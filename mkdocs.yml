@@ -217,6 +217,7 @@ nav:
         - Finite real algebras: "guides_finite_real_algebras.md"
         - Structured finite volume: "guides_finite_volume.md"
         - Shallow water: "guides_shallow_water.md"
+        - Ocean process modeling: "guides_ocean.md"
         - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
         - Compressible multiphysics: "guides_compressible_multiphysics.md"
         - Advanced multiphysics: "guides_advanced_multiphysics.md"
@@ -437,6 +438,7 @@ nav:
         - Circuit analysis: "api/circuit.md"
         - Astrodynamics applications: "api/astrodynamics.md"
         - Astrophysics applications: "api/astrophysics.md"
+        - Ocean process modeling: "api/ocean.md"
         - Compact objects applications: "api/compact_objects.md"
         - Solver:
             - Overview: "api/solver/index.md"

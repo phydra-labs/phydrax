@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any, TYPE_CHECKING
 
@@ -24,6 +25,10 @@ from ..discretization import (
 )
 from ..discretization.finite_volume._incompressible import FaceVelocity
 from ..discretization.finite_volume._mac_momentum import PreparedMACMomentumOperators
+from ..discretization.finite_volume._mac_ocean import (
+    MACOceanForcingEvidence,
+    PreparedMACOceanForcing,
+)
 from ..discretization.finite_volume._mac_scalar import (
     MACScalarDiagnostics,
     MACScalarFluxResult,
@@ -88,6 +93,9 @@ class MACBuoyancyLedger(StrictModule):
     total_power: Array
     potential_energy_rate: Array
     exchange_defect: Array
+    exchange_scale: Array
+    normalized_exchange_defect: Array
+    tolerance: Array
     finite: Array
     success: Array
     law_id: str = eqx.field(static=True)
@@ -105,6 +113,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
     field_names: tuple[str, ...] = eqx.field(static=True)
     coefficients: tuple[float, ...] = eqx.field(static=True)
     references: tuple[float, ...] = eqx.field(static=True)
+    enforce_exchange: bool = eqx.field(static=True)
     law_id: str = eqx.field(static=True)
 
     def __init__(
@@ -114,6 +123,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         /,
         *,
         references: Mapping[str, ArrayLike] | None = None,
+        enforce_exchange: bool = False,
         law_id: str | None = None,
     ):
         gravity_ = jnp.asarray(gravity, dtype=float)
@@ -136,6 +146,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
                     "fields": list(names),
                     "coefficients": list(coefficient_values),
                     "references": list(reference_values),
+                    "enforce_exchange": bool(enforce_exchange),
                 }
             )
             if law_id is None
@@ -147,6 +158,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         self.field_names = names
         self.coefficients = coefficient_values
         self.references = reference_values
+        self.enforce_exchange = bool(enforce_exchange)
         self.law_id = identifier
 
     def evaluate(
@@ -235,11 +247,19 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         total_power = sum(power_by_field.values())
         potential_energy_rate = sum(potential_by_field.values())
         exchange_defect = total_power + potential_energy_rate
+        dtype = velocity_[0].dtype
+        exchange_scale = jnp.maximum(
+            jnp.abs(total_power) + jnp.abs(potential_energy_rate),
+            jnp.asarray(1.0, dtype=dtype),
+        )
+        normalized_exchange_defect = jnp.abs(exchange_defect) / exchange_scale
+        tolerance = 128.0 * jnp.finfo(dtype).eps
         finite = (
             jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in force)))
             & jnp.isfinite(total_power)
             & jnp.isfinite(potential_energy_rate)
             & jnp.isfinite(exchange_defect)
+            & jnp.isfinite(normalized_exchange_defect)
         )
         return MACBuoyancyLedger(
             force=force,
@@ -248,8 +268,15 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
             total_power=total_power,
             potential_energy_rate=potential_energy_rate,
             exchange_defect=exchange_defect,
+            exchange_scale=exchange_scale,
+            normalized_exchange_defect=normalized_exchange_defect,
+            tolerance=tolerance,
             finite=finite,
-            success=finite,
+            success=finite
+            & (
+                (normalized_exchange_defect <= tolerance)
+                | jnp.asarray(not self.enforce_exchange)
+            ),
             law_id=self.law_id,
             transport_id=transport.prepared_id,
             momentum_id=momentum.prepared_id,
@@ -274,6 +301,7 @@ class MACScalarBuoyancyStage(StrictModule):
     scalars: dict[str, Array]
     scalar_fluxes: dict[str, MACScalarFluxResult]
     buoyancy: MACBuoyancyLedger
+    ocean_forcing: MACOceanForcingEvidence | None
     unconstrained_velocity_rate: FaceVelocity
     velocity_rate: FaceVelocity
     scalar_rates: dict[str, Array]
@@ -300,6 +328,7 @@ class MACScalarBuoyancyDiagnostics(StrictModule):
     nonlinear_energy_rate: Array
     forcing_power: Array
     buoyancy_power: Array
+    ocean_forcing_power: Array
     viscous_energy_rate: Array
     dissipation: Array
     wall_power: Array
@@ -323,6 +352,8 @@ class MACScalarBuoyancyStepRestriction(StrictModule):
 
     momentum: MACStepRestriction
     scalars: MACScalarStepRestriction
+    ocean_forcing: Array
+    stratification: Array
     selected: Array
     finite: Array
     success: Array
@@ -341,6 +372,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
     projection: MACPressureProjectionPlan
     transport: PreparedMACScalarTransport
     buoyancy: MACBuoyancyLaw
+    ocean_forcing: PreparedMACOceanForcing | None
     base_dynamics: CompiledMACIncompressibleDynamics
     discretization_bundle: DiscretizationBundle
     velocity_size: int = eqx.field(static=True)
@@ -357,6 +389,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         transport: PreparedMACScalarTransport,
         buoyancy: MACBuoyancyLaw,
         base_dynamics: CompiledMACIncompressibleDynamics,
+        ocean_forcing: PreparedMACOceanForcing | None = None,
         /,
         *,
         compilation_id: str,
@@ -383,12 +416,20 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
                 ),
             )
         )
+        if ocean_forcing is not None and (
+            not isinstance(ocean_forcing, PreparedMACOceanForcing)
+            or ocean_forcing.operators.prepared_id != momentum.operators.prepared_id
+        ):
+            raise ValueError(
+                "Ocean forcing must be prepared on the coupled MAC operators."
+            )
         self.flow_problem = flow_problem
         self.scalar_problem = scalar_problem
         self.momentum = momentum
         self.projection = projection
         self.transport = transport
         self.buoyancy = buoyancy
+        self.ocean_forcing = ocean_forcing
         self.base_dynamics = base_dynamics
         self.discretization_bundle = bundle
         self.velocity_size = momentum.operators.velocity_space.size
@@ -398,6 +439,9 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
                 "flow": flow_problem.problem_id,
                 "scalars": scalar_problem.problem_id,
                 "buoyancy": buoyancy.law_id,
+                "ocean_forcing": (
+                    "none" if ocean_forcing is None else ocean_forcing.plan_id
+                ),
             }
         )
         self.resolved_method = "mac-symmetry-preserving-projected-scalar-buoyancy"
@@ -471,7 +515,12 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
     ) -> MACScalarBuoyancyStage:
         value = self.validate_state(state)
         velocity_coordinates = value[: self.velocity_size]
-        velocity, scalars = self.unpack_state(value)
+        raw_velocity, scalars = self.unpack_state(value)
+        boundary_stage = self.base_dynamics.boundary_stage(time, args)
+        velocity = self.momentum.boundaries.enforce(
+            raw_velocity,
+            boundary_stage,
+        )
         scalar_fluxes = self.transport.evaluate(time, scalars, velocity, args)
         buoyancy = self.buoyancy.evaluate(
             velocity,
@@ -480,26 +529,45 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             self.momentum,
             projection_id=self.projection.plan_id,
         )
-        unconstrained_base, _, _, _ = self.base_dynamics.rate_components(
-            time, velocity_coordinates, args
+        ocean_forcing = (
+            None
+            if self.ocean_forcing is None
+            else self.ocean_forcing.evaluate(time, velocity, args)
+        )
+        ocean_force = (
+            tuple(jnp.zeros_like(component) for component in velocity)
+            if ocean_forcing is None
+            else ocean_forcing.force
+        )
+        unconstrained_base, _, _, _ = self.base_dynamics._rate_components(
+            jnp.asarray(time),
+            velocity_coordinates,
+            args,
+            boundary_stage,
         )
         unconstrained = self.momentum.boundaries.homogeneous_rate(
             tuple(
-                base + force
-                for base, force in zip(
+                base + buoyancy_force + ocean_force_component
+                for base, buoyancy_force, ocean_force_component in zip(
                     unconstrained_base,
                     buoyancy.force,
+                    ocean_force,
                     strict=True,
                 )
             )
         )
-        projected = self.projection.project_rate(unconstrained)
-        projected_rate = tuple(
-            eqx.error_if(
-                component,
-                ~projected.converged | jnp.any(~jnp.isfinite(component)),
-                "Coupled MAC momentum-rate projection failed.",
+        projected = self.projection.project_rate(
+            unconstrained,
+            boundary_stage=boundary_stage,
+        )
+        projected_rate_finite = jnp.all(
+            jnp.stack(
+                tuple(jnp.all(jnp.isfinite(component)) for component in projected.rate)
             )
+        )
+        projected_rate_valid = projected.converged & projected_rate_finite
+        projected_rate = tuple(
+            jnp.where(projected_rate_valid, component, jnp.zeros_like(component))
             for component in projected.rate
         )
         scalar_rates = {
@@ -507,6 +575,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         }
         finite = (
             buoyancy.finite
+            & (jnp.asarray(True) if ocean_forcing is None else ocean_forcing.finite)
             & jnp.all(
                 jnp.stack(
                     tuple(
@@ -515,23 +584,23 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
                     )
                 )
             )
-            & jnp.all(
-                jnp.stack(
-                    tuple(
-                        jnp.all(jnp.isfinite(component)) for component in projected_rate
-                    )
-                )
-            )
+            & projected_rate_finite
             & jnp.all(jnp.isfinite(projected.pressure))
             & jnp.all(jnp.isfinite(projected.pressure_residual))
             & jnp.all(jnp.isfinite(projected.divergence_after))
         )
-        success = finite & projected.converged & buoyancy.success
+        success = (
+            finite
+            & projected.converged
+            & buoyancy.success
+            & (jnp.asarray(True) if ocean_forcing is None else ocean_forcing.success)
+        )
         return MACScalarBuoyancyStage(
             velocity=velocity,
             scalars=scalars,
             scalar_fluxes=scalar_fluxes,
             buoyancy=buoyancy,
+            ocean_forcing=ocean_forcing,
             unconstrained_velocity_rate=unconstrained,
             velocity_rate=projected_rate,
             scalar_rates=scalar_rates,
@@ -568,16 +637,63 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             "Coupled MAC pressure recovery failed.",
         )
 
+    def _stratification_step(self, scalars: Mapping[str, Array], /) -> Array:
+        gravity = np.asarray(self.buoyancy.gravity, dtype=float)
+        vertical_axis = int(np.argmax(np.abs(gravity)))
+        centers = self.momentum.operators.discretization.grid.structured_axes[
+            vertical_axis
+        ].interval_centers
+        if centers.size < 2 or float(np.max(np.abs(gravity))) == 0.0:
+            return jnp.asarray(
+                math.inf,
+                dtype=self.momentum.operators.pressure_space.dtype,
+            )
+        density_anomaly = jnp.zeros(
+            self.momentum.operators.discretization.cell_shape,
+            dtype=self.momentum.operators.pressure_space.dtype,
+        )
+        for name, coefficient, reference in zip(
+            self.buoyancy.field_names,
+            self.buoyancy.coefficients,
+            self.buoyancy.references,
+            strict=True,
+        ):
+            density_anomaly = density_anomaly + coefficient * (scalars[name] - reference)
+        moved = jnp.moveaxis(density_anomaly, vertical_axis, 0)
+        widths = centers[1:] - centers[:-1]
+        shape = (widths.size,) + (1,) * (moved.ndim - 1)
+        gradient = (moved[1:] - moved[:-1]) / widths.reshape(shape)
+        frequency = jnp.sqrt(
+            jnp.max(jnp.abs(self.buoyancy.gravity[vertical_axis] * gradient))
+        )
+        safe_frequency = jnp.where(frequency > 0.0, frequency, 1.0)
+        return jnp.where(
+            frequency > 0.0,
+            math.sqrt(3.0) / safe_frequency,
+            jnp.inf,
+        )
+
     def step_restriction(self, state: ArrayLike, /) -> MACScalarBuoyancyStepRestriction:
         value = self.validate_state(state)
-        velocity, _ = self.unpack_state(value)
+        velocity, scalar_fields = self.unpack_state(value)
         momentum = self.base_dynamics.step_restriction(value[: self.velocity_size])
         scalars = self.transport.step_restriction(velocity)
-        selected = jnp.minimum(momentum.selected, scalars.selected)
+        ocean_forcing = (
+            jnp.asarray(jnp.inf, dtype=value.dtype)
+            if self.ocean_forcing is None
+            else self.ocean_forcing.step_restriction()
+        )
+        stratification = self._stratification_step(scalar_fields)
+        selected = jnp.minimum(
+            jnp.minimum(momentum.selected, scalars.selected),
+            jnp.minimum(ocean_forcing, stratification),
+        )
         finite = ~jnp.isnan(selected)
         return MACScalarBuoyancyStepRestriction(
             momentum=momentum,
             scalars=scalars,
+            ocean_forcing=ocean_forcing,
+            stratification=stratification,
             selected=selected,
             finite=finite,
             success=finite & scalars.success,
@@ -613,6 +729,14 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         kinetic_energy = 0.5 * jnp.real(space.inner(stage.velocity, stage.velocity))
         nonlinear_energy_rate = jnp.real(space.inner(stage.velocity, nonlinear_rate))
         forcing_power = jnp.real(space.inner(stage.velocity, forcing))
+        ocean_forcing_power = (
+            jnp.asarray(0.0, dtype=kinetic_energy.dtype)
+            if stage.ocean_forcing is None
+            else (
+                stage.ocean_forcing.coriolis_power
+                + stage.ocean_forcing.surface_stress_power
+            )
+        )
         viscous_energy_rate = jnp.real(space.inner(stage.velocity, viscous_rate))
         semidiscrete_energy_rate = jnp.real(
             space.inner(stage.velocity, stage.velocity_rate)
@@ -623,7 +747,13 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         )
         dissipation = -homogeneous_viscous_rate
         wall_power = viscous_energy_rate - homogeneous_viscous_rate
-        expected = forcing_power + stage.buoyancy.total_power - dissipation + wall_power
+        expected = (
+            forcing_power
+            + ocean_forcing_power
+            + stage.buoyancy.total_power
+            - dissipation
+            + wall_power
+        )
         volumes = self.momentum.operators.discretization.cell_volumes
         pressure_residual_norm = jnp.sqrt(jnp.sum(volumes * stage.pressure_residual**2))
         divergence_norm = GeometryPrecisionPolicy().norm(
@@ -644,6 +774,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
                             nonlinear_energy_rate,
                             forcing_power,
                             stage.buoyancy.total_power,
+                            ocean_forcing_power,
                             viscous_energy_rate,
                             dissipation,
                             wall_power,
@@ -665,6 +796,7 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             nonlinear_energy_rate=nonlinear_energy_rate,
             forcing_power=forcing_power,
             buoyancy_power=stage.buoyancy.total_power,
+            ocean_forcing_power=ocean_forcing_power,
             viscous_energy_rate=viscous_energy_rate,
             dissipation=dissipation,
             wall_power=wall_power,
@@ -705,6 +837,8 @@ def compile_mac_scalar_buoyancy(
     transport: PreparedMACScalarTransport,
     buoyancy: MACBuoyancyLaw,
     /,
+    *,
+    ocean_forcing: PreparedMACOceanForcing | None = None,
 ) -> CompiledMACScalarBuoyancyDynamics:
     """Compile projected unit-density MAC flow with named explicit scalars."""
     from ..solver._structured_incompressible import MACPressureProjectionPlan
@@ -737,6 +871,11 @@ def compile_mac_scalar_buoyancy(
         raise ValueError("MAC buoyancy gravity and flow dimensions differ.")
     if not np.isclose(projection.density, 1.0, rtol=0.0, atol=0.0):
         raise ValueError("MAC Boussinesq dynamics require unit reference density.")
+    if ocean_forcing is not None and (
+        not isinstance(ocean_forcing, PreparedMACOceanForcing)
+        or ocean_forcing.operators.prepared_id != momentum.operators.prepared_id
+    ):
+        raise ValueError("Ocean forcing must be prepared on the coupled MAC operators.")
     base = compile_mac_incompressible_flow(flow_problem, momentum, projection)
     identifier = canonical_fingerprint(
         {
@@ -747,6 +886,7 @@ def compile_mac_scalar_buoyancy(
             "projection": projection.plan_id,
             "transport": transport.prepared_id,
             "buoyancy": buoyancy.law_id,
+            "ocean_forcing": ("none" if ocean_forcing is None else ocean_forcing.plan_id),
         }
     )
     return CompiledMACScalarBuoyancyDynamics(
@@ -757,6 +897,7 @@ def compile_mac_scalar_buoyancy(
         transport,
         buoyancy,
         base,
+        ocean_forcing,
         compilation_id=identifier,
     )
 
