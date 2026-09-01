@@ -11,6 +11,13 @@
 - Added explicit state/adjoint acceptance evidence, prepared neural-field
   stationarity and virtual-work roots, separate physical static/dynamic
   stability contracts, and accepted-state continuation checkpoints/replay.
+- Added three-dimensional Cartesian rigid-lid Boussinesq ocean process modeling
+  with linear temperature-salinity reference physics, weighted-skew f-plane
+  Coriolis, directional scalar diffusion, conservative surface scalar fluxes,
+  impermeable surface stress, coupled fail-closed SSPRK3, accepted budgets,
+  strict restart/output archives, qualification scenarios, examples, and
+  benchmarks. Hardened coupled MAC scalar CFL, boundary-stage propagation,
+  buoyancy exchange evidence, and rotation/stratification step restrictions.
 - Added native fixed-topology partitioned multiphysics coupling with exact typed
   participant ports, direct and paired field transfers, deterministic SCC plans,
   explicit Jacobi/Gauss–Seidel sweeps, physically certified implicit interface

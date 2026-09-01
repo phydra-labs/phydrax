@@ -27,7 +27,7 @@ from ._precision import FiniteVolumePrecisionPolicy
 
 
 MACScalarAdvection: TypeAlias = Literal["centered", "upwind"]
-MACScalarBoundaryKind: TypeAlias = Literal["periodic", "dirichlet", "neumann"]
+MACScalarBoundaryKind: TypeAlias = Literal["periodic", "dirichlet", "neumann", "flux"]
 
 
 def _canonical_names(names: Sequence[str], /) -> tuple[str, ...]:
@@ -160,35 +160,92 @@ class MACScalarLayout(StrictModule, NonTrainableState):
 
 
 class MACScalarBoundaryCondition(StrictModule, NonTrainableState):
-    """One static scalar wall value or normal-gradient condition."""
+    """One scalar wall value, gradient, or outward conservative flux."""
 
     kind: MACScalarBoundaryKind = eqx.field(static=True)
     value: Array
+    function: Any = eqx.field(static=True)
+    function_id: str = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         kind: MACScalarBoundaryKind,
-        value: ArrayLike = 0.0,
+        value: ArrayLike | Any = 0.0,
         /,
+        *,
+        function_id: str | None = None,
     ):
-        if kind not in ("periodic", "dirichlet", "neumann"):
+        if kind not in ("periodic", "dirichlet", "neumann", "flux"):
             raise ValueError("Unknown MAC scalar boundary kind.")
-        value_ = jnp.asarray(value)
-        host = np.asarray(value_)
-        if np.iscomplexobj(host) or np.any(~np.isfinite(host)):
-            raise ValueError("MAC scalar boundary values must be finite and real.")
-        if kind == "periodic" and (value_.shape != () or float(value_) != 0.0):
+        if callable(value):
+            if kind != "flux":
+                raise ValueError(
+                    "Dynamic MAC scalar boundary data are supported only for flux."
+                )
+            identifier = "" if function_id is None else str(function_id)
+            if not identifier:
+                raise ValueError(
+                    "Dynamic MAC scalar boundary flux requires a function_id."
+                )
+            value_ = jnp.asarray(0.0)
+            function = value
+            host_value: Any = "dynamic"
+        else:
+            if function_id is not None:
+                raise ValueError(
+                    "function_id must be omitted for static MAC scalar boundaries."
+                )
+            value_ = jnp.asarray(value)
+            host = np.asarray(value_)
+            if np.iscomplexobj(host) or np.any(~np.isfinite(host)):
+                raise ValueError("MAC scalar boundary values must be finite and real.")
+            function = None
+            identifier = "none"
+            host_value = host.tolist()
+        if kind == "periodic" and (
+            function is not None or value_.shape != () or float(value_) != 0.0
+        ):
             raise ValueError("Periodic MAC scalar boundaries cannot carry data.")
         self.kind = kind
         self.value = value_
+        self.function = function
+        self.function_id = identifier
         self.boundary_id = canonical_fingerprint(
             {
                 "kind": "mac-scalar-boundary-condition",
                 "boundary_kind": kind,
-                "value": host.tolist(),
+                "value": host_value,
+                "function": identifier,
+                "flux_sign": "outward-loss" if kind == "flux" else "not-applicable",
             }
         )
+
+    def evaluate(
+        self,
+        time: Array,
+        coordinates: Array,
+        args: Any = None,
+        /,
+    ) -> Array:
+        target_shape = coordinates.shape[:-1]
+        if self.function is None:
+            output = jnp.broadcast_to(
+                jnp.asarray(self.value, dtype=coordinates.dtype), target_shape
+            )
+        else:
+            output = jnp.asarray(
+                self.function(time, coordinates, args),
+                dtype=coordinates.dtype,
+            )
+            if output.shape == ():
+                output = jnp.broadcast_to(output, target_shape)
+            elif output.shape != target_shape:
+                raise ValueError(
+                    "Dynamic MAC scalar boundary flux must be scalar or match "
+                    f"boundary shape {target_shape}."
+                )
+        return _finite_array(output, "MAC scalar boundary evaluation")
 
 
 class MACScalarBoundarySet(StrictModule, NonTrainableState):
@@ -305,8 +362,12 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
         field_conditions = self.conditions[self._field_index(name)]
         return {
             axis_name: (
-                ConservativeBoundaryCondition(lower.kind),
-                ConservativeBoundaryCondition(upper.kind),
+                ConservativeBoundaryCondition(
+                    "neumann" if lower.kind == "flux" else lower.kind
+                ),
+                ConservativeBoundaryCondition(
+                    "neumann" if upper.kind == "flux" else upper.kind
+                ),
             )
             for axis_name, (lower, upper) in zip(
                 self.layout.operators.discretization.grid.axis_names,
@@ -318,13 +379,21 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
     def boundary_values(self, name: str, /) -> dict[str, tuple[Array, Array]]:
         field_conditions = self.conditions[self._field_index(name)]
         return {
-            axis_name: (lower.value, upper.value)
+            axis_name: (
+                jnp.asarray(0.0) if lower.kind == "flux" else lower.value,
+                jnp.asarray(0.0) if upper.kind == "flux" else upper.value,
+            )
             for axis_name, (lower, upper) in zip(
                 self.layout.operators.discretization.grid.axis_names,
                 field_conditions,
                 strict=True,
             )
         }
+
+    def field_conditions(
+        self, name: str, /
+    ) -> tuple[tuple[MACScalarBoundaryCondition, MACScalarBoundaryCondition], ...]:
+        return self.conditions[self._field_index(name)]
 
 
 class MACScalarTransport(StrictModule, NonTrainableState):
@@ -351,11 +420,16 @@ class MACScalarTransport(StrictModule, NonTrainableState):
         if not field_name:
             raise ValueError("MAC scalar transport requires a non-empty field name.")
         diffusivity_ = jnp.asarray(diffusivity, dtype=float)
-        if diffusivity_.shape != () or not bool(
-            jnp.isfinite(diffusivity_) & (diffusivity_ >= 0.0)
+        if (
+            diffusivity_.ndim > 1
+            or diffusivity_.size == 0
+            or not bool(
+                jnp.all(jnp.isfinite(diffusivity_)) & jnp.all(diffusivity_ >= 0.0)
+            )
         ):
             raise ValueError(
-                "MAC scalar diffusivity must be one finite nonnegative scalar."
+                "MAC scalar diffusivity must be one finite nonnegative scalar "
+                "or one nonnegative value per grid axis."
             )
         if advection not in ("centered", "upwind"):
             raise ValueError("MAC scalar advection must be 'centered' or 'upwind'.")
@@ -378,7 +452,7 @@ class MACScalarTransport(StrictModule, NonTrainableState):
             {
                 "kind": "mac-scalar-transport",
                 "name": field_name,
-                "diffusivity": float(diffusivity_),
+                "diffusivity": np.asarray(diffusivity_).tolist(),
                 "advection": advection,
                 "source": source_identifier,
             }
@@ -609,13 +683,25 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                     precision=precision,
                 ).prepare(zero_velocity)
             )
+            coefficient = declaration.diffusivity
+            if coefficient.ndim == 1:
+                dimension = len(grid.shape)
+                if coefficient.size != dimension:
+                    raise ValueError(
+                        "Directional MAC scalar diffusivity must contain one "
+                        f"value per grid axis; expected {dimension}."
+                    )
+                coefficient = jnp.broadcast_to(
+                    coefficient,
+                    grid.shape + (dimension,),
+                )
             diffusion.append(
                 ConservativeDiffusionPlan(
                     grid,
                     boundaries=conditions,
                     interpolation="harmonic",
                     precision=precision,
-                ).prepare(declaration.diffusivity)
+                ).prepare(coefficient)
             )
         advection_ = tuple(advection)
         diffusion_ = tuple(diffusion)
@@ -695,6 +781,40 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
             output[name] = _finite_array(value, f"MAC scalar reaction field {name!r}")
         return output
 
+    def _prescribed_diffusive_fluxes(
+        self,
+        time: Array,
+        name: str,
+        fluxes: tuple[Array, ...],
+        args: Any,
+        /,
+    ) -> tuple[Array, ...]:
+        output = list(fluxes)
+        discretization = self.layout.operators.discretization
+        for axis, (lower, upper) in enumerate(self.boundaries.field_conditions(name)):
+            for index, condition, orientation in (
+                (0, lower, 1.0),
+                (-1, upper, -1.0),
+            ):
+                if condition.kind != "flux":
+                    continue
+                coordinates = jnp.take(
+                    discretization.face_centers[axis],
+                    index,
+                    axis=axis,
+                )
+                outward_loss = condition.evaluate(
+                    time,
+                    coordinates,
+                    args,
+                )
+                location = [slice(None)] * output[axis].ndim
+                location[axis] = index
+                output[axis] = (
+                    output[axis].at[tuple(location)].set(orientation * outward_loss)
+                )
+        return tuple(output)
+
     def evaluate(
         self,
         time: ArrayLike,
@@ -734,6 +854,12 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 value,
                 diffusion.coefficient,
                 boundary_values,
+            )
+            diffusive_fluxes = self._prescribed_diffusive_fluxes(
+                time_,
+                name,
+                diffusive_fluxes,
+                args,
             )
             diffusive_divergence = diffusion.divergence(diffusive_fluxes)
             if declaration.source is None:
@@ -914,23 +1040,28 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         /,
     ) -> MACScalarStepRestriction:
         velocity_ = self._validate_velocity(velocity)
-        grid = self.layout.operators.discretization.grid
+        discretization = self.layout.operators.discretization
+        grid = discretization.grid
         inverse_advective = jnp.zeros(
             self.layout.cell_shape,
             dtype=self.layout.dtype,
         )
         for axis_index, axis in enumerate(grid.structured_axes):
-            moved = jnp.moveaxis(velocity_[axis_index], axis_index, 0)
-            cell_velocity = (
-                0.5 * (moved + jnp.roll(moved, -1, axis=0))
-                if axis.periodic
-                else 0.5 * (moved[:-1] + moved[1:])
+            oriented_flux = (
+                velocity_[axis_index] * discretization.face_measures[axis_index]
             )
-            cell_velocity = jnp.moveaxis(cell_velocity, 0, axis_index)
-            shape = [1] * len(self.layout.cell_shape)
-            shape[axis_index] = int(axis.interval_widths.size)
-            widths = axis.interval_widths.reshape(tuple(shape))
-            inverse_advective = inverse_advective + jnp.abs(cell_velocity) / widths
+            if axis.periodic:
+                lower = oriented_flux
+                upper = jnp.roll(oriented_flux, -1, axis=axis_index)
+            else:
+                lower_slice = [slice(None)] * oriented_flux.ndim
+                upper_slice = [slice(None)] * oriented_flux.ndim
+                lower_slice[axis_index] = slice(0, oriented_flux.shape[axis_index] - 1)
+                upper_slice[axis_index] = slice(1, oriented_flux.shape[axis_index])
+                lower = oriented_flux[tuple(lower_slice)]
+                upper = oriented_flux[tuple(upper_slice)]
+            outgoing = jnp.maximum(-lower, 0.0) + jnp.maximum(upper, 0.0)
+            inverse_advective = inverse_advective + outgoing / discretization.cell_volumes
         advective_rate = jnp.max(inverse_advective)
         safe_advective = jnp.where(advective_rate > 0.0, advective_rate, 1.0)
         advective_value = jnp.where(
