@@ -97,6 +97,19 @@ material version, schedule cursor, and topology identity. Local mesh changes use
 `FiniteElementTopologyTransaction`; candidate transfer or certification failure
 retains the accepted mesh and state.
 
+## Design-dependent fixed-topology geometry
+
+`FiniteElementMeshMotionPlan` realizes one accepted full-dimensional P1/Q1 mesh
+under a fixed boundary-coordinate provider. Boundary motion is extended
+harmonically to interior vertices and accepted only when provider, solve,
+displacement, finiteness, and signed-Jacobian evidence pass. An invalid trial
+returns the base runtime but remains inadmissible.
+
+PDE-constrained workflows must recompute the realization from the same design in
+the residual, objective, `state_admissibility`, and `state_realization` callables.
+Connectivity changes terminate the current topology epoch. See
+[Differentiable fixed-topology geometry](guides_differentiable_geometry.md).
+
 ## Current scope
 
 These workflows are single-device. Deformable contact currently uses a host

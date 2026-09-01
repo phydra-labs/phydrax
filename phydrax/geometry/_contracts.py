@@ -22,6 +22,11 @@ from ._capabilities import (
     SupportMapProvider,
 )
 from ._certificate import FieldCertificate
+from ._validity import (
+    GeometryValidityEvidence,
+    parameter_validity,
+    representation_validity,
+)
 from .design._schema import (
     _ParameterCollector,
     DesignState,
@@ -225,6 +230,32 @@ class CompiledGeometry(StrictModule):
     def field_certificate(self) -> FieldCertificate:
         return self.kernel.field_certificate
 
+    def validity(self, state: DesignState | None = None, /) -> GeometryValidityEvidence:
+        selected = self.state if state is None else state
+        common = parameter_validity(self.schema, selected)
+        representation = representation_validity(self.kernel, selected)
+        return common.combined_with(
+            representation,
+            contract_id=f"compiled:{representation.contract_id}",
+        )
+
+    def require_valid(
+        self,
+        state: DesignState | None = None,
+        /,
+    ) -> GeometryValidityEvidence:
+        evidence = self.validity(state)
+        checked = eqx.error_if(
+            evidence.conditions_satisfied,
+            ~evidence.accepted,
+            "Geometry state is invalid or its validity is inconclusive.",
+        )
+        return eqx.tree_at(
+            lambda item: item.conditions_satisfied,
+            evidence,
+            checked,
+        )
+
     def has_capability(self, capability: GeometryCapability, /) -> bool:
         return capability in self.capabilities
 
@@ -403,6 +434,26 @@ class AbstractGeometrySource(StrictModule):
         from .analytic._operations import Scaling
 
         return Scaling(self, scale, center=center)
+
+    def extruded(
+        self,
+        height: Any,
+        /,
+        *,
+        feature_id: str | None = None,
+    ) -> GeometrySource:
+        from .analytic._sweeps import Extrusion
+
+        return Extrusion(self, height, feature_id=feature_id)
+
+    def revolved(
+        self,
+        *,
+        feature_id: str | None = None,
+    ) -> GeometrySource:
+        from .analytic._sweeps import Revolution
+
+        return Revolution(self, feature_id=feature_id)
 
     def __and__(self, other: GeometrySource, /) -> GeometrySource:
         from .analytic._operations import Intersection

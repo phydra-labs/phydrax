@@ -39,6 +39,11 @@ from .._sampling import (
     RejectionSamplingPlan,
     SamplingResult,
 )
+from .._validity import (
+    combine_validity,
+    GeometryValidityEvidence,
+    representation_validity,
+)
 from ..design._schema import (
     _ParameterCollector,
     ParameterBinding,
@@ -276,6 +281,36 @@ class _RigidTransformKernel(GeometryKernel):
             (*certificate.provenance, "rigid_transform"),
         )
 
+    def geometry_validity(self, state, /):
+        rotation, _ = self._parameters(state)
+        identity = jnp.eye(rotation.shape[0], dtype=rotation.dtype)
+        tolerance = 10.0 * jnp.sqrt(jnp.finfo(rotation.dtype).eps)
+        orthogonality_error = jnp.max(jnp.abs(rotation.T @ rotation - identity))
+        determinant_error = jnp.abs(jnp.linalg.det(rotation) - 1.0)
+        local = GeometryValidityEvidence(
+            finite=(
+                jnp.all(jnp.isfinite(rotation))
+                & jnp.isfinite(orthogonality_error)
+                & jnp.isfinite(determinant_error)
+            ),
+            conditions_satisfied=(
+                (orthogonality_error <= tolerance) & (determinant_error <= tolerance)
+            ),
+            resolved=True,
+            margins=jnp.stack(
+                (
+                    tolerance - orthogonality_error,
+                    tolerance - determinant_error,
+                )
+            ),
+            margin_names=("rotation_orthogonality", "rotation_determinant"),
+            contract_id="rigid_transform_frame",
+        )
+        return combine_validity(
+            (representation_validity(self.child, state), local),
+            contract_id="rigid_transform",
+        )
+
     def _parameters(self, state):
         return self.rotation.read(state), self.translation.read(state)
 
@@ -500,6 +535,9 @@ class _ScalingKernel(GeometryKernel):
             ),
         )
 
+    def geometry_validity(self, state, /):
+        return representation_validity(self.child, state)
+
     def _parameters(self, state):
         return self.scale.read(state), self.center.read(state)
 
@@ -722,6 +760,12 @@ class _SharpCSGKernel(GeometryKernel):
             ),
         )
 
+    def geometry_validity(self, state, /):
+        return combine_validity(
+            tuple(representation_validity(child, state) for child in self.children),
+            contract_id=f"sharp_{self.operation}",
+        )
+
     def _fields(self, state, points):
         return jnp.stack(
             tuple(child.boundary_field(state, points) for child in self.children), axis=-1
@@ -884,6 +928,12 @@ class _BlendCSGKernel(GeometryKernel):
             "all_space",
             True,
             (f"blend_{self.operation}",),
+        )
+
+    def geometry_validity(self, state, /):
+        return combine_validity(
+            tuple(representation_validity(child, state) for child in self.children),
+            contract_id=f"blend_{self.operation}",
         )
 
     def _fields(self, state, points):

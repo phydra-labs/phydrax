@@ -1,0 +1,163 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "1ce67df0131f6721c8085f2a5d1a08b97ae81eabfa1c725faaa9aaffa5b378bd",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "1e8e2730c91f82fa283370ea43e32b99cf6f4522c1c5b78e1567bb74099f5cf5",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "finite_element": {
+    "accepted": true,
+    "boundary_vertices": 4,
+    "derivative": {
+      "count": 4,
+      "max_seconds": 0.866629792,
+      "mean_seconds": 0.73163313525,
+      "median_seconds": 0.690331416,
+      "min_seconds": 0.679239917,
+      "samples_seconds": [
+        0.679239917,
+        0.866629792,
+        0.691832041,
+        0.688830791
+      ],
+      "std_seconds": 0.078078989537939
+    },
+    "first_derivative_seconds": 4.6326875,
+    "first_realization_seconds": 1.9443045,
+    "interior_vertices": 1,
+    "logical_plan_bytes": 4128,
+    "minimum_relative_jacobian": 1.2100000000000002,
+    "realization": {
+      "count": 4,
+      "max_seconds": 0.279126083,
+      "mean_seconds": 0.27427590625,
+      "median_seconds": 0.273650646,
+      "min_seconds": 0.27067625,
+      "samples_seconds": [
+        0.279126083,
+        0.27067625,
+        0.274971875,
+        0.272329417
+      ],
+      "std_seconds": 0.003191979500472506
+    },
+    "shape_derivative": 4.4,
+    "vertices": 5
+  },
+  "kind": "geometry-realization-record-only-timing",
+  "record_only": true,
+  "surface": [
+    {
+      "accepted": true,
+      "discovery_seconds": 6.050715292,
+      "faces": 108,
+      "first_jvp_seconds": 5.31529875,
+      "first_realization_seconds": 0.403322583,
+      "intersection_pairs": 5140,
+      "jvp": {
+        "count": 4,
+        "max_seconds": 1.111381042,
+        "mean_seconds": 0.94312830225,
+        "median_seconds": 0.9060268335,
+        "min_seconds": 0.8490785,
+        "samples_seconds": [
+          0.925869625,
+          0.8490785,
+          0.886184042,
+          1.111381042
+        ],
+        "std_seconds": 0.10086483586027983
+      },
+      "lattice_points": 343,
+      "logical_plan_bytes": 61191,
+      "minimum_face_area": 0.042698381257960764,
+      "realization": {
+        "count": 4,
+        "max_seconds": 0.409831708,
+        "mean_seconds": 0.40627277075,
+        "median_seconds": 0.4066068545,
+        "min_seconds": 0.402045666,
+        "samples_seconds": [
+          0.409831708,
+          0.407195042,
+          0.402045666,
+          0.406018667
+        ],
+        "std_seconds": 0.0028039972312419764
+      },
+      "resolution_per_axis": 7,
+      "vertices": 56
+    },
+    {
+      "accepted": true,
+      "discovery_seconds": 7.12570675,
+      "faces": 252,
+      "first_jvp_seconds": 5.368377792,
+      "first_realization_seconds": 0.447054875,
+      "intersection_pairs": 30084,
+      "jvp": {
+        "count": 4,
+        "max_seconds": 1.138100666,
+        "mean_seconds": 1.03920398925,
+        "median_seconds": 1.038005729,
+        "min_seconds": 0.942703833,
+        "samples_seconds": [
+          0.942703833,
+          1.138100666,
+          1.034967042,
+          1.041044416
+        ],
+        "std_seconds": 0.06912700579565446
+      },
+      "lattice_points": 729,
+      "logical_plan_bytes": 286081,
+      "minimum_face_area": 0.013346338615938034,
+      "realization": {
+        "count": 4,
+        "max_seconds": 0.708404875,
+        "mean_seconds": 0.50749743725,
+        "median_seconds": 0.4548696455,
+        "min_seconds": 0.411845583,
+        "samples_seconds": [
+          0.411845583,
+          0.708404875,
+          0.415772583,
+          0.493966708
+        ],
+        "std_seconds": 0.12052966988044266
+      },
+      "resolution_per_axis": 9,
+      "vertices": 128
+    }
+  ]
+}

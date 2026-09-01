@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added executable geometry-state validity, exact analytic extrusion and revolution,
+  dense host-discovered fixed-topology implicit surfaces with normal-gauge projection
+  and regularized native QEF realization, and graph-harmonic finite-element mesh
+  motion with signed-Jacobian evidence, safe rejected-trial fallback, qualification,
+  examples, benchmarks, and explicit topology-refresh boundaries.
 - Added fixed-topology one-phase free-surface ALE hydrodynamics with graph
   geometry, extensive mapped momentum/scalars, conservative kinematic GCL,
   nonorthogonal mapped Hodge, mixed pressure projection, strongly coupled

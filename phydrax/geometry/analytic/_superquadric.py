@@ -35,6 +35,7 @@ from .._sampling import (
     complete_sampling_result,
     RejectionSamplingPlan,
 )
+from .._validity import GeometryValidityEvidence
 from ..design._schema import (
     _ParameterCollector,
     DesignState,
@@ -215,6 +216,35 @@ class _SuperquadricKernel(GeometryKernel):
             orientation,
             self.first_blockiness.read(state),
             self.second_blockiness.read(state),
+        )
+
+    def geometry_validity(self, state, /) -> GeometryValidityEvidence:
+        axes = self.semi_axes.read(state)
+        orientation = self.orientation.read(state)
+        first = self.first_blockiness.read(state)
+        second = self.second_blockiness.read(state)
+        orientation_norm = jnp.linalg.norm(orientation)
+        margins = jnp.stack(
+            (
+                jnp.min(axes),
+                orientation_norm - jnp.finfo(orientation.dtype).eps,
+                first - 2.0,
+                second - 2.0,
+            )
+        )
+        finite = jnp.all(jnp.isfinite(margins))
+        return GeometryValidityEvidence(
+            finite=finite,
+            conditions_satisfied=jnp.all(margins >= 0.0),
+            resolved=True,
+            margins=margins,
+            margin_names=(
+                "semi_axes_minimum",
+                "orientation_norm",
+                "first_blockiness",
+                "second_blockiness",
+            ),
+            contract_id="analytic_superquadric",
         )
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:

@@ -189,7 +189,7 @@ def test_restricted_geometry_validity_region_fails_before_evaluation(monkeypatch
         property(lambda _self: restricted),
     )
 
-    with pytest.raises(NotImplementedError, match="validity region"):
+    with pytest.raises(NotImplementedError, match="executable geometry validity"):
         system.search(
             phx.optim.DifferentialEvolutionSearch(4, 1),
             key=jr.key(0),

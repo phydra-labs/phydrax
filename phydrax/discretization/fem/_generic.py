@@ -1388,9 +1388,16 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         *,
         numeric_version: str,
     ) -> FiniteElementRuntimeData:
+        points = jnp.asarray(
+            self.default_runtime.coordinates if coordinates is None else coordinates
+        )
+        if points.shape != self.default_runtime.coordinates.shape:
+            raise ValueError(
+                "Fixed-topology FE runtime coordinates must preserve coordinate shape."
+            )
         return FiniteElementRuntimeData(
             self.mesh,
-            (self.default_runtime.coordinates if coordinates is None else coordinates),
+            points,
             numeric_version=numeric_version,
             geometry_layout_id=self.default_runtime.geometry_layout_id,
         )

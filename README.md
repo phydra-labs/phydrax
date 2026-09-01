@@ -33,9 +33,11 @@ functionals such as signed energies, and $r_k$ are model-level losses.
 Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space $\Omega=\Omega_x\times\Omega_t\times\cdots$.
-- **Geometry**: analytic, simplicial, B-Rep, CSG, and reconstructed sources compile
-  to one JAX kernel/state contract with explicit capabilities, field certificates,
-  boundary atlases, topology identities, and design parameters.
+- **Geometry**: analytic, swept, simplicial, B-Rep, CSG, and reconstructed sources
+  compile to one JAX kernel/state contract with explicit capabilities, field
+  certificates, runtime validity, boundary atlases, topology identities, and design
+  parameters. Dense implicit-surface discovery, normal-gauge fixed-anchor projection,
+  and evidence-bearing FE mesh motion keep connectivity static while coordinates vary.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,
@@ -216,7 +218,8 @@ If you are new to the library, the general recipe is:
 
 Geometry construction lives in `phx.geometry`; `phx.domain.GeometryDomain` is the
 thin labeled-domain adapter used by sampling, integration, and constraints. See the
-[geometry substrate API](docs/api/geometry.md).
+[geometry substrate API](docs/api/geometry.md) and
+[differentiable fixed-topology geometry guide](docs/guides_differentiable_geometry.md).
 
 Numerical supports and finite field spaces live in `phx.discretization`, including
 bounded, periodic, half-line, and real-line global tensor bases; rational Chebyshev
