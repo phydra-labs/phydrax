@@ -516,10 +516,6 @@ from ._fractional_memory import (
     FractionalVectorField,
     solve_caputo_fractional,
 )
-from ._free_surface_ale_projection import (
-    FreeSurfaceProjectionResult,
-    MappedFreeSurfaceProjectionPlan,
-)
 from ._functional_differential import (
     FunctionalCollocationPlan,
     FunctionalDifferentialBoundaryProblem,
@@ -1968,8 +1964,6 @@ __all__ = [
     "MACFreeSurfaceProjectionPlan",
     "MACFreeSurfaceProjectionResult",
     "LinearImplicitFreeSurfacePlan",
-    "FreeSurfaceProjectionResult",
-    "MappedFreeSurfaceProjectionPlan",
     "MACReplayCertification",
     "MACDeformableImmersedBackwardEulerMethod",
     "MACDeformableImmersedEnergyLedger",

@@ -65,6 +65,19 @@ pressure projection, coupled surface kinematics, scalar GCL, and accepted work
 evidence. See
 [One-phase free-surface ALE hydrodynamics](../guides_free_surface_ale_hydrodynamics.md).
 
+## Advanced and two-phase hydrodynamics
+
+```text
+python examples/advanced_capillary_wave.py
+python examples/advanced_rigid_hydroelastic_body.py
+python examples/advanced_two_phase_vof.py
+```
+
+These exercise variational graph capillarity, coherent wave forcing and absorption,
+mapped rigid/modal coupling, and conservative two-phase VOF flow. See
+[Advanced hydrodynamics](../guides_advanced_hydrodynamics.md) and
+[Two-phase hydrodynamics](../guides_two_phase_hydrodynamics.md).
+
 ## Particle physics scripts
 
 The repository includes directly runnable scripts for the fixed-capacity particle stack:

@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added advanced hydrodynamics with corrected graph-stage timing, pressure/reference
+  semantics, unified mapped kinetic and boundary ownership, truthful work ledgers,
+  variational surface tension, coherent wave forcing/absorption, vertical rezoning,
+  shoreline handoff events, submerged rigid/modal coupling, and a separate
+  conservative incompressible two-phase VOF/CLSVOF product with variable-density
+  projection, capillarity, moving-body forcing, topology evidence, restart, output,
+  qualification, examples, and benchmarks.
 - Added executable geometry-state validity, exact analytic extrusion and revolution,
   dense host-discovered fixed-topology implicit surfaces with normal-gauge projection
   and regularized native QEF realization, and graph-harmonic finite-element mesh

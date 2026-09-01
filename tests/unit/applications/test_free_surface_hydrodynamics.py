@@ -82,7 +82,16 @@ def test_mixed_projection_reduces_divergence():
     )
     momentum = hydrodynamics.surface.apply_hodge(geometry, velocity)
 
-    result = hydrodynamics.projection.project(geometry, momentum, jnp.asarray(0.01))
+    boundary = hydrodynamics.plan.boundary.stage(
+        hydrodynamics.surface,
+        geometry,
+        state.eta,
+        gravity=hydrodynamics.plan.gravity,
+        density=hydrodynamics.plan.density,
+    )
+    result = hydrodynamics.projection.project(
+        geometry, momentum, boundary, jnp.asarray(0.01)
+    )
 
     assert bool(result.successful)
     before = jnp.sqrt(jnp.sum(geometry.cell_volumes * result.divergence_before**2))

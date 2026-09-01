@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import FiniteVolumeDiscretization
@@ -156,6 +156,7 @@ class GraphSurfaceALEPlan(StrictModule, NonTrainableState):
             {
                 "kind": "graph-surface-ale-plan",
                 "reference": reference.prepared_id,
+                "bottom": array_tree_fingerprint(np.asarray(bottom_)),
                 "minimum_height": values[0],
                 "maximum_slope": values[1],
                 "tolerance": values[2],

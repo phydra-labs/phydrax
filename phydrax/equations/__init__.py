@@ -201,6 +201,7 @@ from ._hyperbolic_systems import (
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
+from ._incident_wave import IncidentWavePlan, WaveComponent, WaveSample
 from ._incompressible import (
     compile_periodic_incompressible_flow,
     CompiledIncompressibleSpectralDynamics,
@@ -1043,3 +1044,5 @@ __all__ += [
     "VortexParticleFlowProblem",
     "compile_vortex_particle_flow",
 ]
+
+__all__ += ["IncidentWavePlan", "WaveComponent", "WaveSample"]

@@ -28,7 +28,7 @@
 
 ---
 
-::: phydrax.solver.MappedFreeSurfaceProjectionPlan
+::: phydrax.applications.hydrodynamics.MappedFreeSurfaceProjectionPlan
 
 ---
 

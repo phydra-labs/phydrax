@@ -240,6 +240,8 @@ nav:
         - Ocean process modeling: "guides_ocean.md"
         - Hydrostatic ocean modeling: "guides_hydrostatic_ocean.md"
         - Free-surface ALE hydrodynamics: "guides_free_surface_ale_hydrodynamics.md"
+        - Advanced hydrodynamics: "guides_advanced_hydrodynamics.md"
+        - Two-phase hydrodynamics: "guides_two_phase_hydrodynamics.md"
         - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
         - Compressible multiphysics: "guides_compressible_multiphysics.md"
         - Advanced multiphysics: "guides_advanced_multiphysics.md"
@@ -470,6 +472,7 @@ nav:
         - Ocean process modeling: "api/ocean.md"
         - Hydrostatic ocean modeling: "api/hydrostatic_ocean.md"
         - Free-surface hydrodynamics: "api/free_surface_hydrodynamics.md"
+        - Advanced hydrodynamics: "api/advanced_hydrodynamics.md"
         - Compact objects applications: "api/compact_objects.md"
         - Solver:
             - Overview: "api/solver/index.md"
