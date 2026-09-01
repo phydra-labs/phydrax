@@ -57,6 +57,7 @@ benchmarks/*
 !benchmarks/unbounded_spectral.json
 !benchmarks/structured_flow.json
 !benchmarks/shallow_water.json
+!benchmarks/ocean.json
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/mac_immersed_boundary.json

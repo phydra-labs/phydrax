@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added three-dimensional Cartesian rigid-lid Boussinesq ocean process modeling
+  with linear temperature-salinity reference physics, weighted-skew f-plane
+  Coriolis, directional scalar diffusion, conservative surface scalar fluxes,
+  impermeable surface stress, coupled fail-closed SSPRK3, accepted budgets,
+  strict restart/output archives, qualification scenarios, examples, and
+  benchmarks. Hardened coupled MAC scalar CFL, boundary-stage propagation,
+  buoyancy exchange evidence, and rotation/stratification step restrictions.
 - Added one fixed-capacity runtime particle-population authority with activity,
   mass, incarnation-safe slot reuse, deterministic allocation/deactivation, DEM
   lifecycle migration, and runtime particle-splat masks.
