@@ -17,100 +17,79 @@ from phydrax.domain import DomainFunction
 from .._doc import DOC_KEY0
 from .._term import AbstractSamplingTerm
 from ..integration import (
+    AdaptiveIntegration,
+    CallerIntegration,
+    FixedIntegration,
     IntegrationRealization,
+    IntegrationSource,
     IntegrationStatus,
-    materialize,
+    PerStepIntegration,
     reduce,
+    resolve_integration,
 )
-from ..integration._api import _requires_random_key
 
 
 class IntegralFunctional(AbstractSamplingTerm):
     """A raw signed scalar objective executed by any integration target and plan."""
 
     objective_vars: tuple[str, ...]
-    target: Any
-    plan: Any
+    source: IntegrationSource
     weight: float = eqx.field(static=True)
     integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction] | DomainFunction
-    fixed_realization: IntegrationRealization | None
     label: str | None = eqx.field(static=True)
-    materialization_policy: Literal["fixed", "per_step", "caller"] = eqx.field(
-        static=True
-    )
     nonfinite_integrand: Literal["raise", "propagate"] = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        target: Any,
+        source: IntegrationSource,
         integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction]
         | DomainFunction,
-        plan: Any = None,
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-        materialization_policy: Literal["fixed", "per_step", "caller"] = "per_step",
         nonfinite_integrand: Literal["raise", "propagate"] = "raise",
-        fixed_realization: IntegrationRealization | None = None,
-        fixed_key: Key[Array, ""] | None = None,
     ):
         if not isinstance(integrand, DomainFunction) and not callable(integrand):
             raise TypeError("integrand must be a DomainFunction or callable.")
-        policy = str(materialization_policy).lower()
-        if policy not in ("fixed", "per_step", "caller"):
-            raise ValueError(
-                "materialization_policy must be 'fixed', 'per_step', or 'caller'."
+        if not isinstance(
+            source,
+            (
+                PerStepIntegration,
+                FixedIntegration,
+                CallerIntegration,
+                AdaptiveIntegration,
+            ),
+        ):
+            raise TypeError("source must be an IntegrationSource.")
+        if isinstance(source, AdaptiveIntegration):
+            raise TypeError(
+                "IntegralFunctional does not support AdaptiveIntegration; "
+                "adaptive signed objectives require an explicit estimator contract."
             )
         nonfinite_policy = str(nonfinite_integrand).lower()
         if nonfinite_policy not in ("raise", "propagate"):
             raise ValueError("nonfinite_integrand must be 'raise' or 'propagate'.")
-        if policy == "fixed":
-            if fixed_realization is None:
-                if _requires_random_key(plan):
-                    if fixed_key is None:
-                        raise ValueError(
-                            "A randomized fixed IntegralFunctional requires fixed_key=."
-                        )
-                    fixed_realization = materialize(target, plan, key=fixed_key)
-                else:
-                    if fixed_key is not None:
-                        raise ValueError(
-                            "A deterministic fixed IntegralFunctional does not consume "
-                            "fixed_key=."
-                        )
-                    fixed_realization = materialize(target, plan)
-        elif fixed_realization is not None or fixed_key is not None:
-            raise ValueError(
-                "fixed_realization/fixed_key require materialization_policy='fixed'."
-            )
         self.objective_vars = () if objective_vars is None else tuple(objective_vars)
-        self.target = target
-        self.plan = plan
+        self.source = source
         self.integrand = integrand
         weight_value = float(weight)
         if not math.isfinite(weight_value):
             raise ValueError("weight must be finite.")
         self.weight = weight_value
         self.label = None if label is None else str(label)
-        self.materialization_policy = policy
         self.nonfinite_integrand = nonfinite_policy
-        self.fixed_realization = fixed_realization
 
     @classmethod
     def from_operator(
         cls,
         *,
-        target: Any,
+        source: IntegrationSource,
         operator: Callable[..., DomainFunction],
         objective_vars: str | Sequence[str],
-        plan: Any = None,
         weight: ArrayLike = 1.0,
         label: str | None = None,
-        materialization_policy: Literal["fixed", "per_step", "caller"] = "per_step",
         nonfinite_integrand: Literal["raise", "propagate"] = "raise",
-        fixed_realization: IntegrationRealization | None = None,
-        fixed_key: Key[Array, ""] | None = None,
     ) -> "IntegralFunctional":
         """Build an integral functional from an operator on named solver fields."""
         variables = (
@@ -123,16 +102,12 @@ class IntegralFunctional(AbstractSamplingTerm):
             return operator(*(functions[name] for name in variables))
 
         return cls(
-            target=target,
-            plan=plan,
+            source=source,
             integrand=integrand,
             objective_vars=variables,
             weight=weight,
             label=label,
-            materialization_policy=materialization_policy,
             nonfinite_integrand=nonfinite_integrand,
-            fixed_realization=fixed_realization,
-            fixed_key=fixed_key,
         )
 
     def sample(
@@ -140,16 +115,10 @@ class IntegralFunctional(AbstractSamplingTerm):
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> IntegrationRealization | None:
-        """Materialize according to the objective's refresh policy."""
-        if self.materialization_policy == "fixed":
-            if self.fixed_realization is None:
-                raise RuntimeError("Fixed IntegralFunctional has no realization.")
-            return self.fixed_realization
-        if self.materialization_policy == "caller":
+        """Resolve one realization according to the typed integration source."""
+        if isinstance(self.source, CallerIntegration):
             return None
-        if _requires_random_key(self.plan):
-            return materialize(self.target, self.plan, key=key)
-        return materialize(self.target, self.plan)
+        return resolve_integration(self.source, key=key)
 
     def _integrand_function(
         self, functions: Mapping[str, DomainFunction], /
@@ -177,12 +146,18 @@ class IntegralFunctional(AbstractSamplingTerm):
             return jnp.zeros((), dtype=float)
         realization = batch
         if realization is None:
-            if self.materialization_policy == "caller":
+            if isinstance(self.source, CallerIntegration):
                 raise ValueError(
                     "Caller-managed IntegralFunctional requires "
                     "batch=IntegrationRealization."
                 )
             realization = self.sample(key=key)
+        elif isinstance(self.source, CallerIntegration):
+            realization = resolve_integration(
+                self.source,
+                key=key,
+                realization=realization,
+            )
         if not isinstance(realization, IntegrationRealization):
             raise TypeError("IntegralFunctional batch must be an IntegrationRealization.")
         estimate = reduce(self._integrand_function(functions), realization, **kwargs)

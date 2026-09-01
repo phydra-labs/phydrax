@@ -21,6 +21,7 @@ from ...discretization.fem._high_order import SumFactorizationPlan
 from ...discretization.fem._sbp import MappedTensorMetrics
 from ...linalg import DualSpace
 from ...sparse import scatter_local as _scatter_local
+from ...variational import FunctionalContext, LocalFieldJet, LocalGeometry
 from .._finite_element_variational import (
     _action_domain,
     _action_rule,
@@ -36,6 +37,7 @@ from .._finite_element_variational import (
     FiniteElementExecutionContext,
     FiniteElementForm,
     InteriorFacetAction,
+    LocalFunctionalAction,
     MassAction,
     PairwiseVolumeFluxAction,
     PreparedOperatorAction,
@@ -669,6 +671,466 @@ def _prepared_local_volume_residual(
     return output_field, dofs, local
 
 
+def _prepared_local_functional_value_and_residual(
+    action: LocalFunctionalAction,
+    discretization: AbstractPreparedLocalDiscretization,
+    workset,
+    state_by_field: dict[str, Array],
+    context: FiniteElementExecutionContext,
+    /,
+    *,
+    with_residual: bool,
+):
+    region = workset.local_region
+    if region is None:
+        raise ValueError("Prepared functional execution requires a local region.")
+    metric = region.geometry_actions.realize(context.runtime)
+    references = {
+        name: reference.realize_reference_actions(context.runtime)
+        for name, reference in zip(
+            region.field_names,
+            region.reference_actions,
+            strict=True,
+        )
+    }
+    gathers = dict(workset.gathers)
+    local_inputs = tuple(
+        state_by_field[field_name][gathers[field_name]]
+        for field_name in action.input_fields
+    )
+    input_indices = {
+        field_name: index for index, field_name in enumerate(action.input_fields)
+    }
+    active_indices = tuple(input_indices[field] for field in action.output_fields)
+    semantic_to_field = action.semantic_to_field
+    functional_context = FunctionalContext(
+        time=context.time,
+        user_args=context.user_args,
+    )
+    valid = jnp.asarray(workset.valid) & jnp.asarray(metric.valid)
+    normal = None
+    if action.term.normal:
+        if metric.normals.size == 0:
+            raise ValueError(
+                "Prepared functional normal request requires trace geometry normals."
+            )
+        normal = metric.normals
+
+    def energy(*coefficients):
+        jets = {}
+        for specification in action.term.fields:
+            field_name = semantic_to_field[specification.field_name]
+            index = input_indices[field_name]
+            reference = references[field_name]
+            coefficient = coefficients[index]
+            value = (
+                reference.interpolate(context.runtime, coefficient)
+                if specification.value
+                else None
+            )
+            gradient = None
+            if specification.gradient:
+                reference_gradient = reference.reference_gradient(
+                    context.runtime,
+                    coefficient,
+                )
+                gradient = metric.physical_gradient(reference_gradient)
+            jets[specification.field_name] = LocalFieldJet(
+                value=value,
+                gradient=gradient,
+            )
+        density = jnp.asarray(
+            action.term.density(
+                jets,
+                LocalGeometry(metric.points, normal=normal),
+                functional_context,
+            )
+        )
+        if density.shape != metric.physical_weights.shape:
+            raise ValueError(
+                "A prepared functional density must return one scalar per local point."
+            )
+        if jnp.iscomplexobj(density):
+            raise TypeError("Prepared functional densities must be real.")
+        return action.term.weight * jnp.sum(
+            density * metric.physical_weights * valid[:, None]
+        )
+
+    if not with_residual:
+        return energy(*local_inputs), ()
+    value, local_gradients = jax.value_and_grad(
+        energy,
+        argnums=active_indices,
+    )(*local_inputs)
+    blocks = tuple(
+        (field_name, gathers[field_name], local)
+        for field_name, local in zip(
+            action.output_fields,
+            local_gradients,
+            strict=True,
+        )
+    )
+    return value, blocks
+
+
+def _cell_functional_problem(
+    discretization: FiniteElementDiscretization,
+    state_by_field: dict[str, Array],
+    action: LocalFunctionalAction,
+    workset,
+    block_index: int,
+    local_cells: Array,
+    context: FiniteElementExecutionContext,
+    /,
+):
+    block = discretization.mesh.blocks[block_index]
+    rule = _action_rule(action, block.name, block.cell_kind)
+    rule_data = _reference_rule_data(rule)
+    gathers = dict(workset.gathers)
+    local_inputs = []
+    local_dofs = []
+    orientations = []
+    bases = []
+    gradients = []
+    physical_points = None
+    physical_weights = None
+    for field_name in action.input_fields:
+        field_index = discretization._field_index(field_name)
+        dof_map = discretization.dof_maps[field_index]
+        geometry = discretization.evaluate_block_geometry(
+            field_name,
+            block_index,
+            context.runtime.coordinates,
+            rule_data.points,
+            rule_data.weights,
+        )
+        dofs = gathers[field_name]
+        local = state_by_field[field_name][dofs]
+        orientation = dof_map.orientations[block_index][local_cells]
+        local = local * orientation.reshape(
+            orientation.shape + (1,) * (local.ndim - orientation.ndim)
+        )
+        basis = geometry.basis_values
+        physical_gradient = geometry.physical_gradients[local_cells]
+        if basis.ndim > 2:
+            basis = basis[local_cells]
+        points = geometry.physical_points[local_cells]
+        weights = geometry.physical_weights[local_cells]
+        if physical_points is None:
+            physical_points = points
+            physical_weights = weights
+        elif (
+            points.shape != physical_points.shape
+            or weights.shape != physical_weights.shape
+        ):
+            raise ValueError(
+                "Functional input fields must share one physical quadrature layout."
+            )
+        local_inputs.append(local)
+        local_dofs.append(dofs)
+        orientations.append(orientation)
+        bases.append(basis)
+        gradients.append(physical_gradient)
+    if physical_points is None or physical_weights is None:
+        raise RuntimeError("Functional action has no input fields.")
+    semantic_to_field = action.semantic_to_field
+    input_indices = {
+        field_name: index for index, field_name in enumerate(action.input_fields)
+    }
+    functional_context = FunctionalContext(
+        time=context.time,
+        user_args=context.user_args,
+    )
+    valid = jnp.asarray(workset.valid)
+
+    def energy(*coefficients):
+        jets = {}
+        for specification in action.term.fields:
+            field_name = semantic_to_field[specification.field_name]
+            index = input_indices[field_name]
+            coefficient = coefficients[index]
+            basis = bases[index]
+            physical_gradient = gradients[index]
+            if basis.ndim == 2:
+                value = (
+                    oe.contract("qi,ci...->cq...", basis, coefficient)
+                    if specification.value
+                    else None
+                )
+                gradient = (
+                    jnp.moveaxis(
+                        oe.contract(
+                            "cqid,ci...->cqd...",
+                            physical_gradient,
+                            coefficient,
+                        ),
+                        2,
+                        -1,
+                    )
+                    if specification.gradient
+                    else None
+                )
+            else:
+                value = (
+                    oe.contract("cqiv,ci->cqv", basis, coefficient)
+                    if specification.value
+                    else None
+                )
+                gradient = (
+                    oe.contract(
+                        "cqivd,ci->cqvd",
+                        physical_gradient,
+                        coefficient,
+                    )
+                    if specification.gradient
+                    else None
+                )
+            jets[specification.field_name] = LocalFieldJet(
+                value=value,
+                gradient=gradient,
+            )
+        density = jnp.asarray(
+            action.term.density(
+                jets,
+                LocalGeometry(physical_points),
+                functional_context,
+            )
+        )
+        if density.shape != physical_weights.shape:
+            raise ValueError(
+                "A cell functional density must return one scalar per quadrature point."
+            )
+        if jnp.iscomplexobj(density):
+            raise TypeError("Finite-element functional densities must be real.")
+        return action.term.weight * jnp.sum(density * physical_weights * valid[:, None])
+
+    return (
+        energy,
+        tuple(local_inputs),
+        tuple(local_dofs),
+        tuple(orientations),
+        input_indices,
+    )
+
+
+def _accumulate_cell_functional_residual(
+    discretization: FiniteElementDiscretization,
+    state_by_field: dict[str, Array],
+    residual_by_field: dict[str, Array],
+    action: LocalFunctionalAction,
+    workset,
+    block_index: int,
+    local_cells: Array,
+    context: FiniteElementExecutionContext,
+    accumulation: str,
+    /,
+) -> Array:
+    energy, local_inputs, local_dofs, orientations, input_indices = (
+        _cell_functional_problem(
+            discretization,
+            state_by_field,
+            action,
+            workset,
+            block_index,
+            local_cells,
+            context,
+        )
+    )
+    active_indices = tuple(input_indices[field] for field in action.output_fields)
+    value, local_gradients = jax.value_and_grad(
+        energy,
+        argnums=active_indices,
+    )(*local_inputs)
+    valid = jnp.asarray(workset.valid)
+    for output_field, input_index, local in zip(
+        action.output_fields,
+        active_indices,
+        local_gradients,
+        strict=True,
+    ):
+        local = jnp.where(
+            valid.reshape((local.shape[0],) + (1,) * (local.ndim - 1)),
+            local,
+            0.0,
+        )
+        orientation = orientations[input_index]
+        local = local * orientation.reshape(
+            orientation.shape + (1,) * (local.ndim - orientation.ndim)
+        )
+        residual_by_field[output_field] = _scatter_local(
+            residual_by_field[output_field],
+            local_dofs[input_index],
+            local,
+            accumulation,
+        )
+    return value
+
+
+def _exterior_functional_value(
+    discretization: FiniteElementDiscretization,
+    state_by_field: dict[str, Array],
+    action: LocalFunctionalAction,
+    workset,
+    domain: IntegrationDomain,
+    context: FiniteElementExecutionContext,
+    /,
+    *,
+    residual_by_field: dict[str, Array] | None = None,
+    accumulation: str = "fast",
+) -> Array:
+    connectivity = discretization.mesh.connectivity
+    if (
+        not isinstance(connectivity, PolygonalConnectivity)
+        or len(discretization.mesh.blocks) != 1
+    ):
+        raise ValueError(
+            "Exterior functional terms currently require one two-dimensional "
+            "polygonal mesh block."
+        )
+    block = discretization.mesh.blocks[0]
+    rule = _interval_rule() if not action.rules else action.rules[0][1]
+    data = _reference_rule_data(rule)
+    if data.cell != "interval":
+        raise ValueError("Polygon exterior functionals require an interval rule.")
+    facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
+    owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
+    owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
+    signs = jnp.asarray(connectivity.cell_edge_signs)
+    owner_sign = signs[owners, owner_local]
+    edge_points = context.runtime.coordinates[jnp.asarray(connectivity.edges)[facets]]
+    parameter = data.points[:, 0]
+    physical_points = (1.0 - parameter)[None, :, None] * edge_points[
+        :, None, 0, :
+    ] + parameter[None, :, None] * edge_points[:, None, 1, :]
+    tangent = edge_points[:, 1] - edge_points[:, 0]
+    measure = jnp.sqrt(jnp.sum(tangent**2, axis=-1))
+    if action.term.normal:
+        normal = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
+        normal = normal / measure[:, None]
+        centers = jnp.mean(context.runtime.coordinates[block.vertices], axis=1)
+        midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
+        outward = jnp.sum(normal * (midpoint - centers[owners]), axis=-1)
+        normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
+        normal = jnp.broadcast_to(normal[:, None, :], physical_points.shape)
+    else:
+        normal = None
+    weights = measure[:, None] * data.weights[None, :]
+    valid = jnp.asarray(workset.valid)
+    semantic_to_field = action.semantic_to_field
+    input_indices = {
+        field_name: index for index, field_name in enumerate(action.input_fields)
+    }
+    active_indices = tuple(input_indices[field] for field in action.output_fields)
+    functional_context = FunctionalContext(
+        time=context.time,
+        user_args=context.user_args,
+    )
+    local_inputs = []
+    local_dofs = []
+    orientations = []
+    selected_bases = []
+    for field_name in action.input_fields:
+        field_index = discretization._field_index(field_name)
+        dof_map = discretization.dof_maps[field_index]
+        dofs = dof_map.cell_dofs[0][owners]
+        orientation = dof_map.orientations[0][owners]
+        local = state_by_field[field_name][dofs]
+        local = local * orientation.reshape(
+            orientation.shape + (1,) * (local.ndim - orientation.ndim)
+        )
+        selected_basis = None
+        for local_facet in range(block.arity):
+            for side_orientation in (-1.0, 1.0):
+                active = (
+                    valid
+                    & (owner_local == local_facet)
+                    & (owner_sign * side_orientation > 0.0)
+                )
+                reference_points = _polygon_side_points(
+                    block.cell_kind,
+                    local_facet,
+                    side_orientation,
+                    parameter,
+                )
+                geometry = discretization.evaluate_block_geometry(
+                    field_name,
+                    0,
+                    context.runtime.coordinates,
+                    reference_points,
+                    jnp.ones_like(data.weights),
+                )
+                basis = geometry.basis_values
+                if basis.ndim == 2:
+                    basis = jnp.broadcast_to(
+                        basis,
+                        (owners.shape[0],) + basis.shape,
+                    )
+                else:
+                    basis = basis[owners]
+                if selected_basis is None:
+                    selected_basis = jnp.zeros_like(basis)
+                mask = active.reshape((active.shape[0],) + (1,) * (basis.ndim - 1))
+                selected_basis = jnp.where(mask, basis, selected_basis)
+        if selected_basis is None:
+            raise RuntimeError("Exterior functional field has no facet basis.")
+        local_inputs.append(local)
+        local_dofs.append(dofs)
+        orientations.append(orientation)
+        selected_bases.append(selected_basis)
+
+    def energy(*coefficients):
+        jets = {}
+        for specification in action.term.fields:
+            field_name = semantic_to_field[specification.field_name]
+            index = input_indices[field_name]
+            basis = selected_bases[index]
+            coefficient = coefficients[index]
+            if basis.ndim == 3:
+                value = oe.contract("eqi,ei...->eq...", basis, coefficient)
+            else:
+                value = oe.contract("eqiv,ei->eqv", basis, coefficient)
+            jets[specification.field_name] = LocalFieldJet(value=value)
+        density = jnp.asarray(
+            action.term.density(
+                jets,
+                LocalGeometry(physical_points, normal=normal),
+                functional_context,
+            )
+        )
+        if density.shape != weights.shape:
+            raise ValueError(
+                "An exterior functional density must return one scalar "
+                "per quadrature point."
+            )
+        if jnp.iscomplexobj(density):
+            raise TypeError("Finite-element functional densities must be real.")
+        return action.term.weight * jnp.sum(density * weights * valid[:, None])
+
+    if residual_by_field is None:
+        return energy(*local_inputs)
+    result, local_gradients = jax.value_and_grad(
+        energy,
+        argnums=active_indices,
+    )(*local_inputs)
+    for output_field, input_index, local in zip(
+        action.output_fields,
+        active_indices,
+        local_gradients,
+        strict=True,
+    ):
+        orientation = orientations[input_index]
+        local = local * orientation.reshape(
+            orientation.shape + (1,) * (local.ndim - orientation.ndim)
+        )
+        residual_by_field[output_field] = _scatter_local(
+            residual_by_field[output_field],
+            local_dofs[input_index],
+            local,
+            accumulation,
+        )
+    return result
+
+
 def _full_residual(
     form: FiniteElementForm,
     discretization: AbstractPreparedLocalDiscretization,
@@ -705,19 +1167,32 @@ def _full_residual(
     for workset in workset_program.worksets:
         if workset.local_region is not None:
             for raw_action_index in workset.action_index_values:
-                output_field, dofs, local = _prepared_local_volume_residual(
-                    form.actions[raw_action_index],
-                    discretization,
-                    workset,
-                    state_by_field,
-                    context,
-                )
-                residual_by_field[output_field] = _scatter_local(
-                    residual_by_field[output_field],
-                    dofs,
-                    local,
-                    accumulation,
-                )
+                action = form.actions[raw_action_index]
+                if isinstance(action, LocalFunctionalAction):
+                    _value, blocks = _prepared_local_functional_value_and_residual(
+                        action,
+                        discretization,
+                        workset,
+                        state_by_field,
+                        context,
+                        with_residual=True,
+                    )
+                else:
+                    output_field, dofs, local = _prepared_local_volume_residual(
+                        action,
+                        discretization,
+                        workset,
+                        state_by_field,
+                        context,
+                    )
+                    blocks = ((output_field, dofs, local),)
+                for output_field, dofs, local in blocks:
+                    residual_by_field[output_field] = _scatter_local(
+                        residual_by_field[output_field],
+                        dofs,
+                        local,
+                        accumulation,
+                    )
             continue
         if not isinstance(discretization, FiniteElementDiscretization):
             raise ValueError("Facet and legacy volume worksets require finite elements.")
@@ -728,6 +1203,42 @@ def _full_residual(
         gathers = dict(workset.gathers)
         for raw_action_index in workset.action_index_values:
             action = form.actions[raw_action_index]
+            if isinstance(action, LocalFunctionalAction):
+                domain = (
+                    _action_domain(action, discretization)
+                    if len(discretization.mesh.blocks) == 1
+                    else _workset_domain(
+                        action,
+                        discretization,
+                        workset.entity_index_values,
+                    )
+                )
+                if domain.kind == "cell":
+                    _accumulate_cell_functional_residual(
+                        discretization,
+                        state_by_field,
+                        residual_by_field,
+                        action,
+                        workset,
+                        block_index,
+                        local_cells,
+                        context,
+                        accumulation,
+                    )
+                elif domain.kind == "exterior_facet":
+                    _exterior_functional_value(
+                        discretization,
+                        state_by_field,
+                        action,
+                        workset,
+                        domain,
+                        context,
+                        residual_by_field=residual_by_field,
+                        accumulation=accumulation,
+                    )
+                else:
+                    raise ValueError("Unsupported functional integration domain.")
+                continue
             output_field = action.field_name
             output_state = state_by_field[output_field]
             output_field_index = discretization._field_index(output_field)
@@ -1146,7 +1657,11 @@ def _full_residual(
                             (local_state.shape[0], -1) + component_shape
                         )
                         gradients_ = physical_gradient.reshape(
-                            (local_state.shape[0], -1, metric.physical_points.shape[-1])
+                            (
+                                local_state.shape[0],
+                                -1,
+                                metric.physical_points.shape[-1],
+                            )
                             + component_shape
                         )
                         density = jnp.asarray(
@@ -2529,6 +3044,185 @@ def _boundary_load(
     return result
 
 
+def _execute_finite_element_functional(
+    workset_program: WorksetProgram,
+    form: FiniteElementForm,
+    discretization: AbstractPreparedLocalDiscretization,
+    state: Array | tuple[Array, ...],
+    context: FiniteElementExecutionContext,
+    /,
+    *,
+    accumulation: str | None,
+):
+    if form.functional is None or not all(
+        isinstance(action, LocalFunctionalAction) for action in form.actions
+    ):
+        raise ValueError("Finite-element form is not generated by one functional.")
+    states = state if isinstance(state, tuple) else (state,)
+    if len(states) != len(form.field_names):
+        raise ValueError("Finite-element state blocks must match form fields.")
+    bindings = {
+        name: discretization.local_field_binding(name) for name in form.field_names
+    }
+    state_by_field = {
+        name: bindings[name].flatten(value)
+        for name, value in zip(form.field_names, states, strict=True)
+    }
+    residual_by_field = (
+        None
+        if accumulation is None
+        else {
+            field_name: jnp.zeros_like(value)
+            for field_name, value in state_by_field.items()
+        }
+    )
+    accumulator_dtype = next(iter(state_by_field.values())).dtype
+    term_values = [jnp.zeros((), dtype=accumulator_dtype) for _ in form.actions]
+    if isinstance(discretization, FiniteElementDiscretization):
+        block_names = tuple(block.name for block in discretization.mesh.blocks)
+        cell_offsets = np.cumsum(
+            np.asarray(
+                (0,) + tuple(block.cell_count for block in discretization.mesh.blocks),
+                dtype=np.int32,
+            )
+        )
+    else:
+        block_names = ()
+        cell_offsets = np.empty((0,), dtype=np.int32)
+    for workset in workset_program.worksets:
+        if workset.local_region is not None:
+            for raw_action_index in workset.action_index_values:
+                action = form.actions[raw_action_index]
+                contribution, blocks = _prepared_local_functional_value_and_residual(
+                    action,
+                    discretization,
+                    workset,
+                    state_by_field,
+                    context,
+                    with_residual=residual_by_field is not None,
+                )
+                if residual_by_field is not None:
+                    for output_field, dofs, local in blocks:
+                        residual_by_field[output_field] = _scatter_local(
+                            residual_by_field[output_field],
+                            dofs,
+                            local,
+                            accumulation,
+                        )
+                term_values[raw_action_index] = (
+                    term_values[raw_action_index] + contribution
+                )
+            continue
+        if not isinstance(discretization, FiniteElementDiscretization):
+            raise ValueError(
+                "Legacy functional worksets require finite-element discretization."
+            )
+        block_index = block_names.index(workset.signature.block_name)
+        work_cells = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
+        local_cells = work_cells - int(cell_offsets[block_index])
+        for raw_action_index in workset.action_index_values:
+            action = form.actions[raw_action_index]
+            domain = (
+                _action_domain(action, discretization)
+                if len(discretization.mesh.blocks) == 1
+                else _workset_domain(
+                    action,
+                    discretization,
+                    workset.entity_index_values,
+                )
+            )
+            if domain.kind == "cell":
+                if residual_by_field is None:
+                    energy, local_inputs, _, _, _ = _cell_functional_problem(
+                        discretization,
+                        state_by_field,
+                        action,
+                        workset,
+                        block_index,
+                        local_cells,
+                        context,
+                    )
+                    contribution = energy(*local_inputs)
+                else:
+                    contribution = _accumulate_cell_functional_residual(
+                        discretization,
+                        state_by_field,
+                        residual_by_field,
+                        action,
+                        workset,
+                        block_index,
+                        local_cells,
+                        context,
+                        accumulation,
+                    )
+            elif domain.kind == "exterior_facet":
+                contribution = _exterior_functional_value(
+                    discretization,
+                    state_by_field,
+                    action,
+                    workset,
+                    domain,
+                    context,
+                    residual_by_field=residual_by_field,
+                    accumulation="fast" if accumulation is None else accumulation,
+                )
+            else:
+                raise ValueError("Unsupported functional integration domain.")
+            term_values[raw_action_index] = term_values[raw_action_index] + contribution
+    values = tuple(discretization.precision_policy.output(value) for value in term_values)
+    total = discretization.precision_policy.output(jnp.sum(jnp.stack(values)))
+    if residual_by_field is None:
+        return total, values, None
+    residuals = tuple(
+        DualSpace(
+            discretization.field_spaces[discretization._field_index(name)].vector_space
+        ).validate(bindings[name].unflatten(residual_by_field[name]))
+        for name in form.field_names
+    )
+    residual = residuals[0] if len(residuals) == 1 else residuals
+    return total, values, residual
+
+
+def execute_finite_element_potential(
+    workset_program: WorksetProgram,
+    form: FiniteElementForm,
+    discretization: AbstractPreparedLocalDiscretization,
+    state: Array | tuple[Array, ...],
+    context: FiniteElementExecutionContext,
+    /,
+) -> tuple[Array, tuple[Array, ...]]:
+    """Evaluate all declared functional terms on one full FE state."""
+    value, term_values, _ = _execute_finite_element_functional(
+        workset_program,
+        form,
+        discretization,
+        state,
+        context,
+        accumulation=None,
+    )
+    return value, term_values
+
+
+def execute_finite_element_value_and_residual(
+    workset_program: WorksetProgram,
+    form: FiniteElementForm,
+    discretization: AbstractPreparedLocalDiscretization,
+    state: Array | tuple[Array, ...],
+    accumulation: str,
+    context: FiniteElementExecutionContext,
+    /,
+):
+    """Evaluate one functional and all full-space variations in one local pass."""
+    return _execute_finite_element_functional(
+        workset_program,
+        form,
+        discretization,
+        state,
+        context,
+        accumulation=accumulation,
+    )
+
+
 def execute_finite_element_residual(
     action_ir: LocalActionIR,
     workset_program: WorksetProgram,
@@ -2584,4 +3278,8 @@ def execute_finite_element_residual(
     )
 
 
-__all__ = ["execute_finite_element_residual"]
+__all__ = [
+    "execute_finite_element_potential",
+    "execute_finite_element_value_and_residual",
+    "execute_finite_element_residual",
+]

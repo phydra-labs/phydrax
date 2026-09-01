@@ -294,7 +294,8 @@ def _validate_common(
         raise TypeError("problem must be CompiledFiniteElementProblem.")
     if not problem.potential_compatible or len(problem.form.field_names) != 1:
         raise ValueError(
-            "Finite-element contact requires one field and exclusively CellEnergyAction terms."
+            "Finite-element contact requires one field and a form compiled from "
+            "variational.Functional."
         )
     if not isinstance(problem.state_space, ArraySpace):
         raise TypeError("Finite-element contact currently requires an ArraySpace state.")

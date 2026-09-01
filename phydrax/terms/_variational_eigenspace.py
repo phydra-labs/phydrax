@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,12 +19,16 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..integration import (
+    AdaptiveIntegration,
+    CallerIntegration,
+    FixedIntegration,
     IntegrationRealization,
+    IntegrationSource,
     IntegrationStatus,
-    materialize,
+    PerStepIntegration,
     reduce,
+    resolve_integration,
 )
-from ..integration._api import _requires_random_key
 from ..linalg import HermitianSpectrum
 from ..linalg.eigen import (
     block_rayleigh_trace,
@@ -37,7 +41,6 @@ from ..operators import conjugate
 
 FormDensity = Callable[[DomainFunction, DomainFunction], DomainFunction]
 EigenspaceAction: TypeAlias = Callable[[DomainFunction], DomainFunction]
-MaterializationPolicy: TypeAlias = Literal["fixed", "per_step", "caller"]
 
 
 def _default_mass(left: DomainFunction, right: DomainFunction, /) -> DomainFunction:
@@ -73,66 +76,32 @@ def _weight(value: ArrayLike, /, *, nonnegative: bool) -> float:
     return weight
 
 
-def _prepare_materialization(
-    target: Any,
-    plan: Any,
-    materialization_policy: MaterializationPolicy,
-    fixed_realization: IntegrationRealization | None,
-    fixed_key: Key[Array, ""] | None,
-    /,
-    *,
-    role: str,
-) -> tuple[MaterializationPolicy, IntegrationRealization | None]:
-    policy = str(materialization_policy).lower()
-    if policy not in ("fixed", "per_step", "caller"):
-        raise ValueError(
-            "materialization_policy must be 'fixed', 'per_step', or 'caller'."
+def _integration_source(source: IntegrationSource, /, *, role: str) -> IntegrationSource:
+    if not isinstance(
+        source,
+        (PerStepIntegration, FixedIntegration, CallerIntegration, AdaptiveIntegration),
+    ):
+        raise TypeError(f"{role} source must be an IntegrationSource.")
+    if isinstance(source, AdaptiveIntegration):
+        raise TypeError(
+            f"{role} does not support AdaptiveIntegration; "
+            "adaptive eigenspace estimators require an explicit population contract."
         )
-    if policy == "fixed":
-        if fixed_realization is None:
-            if _requires_random_key(plan):
-                if fixed_key is None:
-                    raise ValueError(f"A randomized fixed {role} requires fixed_key=.")
-                fixed_realization = materialize(target, plan, key=fixed_key)
-            else:
-                if fixed_key is not None:
-                    raise ValueError(
-                        f"A deterministic fixed {role} does not consume fixed_key=."
-                    )
-                fixed_realization = materialize(target, plan)
-    elif fixed_realization is not None or fixed_key is not None:
-        raise ValueError(
-            "fixed_realization/fixed_key require materialization_policy='fixed'."
-        )
-    return policy, fixed_realization
+    return source
 
 
 def _sample_realization(
-    target: Any,
-    plan: Any,
-    materialization_policy: MaterializationPolicy,
-    fixed_realization: IntegrationRealization | None,
+    source: IntegrationSource,
     key: Key[Array, ""],
     /,
-    *,
-    role: str,
 ) -> IntegrationRealization | None:
-    if materialization_policy == "fixed":
-        if fixed_realization is None:
-            raise RuntimeError(f"Fixed {role} has no realization.")
-        return fixed_realization
-    if materialization_policy == "caller":
+    if isinstance(source, CallerIntegration):
         return None
-    if _requires_random_key(plan):
-        return materialize(target, plan, key=key)
-    return materialize(target, plan)
+    return resolve_integration(source, key=key)
 
 
 def _resolve_realization(
-    target: Any,
-    plan: Any,
-    materialization_policy: MaterializationPolicy,
-    fixed_realization: IntegrationRealization | None,
+    source: IntegrationSource,
     batch: IntegrationRealization | None,
     key: Key[Array, ""],
     /,
@@ -141,18 +110,13 @@ def _resolve_realization(
 ) -> IntegrationRealization:
     realization = batch
     if realization is None:
-        if materialization_policy == "caller":
+        if isinstance(source, CallerIntegration):
             raise ValueError(
                 f"Caller-managed {role} requires batch=IntegrationRealization."
             )
-        realization = _sample_realization(
-            target,
-            plan,
-            materialization_policy,
-            fixed_realization,
-            key,
-            role=role,
-        )
+        realization = _sample_realization(source, key)
+    elif isinstance(source, CallerIntegration):
+        realization = resolve_integration(source, key=key, realization=realization)
     if not isinstance(realization, IntegrationRealization):
         raise TypeError(f"{role} batch must be an IntegrationRealization.")
     return realization
@@ -394,71 +358,44 @@ class VariationalEigenspace(AbstractSamplingTerm):
     """Hermitian block Rayleigh objective over named continuous trial fields."""
 
     objective_vars: tuple[str, ...]
-    target: Any
-    plan: Any
+    source: IntegrationSource
     stiffness_form: FormDensity
     mass_form: FormDensity
-    fixed_realization: IntegrationRealization | None
     weight: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
-    materialization_policy: MaterializationPolicy = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        target: Any,
+        source: IntegrationSource,
         stiffness_form: FormDensity,
         objective_vars: Sequence[str],
         mass_form: FormDensity | None = None,
-        plan: Any = None,
         weight: ArrayLike = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
-        materialization_policy: MaterializationPolicy = "fixed",
-        fixed_realization: IntegrationRealization | None = None,
-        fixed_key: Key[Array, ""] | None = None,
     ):
         if not callable(stiffness_form):
             raise TypeError("stiffness_form must be callable.")
         if mass_form is not None and not callable(mass_form):
             raise TypeError("mass_form must be callable or None.")
         variables = _objective_variables(objective_vars)
-        tolerance_ = _tolerance(tolerance)
-        weight_ = _weight(weight, nonnegative=False)
-        policy, fixed_realization_ = _prepare_materialization(
-            target,
-            plan,
-            materialization_policy,
-            fixed_realization,
-            fixed_key,
-            role="VariationalEigenspace",
-        )
         self.objective_vars = variables
-        self.target = target
-        self.plan = plan
+        self.source = _integration_source(source, role="VariationalEigenspace")
         self.stiffness_form = stiffness_form
         self.mass_form = _default_mass if mass_form is None else mass_form
-        self.fixed_realization = fixed_realization_
-        self.weight = weight_
-        self.tolerance = tolerance_
+        self.weight = _weight(weight, nonnegative=False)
+        self.tolerance = _tolerance(tolerance)
         self.label = None if label is None else str(label)
-        self.materialization_policy = policy
 
     def sample(
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> IntegrationRealization | None:
-        """Materialize one integration realization under the declared policy."""
-        return _sample_realization(
-            self.target,
-            self.plan,
-            self.materialization_policy,
-            self.fixed_realization,
-            key,
-            role="VariationalEigenspace",
-        )
+        """Resolve one realization according to the typed integration source."""
+        return _sample_realization(self.source, key)
 
     def assemble(
         self,
@@ -471,10 +408,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
     ) -> VariationalEigenspaceEvaluation:
         """Assemble both form matrices on one shared realization."""
         realization = _resolve_realization(
-            self.target,
-            self.plan,
-            self.materialization_policy,
-            self.fixed_realization,
+            self.source,
             batch,
             key,
             role="VariationalEigenspace",
@@ -575,34 +509,27 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
     """Basis-invariant strong residual for a self-adjoint trial eigenspace."""
 
     objective_vars: tuple[str, ...]
-    target: Any
-    plan: Any
+    source: IntegrationSource
     operator_action: EigenspaceAction
     metric_action: EigenspaceAction
     pairing: FormDensity
     residual_pairing: FormDensity
-    fixed_realization: IntegrationRealization | None
     weight: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
-    materialization_policy: MaterializationPolicy = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        target: Any,
+        source: IntegrationSource,
         operator_action: EigenspaceAction,
         objective_vars: Sequence[str],
         metric_action: EigenspaceAction | None = None,
         pairing: FormDensity | None = None,
         residual_pairing: FormDensity | None = None,
-        plan: Any = None,
         weight: ArrayLike = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
-        materialization_policy: MaterializationPolicy = "fixed",
-        fixed_realization: IntegrationRealization | None = None,
-        fixed_key: Key[Array, ""] | None = None,
     ):
         if not callable(operator_action):
             raise TypeError("operator_action must be callable.")
@@ -613,44 +540,24 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         if residual_pairing is not None and not callable(residual_pairing):
             raise TypeError("residual_pairing must be callable or None.")
         variables = _objective_variables(objective_vars)
-        tolerance_ = _tolerance(tolerance)
-        weight_ = _weight(weight, nonnegative=True)
-        policy, fixed_realization_ = _prepare_materialization(
-            target,
-            plan,
-            materialization_policy,
-            fixed_realization,
-            fixed_key,
-            role="InvariantSubspaceResidual",
-        )
         pairing_ = _default_mass if pairing is None else pairing
         self.objective_vars = variables
-        self.target = target
-        self.plan = plan
+        self.source = _integration_source(source, role="InvariantSubspaceResidual")
         self.operator_action = operator_action
         self.metric_action = _identity_action if metric_action is None else metric_action
         self.pairing = pairing_
         self.residual_pairing = pairing_ if residual_pairing is None else residual_pairing
-        self.fixed_realization = fixed_realization_
-        self.weight = weight_
-        self.tolerance = tolerance_
+        self.weight = _weight(weight, nonnegative=True)
+        self.tolerance = _tolerance(tolerance)
         self.label = None if label is None else str(label)
-        self.materialization_policy = policy
 
     def sample(
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> IntegrationRealization | None:
-        """Materialize one integration realization under the declared policy."""
-        return _sample_realization(
-            self.target,
-            self.plan,
-            self.materialization_policy,
-            self.fixed_realization,
-            key,
-            role="InvariantSubspaceResidual",
-        )
+        """Resolve one realization according to the typed integration source."""
+        return _sample_realization(self.source, key)
 
     def _assemble(
         self,
@@ -662,10 +569,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         **kwargs: Any,
     ) -> _InvariantSubspaceAssembly:
         realization = _resolve_realization(
-            self.target,
-            self.plan,
-            self.materialization_policy,
-            self.fixed_realization,
+            self.source,
             batch,
             key,
             role="InvariantSubspaceResidual",

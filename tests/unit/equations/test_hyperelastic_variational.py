@@ -29,23 +29,27 @@ def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(dimen
     parameters = _parameters()
     form = phx.applications.solid_mechanics.neo_hookean_form("u", parameters)
     action = form.actions[0]
-    assert isinstance(action, phx.equations.CellEnergyAction)
+    assert isinstance(action, phx.equations.LocalFunctionalAction)
 
     displacement_gradient = (
         jnp.asarray([[0.08, 0.02], [0.05, -0.04]])
         if dimension == 2
         else jnp.asarray([[0.08, 0.02, 0.01], [0.05, -0.04, 0.03], [0.0, 0.02, 0.06]])
     )
-    executor_gradient = displacement_gradient.T[None, None]
-    values = jnp.zeros((1, 1, dimension))
     points = jnp.zeros((1, 1, dimension))
 
     def total_energy(gradient):
-        return jnp.sum(action.density(values, gradient, points, None))
+        return jnp.sum(
+            action.term.density(
+                {"u": phx.variational.LocalFieldJet(gradient=gradient[None, None])},
+                phx.variational.LocalGeometry(points),
+                phx.variational.FunctionalContext(),
+            )
+        )
 
-    actual_energy = total_energy(executor_gradient)
-    actual_derivative = jax.grad(total_energy)(executor_gradient)[0, 0]
-    actual_tangent = jax.hessian(total_energy)(executor_gradient)[0, 0, :, :, 0, 0, :, :]
+    actual_energy = total_energy(displacement_gradient)
+    actual_derivative = jax.grad(total_energy)(displacement_gradient)
+    actual_tangent = jax.hessian(total_energy)(displacement_gradient)
     deformation = jnp.eye(dimension) + displacement_gradient
     deformation_3d = _embedded(deformation)
     expected_energy = phx.applications.solid_mechanics.neo_hookean_reference_energy(
@@ -56,12 +60,10 @@ def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(dimen
     )[:dimension, :dimension]
     expected_tangent = phx.operators.mechanics.neo_hookean_tangent(
         deformation, parameters
-    )[:dimension, :dimension, :dimension, :dimension].transpose(1, 0, 3, 2)
+    )[:dimension, :dimension, :dimension, :dimension]
 
     np.testing.assert_allclose(actual_energy, expected_energy, rtol=2e-12, atol=2e-12)
-    np.testing.assert_allclose(
-        actual_derivative, expected_piola.T, rtol=2e-11, atol=2e-11
-    )
+    np.testing.assert_allclose(actual_derivative, expected_piola, rtol=2e-11, atol=2e-11)
     np.testing.assert_allclose(actual_tangent, expected_tangent, rtol=3e-11, atol=3e-11)
 
 
@@ -86,9 +88,12 @@ def test_neo_hookean_form_compiles_vector_plane_strain_identity_residual():
 def test_neo_hookean_form_rejects_incompatible_component_dimension():
     form = phx.applications.solid_mechanics.neo_hookean_form("u", _parameters())
     action = form.actions[0]
-    values = jnp.zeros((1, 1, 3))
     gradients = jnp.zeros((1, 1, 2, 3))
     points = jnp.zeros((1, 1, 2))
 
-    with pytest.raises(ValueError, match="2x2 or 3x3"):
-        action.density(values, gradients, points, None)
+    with pytest.raises(ValueError, match="square matrix"):
+        action.term.density(
+            {"u": phx.variational.LocalFieldJet(gradient=gradients)},
+            phx.variational.LocalGeometry(points),
+            phx.variational.FunctionalContext(),
+        )

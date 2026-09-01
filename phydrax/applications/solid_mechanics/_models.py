@@ -7,14 +7,70 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations import CellEnergyAction, FiniteElementForm
+from ...equations import finite_element_form_from_functional, FiniteElementForm
 from ...operators.mechanics import (
     neo_hookean_first_piola,
     neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
+from ...variational import FieldJetSpec, Functional, LocalIntegralTerm
+
+
+def neo_hookean_functional(
+    field_name: str,
+    parameters: NeoHookeanParameters,
+    /,
+    *,
+    region: str = "body",
+    functional_id: str = "neo-hookean-equilibrium",
+) -> Functional:
+    """Build one representation-independent stored-energy functional."""
+    if not isinstance(parameters, NeoHookeanParameters):
+        raise TypeError("parameters must be NeoHookeanParameters.")
+    field = str(field_name)
+    if not field:
+        raise ValueError("field_name must be non-empty.")
+
+    def density(fields, geometry, context):
+        del geometry, context
+        gradient = fields[field].gradient
+        if gradient is None:
+            raise ValueError("Neo-Hookean density requires a displacement gradient.")
+        if (
+            gradient.ndim < 2
+            or gradient.shape[-1] != gradient.shape[-2]
+            or gradient.shape[-1] not in (2, 3)
+        ):
+            raise ValueError(
+                "Neo-Hookean displacement gradients must end in a 2x2 or 3x3 "
+                "square matrix."
+            )
+        dimension = gradient.shape[-1]
+        deformation = jnp.eye(dimension, dtype=gradient.dtype) + gradient
+        return neo_hookean_reference_energy(deformation, parameters)
+
+    return Functional(
+        functional_id,
+        (
+            LocalIntegralTerm(
+                "stored-energy",
+                region=region,
+                fields=(FieldJetSpec(field, gradient=True),),
+                density=density,
+                density_id=canonical_fingerprint(
+                    {
+                        "kind": "neo-hookean-reference-energy",
+                        "shear_modulus": float(parameters.shear_modulus),
+                        "lame_lambda": float(parameters.lame_lambda),
+                    }
+                ),
+            ),
+        ),
+        variable_fields=(field,),
+    )
 
 
 def neo_hookean_form(
@@ -24,27 +80,16 @@ def neo_hookean_form(
     *,
     form_id: str = "neo-hookean-equilibrium",
 ) -> FiniteElementForm:
-    if not isinstance(parameters, NeoHookeanParameters):
-        raise TypeError("parameters must be NeoHookeanParameters.")
-
-    def density(values, gradients, points, context):
-        del values, points, context
-        displacement_gradient = jnp.swapaxes(jnp.asarray(gradients), -1, -2)
-        if displacement_gradient.shape[-2:] not in ((2, 2), (3, 3)):
-            raise ValueError("Neo-Hookean displacement gradients must end in 2x2 or 3x3.")
-        deformation = jnp.eye(displacement_gradient.shape[-1]) + displacement_gradient
-        return neo_hookean_reference_energy(deformation, parameters)
-
-    return FiniteElementForm(
-        form_id,
+    functional = neo_hookean_functional(
         field_name,
-        (
-            CellEnergyAction(
-                field_name,
-                density,
-                action_id="neo-hookean-reference-energy",
-            ),
-        ),
+        parameters,
+        functional_id=form_id,
+    )
+    return finite_element_form_from_functional(
+        functional,
+        {field_name: field_name},
+        {"body": None},
+        form_id=form_id,
     )
 
 
@@ -158,4 +203,5 @@ __all__ = [
     "neo_hookean_first_piola",
     "neo_hookean_reference_energy",
     "neo_hookean_form",
+    "neo_hookean_functional",
 ]

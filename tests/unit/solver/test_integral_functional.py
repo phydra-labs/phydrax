@@ -14,12 +14,13 @@ import phydrax as phx
 
 def _fixed_problem(integrand, *, label=None):
     domain = integrand.domain
+    target = phx.integration.over(domain.component())
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(12))
+    realization = phx.integration.materialize(target, plan)
     return phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(12)),
+        source=phx.integration.fixed(realization),
         integrand=integrand,
         label=label,
-        materialization_policy="fixed",
     )
 
 
@@ -38,8 +39,10 @@ def test_adaptive_plan_uses_the_same_integral_functional_and_trains_parameter():
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     parameter = domain.Parameter(2.0)
     objective = phx.terms.IntegralFunctional.from_operator(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.AdaptiveQuadraturePlan(),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.AdaptiveQuadraturePlan(),
+        ),
         operator=lambda value: (value - 1.0) ** 2,
         objective_vars="u",
     )
@@ -66,7 +69,7 @@ def test_integral_functional_gradient_matches_analytic_value():
     def loss(scale):
         density = domain.Function("t")(lambda time: scale * time**2)
         objective = phx.terms.IntegralFunctional(
-            target=target, plan=plan, integrand=density
+            source=phx.integration.per_step(target, plan), integrand=density
         )
         return objective.loss({"density": density})
 
@@ -75,38 +78,25 @@ def test_integral_functional_gradient_matches_analytic_value():
     assert jnp.allclose(jax.jit(jax.vmap(loss))(scales), scales / 3.0, atol=1e-11)
 
 
-def test_integral_functional_materialization_policies_are_explicit():
+def test_integral_functional_integration_sources_are_explicit():
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: x)
     target = phx.integration.over(domain.component())
     plan = phx.integration.MonteCarloPlan(128)
 
-    with pytest.raises(ValueError, match="requires fixed_key"):
-        phx.terms.IntegralFunctional(
-            target=target,
-            plan=plan,
-            integrand=function,
-            materialization_policy="fixed",
-        )
-
+    realization = phx.integration.materialize(target, plan, key=jr.key(1))
     fixed = phx.terms.IntegralFunctional(
-        target=target,
-        plan=plan,
+        source=phx.integration.fixed(realization),
         integrand=function,
-        materialization_policy="fixed",
-        fixed_key=jr.key(1),
     )
-    assert fixed.sample(key=jr.key(2)) is fixed.fixed_realization
+    assert fixed.sample(key=jr.key(2)) is realization
 
     caller = phx.terms.IntegralFunctional(
-        target=target,
-        plan=plan,
+        source=phx.integration.caller(target),
         integrand=function,
-        materialization_policy="caller",
     )
     with pytest.raises(ValueError, match="requires batch"):
         caller.loss({"u": function})
-    realization = phx.integration.materialize(target, plan, key=jr.key(3))
     assert jnp.isfinite(caller.loss({"u": function}, batch=realization))
 
 
@@ -124,11 +114,10 @@ def test_integral_functional_accepts_planless_external_measures():
         axes=realization.batch.axes,
     )
     objective = phx.terms.IntegralFunctional(
-        target=external_target,
+        source=phx.integration.per_step(external_target),
         integrand=density,
     )
 
-    assert objective.plan is None
     assert jnp.allclose(objective.loss({"density": density}), 0.5, atol=1e-12)
 
 
@@ -141,12 +130,14 @@ def test_integral_functional_rejects_complex_and_failed_estimates():
 
     discontinuity = domain.Function("x")(lambda x: jnp.where(x < 0.123, 1.0, 0.0))
     failed_objective = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.AdaptiveQuadraturePlan(
-            absolute_tolerance=0.0,
-            relative_tolerance=0.0,
-            max_intervals=1,
-            throw=False,
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.AdaptiveQuadraturePlan(
+                absolute_tolerance=0.0,
+                relative_tolerance=0.0,
+                max_intervals=1,
+                throw=False,
+            ),
         ),
         integrand=discontinuity,
     )
@@ -161,31 +152,29 @@ def test_integral_functional_nonfinite_integrand_policy_is_narrow():
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4))
 
     strict = phx.terms.IntegralFunctional(
-        target=target,
-        plan=plan,
+        source=phx.integration.per_step(target, plan),
         integrand=nonfinite,
-        materialization_policy="fixed",
     )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
         jax.block_until_ready(strict.loss({"u": nonfinite}))
 
     propagated = phx.terms.IntegralFunctional(
-        target=target,
-        plan=plan,
+        source=phx.integration.per_step(target, plan),
         integrand=nonfinite,
-        materialization_policy="fixed",
         nonfinite_integrand="propagate",
     )
     assert not bool(jnp.isfinite(propagated.loss({"u": nonfinite})))
 
     discontinuity = domain.Function("x")(lambda x: jnp.where(x < 0.123, 1.0, 0.0))
     failed_for_budget = phx.terms.IntegralFunctional(
-        target=target,
-        plan=phx.integration.AdaptiveQuadraturePlan(
-            absolute_tolerance=0.0,
-            relative_tolerance=0.0,
-            max_intervals=1,
-            throw=False,
+        source=phx.integration.per_step(
+            target,
+            phx.integration.AdaptiveQuadraturePlan(
+                absolute_tolerance=0.0,
+                relative_tolerance=0.0,
+                max_intervals=1,
+                throw=False,
+            ),
         ),
         integrand=discontinuity,
         nonfinite_integrand="propagate",
@@ -195,8 +184,7 @@ def test_integral_functional_nonfinite_integrand_policy_is_narrow():
 
     with pytest.raises(ValueError, match="nonfinite_integrand"):
         phx.terms.IntegralFunctional(
-            target=target,
-            plan=plan,
+            source=phx.integration.per_step(target, plan),
             integrand=nonfinite,
             nonfinite_integrand="ignore",
         )
@@ -206,8 +194,10 @@ def test_integral_functional_from_operator_forwards_nonfinite_policy():
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     parameter = domain.Parameter(1.0)
     objective = phx.terms.IntegralFunctional.from_operator(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+        ),
         operator=lambda value: value,
         objective_vars="u",
         nonfinite_integrand="propagate",
@@ -232,12 +222,12 @@ def test_lbfgs_rejects_nonfinite_neo_hookean_trial():
         compression = 20.0 * phx.operators.einsum("...i,...i->...", current, coordinate)
         return stored_energy + compression
 
+    target = phx.integration.over(domain.component())
+    plan = phx.integration.MonteCarloPlan(128)
+    realization = phx.integration.materialize(target, plan, key=jr.key(91))
     objective = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.MonteCarloPlan(128),
+        source=phx.integration.fixed(realization),
         integrand=density,
-        materialization_policy="fixed",
-        fixed_key=jr.key(91),
         nonfinite_integrand="propagate",
     )
     solver = phx.solver.FunctionalSolver(
@@ -269,11 +259,11 @@ def test_deep_ritz_energy_optimizes_with_fixed_realization():
         gradient_sq = phx.operators.einsum("...i,...i->...", gradient, gradient)
         return 0.5 * gradient_sq - value
 
+    target = phx.integration.over(domain.component())
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24))
     objective = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24)),
+        source=phx.integration.fixed(phx.integration.materialize(target, plan)),
         integrand=density,
-        materialization_policy="fixed",
         label="deep_ritz_energy",
     )
     solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(objective,))
@@ -295,8 +285,10 @@ def test_field_stationarity_reuses_one_prepared_scalar_term_realization():
     parameter = domain.Parameter(2.0)
     functions = {"u": parameter}
     term = phx.terms.IntegralFunctional.from_operator(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(6)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(6)),
+        ),
         operator=lambda value: (value - 1.0) ** 2,
         objective_vars="u",
     )

@@ -172,14 +172,26 @@ def test_domains_rules_and_entity_coefficients_select_exact_cells():
 def test_energy_custom_residual_and_interior_flux_share_one_compiler():
     discretization = _scalar_discretization()
     state = jnp.asarray([0.0, 1.0, 2.0, 1.0, 1.0])
-    energy = phx.equations.CellEnergyAction(
-        "u",
-        lambda values, gradients, points, context: 0.5 * jnp.sum(gradients**2, axis=-1),
-        action_id="dirichlet-energy",
+    functional = phx.variational.Functional(
+        "energy",
+        (
+            phx.variational.LocalIntegralTerm(
+                "dirichlet-energy",
+                region="body",
+                fields=(phx.variational.FieldJetSpec("u", gradient=True),),
+                density=lambda fields, geometry, context: (
+                    0.5 * jnp.sum(fields["u"].gradient ** 2, axis=-1)
+                ),
+                density_id="dirichlet-energy",
+            ),
+        ),
+        variable_fields=("u",),
     )
-    compiled_energy = phx.equations.compile_finite_element_problem(
-        phx.equations.FiniteElementForm("energy", "u", (energy,)),
+    compiled_energy = phx.equations.compile_finite_element_functional(
+        functional,
         discretization,
+        fields={"u": "u"},
+        regions={"body": None},
         execution_policy=phx.equations.FiniteElementExecutionPolicy(
             realization="matrix_free"
         ),
@@ -251,9 +263,7 @@ def test_curved_compatible_local_and_hdg_spaces_are_executable():
         ),
     ).prepare()
 
-    elimination = phx.linalg.LocalEliminationPlan(
-        3, jnp.asarray([1, 2])
-    )
+    elimination = phx.linalg.LocalEliminationPlan(3, jnp.asarray([1, 2]))
     local_matrix = jnp.asarray([[[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]]])
     condensed = elimination.condense(local_matrix, jnp.asarray([[1.0, 0.0, 1.0]]))
     reconstructed = elimination.reconstruct(jnp.asarray([[1.0, 1.0]]), condensed)

@@ -72,6 +72,7 @@ from ._execution import (
     IntegrationSource,
     per_step,
     PerStepIntegration,
+    resolve_integration,
 )
 from ._factorized import (
     factorized_bilinear_form,
@@ -347,6 +348,7 @@ __all__ = [
     "materialize",
     "mean_over",
     "per_step",
+    "resolve_integration",
     "normalized_density",
     "over",
     "reduce",
