@@ -13,6 +13,9 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
+from ._capabilities import VortexDiffusionCapabilities, VortexVelocityCapabilities
+from ._compatibility import VortexVelocityCompatibility
+from ._source import VortexSourceState, VortexTargetState
 
 
 class VortexFieldRequest(StrictModule, NonTrainableState):
@@ -84,6 +87,7 @@ class AbstractVortexVelocityPlan(StrictModule, NonTrainableState):
 
     dimension: AbstractAttribute[int]
     plan_id: AbstractAttribute[str]
+    capabilities: AbstractAttribute[VortexVelocityCapabilities]
 
     @abc.abstractmethod
     def prepare(
@@ -92,8 +96,11 @@ class AbstractVortexVelocityPlan(StrictModule, NonTrainableState):
         *,
         source_capacity: int,
         target_capacity: int | None = None,
+        source_kind: str = "particle",
+        target_topology: str = "same-support",
+        request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> AbstractPreparedVortexVelocity:
-        """Bind exact source and target capacities within the declared budgets."""
+        """Bind capacities, source kind, target topology, and requested fields."""
 
 
 class AbstractPreparedVortexVelocity(StrictModule, NonTrainableState):
@@ -104,17 +111,16 @@ class AbstractPreparedVortexVelocity(StrictModule, NonTrainableState):
     target_capacity: AbstractAttribute[int]
     backend_id: AbstractAttribute[str]
     prepared_id: AbstractAttribute[str]
+    capabilities: AbstractAttribute[VortexVelocityCapabilities]
+    compatibility: AbstractAttribute[VortexVelocityCompatibility]
 
     @abc.abstractmethod
     def evaluate(
         self,
-        position: ArrayLike,
-        strength: ArrayLike,
-        core_radius: ArrayLike,
+        source: VortexSourceState,
+        target: VortexTargetState,
         /,
         *,
-        targets: ArrayLike | None = None,
-        target_source_indices: ArrayLike | None = None,
         request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> VortexVelocityEvaluation:
         """Evaluate requested fields, excluding only explicitly identified selves."""
@@ -149,6 +155,7 @@ class AbstractVortexDiffusionPlan(StrictModule, NonTrainableState):
 
     dimension: AbstractAttribute[int]
     plan_id: AbstractAttribute[str]
+    capabilities: AbstractAttribute[VortexDiffusionCapabilities]
 
     @abc.abstractmethod
     def prepare(
@@ -168,17 +175,16 @@ class AbstractPreparedVortexDiffusion(StrictModule, NonTrainableState):
     capacity: AbstractAttribute[int]
     backend_id: AbstractAttribute[str]
     prepared_id: AbstractAttribute[str]
+    capabilities: AbstractAttribute[VortexDiffusionCapabilities]
 
     @abc.abstractmethod
     def evaluate(
         self,
-        position: ArrayLike,
-        strength: ArrayLike,
-        volume: ArrayLike,
+        source: VortexSourceState,
         viscosity: ArrayLike,
         /,
     ) -> VortexDiffusionEvaluation:
-        """Return the conservative strength rate for fixed particle identities."""
+        """Return the conservative strength rate for the canonical source state."""
 
 
 __all__ = [

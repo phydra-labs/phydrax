@@ -156,25 +156,20 @@ For inverse problems, prepare topology and capacity before differentiation, keep
 same active-set and route decisions across the differentiated evaluation, and reject a
 sample when its evidence reports that those assumptions failed.
 
-## Advanced workflows and current limits
+## Complete advanced workflows and remaining mathematical boundaries
 
-The advanced workflow layer provides fixed-tree accelerated field evaluation, active
-actuator sources, passive probes, explicit rigid-body load/pose exchange, named Wiener
-noise for random-vortex diffusion, and learned-vorticity reconstruction with a
-caller-supplied model and trainer. `examples/vortex_advanced_workflow.py` uses a real
-public workflow rather than embedding training or plotting infrastructure.
+Field execution includes direct, periodic Ewald, free-space FFT, corrected P3M,
+hierarchical FMM, and explicit sharding. Actuator sources and passive probes
+remain distinct. Native rigid/flexible FSI replaces the former standalone Euler
+wrapper. Random vortices advance complete ensembles with boundary and variance
+policies. Learned vorticity uses native optimization, incompressible
+reconstruction, assimilation, and constrained closure evidence.
 
-These capabilities are deliberately separate:
-
-- the Barnes--Hut route is an explicitly named approximation with direct near
-  interactions; it is not advertised as an FMM;
-- passive probes never inject vorticity;
-- stochastic diffusion is an SDE contract and is not interchangeable with PSE;
-- learned reconstruction requires supplied model, trainer, and reconstruction
-  operator; Phydrax does not fabricate a surrogate;
-- reformulated VPM and relaxation do not change classic 3-D defaults;
-- topology-changing gradients, vortex reconnection, adaptive source creation inside an
-  ODE stage, and a universal wall-turbulence closure are not claimed.
+Fixed-program gradients, event pullbacks, and transversal saltation maps are
+available. Event selection, arbitrary reconnection choices, and capacity-policy
+branching are not represented as ordinary smooth derivatives. A universal
+turbulence closure, exact under-resolved loads, and a purely solenoidal
+compressible-flow model remain intentionally unclaimed.
 
 ## Primary method references
 

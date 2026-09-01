@@ -20,24 +20,31 @@ def _particles(dimension, count):
 
 
 def test_direct_2d_excludes_only_explicit_self_and_preserves_coincident_distinct_blob():
+    request = phx.discretization.VortexFieldRequest(
+        velocity=True,
+        velocity_gradient=True,
+        vorticity=True,
+    )
     plan = phx.operators.GaussianDirectVortexPlan2D(
         maximum_sources=2,
         source_chunk_size=1,
         target_chunk_size=1,
-    ).prepare(source_capacity=2, target_capacity=2)
-    position = jnp.zeros((2, 2))
-    circulation = jnp.asarray((1.0, -0.5))
-    core = jnp.asarray((0.2, 0.3))
-    result = plan.evaluate(
-        position,
-        circulation,
-        core,
-        request=phx.discretization.VortexFieldRequest(
-            velocity=True,
-            velocity_gradient=True,
-            vorticity=True,
-        ),
+    ).prepare(
+        source_capacity=2,
+        target_capacity=2,
+        request=request,
     )
+    position = jnp.zeros((2, 2))
+    source = phx.discretization.VortexSourceState(
+        position,
+        jnp.asarray((1.0, -0.5)),
+        core_radius=jnp.asarray((0.2, 0.3)),
+    )
+    target = phx.discretization.VortexTargetState(
+        position,
+        source_indices=jnp.arange(2),
+    )
+    result = plan.evaluate(source, target, request=request)
 
     np.testing.assert_allclose(result.velocity, 0.0)
     assert int(result.diagnostics.excluded_interaction_count) == 2
@@ -52,27 +59,41 @@ def test_direct_2d_chunking_and_permutation_leave_fields_unchanged():
     circulation = jnp.asarray((0.7, -0.4, 0.9))
     core = jnp.asarray((0.2, 0.3, 0.25))
     target = jnp.asarray(((0.2, -0.4), (0.8, 0.1)))
+    source = phx.discretization.VortexSourceState(
+        position,
+        circulation,
+        core_radius=core,
+    )
+    targets = phx.discretization.VortexTargetState(target)
     coarse = phx.operators.GaussianDirectVortexPlan2D(
         maximum_sources=3,
         maximum_targets=2,
         source_chunk_size=3,
         target_chunk_size=2,
-    ).prepare(source_capacity=3, target_capacity=2)
+    ).prepare(
+        source_capacity=3,
+        target_capacity=2,
+        target_topology="arbitrary-targets",
+    )
     fine = phx.operators.GaussianDirectVortexPlan2D(
         maximum_sources=3,
         maximum_targets=2,
         source_chunk_size=1,
         target_chunk_size=1,
-    ).prepare(source_capacity=3, target_capacity=2)
-    expected = coarse.evaluate(position, circulation, core, targets=target).velocity
-    actual = fine.evaluate(position, circulation, core, targets=target).velocity
+    ).prepare(
+        source_capacity=3,
+        target_capacity=2,
+        target_topology="arbitrary-targets",
+    )
+    expected = coarse.evaluate(source, targets).velocity
+    actual = fine.evaluate(source, targets).velocity
     permutation = jnp.asarray((2, 0, 1))
-    permuted = coarse.evaluate(
+    permuted_source = phx.discretization.VortexSourceState(
         position[permutation],
         circulation[permutation],
-        core[permutation],
-        targets=target,
-    ).velocity
+        core_radius=core[permutation],
+    )
+    permuted = coarse.evaluate(permuted_source, targets).velocity
 
     np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(permuted, expected, rtol=1e-12, atol=1e-12)
@@ -92,14 +113,13 @@ def test_pse_is_exactly_conservative_for_unequal_particle_volumes():
     plan = phx.operators.GaussianParticleStrengthExchangePlan(
         2,
         0.5,
-        active_mask=jnp.ones((3,), dtype=bool),
     ).prepare(capacity=3, dimension=2)
-    evaluation = plan.evaluate(
+    source = phx.discretization.VortexSourceState(
         jnp.asarray(((-0.2, 0.0), (0.0, 0.0), (0.3, 0.0))),
         jnp.asarray((0.4, 1.2, -0.2)),
-        jnp.asarray((0.2, 0.5, 0.3)),
-        0.01,
+        volume=jnp.asarray((0.2, 0.5, 0.3)),
     )
+    evaluation = plan.evaluate(source, 0.01)
 
     np.testing.assert_allclose(jnp.sum(evaluation.rate), 0.0, atol=1e-14)
     assert bool(evaluation.diagnostics.conservative)
@@ -145,9 +165,11 @@ def test_classic_3d_dynamics_adds_velocity_gradient_stretching():
     )
     method = phx.discretization.VortexParticleMethodPlan(
         phx.operators.GaussianErfDirectVortexPlan3D(
+            maximum_sources=2,
+            maximum_targets=2,
             source_chunk_size=2,
             target_chunk_size=2,
-            interaction_budget=4,
+            maximum_interactions=4,
         )
     )
     compiled = phx.equations.compile_vortex_particle_flow(

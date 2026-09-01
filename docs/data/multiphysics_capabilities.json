@@ -148,5 +148,22 @@
     "structure_preserving_face_closure": "implemented",
     "coupled_face_edge_mhd_closure": "implemented",
     "ood_fallback": "implemented"
+  },
+  "vortex_methods": {
+    "typed_source_target_capabilities": "qualified",
+    "direct_and_periodic_authorities": "qualified",
+    "free_space_fft_p3m_and_hierarchical_fmm": "implemented",
+    "classic_rvpm_diffusion_les_baroclinic": "implemented",
+    "transactional_population_remesh_replay": "qualified",
+    "shared_ring_sheet_and_adaptive_wakes": "implemented",
+    "multi_surface_vlm_uvlm_rotor_and_loads": "implemented",
+    "native_2d_3d_panel_methods": "implemented",
+    "boundary_integral_and_immersed_viscous_walls": "implemented",
+    "rigid_flexible_fsi_control_and_acoustics": "implemented",
+    "random_learned_and_assimilation_workflows": "implemented",
+    "portable_checkpoint_export_and_sharding": "implemented",
+    "ordinary_derivative_through_event_selection": "unsupported",
+    "universal_wall_turbulence_closure": "unsupported",
+    "purely_solenoidal_compressible_flow": "unsupported"
   }
 }

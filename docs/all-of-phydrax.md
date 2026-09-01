@@ -151,16 +151,18 @@ for ghost pressure, capillarity, free-surface viscosity and multiphase material
 reconstruction, with moving-solid cut measures and fixed-pool reseeding treated
 as explicit accepted-step transactions.
 Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
-to stable particle supports without reinterpreting material mass. Qualified
-routes include Gaussian free-space direct evaluation, periodic
-particle-to-grid Fourier inversion, conservative Gaussian strength exchange,
-classic 3-D stretching, regularized filaments, steady and fixed-capacity
-unsteady lifting wakes, polygonal vortex panels, rigid panel motion,
-boundary-sheet transfer, conservative remeshing, explicit advanced
-formulations, and fixed-tree/workflow evidence. See
-[Guide → Vortex methods](guides_vortex_methods.md),
-[Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
-[Guide → Vortex boundaries](guides_vortex_boundaries.md).
+to typed source states without reinterpreting material mass. Capability-driven
+direct, Ewald, free-space FFT, corrected P3M, hierarchical FMM, periodic VIC,
+PSE/core-spreading/redistribution, classic/rVPM/LES/baroclinic formulations,
+transactional populations, shared ring/sheet wakes, multi-surface lifting,
+native 2-D/3-D panels, no-slip and immersed wall coupling, native rigid/flexible
+FSI, rotors, control, acoustics, stochastic ensembles, learned reconstruction,
+assimilation, checkpoints, replay, export, and sharding retain explicit validity
+and derivative evidence. See [Guide → Vortex architecture](guides_vortex_architecture.md),
+[Guide → Vortex field backends](guides_vortex_backends.md),
+[Guide → Vortex diffusion and topology](guides_vortex_diffusion_topology.md),
+[Guide → Vortex FSI and control](guides_vortex_fsi_control.md), and
+[Guide → Stochastic and learned vortex methods](guides_vortex_stochastic_learning.md).
 Cosmological applications reuse those particle, grid, solver, operator, artifact, and
 likelihood identities rather than introducing a separate framework. Canonical physical
 states project only declared dependencies into content-addressed products; pinned

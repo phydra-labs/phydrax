@@ -9,7 +9,7 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -23,6 +23,12 @@ from ....discretization import (
     SplatExecutionPolicy,
     TensorSpectralDiscretization,
 )
+from ....discretization.vortex._capabilities import VortexVelocityCapabilities
+from ....discretization.vortex._compatibility import (
+    request_fields,
+    validate_vortex_velocity_evaluation,
+    VortexVelocityCompatibility,
+)
 from ....discretization.vortex._interfaces import (
     AbstractPreparedVortexVelocity,
     AbstractVortexVelocityPlan,
@@ -31,6 +37,8 @@ from ....discretization.vortex._interfaces import (
     VortexVelocityDiagnostics,
     VortexVelocityEvaluation,
 )
+from ....discretization.vortex._precision import VortexPrecisionPolicy
+from ....discretization.vortex._source import VortexSourceState, VortexTargetState
 
 
 class PeriodicVortexInCellDiagnostics(StrictModule):
@@ -50,6 +58,8 @@ class PeriodicVortexInCellDiagnostics(StrictModule):
 class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
     """Periodic particle-to-grid vorticity inversion with explicit filter identity."""
 
+    precision: VortexPrecisionPolicy
+    capabilities: VortexVelocityCapabilities
     particles: ParticleDiscretization
     grid: PreparedTensorGrid
     spectral: TensorSpectralDiscretization
@@ -68,6 +78,7 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
         /,
         *,
         execution: SplatExecutionPolicy | None = None,
+        precision: VortexPrecisionPolicy | None = None,
         compatibility_tolerance: float = 1.0e-12,
     ):
         if not isinstance(particles, ParticleDiscretization):
@@ -78,6 +89,11 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
             raise TypeError("spectral must be TensorSpectralDiscretization.")
         if not isinstance(assignment, AbstractStructuredSplatAssignment):
             raise TypeError("assignment must be an AbstractStructuredSplatAssignment.")
+        if not np.all(np.asarray(particles.active_mask)):
+            raise ValueError(
+                "Periodic VIC binds capacity only; runtime activity belongs to "
+                "VortexSourceState."
+            )
         dimension = particles.ambient_dimension
         if dimension not in (2, 3) or len(grid.structured_axes) != dimension:
             raise ValueError("Periodic VIC requires matching dimension 2 or 3.")
@@ -104,6 +120,24 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
         execution_ = SplatExecutionPolicy() if execution is None else execution
         if not isinstance(execution_, SplatExecutionPolicy):
             raise TypeError("execution must be SplatExecutionPolicy or None.")
+        precision_ = VortexPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, VortexPrecisionPolicy):
+            raise TypeError("precision must be VortexPrecisionPolicy or None.")
+        capabilities = VortexVelocityCapabilities(
+            dimension,
+            required_source_fields=("positions", "strength", "active_mask"),
+            supported_fields=("velocity", "velocity_gradient", "vorticity"),
+            domain="periodic",
+            precision=precision_,
+            derivatives=(
+                "source-position",
+                "source-strength",
+            ),
+            target_topologies=("same-support",),
+            acceleration="particle-mesh",
+        )
+        self.precision = precision_
+        self.capabilities = capabilities
         self.particles = particles
         self.grid = grid
         self.spectral = spectral
@@ -120,6 +154,7 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
                 "assignment": assignment.assignment_id,
                 "execution": execution_.policy_id,
                 "compatibility_tolerance": tolerance,
+                "precision": precision_.policy_id,
             }
         )
 
@@ -129,6 +164,9 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
         *,
         source_capacity: int,
         target_capacity: int | None = None,
+        source_kind: str = "particle",
+        target_topology: str = "same-support",
+        request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> PreparedPeriodicVortexInCell:
         targets = (
             int(source_capacity) if target_capacity is None else int(target_capacity)
@@ -145,13 +183,23 @@ class PeriodicVortexInCellPlan(AbstractVortexVelocityPlan):
             assignment=self.assignment,
             execution=self.execution,
         ).prepare(self.particles)
-        return PreparedPeriodicVortexInCell(self, transfer)
+        compatibility = VortexVelocityCompatibility(
+            self.capabilities,
+            source_capacity=int(source_capacity),
+            target_capacity=targets,
+            source_kind=source_kind,
+            target_topology=target_topology,
+            requested_fields=request_fields(request),
+        )
+        return PreparedPeriodicVortexInCell(self, transfer, compatibility)
 
 
 class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
     plan: PeriodicVortexInCellPlan
     transfer: PreparedParticleGridSplat
     projector: PeriodicLerayProjector
+    capabilities: VortexVelocityCapabilities
+    compatibility: VortexVelocityCompatibility
     dimension: int = eqx.field(static=True)
     source_capacity: int = eqx.field(static=True)
     target_capacity: int = eqx.field(static=True)
@@ -159,10 +207,16 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
-        self, plan: PeriodicVortexInCellPlan, transfer: PreparedParticleGridSplat, /
+        self,
+        plan: PeriodicVortexInCellPlan,
+        transfer: PreparedParticleGridSplat,
+        compatibility: VortexVelocityCompatibility,
+        /,
     ):
         self.plan = plan
         self.transfer = transfer
+        self.capabilities = plan.capabilities
+        self.compatibility = compatibility
         self.projector = PeriodicLerayProjector(plan.spectral)
         self.dimension = plan.dimension
         self.source_capacity = plan.particles.capacity
@@ -174,6 +228,7 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
                 "plan": plan.plan_id,
                 "transfer": transfer.prepared_id,
                 "projector": self.projector.projector_id,
+                "compatibility": compatibility.compatibility_id,
             }
         )
 
@@ -206,37 +261,41 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
 
     def evaluate(
         self,
-        position: ArrayLike,
-        strength: ArrayLike,
-        core_radius: ArrayLike,
+        source: VortexSourceState,
+        target: VortexTargetState,
         /,
         *,
-        targets: ArrayLike | None = None,
-        target_source_indices: ArrayLike | None = None,
         request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> VortexVelocityEvaluation:
-        if targets is not None or target_source_indices is not None:
-            raise ValueError("Periodic VIC evaluates only its bound particle support.")
-        positions = jnp.asarray(position)
-        strengths = jnp.asarray(strength)
-        cores = jnp.asarray(core_radius)
-        expected_strength = (
-            (self.source_capacity,) if self.dimension == 2 else (self.source_capacity, 3)
+        source, target = validate_vortex_velocity_evaluation(
+            self.capabilities,
+            self.compatibility,
+            source,
+            target,
+            request,
         )
-        if positions.shape != (self.source_capacity, self.dimension):
-            raise ValueError("VIC positions do not match prepared support.")
-        if strengths.shape != expected_strength:
-            raise ValueError("VIC strengths do not match prepared dimension.")
-        if cores.shape != (self.source_capacity,):
-            raise ValueError("VIC core_radius must have particle-capacity shape.")
-        active = self.plan.particles.active_mask
-        strength_mask = active if self.dimension == 2 else active[:, None]
-        safe_positions = jnp.where(active[:, None], positions, 0.0)
-        safe_strengths = jnp.where(strength_mask, strengths, 0.0)
+        positions = eqx.error_if(
+            source.positions,
+            jnp.any(target.positions != source.positions),
+            "Periodic VIC same-support target positions must equal source positions.",
+        )
+        source_indices = eqx.error_if(
+            target.source_indices,
+            jnp.any(
+                target.source_indices != jnp.arange(self.source_capacity, dtype=jnp.int32)
+            ),
+            "Periodic VIC targets require source identity in support order.",
+        )
+        positions = positions + jnp.zeros_like(
+            source_indices[:, None], dtype=positions.dtype
+        )
+        active = source.active_mask
+        safe_positions = self.plan.precision.compute(source.safe_positions())
+        safe_strengths = self.plan.precision.compute(source.safe_strength())
         transfer_state = self.transfer.build(safe_positions)
         deposited = self.transfer.deposit_content(transfer_state, safe_strengths)
-        total = jnp.sum(safe_strengths, axis=0)
-        scale = jnp.maximum(jnp.sum(jnp.abs(safe_strengths), axis=0), 1.0)
+        total = self.plan.precision.sum(safe_strengths, axis=0)
+        scale = jnp.maximum(self.plan.precision.sum(jnp.abs(safe_strengths), axis=0), 1.0)
         residual = jnp.max(jnp.abs(total) / scale)
         compatible = residual <= self.plan.compatibility_tolerance
         safe_density = eqx.error_if(
@@ -248,7 +307,11 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
         velocity_coefficients = self._velocity_coefficients(vorticity_coefficients)
         velocity_grid = self.plan.spectral.reconstruct(velocity_coefficients).real
         gathered_velocity = self.transfer.gather(transfer_state, velocity_grid)
-        velocity = gathered_velocity.values if request.velocity else None
+        velocity = (
+            self.plan.precision.output(gathered_velocity.values)
+            if request.velocity
+            else None
+        )
         gradient = None
         if request.velocity_gradient:
             derivatives = tuple(
@@ -257,15 +320,19 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
                 ).real
                 for axis in range(self.dimension)
             )
-            gradient = jnp.stack(
-                tuple(
-                    self.transfer.gather(transfer_state, derivative).values
-                    for derivative in derivatives
-                ),
-                axis=-1,
+            gradient = self.plan.precision.output(
+                jnp.stack(
+                    tuple(
+                        self.transfer.gather(transfer_state, derivative).values
+                        for derivative in derivatives
+                    ),
+                    axis=-1,
+                )
             )
         vorticity = (
-            self.transfer.gather(transfer_state, safe_density).values
+            self.plan.precision.output(
+                self.transfer.gather(transfer_state, safe_density).values
+            )
             if request.vorticity
             else None
         )
@@ -306,7 +373,11 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
             jnp.asarray(self.transfer.route_count, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
-            jnp.min(jnp.where(active, cores, jnp.inf)),
+            (
+                jnp.asarray(jnp.inf, dtype=positions.dtype)
+                if source.core_radius is None
+                else jnp.min(jnp.where(active, source.safe_core_radius(), jnp.inf))
+            ),
             jnp.all(jnp.isfinite(safe_positions)) & jnp.all(jnp.isfinite(safe_strengths)),
             outputs_finite,
             transfer_successful,
@@ -324,6 +395,8 @@ class PreparedPeriodicVortexInCell(AbstractPreparedVortexVelocity):
                     "kind": "periodic-vortex-in-cell-evaluation",
                     "prepared": self.prepared_id,
                     "request": request.request_id,
+                    "source": source.source_id,
+                    "target": target.target_id,
                 }
             ),
             diagnostics,

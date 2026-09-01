@@ -19,7 +19,7 @@ motion = phx.operators.RigidPanelMotion2D(
     jnp.asarray(0.02),
 )
 moving_result = plan.solve(jnp.asarray((1.0, 0.0)), motion=motion)
-wall = phx.discretization.WallVorticityTransferPlan2D(64, 0.08, 0.1)
+wall = phx.discretization.BoundarySheetParticleTransferPlan2D(64, 0.08, 0.1)
 wall_result = wall.transfer(wall.initialize(dtype=float), geometry, result.sheet_strength)
 
 print("boundary residual", result.boundary_residual_norm)

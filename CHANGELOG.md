@@ -125,6 +125,22 @@
   relaxation operators, nonlinear polar closure, fixed-tree acceleration,
   actuator/rigid/stochastic/learned workflows, qualification evidence, and
   fixed-topology differentiation contracts.
+- Closed the native vortex capability boundaries with typed source/target and
+  capability contracts, dynamic-core formulations, periodic Ewald and
+  free-space FFT authorities, corrected P3M, hierarchical 2-D/3-D FMM,
+  transactional populations and epoch replay, shared ring/sheet wakes,
+  multi-surface lifting and complete loads, native 2-D/3-D panels, no-slip and
+  immersed wall coupling, rigid/flexible FSI, rotor/actuator/control/acoustic
+  workflows, stochastic ensembles, constrained learned reconstruction and
+  assimilation, portable checkpoints/exports, and explicit sharding evidence.
+- Added fixed-topology material-measure immersed-boundary coupling on uniform
+  unit-density MAC grids: local cubic B-spline marker routes, force/torque/work
+  certificates, exact prescribed pressure-plus-marker projection, IMEX-Euler and
+  SBDF2 execution, explicitly separate penalty CFD–DEM, generic free rigid-body
+  coupling, fixed FE marker H/H* maps, synchronized deformable coupling, and
+  fixed-routing implicit sensitivities. Variable density, mapped/AMR/distributed
+  markers, remeshing, contact extensions, fluctuating hydrodynamics,
+  divergence-free interpolation, and sharp-interface changes remain unsupported.
 - Added field-valued logarithmic compressible Neo-Hookean reference energy,
   line-search-safe nonfinite integral propagation, and an experimental matched
   neural-variational/finite-element hyperelastic qualification.

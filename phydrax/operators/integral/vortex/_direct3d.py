@@ -7,11 +7,15 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
-from ...._geometry_precision import GeometryPrecisionPolicy
 from ...._strict import StrictModule
+from ....discretization.vortex._capabilities import VortexVelocityCapabilities
+from ....discretization.vortex._compatibility import (
+    request_fields,
+    validate_vortex_velocity_evaluation,
+    VortexVelocityCompatibility,
+)
 from ....discretization.vortex._interfaces import (
     AbstractPreparedVortexVelocity,
     AbstractVortexVelocityPlan,
@@ -20,6 +24,8 @@ from ....discretization.vortex._interfaces import (
     VortexVelocityDiagnostics,
     VortexVelocityEvaluation,
 )
+from ....discretization.vortex._precision import VortexPrecisionPolicy
+from ....discretization.vortex._source import VortexSourceState, VortexTargetState
 from ._gaussian3d import GaussianErfVortexKernel3D
 
 
@@ -40,86 +46,120 @@ class DirectVortexResourceEvidence3D(StrictModule):
 
 
 class GaussianErfDirectVortexPlan3D(AbstractVortexVelocityPlan):
-    """Chunked all-pairs free-space plan for Gaussian 3-D vortex blobs."""
+    """Chunked free-space Gaussian Biot--Savart evaluation with hard budgets."""
 
     kernel: GaussianErfVortexKernel3D
-    precision: GeometryPrecisionPolicy
+    precision: VortexPrecisionPolicy
+    capabilities: VortexVelocityCapabilities
+    maximum_sources: int = eqx.field(static=True)
+    maximum_targets: int = eqx.field(static=True)
     source_chunk_size: int = eqx.field(static=True)
     target_chunk_size: int = eqx.field(static=True)
-    memory_budget_bytes: int | None = eqx.field(static=True)
-    interaction_budget: int | None = eqx.field(static=True)
+    maximum_interactions: int = eqx.field(static=True)
+    maximum_workspace_bytes: int = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
-    supports_velocity: bool = eqx.field(static=True)
-    supports_velocity_gradient: bool = eqx.field(static=True)
-    supports_vorticity: bool = eqx.field(static=True)
-    supports_vector_strength: bool = eqx.field(static=True)
-    supports_variable_core_radius: bool = eqx.field(static=True)
     core_radius_convention: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
+        maximum_sources: int,
+        maximum_targets: int | None = None,
         kernel: GaussianErfVortexKernel3D | None = None,
-        precision: GeometryPrecisionPolicy | None = None,
+        precision: VortexPrecisionPolicy | None = None,
         source_chunk_size: int = 128,
         target_chunk_size: int = 128,
-        memory_budget_bytes: int | None = None,
-        interaction_budget: int | None = None,
+        maximum_interactions: int | None = None,
+        maximum_workspace_bytes: int = 64 * 1024 * 1024,
+        plan_id: str | None = None,
     ):
+        sources = int(maximum_sources)
+        targets = sources if maximum_targets is None else int(maximum_targets)
         kernel_ = GaussianErfVortexKernel3D() if kernel is None else kernel
         if not isinstance(kernel_, GaussianErfVortexKernel3D):
             raise TypeError("kernel must be GaussianErfVortexKernel3D or None.")
-        precision_ = GeometryPrecisionPolicy() if precision is None else precision
-        if not isinstance(precision_, GeometryPrecisionPolicy):
-            raise TypeError("precision must be GeometryPrecisionPolicy or None.")
-        requested_dtypes = (
-            precision_.coordinate_dtype,
-            precision_.compute_dtype,
-            precision_.accumulation_dtype,
-            precision_.decision_dtype,
-            precision_.output_dtype,
-        )
-        if any(
-            value is not None and not value.startswith("float")
-            for value in requested_dtypes
-        ):
-            raise ValueError("The 3-D direct vortex backend requires real precision.")
+        precision_ = VortexPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, VortexPrecisionPolicy):
+            raise TypeError("precision must be VortexPrecisionPolicy or None.")
         source_chunk = int(source_chunk_size)
         target_chunk = int(target_chunk_size)
+        interactions = (
+            sources * targets
+            if maximum_interactions is None
+            else int(maximum_interactions)
+        )
+        workspace = int(maximum_workspace_bytes)
+        if sources <= 0 or targets <= 0:
+            raise ValueError("Direct vortex source and target budgets must be positive.")
         if source_chunk <= 0 or target_chunk <= 0:
             raise ValueError("Direct vortex chunk sizes must be positive.")
-        memory_budget = None if memory_budget_bytes is None else int(memory_budget_bytes)
-        interactions = None if interaction_budget is None else int(interaction_budget)
-        if memory_budget is not None and memory_budget <= 0:
-            raise ValueError("memory_budget_bytes must be positive or None.")
-        if interactions is not None and interactions <= 0:
-            raise ValueError("interaction_budget must be positive or None.")
-
+        if interactions <= 0 or workspace <= 0:
+            raise ValueError(
+                "Direct vortex interaction and workspace budgets must be positive."
+            )
+        largest_source_chunk = min(source_chunk, sources)
+        largest_target_chunk = min(target_chunk, targets)
+        estimated = (
+            8
+            * (
+                48 * largest_source_chunk * largest_target_chunk
+                + 7 * largest_source_chunk
+                + 15 * largest_target_chunk
+            )
+            + 3 * largest_source_chunk * largest_target_chunk
+        )
+        if estimated > workspace:
+            raise ValueError(
+                "Configured direct-vortex chunk block exceeds maximum_workspace_bytes."
+            )
+        capabilities = VortexVelocityCapabilities(
+            3,
+            required_source_fields=(
+                "positions",
+                "strength",
+                "active_mask",
+                "core_radius",
+            ),
+            supported_fields=("velocity", "velocity_gradient", "vorticity"),
+            domain="free-space",
+            precision=precision_,
+            derivatives=(
+                "source-position",
+                "source-strength",
+                "source-core-radius",
+                "target-position",
+            ),
+            acceleration="direct",
+        )
         self.kernel = kernel_
         self.precision = precision_
+        self.capabilities = capabilities
+        self.maximum_sources = sources
+        self.maximum_targets = targets
         self.source_chunk_size = source_chunk
         self.target_chunk_size = target_chunk
-        self.memory_budget_bytes = memory_budget
-        self.interaction_budget = interactions
+        self.maximum_interactions = interactions
+        self.maximum_workspace_bytes = workspace
         self.dimension = 3
-        self.supports_velocity = True
-        self.supports_velocity_gradient = True
-        self.supports_vorticity = True
-        self.supports_vector_strength = True
-        self.supports_variable_core_radius = True
         self.core_radius_convention = kernel_.core_radius_convention
-        self.plan_id = canonical_fingerprint(
+        generated = canonical_fingerprint(
             {
-                "kind": "gaussian-erf-direct-vortex-plan-3d-v1",
+                "kind": "gaussian-erf-direct-vortex-plan-3d",
                 "kernel": kernel_.kernel_id,
                 "precision": precision_.policy_id,
+                "maximum_sources": sources,
+                "maximum_targets": targets,
                 "source_chunk_size": source_chunk,
                 "target_chunk_size": target_chunk,
-                "memory_budget_bytes": memory_budget,
-                "interaction_budget": interactions,
+                "maximum_interactions": interactions,
+                "maximum_workspace_bytes": workspace,
             }
         )
+        identifier = generated if plan_id is None else str(plan_id).strip()
+        if not identifier:
+            raise ValueError("plan_id must be non-empty.")
+        self.plan_id = identifier
 
     def prepare(
         self,
@@ -127,43 +167,40 @@ class GaussianErfDirectVortexPlan3D(AbstractVortexVelocityPlan):
         *,
         source_capacity: int,
         target_capacity: int | None = None,
+        source_kind: str = "particle",
+        target_topology: str = "same-support",
+        request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> PreparedGaussianErfDirectVortex3D:
         source_count = int(source_capacity)
         target_count = source_count if target_capacity is None else int(target_capacity)
         if source_count <= 0 or target_count <= 0:
             raise ValueError("Direct vortex capacities must be positive.")
+        if source_count > self.maximum_sources or target_count > self.maximum_targets:
+            raise ValueError("Prepared direct-vortex capacity exceeds its plan budget.")
+        interaction_count = source_count * target_count
+        if interaction_count > self.maximum_interactions:
+            raise ValueError("Prepared direct-vortex interactions exceed their budget.")
         source_chunk = min(self.source_chunk_size, source_count)
         target_chunk = min(self.target_chunk_size, target_count)
         source_chunks = (source_count + source_chunk - 1) // source_chunk
         target_chunks = (target_count + target_chunk - 1) // target_chunk
-        interaction_count = source_count * target_count
-        if (
-            self.interaction_budget is not None
-            and interaction_count > self.interaction_budget
-        ):
-            raise ValueError(
-                f"Direct vortex evaluation requires {interaction_count} interactions, "
-                f"exceeding budget {self.interaction_budget}."
-            )
-
-        # Conservative upper bound for the pair kernel's fused scalar workspace,
-        # its masks, chunk inputs, and all three requested target accumulators.
-        scalar_bytes = 8
         estimated_bytes = (
-            scalar_bytes
-            * (48 * source_chunk * target_chunk + 7 * source_chunk + 15 * target_chunk)
+            8 * (48 * source_chunk * target_chunk + 7 * source_chunk + 15 * target_chunk)
             + 3 * source_chunk * target_chunk
         )
-        if (
-            self.memory_budget_bytes is not None
-            and estimated_bytes > self.memory_budget_bytes
-        ):
-            raise ValueError(
-                f"Direct vortex chunks require an estimated {estimated_bytes} bytes, "
-                f"exceeding budget {self.memory_budget_bytes}."
-            )
+        if estimated_bytes > self.maximum_workspace_bytes:
+            raise ValueError("Prepared direct-vortex workspace exceeds its budget.")
+        compatibility = VortexVelocityCompatibility(
+            self.capabilities,
+            source_capacity=source_count,
+            target_capacity=target_count,
+            source_kind=source_kind,
+            target_topology=target_topology,
+            requested_fields=request_fields(request),
+        )
         return PreparedGaussianErfDirectVortex3D(
             self,
+            compatibility,
             source_capacity=source_count,
             target_capacity=target_count,
             source_chunk_size=source_chunk,
@@ -178,7 +215,9 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
     """Prepared fixed-capacity direct evaluator with identity-only self removal."""
 
     plan: GaussianErfDirectVortexPlan3D
-    precision: GeometryPrecisionPolicy
+    precision: VortexPrecisionPolicy
+    capabilities: VortexVelocityCapabilities
+    compatibility: VortexVelocityCompatibility
     source_capacity: int = eqx.field(static=True)
     target_capacity: int = eqx.field(static=True)
     source_chunk_size: int = eqx.field(static=True)
@@ -187,11 +226,6 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
     target_chunk_count: int = eqx.field(static=True)
     estimated_working_set_bytes: int = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
-    supports_velocity: bool = eqx.field(static=True)
-    supports_velocity_gradient: bool = eqx.field(static=True)
-    supports_vorticity: bool = eqx.field(static=True)
-    supports_vector_strength: bool = eqx.field(static=True)
-    supports_variable_core_radius: bool = eqx.field(static=True)
     core_radius_convention: str = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -199,6 +233,7 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
     def __init__(
         self,
         plan: GaussianErfDirectVortexPlan3D,
+        compatibility: VortexVelocityCompatibility,
         /,
         *,
         source_capacity: int,
@@ -209,8 +244,12 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         target_chunk_count: int,
         estimated_working_set_bytes: int,
     ):
+        if not isinstance(compatibility, VortexVelocityCompatibility):
+            raise TypeError("compatibility must be VortexVelocityCompatibility.")
         self.plan = plan
         self.precision = plan.precision
+        self.capabilities = plan.capabilities
+        self.compatibility = compatibility
         self.source_capacity = source_capacity
         self.target_capacity = target_capacity
         self.source_chunk_size = source_chunk_size
@@ -219,11 +258,7 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         self.target_chunk_count = target_chunk_count
         self.estimated_working_set_bytes = estimated_working_set_bytes
         self.dimension = 3
-        self.supports_velocity = plan.supports_velocity
-        self.supports_velocity_gradient = plan.supports_velocity_gradient
-        self.supports_vorticity = plan.supports_vorticity
-        self.supports_vector_strength = plan.supports_vector_strength
-        self.supports_variable_core_radius = plan.supports_variable_core_radius
+
         self.core_radius_convention = plan.core_radius_convention
         self.backend_id = plan.plan_id
         self.prepared_id = canonical_fingerprint(
@@ -235,112 +270,35 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
                 "source_chunk_size": source_chunk_size,
                 "target_chunk_size": target_chunk_size,
                 "estimated_working_set_bytes": estimated_working_set_bytes,
+                "compatibility": compatibility.compatibility_id,
             }
         )
 
     def evaluate(
         self,
-        position: ArrayLike,
-        strength: ArrayLike,
-        core_radius: ArrayLike,
+        source: VortexSourceState,
+        target: VortexTargetState,
         /,
         *,
-        targets: ArrayLike | None = None,
-        target_source_indices: ArrayLike | None = None,
         request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> VortexVelocityEvaluation:
-        if not isinstance(request, VortexFieldRequest):
-            raise TypeError("request must be a VortexFieldRequest.")
-        source_position = jnp.asarray(position)
-        source_strength = jnp.asarray(strength)
-        source_core = jnp.asarray(core_radius)
-        expected_source_shape = (self.source_capacity, 3)
-        if source_position.shape != expected_source_shape:
-            raise ValueError(
-                f"position must have shape {expected_source_shape}; got "
-                f"{source_position.shape}."
-            )
-        if source_strength.shape != expected_source_shape:
-            raise ValueError(
-                f"strength must have shape {expected_source_shape}; got "
-                f"{source_strength.shape}."
-            )
-        if source_core.shape == ():
-            source_core = jnp.broadcast_to(source_core, (self.source_capacity,))
-        elif source_core.shape != (self.source_capacity,):
-            raise ValueError(
-                f"core_radius must be scalar or shape ({self.source_capacity},); "
-                f"got {source_core.shape}."
-            )
-        if not jnp.issubdtype(source_position.dtype, jnp.floating):
-            raise TypeError("position must use a real floating dtype.")
-        if not jnp.issubdtype(source_strength.dtype, jnp.floating):
-            raise TypeError("strength must use a real floating dtype.")
-        if not jnp.issubdtype(source_core.dtype, jnp.floating):
-            raise TypeError("core_radius must use a real floating dtype.")
-
-        source_targets = targets is None
-        if source_targets:
-            if self.target_capacity != self.source_capacity:
-                raise ValueError(
-                    "targets=None requires target_capacity == source_capacity."
-                )
-            query_position = source_position
-        else:
-            query_position = jnp.asarray(targets)
-            expected_target_shape = (self.target_capacity, 3)
-            if query_position.shape != expected_target_shape:
-                raise ValueError(
-                    f"targets must have shape {expected_target_shape}; got "
-                    f"{query_position.shape}."
-                )
-            if not jnp.issubdtype(query_position.dtype, jnp.floating):
-                raise TypeError("targets must use a real floating dtype.")
-
-        if target_source_indices is None:
-            if source_targets:
-                self_indices = jnp.arange(self.target_capacity, dtype=jnp.int32)
-                mapping_mode = "implicit-source-identity"
-            else:
-                self_indices = -jnp.ones((self.target_capacity,), dtype=jnp.int32)
-                mapping_mode = "none"
-        else:
-            self_indices = jnp.asarray(target_source_indices)
-            if self_indices.shape != (self.target_capacity,):
-                raise ValueError(
-                    "target_source_indices must have shape "
-                    f"({self.target_capacity},); got {self_indices.shape}."
-                )
-            if not jnp.issubdtype(self_indices.dtype, jnp.integer):
-                raise TypeError("target_source_indices must use an integer dtype.")
-            self_indices = self_indices.astype(jnp.int32)
-            self_indices = eqx.error_if(
-                self_indices,
-                jnp.any((self_indices < -1) | (self_indices >= self.source_capacity)),
-                "target_source_indices entries must be -1 or valid source indices.",
-            )
-            mapping_mode = "explicit"
-
-        self.precision.validate_coordinates(source_position)
-        self.precision.validate_coordinates(query_position)
-        precision_evidence = self.precision.evidence_for(source_position)
-        inputs_finite = (
-            jnp.all(jnp.isfinite(source_position))
-            & jnp.all(jnp.isfinite(source_strength))
-            & jnp.all(jnp.isfinite(source_core))
-            & jnp.all(source_core > 0.0)
-            & jnp.all(jnp.isfinite(query_position))
+        source, target = validate_vortex_velocity_evaluation(
+            self.capabilities,
+            self.compatibility,
+            source,
+            target,
+            request,
         )
-        safe_position = jnp.where(jnp.isfinite(source_position), source_position, 0.0)
-        safe_strength = jnp.where(jnp.isfinite(source_strength), source_strength, 0.0)
-        safe_core = jnp.where(
-            jnp.isfinite(source_core) & (source_core > 0.0), source_core, 1.0
+        safe_position = self.precision.compute(source.safe_positions())
+        safe_strength = self.precision.compute(source.safe_strength())
+        safe_core = self.precision.compute(source.safe_core_radius())
+        safe_targets = self.precision.compute(target.positions)
+        self_indices = (
+            -jnp.ones((self.target_capacity,), dtype=jnp.int32)
+            if target.source_indices is None
+            else target.source_indices
         )
-        safe_targets = jnp.where(jnp.isfinite(query_position), query_position, 0.0)
-        safe_position = self.precision.compute(safe_position)
-        safe_strength = self.precision.compute(safe_strength)
-        safe_core = self.precision.compute(safe_core)
-        safe_targets = self.precision.compute(safe_targets)
+        mapping_mode = "none" if target.source_indices is None else "explicit"
         compute_dtype = jnp.result_type(
             safe_position.dtype, safe_strength.dtype, safe_core.dtype, safe_targets.dtype
         )
@@ -348,6 +306,13 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         safe_strength = safe_strength.astype(compute_dtype)
         safe_core = safe_core.astype(compute_dtype)
         safe_targets = safe_targets.astype(compute_dtype)
+        inputs_finite = (
+            jnp.all(jnp.isfinite(safe_position))
+            & jnp.all(jnp.isfinite(safe_strength))
+            & jnp.all(jnp.isfinite(safe_core))
+            & jnp.all(safe_core > 0.0)
+            & jnp.all(jnp.isfinite(safe_targets))
+        )
 
         padded_source_count = self.source_chunk_count * self.source_chunk_size
         source_padding = padded_source_count - self.source_capacity
@@ -358,7 +323,11 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         source_core_padded = jnp.pad(
             safe_core, ((0, source_padding),), constant_values=1.0
         )
-        source_valid = jnp.arange(padded_source_count) < self.source_capacity
+        source_valid = jnp.pad(
+            source.active_mask,
+            ((0, source_padding),),
+            constant_values=False,
+        )
         source_indices = jnp.arange(padded_source_count, dtype=jnp.int32)
         target_position_padded = jnp.pad(safe_targets, ((0, target_padding), (0, 0)))
         target_valid = jnp.arange(padded_target_count) < self.target_capacity
@@ -430,22 +399,21 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
                 )
                 mask_vector = active_pair[..., None]
                 mask_matrix = active_pair[..., None, None]
-                velocity_sum = velocity_sum + jnp.sum(
-                    jnp.where(mask_vector, pair.velocity, 0.0).astype(accumulation_dtype),
-                    axis=1,
-                )
-                gradient_sum = gradient_sum + jnp.sum(
-                    jnp.where(mask_matrix, pair.velocity_gradient, 0.0).astype(
-                        accumulation_dtype
-                    ),
-                    axis=1,
-                )
-                vorticity_sum = vorticity_sum + jnp.sum(
-                    jnp.where(mask_vector, pair.vorticity, 0.0).astype(
-                        accumulation_dtype
-                    ),
-                    axis=1,
-                )
+                if request.velocity:
+                    velocity_sum = velocity_sum + self.precision.sum(
+                        jnp.where(mask_vector, pair.velocity, 0.0),
+                        axis=1,
+                    )
+                if request.velocity_gradient:
+                    gradient_sum = gradient_sum + self.precision.sum(
+                        jnp.where(mask_matrix, pair.velocity_gradient, 0.0),
+                        axis=1,
+                    )
+                if request.vorticity:
+                    vorticity_sum = vorticity_sum + self.precision.sum(
+                        jnp.where(mask_vector, pair.vorticity, 0.0),
+                        axis=1,
+                    )
                 active_count = active_count + jnp.sum(active_pair, dtype=jnp.int32)
                 excluded_count = excluded_count + jnp.sum(self_pair, dtype=jnp.int32)
                 coincident_count = coincident_count + jnp.sum(
@@ -471,45 +439,40 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
             excluded_counts,
             coincident_counts,
         ) = jax.lax.map(evaluate_target_chunk, target_chunks)
-        velocity_raw = velocity_chunks.reshape(padded_target_count, 3)[
-            : self.target_capacity
-        ]
-        gradient_raw = gradient_chunks.reshape(padded_target_count, 3, 3)[
-            : self.target_capacity
-        ]
-        vorticity_raw = vorticity_chunks.reshape(padded_target_count, 3)[
-            : self.target_capacity
-        ]
-        velocity_raw = self.precision.output(velocity_raw)
-        gradient_raw = self.precision.output(gradient_raw)
-        vorticity_raw = self.precision.output(vorticity_raw)
-        outputs_finite = (
-            jnp.all(jnp.isfinite(velocity_raw))
-            & jnp.all(jnp.isfinite(gradient_raw))
-            & jnp.all(jnp.isfinite(vorticity_raw))
+        velocity_raw = self.precision.output(
+            velocity_chunks.reshape(padded_target_count, 3)[: self.target_capacity]
         )
+        gradient_raw = self.precision.output(
+            gradient_chunks.reshape(padded_target_count, 3, 3)[: self.target_capacity]
+        )
+        vorticity_raw = self.precision.output(
+            vorticity_chunks.reshape(padded_target_count, 3)[: self.target_capacity]
+        )
+        outputs_finite = jnp.asarray(True)
+        if request.velocity:
+            outputs_finite = outputs_finite & jnp.all(jnp.isfinite(velocity_raw))
+        if request.velocity_gradient:
+            outputs_finite = outputs_finite & jnp.all(jnp.isfinite(gradient_raw))
+        if request.vorticity:
+            outputs_finite = outputs_finite & jnp.all(jnp.isfinite(vorticity_raw))
         resource_budget_satisfied = jnp.asarray(True)
         successful = inputs_finite & outputs_finite & resource_budget_satisfied
         velocity_result = jnp.where(successful, velocity_raw, jnp.nan)
         gradient_result = jnp.where(successful, gradient_raw, jnp.nan)
         vorticity_result = jnp.where(successful, vorticity_raw, jnp.nan)
-        minimum_core = jnp.where(
-            jnp.all(jnp.isfinite(source_core) & (source_core > 0.0)),
-            jnp.min(source_core),
-            jnp.asarray(jnp.nan, dtype=source_core.dtype),
-        )
+        minimum_core = jnp.min(jnp.where(source.active_mask, safe_core, jnp.inf))
         backend_diagnostics = DirectVortexResourceEvidence3D(
             self.source_chunk_size,
             self.target_chunk_size,
             self.source_chunk_count,
             self.target_chunk_count,
             self.estimated_working_set_bytes,
-            self.plan.memory_budget_bytes,
+            self.plan.maximum_workspace_bytes,
             self.source_capacity * self.target_capacity,
-            self.plan.interaction_budget,
+            self.plan.maximum_interactions,
             mapping_mode,
             True,
-            precision_evidence,
+            self.precision.policy_id,
         )
         diagnostics = VortexVelocityDiagnostics(
             jnp.asarray(self.source_capacity, dtype=jnp.int32),
@@ -526,10 +489,12 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         )
         evaluation_id = canonical_fingerprint(
             {
-                "kind": "gaussian-erf-direct-vortex-evaluation-3d-v1",
+                "kind": "gaussian-erf-direct-vortex-evaluation-3d",
                 "prepared": self.prepared_id,
                 "request": request.request_id,
-                "target_mode": "sources" if source_targets else "arbitrary",
+                "source": source.source_id,
+                "target": target.target_id,
+                "target_topology": self.compatibility.target_topology,
                 "self_mapping": mapping_mode,
             }
         )

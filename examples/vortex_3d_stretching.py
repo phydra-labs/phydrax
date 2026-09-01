@@ -19,9 +19,11 @@ properties = phx.discretization.VortexParticleProperties(
     jnp.ones((2,)),
 )
 velocity = phx.operators.GaussianErfDirectVortexPlan3D(
+    maximum_sources=2,
+    maximum_targets=2,
     source_chunk_size=2,
     target_chunk_size=2,
-    interaction_budget=4,
+    maximum_interactions=4,
 )
 method = phx.discretization.VortexParticleMethodPlan(velocity)
 compiled = phx.equations.compile_vortex_particle_flow(

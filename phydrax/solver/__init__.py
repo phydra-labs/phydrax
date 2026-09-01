@@ -1464,6 +1464,32 @@ from .maxwell import (
     CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
 )
+from ._uvlm import *  # noqa: F403
+from ._uvlm import __all__ as _uvlm_all
+from ._vortex_lattice import *  # noqa: F403
+from ._vortex_lattice import __all__ as _vortex_lattice_all
+from ._vortex_panels import *  # noqa: F403
+from ._vortex_panels import __all__ as _vortex_panels_all
+from ._vortex_step import *  # noqa: F403
+from ._vortex_step import __all__ as _vortex_step_all
+from ._lifting_complete import *  # noqa: F403
+from ._lifting_complete import __all__ as _lifting_complete_all
+from ._panel_complete import *  # noqa: F403
+from ._panel_complete import __all__ as _panel_complete_all
+from ._panels3d_complete import *  # noqa: F403
+from ._panels3d_complete import __all__ as _panels3d_complete_all
+from ._polar_complete import *  # noqa: F403
+from ._polar_complete import __all__ as _polar_complete_all
+from ._rotor import *  # noqa: F403
+from ._rotor import __all__ as _rotor_all
+from ._vortex_immersed import *  # noqa: F403
+from ._vortex_immersed import __all__ as _vortex_immersed_all
+from ._vortex_loads import *  # noqa: F403
+from ._vortex_loads import __all__ as _vortex_loads_all
+from ._wake_complete import *  # noqa: F403
+from ._wake_complete import __all__ as _wake_complete_all
+from ._viscous_vortex_wall import *  # noqa: F403
+from ._viscous_vortex_wall import __all__ as _viscous_vortex_wall_all
 
 
 __all__ = [
@@ -2515,6 +2541,15 @@ __all__ += [
         *_vortex_lattice_all,
         *_vortex_panels_all,
         *_vortex_step_all,
+        *_lifting_complete_all,
+        *_panel_complete_all,
+        *_panels3d_complete_all,
+        *_polar_complete_all,
+        *_rotor_all,
+        *_vortex_immersed_all,
+        *_vortex_loads_all,
+        *_wake_complete_all,
+        *_viscous_vortex_wall_all,
     )
     if name not in __all__
 ]

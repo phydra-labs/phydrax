@@ -7,11 +7,17 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....discretization.vortex._capabilities import VortexVelocityCapabilities
+from ....discretization.vortex._compatibility import (
+    request_fields,
+    validate_vortex_velocity_evaluation,
+    VortexVelocityCompatibility,
+)
 from ....discretization.vortex._interfaces import (
     AbstractPreparedVortexVelocity,
     AbstractVortexVelocityPlan,
@@ -20,6 +26,8 @@ from ....discretization.vortex._interfaces import (
     VortexVelocityDiagnostics,
     VortexVelocityEvaluation,
 )
+from ....discretization.vortex._precision import VortexPrecisionPolicy
+from ....discretization.vortex._source import VortexSourceState, VortexTargetState
 from ._gaussian2d import (
     gaussian_vortex_velocity_2d,
     gaussian_vortex_velocity_gradient_2d,
@@ -70,6 +78,8 @@ def _resolved_id(name: str, value: str | None, payload: object, /) -> str:
 class GaussianDirectVortexPlan2D(AbstractVortexVelocityPlan):
     """Chunked free-space Gaussian Biot--Savart evaluation with hard budgets."""
 
+    precision: VortexPrecisionPolicy
+    capabilities: VortexVelocityCapabilities
     maximum_sources: int = eqx.field(static=True)
     maximum_targets: int = eqx.field(static=True)
     source_chunk_size: int = eqx.field(static=True)
@@ -88,6 +98,7 @@ class GaussianDirectVortexPlan2D(AbstractVortexVelocityPlan):
         target_chunk_size: int = 128,
         maximum_interactions: int | None = None,
         maximum_workspace_bytes: int = 64 * 1024 * 1024,
+        precision: VortexPrecisionPolicy | None = None,
         plan_id: str | None = None,
     ):
         sources = int(maximum_sources)
@@ -116,6 +127,30 @@ class GaussianDirectVortexPlan2D(AbstractVortexVelocityPlan):
             raise ValueError(
                 "Configured direct-vortex chunk block exceeds maximum_workspace_bytes."
             )
+        precision_ = VortexPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, VortexPrecisionPolicy):
+            raise TypeError("precision must be VortexPrecisionPolicy or None.")
+        capabilities = VortexVelocityCapabilities(
+            2,
+            required_source_fields=(
+                "positions",
+                "strength",
+                "active_mask",
+                "core_radius",
+            ),
+            supported_fields=("velocity", "velocity_gradient", "vorticity"),
+            domain="free-space",
+            precision=precision_,
+            derivatives=(
+                "source-position",
+                "source-strength",
+                "source-core-radius",
+                "target-position",
+            ),
+            acceleration="direct",
+        )
+        self.precision = precision_
+        self.capabilities = capabilities
         self.maximum_sources = sources
         self.maximum_targets = targets
         self.source_chunk_size = source_chunk
@@ -134,6 +169,7 @@ class GaussianDirectVortexPlan2D(AbstractVortexVelocityPlan):
                 "target_chunk_size": target_chunk,
                 "maximum_interactions": interactions,
                 "maximum_workspace_bytes": workspace,
+                "precision": precision_.policy_id,
             },
         )
 
@@ -143,6 +179,9 @@ class GaussianDirectVortexPlan2D(AbstractVortexVelocityPlan):
         *,
         source_capacity: int,
         target_capacity: int | None = None,
+        source_kind: str = "particle",
+        target_topology: str = "same-support",
+        request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> PreparedGaussianDirectVortex2D:
         sources = int(source_capacity)
         targets = sources if target_capacity is None else int(target_capacity)
@@ -186,7 +225,15 @@ class GaussianDirectVortexPlan2D(AbstractVortexVelocityPlan):
             True,
             evidence_id,
         )
-        return PreparedGaussianDirectVortex2D(self, evidence)
+        compatibility = VortexVelocityCompatibility(
+            self.capabilities,
+            source_capacity=sources,
+            target_capacity=targets,
+            source_kind=source_kind,
+            target_topology=target_topology,
+            requested_fields=request_fields(request),
+        )
+        return PreparedGaussianDirectVortex2D(self, evidence, compatibility)
 
 
 class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
@@ -194,6 +241,8 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
 
     plan: GaussianDirectVortexPlan2D
     resources: DirectVortexResourceEvidence
+    capabilities: VortexVelocityCapabilities
+    compatibility: VortexVelocityCompatibility
     dimension: int = eqx.field(static=True)
     source_capacity: int = eqx.field(static=True)
     target_capacity: int = eqx.field(static=True)
@@ -204,14 +253,19 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
         self,
         plan: GaussianDirectVortexPlan2D,
         resources: DirectVortexResourceEvidence,
+        compatibility: VortexVelocityCompatibility,
         /,
     ):
         if not isinstance(plan, GaussianDirectVortexPlan2D):
             raise TypeError("plan must be a GaussianDirectVortexPlan2D.")
         if not isinstance(resources, DirectVortexResourceEvidence):
             raise TypeError("resources must be DirectVortexResourceEvidence.")
+        if not isinstance(compatibility, VortexVelocityCompatibility):
+            raise TypeError("compatibility must be VortexVelocityCompatibility.")
         self.plan = plan
         self.resources = resources
+        self.capabilities = plan.capabilities
+        self.compatibility = compatibility
         self.dimension = 2
         self.source_capacity = resources.source_capacity
         self.target_capacity = resources.target_capacity
@@ -223,91 +277,35 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
                 "kind": "prepared-gaussian-direct-vortex-2d",
                 "backend": self.backend_id,
                 "resources": resources.evidence_id,
+                "compatibility": compatibility.compatibility_id,
             }
         )
 
     def evaluate(
         self,
-        position: ArrayLike,
-        strength: ArrayLike,
-        core_radius: ArrayLike,
+        source: VortexSourceState,
+        target: VortexTargetState,
         /,
         *,
-        targets: ArrayLike | None = None,
-        target_source_indices: ArrayLike | None = None,
         request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> VortexVelocityEvaluation:
-        if not isinstance(request, VortexFieldRequest):
-            raise TypeError("request must be a VortexFieldRequest.")
-        source_position = jnp.asarray(position)
-        dtype = jnp.result_type(source_position, strength, core_radius, jnp.float32)
-        source_position = jnp.asarray(source_position, dtype=dtype)
-        source_strength = jnp.asarray(strength, dtype=dtype)
-        source_core = jnp.asarray(core_radius, dtype=dtype)
-        if source_position.shape != (self.source_capacity, 2):
-            raise ValueError(
-                f"Source position must have shape ({self.source_capacity}, 2)."
-            )
-        if source_strength.shape != (self.source_capacity,):
-            raise ValueError(
-                f"2-D vortex strength must have shape ({self.source_capacity},)."
-            )
-        if source_core.shape != (self.source_capacity,):
-            raise ValueError(f"Core radius must have shape ({self.source_capacity},).")
-
-        same_support = targets is None
-        if same_support:
-            if self.target_capacity != self.source_capacity:
-                raise ValueError(
-                    "targets=None requires equal prepared source and target capacities."
-                )
-            target_position = source_position
-        else:
-            target_position = jnp.asarray(targets, dtype=dtype)
-            if target_position.shape != (self.target_capacity, 2):
-                raise ValueError(f"Targets must have shape ({self.target_capacity}, 2).")
-
-        if target_source_indices is None:
-            target_identity = (
-                jnp.arange(self.target_capacity, dtype=jnp.int32)
-                if same_support
-                else -jnp.ones((self.target_capacity,), dtype=jnp.int32)
-            )
-        else:
-            target_identity = jnp.asarray(target_source_indices)
-            if target_identity.shape != (self.target_capacity,):
-                raise ValueError(
-                    "target_source_indices must have the prepared target shape."
-                )
-            if not jnp.issubdtype(target_identity.dtype, jnp.integer):
-                raise TypeError("target_source_indices must contain integers.")
-            target_identity = target_identity.astype(jnp.int32)
-
-        source_position = eqx.error_if(
-            source_position,
-            jnp.any(~jnp.isfinite(source_position)),
-            "Direct-vortex source positions must be finite.",
+        source, target = validate_vortex_velocity_evaluation(
+            self.capabilities,
+            self.compatibility,
+            source,
+            target,
+            request,
         )
-        source_strength = eqx.error_if(
-            source_strength,
-            jnp.any(~jnp.isfinite(source_strength)),
-            "Direct-vortex source strengths must be finite.",
+        source_position = self.plan.precision.compute(source.safe_positions())
+        source_strength = self.plan.precision.compute(source.safe_strength())
+        source_core = self.plan.precision.compute(source.safe_core_radius())
+        target_position = self.plan.precision.compute(target.positions)
+        target_identity = (
+            -jnp.ones((self.target_capacity,), dtype=jnp.int32)
+            if target.source_indices is None
+            else target.source_indices
         )
-        source_core = eqx.error_if(
-            source_core,
-            jnp.any(~jnp.isfinite(source_core) | (source_core <= 0.0)),
-            "Direct-vortex core radii must be finite and strictly positive.",
-        )
-        target_position = eqx.error_if(
-            target_position,
-            jnp.any(~jnp.isfinite(target_position)),
-            "Direct-vortex target positions must be finite.",
-        )
-        target_identity = eqx.error_if(
-            target_identity,
-            jnp.any((target_identity < -1) | (target_identity >= self.source_capacity)),
-            "target_source_indices entries must lie in [-1, source_capacity).",
-        )
+        dtype = source_position.dtype
 
         source_chunk = self.resources.source_chunk_size
         target_chunk = self.resources.target_chunk_size
@@ -322,9 +320,14 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
             ((0, source_padding),),
             constant_values=1.0,
         )
-        source_valid = jnp.arange(padded_sources) < self.source_capacity
+        source_active = jnp.pad(
+            source.active_mask,
+            ((0, source_padding),),
+            constant_values=False,
+        )
+        source_capacity_mask = jnp.arange(padded_sources) < self.source_capacity
         source_indices = jnp.where(
-            source_valid,
+            source_capacity_mask,
             jnp.arange(padded_sources, dtype=jnp.int32),
             jnp.asarray(-2, dtype=jnp.int32),
         )
@@ -341,7 +344,7 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
             source_strength_padded.reshape((-1, source_chunk)),
             source_core_padded.reshape((-1, source_chunk)),
             source_indices.reshape((-1, source_chunk)),
-            source_valid.reshape((-1, source_chunk)),
+            source_active.reshape((-1, source_chunk)),
         )
         target_xs = (
             target_position_padded.reshape((-1, target_chunk, 2)),
@@ -356,9 +359,13 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
             del carry
             target_block, identity_block, target_block_valid = target_values
             initial = (
-                jnp.zeros((target_chunk, 2), dtype=dtype),
-                jnp.zeros((target_chunk, 2, 2), dtype=dtype),
-                jnp.zeros((target_chunk,), dtype=dtype),
+                self.plan.precision.accumulation(
+                    jnp.zeros((target_chunk, 2), dtype=dtype)
+                ),
+                self.plan.precision.accumulation(
+                    jnp.zeros((target_chunk, 2, 2), dtype=dtype)
+                ),
+                self.plan.precision.accumulation(jnp.zeros((target_chunk,), dtype=dtype)),
                 jnp.asarray(0, dtype=jnp.int32),
                 jnp.asarray(0, dtype=jnp.int32),
             )
@@ -391,7 +398,7 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
                         pair_strength,
                         pair_core,
                     )
-                    velocity_sum = velocity_sum + jnp.sum(
+                    velocity_sum = velocity_sum + self.plan.precision.sum(
                         jnp.where(pair_valid[..., None], pair_velocity, 0.0),
                         axis=1,
                     )
@@ -401,7 +408,7 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
                         pair_strength,
                         pair_core,
                     )
-                    gradient_sum = gradient_sum + jnp.sum(
+                    gradient_sum = gradient_sum + self.plan.precision.sum(
                         jnp.where(pair_valid[..., None, None], pair_gradient, 0.0),
                         axis=1,
                     )
@@ -411,7 +418,7 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
                         pair_strength,
                         pair_core,
                     )
-                    vorticity_sum = vorticity_sum + jnp.sum(
+                    vorticity_sum = vorticity_sum + self.plan.precision.sum(
                         jnp.where(pair_valid, pair_vorticity, 0.0),
                         axis=1,
                     )
@@ -444,9 +451,15 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
         active_interactions = jnp.sum(chunk_outputs[3], dtype=jnp.int32)
         coincident_distinct = jnp.sum(chunk_outputs[4], dtype=jnp.int32)
 
-        velocity = velocity_all if request.velocity else None
-        gradient = gradient_all if request.velocity_gradient else None
-        vorticity = vorticity_all if request.vorticity else None
+        velocity = self.plan.precision.output(velocity_all) if request.velocity else None
+        gradient = (
+            self.plan.precision.output(gradient_all)
+            if request.velocity_gradient
+            else None
+        )
+        vorticity = (
+            self.plan.precision.output(vorticity_all) if request.vorticity else None
+        )
         outputs_finite = jnp.asarray(True)
         if velocity is not None:
             outputs_finite = outputs_finite & jnp.all(jnp.isfinite(velocity))
@@ -490,7 +503,7 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
             active_interactions,
             excluded,
             coincident_distinct,
-            jnp.min(source_core),
+            jnp.min(jnp.where(source.active_mask, source_core, jnp.inf)),
             inputs_finite,
             outputs_finite,
             resource_successful,
@@ -502,13 +515,11 @@ class PreparedGaussianDirectVortex2D(AbstractPreparedVortexVelocity):
                 "kind": "gaussian-direct-vortex-evaluation-2d",
                 "prepared": self.prepared_id,
                 "request": request.request_id,
-                "target_mode": "source-support" if same_support else "explicit",
+                "source": source.source_id,
+                "target": target.target_id,
+                "target_topology": self.compatibility.target_topology,
                 "identity_mode": (
-                    "implicit-self"
-                    if target_source_indices is None and same_support
-                    else "none"
-                    if target_source_indices is None
-                    else "explicit"
+                    "none" if target.source_indices is None else "explicit"
                 ),
             }
         )
