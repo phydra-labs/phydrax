@@ -42,15 +42,6 @@ CANONICAL_CORE_OWNERS = {
     "weno_teno": "phydrax.discretization.finite_volume",
     "maxwell": "phydrax.solver.CompatibleMaxwellPlan",
     "pde_ir": "phydrax.equations.PDEProblemIR",
-    "biological_sequence": "phydrax.bioinformatics.sequence.SequenceBatch",
-    "biological_feature_dictionary": "phydrax.bioinformatics.foundation.FeatureDictionary",
-    "biospecimen_lineage": "phydrax.bioinformatics.foundation.BiospecimenLineage",
-    "genomic_coordinate": "phydrax.bioinformatics.genomics.IntervalSet",
-    "biological_assay": "phydrax.bioinformatics.omics.CountAssay",
-    "phylogenetic_tree": "phydrax.bioinformatics.phylogenetics.TreeTopology",
-    "macromolecular_structure": "phydrax.bioinformatics.structure.MacromolecularStructure",
-    "mass_spectrum": "phydrax.bioinformatics.spectrometry.SpectrumBatch",
-    "biochemical_network": "phydrax.bioinformatics.systems.StoichiometricNetwork",
 }
 
 
