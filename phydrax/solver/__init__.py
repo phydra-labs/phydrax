@@ -585,6 +585,7 @@ from ._jump_delay import (
     JumpDelayProblem,
     solve_jump_delay,
 )
+from ._kdk import KDKCoefficients, KDKCompletion, KDKProposal, KDKTransactionPlan
 from ._laplace_capacitance import (
     LaplaceCapacitanceResult3D,
     solve_laplace_capacitance_3d,
@@ -865,6 +866,29 @@ from ._particle_epoch import (
     ParticleEpochTrajectory,
     pullback_particle_epoch_transition,
     segmented_particle_epoch_vjp,
+)
+from ._particle_gravity import (
+    BarnesHutGravityPlan,
+    CartesianExpansionSpace,
+    CartesianFMMOperators,
+    DirectParticleGravityPlan,
+    DistributedParticleLayout,
+    MeshComplementCalibrationEvidence,
+    MeshComplementCalibrationPlan,
+    NewtonianPairKernel,
+    ParticleGravityEvidence,
+    ParticleOctreePlan3D,
+    PeriodicBarnesHutPlan,
+    PeriodicEwaldEvidence,
+    PeriodicEwaldForcePlan,
+    PeriodicEwaldResult,
+    PreparedParticleOctree3D,
+    TreeGravityEvidence,
+    TreeGravityResult,
+    TreePMPlan,
+    TreePMResult,
+    TreePMSplitPolicy,
+    UniformFMMPlan,
 )
 from ._particle_mesh_gravity import (
     ParticleMeshGravityDiagnostics,
@@ -2169,4 +2193,35 @@ __all__ += [
     "IAS15Plan",
     "IAS15Result",
     "ScheduledHybridEvent",
+]
+
+__all__ += [
+    "BarnesHutGravityPlan",
+    "CartesianExpansionSpace",
+    "CartesianFMMOperators",
+    "DirectParticleGravityPlan",
+    "DistributedParticleLayout",
+    "MeshComplementCalibrationEvidence",
+    "MeshComplementCalibrationPlan",
+    "NewtonianPairKernel",
+    "ParticleGravityEvidence",
+    "ParticleOctreePlan3D",
+    "PeriodicBarnesHutPlan",
+    "PeriodicEwaldEvidence",
+    "PeriodicEwaldForcePlan",
+    "PeriodicEwaldResult",
+    "PreparedParticleOctree3D",
+    "TreeGravityEvidence",
+    "TreeGravityResult",
+    "TreePMPlan",
+    "TreePMResult",
+    "TreePMSplitPolicy",
+    "UniformFMMPlan",
+]
+
+__all__ += [
+    "KDKCoefficients",
+    "KDKCompletion",
+    "KDKProposal",
+    "KDKTransactionPlan",
 ]

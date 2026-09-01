@@ -162,6 +162,17 @@ object or runtime plugin registry. Every maximal path reports capacity, topology
 parity, or approximation evidence; distributed particle layout is an ownership contract,
 not an undeclared communication implementation.
 
+Cross-domain reconciliation moves reusable mechanics out of applications:
+`DimensionalScaleContract` owns length/mass/time and physical/comoving/code coordinate
+identity; `phydrax.artifacts` owns checksummed artifacts and derivative capabilities;
+`phydrax.observation` owns labelled products, linear responses, covariance actions, and
+Gaussian likelihoods; core solver gravity owns direct kernels, runtime Morton octrees,
+Barnes--Hut, Cartesian FMM, periodic Ewald, and TreePM; core AMR owns ratio-two
+prolong/restrict/reflux; core KDK owns coefficient-driven proposal/completion; and core
+events own fixed-capacity replay statuses. Cosmology retains scale-factor/canonical/
+periodic/manifold semantics, while astrodynamics retains physical velocity, epoch,
+frame, encounter, and mission semantics.
+
 `WhitenedFieldInferencePlan`, `ParticleMarginalLikelihoodPlan`, and
 `SimulationSensitivityReport` compose existing inference substrates with field-valued
 multiphysics simulations. `StructurePreservingFaceClosurePlan` and

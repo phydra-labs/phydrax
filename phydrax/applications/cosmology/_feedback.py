@@ -13,6 +13,12 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...events import (
+    EVENT_COMMITTED,
+    EVENT_DEFERRED,
+    EVENT_REJECTED,
+    FixedCapacityEventState,
+)
 
 
 POPULATION_INACTIVE = 0
@@ -86,6 +92,22 @@ class FeedbackEventLedger(StrictModule):
     rejected: Array
     event_count: Array
     overflow: Array
+
+    def as_event_state(self, /) -> FixedCapacityEventState:
+        active = self.committed | self.deferred | self.rejected
+        statuses = jnp.where(
+            self.committed,
+            EVENT_COMMITTED,
+            jnp.where(self.deferred, EVENT_DEFERRED, EVENT_REJECTED),
+        )
+        return FixedCapacityEventState(
+            self.source_ids,
+            self.recipient_ids,
+            self.channels,
+            statuses,
+            active,
+            self.overflow,
+        )
 
 
 class StarFormationResult(StrictModule):

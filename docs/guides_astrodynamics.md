@@ -61,3 +61,13 @@ Smooth fixed branches support JIT, vmap, JVP, and VJP. Branch selection, event b
 selection, grazing events, collisions, classical-element singularities, external data
 loading, and static-capacity transitions do not have an ordinary smooth derivative.
 Inspect `valid`, `status`, residuals, and iteration evidence before consuming results.
+
+## Shared core substrates
+
+`AstrodynamicsScaleContract` is the shared `DimensionalScaleContract` with physical
+length coordinates; epoch and frame remain astrodynamics-owned. Direct and hierarchical
+gravity now delegate to core `NewtonianPairKernel`, runtime Morton octree, and
+`BarnesHutGravityPlan`; the previous application-local nominal FMM and TreePM names were
+removed because they did not implement those algorithms. Orbit-determination whitening
+uses the core Cholesky covariance action, while range/range-rate/RA-Dec geometry remains
+astrodynamics-specific. Artifact manifests use the core checksum/lineage contract.

@@ -177,6 +177,14 @@ states unsupported species, topology, approximation, capacity, distribution, and
 communication branches; precision parity beyond qualified profiles, multilevel
 distributed AMR, adaptive/distributed trees, production feedback, and full release
 coverage remain separate qualification claims rather than hidden flags.
+Cross-domain reconciliation keeps those domain states distinct while moving shared
+mechanics to core owners: dimensional scales, artifacts and derivative capabilities,
+labelled observation/covariance/likelihood algebra, direct and hierarchical particle
+gravity, coefficient-driven KDK, and ratio-two AMR transfer/reflux. Cosmology supplies
+comoving/canonical/scale-factor adapters; astrodynamics supplies physical velocity,
+epoch, frame, encounter, and mission adapters; astrophysics supplies concrete
+instrument/sky response. Application-local nominal FMM/TreePM and duplicate response
+or covariance implementations are removed rather than maintained beside the core.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,

@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Reconciled cosmology, astrodynamics, and astrophysical-observation foundations:
+  dimensional scales, artifacts and derivative capabilities, labelled observation/
+  covariance/likelihood algebra, direct and hierarchical particle gravity, KDK
+  transactions, ratio-two AMR mechanics, and event replay now have core owners.
+  Domain applications retain comoving/canonical/scale-factor, physical epoch/frame/
+  encounter, and instrument-specific semantics. Removed the astrodynamics nominal FMM
+  and TreePM names that did not implement those algorithms.
 - Added bounded maximal native cosmology profiles: fixed-layout thermodynamics/scalar
   transfer/line-of-sight algebra, global S3 manifold/KDK/harmonic Poisson/particle
   transfer, typed multi-release survey composition, deterministic FoF/unbinding/M200m/
