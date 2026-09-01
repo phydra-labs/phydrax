@@ -1327,19 +1327,32 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   standards clauses, reliability, calibration, and evidence acquisition. See
   [Guides → Advanced structural evidence](guides_advanced_structural_evidence.md)
   and [API → Advanced structural evidence](api/advanced_structural.md).
+- **Classical circuit networks and periodic analysis**: compose typed scattering
+  networks, grounded MNA circuits, implicit device DAEs, operating points,
+  descriptors, macromodels, noise, calibration, and field coupling. Harmonic
+  balance plans fixed Fourier-collocation resources, prepares the native
+  matrix-free nonlinear solve, and refreshes frequency and circuit coefficients
+  without changing device equations. See
+  [Guides → Circuit networks](guides_circuit_networks.md) and
+  [Guides → Circuit periodic analysis](guides_circuit_periodic.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
-- **Quantum systems and dynamics**: construct composite states, generalized local
-  operators, reduced densities, information measures, matrix commutators, and
-  closed- or open-system residuals. Connected discrete VMC and nonrelativistic
-  finite-molecule Coulomb VMC share persistent MCMC, matrix-free score/Gram SR,
-  statuses, diagnostics, and checkpoints. The continuum path includes exact or
-  chunked-exact coordinate traces, state-corrected electronic proposals, and a
-  full-determinant FermiNet under a conservative four-electron ceiling; it
-  excludes larger, periodic, or relativistic electron systems and stochastic
-  traces. Complex residual penalties remain real and nonnegative.
-  See [Guides → Quantum operators and dynamics](guides_quantum.md),
+- **Quantum systems and dynamics**: construct composite states, explicit
+  mixed-dimensional Hilbert layouts, local unitary/Kraus programs, reduced
+  densities, information measures, matrix commutators, and closed- or open-system
+  residuals. Dense local programs plan exact target routes and resource envelopes,
+  refresh only numerical matrices under fixed structure, avoid global operator or
+  superoperator promotion, and return unitarity, trace-preservation, and state
+  physicality evidence. Connected discrete VMC and nonrelativistic finite-molecule
+  Coulomb VMC share persistent MCMC, matrix-free score/Gram SR, statuses,
+  diagnostics, and checkpoints. The continuum path includes exact or chunked-exact
+  coordinate traces, state-corrected electronic proposals, and a full-determinant
+  FermiNet under a conservative four-electron ceiling; it excludes larger,
+  periodic, or relativistic electron systems and stochastic traces. Complex
+  residual penalties remain real and nonnegative. See
+  [Guides → Quantum operators and dynamics](guides_quantum.md),
+  [Guides → Dense local quantum programs](guides_quantum_programs.md),
   [Cookbook → Variational Monte Carlo](cookbook/quantum_vmc.md), and
   [Cookbook → Open-system amplitude damping](cookbook/quantum_open_system.md).
 - **Ritz/energy minimization**: use an explicit integral source with the

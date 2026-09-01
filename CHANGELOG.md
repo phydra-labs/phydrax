@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added deterministic dense local quantum programs with explicit mixed-dimensional
+  Hilbert layouts, ordered local unitary and Kraus contractions, CP-by-construction
+  and trace-preservation evidence, resource-bounded plan/prepare/refresh execution,
+  physicality diagnostics, and fixed-schema JIT, batching, and gradient contracts.
+- Added prepared harmonic-balance planning, resource evidence, numeric refresh,
+  and provenance around the existing Fourier-collocation circuit residual and
+  matrix-free native nonlinear solve.
 - Added advanced hydrodynamics with corrected graph-stage timing, pressure/reference
   semantics, unified mapped kinetic and boundary ownership, truthful work ledgers,
   variational surface tension, coherent wave forcing/absorption, vertical rezoning,

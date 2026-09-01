@@ -89,6 +89,28 @@ and sampling entry points reject larger systems.
 
 ::: phydrax.operators.embed_operator
 
+## Explicit local quantum programs
+
+The local-operation namespace uses an explicit ordered Hilbert factorization and
+does not materialize global embedded operators. See
+[Dense local quantum programs](../../guides_quantum_programs.md).
+
+::: phydrax.operators.quantum.HilbertRegisterLayout
+
+::: phydrax.operators.quantum.LocalUnitaryOperation
+
+::: phydrax.operators.quantum.LocalKrausChannelOperation
+
+::: phydrax.operators.quantum.QuantumProgram
+
+::: phydrax.operators.quantum.apply_local_unitary_to_state
+
+::: phydrax.operators.quantum.conjugate_local_density
+
+::: phydrax.operators.quantum.apply_local_kraus_to_density
+
+::: phydrax.operators.quantum.kraus_trace_preservation_residual
+
 ## Structural residuals
 
 ::: phydrax.operators.hermiticity_residual

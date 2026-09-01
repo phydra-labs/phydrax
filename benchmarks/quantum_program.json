@@ -1,0 +1,62 @@
+{
+  "backend": "cpu",
+  "density": {
+    "dimension": 64,
+    "first_seconds": 0.134050083,
+    "kraus_capacity": 2,
+    "minimum_eigenvalue": 0.0,
+    "operation_bytes": 128,
+    "prepare_seconds": 0.107199333,
+    "state_bytes": 65536,
+    "successful": true,
+    "trace_residual": 1.1102230246251565e-16,
+    "warm_seconds": 0.000829125,
+    "wire_count": 6,
+    "workspace_bytes": 196608
+  },
+  "dtype": "complex128",
+  "jax": "0.9.2",
+  "kind": "quantum-program-benchmark",
+  "python": "3.12.8",
+  "state_vector": [
+    {
+      "dimension": 16,
+      "first_seconds": 0.1158055,
+      "maximum_error": 0.0,
+      "operation_bytes": 64,
+      "prepare_seconds": 0.276669292,
+      "promoted_operator_bytes": 4096,
+      "state_bytes": 256,
+      "successful": true,
+      "warm_seconds": 0.000137667,
+      "wire_count": 4,
+      "workspace_bytes": 512
+    },
+    {
+      "dimension": 256,
+      "first_seconds": 0.054299167,
+      "maximum_error": 0.0,
+      "operation_bytes": 64,
+      "prepare_seconds": 0.001408,
+      "promoted_operator_bytes": 1048576,
+      "state_bytes": 4096,
+      "successful": true,
+      "warm_seconds": 0.000284084,
+      "wire_count": 8,
+      "workspace_bytes": 8192
+    },
+    {
+      "dimension": 1024,
+      "first_seconds": 0.056160375,
+      "maximum_error": 0.0,
+      "operation_bytes": 64,
+      "prepare_seconds": 0.001312167,
+      "promoted_operator_bytes": 16777216,
+      "state_bytes": 16384,
+      "successful": true,
+      "warm_seconds": 0.000299083,
+      "wire_count": 10,
+      "workspace_bytes": 32768
+    }
+  ]
+}

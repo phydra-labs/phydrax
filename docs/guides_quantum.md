@@ -388,9 +388,15 @@ See the [VMC cookbook](cookbook/quantum_vmc.md) and
 
 ## Scope
 
-The current quantum API intentionally excludes non-Markovian master equations,
-creation–annihilation operators, Moyal/star products, and general
-completely-positive open-system time integrators. Dense closed-system unitary
-propagation is explicit; arbitrary learned trajectories are not silently repaired
-to become unitary. Composite factorization remains explicit rather than inferred
-from array shapes.
+The quantum surface includes dense closed-system propagation, explicit finite
+Hilbert-factor programs, Fock operators, Lindblad and Gaussian open systems,
+trajectories, HEOM, pseudomodes, memory kernels, process tensors, MPS/TEBD, and
+locally purified evolution. These remain representation-specific and retain their
+own approximation and physicality evidence; they are not folded into a universal
+quantum array or backend.
+
+Local deterministic programs are documented in
+[Dense local quantum programs](guides_quantum_programs.md). Composite factorization
+remains explicit rather than inferred from array shapes. Arbitrary learned
+trajectories are not silently repaired to become unitary, completely positive, or
+trace preserving.
