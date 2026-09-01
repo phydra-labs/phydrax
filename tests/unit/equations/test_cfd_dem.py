@@ -112,33 +112,7 @@ def test_multirate_window_commits_equal_opposite_impulses_atomically():
     assert result.accepted_state.accepted_windows == 1
 
 
-def test_resolved_ib_work_adjoint_is_conservative():
-    particles = phx.discretization.ParticleSetPlan(
-        jnp.asarray([0]), jnp.asarray([1.0]), ambient_dimension=2
-    ).prepare()
-    bodies = phx.discretization.RigidSphereSetPlan(
-        jnp.asarray([0.1]), jnp.asarray([0])
-    ).prepare(particles)
-    kinematics = bodies.kinematics(jnp.asarray([[0.0, 0.0]]), jnp.zeros((1, 2)))
-    geometry = phx.equations.ResolvedIBGeometryPlan(
-        jnp.asarray([[0.0, 0.0]]),
-        jnp.asarray([0]),
-        jnp.asarray([1.0]),
-        jnp.asarray([[0.0, 0.0]]),
-        0.5,
-        1,
-    )
-    ib = phx.equations.ResolvedIBCFDEMCouplingPlan(
-        bodies, geometry, phx.equations.IBConstraintPlan(10.0)
-    )
-    evaluation = phx.equations.evaluate_resolved_ib_cfd_dem(
-        ib, kinematics, jnp.zeros((1, 2))
-    )
-    assert evaluation.successful
-    assert jnp.isclose(evaluation.work_adjoint_residual, 0.0)
-
-
-def test_resolved_mac_ib_window_preserves_zero_load_and_projection():
+def test_mac_penalty_ib_window_preserves_zero_load_and_projection():
     dem, dem_state, _ = _compiled_dem()
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(6, periodic=True) for _ in range(2)),
@@ -152,34 +126,33 @@ def test_resolved_mac_ib_window_preserves_zero_load_and_projection():
         momentum,
         phx.solver.MACPressureProjectionPlan(operators, solve_method="transform"),
     )
-    face_transfer = phx.discretization.MACMarkerTransferPlan(operators, 0.3, 12).prepare()
-    geometry = phx.equations.ResolvedIBGeometryPlan(
-        jnp.zeros((2, 2)),
+    markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.asarray([0, 1]),
+        jnp.zeros((2, 2)),
         jnp.ones((2,)),
-        jnp.asarray([[0.0, 0.0]]),
-        0.3,
-        1,
-    )
-    coupling = phx.equations.ResolvedMACIBCFDEMCouplingPlan(
+    ).prepare()
+    face_transfer = phx.discretization.MACMarkerTransferPlan(
+        operators, markers
+    ).prepare()
+    coupling = phx.equations.MACPenaltyIBCFDEMCouplingPlan(
         fluid,
         dem.dynamics,
-        geometry,
-        phx.equations.IBConstraintPlan(1.0),
+        jnp.asarray([0, 1]),
+        phx.equations.IBPenaltyPlan(1.0),
         face_transfer,
     )
     zero_velocity = tuple(
         jnp.zeros(layout.shape) for layout in finite_volume.face_layouts
     )
-    evaluation = phx.equations.evaluate_resolved_mac_ib_cfd_dem(
+    evaluation = phx.equations.evaluate_mac_penalty_ib_cfd_dem(
         coupling, dem_state.kinematics, zero_velocity, jnp.asarray(1.0e-4)
     )
-    coupled_state = phx.solver.MACResolvedIBCouplingState.initialize(
+    coupled_state = phx.solver.MACPenaltyIBCouplingState.initialize(
         coupling, dem_state, fluid.project_state(zero_velocity)
     )
-    step = phx.solver.advance_mac_resolved_ib_window(
+    step = phx.solver.advance_mac_penalty_ib_cfd_dem_window(
         coupling,
-        phx.solver.MACResolvedIBCouplingSchedulePlan(1),
+        phx.solver.MACPenaltyIBCouplingSchedulePlan(1),
         coupled_state,
         jnp.asarray(0.0),
         jnp.asarray(1.0e-4),

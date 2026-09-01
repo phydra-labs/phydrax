@@ -22,11 +22,13 @@ def _case(shape, *, order=1, dealiasing="none"):
     provenance = cosmology.CosmologyProductProvenance(
         producer="test",
         producer_version="current",
-        model_id=background.model_id,
+        model_form_id=background.model_form_id,
+        request_id="test-power-request",
         numerical_policy_id="test-power",
+        physics_policy_id="linear-cold-baryon-power",
         scale_id=scale.scale_id,
         source_kind="external",
-        differentiability="constant",
+        differentiation="constant",
     )
     maximum_k = np.sqrt(dimension) * np.pi * max(shape)
     k = jnp.linspace(1.0, maximum_k + 2.0, 128)
@@ -36,9 +38,14 @@ def _case(shape, *, order=1, dealiasing="none"):
         [0.1, 1.0],
         k,
         jnp.stack((first_growth**2 * base, base)),
+        cosmology.MatterPowerDescriptor(
+            "cold_baryon",
+            "cold_baryon",
+            spatial_dimension=dimension,
+        ),
         scale,
         provenance,
-        spatial_dimension=dimension,
+        background.realization,
     )
     plan = cosmology.LagrangianPerturbationInitialConditionPlan(
         particles,
@@ -100,29 +107,33 @@ def test_lpt_rejects_unsupported_order_and_dimension_mismatch():
             plan.particles, (4,), (1.0,), order=3
         )
     scale = plan.scale
+    background = cosmology.FLRWBackground(1.0, 1.0, scale=scale)
     provenance = cosmology.CosmologyProductProvenance(
         producer="test",
         producer_version="current",
-        model_id="test",
+        model_form_id=background.model_form_id,
+        request_id="test",
         numerical_policy_id="test",
+        physics_policy_id="test",
         scale_id=scale.scale_id,
         source_kind="external",
-        differentiability="constant",
+        differentiation="constant",
     )
     mismatched = cosmology.MatterPowerTable(
         [0.1, 1.0],
         [1.0, 10.0],
         [[1.0, 1.0], [1.0, 1.0]],
+        cosmology.MatterPowerDescriptor(
+            "cold_baryon", "cold_baryon", spatial_dimension=2
+        ),
         scale,
         provenance,
-        spatial_dimension=2,
+        background.realization,
     )
     with pytest.raises(ValueError, match="dimensions disagree"):
         plan.realize(
-            cosmology.FLRWBackground(1.0, 1.0, scale=scale),
-            cosmology.FLRWGrowthPlan([0.1, 1.0]).solve(
-                cosmology.FLRWBackground(1.0, 1.0, scale=scale)
-            ),
+            background,
+            cosmology.FLRWGrowthPlan([0.1, 1.0]).solve(background),
             mismatched,
             jnp.ones((4,)),
             0.1,

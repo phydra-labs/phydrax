@@ -1,0 +1,197 @@
+{
+  "cases": {
+    "amr_interface": {
+      "mass_defect": 0.0,
+      "minimum_population": 0.026925824999999997,
+      "momentum_defect": 3.469446951953614e-18,
+      "nonequilibrium_scale": 2.0,
+      "passed": true,
+      "roundtrip_error": 1.1102230246251565e-16
+    },
+    "boundary_geometry": {
+      "blocked_link_count": 124,
+      "geometry_margin": 0.0011262177912835236,
+      "geometry_normal_residual": 0.0,
+      "passed": true,
+      "womersley_centerline_error": 0.0,
+      "womersley_periodicity_error": 4.81482486096809e-35,
+      "womersley_wall_error": 3.872331202997647e-19
+    },
+    "checkpoint": {
+      "passed": true,
+      "payload_identity_matches": true,
+      "state_error": 0.0
+    },
+    "collision_forcing": {
+      "d3q19_shear": {
+        "elapsed_time": 0.09765625,
+        "maximum_mach": 0.01462524604269435,
+        "minimum_density": 0.9999999999999989,
+        "minimum_population": 0.0270610421352062,
+        "passed": true,
+        "relative_error": 0.008062813477847519,
+        "relative_mass_drift": 1.1102230246251565e-16,
+        "shape": [
+          16,
+          16,
+          16
+        ],
+        "steps": 5,
+        "successful": true,
+        "time_step": 0.01953125
+      },
+      "guo_mass_residual": 4.235164736271502e-22,
+      "guo_momentum_residual": 1.6940658945086007e-21,
+      "passed": true,
+      "shear_decay": {
+        "cases": [
+          {
+            "cell_size": 0.0625,
+            "elapsed_time": 0.09765625,
+            "expected_amplitude": 0.0462895725601809,
+            "mass_defect": 0.0,
+            "recovered_amplitude": 0.045879823101734524,
+            "relative_error": 0.008851873883986837,
+            "resolution": 16,
+            "steps": 5,
+            "successful": true,
+            "time_step": 0.01953125
+          },
+          {
+            "cell_size": 0.041666666666666664,
+            "elapsed_time": 0.10416666666666667,
+            "expected_amplitude": 0.04605223529290192,
+            "mass_defect": 0.0,
+            "recovered_amplitude": 0.04587009977295545,
+            "relative_error": 0.003954976751683266,
+            "resolution": 24,
+            "steps": 12,
+            "successful": true,
+            "time_step": 0.008680555555555556
+          },
+          {
+            "cell_size": 0.03125,
+            "elapsed_time": 0.09765625,
+            "expected_amplitude": 0.0462895725601809,
+            "mass_defect": 1.1102230246251568e-16,
+            "recovered_amplitude": 0.04618707121897901,
+            "relative_error": 0.0022143505660725082,
+            "resolution": 32,
+            "steps": 20,
+            "successful": true,
+            "time_step": 0.0048828125
+          }
+        ],
+        "finest_relative_error": 0.0022143505660725082,
+        "observed_order": 1.9983043597745265,
+        "passed": true
+      }
+    },
+    "differentiation": {
+      "bulk_gradient_error": 1.2562395568238571e-11,
+      "force_gradient_error": 7.997075224253081e-16,
+      "passed": true
+    },
+    "discrete_velocity": {
+      "methods": {
+        "d2v17": {
+          "conserved_residual": 4.440892098500626e-16,
+          "energy_flux_residual": 4.163336342344337e-17,
+          "quadrature_residual": 1.1102230246251565e-16,
+          "realizable": true,
+          "transport_kind": "integer_lattice"
+        },
+        "d2v37": {
+          "conserved_residual": 1.1102230246251565e-16,
+          "energy_flux_residual": 1.249000902703301e-16,
+          "quadrature_residual": 1.7763568394002505e-15,
+          "realizable": true,
+          "transport_kind": "off_lattice"
+        }
+      },
+      "passed": true
+    },
+    "multiphase": {
+      "chemical_force_sum": 4.996003610813204e-16,
+      "contact_angle_cosine_error": 0.0,
+      "curvature_relative_error": 0.0046577735728059455,
+      "force_representation_errors": [
+        0.0008231397499669601,
+        0.00021980905176289482
+      ],
+      "force_representation_order": 1.9048865896098537,
+      "force_representation_residual_maximum": 0.0012791572530138728,
+      "passed": true,
+      "stress_force_sum": 1.1102230246251565e-15
+    },
+    "production_execution": {
+      "device_count": 4,
+      "diagnostics_equivalent": true,
+      "failures_equivalent": true,
+      "maximum_absolute_error": 0.0,
+      "partition_shape": [
+        2,
+        2
+      ],
+      "passed": true,
+      "population_axis_partitioned": false,
+      "populations_equivalent": true
+    }
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "bad4dbfec6e4f2c53eb85772b2117f722ff27ac9a1d27c53b7bd05639b593d99",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.1",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.1",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "68119d6cd44934c2b5249649aa84d3b4f7a6d1e5fe1659c3d2d3837c3509a1c0",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "evidence_levels": {
+    "deployment_qualified": false,
+    "differentiation_qualified": true,
+    "execution_qualified": true,
+    "invariant_complete": true,
+    "physics_qualified": true
+  },
+  "passed": true
+}

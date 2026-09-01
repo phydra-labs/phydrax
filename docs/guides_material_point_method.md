@@ -73,9 +73,13 @@ P(F) = mu (F - F^-T) + lambda log(J) F^-T
 
 For one-dimensional mechanics and plane strain, the active deformation is embedded
 with inactive stretches fixed to one. Plane-stress models use either the scalar
-`IsotropicPlaneStressMPMConstitutivePlan` or the anisotropic,
+`PlaneStressMPMConstitutivePlan` or the anisotropic,
 director-coupled `GeneralPlaneStressMPMConstitutivePlan`. Nonpositive `J` is a
 rejected material trial, not a clamped state.
+
+The field-valued energy and stress operators use the same $\mu$, $\lambda$, $K$,
+plane-strain, reference-volume, and nonpositive-$J$ conventions.
+
 
 Material parameters remain rollout arguments. Place state initialization inside a
 parameterized objective when the initial constitutive response depends on trainable

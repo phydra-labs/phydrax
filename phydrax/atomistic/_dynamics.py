@@ -272,6 +272,21 @@ class PreparedAtomisticDynamics(StrictModule):
     def velocity(self, state: AtomisticDynamicsState, /) -> Array:
         return state.kinematics.momenta * self.system.inverse_masses[:, None]
 
+    def interaction_sites(self, state: AtomisticDynamicsState, /):
+        if state.prepared_dynamics_id != self.prepared_id:
+            raise ValueError("State belongs to another atomistic dynamics runtime.")
+        if self.system.cell is None or state.cell_vectors.size == 0:
+            return self.system.coordinate_map.realize(state.kinematics.positions)
+        fractional = self.system.cell.fractional_with_vectors(
+            state.kinematics.positions, state.cell_vectors
+        )
+        return self.system.coordinate_map.realize(
+            state.kinematics.positions,
+            cell=self.system.cell,
+            fractional_positions=fractional,
+            cell_vectors=state.cell_vectors,
+        )
+
     def kinetic_energy(self, momenta: Array, /) -> Array:
         kinetic_factor = self.system.plan.units.kinetic_to_energy
         per_atom = (
@@ -391,12 +406,21 @@ class PreparedAtomisticDynamics(StrictModule):
             if species is None
             else jnp.asarray(species, dtype=jnp.int32)
         )
+        potential_kwargs: dict[str, Any] = {
+            "unwrapped_positions": self._unwrapped(kinematics, cell_vectors),
+            "species": species_,
+            "cell": self.system.cell,
+        }
+        if self.system.cell is not None and cell_vectors is not None:
+            dynamic_vectors = jnp.asarray(cell_vectors, dtype=wrapped.dtype)
+            potential_kwargs["fractional_positions"] = (
+                self.system.cell.fractional_with_vectors(wrapped, dynamic_vectors)
+            )
+            potential_kwargs["cell_vectors"] = dynamic_vectors
         evaluation = self.potential.evaluate(
             wrapped,
             neighborhood,
-            unwrapped_positions=self._unwrapped(kinematics, cell_vectors),
-            species=species_,
-            cell=self.system.cell,
+            **potential_kwargs,
         )
         force = self._force_state(evaluation, cache, jnp.zeros((), dtype=jnp.int32))
         kinetic = self.kinetic_energy(momenta)

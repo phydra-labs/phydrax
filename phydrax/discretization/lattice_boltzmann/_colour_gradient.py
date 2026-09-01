@@ -23,6 +23,7 @@ from ._method import (
     LatticeBoltzmannMethodPlan,
     PreparedLatticeBoltzmannMethodPlan,
 )
+from ._program import coupled_population_manifest, KineticProgramManifest
 from ._scaling import LatticeBoltzmannScaling
 
 
@@ -270,6 +271,7 @@ class PreparedColourGradientLBMDynamics(StrictModule, NonTrainableState):
     scaling: LatticeBoltzmannScaling
     method: ColourGradientLBMMethod
     hydrodynamic_method: PreparedLatticeBoltzmannMethodPlan
+    program_manifest: KineticProgramManifest
     boundary: PreparedLatticeBoltzmannBoundary
     prepared_id: str = eqx.field(static=True)
 
@@ -302,10 +304,20 @@ class PreparedColourGradientLBMDynamics(StrictModule, NonTrainableState):
             discretization.velocity_set,
             discretization.precision,
         )
+        program_manifest = coupled_population_manifest(
+            "colour_gradient_lattice_boltzmann",
+            discretization.velocity_set.lattice_id,
+            discretization.precision.policy_id,
+            discretization.velocity_set.population_count,
+            discretization.velocity_set.dimension,
+            ("red_populations", "blue_populations"),
+            (("red_mass", "momentum"), ("blue_mass", "momentum")),
+        )
         self.discretization = discretization
         self.scaling = scaling
         self.method = method
         self.hydrodynamic_method = hydrodynamic_method
+        self.program_manifest = program_manifest
         self.boundary = boundary
         self.prepared_id = canonical_fingerprint(
             {
@@ -314,6 +326,7 @@ class PreparedColourGradientLBMDynamics(StrictModule, NonTrainableState):
                 "scaling": scaling.scaling_id,
                 "method": method.method_id,
                 "prepared_hydrodynamic_method": hydrodynamic_method.method_id,
+                "program_manifest": program_manifest.manifest_id,
                 "boundary": boundary.boundary_id,
             }
         )

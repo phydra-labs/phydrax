@@ -18,7 +18,15 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
+from ...discretization.contact import (
+    CollisionSurfacePlan,
+    ContactPairPolicy,
+    ContactPrecisionPolicy,
+    PreparedCollisionSurface,
+    selection_collision_operator,
+)
 from ...discretization.particle._rigid_contact import RigidContactGeometry
+from ...linalg import ArraySpace
 
 
 class ShellMaterialParameters(StrictModule, NonTrainableState):
@@ -627,6 +635,60 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
                 "hinge_weight": array_tree_fingerprint(hinge_weight),
                 "nodal_mass": array_tree_fingerprint(nodal_mass),
             }
+        )
+
+    def collision_surface(
+        self,
+        /,
+        *,
+        vertex_ids: ArrayLike | None = None,
+        body_id: int = 0,
+        patch_id: int = 0,
+        minimum_separation: float | None = None,
+    ) -> PreparedCollisionSurface:
+        """Expose the shell through the shared exact-map collision interface."""
+        identifiers = (
+            np.arange(self.node_count, dtype=np.int64)
+            if vertex_ids is None
+            else np.asarray(vertex_ids)
+        )
+        if identifiers.shape != (self.node_count,) or not np.issubdtype(
+            identifiers.dtype, np.integer
+        ):
+            raise TypeError("vertex_ids must be one integer ID per shell node.")
+        separation = (
+            float(jnp.max(self.plan.thickness))
+            if minimum_separation is None
+            else float(minimum_separation)
+        )
+        policy = ContactPairPolicy(
+            self.node_count,
+            body_ids=np.full((self.node_count,), int(body_id), dtype=np.int64),
+            patch_ids=np.full((self.node_count,), int(patch_id), dtype=np.int64),
+            static_mask=np.asarray(self.fixed_mask, dtype=bool),
+        )
+        topology = CollisionSurfacePlan(
+            identifiers,
+            ambient_dimension=3,
+            faces=self.plan.triangles,
+            pair_policy=policy,
+            minimum_separation=separation,
+        )
+        dtype = np.dtype(self.reference_positions.dtype)
+        source = ArraySpace((self.node_count, 3), dtype=dtype)
+        precision = ContactPrecisionPolicy(
+            geometry_dtype=dtype,
+            accumulation_dtype=np.float64,
+            certification_dtype=np.float64,
+            output_dtype=dtype,
+        )
+        return PreparedCollisionSurface(
+            topology,
+            self.reference_positions,
+            selection_collision_operator(
+                source, np.arange(self.node_count, dtype=np.int32)
+            ),
+            precision=precision,
         )
 
     def _validate_kinematics(

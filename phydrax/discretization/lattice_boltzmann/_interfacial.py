@@ -9,7 +9,6 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from ..._phase_field import double_well_free_energy_density
 from ..._strict import StrictModule
 from ._lattice import LatticeBoltzmannVelocitySet
 
@@ -333,45 +332,12 @@ def natural_wetting_gradient(
     return jnp.where(mask[..., None], adjusted, grad)
 
 
-def korteweg_stress(
-    phase: ArrayLike,
-    chemical_potential: ArrayLike,
-    gradient: ArrayLike,
-    bulk_coefficient: ArrayLike,
-    gradient_coefficient: ArrayLike,
-    /,
-) -> Array:
-    """Return the explicit symmetric Korteweg stress tensor."""
-
-    phi = jnp.asarray(phase)
-    chemical = jnp.asarray(chemical_potential, dtype=phi.dtype)
-    grad = jnp.asarray(gradient, dtype=phi.dtype)
-    if chemical.shape != phi.shape or grad.shape[:-1] != phi.shape:
-        raise ValueError("Korteweg fields have incompatible shapes.")
-    kappa = jnp.asarray(gradient_coefficient, dtype=phi.dtype)
-    if kappa.shape != ():
-        raise ValueError("gradient_coefficient must be scalar.")
-    kappa = eqx.error_if(
-        kappa,
-        ~jnp.isfinite(kappa) | (kappa <= 0.0),
-        "gradient_coefficient must be finite and positive.",
-    )
-    bulk = double_well_free_energy_density(phi, bulk_coefficient)
-    gradient_squared = oe.contract("...d,...d->...", grad, grad)
-    isotropic_pressure = phi * chemical - bulk - 0.5 * kappa * gradient_squared
-    identity = jnp.eye(grad.shape[-1], dtype=phi.dtype)
-    return isotropic_pressure[..., None, None] * identity + kappa * oe.contract(
-        "...a,...b->...ab", grad, grad
-    )
-
-
 __all__ = [
     "InterfacialFields",
     "continuum_surface_force",
     "isotropic_divergence",
     "isotropic_gradient",
     "isotropic_laplacian",
-    "korteweg_stress",
     "natural_wetting_gradient",
     "normalized_gradient",
     "static_contact_angle_normal",

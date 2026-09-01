@@ -31,9 +31,9 @@ transfers = tuple(transfer_plan.prepare(value) for value in charged)
 currents = tuple(
     phx.discretization.pic.ChargeConservingCurrentPlan(value) for value in transfers
 )
-current_source = phx.discretization.pic.PICMaxwellCurrentSource()
+current_source = phx.solver.PICMaxwellCurrentSourcePlan()
 maxwell = phx.solver.CompatibleMaxwellPlan(
-    bridge, current_source=current_source, plan_id="periodic-pic-maxwell"
+    bridge, sources=(current_source,), plan_id="periodic-pic-maxwell"
 ).prepare()
 electrostatic = phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic")
 pic = phx.solver.ElectromagneticPICPlan(

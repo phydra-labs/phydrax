@@ -1,0 +1,10 @@
+{
+  "batch": 4096,
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "kind": "astrodynamics-benchmark",
+  "lambert_compile_seconds": 0.2915342500018596,
+  "lambert_warm_seconds": 0.008668584003316937,
+  "universal_compile_seconds": 0.3660037090012338,
+  "universal_warm_seconds": 0.03066354200200294
+}

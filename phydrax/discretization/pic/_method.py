@@ -102,7 +102,9 @@ class RelativisticBorisPlan(StrictModule, NonTrainableState):
         if electric_.shape != proper.shape or magnetic_.shape != proper.shape:
             raise ValueError("electric and magnetic must match proper_velocity.")
         if specific.shape != (proper.shape[0],) or active.shape != specific.shape:
-            raise ValueError("specific_charge and active_mask must match particle capacity.")
+            raise ValueError(
+                "specific_charge and active_mask must match particle capacity."
+            )
         half = 0.5 * step * specific[:, None]
         u_minus = proper + half * electric_
         gamma_minus = jnp.sqrt(

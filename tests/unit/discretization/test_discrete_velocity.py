@@ -250,6 +250,16 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
     quadrature_factory,
 ):
     method = _compressible_method(quadrature_factory())
+    assert tuple(stage.name for stage in method.program_manifest.stages) == (
+        "moments",
+        "equilibrium",
+        "collision",
+        "diagnostics",
+    )
+    assert method.program_manifest.checkpoint_fields == (
+        "particle_populations",
+        "total_energy_populations",
+    )
     conserved = _conserved_state()
     equilibrium, equilibrium_evidence = method.equilibrium_with_evidence(conserved)
 

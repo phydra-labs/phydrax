@@ -285,10 +285,6 @@
 
 ---
 
-::: phydrax.discretization.DeformableContactPlan
-
----
-
 ::: phydrax.discretization.RigidMPMCouplingPlan
 
 ---
@@ -397,7 +393,7 @@
 
 ---
 
-::: phydrax.equations.ResolvedIBCFDEMCouplingPlan
+::: phydrax.equations.MACPenaltyIBCFDEMCouplingPlan
 
 ---
 

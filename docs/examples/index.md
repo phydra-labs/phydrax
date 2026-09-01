@@ -27,6 +27,20 @@ The first reports stage acceptance, minimum depth, mass defect, and wet-cell cou
 The second exercises identified f/beta-plane forcing and reports mass and momentum
 norm diagnostics. See [Shallow water](../guides_shallow_water.md).
 
+## Ocean process scripts
+
+The Cartesian rigid-lid Boussinesq product has directly runnable examples:
+
+```text
+python examples/ocean_inertial_oscillation.py
+python examples/ocean_stratified_adjustment.py
+python examples/ocean_surface_flux_column.py
+```
+
+They exercise weighted-skew f-plane rotation, state-dependent stratification bounds,
+directional T/S diffusion, and conservative surface heat flux. See
+[Cartesian ocean process modeling](../guides_ocean.md).
+
 ## Particle physics scripts
 
 The repository includes directly runnable scripts for the fixed-capacity particle stack:
@@ -50,10 +64,28 @@ python examples/superquadric_collision.py
 python examples/particle_internal_heating.py
 python examples/particle_radial_drying.py
 python examples/reactive_cfd_dem.py
+python examples/prescribed_immersed_cylinder.py
 ```
 
 Each script prints its acceptance flag and balance, geometry, constitutive,
 contact, nonlinear, or topology evidence for the exercised route.
+
+## Atomistic ecosystem scripts
+
+The atomistic examples exercise the native force-field, trajectory-interchange,
+enhanced-sampling, and committee-uncertainty paths:
+
+```text
+python examples/atomistic_force_field.py
+python examples/atomistic_virtual_sites.py
+python examples/atomistic_interop.py
+python examples/atomistic_ipi.py
+python examples/atomistic_sampling.py
+python examples/atomistic_uncertainty.py
+```
+
+Each script is self-contained, uses stable prepared plans, and fails if the exercised
+runtime contract is unsuccessful.
 
 ## Velocimetry scripts
 

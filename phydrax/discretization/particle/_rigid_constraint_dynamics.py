@@ -45,11 +45,11 @@ from ...nonlinear import (
 )
 from ._rigid_body import (
     _rigid_body_close_kick,
-    _rigid_body_drift,
     _rigid_body_half_kick,
     _rigid_body_relative_rotation,
-    _rigid_body_world_inertia,
     PreparedRigidBodySet,
+    rigid_body_drift,
+    rigid_body_world_inertia,
     RigidBodyKinematics,
     RigidBodyLoad,
 )
@@ -409,7 +409,7 @@ def _projection_inertia(
 ) -> Array:
     if bodies.ambient_dimension == 2:
         return bodies.inertia_body[mobile_indices, None, None]
-    inertia_world, _ = _rigid_body_world_inertia(bodies, orientation)
+    inertia_world, _ = rigid_body_world_inertia(bodies, orientation)
     return inertia_world[mobile_indices]
 
 
@@ -521,6 +521,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 validity=_PositionProjectionValidity(solver, bodies.ambient_dimension),
                 problem_id=f"rigid-position-projection/{joints.prepared_id}",
             )
+
             args = _PositionProjectionArguments(
                 reference,
                 _projection_inertia(bodies, reference.orientation, joints.mobile_indices),
@@ -591,6 +592,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     ) -> NonlinearResult:
         if self.position_problem is None or self.position_template is None:
             raise ValueError("An empty joint graph has no position projection solve.")
+
         arguments = _PositionProjectionArguments(
             predicted,
             _projection_inertia(
@@ -804,7 +806,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         half = _rigid_body_half_kick(
             self.bodies, state.kinematics, initial_load, safe_step
         )
-        predicted = _rigid_body_drift(self.bodies, half, safe_step)
+        predicted = rigid_body_drift(self.bodies, half, safe_step)
 
         if self.joints.constraint_count == 0:
             closing_load = self._load(time_ + safe_step, predicted, args)

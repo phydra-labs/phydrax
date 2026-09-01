@@ -1,0 +1,10 @@
+{
+  "device": "TFRT_CPU_0",
+  "ias15_compile_seconds": 0.21460695900168503,
+  "ias15_warm_seconds": 4.44999968749471e-05,
+  "kind": "astronomy-closure-benchmark",
+  "wcs_compile_seconds": 0.1480682080000406,
+  "wcs_finite_fraction": 1.0,
+  "wcs_points": 65536,
+  "wcs_warm_seconds": 0.0033467079992988147
+}

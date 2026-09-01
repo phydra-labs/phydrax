@@ -205,6 +205,31 @@ respect to those parameters. Identifiability still belongs to the model and data
 Hamiltonians may be ambiguous up to constants, and learned Lagrangians may have gauge
 freedom.
 
+## Neural variational continuum mechanics
+
+`DomainFunction`, pointwise finite-strain mechanics, fixed integration
+realizations, and `PreparedFieldEquilibrium` provide two distinct routes:
+
+1. `FunctionalSolver` minimizes a certified scalar potential.
+2. `prepare_functional_stationarity` or
+   `prepare_virtual_work_equilibrium` builds a nonlinear root for signed saddle
+   actions or nonconservative virtual work.
+
+Plane strain, three-dimensional, block-diagonal plane stress, exact/finite-bulk
+mixed incompressibility, dead/current/follower loads, fixed-epoch contact,
+sharp/diffuse fracture, topology state proposals, continuation, physical
+bifurcation certification, and parameter-conditioned operator losses all reuse
+these contracts. No route infers a potential from configuration dependence.
+
+History, contact search, crack topology, continuation and topology design commit
+only at accepted boundaries. Neural parameter Hessians are not physical
+stability operators: buckling and dynamic spectra require an independently
+declared physical certification space and operator.
+
+Low sampled objective or residual values are not certificates. Use independent
+state/adjoint defects, minimum-J checks, reactions, physical stability,
+refinement, held-out parameter cases, and authoritative FE reanalysis.
+
 ## Discrete continuum mechanics
 
 The [Material Point Method](guides_material_point_method.md) is a separate

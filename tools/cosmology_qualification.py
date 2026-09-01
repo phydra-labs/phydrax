@@ -25,8 +25,12 @@ def main() -> None:
             jnp.asarray([0.1, 1.0]),
             k,
             jnp.stack((first_growth**2 * base, base)),
+            phx.applications.cosmology.MatterPowerDescriptor(
+                "cold_baryon", "cold_baryon"
+            ),
             background.scale,
             provenance,
+            background.realization,
         )
         initial = lpt.realize(background, growth, power, white_noise, 0.1)
         evolved = rollout.rollout(background, initial.state)

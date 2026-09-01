@@ -90,6 +90,25 @@ deposition/Poisson path. The cosmological plan advances canonical momentum over 
 explicit scale-factor schedule, recomputes endpoint force, reuses one authoritative
 particle discretization, and rolls back on failed force or state evidence.
 
+`ComovingEulerPlan` reuses a prepared finite-volume Euler residual while changing the
+evolution coordinate to scale factor. It applies the exact `1/(a^2 H)` transport scaling,
+Hubble momentum/internal-energy work, and shared rescaled-potential gravity source.
+`CosmologicalGasParticleGravityPlan` predicts and corrects gas transport, deposits DM,
+solves one total-density periodic potential, gathers the same field to particles, and
+atomically accepts or rolls back the complete epoch.
+
+`PrimordialMicrophysicsPlan` closes the first deterministic source layer with named
+HI/HII/HeI/HeII/HeIII/electron state, immutable temperature/scale rate tables,
+photoionization/heating, collisional ionization, recombination, cooling, a fixed Newton
+solve, nuclei/charge/energy ledgers, and atomic gas-energy commit. H2, metals, stochastic
+stars/feedback, MHD radiation coupling, and AMR remain separate gated programs.
+
+`PeriodicImageForcePlan` remains a cheap image-shell diagnostic.
+`PeriodicEwaldForcePlan` is the small-N neutral periodic reference used by
+`MeshMatchedNearFieldGate`; passing the gate does not install a short-range correction.
+`CosmologySnapshotProduct` and `DistributedPMFeasibilityEvidence` define conversion and
+resource contracts without claiming Barnes--Hut, FMM, TreePM, or distributed execution.
+
 ## Constrained transport MHD
 
 `StructuredCochainBridge.pack_face_flux` stores integrated magnetic flux as a degree-two

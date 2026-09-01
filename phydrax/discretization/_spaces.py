@@ -26,6 +26,7 @@ FieldRepresentation: TypeAlias = Literal[
     "point_value",
     "cell_average",
     "cell_integral",
+    "basis_coefficient",
     "flux_moment",
     "circulation_moment",
     "polynomial_moment",
@@ -354,6 +355,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             )
         if representation not in (
             "point_value",
+            "basis_coefficient",
             "cell_average",
             "cell_integral",
             "flux_moment",

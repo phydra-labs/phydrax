@@ -140,13 +140,6 @@ from ._hyperbolic_systems import (
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
-from ._ib_cfd_dem import (
-    evaluate_resolved_ib_cfd_dem,
-    IBConstraintPlan,
-    ResolvedIBCFDEMCouplingPlan,
-    ResolvedIBEvaluation,
-    ResolvedIBGeometryPlan,
-)
 from ._incompressible import (
     compile_periodic_incompressible_flow,
     CompiledIncompressibleSpectralDynamics,
@@ -187,6 +180,8 @@ from ._lattice_boltzmann_free_energy import *  # noqa: F403
 from ._lattice_boltzmann_free_energy import (
     __all__ as _lattice_boltzmann_free_energy_all,
 )
+from ._lattice_boltzmann_profiles import *  # noqa: F403
+from ._lattice_boltzmann_profiles import __all__ as _lattice_boltzmann_profiles_all
 from ._lattice_boltzmann_species import *  # noqa: F403
 from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
 from ._lattice_boltzmann_thermal import *  # noqa: F403
@@ -197,17 +192,18 @@ from ._local_constitutive_root import (
     VectorLocalConstitutiveRootDiagnostics,
     VectorLocalConstitutiveRootPlan,
 )
-from ._mac_ib_cfd_dem import (
-    evaluate_resolved_mac_ib_cfd_dem,
-    ResolvedMACIBCFDEMCouplingPlan,
-    ResolvedMACIBEvaluation,
-    ResolvedMACIBStatus,
-)
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
     CompiledMACIncompressibleDynamics,
     MACIncompressibleDiagnostics,
     MACStepRestriction,
+)
+from ._mac_penalty_ib_cfd_dem import (
+    evaluate_mac_penalty_ib_cfd_dem,
+    IBPenaltyPlan,
+    MACPenaltyIBCFDEMCouplingPlan,
+    MACPenaltyIBEvaluation,
+    MACPenaltyIBStatus,
 )
 from ._mac_scalar_buoyancy import (
     compile_mac_scalar_buoyancy,
@@ -255,6 +251,11 @@ from ._materials import (
     TwoMaterialEOSClosure,
     TwoMaterialEOSReport,
     TwoMaterialPrimitiveState,
+)
+from ._mechanical_load_action import (
+    MechanicalLoadAction,
+    MechanicalLoadActionEvaluation,
+    NeuralCoordinateTrace,
 )
 from ._multiphase import (
     TwoMaterialVOFDiagnostics,
@@ -364,6 +365,13 @@ from ._stencil_compile import (
     CompiledStencilDynamics,
     StencilStateLayout,
 )
+from ._thermodynamics import (
+    AbstractKineticThermodynamicClosure,
+    BinaryPhaseThermodynamicClosure,
+    BinaryThermodynamicLocalFields,
+    BinaryThermodynamicParameters,
+    ThermodynamicForceRepresentation,
+)
 from ._tokens import (
     pad_pde_tokens,
     PDE_OPERATOR_VOCABULARY,
@@ -388,6 +396,11 @@ from ._variational import (
     MassAction,
     SourceAction,
     VariationalCoefficient,
+)
+from ._vortex_particles import (
+    compile_vortex_particle_flow,
+    CompiledVortexParticleFlow,
+    VortexParticleFlowProblem,
 )
 from ._weakly_compressible import (
     compile_weakly_compressible_sph_problem,
@@ -551,6 +564,9 @@ __all__ = [
     "CellBilinearAction",
     "CellEnergyAction",
     "CellResidualAction",
+    "MechanicalLoadAction",
+    "MechanicalLoadActionEvaluation",
+    "NeuralCoordinateTrace",
     "coefficient",
     "compile_finite_element_problem",
     "CompiledFiniteElementProblem",
@@ -664,9 +680,10 @@ __all__ = [
     "MACVariableDensityState",
     "MACVariableDensityStepRestriction",
     "MACVariableDensityStepResult",
-    "ResolvedMACIBCFDEMCouplingPlan",
-    "ResolvedMACIBEvaluation",
-    "ResolvedMACIBStatus",
+    "IBPenaltyPlan",
+    "MACPenaltyIBCFDEMCouplingPlan",
+    "MACPenaltyIBEvaluation",
+    "MACPenaltyIBStatus",
     "CompiledLatticeBoltzmannProblem",
     "LatticeBoltzmannProblem",
     "compile_lattice_boltzmann_problem",
@@ -709,7 +726,7 @@ __all__ = [
     "MonogenicPolynomialBasis",
     "compile_mac_scalar_buoyancy",
     "compile_mac_variable_density_flow",
-    "evaluate_resolved_mac_ib_cfd_dem",
+    "evaluate_mac_penalty_ib_cfd_dem",
     "compile_mac_incompressible_flow",
     "compile_periodic_incompressible_flow",
     "compile_channel_flow",
@@ -802,13 +819,8 @@ __all__ = [
     "CFDEMCouplingEvaluation",
     "FluidParticleSample",
     "HydrodynamicClosureResult",
-    "IBConstraintPlan",
-    "ResolvedIBCFDEMCouplingPlan",
-    "ResolvedIBEvaluation",
-    "ResolvedIBGeometryPlan",
     "StokesDragPlan",
     "UnresolvedCFDEMCouplingPlan",
-    "evaluate_resolved_ib_cfd_dem",
     "evaluate_unresolved_cfd_dem",
     "AntoineSaturationPressurePlan",
     "EvaporationPhaseChangePlan",
@@ -853,6 +865,7 @@ __all__ += [
         *_discrete_velocity_all,
         *_lattice_boltzmann_colour_gradient_all,
         *_lattice_boltzmann_free_energy_all,
+        *_lattice_boltzmann_profiles_all,
         *_lattice_boltzmann_species_all,
         *_lattice_boltzmann_thermal_all,
     )
@@ -884,4 +897,15 @@ __all__ += [
     "double_well_chemical_derivative",
     "double_well_free_energy_density",
     "evaluate_binary_free_energy",
+    "AbstractKineticThermodynamicClosure",
+    "BinaryPhaseThermodynamicClosure",
+    "BinaryThermodynamicLocalFields",
+    "BinaryThermodynamicParameters",
+    "ThermodynamicForceRepresentation",
+]
+
+__all__ += [
+    "CompiledVortexParticleFlow",
+    "VortexParticleFlowProblem",
+    "compile_vortex_particle_flow",
 ]

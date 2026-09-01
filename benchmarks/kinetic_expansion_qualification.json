@@ -153,7 +153,7 @@
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "a65342a8e36faa167394c1099132107b342b13971b9c289fb21956577e10ca23",
+    "fingerprint": "bad4dbfec6e4f2c53eb85772b2117f722ff27ac9a1d27c53b7bd05639b593d99",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -181,7 +181,7 @@
     "logical_cpus": 10,
     "machine": "arm64",
     "numpy_version": "2.3.5",
-    "package_fingerprint": "79b81a6dbcc23cb1341242cf5f4615f9f74d80c5275fc4837797953a6407594e",
+    "package_fingerprint": "68119d6cd44934c2b5249649aa84d3b4f7a6d1e5fe1659c3d2d3837c3509a1c0",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,

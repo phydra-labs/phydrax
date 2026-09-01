@@ -33,7 +33,6 @@ from ._iterative._types import (
 from ._mma import _mma_subproblem, _MMAState, MMAEvidence, MMAPolicy
 from ._pde_constrained import (
     _default_adjoint_policy,
-    _usable_linear_status,
     AbstractStateDesignMethod,
     StateDesignConstraint,
     StateDesignProblem,
@@ -175,6 +174,7 @@ def _reduced_values_and_gradients(
     design: PyTree[Any],
     args: Any,
     linear_policy: LinearSolvePolicy,
+    state_acceptance,
     /,
 ):
     def residual_function(current_state):
@@ -221,7 +221,7 @@ def _reduced_values_and_gradients(
         direct = jax.grad(lambda current_design: function(state, current_design))(design)
         if not depends_on_state:
             zero = jax.tree.map(jnp.zeros_like, residual)
-            return direct, zero, None
+            return direct, zero, None, None
         state_gradient = jax.grad(lambda current_state: function(current_state, design))(
             state
         )
@@ -230,16 +230,30 @@ def _reduced_values_and_gradients(
             state_gradient,
             policy=linear_policy,
         )
-        residual_part = design_residual_pullback(adjoint_result.value)[0]
+        adjoint = adjoint_result.value
+        adjoint_acceptance = problem.acceptance_policy.adjoint_evidence(
+            adjoint,
+            state_transpose_action(adjoint),
+            state_gradient,
+            adjoint_result.status,
+            admissible=state_acceptance.admissible & state_acceptance.finite,
+            realization_matches=state_acceptance.realization_matches,
+        )
+        residual_part = design_residual_pullback(adjoint)[0]
         gradient = jax.tree.map(
             lambda direct_part, implicit_part: direct_part - implicit_part,
             direct,
             residual_part,
         )
-        return gradient, adjoint_result.value, adjoint_result
+        return gradient, adjoint, adjoint_result, adjoint_acceptance
 
     objective_value, _ = problem.value(state, design, args)
-    objective_gradient, objective_adjoint, objective_result = reduced_gradient(
+    (
+        objective_gradient,
+        objective_adjoint,
+        objective_result,
+        objective_acceptance,
+    ) = reduced_gradient(
         lambda current_state, current_design: problem.value(
             current_state, current_design, args
         )[0],
@@ -249,9 +263,10 @@ def _reduced_values_and_gradients(
     values = []
     rows = []
     adjoint_results = []
+    adjoint_acceptances = []
     for inequality in inequalities:
         value = inequality.value(state, design, args)
-        gradient, _, adjoint_result = reduced_gradient(
+        gradient, _, adjoint_result, adjoint_acceptance = reduced_gradient(
             lambda current_state, current_design, inequality=inequality: inequality.value(
                 current_state, current_design, args
             ),
@@ -262,12 +277,10 @@ def _reduced_values_and_gradients(
         rows.append(flat_gradient)
         if adjoint_result is not None:
             adjoint_results.append(adjoint_result)
-    all_results = ((objective_result,) if objective_result is not None else ()) + tuple(
-        adjoint_results
-    )
-    usable = jnp.all(
-        jnp.stack(tuple(_usable_linear_status(result.status) for result in all_results))
-    )
+            adjoint_acceptances.append(adjoint_acceptance)
+    all_results = (objective_result,) + tuple(adjoint_results)
+    all_acceptances = (objective_acceptance,) + tuple(adjoint_acceptances)
+    usable = jnp.all(jnp.stack(tuple(evidence.accepted for evidence in all_acceptances)))
     linear_iterations = sum(
         (result.diagnostics.iterations for result in all_results),
         start=jnp.asarray(0, dtype=jnp.int32),
@@ -278,6 +291,7 @@ def _reduced_values_and_gradients(
         jnp.stack(values),
         jnp.stack(rows),
         objective_adjoint,
+        objective_acceptance,
         usable,
         jnp.asarray(len(all_results), dtype=jnp.int32),
         linear_iterations,
@@ -321,6 +335,7 @@ def _solve_reduced_mma(
         initial_constraints,
         _,
         initial_adjoint,
+        _,
         initial_adjoint_usable,
         initial_adjoint_solves,
         initial_linear_iterations,
@@ -331,6 +346,7 @@ def _solve_reduced_mma(
         initial_design,
         args,
         method.linear_policy,
+        state.acceptance,
     )
     initial_projected = problem.design_bounds.projected_gradient(
         initial_design, unravel(initial_gradient)
@@ -341,7 +357,7 @@ def _solve_reduced_mma(
         jnp.max(jnp.abs(initial_projected_flat), initial=0.0), feasibility
     )
     valid = (
-        state.successful
+        state.acceptance.accepted
         & initial_adjoint_usable
         & problem.design_bounds.contains(initial_design)
         & (feasibility <= method.policy.feasibility_tolerance)
@@ -395,6 +411,7 @@ def _solve_reduced_mma(
             constraint_values,
             constraint_jacobian,
             objective_adjoint,
+            _,
             adjoints_usable,
             adjoint_solves,
             linear_iterations,
@@ -405,6 +422,7 @@ def _solve_reduced_mma(
             design,
             args,
             method.linear_policy,
+            current.state_result.acceptance,
         )
         candidate, asymptote_lower, asymptote_upper, multipliers, subproblem_residual = (
             _mma_subproblem(
@@ -424,7 +442,7 @@ def _solve_reduced_mma(
             args=args,
         )
         finite = (
-            candidate_state.successful
+            candidate_state.acceptance.accepted
             & adjoints_usable
             & jnp.all(jnp.isfinite(candidate))
         )
@@ -506,6 +524,7 @@ def _solve_reduced_mma(
         final_constraints,
         final_jacobian,
         final_adjoint,
+        final_adjoint_acceptance,
         final_adjoint_usable,
         final_adjoint_solves,
         final_linear_iterations,
@@ -516,6 +535,7 @@ def _solve_reduced_mma(
         design,
         args,
         method.linear_policy,
+        carry.state_result.acceptance,
     )
     lagrangian_gradient = final_gradient + contract(
         "m,mn->n", carry.mma.multipliers, final_jacobian
@@ -537,8 +557,9 @@ def _solve_reduced_mma(
     )
     threshold = termination.optimality_threshold(carry.mma.initial_optimality)
     certified = (
-        carry.state_result.successful
+        carry.state_result.acceptance.accepted
         & final_adjoint_usable
+        & final_adjoint_acceptance.accepted
         & jnp.isfinite(final_value)
         & jnp.isfinite(optimality)
         & (optimality <= threshold)
@@ -609,6 +630,8 @@ def _solve_reduced_mma(
         status,
         diagnostics,
         provenance,
+        state_acceptance=carry.state_result.acceptance,
+        adjoint_acceptance=final_adjoint_acceptance,
         certificate=certificate,
         method_evidence=evidence,
     )

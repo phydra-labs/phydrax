@@ -7,6 +7,20 @@ nonnegativity.
 `IntegralFunctional` uses the same target, plan, and realization contract as
 [`phydrax.integration`](integration.md).
 
+## Domain-limited integrands
+
+`IntegralFunctional` is strict by default: every non-converged integration status,
+including a nonfinite integrand, raises. Domain-limited energies may set
+`nonfinite_integrand="propagate"` when a line-search optimizer must observe a
+nonfinite trial and reject that candidate. Only
+`IntegrationStatus.NONFINITE_INTEGRAND` is propagated as `NaN`; exhausted
+adaptive budgets, invalid measures, failed proposals, and every other integration
+failure still raise.
+
+Use propagation only with an optimizer whose line search is tested to reject
+nonfinite candidates. An initially nonfinite objective remains an invalid solve.
+
+
 ## Sampled term batches
 
 `AbstractSamplingTerm` separates expensive random-label construction from the

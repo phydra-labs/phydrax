@@ -94,30 +94,75 @@ when a compatible cochain complex is available.
 
 ## Cosmology, inference, and learned closures
 
-`phydrax.applications.cosmology` provides a parameter-differentiable flat
-radiation--matter--Lambda `FLRWBackground`, explicit comoving length/mass/time scales,
-native first- and second-order Lagrangian growth, immutable expansion/growth/linear-power
-tables, state-ready 1LPT/2LPT, and a transactional periodic particle-mesh rollout in
-scale factor.
+`phydrax.applications.cosmology` provides a parameter-differentiable FLRW background
+with radiation, matter, signed spatial curvature, and CPL dark energy. Fixed quadrature
+supplies radial/transverse comoving distance, angular/luminosity distance, volume, and
+finite-epoch time integrals. Native first/second Lagrangian growth remains an explicitly
+flat, smooth-dark-energy, matter-era Newtonian approximation.
+
+Cosmology products separate canonical physical state, dependency projections,
+content identity, producer lineage, and independent derivative capabilities. Immutable
+artifacts carry build, license, resource, parent, completion, and failure evidence.
+`CoordinateLayout`, `LinearObservationPlan`, `PrecisionCovarianceAction`, and
+`CorrelatedGaussianPlan` provide one ordered theory→window→covariance→likelihood path
+for survey and CMB products.
+
+Precision transfer products use concrete `ClassLinearTheoryBackend` and
+`CambLinearTheoryBackend` wrappers around user-installed, manifest-pinned isolated
+executables. Their atomic cache keys include the physical request, binary digest, and
+resource policy; cached and fresh products share content identity. The bounded native
+fixed-hierarchy Einstein--Boltzmann/CMB solver returns canonical reference products,
+but precision CLASS/CAMB parity remains intentionally unclaimed.
+
+Bounded native closures include fixed-quadrature one-loop EdS SPT, a locked
+Tinker08/Tinker10/Duffy08 200m halo triplet, a matter halo model, immutable halo
+catalogs, Zheng07 expectation HOD, a release-locked DESI DR1 LRG full-shape Gaussian
+likelihood, a six-species primordial H/He chemistry/cooling source solve, relic/BBN/
+recombination histories, halo/nonlinear composition, lensing planes, light cones, and
+baryonic-feedback reference products. Each retains model/domain/artifact evidence
+rather than acting as an automatic fallback.
+
+`LocalCurvatureValidityPlan` quantifies local-flat geometry indicators without relaxing
+the explicit flat-torus guards. `PeriodicEwaldForcePlan` supplies a converged small-N
+periodic reference, while `MeshMatchedNearFieldGate` only approves a future correction
+when error and pair-capacity budgets pass. Snapshot and distributed-PM classes remain
+interop/feasibility contracts, not production distributed TreePM.
+
+CMB instrument closure uses supplied immutable harmonic synthesis factors, explicit
+HEALPix/IAU products, beam/pointing/white-noise TOD, per-pixel matrix-free normal
+equations, rank evidence, and bandpower handoff. It does not hide an experiment
+pipeline, foreground model, calibrated survey product, or precision theory provider.
 
 Particles use comoving position `x` and canonical momentum `p = m a^2 dx/dt`.
-`ParticleMeshGravityPlan.acceleration` solves for the rescaled potential
-`psi = a Phi` from comoving density,
-`nabla_x^2 psi = 4 pi G (rho_com - mean(rho_com))`. The cosmological KDK then
-integrates `dx/da = p / (m a^3 H)` and `dp/da = m g_psi / (a^2 H)`. One prepared
-particle discretization owns IDs, masses, active support, and dimension across LPT,
-KDK, deposition, and force gathering.
-
-The native linear-power input is a supplied `MatterPowerTable`; Phydrax does not claim
-a Boltzmann, transfer-function, nonlinear-correction, halo, survey-observable, or CMB
-solver. `CosmologicalBaryonParticlePlan` synchronizes terminal scale factor only and
-does not claim physical baryon--dark-matter exchange.
+`ParticleMeshGravityPlan.acceleration` solves the rescaled potential `psi = a Phi` from
+comoving density, `nabla_x^2 psi = 4 pi G (rho_com - mean(rho_com))`. Periodic LPT,
+KDK, collisionless PM, and gas-particle gravity reject nonzero spatial curvature.
 
 `WhitenedFieldInferencePlan`, `ParticleMarginalLikelihoodPlan`, and
 `SimulationSensitivityReport` compose existing inference substrates with field-valued
 multiphysics simulations. `StructurePreservingFaceClosurePlan` and
 `ConstrainedMHDClosurePlan` provide dissipative face corrections, edge-EMF corrections,
 and explicit OOD fallback.
+
+## Astrodynamics and astrophysical observations
+
+`phydrax.applications.astrodynamics` binds scale, two-part epoch, and frame identity to
+Cartesian states while keeping numerical solver time relative and dense. Universal
+Kepler, modified-equinoctial conversion, Lambert branches, native force composition,
+tabulated ephemerides, orbital events, direct and nearly-Keplerian N-body dynamics,
+CR3BP, rigid-spacecraft loads, and measurement Jacobians delegate general integration,
+geometry, particles, roots, and control to their existing owners.
+
+`phydrax.applications.astrophysics` projects those states into an observer frame and
+composes polynomial limb-darkened occultation with immutable photon-counting
+bandpasses. Binned, image, frequency, ray-transfer, and complex-field response objects
+are concrete array operators. Existing likelihood, state-space, posterior, and
+BlackJAX contracts remain the only inference boundary.
+
+Contacts, transfer-branch selection, event brackets, collisions, classical-element
+singularities, provider loading, and capacity changes are discrete or singular
+boundaries. Smooth fixed branches retain ordinary JAX derivatives; every other path
+must be judged through its explicit validity/status evidence.
 
 ## Differentiability boundary
 
