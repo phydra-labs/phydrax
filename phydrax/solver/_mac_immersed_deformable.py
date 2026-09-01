@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import IntFlag
 from typing import Any
 
 import equinox as eqx
@@ -16,6 +17,9 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.fem._immersed_marker import (
     PreparedFiniteElementImmersedMarkerMap,
+)
+from ..discretization.finite_volume._mac_marker_transfer import (
+    MACMarkerTransferDiagnostics,
 )
 from ..dynamics import SecondOrderDifferentialSystem
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
@@ -30,6 +34,19 @@ from ._mac_viscous import MACHelmholtzResult, MACHelmholtzSolvePlan
 
 
 StructuralEnergy = Callable[[Array, Any], Array]
+StructuralContactResidual = Callable[[Array, Array, Any], Array]
+
+
+class MACDeformableImmersedStatus(IntFlag):
+    SUCCESS = 0
+    NONLINEAR_FAILED = 1
+    TRANSFER_FAILED = 2
+    ROUTE_CHANGED = 4
+    DIVERGENCE_FAILED = 8
+    SLIP_FAILED = 16
+    PRESSURE_GAUGE_FAILED = 32
+    COUPLING_WORK_FAILED = 64
+    NONFINITE = 128
 
 
 class MACDeformableImmersedEnergyLedger(StrictModule):
@@ -44,12 +61,14 @@ class MACDeformableImmersedEnergyLedger(StrictModule):
 
 
 class MACDeformableImmersedState(StrictModule):
+    time: Array
     fluid_state: Array
     configuration: Array
     structural_velocity: Array
     pressure: Array
     marker_force_density: Array
     accepted_steps: Array
+    status: Array
 
 
 class MACDeformableImmersedStepResult(StrictModule):
@@ -58,8 +77,14 @@ class MACDeformableImmersedStepResult(StrictModule):
     nonlinear: NonlinearResult
     helmholtz: MACHelmholtzResult
     energy: MACDeformableImmersedEnergyLedger
+    transfer_diagnostics: MACMarkerTransferDiagnostics
     divergence: Array
     marker_slip: Array
+    divergence_norm: Array
+    slip_norm: Array
+    gauge_defect: Array
+    kkt_residual_norm: Array
+    status: Array
     route_unchanged: Array
     finite: Array
     accepted: Array
@@ -78,6 +103,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
     marker_map: PreparedFiniteElementImmersedMarkerMap
     structure: SecondOrderDifferentialSystem
     structural_energy: StructuralEnergy
+    structural_contact_residual: StructuralContactResidual | None
     energy_id: str = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
     helmholtz: MACHelmholtzSolvePlan
@@ -98,6 +124,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         energy_id: str,
         nonlinear_method: NewtonKrylov | None = None,
         termination: NonlinearTermination | None = None,
+        structural_contact_residual: StructuralContactResidual | None = None,
     ):
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
@@ -107,7 +134,9 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
             raise TypeError("marker_map must be PreparedFiniteElementImmersedMarkerMap.")
         if not isinstance(structure, SecondOrderDifferentialSystem):
             raise TypeError("structure must be SecondOrderDifferentialSystem.")
-        if marker_map.configuration_space.size != int(jnp.prod(jnp.asarray(structure.state_shape))):
+        if marker_map.configuration_space.size != int(
+            jnp.prod(jnp.asarray(structure.state_shape))
+        ):
             raise ValueError("FE marker-map and structural state dimensions differ.")
         if marker_map.markers.prepared_id != projection.transfer.markers.prepared_id:
             raise ValueError("FE map and immersed projection must share markers.")
@@ -126,17 +155,22 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         self.structure = structure
         self.structural_energy = structural_energy
         self.energy_id = identifier
+        if structural_contact_residual is not None and not callable(
+            structural_contact_residual
+        ):
+            raise TypeError("structural_contact_residual must be callable or None.")
+        self.structural_contact_residual = structural_contact_residual
         self.step_size = step
         self.helmholtz = MACHelmholtzSolvePlan(
             dynamics.momentum,
             fixed_mass_coefficient=1.0,
             fixed_diffusion_coefficient=step * viscosity,
         )
-        self.nonlinear_method = NewtonKrylov() if nonlinear_method is None else nonlinear_method
+        self.nonlinear_method = (
+            NewtonKrylov() if nonlinear_method is None else nonlinear_method
+        )
         self.termination = (
-            NonlinearTermination(maximum_steps=25)
-            if termination is None
-            else termination
+            NonlinearTermination(maximum_steps=25) if termination is None else termination
         )
         self.method_id = canonical_fingerprint(
             {
@@ -146,6 +180,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
                 "marker_map": marker_map.prepared_id,
                 "structure": structure.system_id,
                 "energy": identifier,
+                "contact": structural_contact_residual is not None,
                 "step_size": step,
             }
         )
@@ -156,12 +191,16 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         configuration: ArrayLike,
         structural_velocity: ArrayLike,
         /,
+        *,
+        time: ArrayLike = 0.0,
     ) -> MACDeformableImmersedState:
         fluid = self.dynamics.validate_state(fluid_state)
         q = jnp.asarray(configuration)
         v = jnp.asarray(structural_velocity)
         if q.shape != self.structure.state_shape or v.shape != q.shape:
-            raise ValueError("Structural initial arrays must match the second-order system.")
+            raise ValueError(
+                "Structural initial arrays must match the second-order system."
+            )
         dtype = fluid.dtype
         pressure = jnp.zeros(
             self.dynamics.momentum.operators.discretization.cell_shape, dtype=dtype
@@ -171,7 +210,14 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
             dtype=dtype,
         )
         return MACDeformableImmersedState(
-            fluid, q, v, pressure, marker_force, jnp.zeros((), dtype=jnp.int32)
+            jnp.asarray(time, dtype=dtype).reshape(()),
+            fluid,
+            q,
+            v,
+            pressure,
+            marker_force,
+            jnp.zeros((), dtype=jnp.int32),
+            jnp.asarray(int(MACDeformableImmersedStatus.SUCCESS), dtype=jnp.int32),
         )
 
     def step(
@@ -200,9 +246,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
             value + step * rate
             for value, rate in zip(current_velocity, explicit, strict=True)
         )
-        boundary_stage = self.dynamics.momentum.boundaries.evaluate(
-            attempted_time, args
-        )
+        boundary_stage = self.dynamics.momentum.boundaries.evaluate(attempted_time, args)
         helmholtz = self.helmholtz.solve(
             rhs, boundary_stage, initial_guess=current_velocity
         )
@@ -230,19 +274,26 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
             fluid_coordinates, q, v, pressure, multiplier = unknown
             fluid_velocity = tuple(operators.velocity_space.unflatten(fluid_coordinates))
             marker_kinematics = self.marker_map.kinematics(q, v)
-            relation = self.projection.transfer.relation(marker_kinematics.position)
+            relation = self.projection.transfer.relation_on_routes(
+                marker_kinematics.position,
+                self.projection.transfer.route_state(predictor_relation),
+            )
+            if boundaries.closure_kind == "neumann":
+                volumes = operators.discretization.cell_volumes.astype(pressure.dtype)
+                pressure_mean = jnp.sum(volumes * pressure) / jnp.sum(volumes)
+                pressure_value = pressure - pressure_mean
+            else:
+                pressure_mean = jnp.asarray(0.0, dtype=pressure.dtype)
+                pressure_value = pressure
             gradient = boundaries.pressure_gradient(
-                pressure,
+                pressure_value,
                 boundary_stage,
                 homogeneous=boundaries.closure_kind == "neumann",
             )
             spread = self.projection.transfer.spread(relation, multiplier)
             fluid_residual = boundaries.homogeneous_rate(
                 tuple(
-                    value
-                    - predictor
-                    + step * derivative
-                    - step * force
+                    value - predictor + step * derivative - step * force
                     for value, predictor, derivative, force in zip(
                         fluid_velocity,
                         helmholtz.value,
@@ -253,18 +304,22 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
                 )
             )
             acceleration = (v - initial_v) / step
-            structural = self.structure.evaluate(
-                attempted_time, q, v, acceleration, args
+            structural = self.structure.evaluate(attempted_time, q, v, acceleration, args)
+            contact_residual = (
+                jnp.zeros_like(structural)
+                if self.structural_contact_residual is None
+                else self.structural_contact_residual(q, v, args)
             )
             load = self.marker_map.structural_load(multiplier)
             structural_residual = (
                 structural
+                + contact_residual
                 + self.marker_map.configuration_space.flatten(load).reshape(
                     structural.shape
                 )
             )
             configuration_residual = q - initial_q - step * v
-            divergence = operators.divergence(fluid_velocity)
+            divergence = operators.divergence(fluid_velocity) + pressure_mean
             marker_slip = self.projection.transfer.gather(
                 relation, fluid_velocity
             ) - self.marker_map.active_velocity(v)
@@ -285,7 +340,13 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
             initial_guess,
             termination=self.termination,
         )
-        fluid_coordinates, q_candidate, v_candidate, pressure_candidate, multiplier_candidate = nonlinear.state
+        (
+            fluid_coordinates,
+            q_candidate,
+            v_candidate,
+            pressure_candidate,
+            multiplier_candidate,
+        ) = nonlinear.state
         candidate_velocity = tuple(operators.velocity_space.unflatten(fluid_coordinates))
         marker_candidate = self.marker_map.kinematics(q_candidate, v_candidate)
         relation_candidate = self.projection.transfer.relation(marker_candidate.position)
@@ -308,25 +369,31 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
                 )
             )
         )
-        finite = (
-            nonlinear.successful
-            & relation_candidate.successful
-            & jnp.all(jnp.isfinite(fluid_coordinates))
-            & jnp.all(jnp.isfinite(q_candidate))
-            & jnp.all(jnp.isfinite(v_candidate))
-            & jnp.all(jnp.isfinite(pressure_candidate))
-            & jnp.all(jnp.isfinite(multiplier_candidate))
+        volumes = operators.discretization.cell_volumes.astype(fluid_coordinates.dtype)
+        divergence_norm = jnp.sqrt(jnp.sum(volumes * divergence**2))
+        slip_norm = jnp.sqrt(
+            jnp.real(
+                self.marker_map.markers.active_velocity_space.inner(
+                    marker_slip, marker_slip
+                )
+            )
         )
-        accepted = finite & route_unchanged
-        candidate_state = MACDeformableImmersedState(
-            fluid_coordinates,
-            q_candidate,
-            v_candidate,
-            pressure_candidate,
+        pressure_value = (
+            operators.gauge_project(pressure_candidate)
+            if boundaries.closure_kind == "neumann"
+            else pressure_candidate
+        )
+        gauge_defect = (
+            jnp.abs(jnp.sum(volumes * pressure_value))
+            if boundaries.closure_kind == "neumann"
+            else jnp.asarray(0.0, dtype=pressure_value.dtype)
+        )
+        transfer_diagnostics = self.projection.transfer.diagnostics(
+            relation_candidate,
+            candidate_velocity,
             multiplier_candidate,
-            state.accepted_steps + jnp.asarray(1, dtype=jnp.int32),
         )
-        accepted_state = jax_tree_where(accepted, candidate_state, state)
+        kkt_residual_norm = nonlinear.diagnostics.final_residual_norm
         fluid_before = 0.5 * jnp.real(
             operators.velocity_space.inner(current_velocity, current_velocity)
         )
@@ -347,6 +414,7 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         structural_power = -jnp.real(
             self.marker_map.configuration_space.inner(v_candidate, structural_load)
         )
+        coupling_power_residual = fluid_power + structural_power
         energy = MACDeformableImmersedEnergyLedger(
             fluid_before,
             fluid_after,
@@ -354,24 +422,90 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
             structure_after,
             fluid_power,
             structural_power,
-            fluid_power + structural_power,
-            fluid_after
-            + structure_after
-            - fluid_before
-            - structure_before,
+            coupling_power_residual,
+            fluid_after + structure_after - fluid_before - structure_before,
         )
+        scale = jnp.maximum(
+            1.0,
+            jnp.max(
+                jnp.stack(
+                    (
+                        kkt_residual_norm,
+                        divergence_norm,
+                        slip_norm,
+                        jnp.abs(fluid_power),
+                        jnp.abs(structural_power),
+                    )
+                )
+            ),
+        )
+        tolerance = self.projection.tolerance * scale
+        finite = (
+            relation_candidate.successful
+            & transfer_diagnostics.finite
+            & jnp.all(jnp.isfinite(fluid_coordinates))
+            & jnp.all(jnp.isfinite(q_candidate))
+            & jnp.all(jnp.isfinite(v_candidate))
+            & jnp.all(jnp.isfinite(pressure_value))
+            & jnp.all(jnp.isfinite(multiplier_candidate))
+            & jnp.isfinite(coupling_power_residual)
+        )
+        checks = (
+            (nonlinear.successful, MACDeformableImmersedStatus.NONLINEAR_FAILED),
+            (
+                relation_candidate.successful & transfer_diagnostics.successful,
+                MACDeformableImmersedStatus.TRANSFER_FAILED,
+            ),
+            (route_unchanged, MACDeformableImmersedStatus.ROUTE_CHANGED),
+            (
+                divergence_norm <= tolerance,
+                MACDeformableImmersedStatus.DIVERGENCE_FAILED,
+            ),
+            (slip_norm <= tolerance, MACDeformableImmersedStatus.SLIP_FAILED),
+            (
+                gauge_defect <= self.projection.tolerance,
+                MACDeformableImmersedStatus.PRESSURE_GAUGE_FAILED,
+            ),
+            (
+                jnp.abs(coupling_power_residual) <= tolerance,
+                MACDeformableImmersedStatus.COUPLING_WORK_FAILED,
+            ),
+            (finite, MACDeformableImmersedStatus.NONFINITE),
+        )
+        status = jnp.asarray(int(MACDeformableImmersedStatus.SUCCESS), dtype=jnp.int32)
+        accepted = jnp.asarray(True)
+        for passed, flag in checks:
+            accepted = accepted & passed
+            status = status | jnp.where(passed, 0, int(flag)).astype(jnp.int32)
+        candidate_state = MACDeformableImmersedState(
+            attempted_time,
+            fluid_coordinates,
+            q_candidate,
+            v_candidate,
+            pressure_value,
+            multiplier_candidate,
+            state.accepted_steps + jnp.asarray(1, dtype=jnp.int32),
+            status,
+        )
+        accepted_state = jax_tree_where(accepted, candidate_state, state)
         return MACDeformableImmersedStepResult(
-            candidate_state,
-            accepted_state,
-            nonlinear,
-            helmholtz,
-            energy,
-            divergence,
-            marker_slip,
-            route_unchanged,
-            finite,
-            accepted,
-            self.method_id,
+            candidate_state=candidate_state,
+            accepted_state=accepted_state,
+            nonlinear=nonlinear,
+            helmholtz=helmholtz,
+            energy=energy,
+            transfer_diagnostics=transfer_diagnostics,
+            divergence=divergence,
+            marker_slip=marker_slip,
+            divergence_norm=divergence_norm,
+            slip_norm=slip_norm,
+            gauge_defect=gauge_defect,
+            kkt_residual_norm=kkt_residual_norm,
+            status=status,
+            route_unchanged=route_unchanged,
+            finite=finite,
+            accepted=accepted,
+            method_id=self.method_id,
         )
 
 
@@ -391,4 +525,5 @@ __all__ = [
     "MACDeformableImmersedState",
     "MACDeformableImmersedStepResult",
     "StructuralEnergy",
+    "StructuralContactResidual",
 ]
