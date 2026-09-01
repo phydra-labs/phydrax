@@ -16,8 +16,8 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 from ..imaging import ImageGeometry2D, ImagePair2D
-from ._report import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 
 
 ImageLoader = Callable[[Path], Any]

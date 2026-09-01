@@ -10,16 +10,16 @@ from typing import Literal
 
 import numpy as np
 
-from ..imaging import DenseDisplacementField2D
-from ..piv import PhysicalPIVResult2D
-from ._piv_field import field_columns, field_from_columns
-from ._report import (
+from ...interchange import (
     AdapterError,
     AdapterLoss,
     AdapterReport,
     AdapterStatus,
     require_lossless,
 )
+from ..imaging import DenseDisplacementField2D
+from ..piv import PhysicalPIVResult2D
+from ._piv_field import field_columns, field_from_columns
 
 
 OpenPIVCoordinateConvention = Literal["physical", "image"]

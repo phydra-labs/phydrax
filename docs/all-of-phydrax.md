@@ -277,6 +277,37 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Evidence-bearing bioinformatics
+
+`phydrax.bioinformatics` separates host biological identity and interchange from
+fixed-shape numeric JAX state. Shared foundation contracts name feature dictionaries,
+ontologies, biospecimen lineage, experimental units, exchangeability, biological
+splits, leakage audits, and independently classified scientific/numerical/
+differentiation claims. Domain owners cover sequence and translation; reference-aware
+genomics and bounded variation inference; fixed-tree phylogenetics and population
+genetics; omics and spatial experimental design; spectra and acquisition;
+metagenomics; macromolecular structure and strict atomistic lowering; exact declared
+pseudoknot-free RNA grammars; typed systems/flux/kinetic analysis; and native
+provenance-bound biological models.
+
+Exact-model results are exact only for their declared finite state/path/tree/grammar/
+network model. Banded and supplied-candidate routes retain conditioning; dispersion
+and asymptotic tests remain approximate; relaxed design outputs remain distinct from
+repaired discrete sequences; progressive/search/pseudoknot methods retain heuristic
+status; learned results retain artifact, license, split, homology, and pretraining
+overlap provenance. Capacities, masks, units, references, validity, and status remain
+observable, and technical rows never silently become independent experimental units.
+
+Host FASTX, GFF3/GTF/BED, VCF-like, SAM/BAM/CRAM, mmCIF, OME-NGFF metadata, SBML AST,
+and mzML-like boundaries do not download data or place strings/external objects in
+PyTrees. Optional local readers are limited to pysam and Pyteomics entrypoints. The
+layer does not imply exhaustive mapping, assembly, or discovery; clinical
+interpretation; bundled empirical RNA thermodynamics; structure repair or force-field
+assignment; arbitrary SBML expression execution; or validation of learned-model
+generalization. See [Guide → Bioinformatics](guides_bioinformatics.md), the
+[bioinformatics cookbooks](cookbook/index.md), and
+[API → Bioinformatics](api/bioinformatics/index.md).
+
 ### Experimental velocimetry from images to trajectories
 
 `phydrax.velocimetry` keeps particle image velocimetry, dense image displacement,

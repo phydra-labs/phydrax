@@ -11,9 +11,9 @@ from typing import Any, Literal
 
 import numpy as np
 
+from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 from ..imaging import DenseDisplacementField2D
 from ._piv_field import field_columns, field_from_columns
-from ._report import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 
 
 PivpyYAxis = Literal["down", "up"]

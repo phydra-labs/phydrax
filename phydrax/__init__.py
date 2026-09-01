@@ -51,6 +51,7 @@ from . import (
 )
 
 from . import atomistic
+from . import bioinformatics
 
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
@@ -60,6 +61,7 @@ from . import applications
 __all__ = [
     "atomistic",
     "applications",
+    "bioinformatics",
     "backends",
     "combinatorial",
     "circuit",
