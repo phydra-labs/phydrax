@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added fixed-topology one-phase free-surface ALE hydrodynamics with graph
+  geometry, extensive mapped momentum/scalars, conservative kinematic GCL,
+  nonorthogonal mapped Hodge, mixed pressure projection, strongly coupled
+  second-order stepping, accepted work ledgers, strict restart/output,
+  qualification, examples, and benchmarks.
 - Added hydrostatic primitive-equation ocean modeling with prognostic free surface,
   extensive layer transports and tracer inventories, implicit and split-explicit
   external modes, z-star and partial-cell geometry, freshwater volume sources,
