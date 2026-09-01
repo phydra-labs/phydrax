@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -389,6 +389,125 @@ class LinearSolveResult(StrictModule):
         return self.status == int(LinearSolveStatus.SUCCESS)
 
 
+LinearSolveCheckKind: TypeAlias = Literal["primal", "adjoint"]
+
+
+class LinearSolveCheckEvidence(StrictModule):
+    """Fail-closed assessment of one computed primal or adjoint solve."""
+
+    status: Array
+    true_residual_norm: Array
+    rhs_norm: Array
+    relative_residual: Array
+    residual_threshold: Array
+    finite: Array
+    stability_lower_bound: Array
+    status_ok: Array
+    converged: Array
+    residual_ok: Array
+    stability_ok: Array
+    compatibility_residual: Array
+    gauge_residual: Array
+    nullspace_ok: Array
+    primal_valid: Array
+    valid: Array
+    kind: LinearSolveCheckKind = eqx.field(static=True)
+    operator_id: str = eqx.field(static=True)
+    stability_checked: bool = eqx.field(static=True)
+    stability_certificate_id: str | None = eqx.field(static=True)
+    nullspace_checked: bool = eqx.field(static=True)
+    nullspace_certificate_id: str | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        kind: LinearSolveCheckKind,
+        operator_id: str,
+        status: Any,
+        true_residual_norm: Any,
+        rhs_norm: Any,
+        residual_threshold: Any,
+        finite: Any,
+        converged: Any,
+        stability_lower_bound: Any,
+        stability_checked: bool,
+        stability_ok: Any,
+        stability_certificate_id: str | None,
+        compatibility_residual: Any,
+        gauge_residual: Any,
+        nullspace_checked: bool,
+        nullspace_ok: Any,
+        nullspace_certificate_id: str | None,
+        primal_valid: Any = True,
+    ):
+        if kind not in ("primal", "adjoint"):
+            raise ValueError("kind must be 'primal' or 'adjoint'.")
+        identifier = str(operator_id)
+        if not identifier:
+            raise ValueError("operator_id must be non-empty.")
+        status_ = jnp.asarray(status, dtype=jnp.int32)
+        shape = status_.shape
+
+        def broadcast(value: Any, dtype: Any | None = None) -> Array:
+            array = jnp.asarray(value, dtype=dtype)
+            return jnp.broadcast_to(array, shape)
+
+        residual = broadcast(true_residual_norm)
+        rhs = broadcast(rhs_norm)
+        threshold = broadcast(residual_threshold)
+        finite_ = broadcast(finite, bool)
+        stability_bound = broadcast(stability_lower_bound)
+        converged_ = broadcast(converged, bool)
+        stability_ok_ = broadcast(stability_ok, bool)
+        compatibility = broadcast(compatibility_residual)
+        gauge = broadcast(gauge_residual)
+        nullspace_ok_ = broadcast(nullspace_ok, bool)
+        primal_valid_ = broadcast(primal_valid, bool)
+        status_ok = status_ == int(LinearSolveStatus.SUCCESS)
+        residual_ok = (
+            jnp.isfinite(residual)
+            & jnp.isfinite(rhs)
+            & jnp.isfinite(threshold)
+            & (residual <= threshold)
+        )
+        relative = jnp.where(rhs > 0.0, residual / rhs, residual)
+        valid = (
+            finite_
+            & status_ok
+            & converged_
+            & residual_ok
+            & stability_ok_
+            & nullspace_ok_
+            & primal_valid_
+        )
+        self.status = status_
+        self.true_residual_norm = residual
+        self.rhs_norm = rhs
+        self.relative_residual = relative
+        self.residual_threshold = threshold
+        self.finite = finite_
+        self.stability_lower_bound = stability_bound
+        self.status_ok = status_ok
+        self.converged = converged_
+        self.residual_ok = residual_ok
+        self.stability_ok = stability_ok_
+        self.compatibility_residual = compatibility
+        self.gauge_residual = gauge
+        self.nullspace_ok = nullspace_ok_
+        self.primal_valid = primal_valid_
+        self.valid = valid
+        self.kind = kind
+        self.operator_id = identifier
+        self.stability_checked = bool(stability_checked)
+        self.stability_certificate_id = (
+            None if stability_certificate_id is None else str(stability_certificate_id)
+        )
+        self.nullspace_checked = bool(nullspace_checked)
+        self.nullspace_certificate_id = (
+            None if nullspace_certificate_id is None else str(nullspace_certificate_id)
+        )
+
+
 class RecycledLinearSolveResult(StrictModule):
     """An ordinary linear result paired with immutable updated recycling state."""
 
@@ -438,6 +557,8 @@ __all__ = [
     "LinearSolveDiagnostics",
     "LinearPrecisionEvidence",
     "LinearSolveProvenance",
+    "LinearSolveCheckEvidence",
+    "LinearSolveCheckKind",
     "LinearSolveResult",
     "LinearSolveStatus",
     "linear_status_message",

@@ -16,6 +16,7 @@ from jaxtyping import Array
 
 from .._precision import precision_dtype_name
 from .._strict import StrictModule
+from ._certificates import StabilityLowerBound
 from ._materialization import MaterializationPolicy
 from ._preconditioning import PreconditioningPolicy
 from ._recycling_policy import (
@@ -607,6 +608,96 @@ class SolveResourcePolicy(StrictModule):
         ) = values
 
 
+def _linear_check_parameters(
+    relative_tolerance: float,
+    absolute_tolerance: float,
+    nullspace_tolerance: float,
+    stability_lower_bound: StabilityLowerBound | None,
+    /,
+) -> tuple[float, float, float, StabilityLowerBound | None]:
+    relative = float(relative_tolerance)
+    absolute = float(absolute_tolerance)
+    nullspace = float(nullspace_tolerance)
+    if (
+        not math.isfinite(relative)
+        or not math.isfinite(absolute)
+        or not math.isfinite(nullspace)
+        or relative < 0.0
+        or absolute < 0.0
+        or nullspace < 0.0
+    ):
+        raise ValueError("Check tolerances must be finite and non-negative.")
+    if stability_lower_bound is not None and not isinstance(
+        stability_lower_bound, StabilityLowerBound
+    ):
+        raise TypeError("stability_lower_bound must be a StabilityLowerBound or None.")
+    return relative, absolute, nullspace, stability_lower_bound
+
+
+class LinearSolveCheckPolicy(StrictModule):
+    """Independent acceptance requirements for a computed primal solve."""
+
+    relative_tolerance: float = eqx.field(static=True)
+    absolute_tolerance: float = eqx.field(static=True)
+    nullspace_tolerance: float = eqx.field(static=True)
+    stability_lower_bound: StabilityLowerBound | None
+    require_nullspace: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        relative_tolerance: float = 1e-8,
+        absolute_tolerance: float = 1e-10,
+        nullspace_tolerance: float = 1e-10,
+        stability_lower_bound: StabilityLowerBound | None = None,
+        require_nullspace: bool = False,
+    ):
+        (
+            self.relative_tolerance,
+            self.absolute_tolerance,
+            self.nullspace_tolerance,
+            self.stability_lower_bound,
+        ) = _linear_check_parameters(
+            relative_tolerance,
+            absolute_tolerance,
+            nullspace_tolerance,
+            stability_lower_bound,
+        )
+        self.require_nullspace = bool(require_nullspace)
+
+
+class LinearDerivativeSolvePolicy(StrictModule):
+    """Independent acceptance requirements for an adjoint derivative solve."""
+
+    relative_tolerance: float = eqx.field(static=True)
+    absolute_tolerance: float = eqx.field(static=True)
+    nullspace_tolerance: float = eqx.field(static=True)
+    stability_lower_bound: StabilityLowerBound | None
+    require_nullspace: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        relative_tolerance: float = 1e-8,
+        absolute_tolerance: float = 1e-10,
+        nullspace_tolerance: float = 1e-10,
+        stability_lower_bound: StabilityLowerBound | None = None,
+        require_nullspace: bool = False,
+    ):
+        (
+            self.relative_tolerance,
+            self.absolute_tolerance,
+            self.nullspace_tolerance,
+            self.stability_lower_bound,
+        ) = _linear_check_parameters(
+            relative_tolerance,
+            absolute_tolerance,
+            nullspace_tolerance,
+            stability_lower_bound,
+        )
+        self.require_nullspace = bool(require_nullspace)
+
+
 class LinearSolvePolicy(StrictModule):
     """Composable mathematical, differentiation, and resource requirements."""
 
@@ -705,6 +796,8 @@ __all__ = [
     "SparseCholesky",
     "LinearSolveControl",
     "LinearSolvePolicy",
+    "LinearDerivativeSolvePolicy",
+    "LinearSolveCheckPolicy",
     "LSMR",
     "MINRES",
     "PCG",

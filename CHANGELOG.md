@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added an authoritative surface and boundary-integral platform with checked
+  linear solves, scalar Calderón formulations, periodic scalar kernels,
+  FEM–BEM coupling, finite-depth potential-flow hydrodynamics, adaptive and
+  block execution, portable archives, static elasticity and Stokes kernels,
+  convolution quadrature, RWG Maxwell support, and fail-closed commercial
+  qualification evidence.
 - Reconciled cosmology, astrodynamics, and astrophysical-observation foundations:
   dimensional scales, artifacts and derivative capabilities, labelled observation/
   covariance/likelihood algebra, direct and hierarchical particle gravity, KDK
