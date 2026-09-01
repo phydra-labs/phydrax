@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
@@ -16,17 +15,17 @@ from ...equations import (
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ._models import (
-    _embed_neo_hookean_deformation,
+from ...operators.mechanics import (
+    finite_strain_kinematics,
     neo_hookean_first_piola,
     neo_hookean_reference_energy,
+    neo_hookean_tangent,
     NeoHookeanParameters,
 )
 
 
 class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
-    """Stateless logarithmic Neo-Hookean material for plane strain or 3-D MPM."""
+    """Stateless logarithmic Neo-Hookean material for 1-D, plane strain, or 3-D MPM."""
 
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
@@ -36,10 +35,14 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
 
     def __init__(self, dimension: int, /):
         dimension_ = int(dimension)
-        if dimension_ not in (2, 3):
-            raise ValueError("Neo-Hookean MPM supports plane strain and 3-D only.")
+        if dimension_ not in (1, 2, 3):
+            raise ValueError("Neo-Hookean MPM supports dimensions one, two, and three.")
         self.dimension = dimension_
-        self.kinematics = "plane_strain" if dimension_ == 2 else "three_dimensional"
+        self.kinematics = (
+            "one_dimensional"
+            if dimension_ == 1
+            else ("plane_strain" if dimension_ == 2 else "three_dimensional")
+        )
         self.state_shape = (0,)
         self.capabilities = MPMConstitutiveCapabilities(
             stateful=False,
@@ -59,7 +62,14 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         )
 
     def _embed(self, deformation):
-        return _embed_neo_hookean_deformation(deformation)
+        if self.dimension == 3:
+            return deformation
+        shape = deformation.shape[:-2] + (3, 3)
+        embedded = jnp.zeros(shape, dtype=deformation.dtype)
+        embedded = embedded.at[..., : self.dimension, : self.dimension].set(deformation)
+        for axis in range(self.dimension, 3):
+            embedded = embedded.at[..., axis, axis].set(1.0)
+        return embedded
 
     def initialize_state(self, batch_shape, dtype, /):
         return jnp.empty(tuple(batch_shape) + (0,), dtype=dtype)
@@ -92,28 +102,25 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         if density.shape != batch_shape:
             raise ValueError(f"Reference density must have shape {batch_shape}.")
 
-        embedded = self._embed(deformation)
-        inverse = solve_small_linear(
-            SmallLinearSolvePlan(3),
-            embedded,
-            jnp.broadcast_to(jnp.eye(3, dtype=embedded.dtype), embedded.shape),
+        kinematic_response = finite_strain_kinematics(self._embed(deformation))
+        determinant = kinematic_response.jacobian
+        finite_input = jnp.all(
+            jnp.isfinite(kinematic_response.deformation_gradient), axis=(-2, -1)
         )
-        determinant = inverse.determinant
-        finite_input = jnp.all(jnp.isfinite(embedded), axis=(-2, -1))
         valid = (
             finite_input
-            & inverse.successful
-            & jnp.isfinite(determinant)
-            & (determinant > 0.0)
+            & kinematic_response.admissible
             & jnp.isfinite(density)
             & (density > 0.0)
         )
 
-        first_piola_3d = neo_hookean_first_piola(embedded, parameters)
-        energy = neo_hookean_reference_energy(embedded, parameters)
+        first_piola_3d = neo_hookean_first_piola(kinematic_response, parameters)
+        energy = neo_hookean_reference_energy(kinematic_response, parameters)
         first_piola = first_piola_3d[..., : self.dimension, : self.dimension]
 
-        inverse_in_plane = inverse.value[..., : self.dimension, : self.dimension]
+        inverse_in_plane = kinematic_response.inverse_deformation_gradient[
+            ..., : self.dimension, : self.dimension
+        ]
         absolute_inverse = jnp.abs(inverse_in_plane)
         norm_one = jnp.max(jnp.sum(absolute_inverse, axis=-2), axis=-1)
         norm_infinity = jnp.max(jnp.sum(absolute_inverse, axis=-1), axis=-1)
@@ -143,7 +150,7 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
             admissible=valid,
             diagnostics={
                 "determinant": determinant,
-                "inverse_condition_estimate": inverse.condition_estimate,
+                "inverse_condition_estimate": kinematic_response.inverse_condition_estimate,
                 "inverse_norm_squared_bound": inverse_norm_squared_bound,
                 "longitudinal_modulus_bound": longitudinal_modulus_bound,
             },
@@ -167,31 +174,24 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
             time,
             step_size,
         )
-        deformation = jnp.asarray(deformation_gradient)
-        batch_shape = deformation.shape[:-2]
-        flat_deformation = deformation.reshape((-1, self.dimension, self.dimension))
-
-        def stress(value):
-            return self.evaluate(
-                value[None, ...],
-                jnp.empty((1, 0), dtype=value.dtype),
-                jnp.ones((1,), dtype=value.dtype),
-                parameters,
-                time,
-                step_size,
-            ).first_piola[0]
-
-        tangent = jax.vmap(jax.jacfwd(stress))(flat_deformation)
-        tangent = tangent.reshape(
-            batch_shape
-            + (
-                self.dimension,
-                self.dimension,
-                self.dimension,
-                self.dimension,
-            )
+        tangent_3d = neo_hookean_tangent(
+            self._embed(jnp.asarray(deformation_gradient)), parameters
         )
-        tangent_successful = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
+        tangent = tangent_3d[
+            ...,
+            : self.dimension,
+            : self.dimension,
+            : self.dimension,
+            : self.dimension,
+        ]
+        tangent_successful = response.successful & jnp.all(
+            jnp.isfinite(tangent), axis=(-4, -3, -2, -1)
+        )
+        tangent = jnp.where(
+            tangent_successful[..., None, None, None, None],
+            tangent,
+            jnp.zeros_like(tangent),
+        )
         return MPMLinearizedConstitutiveResponse(response, tangent, tangent_successful)
 
 

@@ -4,16 +4,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 import equinox as eqx
-import jax
-import jax.numpy as jnp
-import numpy as np
 
-from .._array_archive import read_array_archive, write_array_archive
+from .._array_archive import (
+    pack_array_tree,
+    read_array_archive,
+    unpack_array_tree,
+    write_array_archive,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -21,48 +21,6 @@ from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 
 
 _CHECKPOINT_FORMAT = "phydrax-atomistic-dynamics-checkpoint"
-
-
-def _pack_array_tree(
-    prefix: str, tree: Any, arrays: dict[str, object], /
-) -> dict[str, object]:
-    path_leaves, _ = jax.tree_util.tree_flatten_with_path(tree)
-    paths: list[str] = []
-    names: list[str] = []
-    for index, (path, leaf) in enumerate(path_leaves):
-        value = np.asarray(leaf)
-        if value.dtype.hasobject:
-            raise TypeError("Atomistic checkpoint state cannot contain object arrays.")
-        name = f"{prefix}/{index:06d}"
-        paths.append(jax.tree_util.keystr(path) or "<root>")
-        names.append(name)
-        arrays[name] = value
-    return {"paths": paths, "arrays": names, "num_leaves": len(names)}
-
-
-def _unpack_array_tree(
-    specification: Mapping[str, Any],
-    arrays: Mapping[str, Any],
-    template: Any,
-    /,
-) -> Any:
-    template_path_leaves, treedef = jax.tree_util.tree_flatten_with_path(template)
-    expected_paths = [
-        jax.tree_util.keystr(path) or "<root>" for path, _ in template_path_leaves
-    ]
-    names = specification.get("arrays")
-    if specification.get("paths") != expected_paths or not isinstance(names, list):
-        raise ValueError("Checkpoint state tree does not match the runtime template.")
-    leaves = []
-    for name, (_, template_leaf) in zip(names, template_path_leaves, strict=True):
-        if not isinstance(name, str) or name not in arrays:
-            raise ValueError("Checkpoint state array is missing.")
-        value = jnp.asarray(arrays[name])
-        expected = jnp.asarray(template_leaf)
-        if value.shape != expected.shape or value.dtype != expected.dtype:
-            raise ValueError("Checkpoint state array shape or dtype changed.")
-        leaves.append(value)
-    return jax.tree_util.tree_unflatten(treedef, leaves)
 
 
 class AtomisticCheckpointPlan(StrictModule, NonTrainableState):
@@ -103,7 +61,7 @@ def write_atomistic_checkpoint(
     if state.prepared_dynamics_id != plan.dynamics.prepared_id:
         raise ValueError("Checkpoint state belongs to another dynamics runtime.")
     arrays: dict[str, object] = {}
-    specification = _pack_array_tree("runtime", state, arrays)
+    specification = pack_array_tree("runtime", state, arrays)
     manifest = {
         "format": _CHECKPOINT_FORMAT,
         "kind": "atomistic-dynamics-runtime",
@@ -176,7 +134,7 @@ def read_atomistic_checkpoint(
     for name, expected_value in identities.items():
         if manifest[name] != expected_value:
             raise ValueError(f"Atomistic checkpoint {name} does not match the runtime.")
-    state = _unpack_array_tree(manifest["state"], arrays, template)
+    state = unpack_array_tree(manifest["state"], arrays, template)
     if not isinstance(state, AtomisticDynamicsState):
         raise TypeError("Checkpoint did not reconstruct AtomisticDynamicsState.")
     payload_id = str(manifest["payload_id"])

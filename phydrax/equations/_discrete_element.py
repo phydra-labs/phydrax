@@ -19,6 +19,7 @@ from ..discretization import DiscretizationBundle, DiscretizationRecord
 from ..discretization.particle import (
     AbstractParticleNeighborhoodPlan,
     CellListParticleNeighborhoodPlan,
+    HierarchicalRadiusParticleNeighborhoodPlan,
     ImplicitDEMBarrier,
     ParticleDiscretization,
     ParticleExecutionPolicy,
@@ -189,15 +190,31 @@ def compile_discrete_element_problem(
     if problem.gravity.shape != (particles.ambient_dimension,):
         raise ValueError("Problem gravity does not match particle ambient dimension.")
     bodies = spheres.prepare(particles)
-    active_materials = np.asarray(bodies.material_ids)[
-        np.asarray(particles.active_mask, dtype=bool)
-    ]
+    active_mask = np.asarray(particles.active_mask, dtype=bool)
+    body_radii = np.asarray(bodies.radii, dtype=float)
+    body_materials = np.asarray(bodies.material_ids)
+    active_materials = body_materials[active_mask]
     if np.any(active_materials >= problem.materials.material_count):
         raise ValueError("Rigid-sphere material ID is out of range.")
-    required = 2.0 * float(
-        np.max(np.asarray(bodies.radii)[np.asarray(particles.active_mask, dtype=bool)])
+    interaction_extents = method.contact.interaction_extents_for_radii(
+        body_radii[active_mask],
+        active_materials,
+        problem.materials.material_count,
     )
-    required = required + method.contact.interaction_range
+    required = 2.0 * float(np.max(interaction_extents))
+    if isinstance(neighborhood, HierarchicalRadiusParticleNeighborhoodPlan):
+        hierarchy_radii = np.asarray(neighborhood.interaction_radii, dtype=float)
+        if hierarchy_radii.shape != body_radii.shape:
+            raise ValueError(
+                "Hierarchical interaction radii must match rigid-sphere capacity."
+            )
+        if np.any(
+            hierarchy_radii[active_mask]
+            < interaction_extents - 32.0 * np.finfo(interaction_extents.dtype).eps
+        ):
+            raise ValueError(
+                "Hierarchical interaction radii do not cover contact-law envelopes."
+            )
     if isinstance(neighborhood, CellListParticleNeighborhoodPlan):
         if neighborhood.search_radius < required:
             raise ValueError(

@@ -174,8 +174,8 @@ boundary.
 
 Executable application namespaces live under `phydrax.applications`:
 phase-field Allen-Cahn/Cahn-Hilliard, finite-strain crystal plasticity,
-frictionless persistent-pair contact, phase-field fracture, and fixed-crack
-XFEM classification/enrichment.
+fixed-capacity barrier contact with conservative continuous step safety,
+phase-field fracture, and fixed-crack XFEM classification/enrichment.
 
 
 ## Smoothed finite elements

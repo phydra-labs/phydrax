@@ -65,13 +65,6 @@ from ._convex_contact import (
     PreparedConvexShape,
 )
 from ._core import ParticleDiscretization, ParticleSetPlan
-from ._deformable_contact import (
-    DeformableContactEvaluation,
-    DeformableContactPlan,
-    DeformableContactRouteKind,
-    DeformableContactTransposeResult,
-    PreparedDeformableContact,
-)
 from ._dem import (
     DEMBodyPropertyUpdateResult,
     DEMDiagnostics,
@@ -110,6 +103,8 @@ from ._dem_boundary import (
 )
 from ._dem_cohesion import (
     AbstractDEMCohesionPlan,
+    bagheri_capillary_bridge_surface_area,
+    BagheriCapillaryBridgePlan,
     CompositeDEMCohesionPlan,
     DEMCohesionComponentHistory,
     DEMCohesionResponse,
@@ -150,10 +145,23 @@ from ._dem_inverse import (
     evaluate_dem_inverse,
     evaluate_dem_parameter_ensemble,
 )
+from ._dem_liquid import (
+    ConservedLiquidBridgeProcessPlan,
+    DEMLiquidAllocation,
+    DEMLiquidEvaluation,
+    DEMLiquidState,
+)
 from ._dem_multicontact import (
     AbstractDEMContactGraphCorrectionPlan,
     DEMMulticontactCorrection,
     ElasticHalfSpaceMulticontactPlan,
+)
+from ._dem_periodic import (
+    dem_bulk_stress,
+    DEMBulkStress,
+    DEMPeriodicCellControlPlan,
+    DEMPeriodicCellState,
+    DEMPeriodicCellUpdate,
 )
 from ._dem_process_events import (
     fragment_particle_with_growth,
@@ -346,7 +354,7 @@ from ._particle_morphology import (
     deactivate_particle_internal_state,
     DensityPorosityMorphologyPlan,
     fragment_particle_internal_batch,
-    ParticleDeactivationResult,
+    ParticleDeactivationResult as ParticleInternalDeactivationResult,
     ParticleDynamicBodyProperties,
     ParticleMorphologyEvaluation,
     ThermochemicalFragmentationEvaluation,
@@ -367,6 +375,16 @@ from ._particle_surface_exchange import (
     ParticleContactExchangePlan,
 )
 from ._periodic_cell import ParticleCell
+from ._population import (
+    ParticleAllocationRequest,
+    ParticleAllocationResult,
+    ParticleDeactivationResult,
+    ParticlePopulationPlan,
+    ParticlePopulationState,
+    ParticlePopulationStatus,
+    ParticleSlotReusePolicy,
+    update_particle_population,
+)
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._production_boundaries import (
     BoundaryFeatureKind,
@@ -861,6 +879,14 @@ __all__ = [
     "ParticlePairGeometry",
     "ParticlePairRelation",
     "ParticlePrecisionPolicy",
+    "ParticleAllocationRequest",
+    "ParticleAllocationResult",
+    "ParticleDeactivationResult",
+    "ParticlePopulationPlan",
+    "ParticlePopulationState",
+    "ParticlePopulationStatus",
+    "ParticleSlotReusePolicy",
+    "update_particle_population",
     "MorrisViscosityPlan",
     "ParticleSetPlan",
     "ParticleNeighborhoodState",
@@ -900,6 +926,15 @@ __all__ = [
     "DEMStepEvaluation",
     "DEMStepEnergyLedger",
     "DEMStepRestriction",
+    "ConservedLiquidBridgeProcessPlan",
+    "DEMLiquidAllocation",
+    "DEMLiquidEvaluation",
+    "DEMLiquidState",
+    "dem_bulk_stress",
+    "DEMBulkStress",
+    "DEMPeriodicCellControlPlan",
+    "DEMPeriodicCellState",
+    "DEMPeriodicCellUpdate",
     "HertzNormalContactPlan",
     "ImplicitDEMBarrier",
     "LinearSpringDashpotNormalPlan",
@@ -980,6 +1015,8 @@ __all__ = [
     "DEMRotationalResponse",
     "DEMTangentialHistory",
     "DMTContactCohesionPlan",
+    "bagheri_capillary_bridge_surface_area",
+    "BagheriCapillaryBridgePlan",
     "LinearCapillaryBridgePlan",
     "NearContactLubricationPlan",
     "DEMSupportMatrix",
@@ -1112,7 +1149,7 @@ __all__ = [
     "DensityPorosityMorphologyPlan",
     "ParticleDynamicBodyProperties",
     "ParticleMorphologyEvaluation",
-    "ParticleDeactivationResult",
+    "ParticleInternalDeactivationResult",
     "ThermochemicalFragmentationEvaluation",
     "ThermochemicalFragmentationPlan",
     "deactivate_particle_internal_state",
@@ -1140,11 +1177,6 @@ __all__ = [
     "ParticleCapacityStatus",
     "ParticleEpochInsertionResult",
     "ParticleEpochTransition",
-    "DeformableContactEvaluation",
-    "DeformableContactPlan",
-    "DeformableContactRouteKind",
-    "DeformableContactTransposeResult",
-    "PreparedDeformableContact",
     "accept_hard_contact_candidate",
     "CoulombConeProjection",
     "FrictionBallProjection",

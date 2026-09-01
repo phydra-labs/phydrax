@@ -107,7 +107,7 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
             physics_policy_id="flat-smooth-dark-energy-newtonian-growth",
             scale_id=background.scale.scale_id,
             source_kind="native",
-            differentiability="native-parameter",
+            differentiation="native-parameter",
         )
 
     def expansion_history(self, background: FLRWBackground, /) -> ExpansionHistory:

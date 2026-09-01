@@ -36,6 +36,7 @@ from ..discretization.particle._particle_epoch import (
     ParticleExecutionEpoch,
 )
 from ..discretization.particle._particle_morphology import ParticleDynamicBodyProperties
+from ..discretization.particle._population import ParticlePopulationState
 from ..discretization.particle._rigid_sphere import RigidSphereKinematics, RigidSphereLoad
 
 
@@ -225,13 +226,19 @@ def pullback_particle_epoch_transition(
         cotangent.kinematics.velocity[:capacity],
         cotangent.kinematics.angular_velocity[:capacity],
     )
+    population = ParticlePopulationState(
+        cotangent.body_properties.population.active[:capacity],
+        cotangent.body_properties.population.mass[:capacity],
+        cotangent.body_properties.population.incarnation[:capacity],
+        cotangent.body_properties.population.ever_occupied[:capacity],
+        cotangent.body_properties.population.retired[:capacity],
+    )
     properties = ParticleDynamicBodyProperties(
-        cotangent.body_properties.masses[:capacity],
+        population,
         cotangent.body_properties.inverse_masses[:capacity],
         cotangent.body_properties.radii[:capacity],
         cotangent.body_properties.inertias[:capacity],
         cotangent.body_properties.inverse_inertias[:capacity],
-        cotangent.body_properties.active[:capacity],
     )
     particle_history = _pullback_history(
         source.particle_history,
@@ -262,6 +269,8 @@ def pullback_particle_epoch_transition(
         None,
         loads,
         cotangent.energy,
+        cotangent.periodic_cell,
+        cotangent.liquid,
     )
 
 

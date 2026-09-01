@@ -149,6 +149,55 @@ reconstruction. `LaplaceLayerPotential3D` and `evaluate_laplace_layer_3d` requir
 compiled, continuous geometry evidence and reject unresolved or on-surface direct
 targets.
 
+## Three-dimensional DP0 Galerkin capacitance
+
+`prepare_laplace_single_layer_dp0_3d` binds one fixed `MeshRegion` to the existing
+triangle-DP0 finite-element space and `SurfacePanelization3D`. The initial contract
+accepts closed, outward-oriented components with strictly separated component bounding
+boxes. Nested, intersecting, inward-oriented, open, curved, or topology-changing surfaces
+are rejected.
+
+The prepared weak operator maps DP0 density coefficients to DP0 test covectors. Its
+Gram map is the diagonal face-area matrix `M`; the solve-facing strong operator is
+`M⁻¹ V`. The single-layer operator contains no trace jump. Singular and near interactions
+are removed from the streamed regular complement and evaluated by class-specific
+coincident, shared-edge, shared-vertex, or bounded near rules. Production actions cannot
+materialize. A dense oracle exists only when explicitly requested under a
+`MaterializationPolicy`.
+
+```text
+region = phx.geometry.MeshRegion(vertices, faces)
+galerkin = phx.operators.prepare_laplace_single_layer_dp0_3d(region)
+
+left = phx.discretization.EntitySelection(galerkin.surface_entities, left_face_mask)
+right = phx.discretization.EntitySelection(galerkin.surface_entities, right_face_mask)
+
+result = phx.solver.solve_laplace_capacitance_3d(
+    galerkin,
+    {"left": left, "right": right},
+    permittivity=epsilon,
+)
+```
+
+Conductor selections are canonicalized by name. They must be nonempty, disjoint, cover
+every face, and assign each connected surface component wholly to one conductor. Column
+`j` solves the unit-voltage problem for conductor `j`. The solved layer density `mu`
+satisfies `V mu = g`; physical charge density is `epsilon * mu`, and entry `(i, j)` of
+`result.capacitance` is its face-area integral over conductor `i`.
+
+`result.potentials[j]` is an ordinary `LaplaceLayerPotential3D` constructed from `mu`,
+not from the permittivity-scaled charge. It therefore works unchanged with
+`evaluate_laplace_layer_3d` and `evaluate_qbx_3d`. Changing permittivity scales charge
+and capacitance but not the unit-excitation potential.
+
+The default Jacobi-preconditioned FGMRES route is a bounded baseline for a first-kind
+equation, not a mesh-independent preconditioner. Per-column linalg diagnostics and the
+capacitance reciprocity defect remain observable. `valid` certifies finite assembly and
+successful solves; no continuum BEM discretization-error estimator is claimed. Solve
+differentiation, accelerated far fields, mixed boundary conditions, and fused
+multi-right-hand-side execution remain outside this contract.
+
+
 ## Reference near/far backend
 
 `AbstractLayerBackend` separates backend execution from layer representation.
@@ -165,6 +214,7 @@ revision identities; singular and near-panel corrections remain direct.
 - 2D outgoing Helmholtz kernels and explicit Brakhage--Werner CFIE assembly;
 - direct 3D Laplace triangular surface panels with target-centered Duffy self rules;
 - 3D coefficient-quadrature QBX with continuous signed-distance clearance;
+- 3D Laplace DP0 Galerkin single-layer assembly and conductor capacitance solves;
 - explicit direct near/far reference accounting;
 - genuine 2D Laplace FMM M2M/M2L/L2L translations;
 - global 2D QBX/FMM coupling with panel coefficient near corrections.

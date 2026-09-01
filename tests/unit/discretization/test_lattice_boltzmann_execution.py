@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.discretization.finite_difference._boundary import HaloPlan
 from phydrax.discretization.finite_difference._distributed import DistributedHaloSchedule
 from phydrax.discretization.finite_difference._stencil import StencilFootprint
@@ -13,6 +14,9 @@ from phydrax.discretization.lattice_boltzmann._aa import AALatticeBoltzmannPlan
 from phydrax.discretization.lattice_boltzmann._distributed import (
     LatticeBoltzmannHaloSchedule,
     ShardedLatticeBoltzmannExecutionPlan,
+)
+from phydrax.discretization.lattice_boltzmann._distributed_dynamics import (
+    PreparedDistributedLatticeBoltzmannDynamics,
 )
 from phydrax.discretization.lattice_boltzmann._execution import (
     LatticeBoltzmannExecutionStep,
@@ -222,3 +226,73 @@ def test_fused_realization_preserves_failure_and_diagnostic_reference_behavior()
     np.testing.assert_array_equal(production.populations, expected.populations)
     assert production.provenance.execution_kind == "fused"
     assert realized.provenance.backend == "jax"
+
+
+def test_prepared_distributed_dynamics_matches_actual_hydrodynamic_reference():
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(4, periodic=True),
+            phx.discretization.UniformCellAxisSpec(4, periodic=True),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
+    discretization = phx.discretization.LatticeBoltzmannPlan(
+        grid, phx.discretization.D2Q9()
+    ).prepare()
+    compiled = phx.equations.compile_lattice_boltzmann_problem(
+        phx.equations.LatticeBoltzmannProblem("distributed", 2),
+        discretization,
+        phx.discretization.LatticeBoltzmannMethodPlan(
+            phx.discretization.BGKCollisionPlan()
+        ),
+        phx.discretization.LatticeBoltzmannBoundaryPlan(),
+        time_step=0.01,
+    )
+    distributed = PreparedDistributedLatticeBoltzmannDynamics(
+        compiled.dynamics,
+        LatticeBoltzmannHaloSchedule(discretization.velocity_set, _halo_schedule(2)),
+    )
+    parameters = phx.discretization.LatticeBoltzmannRuntimeParameters(0.01)
+    coordinates = grid.points.reshape(grid.shape + (2,))
+    velocity = jnp.stack(
+        (
+            0.01 * jnp.sin(2.0 * jnp.pi * coordinates[..., 1]),
+            jnp.zeros(grid.shape),
+        ),
+        axis=-1,
+    )
+    initial = compiled.initialize_state(1.0, velocity, parameters)
+    qualified = distributed.realize(
+        initial,
+        step_count=3,
+        args=parameters,
+        verify_equivalence=True,
+        atol=1.0e-13,
+        rtol=1.0e-13,
+    )
+    production = distributed.realize(
+        initial,
+        step_count=3,
+        args=parameters,
+        verify_equivalence=False,
+    )
+
+    assert qualified.equivalence.equivalent
+    assert qualified.equivalence.failures_equivalent
+    np.testing.assert_allclose(
+        production.final_populations,
+        qualified.final_populations,
+        atol=1.0e-13,
+        rtol=1.0e-13,
+    )
+    assert distributed.dynamics.program_manifest.stages[2].exchange_fields == (
+        "post_collision",
+    )
+    failed = distributed.realize(
+        initial,
+        step_count=1,
+        args=phx.discretization.LatticeBoltzmannRuntimeParameters(0.0),
+        verify_equivalence=True,
+    )
+    assert not failed.successful
+    np.testing.assert_array_equal(failed.final_populations, initial)

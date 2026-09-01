@@ -26,8 +26,14 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and
   global collocation for future arguments.
+- [Partitioned coupling](coupling.md) compiles exact participant ports and field
+  exchanges into transactional explicit or implicitly certified fixed-window
+  coupling, including fixed-grid waveforms and native implicit sensitivities.
 - [Maxwell solvers](maxwell.md) distinguishes compatible cochain evolution,
   cochain frequency solves, and periodic layered Fourier-modal scattering.
+- [3D Laplace capacitance](laplace_capacitance.md) solves closed triangular
+  conductor surfaces with a DP0 single-layer Galerkin operator and retains
+  per-column linear, assembly, charge, and field-evaluation evidence.
 - [Functional solver](functional_solver.md) assembles training terms, evaluation
   terms, exact enforcement, and model-attached losses for optimization.
 - [Variational Monte Carlo](variational_monte_carlo.md) combines persistent Markov
@@ -61,6 +67,9 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
       valid saved or dense parameter states as named fields.
     - Use `trace_characteristics` for a backward Diffrax foot map, or
       `solve_characteristic_projection` to fit a sequence of pulled-back field slices.
+    - Use `phydrax.solver.coupling.CouplingGraph` plus explicit or implicit
+      coupling policies when independently prepared native subsystems exchange
+      endpoint fields or fixed-grid waveforms.
     - Use `DifferentialAlgebraicProblem`, a `TimeGrid`, and `solve_dae` for regular
       fixed-grid or adaptive index-one residuals `F(t, y, ydot, args) = 0`.
     - Use `AbstractDifferentiableDrivingPath` plus `solve_diffrax_cde` for smooth

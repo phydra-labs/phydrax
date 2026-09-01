@@ -288,3 +288,30 @@ def test_deep_ritz_energy_optimizes_with_fixed_realization():
 
     assert jnp.allclose(trained.loss(key=jr.key(3)), -1.0 / 24.0, atol=3e-4)
     assert jnp.allclose(trained["u"].func(jnp.asarray([0.5])), 0.125, atol=3e-3)
+
+
+def test_field_stationarity_reuses_one_prepared_scalar_term_realization():
+    domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    parameter = domain.Parameter(2.0)
+    functions = {"u": parameter}
+    term = phx.terms.IntegralFunctional.from_operator(
+        target=phx.integration.over(domain.component()),
+        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(6)),
+        operator=lambda value: (value - 1.0) ** 2,
+        objective_vars="u",
+    )
+    subspace = phx.nn.parameters.ParameterSubspace(functions, eqx.is_inexact_array)
+    prepared = phx.solver.prepare_functional_stationarity(
+        functions,
+        term,
+        subspace,
+        realization_id="fixed-quadrature-realization",
+        provenance_id="scalar-term-stationarity",
+        key=jr.key(17),
+    )
+
+    first = prepared.problem.residual(prepared.initial_state)
+    second = prepared.problem.residual(prepared.initial_state)
+
+    assert jnp.array_equal(first, second)
+    assert jnp.allclose(first, jnp.asarray((0.0, 0.0, 2.0)), atol=1e-12)

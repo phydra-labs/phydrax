@@ -19,7 +19,6 @@ from ..discretization.pic import (
     ChargeConservingCurrentPlan,
     PICEnergyLedger,
     PICMaxwellCurrentArguments,
-    PICMaxwellCurrentSource,
     PICParticleState,
     PICRejectionReason,
     PICRunStatus,
@@ -29,6 +28,7 @@ from ..discretization.pic import (
 from ._cochain_electrostatic import CochainElectrostaticPlan
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._maxwell import CompatibleMaxwellState, PreparedCompatibleMaxwell
+from ._pic_current_source import PreparedPICMaxwellCurrentSource
 
 
 class ElectromagneticPICState(StrictModule):
@@ -110,14 +110,26 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             for current, transfer in zip(current_values, transfer_values, strict=True)
         ):
             raise ValueError("Every current plan must use its matching PIC transfer.")
-        if not isinstance(maxwell.plan.current_source, PICMaxwellCurrentSource):
+        if not any(
+            isinstance(source, PreparedPICMaxwellCurrentSource)
+            for source in maxwell.sources
+        ):
             raise ValueError(
-                "Maxwell PIC requires CompatibleMaxwellPlan(current_source=PICMaxwellCurrentSource())."
+                "Maxwell PIC requires CompatibleMaxwellPlan("
+                "sources=(PICMaxwellCurrentSourcePlan(),))."
             )
-        if maxwell.pml is not None or maxwell.boundaries:
-            raise ValueError("Initial electromagnetic PIC supports periodic fields without PML.")
-        if not maxwell.capabilities.lossless or maxwell.capabilities.dispersive:
-            raise ValueError("Initial electromagnetic PIC requires lossless instantaneous Maxwell material.")
+        if maxwell.boundaries:
+            raise ValueError(
+                "Electromagnetic PIC boundary particles require PICOpenBoundaryPlan."
+            )
+        if (
+            maxwell.capabilities.dispersive
+            or maxwell.capabilities.nonlinear
+            or not maxwell.capabilities.passive
+        ):
+            raise ValueError(
+                "Electromagnetic PIC requires passive instantaneous Maxwell material."
+            )
         pusher_ = RelativisticBorisPlan() if pusher is None else pusher
         maximum = float(maximum_displacement_fraction)
         if not isinstance(pusher_, RelativisticBorisPlan):

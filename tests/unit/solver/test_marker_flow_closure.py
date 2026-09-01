@@ -498,6 +498,38 @@ def test_periodic_dfib_preserves_divergence_free_no_slip_state():
     assert result.slip_norm < 1.0e-9
 
 
+def test_deformable_contact_residual_uses_native_geometry_transpose():
+    prepared = phx.applications.contact.DeformableMPMContactPlan(
+        jnp.asarray([0]),
+        jnp.asarray([[0.0, 0.0]]),
+        jnp.asarray([[0.0, 1.0]]),
+        activation_distance=0.1,
+    ).prepare(1)
+    contact = phx.applications.contact.DeformableMPMContactAdapter(
+        prepared,
+        phx.applications.contact.PenaltyContactLaw(10.0),
+    )
+    position = jnp.asarray([[0.3, -0.2]])
+    velocity = jnp.asarray([[0.4, -0.5]])
+    residual_plan = phx.solver.DeformableContactResidualPlan(
+        contact,
+        lambda q, v, _args: (q, v),
+        lambda q, _v, _args: (
+            jnp.zeros_like(q),
+            jnp.broadcast_to(jnp.asarray([0.1, -0.2]), q.shape),
+        ),
+        lambda query, _surface, _args: query,
+        kinematics_id="identity-nodes",
+        assembly_id="query-residual",
+    )
+    residual = residual_plan.evaluate(position, velocity)
+
+    assert residual.successful
+    assert residual.normal_power < 0.0
+    assert residual.dissipation_rate > 0.0
+    assert residual.residual[0, 1] < 0.0
+
+
 def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state():
     finite_volume, operators, boundaries = _periodic_mac(count=4)
     zero = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)

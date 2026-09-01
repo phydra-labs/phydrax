@@ -111,9 +111,77 @@ class MUSLMPMSchedule(AbstractExplicitMPMSchedule):
         return "musl"
 
 
+class AffineMUSLMPMSchedule(AbstractExplicitMPMSchedule):
+    """Pre-advection MUSL with a second APIC affine momentum extrapolation."""
+
+    schedule_code: int = eqx.field(static=True)
+    stress_update: str = eqx.field(static=True)
+    second_momentum_extrapolation: bool = eqx.field(static=True)
+    second_route_time: str = eqx.field(static=True)
+    second_transfer_mode: str = eqx.field(static=True)
+    schedule_id: str = eqx.field(static=True)
+
+    def __init__(self):
+        self.schedule_code = 3
+        self.stress_update = "last"
+        self.second_momentum_extrapolation = True
+        self.second_route_time = "pre-advection"
+        self.second_transfer_mode = "apic-affine-momentum"
+        self.schedule_id = canonical_fingerprint(
+            {
+                "kind": "mpm-explicit-schedule",
+                "common_name": "affine-musl",
+                "stress_update": "last",
+                "second_momentum_extrapolation": True,
+                "second_route_time": self.second_route_time,
+                "second_transfer_mode": self.second_transfer_mode,
+            }
+        )
+
+    @property
+    def common_name(self) -> str:
+        return "affine-musl"
+
+
+class PostAdvectionMUSLMPMSchedule(AbstractExplicitMPMSchedule):
+    """MUSL with post-advection route/domain reconstruction."""
+
+    schedule_code: int = eqx.field(static=True)
+    stress_update: str = eqx.field(static=True)
+    second_momentum_extrapolation: bool = eqx.field(static=True)
+    second_route_time: str = eqx.field(static=True)
+    second_transfer_mode: str = eqx.field(static=True)
+    schedule_id: str = eqx.field(static=True)
+
+    def __init__(self, *, affine_transfer: bool = False):
+        self.schedule_code = 4
+        self.stress_update = "last"
+        self.second_momentum_extrapolation = True
+        self.second_route_time = "post-advection"
+        self.second_transfer_mode = (
+            "apic-affine-momentum" if affine_transfer else "translational-momentum"
+        )
+        self.schedule_id = canonical_fingerprint(
+            {
+                "kind": "mpm-explicit-schedule",
+                "common_name": "post-advection-musl",
+                "stress_update": "last",
+                "second_momentum_extrapolation": True,
+                "second_route_time": self.second_route_time,
+                "second_transfer_mode": self.second_transfer_mode,
+            }
+        )
+
+    @property
+    def common_name(self) -> str:
+        return "post-advection-musl"
+
+
 __all__ = [
     "AbstractExplicitMPMSchedule",
+    "AffineMUSLMPMSchedule",
     "MUSLMPMSchedule",
+    "PostAdvectionMUSLMPMSchedule",
     "USFMPMSchedule",
     "USLMPMSchedule",
 ]

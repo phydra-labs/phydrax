@@ -9,29 +9,21 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization.particle import (
-    DeformableContactEvaluation,
-    DeformableContactTransposeResult,
-    PreparedDeformableContact,
-)
 
 
 DeformableContactKinematics = Callable[[Array, Array, Any], tuple[Array, Array]]
-DeformableContactAssembly = Callable[[Array, Array, Array, Any], Array]
+DeformableContactAssembly = Callable[[Array, Array, Any], Array]
 
 
 class DeformableContactResidualEvaluation(StrictModule):
     residual: Array
-    contact: DeformableContactEvaluation
-    transpose: DeformableContactTransposeResult
-    route_force: Array
-    elastic_energy: Array
+    contact: object
+    normal_power: Array
     dissipation_rate: Array
     finite: Array
     successful: Array
@@ -39,31 +31,25 @@ class DeformableContactResidualEvaluation(StrictModule):
 
 
 class DeformableContactResidualPlan(StrictModule, NonTrainableState):
-    """Native deformable-contact geometry and transpose as a structural residual."""
+    """Native deformable-contact adapter exposed as a structural residual."""
 
-    contact: PreparedDeformableContact
+    contact: object
     query_kinematics: DeformableContactKinematics = eqx.field(static=True)
     surface_kinematics: DeformableContactKinematics = eqx.field(static=True)
     assemble_residual: DeformableContactAssembly = eqx.field(static=True)
-    stiffness: float = eqx.field(static=True)
-    damping: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        contact: PreparedDeformableContact,
+        contact: object,
         query_kinematics: DeformableContactKinematics,
         surface_kinematics: DeformableContactKinematics,
         assemble_residual: DeformableContactAssembly,
         /,
         *,
-        stiffness: float,
-        damping: float = 0.0,
         kinematics_id: str,
         assembly_id: str,
     ):
-        if not isinstance(contact, PreparedDeformableContact):
-            raise TypeError("contact must be PreparedDeformableContact.")
         if not all(
             callable(value)
             for value in (
@@ -73,31 +59,20 @@ class DeformableContactResidualPlan(StrictModule, NonTrainableState):
             )
         ):
             raise TypeError("Deformable contact adapters must be callable.")
-        stiffness_ = float(stiffness)
-        damping_ = float(damping)
-        if (
-            not np.isfinite(stiffness_)
-            or stiffness_ <= 0.0
-            or not np.isfinite(damping_)
-            or damping_ < 0.0
-            or not str(kinematics_id)
-            or not str(assembly_id)
-        ):
-            raise ValueError("Deformable contact residual policy is invalid.")
+        kinematics_identifier = str(kinematics_id)
+        assembly_identifier = str(assembly_id)
+        if not kinematics_identifier or not assembly_identifier:
+            raise ValueError("Deformable contact residual identities must be nonempty.")
         self.contact = contact
         self.query_kinematics = query_kinematics
         self.surface_kinematics = surface_kinematics
         self.assemble_residual = assemble_residual
-        self.stiffness = stiffness_
-        self.damping = damping_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "deformable-contact-structural-residual",
-                "contact": contact.prepared_id,
-                "kinematics": str(kinematics_id),
-                "assembly": str(assembly_id),
-                "stiffness": stiffness_,
-                "damping": damping_,
+                "contact": contact.adapter_id,
+                "kinematics": kinematics_identifier,
+                "assembly": assembly_identifier,
             }
         )
 
@@ -120,36 +95,23 @@ class DeformableContactResidualPlan(StrictModule, NonTrainableState):
             surface_position,
             surface_velocity,
         )
-        normal_velocity = jnp.sum(contact.relative_velocity * contact.normal, axis=-1)
-        penetration = jnp.maximum(-contact.gap, 0.0)
-        closing = jnp.maximum(-normal_velocity, 0.0)
-        magnitude = self.stiffness * penetration + self.damping * closing
-        route_force = jnp.where(
-            contact.valid[:, None], magnitude[:, None] * contact.normal, 0.0
-        )
-        transpose = self.contact.transpose(contact, route_force)
         residual = self.assemble_residual(
-            -transpose.query_action,
-            -transpose.surface_action,
-            -transpose.plane_action,
+            -contact.transpose.query_force,
+            -contact.transpose.surface_force,
             args,
         )
-        elastic_energy = 0.5 * self.stiffness * jnp.sum(penetration**2)
-        dissipation_rate = self.damping * jnp.sum(closing**2)
+        dissipation_rate = jnp.maximum(-contact.normal_power, 0.0)
         finite = (
             contact.finite
-            & transpose.finite
             & jnp.all(jnp.isfinite(residual))
-            & jnp.isfinite(elastic_energy)
+            & jnp.isfinite(contact.normal_power)
             & jnp.isfinite(dissipation_rate)
         )
-        successful = contact.successful & transpose.successful & finite
+        successful = contact.successful & finite
         return DeformableContactResidualEvaluation(
             residual,
             contact,
-            transpose,
-            route_force,
-            elastic_energy,
+            contact.normal_power,
             dissipation_rate,
             finite,
             successful,

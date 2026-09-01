@@ -32,7 +32,7 @@ class PrescribedGridVelocityPlan(StrictModule, NonTrainableState):
     def __init__(self, mask: ArrayLike, values: ArrayLike = 0.0, /):
         mask_ = np.asarray(mask, dtype=bool)
         values_ = np.asarray(values)
-        if mask_.ndim < 2 or mask_.shape[-1] not in (2, 3):
+        if mask_.ndim < 2 or mask_.shape[-1] not in (1, 2, 3):
             raise ValueError(
                 "Velocity mask must have target shape followed by dimension."
             )

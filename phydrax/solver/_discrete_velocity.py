@@ -27,6 +27,10 @@ from ..discretization.finite_volume._dynamics import (
 from ..discretization.finite_volume._mapped import MappedFiniteVolumeDiscretization
 from ..discretization.finite_volume._precision import FiniteVolumePrecisionPolicy
 from ..discretization.finite_volume._structured import FiniteVolumeDiscretization
+from ..discretization.lattice_boltzmann._program import (
+    finite_volume_dvm_manifest,
+    KineticProgramManifest,
+)
 from ..equations._discrete_velocity import (
     AbstractConservativeDVMSource,
     DiscreteVelocityAdvectionSystem,
@@ -50,6 +54,7 @@ class PreparedConservativeFiniteVolumeDVM(StrictModule, NonTrainableState):
     dynamics: PreparedFiniteVolumeDynamics
     source: AbstractConservativeDVMSource | None
     declared_moment_matrix: Array
+    program_manifest: KineticProgramManifest
     declared_moment_names: tuple[str, ...] = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
@@ -60,6 +65,7 @@ class PreparedConservativeFiniteVolumeDVM(StrictModule, NonTrainableState):
         dynamics: PreparedFiniteVolumeDynamics,
         source: AbstractConservativeDVMSource | None,
         declared_moment_matrix: Array,
+        program_manifest: KineticProgramManifest,
         declared_moment_names: tuple[str, ...],
         prepared_id: str,
         /,
@@ -68,6 +74,7 @@ class PreparedConservativeFiniteVolumeDVM(StrictModule, NonTrainableState):
         self.system = system
         self.dynamics = dynamics
         self.source = source
+        self.program_manifest = program_manifest
         self.declared_moment_matrix = declared_moment_matrix
         self.declared_moment_names = declared_moment_names
         self.prepared_id = prepared_id
@@ -226,6 +233,13 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule, NonTrainableState):
             source_id=None if self.source is None else self.source.source_id,
             precision=self.precision,
         )
+        program_manifest = finite_volume_dvm_manifest(
+            self.quadrature.quadrature_id,
+            dynamics.precision.policy_id,
+            self.quadrature.population_count,
+            tuple(names),
+            has_source=self.source is not None,
+        )
         prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-conservative-finite-volume-dvm-v1",
@@ -233,6 +247,7 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule, NonTrainableState):
                 "system": system.system_id,
                 "dynamics": dynamics.dynamics_id,
                 "declared_moments": list(names),
+                "program_manifest": program_manifest.manifest_id,
             }
         )
         return PreparedConservativeFiniteVolumeDVM(
@@ -241,6 +256,7 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule, NonTrainableState):
             dynamics,
             self.source,
             moment_matrix,
+            program_manifest,
             tuple(names),
             prepared_id,
         )

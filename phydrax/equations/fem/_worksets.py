@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._local_variational import PreparedLocalRegion
 from ...discretization.fem._mortar import (
     FiniteElementMortarMetricData,
     FiniteElementMortarPlan,
@@ -28,14 +29,10 @@ class WorksetSignature(StrictModule, NonTrainableState):
     cell_kind: str = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
     entity_set_id: str = eqx.field(static=True)
-    element_id: str = eqx.field(static=True)
-    coordinate_element_id: str = eqx.field(static=True)
     rule_id: str = eqx.field(static=True)
-    prepared_reference_id: str = eqx.field(static=True)
-    neighbour_element_id: str = eqx.field(static=True)
-    neighbour_prepared_reference_id: str = eqx.field(static=True)
-    representation: str = eqx.field(static=True)
-    mapping: str = eqx.field(static=True)
+    reference_action_ids: tuple[str, ...] = eqx.field(static=True)
+    field_layout_ids: tuple[str, ...] = eqx.field(static=True)
+    geometry_action_id: str = eqx.field(static=True)
     coefficient_layout_ids: tuple[str, ...] = eqx.field(static=True)
     precision_id: str = eqx.field(static=True)
     ir_semantics_id: str = eqx.field(static=True)
@@ -56,13 +53,9 @@ class WorksetSignature(StrictModule, NonTrainableState):
         *,
         support_id: str,
         entity_set_id: str,
-        element_id: str,
-        coordinate_element_id: str,
-        prepared_reference_id: str,
-        neighbour_element_id: str | None = None,
-        neighbour_prepared_reference_id: str | None = None,
-        representation: str,
-        mapping: str,
+        reference_action_ids: Sequence[str],
+        field_layout_ids: Sequence[str],
+        geometry_action_id: str,
         coefficient_layout_ids: Sequence[str] = (),
         precision_id: str,
         ir_semantics_id: str,
@@ -78,19 +71,9 @@ class WorksetSignature(StrictModule, NonTrainableState):
         rule = str(rule_id)
         support = str(support_id)
         entity_set = str(entity_set_id)
-        element = str(element_id)
-        coordinate_element = str(coordinate_element_id)
-        prepared_reference = str(prepared_reference_id)
-        neighbour_element = (
-            element if neighbour_element_id is None else str(neighbour_element_id)
-        )
-        neighbour_prepared_reference = (
-            prepared_reference
-            if neighbour_prepared_reference_id is None
-            else str(neighbour_prepared_reference_id)
-        )
-        representation_ = str(representation)
-        mapping_ = str(mapping)
+        references = tuple(sorted(set(str(value) for value in reference_action_ids)))
+        fields = tuple(sorted(set(str(value) for value in field_layout_ids)))
+        geometry = str(geometry_action_id)
         layouts = tuple(sorted(str(value) for value in coefficient_layout_ids))
         precision = str(precision_id)
         semantics = str(ir_semantics_id)
@@ -127,19 +110,17 @@ class WorksetSignature(StrictModule, NonTrainableState):
             rule,
             support,
             entity_set,
-            element,
-            coordinate_element,
-            prepared_reference,
-            neighbour_element,
-            neighbour_prepared_reference,
-            representation_,
-            mapping_,
+            geometry,
             precision,
             semantics,
             kernel,
+            *references,
+            *fields,
         )
         if (
             any(not value for value in identities)
+            or not references
+            or not fields
             or any(not value for value in layouts)
             or not widths
             or any(not name or width <= 0 for name, width in widths)
@@ -153,14 +134,10 @@ class WorksetSignature(StrictModule, NonTrainableState):
         self.cell_kind = cell
         self.support_id = support
         self.entity_set_id = entity_set
-        self.element_id = element
-        self.coordinate_element_id = coordinate_element
         self.rule_id = rule
-        self.prepared_reference_id = prepared_reference
-        self.neighbour_element_id = neighbour_element
-        self.neighbour_prepared_reference_id = neighbour_prepared_reference
-        self.representation = representation_
-        self.mapping = mapping_
+        self.reference_action_ids = references
+        self.field_layout_ids = fields
+        self.geometry_action_id = geometry
         self.coefficient_layout_ids = layouts
         self.precision_id = precision
         self.ir_semantics_id = semantics
@@ -170,20 +147,16 @@ class WorksetSignature(StrictModule, NonTrainableState):
         self.material_id = material
         self.signature_id = canonical_fingerprint(
             {
-                "kind": "finite-element-workset-signature",
+                "kind": "local-workset-signature",
                 "region": region,
                 "block": block,
                 "cell": cell,
                 "support": support,
                 "entity_set": entity_set,
-                "element": element,
-                "coordinate_element": coordinate_element,
                 "rule": rule,
-                "prepared_reference": prepared_reference,
-                "neighbour_element": neighbour_element,
-                "neighbour_prepared_reference": neighbour_prepared_reference,
-                "representation": representation_,
-                "mapping": mapping_,
+                "reference_actions": references,
+                "field_layouts": fields,
+                "geometry_action": geometry,
                 "coefficient_layouts": layouts,
                 "precision": precision,
                 "ir_semantics": semantics,
@@ -197,6 +170,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
 
 class CompiledWorkset(StrictModule, NonTrainableState):
     signature: WorksetSignature
+    local_region: PreparedLocalRegion | None
     reference: PreparedFiniteElementReference | None
     neighbour_reference: PreparedFiniteElementReference | None
     mortar: FiniteElementMortarPlan | None
@@ -227,6 +201,7 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         gathers: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]],
         /,
         *,
+        local_region: PreparedLocalRegion | None = None,
         reference: PreparedFiniteElementReference | None = None,
         neighbour_reference: PreparedFiniteElementReference | None = None,
         mortar: FiniteElementMortarPlan | None = None,
@@ -335,15 +310,27 @@ class CompiledWorkset(StrictModule, NonTrainableState):
             raise ValueError("Workset local-entity routes are invalid.")
         if reference is not None and (
             not isinstance(reference, PreparedFiniteElementReference)
-            or reference.prepared_id != signature.prepared_reference_id
+            or reference.prepared_id not in signature.reference_action_ids
         ):
             raise ValueError("Prepared reference does not match the workset signature.")
         if neighbour_reference is not None and (
             not isinstance(neighbour_reference, PreparedFiniteElementReference)
-            or neighbour_reference.prepared_id
-            != signature.neighbour_prepared_reference_id
+            or neighbour_reference.prepared_id not in signature.reference_action_ids
         ):
             raise ValueError("Neighbour reference does not match the workset signature.")
+        if local_region is not None:
+            if not isinstance(local_region, PreparedLocalRegion):
+                raise TypeError("local_region must be PreparedLocalRegion or None.")
+            if (
+                local_region.geometry_actions.action_id != signature.geometry_action_id
+                or tuple(
+                    sorted(value.action_id for value in local_region.reference_actions)
+                )
+                != signature.reference_action_ids
+                or tuple(int(value) for value in local_region.entity_indices)
+                != tuple(int(value) for value in entities)
+            ):
+                raise ValueError("Prepared local region does not match its workset.")
         if mortar is not None and not isinstance(mortar, FiniteElementMortarPlan):
             raise TypeError("mortar must be FiniteElementMortarPlan or None.")
         if mortar_metric is not None and not isinstance(
@@ -364,6 +351,7 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         if valid_.shape != (count,):
             raise ValueError("Workset validity must have one entry per entity.")
         self.signature = signature
+        self.local_region = local_region
         self.reference = reference
         self.neighbour_reference = neighbour_reference
         self.mortar = mortar
@@ -386,8 +374,11 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         self.valid = jnp.asarray(valid_)
         self.workset_id = canonical_fingerprint(
             {
-                "kind": "compiled-finite-element-workset",
+                "kind": "compiled-local-workset",
                 "signature": signature.signature_id,
+                "local_region": (
+                    None if local_region is None else local_region.region_id
+                ),
                 "prepared_reference": (
                     None if reference is None else reference.prepared_id
                 ),
@@ -503,7 +494,7 @@ class WorksetProgram(StrictModule, NonTrainableState):
         self.worksets = worksets_
         self.program_id = canonical_fingerprint(
             {
-                "kind": "finite-element-workset-program",
+                "kind": "local-workset-program",
                 "ir": ir.ir_id,
                 "worksets": [workset.workset_id for workset in worksets_],
             }

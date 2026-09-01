@@ -125,6 +125,8 @@ class TriangleTopology(StrictModule):
     vertex_faces: Array
     vertex_halfedge_offsets: Array
     vertex_halfedges: Array
+    face_component_ids: Array
+    num_face_components: int = eqx.field(static=True)
     num_vertices: int = eqx.field(static=True)
     watertight: bool = eqx.field(static=True)
 
@@ -236,6 +238,24 @@ class TriangleTopology(StrictModule):
         vertex_halfedge_offsets, vertex_halfedges = _csr(
             origin, np.arange(halfedge_count, dtype=np.int32), vertex_count
         )
+        face_component_ids = np.full((face_count,), -1, dtype=np.int32)
+        face_component_count = 0
+        for start_face in range(face_count):
+            if face_component_ids[start_face] >= 0:
+                continue
+            pending = [start_face]
+            face_component_ids[start_face] = face_component_count
+            while pending:
+                face = pending.pop()
+                for halfedge in range(3 * face, 3 * face + 3):
+                    twin = int(halfedge_twin[halfedge])
+                    if twin < 0:
+                        continue
+                    neighbour = int(halfedge_face[twin])
+                    if face_component_ids[neighbour] < 0:
+                        face_component_ids[neighbour] = face_component_count
+                        pending.append(neighbour)
+            face_component_count += 1
 
         self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
         self.edges = jnp.asarray(edges, dtype=jnp.int32)
@@ -256,6 +276,8 @@ class TriangleTopology(StrictModule):
             vertex_halfedge_offsets, dtype=jnp.int32
         )
         self.vertex_halfedges = jnp.asarray(vertex_halfedges, dtype=jnp.int32)
+        self.face_component_ids = jnp.asarray(face_component_ids, dtype=jnp.int32)
+        self.num_face_components = face_component_count
         self.num_vertices = vertex_count
         self.watertight = boundary_halfedges.size == 0
 

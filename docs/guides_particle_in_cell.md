@@ -62,9 +62,10 @@ integrates cubical Whitney edge forms. The resulting degree-one current satisfie
 under the exact `StructuredCochainBridge.codifferential`. Segment overflow, dropped support, or a
 continuity defect rejects the step.
 
-`PICMaxwellCurrentSource` is the stable `CompatibleMaxwellPlan.current_source` adapter. The same
-`PICMaxwellCurrentArguments` instance is passed to Maxwell stepping and diagnostics, so both see the
-same deposited midpoint current.
+`PICMaxwellCurrentSourcePlan` is the native dynamic Maxwell source plan. The
+same `PICMaxwellCurrentArguments` instance is passed to Maxwell stepping and
+diagnostics, so both see the same deposited midpoint current through the
+prepared `sources` collection.
 
 `ElectromagneticPICPlan` keeps Maxwell as the sole owner of D, B, charge, material, boundary,
 observer, CFL, and constraint updates. It owns only particle staggering and coupling:

@@ -95,13 +95,24 @@ evolution coordinate to scale factor. It applies the exact `1/(a^2 H)` transport
 Hubble momentum/internal-energy work, and shared rescaled-potential gravity source.
 `CosmologicalGasParticleGravityPlan` predicts and corrects gas transport, deposits DM,
 solves one total-density periodic potential, gathers the same field to particles, and
-atomically accepts or rolls back the complete epoch. Its first scope is adiabatic ideal
-gas plus collisionless DM; it has no cooling, chemistry, feedback, or tree-force claim.
+atomically accepts or rolls back the complete epoch.
 
-`PeriodicImageForcePlan` is a small-N softened periodic image-shell qualification tool.
-It reports absolute/relative force error and net-force evidence for a supplied candidate.
-It is not an Ewald solver, short-range correction, Barnes--Hut tree, FMM, or production
-TreePM implementation.
+`PrimordialMicrophysicsPlan` closes the first deterministic source layer with named
+HI/HII/HeI/HeII/HeIII/electron state, immutable temperature/scale rate tables,
+photoionization/heating, collisional ionization, recombination, cooling, a fixed Newton
+solve, nuclei/charge/energy ledgers, and atomic gas-energy commit.
+`CosmologicalPopulationPlan` extends this path with fixed-capacity dynamic gravitating
+star/BH slots, generation-safe IDs, replayable event ledgers, conservative gas→star
+transfer, and stochastic thermal reservoir coupling. H2, metals, winds, black-hole
+accretion, radiation, and calibrated production models remain profile-specific.
+
+`PeriodicImageForcePlan` remains a cheap diagnostic and `PeriodicEwaldForcePlan` remains
+the periodic reference. `ParticleOctreePlan3D` prepares one Morton hierarchy consumed by
+isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM; none introduces
+a second particle state or PM path. `TwoLevelAMRPlan` supplies ratio-two prolong/restrict,
+reflux, average-down, fine-authoritative composite gravity, particle level routing, and
+atomic epoch commit. Multi-level partial patches, CT/radiation synchronization, and
+distributed communication remain later parity profiles rather than silent modes.
 
 ## Constrained transport MHD
 

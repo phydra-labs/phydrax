@@ -30,7 +30,6 @@ from ..._doc import DOC_KEY0
 from ..._model import StructuredDerivativeProvider
 from ..._strict import StrictModule
 from ...domain._evaluation import evaluate_pointwise_callable
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ._array_ops import (
     _basis_nth_derivative,
     _fd_nth_derivative,
@@ -3357,16 +3356,6 @@ def _prepare_neo_hookean_fields(
     )
 
 
-def _neo_hookean_material_values(mu_v: ArrayLike, lambda_v: ArrayLike):
-    mu_v = jnp.asarray(mu_v)
-    lambda_v = jnp.asarray(lambda_v)
-    if mu_v.shape != () or lambda_v.shape != ():
-        raise ValueError("Neo-Hookean material fields must be scalar-valued.")
-    bulk_v = lambda_v + (2.0 / 3.0) * mu_v
-    valid = jnp.isfinite(mu_v) & jnp.isfinite(lambda_v) & (mu_v > 0.0) & (bulk_v > 0.0)
-    return mu_v, lambda_v, valid
-
-
 def neo_hookean_reference_energy(
     u: DomainFunction,
     /,
@@ -3378,12 +3367,12 @@ def neo_hookean_reference_energy(
 ) -> DomainFunction:
     r"""Compressible neo-Hookean reference-volume energy density.
 
-    With deformation gradient $F = I + \nabla u$, $J=\det F$, spatial
-    dimension $d\in\{2,3\}$, shear modulus $\mu$, and Lamé's first
-    parameter $\lambda$, this returns
+    With deformation gradient $F = I + \nabla u$, $J=\det F$, shear modulus
+    $\mu$, and Lamé's first parameter $\lambda$, this delegates to the canonical
+    three-dimensional reference-volume kernel
 
     $$
-    W(F) = \frac{\mu}{2}(F:F-d) - \mu\ln J
+    W(F) = \frac{\mu}{2}(F:F-3) - \mu\ln J
            + \frac{\lambda}{2}(\ln J)^2.
     $$
 
@@ -3415,27 +3404,19 @@ def neo_hookean_reference_energy(
         mu_pos,
         lambda_pos,
     ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
+    from ..mechanics._finite_strain import neo_hookean_reference_energy_from_moduli
 
     def _op(*args, key=None, **kwargs):
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
         lambda_args = [args[i] for i in lambda_pos]
         Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
-        mu_v, lambda_v, material_valid = _neo_hookean_material_values(
+        energy = neo_hookean_reference_energy_from_moduli(
+            Fx,
             mu2.func(*mu_args, key=key, **kwargs),
             lambda2.func(*lambda_args, key=key, **kwargs),
         )
-        J = jnp.linalg.det(Fx)
-        valid = material_valid & jnp.all(jnp.isfinite(Fx)) & jnp.isfinite(J) & (J > 0.0)
-        safe_J = jnp.where(valid, J, 1.0)
-        log_J = jnp.log(safe_J)
-        first_invariant = oe.contract("...ij,...ij->...", Fx, Fx)
-        energy = (
-            0.5 * mu_v * (first_invariant - float(var_dim))
-            - mu_v * log_J
-            + 0.5 * lambda_v * log_J * log_J
-        )
-        return jnp.where(valid, energy, jnp.nan)
+        return energy
 
     return DomainFunction(
         domain=joined,
@@ -3488,35 +3469,19 @@ def neo_hookean_pk1(
         mu_pos,
         lambda_pos,
     ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
-    identity = jnp.eye(var_dim)
-    solve_plan = SmallLinearSolvePlan(var_dim)
+    from ..mechanics._finite_strain import neo_hookean_first_piola_from_moduli
 
     def _op(*args, key=None, **kwargs):
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
         lambda_args = [args[i] for i in lambda_pos]
         Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
-        mu_v, lambda_v, material_valid = _neo_hookean_material_values(
+        stress = neo_hookean_first_piola_from_moduli(
+            Fx,
             mu2.func(*mu_args, key=key, **kwargs),
             lambda2.func(*lambda_args, key=key, **kwargs),
         )
-        inverse_result = solve_small_linear(
-            solve_plan,
-            Fx,
-            jnp.broadcast_to(identity, Fx.shape),
-        )
-        J = inverse_result.determinant
-        valid = (
-            material_valid
-            & inverse_result.successful
-            & jnp.all(jnp.isfinite(Fx))
-            & jnp.isfinite(J)
-            & (J > 0.0)
-        )
-        log_J = jnp.log(jnp.where(valid, J, 1.0))
-        FinvT = jnp.swapaxes(inverse_result.value, -1, -2)
-        stress = mu_v * (Fx - FinvT) + lambda_v * log_J * FinvT
-        return jnp.where(valid, stress, jnp.full_like(stress, jnp.nan))
+        return stress[..., :var_dim, :var_dim]
 
     return DomainFunction(
         domain=joined,
@@ -3570,25 +3535,19 @@ def neo_hookean_cauchy(
         mu_pos,
         lambda_pos,
     ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
-    identity = jnp.eye(var_dim)
+    from ..mechanics._finite_strain import neo_hookean_cauchy_from_moduli
 
     def _op(*args, key=None, **kwargs):
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
         lambda_args = [args[i] for i in lambda_pos]
         Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
-        mu_v, lambda_v, material_valid = _neo_hookean_material_values(
+        stress = neo_hookean_cauchy_from_moduli(
+            Fx,
             mu2.func(*mu_args, key=key, **kwargs),
             lambda2.func(*lambda_args, key=key, **kwargs),
         )
-        J = jnp.linalg.det(Fx)
-        valid = material_valid & jnp.all(jnp.isfinite(Fx)) & jnp.isfinite(J) & (J > 0.0)
-        safe_J = jnp.where(valid, J, 1.0)
-        B = oe.contract("...ik,...jk->...ij", Fx, Fx)
-        stress = (mu_v / safe_J) * (B - identity) + (
-            lambda_v * jnp.log(safe_J) / safe_J
-        ) * identity
-        return jnp.where(valid, stress, jnp.full_like(stress, jnp.nan))
+        return stress[..., :var_dim, :var_dim]
 
     return DomainFunction(
         domain=joined,

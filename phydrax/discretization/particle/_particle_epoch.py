@@ -19,6 +19,7 @@ from ._cell_list import CellListParticleNeighborhoodPlan
 from ._core import ParticleSetPlan
 from ._dem import DEMResolvedLoad, DEMRuntimeState, PreparedSoftSphereDEMDynamics
 from ._dem_contact_state import remap_dem_contact_history
+from ._dem_liquid import DEMLiquidState
 from ._neighborhood import DenseParticleNeighborhoodPlan
 from ._pair_state import (
     IMPLICIT_BARRIER_INTERACTION,
@@ -27,6 +28,7 @@ from ._pair_state import (
     ParticlePairKeySpace,
 )
 from ._particle_morphology import ParticleDynamicBodyProperties
+from ._population import ParticlePopulationState
 from ._rigid_sphere import RigidSphereKinematics, RigidSphereSetPlan
 from ._verlet import VerletParticleNeighborhoodPlan
 
@@ -351,13 +353,19 @@ def grow_particle_execution_epoch(
     velocity = _pad(old_state.kinematics.velocity, target, 0.0)
     angular = _pad(old_state.kinematics.angular_velocity, target, 0.0)
     active = _pad(old_state.body_properties.active, target, False)
-    properties = ParticleDynamicBodyProperties(
+    population = ParticlePopulationState(
+        active,
         _pad(old_state.body_properties.masses, target, 0.0),
+        _pad(old_state.body_properties.population.incarnation, target, 0),
+        _pad(old_state.body_properties.population.ever_occupied, target, False),
+        _pad(old_state.body_properties.population.retired, target, False),
+    )
+    properties = ParticleDynamicBodyProperties(
+        population,
         _pad(old_state.body_properties.inverse_masses, target, 0.0),
         _pad(old_state.body_properties.radii, target, 0.0),
         _pad(old_state.body_properties.inertias, target, 1.0),
         _pad(old_state.body_properties.inverse_inertias, target, 0.0),
-        active,
     )
     neighborhood_state = new_dynamics.neighborhood.build(position, active_mask=active)
     new_keys = new_dynamics.pair_key_space.keys(neighborhood_state.pair_relation)
@@ -394,6 +402,17 @@ def grow_particle_execution_epoch(
         if isinstance(new_dynamics.neighborhood.plan, VerletParticleNeighborhoodPlan)
         else None
     )
+    liquid = (
+        None
+        if old_state.liquid is None
+        else DEMLiquidState(
+            _pad(old_state.liquid.film_volume, target, 0.0),
+            old_state.liquid.cumulative_evaporated_volume,
+            old_state.liquid.initial_total_volume,
+            old_state.liquid.balance_residual,
+            old_state.liquid.successful,
+        )
+    )
     staged = DEMRuntimeState(
         RigidSphereKinematics(position, velocity, angular),
         properties,
@@ -402,6 +421,8 @@ def grow_particle_execution_epoch(
         cache,
         _zero_resolved_load(new_dynamics),
         old_state.energy,
+        old_state.periodic_cell,
+        liquid,
     )
     evaluation = new_dynamics.evaluate(jnp.asarray(time), staged, jnp.asarray(0.0), args)
     candidate_state = DEMRuntimeState(
@@ -412,6 +433,8 @@ def grow_particle_execution_epoch(
         evaluation.neighborhood_cache,
         evaluation.loads,
         staged.energy,
+        staged.periodic_cell,
+        staged.liquid if evaluation.liquid is None else evaluation.liquid.next_state,
     )
     old_mass = jnp.sum(
         jnp.where(old_state.body_properties.active, old_state.body_properties.masses, 0.0)

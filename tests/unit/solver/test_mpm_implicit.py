@@ -70,7 +70,7 @@ def test_implicit_hyperelastic_step_converges_and_has_implicit_gradient():
 
 
 def test_implicit_plane_stress_uses_condensed_material_tangent():
-    material = phx.applications.solid_mechanics.IsotropicPlaneStressMPMConstitutivePlan(
+    material = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )
     compiled, position, volume = _compiled(material)

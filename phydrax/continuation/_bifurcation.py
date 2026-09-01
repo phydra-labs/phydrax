@@ -24,11 +24,17 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
-from ._core import _execution_residual, ContinuationCurveProblem
+from ._core import _execution_residual, BranchSeed, ContinuationCurveProblem
 from ._geometry import ContinuationGeometry
 
 
-BifurcationKind = Literal["fold", "hopf", "branch-point", "pitchfork"]
+BifurcationKind = Literal[
+    "fold",
+    "hopf",
+    "branch-point",
+    "pitchfork",
+    "transcritical",
+]
 
 
 class ExtendedSystemStatus(IntEnum):
@@ -255,6 +261,92 @@ class PitchforkAssumptions(StrictModule):
             and self.reference_branch_symmetric
             and self.critical_mode_is_odd
         )
+
+
+class TranscriticalAssumptions(StrictModule):
+    """Analytical assumptions for two distinct transversely intersecting branches."""
+
+    smoothness_order: int = eqx.field(static=True)
+    reference_branch_verified: bool = eqx.field(static=True)
+    intersecting_branch_verified: bool = eqx.field(static=True)
+    distinct_tangents_verified: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        smoothness_order: int,
+        reference_branch_verified: bool,
+        intersecting_branch_verified: bool,
+        distinct_tangents_verified: bool,
+    ):
+        order = int(smoothness_order)
+        if order < 0:
+            raise ValueError("smoothness_order must be non-negative.")
+        self.smoothness_order = order
+        self.reference_branch_verified = bool(reference_branch_verified)
+        self.intersecting_branch_verified = bool(intersecting_branch_verified)
+        self.distinct_tangents_verified = bool(distinct_tangents_verified)
+
+    @property
+    def verified(self) -> bool:
+        return (
+            self.smoothness_order >= 2
+            and self.reference_branch_verified
+            and self.intersecting_branch_verified
+            and self.distinct_tangents_verified
+        )
+
+
+class BranchCorrectionState(StrictModule):
+    """State and scalar coordinate of an augmented branch-seed correction."""
+
+    state: PyTree[Array]
+    coordinate: Array
+
+    def __init__(self, state: PyTree[Any], coordinate: Any, /):
+        coordinate_ = _validate_scalar(coordinate, "branch correction coordinate")
+        self.state = state
+        self.coordinate = coordinate_
+
+
+class CorrectedBranchSeed(StrictModule):
+    """A branch seed accepted only after an augmented physical-root correction."""
+
+    seed: BranchSeed
+    correction_state: BranchCorrectionState
+    nonlinear_result: NonlinearResult
+    residual_norm: Array
+    constraint_residual: Array
+    successful: Array
+    correction_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        seed: BranchSeed,
+        correction_state: BranchCorrectionState,
+        nonlinear_result: NonlinearResult,
+        residual_norm: Any,
+        constraint_residual: Any,
+        successful: Any,
+        correction_id: str,
+    ):
+        if not isinstance(seed, BranchSeed):
+            raise TypeError("seed must be a BranchSeed.")
+        if not isinstance(correction_state, BranchCorrectionState):
+            raise TypeError("correction_state must be a BranchCorrectionState.")
+        if not isinstance(nonlinear_result, NonlinearResult):
+            raise TypeError("nonlinear_result must be a NonlinearResult.")
+        identifier = str(correction_id)
+        if not identifier:
+            raise ValueError("correction_id must be non-empty.")
+        self.seed = seed
+        self.correction_state = correction_state
+        self.nonlinear_result = nonlinear_result
+        self.residual_norm = jnp.asarray(residual_norm)
+        self.constraint_residual = jnp.asarray(constraint_residual)
+        self.successful = jnp.asarray(successful, dtype=bool)
+        self.correction_id = identifier
 
 
 class FoldState(StrictModule):
@@ -1252,6 +1344,18 @@ class PitchforkEvidence(StrictModule):
     normal_form_success: Array
 
 
+class TranscriticalEvidence(StrictModule):
+    """Reduced-equation and intersecting-family evidence at a branch point."""
+
+    branch_point: BranchPointEvidence
+    quadratic_coefficient: Array
+    mixed_coefficient: Array
+    reference_tangent_residual: Array
+    reference_tangent_condition: Array
+    reference_tangent_success: Array
+    family_separation: Array
+
+
 class BifurcationCertificate(StrictModule):
     """Candidate state plus sufficient evidence for one named local theorem."""
 
@@ -1280,7 +1384,13 @@ class BifurcationCertificate(StrictModule):
         certificate_id: str,
         geometry: ContinuationGeometry | None = None,
     ):
-        if kind not in ("fold", "hopf", "branch-point", "pitchfork"):
+        if kind not in (
+            "fold",
+            "hopf",
+            "branch-point",
+            "pitchfork",
+            "transcritical",
+        ):
             raise ValueError("Unsupported bifurcation kind.")
         identifier = str(certificate_id)
         if not identifier:
@@ -1881,6 +1991,102 @@ def certify_pitchfork(
     )
 
 
+def certify_transcritical(
+    branch_certificate: BifurcationCertificate,
+    assumptions: TranscriticalAssumptions,
+    /,
+    *,
+    quadratic_coefficient: Any,
+    mixed_coefficient: Any,
+    reference_tangent_residual: Any,
+    reference_tangent_condition: Any,
+    reference_tangent_success: Any,
+    family_separation: Any,
+    tolerances: BifurcationTolerances | None = None,
+) -> BifurcationCertificate:
+    """Certify a transcritical intersection from a certified branch point."""
+    if not isinstance(branch_certificate, BifurcationCertificate):
+        raise TypeError("branch_certificate must be a BifurcationCertificate.")
+    if branch_certificate.kind != "branch-point":
+        raise ValueError(
+            "Transcritical certification requires a branch-point certificate."
+        )
+    if not isinstance(assumptions, TranscriticalAssumptions):
+        raise TypeError("assumptions must be TranscriticalAssumptions.")
+    policy = BifurcationTolerances() if tolerances is None else tolerances
+    if not isinstance(policy, BifurcationTolerances):
+        raise TypeError("tolerances must be BifurcationTolerances or None.")
+    branch_evidence = branch_certificate.evidence
+    if not isinstance(branch_evidence, BranchPointEvidence):
+        raise TypeError("branch certificate evidence must be BranchPointEvidence.")
+    quadratic = jnp.asarray(quadratic_coefficient)
+    mixed = jnp.asarray(mixed_coefficient)
+    tangent_residual = jnp.asarray(reference_tangent_residual)
+    tangent_condition = jnp.asarray(reference_tangent_condition)
+    tangent_success = jnp.asarray(reference_tangent_success, dtype=bool)
+    separation = jnp.asarray(family_separation)
+    evidence = TranscriticalEvidence(
+        branch_point=branch_evidence,
+        quadratic_coefficient=quadratic,
+        mixed_coefficient=mixed,
+        reference_tangent_residual=tangent_residual,
+        reference_tangent_condition=tangent_condition,
+        reference_tangent_success=tangent_success,
+        family_separation=separation,
+    )
+    status = jnp.where(
+        branch_certificate.certified,
+        int(BifurcationStatus.CERTIFIED),
+        int(BifurcationStatus.CANDIDATE_ONLY),
+    )
+    if not assumptions.verified:
+        status = jnp.asarray(int(BifurcationStatus.ASSUMPTIONS_UNVERIFIED))
+    finite = (
+        jnp.isfinite(quadratic)
+        & jnp.isfinite(mixed)
+        & jnp.isfinite(tangent_residual)
+        & jnp.isfinite(tangent_condition)
+        & jnp.isfinite(separation)
+    )
+    status = jnp.where(
+        ~finite,
+        int(BifurcationStatus.NONFINITE_EVIDENCE),
+        status,
+    )
+    status = jnp.where(
+        (status == int(BifurcationStatus.CERTIFIED))
+        & (
+            ~tangent_success
+            | (tangent_residual > policy.null_residual)
+            | (tangent_condition > policy.maximum_condition)
+        ),
+        int(BifurcationStatus.ILL_CONDITIONED),
+        status,
+    )
+    status = jnp.where(
+        (status == int(BifurcationStatus.CERTIFIED))
+        & (
+            (jnp.abs(quadratic) < policy.nondegeneracy)
+            | (jnp.abs(mixed) < policy.transversality)
+            | (separation < policy.branch_projection)
+        ),
+        int(BifurcationStatus.NONDEGENERACY_FAILED),
+        status,
+    )
+    return BifurcationCertificate(
+        state=branch_certificate.state,
+        parameter=branch_certificate.parameter,
+        right_nullvector=branch_certificate.right_nullvector,
+        left_nullvector=branch_certificate.left_nullvector,
+        evidence=evidence,
+        status=status,
+        kind="transcritical",
+        assumptions_verified=assumptions.verified,
+        certificate_id=f"{branch_certificate.certificate_id}/transcritical",
+        geometry=branch_certificate.geometry,
+    )
+
+
 def switch_branches_from_nullspace(
     certificate: BifurcationCertificate,
     /,
@@ -1892,7 +2098,7 @@ def switch_branches_from_nullspace(
         raise TypeError("certificate must be a BifurcationCertificate.")
     if not bool(certificate.certified):
         raise ValueError("Automatic branch switching requires a certified nullspace.")
-    if certificate.kind not in ("branch-point", "pitchfork"):
+    if certificate.kind not in ("branch-point", "pitchfork", "transcritical"):
         raise ValueError("Automatic switching is defined for certified branch points.")
     if certificate.right_nullvector is None:
         raise ValueError("The certificate does not contain a right nullvector.")
@@ -1926,15 +2132,164 @@ def switch_branches_from_nullspace(
     )
 
 
+def correct_branch_seed(
+    problem: ContinuationCurveProblem,
+    certificate: BifurcationCertificate,
+    root_method: AbstractNonlinearMethod,
+    lifted_mode: PyTree[Any],
+    /,
+    *,
+    signed_amplitude: float,
+    coordinate_offset: float,
+    branch_id: str,
+    source_point_id: str,
+    termination: NonlinearTermination | None = None,
+    residual_tolerance: float = 1e-7,
+    args: Any = None,
+) -> CorrectedBranchSeed:
+    """Lift one physical mode and correct its seed on an augmented root."""
+    if not isinstance(problem, ContinuationCurveProblem):
+        raise TypeError("problem must be a ContinuationCurveProblem.")
+    if not isinstance(certificate, BifurcationCertificate):
+        raise TypeError("certificate must be a BifurcationCertificate.")
+    if not bool(certificate.certified):
+        raise ValueError("Branch correction requires a certified local theorem.")
+    if certificate.kind not in ("pitchfork", "transcritical"):
+        raise ValueError("Corrected switching requires pitchfork or transcritical proof.")
+    if certificate.geometry is None:
+        raise ValueError("Branch correction requires certificate geometry.")
+    if not isinstance(root_method, AbstractNonlinearMethod):
+        raise TypeError("root_method must be an AbstractNonlinearMethod.")
+    amplitude = float(signed_amplitude)
+    offset = float(coordinate_offset)
+    tolerance = float(residual_tolerance)
+    if not isfinite(amplitude) or amplitude == 0.0:
+        raise ValueError("signed_amplitude must be finite and nonzero.")
+    if not isfinite(offset) or offset == 0.0:
+        raise ValueError("coordinate_offset must be finite and nonzero.")
+    if not isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("residual_tolerance must be finite and non-negative.")
+    termination_ = (
+        NonlinearTermination(
+            absolute_residual=tolerance,
+            relative_residual=0.0,
+        )
+        if termination is None
+        else termination
+    )
+    if not isinstance(termination_, NonlinearTermination):
+        raise TypeError("termination must be a NonlinearTermination or None.")
+    geometry = certificate.geometry
+    critical_coordinates = geometry.state_to_execution(certificate.state)
+    mode_coordinates = geometry.state_tangent_to_execution(
+        certificate.state,
+        lifted_mode,
+    )
+    mode_norm = geometry.state_norm(mode_coordinates)
+    if not bool(jnp.isfinite(mode_norm) & (mode_norm > 0.0)):
+        raise ValueError("lifted_mode must have a finite, positive physical norm.")
+    unit_coordinates = jax.tree.map(lambda value: value / mode_norm, mode_coordinates)
+    unit_mode = geometry.state_tangent_from_execution(
+        critical_coordinates,
+        unit_coordinates,
+    )
+    initial = BranchCorrectionState(
+        tree_add_scaled(certificate.state, unit_mode, amplitude),
+        certificate.parameter + offset,
+    )
+
+    def augmented_residual(candidate, solve_args):
+        state_coordinates = geometry.state_to_execution(candidate.state)
+        increment = tree_add_scaled(
+            state_coordinates,
+            critical_coordinates,
+            -1.0,
+        )
+        phase = geometry.state_inner(unit_coordinates, increment) - amplitude
+        return BranchCorrectionState(
+            problem.residual(candidate.state, candidate.coordinate, solve_args),
+            phase,
+        )
+
+    correction_id = (
+        f"{certificate.certificate_id}/{branch_id}/augmented-physical-correction"
+    )
+    augmented_problem = NonlinearSystemProblem(
+        augmented_residual,
+        problem_id=correction_id,
+    )
+    nonlinear_result = root_method.solve(
+        augmented_problem,
+        initial,
+        termination=termination_,
+        args=args,
+    )
+    corrected = nonlinear_result.state
+    if not isinstance(corrected, BranchCorrectionState):
+        raise TypeError(
+            "The nonlinear method did not preserve BranchCorrectionState structure."
+        )
+    corrected_coordinates = geometry.state_to_execution(corrected.state)
+    state_increment = tree_add_scaled(
+        corrected_coordinates,
+        critical_coordinates,
+        -1.0,
+    )
+    coordinate_increment = corrected.coordinate - certificate.parameter
+    tangent_norm = geometry.augmented_norm(state_increment, coordinate_increment)
+    safe_norm = jnp.where(tangent_norm > 0.0, tangent_norm, 1.0)
+    tangent_coordinates = jax.tree.map(
+        lambda value: value / safe_norm,
+        state_increment,
+    )
+    tangent_state = geometry.state_tangent_from_execution(
+        corrected_coordinates,
+        tangent_coordinates,
+    )
+    residual = geometry.residual_to_execution(
+        problem.residual(corrected.state, corrected.coordinate, args)
+    )
+    residual_norm = geometry.residual_norm(residual)
+    constraint_residual = jnp.abs(
+        geometry.state_inner(unit_coordinates, state_increment) - amplitude
+    )
+    successful = (
+        nonlinear_result.successful
+        & (residual_norm <= tolerance)
+        & (constraint_residual <= tolerance)
+        & problem.contains_coordinate(corrected.coordinate)
+        & (tangent_norm > 0.0)
+    )
+    seed = BranchSeed(
+        state=corrected.state,
+        coordinate=corrected.coordinate,
+        tangent_state=tangent_state,
+        tangent_coordinate=coordinate_increment / safe_norm,
+        branch_id=branch_id,
+        source_point_id=source_point_id,
+    )
+    return CorrectedBranchSeed(
+        seed=seed,
+        correction_state=corrected,
+        nonlinear_result=nonlinear_result,
+        residual_norm=residual_norm,
+        constraint_residual=constraint_residual,
+        successful=successful,
+        correction_id=correction_id,
+    )
+
+
 __all__ = [
     "AbstractHopfAnalyzer",
     "AbstractNullspaceAnalyzer",
+    "BranchCorrectionState",
     "BifurcationCertificate",
     "BifurcationKind",
     "BifurcationStatus",
     "BifurcationTolerances",
     "BranchPointAssumptions",
     "BranchPointEvidence",
+    "CorrectedBranchSeed",
     "CallableHopfAnalyzer",
     "CallableNullspaceAnalyzer",
     "ExtendedSystemCertificate",
@@ -1958,10 +2313,14 @@ __all__ = [
     "NullspaceEvidence",
     "PitchforkAssumptions",
     "PitchforkEvidence",
+    "TranscriticalAssumptions",
+    "TranscriticalEvidence",
     "certify_branch_point",
     "certify_fold",
     "certify_hopf",
     "certify_pitchfork",
+    "certify_transcritical",
+    "correct_branch_seed",
     "evaluate_nullspace",
     "switch_branches_from_nullspace",
 ]

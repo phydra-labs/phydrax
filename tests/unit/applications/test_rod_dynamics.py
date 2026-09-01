@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax.applications.solid_mechanics._rod_dynamics import (
     evaluate_endpoint_attachment,
     evaluate_rod,
@@ -57,6 +58,24 @@ def _one_segment_inextensible_rod():
             inextensible=True,
         )
     )
+
+
+def test_rod_exposes_shared_collision_surface_map():
+    rod = _planar_rod()
+    surface = rod.collision_surface(minimum_separation=0.02)
+    scene = phx.discretization.PreparedCollisionScene((surface,))
+    state = jnp.zeros((rod.plan.node_count, rod.plan.dimension))
+    epoch = phx.discretization.SweepAndPruneContactSearchPlan(
+        edge_vertex_capacity=8,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.1,
+    ).build(scene, scene.positions(state))
+
+    assert surface.plan.edge_count == rod.plan.segment_count
+    assert surface.plan.minimum_separation == pytest.approx(0.02)
+    assert jnp.array_equal(scene.positions(state), rod.plan.rest_positions)
+    assert bool(epoch.successful)
 
 
 def test_rest_state_has_zero_energy_and_planar_rigid_motion_is_objective():

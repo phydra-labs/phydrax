@@ -28,7 +28,7 @@ def _case(shape, *, order=1, dealiasing="none"):
         physics_policy_id="linear-cold-baryon-power",
         scale_id=scale.scale_id,
         source_kind="external",
-        differentiability="constant",
+        differentiation="constant",
     )
     maximum_k = np.sqrt(dimension) * np.pi * max(shape)
     k = jnp.linspace(1.0, maximum_k + 2.0, 128)
@@ -117,7 +117,7 @@ def test_lpt_rejects_unsupported_order_and_dimension_mismatch():
         physics_policy_id="test",
         scale_id=scale.scale_id,
         source_kind="external",
-        differentiability="constant",
+        differentiation="constant",
     )
     mismatched = cosmology.MatterPowerTable(
         [0.1, 1.0],

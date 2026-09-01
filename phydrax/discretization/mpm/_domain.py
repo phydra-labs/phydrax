@@ -33,8 +33,14 @@ class MPMParticleDomainPlan(StrictModule, NonTrainableState):
         support_margin: float | Sequence[float],
     ):
         bounds_ = np.asarray(bounds, dtype=float)
-        if bounds_.ndim != 2 or bounds_.shape[0] != 2 or bounds_.shape[1] not in (2, 3):
-            raise ValueError("MPM particle bounds must have shape (2, 2) or (2, 3).")
+        if (
+            bounds_.ndim != 2
+            or bounds_.shape[0] != 2
+            or bounds_.shape[1] not in (1, 2, 3)
+        ):
+            raise ValueError(
+                "MPM particle bounds must have shape (2, 1), (2, 2), or (2, 3)."
+            )
         if np.any(~np.isfinite(bounds_)) or np.any(bounds_[1] <= bounds_[0]):
             raise ValueError("MPM particle bounds must be finite and strictly ordered.")
         dimension = int(bounds_.shape[1])

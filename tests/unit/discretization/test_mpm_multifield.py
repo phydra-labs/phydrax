@@ -75,7 +75,12 @@ def test_two_field_contact_preserves_action_reaction_and_separate_grid_fields():
     fields = phx.discretization.MPMNodalFieldPlan(
         ("left", "right"),
         slots,
-        contact_friction=phx.discretization.SharpCoulombMPMFrictionPlan(0.2),
+        contact_plan=phx.discretization.KWayMPMContactPlan(
+            2,
+            friction=phx.discretization.SharpCoulombMPMFrictionPlan(0.2),
+            maximum_steps=40,
+            tolerance=1e-8,
+        ),
     )
     compiled, arguments, position, volume = _compiled(fields)
     velocity = jnp.asarray([[0.12, 0.02], [0.12, 0.02], [-0.12, -0.01], [-0.12, -0.01]])
@@ -101,18 +106,26 @@ def test_direct_two_field_projection_stops_approach_and_obeys_friction_cone():
     mass = jnp.asarray([[1.0], [2.0]])
     velocity = jnp.asarray([[[1.0, 0.4]], [[-0.5, 0.0]]])
     gradients = jnp.asarray([[[1.0, 0.0]], [[-1.0, 0.0]]])
-    friction = phx.discretization.SharpCoulombMPMFrictionPlan(0.3)
-    result = phx.discretization.project_two_field_contact(
-        mass, velocity, gradients, friction=friction
+    contact = phx.discretization.KWayMPMContactPlan(
+        2,
+        friction=phx.discretization.SharpCoulombMPMFrictionPlan(0.3),
+        maximum_steps=40,
+        tolerance=1e-8,
+    )
+    result = contact.solve(
+        mass,
+        velocity,
+        contact.build_graph(mass, gradients),
+        0.01,
     )
 
     assert bool(result.successful)
-    assert bool(result.contact_mask[0])
+    assert bool(result.active_pairs[0, 0])
     relative = result.velocity[0, 0] - result.velocity[1, 0]
     assert relative[0] >= -1e-12
     assert result.action_reaction_defect < 1e-12
-    normal_impulse = abs(result.impulse[0, 0])
-    tangential_impulse = abs(result.impulse[0, 1])
+    normal_impulse = abs(result.normal_impulses[0, 0])
+    tangential_impulse = abs(result.tangential_impulses[0, 0, 1])
     assert tangential_impulse <= 0.3 * normal_impulse + 1e-12
 
 
