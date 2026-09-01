@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added advanced hydrodynamics with corrected graph-stage timing, pressure/reference
+  semantics, unified mapped kinetic and boundary ownership, truthful work ledgers,
+  variational surface tension, coherent wave forcing/absorption, vertical rezoning,
+  shoreline handoff events, submerged rigid/modal coupling, and a separate
+  conservative incompressible two-phase VOF/CLSVOF product with variable-density
+  projection, capillarity, moving-body forcing, topology evidence, restart, output,
+  qualification, examples, and benchmarks.
 - Added fixed-topology one-phase free-surface ALE hydrodynamics with graph
   geometry, extensive mapped momentum/scalars, conservative kinematic GCL,
   nonorthogonal mapped Hodge, mixed pressure projection, strongly coupled

@@ -65,6 +65,7 @@ benchmarks/*
 !benchmarks/ocean.json
 !benchmarks/hydrostatic_ocean.json
 !benchmarks/free_surface_ale.json
+!benchmarks/advanced_hydrodynamics.json
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/mac_immersed_boundary.json

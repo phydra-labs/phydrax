@@ -29,6 +29,9 @@ class FreeSurfaceALEDiagnosticView(StrictModule):
     pressure_head: Array
     kinetic_energy: Array
     gravitational_energy: Array
+    surface_energy: Array
+    wave_reflection_coefficient: Array
+    mesh_epoch: Array
     volume: Array
     ledger: FreeSurfaceALELedger | None
     successful: Array
@@ -59,6 +62,18 @@ def free_surface_diagnostic_view(
         * hydrodynamics.plan.gravity
         * jnp.sum(hydrodynamics.surface.horizontal_area * physical.eta**2)
     )
+    surface_energy = hydrodynamics.capillarity.evaluate(
+        physical.eta, hydrodynamics.plan.density
+    ).surface_energy
+    wave_reflection = jnp.asarray(0.0, dtype=physical.eta.dtype)
+    if (
+        continuation is not None
+        and hydrodynamics.wave is not None
+        and continuation.wave_controller is not None
+    ):
+        wave_reflection = hydrodynamics.wave.diagnostics(
+            continuation.wave_controller
+        ).reflection_coefficient
     evidence = hydrodynamics.surface.geometry_evidence(physical.eta, eta_rate)
     return FreeSurfaceALEDiagnosticView(
         eta=physical.eta,
@@ -69,6 +84,13 @@ def free_surface_diagnostic_view(
         pressure_head=pressure,
         kinetic_energy=view.kinetic_energy,
         gravitational_energy=gravitational,
+        surface_energy=surface_energy,
+        wave_reflection_coefficient=wave_reflection,
+        mesh_epoch=(
+            jnp.asarray(0, dtype=jnp.int32)
+            if continuation is None
+            else continuation.mesh_epoch
+        ),
         volume=view.volume,
         ledger=None if continuation is None else continuation.ledger,
         successful=evidence.valid,
@@ -90,6 +112,9 @@ def write_free_surface_output(
         "pressure_head": view.pressure_head,
         "kinetic_energy": view.kinetic_energy,
         "gravitational_energy": view.gravitational_energy,
+        "surface_energy": view.surface_energy,
+        "wave_reflection_coefficient": view.wave_reflection_coefficient,
+        "mesh_epoch": view.mesh_epoch,
         "volume": view.volume,
         "successful": view.successful,
     }

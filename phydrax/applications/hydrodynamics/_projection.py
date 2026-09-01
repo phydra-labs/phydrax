@@ -4,23 +4,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
-from .._strict import StrictModule
-from .._trainable import NonTrainableState
-from ._mac_ale import MACALEStageGeometry
+from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...solver._mac_ale import MACALEStageGeometry
+from ._boundary import FreeSurfaceBoundaryStage
+from ._free_surface_ale import PreparedGraphSurfaceALE
 
-
-if TYPE_CHECKING:
-    from ..applications.hydrodynamics._free_surface_ale import (
-        PreparedGraphSurfaceALE,
-    )
 
 FaceTuple = tuple[Array, ...]
 
@@ -62,9 +57,6 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 200,
     ):
-        from ..applications.hydrodynamics._free_surface_ale import (
-            PreparedGraphSurfaceALE,
-        )
 
         if not isinstance(surface, PreparedGraphSurfaceALE):
             raise TypeError("surface must be PreparedGraphSurfaceALE.")
@@ -86,23 +78,6 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 "other_walls": "normal-neumann",
             }
         )
-
-    def free_velocity_mask(self, geometry: MACALEStageGeometry, /) -> FaceTuple:
-        masks = [jnp.ones_like(value) for value in geometry.face_measures]
-        axes = self.surface.plan.reference.grid.structured_axes
-        for axis, grid_axis in enumerate(axes):
-            if grid_axis.periodic:
-                continue
-            lower = [slice(None)] * masks[axis].ndim
-            upper = [slice(None)] * masks[axis].ndim
-            lower[axis] = 0
-            upper[axis] = masks[axis].shape[axis] - 1
-            masks[axis] = masks[axis].at[tuple(lower)].set(0.0)
-            masks[axis] = masks[axis].at[tuple(upper)].set(0.0)
-        top = [slice(None)] * masks[2].ndim
-        top[2] = masks[2].shape[2] - 1
-        masks[2] = masks[2].at[tuple(top)].set(1.0)
-        return tuple(masks)
 
     def surface_pressure_force(
         self,
@@ -131,10 +106,9 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         zero = tuple(jnp.zeros_like(value) for value in geometry.face_measures)
 
         def divergence(values):
-            masked = tuple(
-                value * active for value, active in zip(values, mask, strict=True)
+            return geometry.divergence(
+                tuple(value * active for value, active in zip(values, mask, strict=True))
             )
-            return geometry.divergence(masked)
 
         cotangent = geometry.cell_volumes * pressure
         gradient = jax.linear_transpose(divergence, zero)(cotangent)[0]
@@ -144,18 +118,33 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         self,
         geometry: MACALEStageGeometry,
         tentative_momentum: FaceTuple,
+        boundary_stage: FreeSurfaceBoundaryStage,
         step_size: ArrayLike,
         pressure_guess: ArrayLike | None = None,
         /,
     ) -> FreeSurfaceProjectionResult:
         if not isinstance(geometry, MACALEStageGeometry):
             raise TypeError("geometry must be MACALEStageGeometry.")
+        if boundary_stage.layout_id == "":
+            raise ValueError("Free-surface boundary stage has no layout identity.")
         dt = jnp.asarray(step_size, dtype=geometry.cell_volumes.dtype).reshape(())
-        mask = self.free_velocity_mask(geometry)
-        tentative = self.surface.inverse_hodge(
-            geometry, tentative_momentum, free_mask=mask
+        mask = boundary_stage.free_velocity_mask
+        lifting_momentum = self.surface.apply_hodge(
+            geometry, boundary_stage.prescribed_velocity
         )
-        divergence_before = geometry.divergence(tentative.velocity)
+        homogeneous_momentum = _tuple_add(tentative_momentum, -1.0, lifting_momentum)
+        tentative = self.surface.inverse_hodge(
+            geometry, homogeneous_momentum, free_mask=mask
+        )
+        tentative_velocity = tuple(
+            free + prescribed
+            for free, prescribed in zip(
+                tentative.velocity,
+                boundary_stage.prescribed_velocity,
+                strict=True,
+            )
+        )
+        divergence_before = geometry.divergence(tentative_velocity)
         rhs = divergence_before / dt
         pressure = (
             jnp.zeros_like(rhs)
@@ -204,18 +193,27 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             (pressure, residual, direction, norm, active, failed),
         )
         gradient = self._gradient_covector(geometry, pressure, mask)
-        corrected_momentum = _tuple_add(tentative_momentum, -dt, gradient)
-        corrected = self.surface.inverse_hodge(
-            geometry, corrected_momentum, free_mask=mask
+        corrected_homogeneous = _tuple_add(homogeneous_momentum, -dt, gradient)
+        corrected_free = self.surface.inverse_hodge(
+            geometry, corrected_homogeneous, free_mask=mask
         )
-        divergence_after = geometry.divergence(corrected.velocity)
+        corrected_velocity = tuple(
+            free + prescribed
+            for free, prescribed in zip(
+                corrected_free.velocity,
+                boundary_stage.prescribed_velocity,
+                strict=True,
+            )
+        )
+        corrected_momentum = _tuple_add(corrected_homogeneous, 1.0, lifting_momentum)
+        divergence_after = geometry.divergence(corrected_velocity)
         pressure_residual = action(pressure) - rhs
         residual_norm = jnp.sqrt(jnp.sum(geometry.cell_volumes * pressure_residual**2))
         divergence_norm = jnp.sqrt(jnp.sum(geometry.cell_volumes * divergence_after**2))
         rhs_norm = jnp.sqrt(jnp.sum(geometry.cell_volumes * rhs**2))
         finite = (
             tentative.finite
-            & corrected.finite
+            & corrected_free.finite
             & jnp.all(jnp.isfinite(pressure))
             & jnp.isfinite(residual_norm)
             & jnp.isfinite(divergence_norm)
@@ -228,7 +226,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         )
         return FreeSurfaceProjectionResult(
             momentum=corrected_momentum,
-            velocity=corrected.velocity,
+            velocity=corrected_velocity,
             pressure_head=pressure,
             pressure_increment=dt * pressure,
             divergence_before=divergence_before,
@@ -236,7 +234,7 @@ class MappedFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             pressure_residual=pressure_residual,
             pressure_residual_norm=residual_norm,
             hodge_residual_norm=jnp.maximum(
-                tentative.residual_norm, corrected.residual_norm
+                tentative.residual_norm, corrected_free.residual_norm
             ),
             iterations=jnp.asarray(self.maximum_iterations, dtype=jnp.int32),
             converged=converged,

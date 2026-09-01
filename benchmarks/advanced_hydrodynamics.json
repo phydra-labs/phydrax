@@ -1,0 +1,42 @@
+{
+  "benchmarks": [
+    {
+      "capillary": false,
+      "cell_updates_per_second": 65.71075398388085,
+      "compile_seconds": 26.132522790998337,
+      "execution_seconds": 0.7304740410036175,
+      "product": "graph-ale",
+      "shape": [4, 4, 3],
+      "successful": true,
+      "wave": false
+    },
+    {
+      "capillary": true,
+      "cell_updates_per_second": 63.76433763496817,
+      "compile_seconds": 43.51277633299469,
+      "execution_seconds": 0.7527718750061467,
+      "product": "graph-ale",
+      "shape": [4, 4, 3],
+      "successful": true,
+      "wave": false
+    },
+    {
+      "capillary": true,
+      "cell_updates_per_second": 63.617331150684315,
+      "compile_seconds": 45.57381591601006,
+      "execution_seconds": 0.7545113749947632,
+      "product": "graph-ale",
+      "shape": [4, 4, 3],
+      "successful": true,
+      "wave": true
+    },
+    {
+      "cell_updates_per_second": 70607.67830159087,
+      "compile_seconds": 1.1558778750040801,
+      "execution_seconds": 0.0009064170008059591,
+      "product": "two-phase-vof",
+      "shape": [8, 8],
+      "successful": true
+    }
+  ]
+}

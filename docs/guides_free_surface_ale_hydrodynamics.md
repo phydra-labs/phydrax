@@ -68,7 +68,7 @@ the pressure action.
 
 The product uses modified pressure head
 
-`Pi = p / rho + g z - p_atm / rho`.
+`Pi = p_liquid / rho + g z - p_reference / rho`.
 
 Without capillarity, top pressure head is `g eta` plus the declared atmospheric
 anomaly convention.
