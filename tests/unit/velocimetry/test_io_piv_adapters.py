@@ -9,10 +9,9 @@ import importlib.util
 import numpy as np
 import pytest
 
+from phydrax.interchange import AdapterError, AdapterStatus
 from phydrax.velocimetry.imaging import DenseDisplacementField2D
 from phydrax.velocimetry.io import (
-    AdapterError,
-    AdapterStatus,
     piv_to_observation_sequence,
     piv_to_tensor_grid,
     read_openpiv_text,

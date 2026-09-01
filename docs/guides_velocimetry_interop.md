@@ -4,7 +4,7 @@ The native archive is the canonical persistence form. It stores arrays without p
 
 ## Adapter reports
 
-Every external conversion returns an `AdapterReport` containing source/target identities and explicit transformed, synthesized, unsupported, or dropped semantics. A conversion that cannot represent a required distinction fails before writing a deceptive result.
+Every external conversion returns a `phydrax.interchange.AdapterReport` containing source/target identities and explicit transformed, synthesized, unsupported, or dropped semantics. A conversion that cannot represent a required distinction fails before writing a deceptive result.
 
 Examples of scientifically relevant loss include:
 

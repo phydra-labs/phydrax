@@ -92,6 +92,17 @@ Most workflows are composing a few primitives:
   refinement, deterministic synthetic qualification, and optional learned dense
   displacement preserve image/physical coordinate frames, raw validity,
   uncertainty, capacity, and provenance.
+- **Bioinformatics**: evidence-bearing native sequence, genomics, phylogenetics,
+  population genetics, omics, spatial biology, spectrometry, metagenomics,
+  macromolecular structure, RNA, systems biology, biological-model, and interchange
+  contracts separate exact-model, approximate, relaxed, heuristic, and learned claims.
+  Host parsers and artifact identity stay outside JAX; kernels retain masks, capacities,
+  units, experimental units, leakage/provenance, validity, and status. No references,
+  annotations, weights, libraries, or qualification data are downloaded. Optional local
+  readers are `pysam` via `bioinformatics-hts` and Pyteomics via
+  `bioinformatics-spectrometry`; native primitives do not imply exhaustive
+  mapping/assembly/discovery, clinical interpretation, empirical RNA parameter tables,
+  automatic structure repair/force-field assignment, or learned-model validation.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
