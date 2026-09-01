@@ -173,9 +173,7 @@ def test_time_law_schedule_and_uniform_refinement_are_transactional():
 def test_element_partial_and_p_transfer_operators_are_consistent():
     local_matrix = jnp.asarray([[[2.0, -1.0], [-1.0, 2.0]], [[2.0, -1.0], [-1.0, 2.0]]])
     gathers = jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32)
-    element = phx.sparse.ElementTensorOperator(
-        local_matrix, gathers, gathers, 3, 3
-    )
+    element = phx.sparse.ElementTensorOperator(local_matrix, gathers, gathers, 3, 3)
     value = jnp.asarray([1.0, 2.0, 3.0])
     expected = jnp.asarray([0.0, 4.0, 4.0])
     assert jnp.allclose(element.mv(value), expected)
@@ -221,16 +219,20 @@ def test_application_model_primitives_are_executable():
     )
     response = material.update(jnp.eye(3), material.initial_state(), 0.1)
     fracture = phx.applications.fracture.PhaseFieldFractureParameters(1.0, 1.0, 1.0, 0.1)
-    contact = phx.applications.contact.FrictionlessContactLaw(100.0)
-    traction, tangent, active = contact.response(
-        jnp.asarray(-0.01), jnp.asarray([1.0, 0.0])
+    squared_distance = jnp.asarray(0.05**2)
+    barrier = phx.applications.contact.physical_clamped_log_barrier(
+        squared_distance, 0.1, 0.0
     )
+    force_magnitude = -jax.grad(
+        lambda value: phx.applications.contact.physical_clamped_log_barrier(
+            value, 0.1, 0.0
+        )
+    )(squared_distance)
 
     assert response.state.plastic_deformation.shape == (3, 3)
     assert fracture.degradation(jnp.asarray(0.0)) > 0.0
-    assert jnp.allclose(traction, jnp.asarray([1.0, 0.0]))
-    assert tangent > 0.0
-    assert active
+    assert barrier > 0.0
+    assert force_magnitude > 0.0
 
 
 def test_partition_and_local_adaptation_have_stable_routes():

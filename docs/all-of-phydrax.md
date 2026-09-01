@@ -1245,9 +1245,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   volumetric FEM with material-state/admissibility ledgers; couple rigid bodies
   through exact interpolation/transpose attachment KKT blocks and mixed pressure
   gauges; evolve objective two-/three-dimensional Cosserat rods and triangular
-  membrane/bending shells; and construct fixed-capacity deformable or rigid–MPM
-  contact/coupling routes. See
-  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md).
+  membrane/bending shells; construct exact-map collision surfaces, deterministic
+  candidate epochs, conservative continuous-collision/simplex-inversion bounds,
+  convergent barrier contact, lagged friction, and fixed-route sensitivities; and
+  retain explicit rigid–MPM coupling routes. See
+  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md)
+  and [Guide → Deformable contact](guides_deformable_contact.md).
 - **Force-density structural form-finding**: build sparse or affine-restraint
   tension, compression, or mixed-sign networks; compose self-weight, traction,
   pressure, or pneumatic loads; optimize forces, supports, loads, gridshell

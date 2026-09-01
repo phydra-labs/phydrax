@@ -4,6 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax.applications.solid_mechanics._shell_dynamics import (
     ShellDynamicsPlan,
     ShellMaterialParameters,
@@ -214,7 +215,16 @@ def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry():
         density=1.0,
         self_contact_pairs=jnp.asarray(((0, 1), (-1, -1)), dtype=jnp.int32),
     )
-    geometry = plan.prepare(positions).self_contact_geometry(positions)
+    prepared = plan.prepare(positions)
+    geometry = prepared.self_contact_geometry(positions)
+    collision_surface = prepared.collision_surface()
+    scene = phx.discretization.PreparedCollisionScene((collision_surface,))
+    epoch = phx.discretization.SweepAndPruneContactSearchPlan(
+        edge_vertex_capacity=0,
+        edge_edge_capacity=16,
+        face_vertex_capacity=16,
+        activation_distance=0.3,
+    ).build(scene, scene.positions(jnp.zeros_like(positions)))
 
     assert isinstance(geometry, RigidContactGeometry)
     assert geometry.normal.shape == (2, 3)
@@ -225,6 +235,10 @@ def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry():
     assert geometry.normal[0, 2] == pytest.approx(-1.0)
     assert bool(geometry.successful)
     assert geometry.as_contact_batch().normal.shape == (2, 3)
+    assert collision_surface.plan.face_count == 2
+    assert collision_surface.plan.minimum_separation == pytest.approx(0.1)
+    assert bool(epoch.successful)
+    assert epoch.candidate_count > 0
 
 
 def test_evaluation_and_step_are_jittable_and_unstable_step_rolls_back():
