@@ -8,6 +8,11 @@
   and regularized native QEF realization, and graph-harmonic finite-element mesh
   motion with signed-Jacobian evidence, safe rejected-trial fallback, qualification,
   examples, benchmarks, and explicit topology-refresh boundaries.
+- Added prepared periodic Fourier-shell statistics with continuum FFT normalization,
+  Hermitian mode accounting, DC/Nyquist/final-edge policies, measured one-epoch matter
+  power, auto/cross spectra, phase-sensitive spectral discrepancy, Parseval evidence,
+  and inverse particle-field realization through existing splat, covariance,
+  optimization, and sensitivity substrates.
 - Added fixed-topology one-phase free-surface ALE hydrodynamics with graph
   geometry, extensive mapped momentum/scalars, conservative kinematic GCL,
   nonorthogonal mapped Hodge, mixed pressure projection, strongly coupled
