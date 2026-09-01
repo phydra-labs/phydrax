@@ -22,7 +22,7 @@ def _context(differentiability="native-parameter", matter=0.3):
         physics_policy_id="test-physics",
         scale_id=scale.scale_id,
         source_kind="native" if differentiability == "native-parameter" else "external",
-        differentiability=differentiability,
+        differentiation=differentiability,
     )
     return scale, background, provenance
 

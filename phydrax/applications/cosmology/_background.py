@@ -10,7 +10,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ._products import CosmologyRealizationSignature
+from ._closure import CosmologyPhysicalState, PhysicalDependencyProjection
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 
@@ -91,8 +91,8 @@ class FLRWBackground(StrictModule):
         )
 
     @property
-    def realization(self) -> CosmologyRealizationSignature:
-        return CosmologyRealizationSignature(
+    def physical_state(self) -> CosmologyPhysicalState:
+        return CosmologyPhysicalState(
             jnp.stack(
                 (
                     self.hubble_constant,
@@ -113,8 +113,13 @@ class FLRWBackground(StrictModule):
                 "dark_energy_w0",
                 "dark_energy_wa",
             ),
-            self.model_form_id,
             self.scale.scale_id,
+        )
+
+    @property
+    def realization(self):
+        return PhysicalDependencyProjection(self.physical_state.names).project(
+            self.physical_state
         )
 
     def equation_of_state(self, scale_factor: ArrayLike, /) -> Array:

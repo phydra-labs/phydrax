@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Closed remaining advanced-cosmology boundaries with projected canonical physical
+  state, content-addressed products/artifacts, dependency-aware derivatives, shared
+  observation/covariance likelihood algebra, concrete pinned precision-process
+  wrappers, one-loop SPT, calibrated 200m halo/galaxy foundations, release-locked
+  survey likelihood contracts, primordial H/He microphysics, local-curvature evidence,
+  low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification, snapshots, and
+  distributed-PM feasibility. Native full Boltzmann/CMB parity, global curved N-body,
+  generic surveys, stochastic feedback, and production tree gravity remain explicit
+  non-goals rather than fallbacks.
 - Added fixed-geometry 3D Laplace DP0 surface Galerkin capacitance solves with
   explicit weak/strong maps, bounded singular and near-pair quadrature,
   nonmaterializable blocked actions, immutable conductor selections, physical
