@@ -105,32 +105,23 @@ This closure adds section data to the lifting calculation. Its validity is bound
 the supplied polar data and model assumptions. It is not a Reynolds-averaged flow
 solver and does not manufacture dynamic-stall or three-dimensional separation physics.
 
-## Filaments in advanced workflows
+## Complete filament and lifting workflows
 
-The workflow layer keeps source and observation roles distinct:
+Shared-vertex edge/ring/sheet topology retains circulation incidence and avoids
+duplicated wake segments. Velocity, gradient, vorticity, core diffusion,
+midpoint/RK3 convection, and curvature/age/reconnection candidates remain
+explicit. Adaptive changes commit transactionally between accepted steps.
 
-- actuator-line and actuator-surface entities inject declared vortex sources;
-- passive probes sample a prepared field and never alter it;
-- prescribed rigid motion maps prepared reference geometry to dynamic world geometry;
-- coupled rigid motion exchanges explicit aerodynamic loads and pose state;
-- accelerated evaluation retains direct-near interactions and fixed-tree error/stale
-  evidence.
+`MultiLiftingSurfacePlan` retains component/body/frame/control-surface and
+trailing-edge ownership across horseshoe, ring, lifting-line, and free/prescribed
+UVLM solves. Loads remain independent Kutta–Joukowski, unsteady Bernoulli,
+impulse, added-mass, moment, and Trefftz providers.
 
-The steady and UVLM solvers do not automatically select an acceleration backend. A
-requested accelerated route is part of the prepared method and must satisfy its own
-accuracy and topology evidence.
-
-## Current support and exclusions
-
-Supported contracts include finite regularized segments, fixed lifting panels, an
-explicit steady AIC solve, Kutta/trailing-edge metadata, Kutta--Joukowski load evidence,
-and fixed-capacity prescribed/free UVLM wakes with accepted-step shedding.
-
-Not claimed are filament reconnection, adaptive wake refinement inside a compiled step,
-compressibility corrections, viscous profile drag without supplied section data,
-dynamic-stall closure, aeroelastic structural dynamics hidden inside UVLM, or an FMM
-implementation. Coupled body motion and nonlinear polar closure are explicit workflows,
-not implicit solver side effects.
+Section polars resolve angle, Reynolds number, Mach number, and flap state.
+Dynamic stall and low-Mach corrections are opt-in. Rotor/blade-element and
+actuator-line/surface workflows report circulation, wake ownership, thrust,
+torque, power, and balance. Hierarchical FMM/P3M selection remains a prepared
+field-backend decision rather than an implicit solver side effect.
 
 ## Primary method references
 

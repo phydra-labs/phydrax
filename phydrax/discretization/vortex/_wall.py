@@ -27,7 +27,7 @@ class WallVortexPoolState(StrictModule):
     next_event_id: Array
 
 
-class WallVorticityTransferResult(StrictModule):
+class BoundarySheetParticleTransferResult(StrictModule):
     candidate: WallVortexPoolState
     accepted: WallVortexPoolState
     emitted_circulation: Array
@@ -38,8 +38,8 @@ class WallVorticityTransferResult(StrictModule):
     transfer_id: str = eqx.field(static=True)
 
 
-class WallVorticityTransferPlan2D(StrictModule, NonTrainableState):
-    """Atomic conversion of one constant vortex sheet to near-wall blobs."""
+class BoundarySheetParticleTransferPlan2D(StrictModule, NonTrainableState):
+    """Atomic conversion of a resolved boundary sheet to vortex carriers."""
 
     particle_capacity: int = eqx.field(static=True)
     core_radius: float = eqx.field(static=True)
@@ -81,7 +81,7 @@ class WallVorticityTransferPlan2D(StrictModule, NonTrainableState):
         geometry: FlowPanelGeometry2D,
         sheet_strength: ArrayLike,
         /,
-    ) -> WallVorticityTransferResult:
+    ) -> BoundarySheetParticleTransferResult:
         strength = jnp.asarray(sheet_strength, dtype=state.circulation.dtype)
         panel_count = int(geometry.length.size)
         if strength.shape != (panel_count,):
@@ -140,7 +140,7 @@ class WallVorticityTransferPlan2D(StrictModule, NonTrainableState):
             jnp.where(successful, candidate.active, state.active),
             jnp.where(successful, candidate.next_event_id, state.next_event_id),
         )
-        return WallVorticityTransferResult(
+        return BoundarySheetParticleTransferResult(
             candidate,
             accepted,
             actual,
@@ -153,7 +153,7 @@ class WallVorticityTransferPlan2D(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "BoundarySheetParticleTransferPlan2D",
+    "BoundarySheetParticleTransferResult",
     "WallVortexPoolState",
-    "WallVorticityTransferPlan2D",
-    "WallVorticityTransferResult",
 ]

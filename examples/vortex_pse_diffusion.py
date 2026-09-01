@@ -26,7 +26,6 @@ velocity = phx.operators.GaussianDirectVortexPlan2D(
 diffusion = phx.operators.GaussianParticleStrengthExchangePlan(
     2,
     0.4,
-    active_mask=particles.active_mask,
 )
 method = phx.discretization.VortexParticleMethodPlan(
     velocity,
@@ -44,7 +43,7 @@ compiled = phx.equations.compile_vortex_particle_flow(
 )
 state = compiled.initialize_state(position, circulation)
 evaluation = compiled.dynamics.evaluate(0.0, state)
-diffusion_evaluation = evaluation[5]
+diffusion_evaluation = evaluation[6]
 backend = diffusion_evaluation.diagnostics.backend_diagnostics
 
 print("strength rate", diffusion_evaluation.rate)

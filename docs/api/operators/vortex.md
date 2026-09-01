@@ -32,4 +32,36 @@
 
 ---
 
-::: phydrax.operators.BarnesHutVortexPlan2D
+::: phydrax.operators.FixedClusterVortexPlan2D
+
+---
+
+::: phydrax.operators.PeriodicVortexEwaldPlan
+
+---
+
+::: phydrax.operators.FreeSpaceVortexFFTPlan
+
+---
+
+::: phydrax.operators.CorrectedP3MPlan
+
+---
+
+::: phydrax.operators.VortexFMMPlan
+
+---
+
+::: phydrax.operators.PreparedRingSheetField3D
+
+---
+
+::: phydrax.operators.NativePanelFieldPlan2D
+
+---
+
+::: phydrax.operators.NativePanelFieldPlan3D
+
+---
+
+::: phydrax.operators.VortexShardingPolicy
