@@ -1,0 +1,30 @@
+{
+  "benchmarks": [
+    {
+      "cells": 48,
+      "geometry_cells_per_second": 32904.4218883446,
+      "geometry_compile_seconds": 0.4618306659976952,
+      "geometry_execution_seconds": 0.0014587705009034835,
+      "repeats": 2,
+      "shape": [4, 4, 3],
+      "step_cells_per_second": 68.89034164598719,
+      "step_compile_seconds": 19.13638058300421,
+      "step_execution_seconds": 0.6967594999987341,
+      "successful": true,
+      "wave": false
+    },
+    {
+      "cells": 48,
+      "geometry_cells_per_second": 27591.8283850256,
+      "geometry_compile_seconds": 0.45432816699758405,
+      "geometry_execution_seconds": 0.0017396454968547914,
+      "repeats": 2,
+      "shape": [4, 4, 3],
+      "step_cells_per_second": 68.68153365528433,
+      "step_compile_seconds": 19.389827874998446,
+      "step_execution_seconds": 0.6988778124978126,
+      "successful": true,
+      "wave": true
+    }
+  ]
+}
