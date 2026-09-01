@@ -135,6 +135,11 @@ from ._initial_conditions import (
     LagrangianInitialConditionResult,
     LagrangianPerturbationInitialConditionPlan,
 )
+from ._inverse_realization import (
+    ParticleFieldRealizationEvaluation,
+    ParticleFieldRealizationPlan,
+    ParticleTargetKind,
+)
 from ._linear_theory import (
     CosmologyModelRequest,
     CosmologyModelResult,
@@ -235,6 +240,14 @@ from ._s3_dynamics import (
     S3PoissonResult,
 )
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
+from ._spectral_statistics import (
+    CosmologicalFieldSpectrumPlan,
+    FieldDensityConvention,
+    MatterPowerEstimate,
+    SpectralFieldDiscrepancyPlan,
+    SpectralFieldDiscrepancyResult,
+    stack_matter_power_estimates,
+)
 from ._spt import OneLoopEdSSPTPlan, OneLoopSPTEvidence, OneLoopSPTResult
 from ._survey_framework import (
     desi_full_shape_slice,

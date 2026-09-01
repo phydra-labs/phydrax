@@ -186,6 +186,12 @@ states unsupported species, topology, approximation, capacity, distribution, and
 communication branches; precision parity beyond qualified profiles, multilevel
 distributed AMR, adaptive/distributed trees, production feedback, and full release
 coverage remain separate qualification claims rather than hidden flags.
+Prepared periodic Fourier shells now provide continuum-normalized isotropic auto/cross
+power, phase-sensitive residuals, Hermitian mode accounting, and explicit spectral
+validity. One-epoch measured power products stack into canonical tables. Inverse
+particle-field realization composes the existing measure-aware splat, shared covariance
+algebra, periodic position parameters, and optimization/sensitivity machinery without
+introducing a second assignment, PM, inference, or FFT substrate.
 Cross-domain reconciliation keeps those domain states distinct while moving shared
 mechanics to core owners: dimensional scales, artifacts and derivative capabilities,
 labelled observation/covariance/likelihood algebra, direct and hierarchical particle
