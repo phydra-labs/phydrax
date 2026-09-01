@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added executable geometry-state validity, exact analytic extrusion and revolution,
+  dense host-discovered fixed-topology implicit surfaces with normal-gauge projection
+  and regularized native QEF realization, and graph-harmonic finite-element mesh
+  motion with signed-Jacobian evidence, safe rejected-trial fallback, qualification,
+  examples, benchmarks, and explicit topology-refresh boundaries.
 - Added prepared periodic Fourier-shell statistics with continuum FFT normalization,
   Hermitian mode accounting, DC/Nyquist/final-edge policies, measured one-epoch matter
   power, auto/cross spectra, phase-sensitive spectral discrepancy, Parseval evidence,

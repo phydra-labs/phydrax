@@ -1,0 +1,92 @@
+{
+  "cases": [
+    {
+      "case_id": "extrusion_exactness",
+      "metrics": {
+        "field_error": 0.0,
+        "volume_error": 0.0
+      },
+      "passed": true
+    },
+    {
+      "case_id": "revolution_exactness",
+      "metrics": {
+        "field_error": 0.0
+      },
+      "passed": true
+    },
+    {
+      "case_id": "geometry_validity",
+      "metrics": {
+        "invalid_detected": true
+      },
+      "passed": true
+    },
+    {
+      "case_id": "implicit_projection_derivative",
+      "metrics": {
+        "maximum_error": 0.0
+      },
+      "passed": true
+    },
+    {
+      "case_id": "implicit_surface_topology",
+      "metrics": {
+        "components": 1,
+        "faces": 108,
+        "minimum_face_area": 0.042698381257960764,
+        "vertices": 56
+      },
+      "passed": true
+    },
+    {
+      "case_id": "implicit_surface_refresh",
+      "metrics": {
+        "accepted": false,
+        "refresh_required": true
+      },
+      "passed": true
+    },
+    {
+      "case_id": "mesh_motion_duality",
+      "metrics": {
+        "work_duality_defect": 1.1102230246251565e-16
+      },
+      "passed": true
+    },
+    {
+      "case_id": "finite_element_shape_derivative",
+      "metrics": {
+        "absolute_defect": 8.695266728864226e-13,
+        "adjoint_value": 4.2,
+        "finite_difference": 4.20000000000087
+      },
+      "passed": true
+    },
+    {
+      "case_id": "invalid_candidate_rejection",
+      "metrics": {
+        "accepted": false,
+        "refresh_required": true
+      },
+      "passed": true
+    },
+    {
+      "case_id": "end_to_end_state_design",
+      "metrics": {
+        "accepted": true,
+        "minimum_relative_jacobian": 1.2100000000000002
+      },
+      "passed": true
+    },
+    {
+      "case_id": "invalid_candidate_finiteness",
+      "metrics": {
+        "finite": true
+      },
+      "passed": true
+    }
+  ],
+  "kind": "geometry-realization-qualification",
+  "passed": true
+}

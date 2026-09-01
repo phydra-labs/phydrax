@@ -474,6 +474,8 @@ class FiniteElementLocalProvider(StrictModule):
             runtime.topology_id != discretization.mesh.topology_id
             or runtime.geometry_layout_id
             != discretization.default_runtime.geometry_layout_id
+            or runtime.coordinates.shape
+            != discretization.default_runtime.coordinates.shape
         ):
             raise ValueError("Finite-element runtime does not match the prepared layout.")
 

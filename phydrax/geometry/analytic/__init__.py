@@ -29,6 +29,7 @@ from ._operations import (
 )
 from ._primitives import Box, Circle, Cube, Sphere
 from ._superquadric import Superquadric
+from ._sweeps import Extrusion, Revolution
 
 
 __all__ = [
@@ -44,10 +45,12 @@ __all__ = [
     "Difference",
     "Ellipse",
     "Ellipsoid",
+    "Extrusion",
     "Intersection",
     "Polygon",
     "Rectangle",
     "RigidFrame",
+    "Revolution",
     "RigidTransform",
     "Scaling",
     "SharpCSG",
