@@ -131,6 +131,14 @@ discrete continuity. Fixed-population free-surface FLIP separately binds cell an
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
+Advanced particle-grid methods preserve those authorities while adding runtime
+population/incarnation state, integer PIC charge and microphysics events,
+one/two-dimensional mixed Maxwell blocks, open-boundary and moving-window
+ledgers, affine simplicial ownership and Whitney current, and a matrix-free
+semi-implicit response. Advanced FLIP derives one particle interface geometry
+for ghost pressure, capillarity, free-surface viscosity and multiphase material
+reconstruction, with moving-solid cut measures and fixed-pool reseeding treated
+as explicit accepted-step transactions.
 Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
 to stable particle supports without reinterpreting material mass. Qualified
 routes include Gaussian free-space direct evaluation, periodic
@@ -153,6 +161,17 @@ flat LPT/PM, and adiabatic gas--DM foundations. Complete native Boltzmann/CMB pa
 global curved N-body, generic surveys, stochastic feedback, production tree gravity,
 AMR, and distributed execution remain explicit external, conditional, or rejected
 boundaries rather than hidden fallbacks.
+Astrodynamics applications reuse the existing differential, geometric, particle,
+rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
+Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,
+universal Kepler and branch-explicit Lambert kernels, force composition, tabulated
+ephemerides, direct and nearly-Keplerian N-body dynamics, CR3BP, spacecraft loads, and
+orbit measurements. External coordinate, SPICE, and SGP4 providers are host-side
+adapters with explicit provenance; provider calls and file access never enter traced
+execution. Astrophysical observation applications add observer projection, physical
+occultation contacts, photon-counting bandpasses, concrete instrument responses, ray
+transfer, and static field operators without introducing a second observation or
+inference runtime.
 Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
 transactional adaptive realization and replay, plane-strain/plane-stress/3-D
 hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
@@ -227,17 +246,20 @@ offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
 indices; the campaign tool compares matched PaiNN and NequIP runs across seeds.
 The existing learned models retain their finite nonperiodic training and prediction
 scope unless explicitly wrapped with periodic graph execution; execution capability
-does not certify rollout stability. The atomistic dynamics substrate separately
-provides complete unit systems, position-independent prepared systems, stable-ID
-molecular topology and pair exceptions, classical and learned scalar-energy
-programs, dense/cell/Verlet execution, NVE and BAOAB NVT, SHAKE/RATTLE,
-triclinic cells and stress, direct Ewald and native B-spline PME, isotropic NPT
-moves, bounded replay, exact checkpoints, hybrid composition, ring polymers,
-and variance-constrained semi-grand transitions. Every capacity or physical
-failure remains typed and fail-closed. See
-[Guide → Atomistic learning](guides_atomistic.md),
+does not certify rollout stability. The atomistic runtime additionally provides complete
+unit systems, interaction-site coordinate maps and differentiable virtual sites, stable-ID
+topology, native force-field bundles and adapters, dense/cell/Verlet and distributed
+execution, constrained NVE/NVT/NPT and rigid dynamics, polarization, implicit solvent,
+quantum-nuclear propagation, many-body and soft-matter models, H5MD/XYZ reporting and
+rerun, MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases,
+replica exchange, free-energy estimators, and committee uncertainty/acquisition. State,
+labels, bias history, transport resources, and analysis frames remain separate typed
+contracts. Every capacity, convergence, protocol, or physical failure is typed and
+fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Atomistic dynamics](guides_atomistic_dynamics.md),
-[Cookbook → Atomistic dynamics](cookbook/atomistic_dynamics.md), and
+[Guide → Atomistic force fields](guides_atomistic_force_fields.md),
+[Guide → Atomistic interoperability](guides_atomistic_interop.md),
+[Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
 ### Experimental velocimetry from images to trajectories

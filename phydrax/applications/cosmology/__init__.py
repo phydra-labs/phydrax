@@ -18,6 +18,8 @@ from ._closure import (
 from ._cmb import (
     CMB_FIELDS,
     CMB_MODES,
+    CmbBandpowerResponsePlan,
+    CmbBandpowerResponseResult,
     CmbSpectrumTable,
     CmbSpectrumTransformPlan,
     PrimordialPowerLaw,

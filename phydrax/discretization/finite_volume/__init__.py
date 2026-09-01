@@ -155,6 +155,9 @@ from ._mac_distributed import (
     MACLocalStencilPlan,
     PreparedMACDistributedTopology,
 )
+from ._mac_capillarity import MACCapillaryResult, MACGhostFluidCapillaryPlan
+from ._mac_cut_cell import MACCutCellGeometryPlan, MACCutCellGeometryState
+from ._mac_interface_state import MACFreeSurfaceGeometryState
 from ._mac_marker_transfer import (
     MACMarkerRelation,
     MACMarkerTransferDiagnostics,
@@ -181,6 +184,10 @@ from ._mac_scalar import (
     MACScalarStepRestriction,
     MACScalarTransport,
     PreparedMACScalarTransport,
+)
+from ._mac_viscous_measures import (
+    MACFreeSurfaceViscousMeasurePlan,
+    MACFreeSurfaceViscousMeasures,
 )
 from ._mac_variable_density import (
     FaceMomentumFlux,
@@ -546,6 +553,13 @@ __all__ = [
     "MACMarkerRelation",
     "MACMarkerTransferDiagnostics",
     "MACMarkerTransferPlan",
+    "MACCapillaryResult",
+    "MACCutCellGeometryPlan",
+    "MACCutCellGeometryState",
+    "MACFreeSurfaceViscousMeasurePlan",
+    "MACFreeSurfaceGeometryState",
+    "MACFreeSurfaceViscousMeasures",
+    "MACGhostFluidCapillaryPlan",
     "MACMomentumDiagnostics",
     "MACMomentumPlan",
     "MACMomentumReport",

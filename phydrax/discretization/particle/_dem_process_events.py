@@ -33,6 +33,7 @@ from ._particle_morphology import (
     ThermochemicalFragmentationEvaluation,
     ThermochemicalFragmentationPlan,
 )
+from ._population import update_particle_population
 from ._rigid_sphere import RigidSphereKinematics
 
 
@@ -424,13 +425,15 @@ def insert_reactive_particles(
         selected_attempt = selected_attempt.at[insertion_index].set(
             jnp.where(use & local_exists, attempt, -1)
         )
+    population = update_particle_population(
+        dem_state.body_properties.population, active, masses
+    )
     body_properties = ParticleDynamicBodyProperties(
-        masses,
+        population,
         inverse_masses,
         radii,
         inertias,
         inverse_inertias,
-        active,
     )
     raw_dem = DEMRuntimeState(
         RigidSphereKinematics(position, velocity, angular),
@@ -761,13 +764,13 @@ def fragment_particle_with_growth(
     inverse_masses = jnp.where(active, 1.0 / jnp.maximum(masses, 1.0e-30), 0.0)
     inertias = jnp.where(active, 0.4 * masses * radii**2, 1.0)
     inverse_inertias = jnp.where(active, 1.0 / inertias, 0.0)
+    population = update_particle_population(properties.population, active, masses)
     body_properties = ParticleDynamicBodyProperties(
-        masses,
+        population,
         inverse_masses,
         radii,
         inertias,
         inverse_inertias,
-        active,
     )
     position = current_epoch.state.kinematics.position
     velocity = current_epoch.state.kinematics.velocity
@@ -1004,13 +1007,17 @@ def remove_particles_in_region(
         internal_state.active & ~local_removed,
         internal_state.batch_id,
     )
+    next_active = dem_state.body_properties.active & ~removed
+    next_masses = jnp.where(removed, 0.0, dem_state.body_properties.masses)
+    population = update_particle_population(
+        dem_state.body_properties.population, next_active, next_masses
+    )
     properties = ParticleDynamicBodyProperties(
-        jnp.where(removed, 0.0, dem_state.body_properties.masses),
+        population,
         jnp.where(removed, 0.0, dem_state.body_properties.inverse_masses),
         jnp.where(removed, 0.0, dem_state.body_properties.radii),
         jnp.where(removed, 1.0, dem_state.body_properties.inertias),
         jnp.where(removed, 0.0, dem_state.body_properties.inverse_inertias),
-        dem_state.body_properties.active & ~removed,
     )
     raw_state = DEMRuntimeState(
         RigidSphereKinematics(

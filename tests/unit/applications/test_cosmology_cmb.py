@@ -62,3 +62,20 @@ def test_primordial_power_law_amplitude_and_gradients():
 
     derivative = jax.grad(value)(jnp.asarray(2.1e-9))
     assert derivative > 0.0
+
+
+def test_cmb_bandpower_response_uses_canonical_packed_theory():
+    table = _table()
+    transform = cosmology.CmbSpectrumTransformPlan((0,), ((0, 0),))
+    windows = jnp.asarray([[[1.0, 0.0]]])
+    response = cosmology.CmbBandpowerResponsePlan(
+        transform,
+        windows,
+        jnp.asarray([2.0]),
+        jnp.eye(1),
+        expected_temperature_unit="dimensionless-thermodynamic",
+        response_id="synthetic-bandpower",
+    ).evaluate(table)
+    assert bool(response.valid)
+    np.testing.assert_allclose(response.predicted_bandpowers, jnp.asarray([2.0]))
+    np.testing.assert_allclose(response.log_likelihood, 0.0)

@@ -421,6 +421,8 @@ class PreparedUnstructuredMaxwell(StrictModule):
         state: CompatibleMaxwellState,
         step_size: ArrayLike,
         /,
+        *,
+        electric_current: ArrayLike | None = None,
     ) -> CompatibleMaxwellState:
         dt = jnp.asarray(step_size)
         dt = eqx.error_if(
@@ -437,9 +439,18 @@ class PreparedUnstructuredMaxwell(StrictModule):
         magnetic = self.constitutive.magnetic_field(
             magnetic_half, state.auxiliary.material
         )
+        current = (
+            jnp.zeros_like(state.primary.electric_displacement)
+            if electric_current is None
+            else jnp.asarray(
+                electric_current, dtype=state.primary.electric_displacement.dtype
+            )
+        )
+        if current.shape != state.primary.electric_displacement.shape:
+            raise ValueError("Unstructured Maxwell current must be a degree-one cochain.")
         displacement = (
             state.primary.electric_displacement
-            + dt * self.plan.cochain.codifferential(2, magnetic)
+            + dt * (self.plan.cochain.codifferential(2, magnetic) - current)
         )
         electric_new = self.constitutive.electric_field(
             displacement, state.auxiliary.material
@@ -448,8 +459,11 @@ class PreparedUnstructuredMaxwell(StrictModule):
             1, electric_new
         )
         del time
+        charge = state.primary.charge - dt * self.plan.cochain.codifferential(
+            1, current
+        )
         return CompatibleMaxwellState(
-            MaxwellPrimaryState(displacement, magnetic_new, state.primary.charge),
+            MaxwellPrimaryState(displacement, magnetic_new, charge),
             state.auxiliary,
             state.observations,
         )
