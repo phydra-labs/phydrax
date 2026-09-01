@@ -27,9 +27,13 @@ The response records root/failure evidence, positive thickness stretch, the
 implicit sensitivity, and the Schur-condensed tangent. Reference thickness
 scales areal energy and resultants but not the local closure root.
 
-The scalar closure is valid only for declared block-diagonal membrane
-kinematics. Mixed incompressibility uses the separately typed coupled
-thickness/pressure reducer; transverse-shear-coupled laws are rejected.
+This scalar adapter remains the minimal isotropic path and is valid only for declared
+block-diagonal membrane kinematics. Mixed incompressibility uses the separately typed
+coupled thickness/pressure reducer; transverse-shear-coupled laws are rejected by the
+scalar adapter. For anisotropy and coupled out-of-plane shear,
+`GeneralPlaneStressMPMConstitutivePlan` solves the three director components
+simultaneously and returns the full implicit Schur-complement tangent;
+`OrientedMPMConstitutivePlan` carries an explicit proper-orthogonal material frame.
 
 ## Multiplicative finite-strain J2
 

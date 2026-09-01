@@ -1,0 +1,10 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "coupled_fields",
+  "metrics": {
+    "successful": true,
+    "pressure_residual_norm": 2.449489742783178,
+    "temperature_residual_norm": 17.488138837509318
+  },
+  "passed": true
+}

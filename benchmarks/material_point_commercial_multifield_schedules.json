@@ -1,0 +1,11 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "multifield_schedules",
+  "metrics": {
+    "usf": true,
+    "musl": true,
+    "affine-musl": true,
+    "post-advection-musl": true
+  },
+  "passed": true
+}

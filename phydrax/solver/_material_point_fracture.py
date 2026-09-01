@@ -264,6 +264,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             candidate_mechanics.body_ids,
             candidate_mechanics.velocity_field_slots,
             candidate_mechanics.storage_state,
+            candidate_mechanics.lifecycle_state,
         )
         candidate = MPMPhaseFieldRuntimeState(updated_mechanics, damage, history)
         irreversibility = jnp.all(damage >= state.damage - 1.0e-12) & jnp.all(

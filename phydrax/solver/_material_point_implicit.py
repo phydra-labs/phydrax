@@ -132,15 +132,22 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         if not isinstance(explicit.material, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("Implicit MPM requires an implicit constitutive plan.")
         if explicit.nodal_fields.field_count != 1:
-            raise ValueError("Initial implicit MPM supports one nodal field.")
+            raise ValueError(
+                "The dense single-field implicit adapter requires one nodal field; "
+                "use MPMImplicitTopologyPlan for K-way field layouts."
+            )
         if explicit.contact is not None:
-            raise ValueError("Initial implicit MPM does not support sharp contact.")
+            raise ValueError(
+                "The dense single-field implicit adapter excludes sharp rigid contact; "
+                "use MPMImplicitContactOperator for complementarity coupling."
+            )
         if explicit.splat.plan.assignment.capabilities.source_geometry_kind not in (
             "point",
             "uGIMP",
         ):
             raise ValueError(
-                "Initial implicit MPM supports point or fixed uGIMP routes only."
+                "The dense single-field implicit adapter requires point or fixed uGIMP "
+                "routes; use MPMRouteSupersetPlan for moving-domain derivatives."
             )
         self.explicit = explicit
         self.method = method_
@@ -204,7 +211,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             deformation = update_deformation(
                 particle.deformation_gradient, gathered.velocity_gradient, dt
             )
-            material = dynamics.material.evaluate(
+            linearized_material = dynamics.material.evaluate_linearized(
                 deformation,
                 particle.material_state,
                 density,
@@ -212,6 +219,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
                 state.time + dt,
                 dt,
             )
+            material = linearized_material.response
             payload = build_apic_route_payload(
                 routes,
                 mass,
@@ -242,6 +250,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
                 gathered.successful
                 & material.successful.all()
                 & material.admissible.all()
+                & linearized_material.tangent_successful.all()
                 & jnp.all(jnp.isfinite(value))
             )
             return value, valid
@@ -341,6 +350,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             state.body_ids,
             state.velocity_field_slots,
             state.storage_state,
+            state.lifecycle_state,
         )
         candidate_state = MPMRuntimeState(
             candidate_particle,
@@ -353,6 +363,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             state.body_ids,
             state.velocity_field_slots,
             state.storage_state,
+            state.lifecycle_state,
         )
         residual_norm = jnp.linalg.norm(nonlinear.residual.reshape((-1,)))
         diagnostics = ImplicitMPMDiagnostics(

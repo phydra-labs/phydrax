@@ -1,0 +1,37 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "transfer",
+  "metrics": {
+    "pic": {
+      "successful": true,
+      "constant_velocity_error": 1.3877787807814457e-17,
+      "mass_defect": 0.0
+    },
+    "flip": {
+      "successful": true,
+      "constant_velocity_error": 0.0,
+      "mass_defect": 0.0
+    },
+    "pic-flip": {
+      "successful": true,
+      "constant_velocity_error": 6.938893903907228e-18,
+      "mass_defect": 0.0
+    },
+    "apic": {
+      "successful": true,
+      "constant_velocity_error": 1.3877787807814457e-17,
+      "mass_defect": 0.0
+    },
+    "affine-musl": {
+      "successful": true,
+      "second_mass_defect": 2.220446049250313e-18,
+      "second_momentum_defect": 2.2351400383409363e-19
+    },
+    "post-advection-musl": {
+      "successful": true,
+      "second_mass_defect": 3.3306690738754695e-18,
+      "second_momentum_defect": 2.2351400383409363e-19
+    }
+  },
+  "passed": true
+}

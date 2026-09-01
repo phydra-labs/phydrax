@@ -231,6 +231,12 @@ actions, area measures, and SFNO interoperability. See the
 [MPM domain guide](docs/guides_mpm_particle_domains.md), the
 [MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
 [MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
+[commercial MPM architecture guide](docs/guides_mpm_commercial_architecture.md), the
+[commercial MPM transfer guide](docs/guides_mpm_commercial_transfers.md), the
+[commercial MPM contact/implicit guide](docs/guides_mpm_commercial_contact_implicit.md), the
+[commercial MPM geomechanics guide](docs/guides_mpm_commercial_geomechanics.md), the
+[commercial MPM scale/operations guide](docs/guides_mpm_commercial_scale_operations.md), the
+[commercial MPM derivatives/VVUQ guide](docs/guides_mpm_commercial_derivatives_vvuq.md), the
 [deformable-contact guide](docs/guides_deformable_contact.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
