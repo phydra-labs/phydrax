@@ -2,7 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -115,6 +119,98 @@ def test_energy_ledger_is_source_resolved_rejection_safe_and_qualifiable():
     assert rejected.accepted_state.energy.accepted_steps == 0
 
 
+def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain():
+    bridge = phx.discretization.BagheriCapillaryBridgePlan(
+        0.072,
+        0.1,
+        1.0e-3,
+    )
+    compiled = _compile(
+        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+        cohesion=bridge,
+    )
+    state = compiled.initialize_state(
+        0.0,
+        jnp.asarray([[0.0, 0.0], [0.99, 0.0]]),
+        jnp.zeros((2, 2)),
+    )
+    component = state.particle_history.cohesion.components[0]
+    assert component.active[0]
+    assert jnp.isclose(component.bridge_volume[0], 1.0e-3)
+
+    characteristic_radius = 0.5
+    dimensionless_volume = 1.0e-3 / characteristic_radius**3
+    critical_gap = (
+        characteristic_radius
+        * (1.0 + 0.5 * 0.1)
+        * (
+            dimensionless_volume ** (1.0 / 3.0)
+            + 0.1 * dimensionless_volume ** (2.0 / 3.0)
+        )
+    )
+    gap = 0.5 * critical_gap
+
+    def contact_energy(current_gap):
+        position = state.kinematics.position.at[1, 0].set(1.0 + current_gap)
+        staged = eqx.tree_at(
+            lambda value: value.kinematics.position,
+            state,
+            position,
+        )
+        evaluation = compiled.dynamics.evaluate(
+            jnp.asarray(0.0), staged, jnp.asarray(0.0), None
+        )
+        return evaluation.particle_contact.elastic_energy[0]
+
+    position = state.kinematics.position.at[1, 0].set(1.0 + gap)
+    staged = eqx.tree_at(lambda value: value.kinematics.position, state, position)
+    evaluation = compiled.dynamics.evaluate(
+        jnp.asarray(0.0), staged, jnp.asarray(0.0), None
+    )
+    energy_gradient = jax.grad(contact_energy)(jnp.asarray(gap))
+    assert evaluation.successful
+    assert evaluation.particle_contact.bridge_surface_area[0] > 0.0
+    assert jnp.allclose(
+        energy_gradient,
+        evaluation.particle_contact.cohesion_force[0, 0],
+        rtol=2.0e-5,
+        atol=2.0e-8,
+    )
+
+    rupture_position = state.kinematics.position.at[1, 0].set(1.0 + 1.01 * critical_gap)
+    rupture_state = eqx.tree_at(
+        lambda value: value.kinematics.position,
+        state,
+        rupture_position,
+    )
+    ruptured = compiled.dynamics.evaluate(
+        jnp.asarray(0.0), rupture_state, jnp.asarray(0.0), None
+    )
+    assert ruptured.particle_contact.cohesion_ruptures[0]
+    assert not ruptured.particle_contact.next_history.cohesion.components[0].active[0]
+    assert jnp.isclose(ruptured.particle_contact.bridge_volume_release[0], 1.0e-3)
+
+    extents = bridge.interaction_extents_for_radii(
+        np.asarray([0.5, 0.5]), np.asarray([0, 0]), 1
+    )
+    assert np.allclose(extents, 0.5 + 0.5 * critical_gap)
+    with pytest.raises(ValueError, match="50 deg"):
+        phx.discretization.BagheriCapillaryBridgePlan(0.072, np.deg2rad(51.0), 1.0e-3)
+    geometry = phx.geometry.Circle(center=(0.0, 0.0), radius=2.0).compile()
+    barrier = phx.discretization.ImplicitDEMBarrier(
+        geometry,
+        phx.discretization.DEMBarrierSide.INTERIOR,
+        0,
+        barrier_id="unsupported-wet-wall",
+    )
+    with pytest.raises(ValueError, match="sphere pairs only"):
+        _compile(
+            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+            cohesion=bridge,
+            barriers=(barrier,),
+        )
+
+
 def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority():
     box = phx.discretization.ParticleBox(
         jnp.asarray([-1.0, -1.0]),
@@ -161,15 +257,46 @@ def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority():
     assert jnp.all(batched.successful)
 
     hierarchy = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
-        phx.discretization.CellListParticleNeighborhoodPlan(1.1, 2, 1, box),
         jnp.asarray([0.5, 0.5]),
         jnp.asarray([0.1, 0.6]),
+        2,
+        1,
+        box,
         skin=0.1,
     )
     particles = compiled.dynamics.bodies.particles
     hierarchy_state = hierarchy.prepare(particles).build(positions)
     assert hierarchy_state.successful
     assert hierarchy_state.pair_count == 1
+    hierarchy_compiled = _compile(
+        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+        neighborhood=hierarchy,
+    )
+    hierarchy_runtime = hierarchy_compiled.initialize_state(
+        0.0, positions, jnp.zeros((2, 2))
+    )
+    hierarchy_step = hierarchy_compiled.dynamics.step_detailed(
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        hierarchy_runtime,
+        jnp.asarray(1.0e-5),
+        None,
+    )
+    assert hierarchy_step.successful
+    assert hierarchy_step.accepted_state.particle_history.valid[0]
+
+    underresolved = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
+        jnp.asarray([0.49, 0.49]),
+        jnp.asarray([0.1, 0.6]),
+        2,
+        1,
+        box,
+    )
+    with pytest.raises(ValueError, match="contact-law envelopes"):
+        _compile(
+            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+            neighborhood=underresolved,
+        )
 
 
 def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added experimental granular micro--macro completion: fitted finite-volume
+  capillary bridges with analytic energy and fit margins, radius-derived contact
+  envelopes, conserved film/bridge inventory and exposed-area evaporation,
+  balance-audited particle and interaction-segment continuum fields, sparse
+  multilevel polydisperse neighborhoods, and dense-authority deforming periodic
+  DEM cells with mixed stress/strain control and cell-work rollback.
 - Added commercial Material Point Method closure contracts: exact claim tuples and
   executable support decisions, intended-use and G0--G7 release evidence, durable
   atomic checkpoint generations, HDF5/XDMF/VTK output, host-side supervision and

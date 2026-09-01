@@ -7,16 +7,17 @@ Phydrax provides an experimental, fixed-capacity, JAX-native soft-contact discre
 - isotropic disks in 2-D and spheres in 3-D;
 - dynamic mass, radius, and inertia updates from accepted morphology;
 - linear spring–dashpot, Hertz, or Thornton plastic normal response;
-- optional DMT, capillary-bridge, and near-contact lubrication cohesion;
+- optional DMT, prescribed linear bridges, fitted Bagheri bridges, and near-contact lubrication;
 - optional Cundall–Strack or Mindlin tangential history;
 - optional constant or elastic rolling–torsional resistance;
 - optional elastic half-space multicontact correction;
-- periodic particle boxes;
+- fixed periodic boxes or dense-authority deforming periodic cells;
 - static, prescribed, or force/torque-servo barriers;
 - triangle-wall traction, work, heat, and Finnie-wear observables;
-- dense, cell-list, hierarchical-radius, or cached Verlet neighborhoods;
+- dense, cell-list, sparse multilevel-radius, or cached Verlet neighborhoods;
 - explicit kick–drift–contact–kick integration;
-- branchwise differentiation through one realized contact route.
+- branchwise differentiation through one realized contact route;
+- balance-audited particle-to-continuum density, momentum, and contact-stress fields.
 
 Sphere orientation is intentionally absent because it cannot affect isotropic sphere geometry. Rigid clumps and superquadrics carry explicit orientation and angular state.
 
@@ -156,6 +157,8 @@ The following reject the candidate step without partially accepting state:
 - overlapping coincident centers;
 - nonfinite loads or state;
 - ill-defined tangential-frame transport;
+- capillary-fit domain or conserved-liquid balance violation;
+- deforming-cell conditioning, unique-image, or strain-increment failure;
 - excessive relative overlap.
 
 Detailed failure inputs can be replayed through `PreparedSoftSphereDEMDynamics.step_detailed`.
@@ -165,9 +168,9 @@ Detailed failure inputs can be replayed through `PreparedSoftSphereDEMDynamics.s
 `DEMResolvedLoad` retains particle-contact, per-barrier, gravity, external, and
 total endpoint loads. `DEMStepEnergyLedger` evaluates source impulse work with
 the average endpoint velocity and records contact stored-energy change,
-prescribed-wall work, signed contact balance loss, and closure residual.
-Rejected candidates expose their candidate ledger but preserve the accepted
-`DEMEnergyLedgerState` exactly.
+prescribed-wall work, deforming-cell work, signed contact balance loss, and
+closure residual. Rejected candidates expose their candidate ledger but
+preserve the accepted `DEMEnergyLedgerState` exactly.
 
 Contact balance loss is a discrete accounting quantity, not automatically pure
 thermodynamic dissipation. Normal viscous, tangential constitutive, rolling, and
@@ -183,7 +186,25 @@ step.
 
 Reference, dense-fused, cell-fused, and Verlet-fused pair reductions share the
 same contact and accumulation semantics. `HierarchicalRadiusParticleNeighborhoodPlan`
-adds immutable radius classes and pair-specific diameter-plus-skin filtering.
+implements the multilevel contact-search construction of [Ogarko and Luding](https://doi.org/10.1016/j.cpc.2011.12.019) using immutable interaction-radius envelopes, sparse occupied-cell keys, and
+bottom-up cross-level search. Its constructor takes per-particle envelope
+radii, level edges, cell occupancy, pair capacity, and `ParticleBox`; the DEM
+compiler rejects any envelope smaller than the body-plus-contact-law reach.
+
+## Deforming periodic rheology
+
+`DEMPeriodicCellControlPlan` combines disjoint prescribed strain-rate and
+stress-controlled tensor masks. Stress feedback uses the current kinetic and
+pair virial stress. `ParticleCell(maximum_condition_number=...)` preallocates
+the minimum-image stencil for the complete admissible deformation envelope.
+The candidate cell, affinely mapped particle positions, velocities, and cell
+work commit atomically. Conditioning, unique-image, determinant, and maximum
+strain-increment failures roll back the complete DEM step.
+
+The current deforming-cell authority is fully periodic, gravity-free, has no
+fixed particles or implicit barriers, and requires
+`DenseParticleNeighborhoodPlan`. Static `ParticleCell` neighborhoods retain
+their existing behavior.
 
 ## Additional contact physics
 
@@ -193,6 +214,8 @@ adds immutable radius classes and pair-specific diameter-plus-skin filtering.
 - `LinearCapillaryBridgePlan` owns bridge birth, rupture, volume source/release, and liquid-balance residuals.
 - `NearContactLubricationPlan` adds regularized finite-gap viscous resistance.
 - `CompositeDEMCohesionPlan` composes ordered cohesion contributions without erasing component history or diagnostics.
+- `BagheriCapillaryBridgePlan` implements the fitted finite-volume model of [Bagheri et al.](https://doi.org/10.1016/j.softx.2024.102048): force, analytic branch potential, tangent stiffness, exposed liquid area, radius-derived rupture distance, and fit margins. Its paper-backed domain is `1e-6 <= V/R^3 <= 1e-1` and `0 <= contact_angle <= 50 degrees`; separations above `0.9` of rupture are explicitly reported as fit extrapolation. Unequal spheres use the published characteristic-radius extension and remain experimental; implicit-barrier contacts reject at compilation.
+- `ConservedLiquidBridgeProcessPlan` draws simultaneous bridge births proportionally from endpoint films, returns rupture volume to both films, and removes `evaporation_flux * exposed_area * dt`. Film plus bridge plus cumulative evaporated volume is checked after every transaction. It requires exactly one `BagheriCapillaryBridgePlan(..., conserve_liquid=True)` and currently supports particle-particle bridges without barriers.
 - `ThorntonLinearPlasticNormalPlan` stores maximum overlap, plastic overlap, and irreversible loss under bilinear loading/unloading.
 - `ParticleContactExchangePlan` provides conservative contact heat exchange as a separate coupling channel.
 
@@ -210,6 +233,17 @@ retain stable IDs and axial/shear/bending/twisting energy. Mixed-mode damage is
 monotone and accumulates fracture energy. Fixed-pool topology transitions
 activate preallocated fragment owners atomically and reject on conservation or
 capacity failure.
+
+## Particle-to-continuum observables
+
+`ParticleCoarseGrainingPlan` implements the balance-law construction of [Weinhart et al.](https://doi.org/10.1063/1.4812153). It composes an existing `ParticleGridSplatPlan` with
+fixed Gauss--Legendre interaction-segment quadrature. It deposits mass, volume,
+momentum, raw momentum flux, external force, constituent-resolved primary
+fields, and the line-integrated pair virial. `ParticleContinuumFields` keeps
+primary content and density separate from derived mean velocity, kinetic
+stress, contact stress, and bulk stress. Every particle and segment deposition
+retains the splat balance evidence; route selection remains branchwise while
+weights and payloads remain differentiable.
 
 ## Coupling
 
