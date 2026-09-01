@@ -181,17 +181,20 @@ offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
 indices; the campaign tool compares matched PaiNN and NequIP runs across seeds.
 The existing learned models retain their finite nonperiodic training and prediction
 scope unless explicitly wrapped with periodic graph execution; execution capability
-does not certify rollout stability. The atomistic dynamics substrate separately
-provides complete unit systems, position-independent prepared systems, stable-ID
-molecular topology and pair exceptions, classical and learned scalar-energy
-programs, dense/cell/Verlet execution, NVE and BAOAB NVT, SHAKE/RATTLE,
-triclinic cells and stress, direct Ewald and native B-spline PME, isotropic NPT
-moves, bounded replay, exact checkpoints, hybrid composition, ring polymers,
-and variance-constrained semi-grand transitions. Every capacity or physical
-failure remains typed and fail-closed. See
-[Guide → Atomistic learning](guides_atomistic.md),
+does not certify rollout stability. The atomistic runtime additionally provides complete
+unit systems, interaction-site coordinate maps and differentiable virtual sites, stable-ID
+topology, native force-field bundles and adapters, dense/cell/Verlet and distributed
+execution, constrained NVE/NVT/NPT and rigid dynamics, polarization, implicit solvent,
+quantum-nuclear propagation, many-body and soft-matter models, H5MD/XYZ reporting and
+rerun, MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases,
+replica exchange, free-energy estimators, and committee uncertainty/acquisition. State,
+labels, bias history, transport resources, and analysis frames remain separate typed
+contracts. Every capacity, convergence, protocol, or physical failure is typed and
+fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Atomistic dynamics](guides_atomistic_dynamics.md),
-[Cookbook → Atomistic dynamics](cookbook/atomistic_dynamics.md), and
+[Guide → Atomistic force fields](guides_atomistic_force_fields.md),
+[Guide → Atomistic interoperability](guides_atomistic_interop.md),
+[Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
 ### Computational topology: exact invariants and filtered fields

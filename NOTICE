@@ -282,3 +282,10 @@ provenance contracts. No source code, generated kernels, numerical tables,
 fixtures, serialized artifacts, runtime types, or executables from those
 projects are copied, translated, bundled, linked, imported, or redistributed.
 Copyleft and unclear-license projects remain design references only.
+
+Atomistic interoperability
+OpenMM, OpenFF Interchange, ParmEd, MDAnalysis, h5py/HDF5, i-PI, and PACKMOL are
+independent external projects. PhydraX's optional adapters use their documented public
+file, object, or socket interfaces. No source, force-field data, executable, or runtime
+artifact from those projects is copied or redistributed by PhydraX; users install and
+license optional dependencies and external executables separately.

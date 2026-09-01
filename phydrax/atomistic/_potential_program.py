@@ -29,6 +29,7 @@ from ._potential import (
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
 )
+from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
 
 
@@ -38,6 +39,17 @@ class AtomisticPotentialContext(StrictModule):
     system: PreparedAtomisticSystem
     positions: Array
     unwrapped_positions: Array
+    site_state: AtomisticInteractionSiteState
+    site_positions: Array
+    site_type_ids: Array
+    site_charges: Array
+    site_pair_left: Array
+    site_pair_right: Array
+    site_pair_valid: Array
+    site_pair_displacement: Array
+    site_pair_distance: Array
+    site_lennard_jones_scales: Array
+    site_electrostatic_scales: Array
     species: Array
     pair_left: Array
     pair_right: Array
@@ -254,6 +266,9 @@ class AtomisticPotentialProgram(StrictModule):
         requirements = AtomisticPotentialRequirements(
             cutoff=None if not cutoffs else max(cutoffs),
             pair_geometry=any(value.requirements.pair_geometry for value in values),
+            interaction_site_geometry=any(
+                value.requirements.interaction_site_geometry for value in values
+            ),
             directed_graph=any(value.requirements.directed_graph for value in values),
             bonded_geometry=any(value.requirements.bonded_geometry for value in values),
             reciprocal_grid=any(value.requirements.reciprocal_grid for value in values),
@@ -398,17 +413,94 @@ class PreparedAtomisticPotentialProgram(StrictModule):
         )
         if species_.shape != (self.system.capacity,):
             raise ValueError("species must match the particle capacity.")
+        selected_cell = self.system.cell if cell is None else cell
+        if cell_vectors is not None and (
+            selected_cell is None or fractional_positions is None
+        ):
+            raise ValueError(
+                "Dynamic cell vectors require a cell and fractional_positions."
+            )
+        site_state = self.system.coordinate_map.realize(
+            position,
+            cell=selected_cell,
+            fractional_positions=fractional_positions
+            if cell_vectors is not None
+            else None,
+            cell_vectors=cell_vectors,
+        )
+        site_left = self.system.coordinate_map.pair_left
+        site_right = self.system.coordinate_map.pair_right
+        site_valid = (
+            self.system.coordinate_map.plan.sites.active_mask[site_left]
+            & self.system.coordinate_map.plan.sites.active_mask[site_right]
+        )
+        if self.plan.requirements.interaction_site_geometry:
+            site_ids = self.system.coordinate_map.plan.sites.site_ids
+            site_left_ids = site_ids[site_left]
+            site_right_ids = site_ids[site_right]
+            site_zeros = jnp.zeros_like(site_left_ids)
+            site_keys = jnp.stack(
+                (
+                    site_zeros,
+                    jnp.minimum(site_left_ids, site_right_ids),
+                    jnp.maximum(site_left_ids, site_right_ids),
+                    site_zeros,
+                    site_zeros,
+                ),
+                axis=-1,
+            )
+            site_lj_scales, site_electrostatic_scales = self.system.topology.pair_scales(
+                site_keys
+            )
+        else:
+            site_lj_scales = jnp.ones(site_left.shape, dtype=position.dtype)
+            site_electrostatic_scales = jnp.ones_like(site_lj_scales)
+        site_displacement = (
+            site_state.positions[site_left] - site_state.positions[site_right]
+        )
+        if cell_vectors is not None:
+            vectors = jnp.asarray(cell_vectors, dtype=position.dtype)
+            determinant = jnp.sum(vectors[0] * jnp.cross(vectors[1], vectors[2]))
+            inverse = (
+                jnp.stack(
+                    (
+                        jnp.cross(vectors[1], vectors[2]),
+                        jnp.cross(vectors[2], vectors[0]),
+                        jnp.cross(vectors[0], vectors[1]),
+                    ),
+                    axis=1,
+                )
+                / determinant
+            )
+            site_fractional = contract("nd,di->ni", site_state.positions, inverse)
+            fractional_displacement = (
+                site_fractional[site_left] - site_fractional[site_right]
+            )
+            central = jax.lax.stop_gradient(
+                jnp.round(fractional_displacement).astype(jnp.int32)
+            )
+            central = jnp.where(selected_cell.periodic_mask, central, 0)
+            site_displacement = contract(
+                "ni,ij->nj",
+                fractional_displacement - central.astype(position.dtype),
+                vectors,
+            )
+        elif selected_cell is not None:
+            site_displacement = selected_cell.minimum_image(site_displacement)
+        site_displacement = jnp.where(site_valid[:, None], site_displacement, 0.0)
+        site_squared = jnp.sum(site_displacement * site_displacement, axis=-1)
+        site_tiny = jnp.asarray(jnp.finfo(position.dtype).tiny, dtype=position.dtype)
+        site_distance = jnp.where(
+            site_squared > 0.0,
+            jnp.sqrt(jnp.maximum(site_squared, site_tiny)),
+            0.0,
+        )
         pairs = neighborhood.pair_relation
         left = pairs.left_indices
         right = pairs.right_indices
         pair_valid = pairs.valid
-        selected_cell = self.system.cell if cell is None else cell
         displacement = position[left] - position[right]
         if cell_vectors is not None:
-            if selected_cell is None or fractional_positions is None:
-                raise ValueError(
-                    "Dynamic cell vectors require a cell and fractional_positions."
-                )
             fractional = jnp.asarray(fractional_positions, dtype=position.dtype)
             if fractional.shape != expected:
                 raise ValueError(f"fractional_positions must have shape {expected}.")
@@ -468,6 +560,17 @@ class PreparedAtomisticPotentialProgram(StrictModule):
         )
         return AtomisticPotentialContext(
             system=self.system,
+            site_state=site_state,
+            site_positions=site_state.positions,
+            site_type_ids=self.system.coordinate_map.plan.sites.site_type_ids,
+            site_charges=self.system.coordinate_map.plan.sites.charges,
+            site_pair_left=site_left,
+            site_pair_right=site_right,
+            site_pair_valid=site_valid,
+            site_pair_displacement=site_displacement,
+            site_pair_distance=site_distance,
+            site_lennard_jones_scales=site_lj_scales,
+            site_electrostatic_scales=site_electrostatic_scales,
             positions=position,
             unwrapped_positions=unwrapped,
             species=species_,
@@ -486,7 +589,10 @@ class PreparedAtomisticPotentialProgram(StrictModule):
                 alchemical_lambda, dtype=position.dtype
             ).reshape(()),
             neighborhood_successful=(
-                neighborhood.successful & keys.successful & ~graph_overflow
+                neighborhood.successful
+                & keys.successful
+                & ~graph_overflow
+                & site_state.successful
             ),
         )
 
