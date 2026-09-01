@@ -12,23 +12,24 @@ derivatives and explicit convergence, derivative, residual, and finiteness evide
 A failed local root rejects the complete MPM attempt and supplies an outer adaptive
 cutback; materials never retry internally.
 
-## Isotropic plane stress
+## Plane stress
 
-`IsotropicPlaneStressMPMConstitutivePlan` wraps one three-dimensional implicit-capable
-material. It embeds the in-plane deformation as a block diagonal tensor and solves
-for `eta3 = log(lambda3)` from:
+`PlaneStressMPMConstitutivePlan` wraps one three-dimensional
+implicit-capable material and a `BlockDiagonalPlaneStressReductionPlan`. It
+embeds the in-plane deformation as a block diagonal tensor and solves the
+safeguarded local equation
 
 ```text
 P33(Fbar, exp(eta3)) = 0.
 ```
 
-The converged out-of-plane stretch is committed in material history. The in-plane
-algorithmic tangent is the implicit Schur complement of the three-dimensional
-tangent. The conservative three-dimensional acoustic bound remains valid in plane
-stress.
+The response records root/failure evidence, positive thickness stretch, the
+implicit sensitivity, and the Schur-condensed tangent. Reference thickness
+scales areal energy and resultants but not the local closure root.
 
-This scalar closure is only valid when the base material has block-diagonal isotropic
-membrane kinematics. General anisotropic/out-of-plane shear coupling is not claimed.
+The scalar closure is valid only for declared block-diagonal membrane
+kinematics. Mixed incompressibility uses the separately typed coupled
+thickness/pressure reducer; transverse-shear-coupled laws are rejected.
 
 ## Multiplicative finite-strain J2
 

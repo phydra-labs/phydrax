@@ -347,6 +347,12 @@ from ._fermionic_gaussian import (
     open_kitaev_chain,
     solve_fermionic_gaussian,
 )
+from ._field_equilibrium import (
+    FieldEquilibriumFormulation,
+    prepare_functional_stationarity,
+    prepare_virtual_work_equilibrium,
+    PreparedFieldEquilibrium,
+)
 from ._finite_element_adaptivity import (
     FiniteElementHPTopologyResult,
     FiniteElementTopologyResult,
@@ -1125,6 +1131,8 @@ from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
+from ._uvlm import *  # noqa: F403
+from ._uvlm import __all__ as _uvlm_all
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -1165,6 +1173,12 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
+from ._vortex_lattice import *  # noqa: F403
+from ._vortex_lattice import __all__ as _vortex_lattice_all
+from ._vortex_panels import *  # noqa: F403
+from ._vortex_panels import __all__ as _vortex_panels_all
+from ._vortex_step import *  # noqa: F403
+from ._vortex_step import __all__ as _vortex_step_all
 from ._wiener_operator import WienerNoiseBlock, WienerNoiseLayout
 from ._xxz_open import (
     boundary_driven_xxz_problem,
@@ -1177,14 +1191,6 @@ from .maxwell import (
     CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
 )
-from ._uvlm import *  # noqa: F403
-from ._uvlm import __all__ as _uvlm_all
-from ._vortex_lattice import *  # noqa: F403
-from ._vortex_lattice import __all__ as _vortex_lattice_all
-from ._vortex_panels import *  # noqa: F403
-from ._vortex_panels import __all__ as _vortex_panels_all
-from ._vortex_step import *  # noqa: F403
-from ._vortex_step import __all__ as _vortex_step_all
 
 
 __all__ = [
@@ -1820,6 +1826,10 @@ __all__ = [
     "solve_bsde_least_squares",
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
+    "FieldEquilibriumFormulation",
+    "PreparedFieldEquilibrium",
+    "prepare_functional_stationarity",
+    "prepare_virtual_work_equilibrium",
     "FunctionalSolver",
     "InteriorLaplaceDirichletResult",
     "LaplaceCapacitanceResult3D",

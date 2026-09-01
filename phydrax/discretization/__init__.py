@@ -17,8 +17,8 @@ from . import (
     pic,
     spectral,
     splatting,
-    vortex,
     vem,
+    vortex,
 )
 from ._axis import (
     AbstractAxisSpec,
@@ -224,17 +224,24 @@ from .fem import (
     lagrange_element,
     local_dual_weighted_residual,
     maximum_mark,
-    MixedVolumetricConstraintPayload,
-    MixedVolumetricConstraintPlan,
+    mixed_inf_sup_diagnostic,
+    MixedConstraintFormulation,
+    MixedFiniteElementConstraintEvaluation,
+    MixedFiniteElementConstraintPlan,
+    MixedFiniteElementSpaceEvidence,
+    MixedInfSupEvidence,
+    MixedPressureStabilization,
+    MixedPressureStabilizationKind,
     MultiscaleFiniteElementBasis,
     nedelec_element,
     PartitionedFiniteElementDofMap,
     prepare_finite_element_point_interpolation,
-    prepare_mixed_volumetric_constraint,
     PreparedFiniteElementImmersedMarkerMap,
     PreparedFiniteElementPointInterpolation,
+    PreparedMixedFiniteElementConstraint,
     PressureGaugeEvidence,
-    PressureGaugePlan,
+    PressureGaugeMode,
+    PressureGaugePolicy,
     raviart_thomas_element,
     refine_triangles_local,
     residual_jump_estimate,
@@ -242,7 +249,6 @@ from .fem import (
     RigidDeformableAttachmentPlan,
     RigidDeformableKKTLinearization,
     RigidDeformableKKTPayload,
-    VolumetricConstraintRankEvidence,
     write_finite_element_field,
 )
 from .finite_difference import (
@@ -1366,8 +1372,6 @@ from .spectral import (
     TensorSpectralPlan,
     TensorSpectralSymmetry,
 )
-from .vortex import *  # noqa: F403
-from .vortex import __all__ as _vortex_all
 from .splatting import (
     AbstractStructuredSplatAssignment,
     AffineCPDISplatAssignment,
@@ -1414,6 +1418,8 @@ from .vem import (
     VirtualElementStabilizationEvidence,
     VirtualElementStabilizationPolicy,
 )
+from .vortex import *  # noqa: F403
+from .vortex import __all__ as _vortex_all
 
 
 __all__ = [
@@ -2673,18 +2679,24 @@ __all__ = [
     "AttachmentActionReactionCertificate",
     "AttachmentRankEvidence",
     "InterpolationTransposeEvidence",
-    "MixedVolumetricConstraintPayload",
-    "MixedVolumetricConstraintPlan",
-    "prepare_finite_element_point_interpolation",
-    "prepare_mixed_volumetric_constraint",
-    "PreparedFiniteElementPointInterpolation",
+    "MixedConstraintFormulation",
+    "MixedFiniteElementConstraintEvaluation",
+    "MixedFiniteElementConstraintPlan",
+    "MixedFiniteElementSpaceEvidence",
+    "MixedInfSupEvidence",
+    "MixedPressureStabilization",
+    "MixedPressureStabilizationKind",
+    "mixed_inf_sup_diagnostic",
+    "PreparedMixedFiniteElementConstraint",
     "PressureGaugeEvidence",
-    "PressureGaugePlan",
+    "PressureGaugeMode",
+    "PressureGaugePolicy",
+    "prepare_finite_element_point_interpolation",
+    "PreparedFiniteElementPointInterpolation",
     "RigidDeformableAttachmentEvaluation",
     "RigidDeformableAttachmentPlan",
     "RigidDeformableKKTLinearization",
     "RigidDeformableKKTPayload",
-    "VolumetricConstraintRankEvidence",
     "PreparedRigidMPMCoupling",
     "RigidMPMConstraintPayload",
     "RigidMPMCouplingEvaluation",

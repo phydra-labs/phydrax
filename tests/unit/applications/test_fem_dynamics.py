@@ -15,7 +15,6 @@ from phydrax.applications.solid_mechanics._fem_dynamics import (
 )
 from phydrax.discretization.fem._rigid_coupling import (
     prepare_finite_element_point_interpolation,
-    prepare_mixed_volumetric_constraint,
     PreparedFiniteElementPointInterpolation,
     RigidDeformableAttachmentPlan,
 )
@@ -311,77 +310,3 @@ def test_duplicate_attachment_rows_fail_rank_preparation():
             jnp.asarray((7, 7), dtype=jnp.int64),
             jnp.zeros((2, 3)),
         )
-
-
-def _mixed_stokes_problem():
-    vertices = jnp.asarray(
-        (
-            (0.0, 0.0),
-            (1.0, 0.0),
-            (1.0, 1.0),
-            (0.0, 1.0),
-            (0.5, 0.5),
-        )
-    )
-    cells = jnp.asarray(
-        ((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)),
-        dtype=jnp.int32,
-    )
-    mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
-    discretization = phx.discretization.FiniteElementPlan(
-        mesh,
-        (
-            phx.discretization.FiniteElementFieldSpec(
-                "u",
-                phx.discretization.lagrange_element("triangle", 2),
-                component_shape=(2,),
-            ),
-            phx.discretization.FiniteElementFieldSpec(
-                "p", phx.discretization.lagrange_element("triangle", 1)
-            ),
-        ),
-    ).prepare()
-    velocity_constraint = phx.discretization.dirichlet_constraint(discretization, "u")
-    compiled = phx.equations.compile_finite_element_problem(
-        phx.equations.fem.stokes_form("u", "p"),
-        discretization,
-        constraints={"u": velocity_constraint},
-        dirichlet_values_by_field={"u": 0.0},
-    )
-    return compiled
-
-
-def test_mixed_volumetric_payload_certifies_rank_and_pressure_gauge():
-    compiled = _mixed_stokes_problem()
-    zero = compiled.state_space.zeros()
-    plan = prepare_mixed_volumetric_constraint(compiled, zero, "u", "p")
-    pressure = jnp.arange(zero[1].size, dtype=zero[1].dtype) + 3.0
-    payload = plan.evaluate((zero[0], pressure))
-
-    assert plan.rank.numerical_rank == zero[1].size - 1
-    assert plan.rank.nullity == 1
-    assert plan.rank.valid
-    assert jnp.abs(jnp.sum(payload.gauged_pressure)) < 1.0e-12
-    assert bool(payload.gauge.valid)
-    assert bool(payload.finite)
-
-
-def test_pinned_pressure_gauge_removes_constant_without_changing_differences():
-    compiled = _mixed_stokes_problem()
-    zero = compiled.state_space.zeros()
-    plan = prepare_mixed_volumetric_constraint(
-        compiled,
-        zero,
-        "u",
-        "p",
-        gauge_mode="pinned",
-        pinned_pressure_dof=2,
-    )
-    pressure = jnp.asarray((2.0, 4.0, 7.0, -1.0, 3.0))
-    projected = plan.gauge.project(pressure)
-
-    assert projected[2] == 0.0
-    assert jnp.allclose(
-        projected[:, None] - projected[None, :], pressure[:, None] - pressure[None, :]
-    )
-    assert bool(plan.gauge.evidence(projected).valid)

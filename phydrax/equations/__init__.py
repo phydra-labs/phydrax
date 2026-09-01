@@ -250,6 +250,11 @@ from ._materials import (
     TwoMaterialEOSReport,
     TwoMaterialPrimitiveState,
 )
+from ._mechanical_load_action import (
+    MechanicalLoadAction,
+    MechanicalLoadActionEvaluation,
+    NeuralCoordinateTrace,
+)
 from ._multiphase import (
     TwoMaterialVOFDiagnostics,
     TwoMaterialVOFStateLayout,
@@ -555,6 +560,9 @@ __all__ = [
     "CellBilinearAction",
     "CellEnergyAction",
     "CellResidualAction",
+    "MechanicalLoadAction",
+    "MechanicalLoadActionEvaluation",
+    "NeuralCoordinateTrace",
     "coefficient",
     "compile_finite_element_problem",
     "CompiledFiniteElementProblem",

@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added full nonlinear solid-mechanics closure: canonical finite-strain laws,
+  safeguarded plane stress, mixed incompressibility, conservative and follower
+  loads, transactional continuation, physical bifurcation/selection, current-
+  geometry contact, sharp and diffuse fracture, state-certified topology
+  optimization, and parameter-measure-aware amortized operator learning.
+- Added explicit state/adjoint acceptance evidence, prepared neural-field
+  stationarity and virtual-work roots, separate physical static/dynamic
+  stability contracts, and accepted-state continuation checkpoints/replay.
 - Added fixed-geometry 3D Laplace DP0 surface Galerkin capacitance solves with
   explicit weak/strong maps, bounded singular and near-pair quadrature,
   nonmaterializable blocked actions, immutable conductor selections, physical
@@ -1112,6 +1120,9 @@
   resource accounting.
 
 ### Changed
+- Replaced the legacy isotropic plane-stress MPM, mixed volumetric-constraint,
+  contact workflow, sharp-fracture workflow, and compliance-only topology APIs
+  with their explicit clean-cutover contracts. No deprecated aliases remain.
 - Neo-Hookean field stress operators now name Lamé's first parameter `lambda_`
   instead of incorrectly describing the same coefficient as bulk modulus
   `kappa`; the old keyword is removed in one clean cutover.
