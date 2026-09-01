@@ -71,6 +71,13 @@ from ._curvature_validity import (
     LocalCurvatureValidityResult,
 )
 from ._distances import FLRWDistancePlan, FLRWDistanceResult
+from ._early_universe import (
+    BbnReactionNetworkPlan,
+    BbnResult,
+    RecombinationPlan,
+    RelicBackgroundPlan,
+    RelicBackgroundResult,
+)
 from ._feedback import (
     CosmologicalPopulationPlan,
     CosmologicalPopulationState,
@@ -83,12 +90,6 @@ from ._feedback import (
     StochasticStarFormationPlan,
     StochasticThermalFeedbackPlan,
     ThermalFeedbackResult,
-from ._early_universe import (
-    BbnReactionNetworkPlan,
-    BbnResult,
-    RecombinationPlan,
-    RelicBackgroundPlan,
-    RelicBackgroundResult,
 )
 from ._force_resolution import PeriodicForceQualificationResult, PeriodicImageForcePlan
 from ._force_scalability import (
@@ -161,6 +162,7 @@ from ._native_boltzmann import (
     ScalarHierarchyLayout,
     ScalarTransferResult,
     ThermodynamicsRateTable,
+)
 from ._nonlinear_closure import (
     BaryonicFeedbackPlan,
     CmbLensingPlan,
