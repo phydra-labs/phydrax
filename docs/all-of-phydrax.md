@@ -150,16 +150,17 @@ formulations, and fixed-tree/workflow evidence. See
 [Guide → Vortex methods](guides_vortex_methods.md),
 [Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
 [Guide → Vortex boundaries](guides_vortex_boundaries.md).
-Cosmological applications reuse those particle and transfer identities rather than
-introducing a separate simulation substrate. Differentiable curved/CPL FLRW geometry,
-fixed-quadrature distances, realization-safe named transfer and matter-power products,
-state-ready flat 1LPT/2LPT, collisionless PM, and adiabatic gas--DM gravity compose the
-existing splat, self-gravity, finite-volume, and transactional KDK operations. Precision
-Boltzmann, massive-neutrino perturbation, and complete CMB evolution remain isolated
-external products. Native downstream contracts cover explicit power corrections,
-analytic halo foundations, compact Limber/RSD predictions, canonical CMB spectra, and
-small-N force qualification without claiming calibrated fits, survey likelihoods, or
-production tree gravity.
+Cosmological applications reuse those particle, grid, solver, operator, artifact, and
+likelihood identities rather than introducing a separate framework. Canonical physical
+states project only their declared dependencies into content-addressed products;
+concrete pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
+release-window Gaussian likelihoods, primordial H/He microphysics, local-curvature
+validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification, snapshots,
+and distributed-PM feasibility extend the curved/CPL background, named transfer/power,
+flat LPT/PM, and adiabatic gas--DM foundations. Complete native Boltzmann/CMB parity,
+global curved N-body, generic surveys, stochastic feedback, production tree gravity,
+AMR, and distributed execution remain explicit external, conditional, or rejected
+boundaries rather than hidden fallbacks.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,

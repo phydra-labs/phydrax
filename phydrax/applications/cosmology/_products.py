@@ -11,82 +11,26 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._closure import CosmologyRealizationSignature, DifferentiationContract
 from ._scales import CosmologyScaleContract
 
 
 CosmologyProductSource = Literal["native", "external"]
-CosmologyDifferentiability = Literal["native-parameter", "coordinate-only", "constant"]
 MatterField = Literal["cold_baryon", "total_matter", "massive_neutrino_total"]
 MatterPowerStage = Literal["linear", "nonlinear"]
 TransferGauge = Literal["synchronous", "newtonian", "gauge-invariant"]
 ShotNoiseConvention = Literal["none", "included", "subtracted"]
 
 
-_DIFFERENTIABILITY_ORDER = {
-    "constant": 0,
-    "coordinate-only": 1,
-    "native-parameter": 2,
-}
 _MATTER_FIELDS = ("cold_baryon", "total_matter", "massive_neutrino_total")
 _GAUGES = ("synchronous", "newtonian", "gauge-invariant")
 
 
-class CosmologyRealizationSignature(StrictModule):
-    """Dynamic physical realization paired with a static model-form contract."""
-
-    parameter_values: Array
-    parameter_names: tuple[str, ...] = eqx.field(static=True)
-    model_form_id: str = eqx.field(static=True)
-    scale_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        parameter_values: ArrayLike,
-        parameter_names: tuple[str, ...],
-        model_form_id: str,
-        scale_id: str,
-        /,
-    ):
-        names = tuple(str(name).strip() for name in parameter_names)
-        values = jnp.asarray(parameter_values).reshape((-1,))
-        if not names or len(names) != values.size or any(not name for name in names):
-            raise ValueError("Cosmology realization names must match parameter values.")
-        if not str(model_form_id).strip() or not str(scale_id).strip():
-            raise ValueError("Cosmology realization identities must be non-empty.")
-        values = eqx.error_if(
-            values,
-            jnp.any(~jnp.isfinite(values)),
-            "Cosmology realization parameters must be finite.",
-        )
-        self.parameter_values = values
-        self.parameter_names = names
-        self.model_form_id = str(model_form_id)
-        self.scale_id = str(scale_id)
-
-    def require_compatible(
-        self, other: CosmologyRealizationSignature, token: ArrayLike, /
-    ) -> Array:
-        if not isinstance(other, CosmologyRealizationSignature):
-            raise TypeError("other must be CosmologyRealizationSignature.")
-        if (
-            self.parameter_names != other.parameter_names
-            or self.model_form_id != other.model_form_id
-            or self.scale_id != other.scale_id
-        ):
-            raise ValueError("Cosmology realization contracts disagree.")
-        value = jnp.asarray(token)
-        return eqx.error_if(
-            value,
-            jnp.any(self.parameter_values != other.parameter_values),
-            "Cosmology products come from different physical realizations.",
-        )
-
-
 class CosmologyProductProvenance(StrictModule, NonTrainableState):
-    """Static producer, model-form, request, policy, scale, and parent identity."""
+    """Static producer, request, policy, scale, lineage, and derivative identity."""
 
     producer: str = eqx.field(static=True)
     producer_version: str = eqx.field(static=True)
@@ -97,7 +41,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
     scale_id: str = eqx.field(static=True)
     parent_product_ids: tuple[str, ...] = eqx.field(static=True)
     source_kind: CosmologyProductSource = eqx.field(static=True)
-    differentiability: CosmologyDifferentiability = eqx.field(static=True)
+    differentiation: DifferentiationContract
     provenance_id: str = eqx.field(static=True)
 
     def __init__(
@@ -111,7 +55,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
         physics_policy_id: str,
         scale_id: str,
         source_kind: CosmologyProductSource,
-        differentiability: CosmologyDifferentiability,
+        differentiation: DifferentiationContract | str,
         parent_product_ids: tuple[str, ...] = (),
     ):
         values = tuple(
@@ -131,8 +75,13 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
             raise ValueError("Cosmology product provenance fields must be non-empty.")
         if source_kind not in ("native", "external"):
             raise ValueError("source_kind must be 'native' or 'external'.")
-        if differentiability not in _DIFFERENTIABILITY_ORDER:
-            raise ValueError("Unknown cosmology product differentiability contract.")
+        differentiation_ = (
+            DifferentiationContract.from_label(differentiation)
+            if isinstance(differentiation, str)
+            else differentiation
+        )
+        if not isinstance(differentiation_, DifferentiationContract):
+            raise TypeError("differentiation must be DifferentiationContract.")
         (
             self.producer,
             self.producer_version,
@@ -144,7 +93,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
         ) = values
         self.parent_product_ids = parents
         self.source_kind = source_kind
-        self.differentiability = differentiability
+        self.differentiation = differentiation_
         self.provenance_id = canonical_fingerprint(
             {
                 "kind": "cosmology-product-provenance",
@@ -157,29 +106,29 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
                 "scale_id": values[6],
                 "parent_product_ids": list(parents),
                 "source_kind": source_kind,
-                "differentiability": differentiability,
+                "differentiation": differentiation_.contract_id,
             }
         )
 
 
-def combine_differentiability(
-    *policies: CosmologyDifferentiability,
-) -> CosmologyDifferentiability:
-    if not policies:
-        raise ValueError("At least one differentiability policy is required.")
-    if any(policy not in _DIFFERENTIABILITY_ORDER for policy in policies):
-        raise ValueError("Unknown cosmology differentiability policy.")
-    return min(policies, key=_DIFFERENTIABILITY_ORDER.__getitem__)
+def combine_differentiation(
+    *contracts: DifferentiationContract,
+) -> DifferentiationContract:
+    if not contracts:
+        raise ValueError("At least one differentiation contract is required.")
+    if any(not isinstance(value, DifferentiationContract) for value in contracts):
+        raise TypeError("All values must be DifferentiationContract.")
+    return contracts[0].meet(*contracts[1:])
 
 
-def _stored(values: Array, policy: CosmologyDifferentiability, /) -> Array:
-    if policy == "native-parameter":
+def _stored(values: Array, contract_: DifferentiationContract, /) -> Array:
+    if contract_.stored_values:
         return values
     return jax.lax.stop_gradient(values)
 
 
-def _evaluated(values: Array, policy: CosmologyDifferentiability, /) -> Array:
-    if policy == "constant":
+def _evaluated(values: Array, contract_: DifferentiationContract, /) -> Array:
+    if not contract_.query_coordinates:
         return jax.lax.stop_gradient(values)
     return values
 
@@ -220,8 +169,6 @@ def _validate_common(
         raise TypeError("realization must be CosmologyRealizationSignature.")
     if scale.scale_id != provenance.scale_id or scale.scale_id != realization.scale_id:
         raise ValueError("Cosmology product scale identities disagree.")
-    if provenance.model_form_id != realization.model_form_id:
-        raise ValueError("Cosmology product model-form identities disagree.")
 
 
 class ExpansionHistory(StrictModule):
@@ -252,7 +199,7 @@ class ExpansionHistory(StrictModule):
             jnp.any(~jnp.isfinite(hubble)) | jnp.any(hubble <= 0.0),
             "ExpansionHistory Hubble values must be finite and positive.",
         )
-        policy = provenance.differentiability
+        policy = provenance.differentiation
         self.scale_factors = _stored(nodes, policy)
         self.hubble_values = _stored(hubble, policy)
         self.scale = scale
@@ -262,7 +209,7 @@ class ExpansionHistory(StrictModule):
     def hubble(self, scale_factor: ArrayLike, /) -> Array:
         query = _validated_query(scale_factor, self.scale_factors, "ExpansionHistory")
         values = jnp.interp(query, self.scale_factors, self.hubble_values)
-        return _evaluated(values, self.provenance.differentiability)
+        return _evaluated(values, self.provenance.differentiation)
 
 
 class LagrangianGrowthHistory(StrictModule):
@@ -310,7 +257,7 @@ class LagrangianGrowthHistory(StrictModule):
             | jnp.any(values[2] <= 0.0),
             "Lagrangian growth values must be finite with positive D1 and D2.",
         )
-        policy = provenance.differentiability
+        policy = provenance.differentiation
         stacked = _stored(stacked, policy)
         self.scale_factors = _stored(nodes, policy)
         (
@@ -337,7 +284,7 @@ class LagrangianGrowthHistory(StrictModule):
             )
         )
         return tuple(
-            _evaluated(value, self.provenance.differentiability) for value in values
+            _evaluated(value, self.provenance.differentiation) for value in values
         )
 
 
@@ -457,7 +404,7 @@ class MatterPowerTable(StrictModule):
             invalid,
             "MatterPowerTable values violate auto/cross-power constraints.",
         )
-        policy = provenance.differentiability
+        policy = provenance.differentiation
         self.scale_factors = _stored(scales, policy)
         self.wavenumbers = _stored(wavenumber, policy)
         self.power_values = _stored(power, policy)
@@ -490,7 +437,7 @@ class MatterPowerTable(StrictModule):
             out_axes=0,
         )(at_each_scale)
         values = values.reshape(query_k.shape)
-        return _evaluated(values, self.provenance.differentiability)
+        return _evaluated(values, self.provenance.differentiation)
 
 
 class LinearTransferDescriptor(StrictModule, NonTrainableState):
@@ -576,7 +523,7 @@ class LinearTransferTable(StrictModule):
             jnp.any(~jnp.isfinite(values)),
             "Linear transfer values must be finite.",
         )
-        policy = provenance.differentiability
+        policy = provenance.differentiation
         self.scale_factors = _stored(scales, policy)
         self.wavenumbers = _stored(wavenumber, policy)
         self.transfer_values = _stored(values, policy)
@@ -611,7 +558,7 @@ class LinearTransferTable(StrictModule):
             out_axes=0,
         )(at_each_scale)
         values = values.reshape(query_k.shape)
-        return _evaluated(values, self.provenance.differentiability)
+        return _evaluated(values, self.provenance.differentiation)
 
 
 class ThermodynamicsHistory(StrictModule):
@@ -659,7 +606,7 @@ class ThermodynamicsHistory(StrictModule):
             | jnp.any(values[3] < 0.0),
             "Thermodynamics values violate finite/non-negative constraints.",
         )
-        policy = provenance.differentiability
+        policy = provenance.differentiation
         stacked = _stored(stacked, policy)
         self.scale_factors = _stored(nodes, policy)
         (
@@ -735,10 +682,10 @@ def reconstruct_total_matter_power(
         + 2.0 * fractions[0] * fractions[1] * cross.power_values
         + fractions[1] ** 2 * neutrino.power_values
     )
-    policy = combine_differentiability(
-        cold_baryon.provenance.differentiability,
-        neutrino.provenance.differentiability,
-        cross.provenance.differentiability,
+    differentiation = combine_differentiation(
+        cold_baryon.provenance.differentiation,
+        neutrino.provenance.differentiation,
+        cross.provenance.differentiation,
     )
     provenance = CosmologyProductProvenance(
         producer="phydrax.applications.cosmology.reconstruct_total_matter_power",
@@ -748,8 +695,8 @@ def reconstruct_total_matter_power(
         numerical_policy_id="algebraic-total-matter-reconstruction",
         physics_policy_id="cb-plus-massive-neutrino-cross-power",
         scale_id=cold_baryon.scale.scale_id,
-        source_kind="native" if policy == "native-parameter" else "external",
-        differentiability=policy,
+        source_kind="native",
+        differentiation=differentiation,
         parent_product_ids=(
             cold_baryon.provenance.provenance_id,
             neutrino.provenance.provenance_id,
@@ -776,11 +723,59 @@ def reconstruct_total_matter_power(
     )
 
 
+def cosmology_product_content_id(product, /) -> str:
+    """Return a host-side content identity for an immutable cosmology product."""
+    if isinstance(product, ExpansionHistory):
+        descriptor = "expansion-history"
+        coordinates = product.scale_factors
+        payload = product.hubble_values
+    elif isinstance(product, LagrangianGrowthHistory):
+        descriptor = "lagrangian-growth-history"
+        coordinates = product.scale_factors
+        payload = (
+            product.first_order_growth,
+            product.first_order_rate,
+            product.second_order_growth,
+            product.second_order_rate,
+        )
+    elif isinstance(product, MatterPowerTable):
+        descriptor = product.descriptor.descriptor_id
+        coordinates = (product.scale_factors, product.wavenumbers)
+        payload = product.power_values
+    elif isinstance(product, LinearTransferTable):
+        descriptor = product.descriptor.descriptor_id
+        coordinates = (product.scale_factors, product.wavenumbers)
+        payload = product.transfer_values
+    elif isinstance(product, ThermodynamicsHistory):
+        descriptor = "thermodynamics-history"
+        coordinates = product.scale_factors
+        payload = (
+            product.ionization_fraction,
+            product.baryon_temperature,
+            product.opacity_derivative,
+            product.visibility,
+        )
+    else:
+        raise TypeError("Unsupported cosmology product type.")
+    return canonical_fingerprint(
+        {
+            "kind": "cosmology-product-content",
+            "descriptor": descriptor,
+            "realization": product.realization.content_id(),
+            "scale": product.scale.scale_id,
+            "coordinates": array_tree_fingerprint(coordinates),
+            "payload": array_tree_fingerprint(payload),
+            "parents": list(product.provenance.parent_product_ids),
+            "differentiation": product.provenance.differentiation.contract_id,
+        }
+    )
+
+
 __all__ = [
-    "CosmologyDifferentiability",
     "CosmologyProductProvenance",
     "CosmologyProductSource",
     "CosmologyRealizationSignature",
+    "DifferentiationContract",
     "ExpansionHistory",
     "LagrangianGrowthHistory",
     "LinearTransferDescriptor",
@@ -792,6 +787,7 @@ __all__ = [
     "ShotNoiseConvention",
     "ThermodynamicsHistory",
     "TransferGauge",
-    "combine_differentiability",
+    "combine_differentiation",
+    "cosmology_product_content_id",
     "reconstruct_total_matter_power",
 ]
