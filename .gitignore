@@ -6,6 +6,8 @@
 !LICENSES/IREE-APACHE-2.0.txt
 !LICENSES/MODEPY-MIT.txt
 !LICENSES/SCIPY-BSD-3-CLAUSE.txt
+!LICENSES/IPC-TOOLKIT-MIT.txt
+!LICENSES/TIGHT-INCLUSION-MIT.txt
 *.log
 *.egg-info
 *.cache
@@ -36,6 +38,8 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/iga_h1.json
+!benchmarks/iga_h1_qualification.json
 !benchmarks/pgm_native.py
 !benchmarks/dae_benchmark_artifact.json
 !benchmarks/direct_collocation.json
@@ -84,6 +88,10 @@ benchmarks/*
 !benchmarks/topology.json
 !benchmarks/advanced_topology.json
 !benchmarks/topology_optimization.json
+!benchmarks/contact_primitives.json
+!benchmarks/contact_search.json
+!benchmarks/contact_dynamics.json
+!benchmarks/contact_qualification.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/

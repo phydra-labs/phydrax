@@ -116,6 +116,18 @@ class ImplicitNewmarkMethod(StrictModule, NonTrainableState):
             + dt * dt * (0.5 - self.beta) * accepted.acceleration
         )
 
+    def position_to_acceleration_scale(
+        self, step_size: ArrayLike, dtype: Any, /
+    ) -> Array:
+        """Return the scalar derivative of Newmark acceleration with respect to position."""
+        dt = jnp.asarray(step_size, dtype=dtype)
+        return 1.0 / (self.beta * dt * dt)
+
+    def position_to_velocity_scale(self, step_size: ArrayLike, dtype: Any, /) -> Array:
+        """Return the scalar derivative of Newmark velocity with respect to position."""
+        dt = jnp.asarray(step_size, dtype=dtype)
+        return self.gamma / (self.beta * dt)
+
 
 class FiniteElementDynamicsState(StrictModule, NonTrainableState):
     """Displacement, rate, acceleration, and committed material history."""

@@ -785,121 +785,6 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
         return kernel @ self.inverse_kernel
 
 
-def _bspline_basis(
-    knots: Array,
-    degree: int,
-    parameters: Array,
-    count: int,
-    /,
-) -> Array:
-    u = jnp.asarray(parameters)
-    knot = jnp.asarray(knots)
-    basis = jnp.stack(
-        [
-            ((u >= knot[index]) & (u < knot[index + 1])).astype(u.dtype)
-            for index in range(knot.size - 1)
-        ],
-        axis=-1,
-    )
-    for level in range(1, degree + 1):
-        width = knot.size - level - 1
-        values = []
-        for index in range(width):
-            left_denominator = knot[index + level] - knot[index]
-            right_denominator = knot[index + level + 1] - knot[index + 1]
-            left = jnp.where(
-                left_denominator > 0.0,
-                (u - knot[index]) / left_denominator * basis[..., index],
-                0.0,
-            )
-            right = jnp.where(
-                right_denominator > 0.0,
-                (knot[index + level + 1] - u) / right_denominator * basis[..., index + 1],
-                0.0,
-            )
-            values.append(left + right)
-        basis = jnp.stack(values, axis=-1)
-    result = basis[..., :count]
-    endpoint = jnp.isclose(u, knot[-1])
-    return result.at[..., -1].set(jnp.where(endpoint, 1.0, result[..., -1]))
-
-
-class NURBSPatch(StrictModule, NonTrainableState):
-    control_points: Array
-    weights: Array
-    knot_vectors: tuple[Array, ...]
-    degrees: tuple[int, ...] = eqx.field(static=True)
-    patch_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        control_points: ArrayLike,
-        weights: ArrayLike,
-        knot_vectors: Sequence[ArrayLike],
-        degrees: Sequence[int],
-        /,
-    ):
-        points = jnp.asarray(control_points)
-        weights_ = jnp.asarray(weights)
-        knots = tuple(jnp.asarray(value) for value in knot_vectors)
-        degrees_ = tuple(int(value) for value in degrees)
-        if (
-            points.shape[:-1] != weights_.shape
-            or len(knots) != len(degrees_)
-            or len(degrees_) != weights_.ndim
-            or any(degree < 0 for degree in degrees_)
-            or any(
-                knot.shape != (points.shape[axis] + degrees_[axis] + 1,)
-                or bool(jnp.any(jnp.diff(knot) < 0.0))
-                for axis, knot in enumerate(knots)
-            )
-        ):
-            raise ValueError(
-                "NURBS control net, weights, knots, and degrees are incompatible."
-            )
-        self.control_points = points
-        self.weights = weights_
-        self.knot_vectors = knots
-        self.degrees = degrees_
-        self.patch_id = canonical_fingerprint(
-            {
-                "kind": "nurbs-patch",
-                "control_points": array_tree_fingerprint(np.asarray(points)),
-                "weights": array_tree_fingerprint(np.asarray(weights_)),
-                "knots": [array_tree_fingerprint(np.asarray(value)) for value in knots],
-                "degrees": degrees_,
-            }
-        )
-
-    def evaluate(self, parameters: ArrayLike, /) -> Array:
-        parameters_ = jnp.asarray(parameters)
-        if parameters_.shape[-1] != len(self.degrees):
-            raise ValueError("NURBS parameters have incompatible dimension.")
-        basis_axes = []
-        for axis, (knots, degree) in enumerate(
-            zip(self.knot_vectors, self.degrees, strict=True)
-        ):
-            count = self.control_points.shape[axis]
-            basis_axes.append(
-                _bspline_basis(
-                    knots,
-                    degree,
-                    parameters_[..., axis],
-                    count,
-                )
-            )
-        tensor = basis_axes[0]
-        for basis in basis_axes[1:]:
-            tensor = tensor[..., :, None] * basis[..., None, :]
-        weighted = tensor * self.weights
-        denominator = jnp.sum(weighted, axis=tuple(range(-self.weights.ndim, 0)))
-        numerator = jnp.sum(
-            weighted[..., None] * self.control_points,
-            axis=tuple(range(-self.weights.ndim - 1, -1)),
-        )
-        return numerator / denominator[..., None]
-
-
 class LevelSetCutQuadrature(StrictModule, NonTrainableState):
     points: Array
     weights: Array
@@ -1241,56 +1126,6 @@ class HybridMortarPlan(StrictModule, NonTrainableState):
         self.reproduction_error = jnp.asarray(error)
 
 
-class MultipatchContinuityPlan(StrictModule, NonTrainableState):
-    prolongation: Array
-
-    def __init__(self, patch_dof_count: int, matching_pairs: ArrayLike, /):
-        count = int(patch_dof_count)
-        pairs = np.asarray(matching_pairs, dtype=np.int32)
-        if (
-            pairs.ndim != 2
-            or pairs.shape[1] != 2
-            or np.any(pairs < 0)
-            or np.any(pairs >= count)
-        ):
-            raise ValueError("Multipatch matching pairs are invalid.")
-        parent = np.arange(count, dtype=np.int32)
-        for left, right in pairs:
-            root = min(parent[left], parent[right])
-            parent[parent == parent[left]] = root
-            parent[parent == parent[right]] = root
-        roots = sorted(set(parent.tolist()))
-        column = {root: index for index, root in enumerate(roots)}
-        matrix = np.zeros((count, len(roots)))
-        for row, root in enumerate(parent):
-            matrix[row, column[int(root)]] = 1.0
-        self.prolongation = jnp.asarray(matrix)
-
-
-class TrimmedCADQuadrature(StrictModule, NonTrainableState):
-    physical_points: Array
-    physical_weights: Array
-    active: Array
-
-    def __init__(
-        self,
-        patch: NURBSPatch,
-        parameter_points: ArrayLike,
-        parameter_weights: ArrayLike,
-        trim_values: ArrayLike,
-        /,
-    ):
-        parameters = jnp.asarray(parameter_points)
-        weights = jnp.asarray(parameter_weights)
-        trim = jnp.asarray(trim_values)
-        if weights.shape != trim.shape or parameters.shape[:-1] != weights.shape:
-            raise ValueError("Trimmed CAD quadrature arrays disagree.")
-        active = trim <= 0.0
-        self.physical_points = patch.evaluate(parameters)
-        self.physical_weights = jnp.where(active, weights, 0.0)
-        self.active = active
-
-
 class UnfittedAggregationPlan(StrictModule, NonTrainableState):
     target_cells: Array
     valid: Array
@@ -1392,8 +1227,6 @@ __all__ = [
     "HybridReferenceFamily",
     "LevelSetCutQuadrature",
     "NIrregularMortarPlan",
-    "NURBSPatch",
-    "MultipatchContinuityPlan",
     "SimplexModalFamily",
     "SimplexSBPPlan",
     "TensorCompatibleFamily",
@@ -1402,7 +1235,6 @@ __all__ = [
     "TensorPiolaMap",
     "tensor_hcurl_family",
     "tensor_hdiv_family",
-    "TrimmedCADQuadrature",
     "UnfittedAggregationPlan",
     "refine_anisotropic_hp_cells",
     "physical_mass_projection",

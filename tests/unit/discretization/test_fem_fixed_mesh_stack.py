@@ -168,13 +168,7 @@ def test_observation_restart_and_result_roundtrip(tmp_path):
     assert loaded.result_id == result.result_id
 
 
-def test_contact_search_and_cut_quadrature_are_deterministic():
-    contact = phx.applications.contact.ContactSearchPlan(
-        jnp.asarray([[[0.0, 0.0], [1.0, 0.0]], [[0.0, 1.0], [1.0, 1.0]]]),
-        jnp.asarray([10, 20]),
-    )
-    pairs = contact.search(jnp.asarray([[0.5, 0.1]]), jnp.asarray([3]))
-    assert int(pairs.master_ids[0]) == 10
+def test_cut_quadrature_is_deterministic():
 
     mesh = _mesh()
     fracture = phx.applications.fracture

@@ -174,6 +174,23 @@ def test_field_space_requires_exact_vector_coordinates():
         )
 
 
+def test_field_space_accepts_basis_coefficient_representation():
+    topology = phx.discretization.TensorTopology(("x",), (3,))
+    support = phx.discretization.DiscreteSupport(topology, 1, "line")
+    layout = phx.discretization.TensorDofLayout(("x",), (3,))
+
+    space = phx.discretization.DiscreteFieldSpace(
+        "u",
+        support.support_id,
+        layout,
+        phx.linalg.ArraySpace((3,)),
+        representation="basis_coefficient",
+        conformity="H1",
+    )
+
+    assert space.representation == "basis_coefficient"
+
+
 def test_field_transfer_validates_spaces_and_bundle_dependencies():
     source = _field_space("source")
     target = _field_space("target")

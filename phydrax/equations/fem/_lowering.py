@@ -15,6 +15,9 @@ from ...discretization._cell_complex import (
     TetrahedralConnectivity,
 )
 from ...discretization._hexahedral import HexahedralConnectivity
+from ...discretization._local_variational import (
+    AbstractPreparedLocalDiscretization,
+)
 from ...discretization.fem import FiniteElementDiscretization
 from ...discretization.fem._high_order import ReferenceNodalFamily
 from ...discretization.fem._mortar import (
@@ -27,15 +30,15 @@ from ._kernels import KernelBinding, KernelTable
 from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
-def _domain_for_action(action, discretization: FiniteElementDiscretization):
+def _domain_for_action(action, discretization: AbstractPreparedLocalDiscretization):
     if action.domain is not None:
         return action.domain
     action_kind = type(action).__name__
     if action_kind in ("BoundaryLoadAction", "ExteriorFacetAction"):
-        return discretization.exterior_facet_domain
+        return discretization.integration_domain("exterior_facet")
     if action_kind == "InteriorFacetAction":
-        return discretization.interior_facet_domain
-    return discretization.cell_domain
+        return discretization.integration_domain("interior_facet")
+    return discretization.integration_domain("cell")
 
 
 def _action_kind(action) -> str:
@@ -106,19 +109,21 @@ def _default_facet_rule(cell_kind: str):
     raise ValueError(f"No facet rule exists for cell kind {cell_kind!r}.")
 
 
-def _rule_ids(action, discretization: FiniteElementDiscretization):
+def _rule_ids(action, discretization: AbstractPreparedLocalDiscretization):
     from .._finite_element_variational import _action_rule, _rule_id
 
     domain = _domain_for_action(action, discretization)
-    explicit = dict(action.rules)
-    result = []
-    for block in discretization.mesh.blocks:
-        if domain.kind == "cell":
-            rule = _action_rule(action, block.name, block.cell_kind)
-        else:
-            rule = explicit.get(block.name, _default_facet_rule(block.cell_kind))
-        result.append((block.name, _rule_id(rule)))
-    return tuple(result)
+    if isinstance(discretization, FiniteElementDiscretization):
+        explicit = dict(action.rules)
+        result = []
+        for block in discretization.mesh.blocks:
+            if domain.kind == "cell":
+                rule = _action_rule(action, block.name, block.cell_kind)
+            else:
+                rule = explicit.get(block.name, _default_facet_rule(block.cell_kind))
+            result.append((block.name, _rule_id(rule)))
+        return tuple(result)
+    return tuple((str(name), _rule_id(rule)) for name, rule in action.rules)
 
 
 def _action_coefficients(action) -> tuple[Any, ...]:
@@ -146,7 +151,7 @@ def _coefficient_layout_ids(action) -> tuple[str, ...]:
 
 
 def _coefficient_fields(
-    action, discretization: FiniteElementDiscretization
+    action, discretization: AbstractPreparedLocalDiscretization
 ) -> tuple[str, ...]:
     requested = {
         value.field_space_id
@@ -329,27 +334,24 @@ def _select_local_kernel(
 
 def lower_finite_element_form(
     form: Any,
-    discretization: FiniteElementDiscretization,
+    discretization: AbstractPreparedLocalDiscretization,
     /,
 ) -> LocalActionIR:
     if type(form).__name__ != "FiniteElementForm" or not isinstance(
-        discretization, FiniteElementDiscretization
+        discretization, AbstractPreparedLocalDiscretization
     ):
-        raise TypeError("Expected FiniteElementForm and FiniteElementDiscretization.")
+        raise TypeError(
+            "Expected FiniteElementForm and AbstractPreparedLocalDiscretization."
+        )
     slots = []
     for field_name in form.field_names:
-        field_index = discretization._field_index(field_name)
-        field_space = discretization.field_spaces[field_index]
-        element = discretization.elements[field_index][0]
-        value_shape = element.value_shape + tuple(
-            discretization.dof_maps[field_index].component_shape
-        )
+        binding = discretization.local_field_binding(field_name)
         slots.append(
             FieldSlot(
                 field_name,
                 "unknown",
-                field_space.vector_space.space_id,
-                value_shape=value_shape,
+                binding.field_space.vector_space.space_id,
+                value_shape=binding.execution_shape,
             )
         )
     actions = []
@@ -414,13 +416,155 @@ def _facet_permutations(mesh, owner_cells, neighbour_cells, owner_local, neighbo
 def compile_workset_program(
     ir: LocalActionIR,
     form: Any,
-    discretization: FiniteElementDiscretization,
+    discretization: AbstractPreparedLocalDiscretization,
     /,
     *,
     local_kernel: str = "auto",
     realization: str = "matrix_free",
 ) -> WorksetProgram:
     worksets = []
+    common_action_indices = set()
+    for action_index, action in enumerate(form.actions):
+        domain = _domain_for_action(action, discretization)
+        action_name = type(action).__name__
+        common_action = (
+            domain.kind == "cell"
+            and action_name in ("DiffusionAction", "MassAction", "SourceAction")
+        ) or (
+            domain.kind == "exterior_facet"
+            and action_name == "BoundaryLoadAction"
+            and not isinstance(discretization, FiniteElementDiscretization)
+        )
+        if not common_action:
+            continue
+        fields = tuple(
+            dict.fromkeys(
+                (action.field_name,)
+                + _input_fields(action)
+                + _coefficient_fields(action, discretization)
+            )
+        )
+        bindings = tuple(discretization.local_field_binding(name) for name in fields)
+        use_common = not action.rules and (
+            not isinstance(discretization, FiniteElementDiscretization)
+            or (
+                all(binding.conformity == "H1" for binding in bindings)
+                and all(
+                    len(
+                        {
+                            element.local_dof_count
+                            for element in discretization.elements[
+                                discretization._field_index(field)
+                            ]
+                        }
+                    )
+                    == 1
+                    for field in fields
+                )
+            )
+        )
+        if not use_common:
+            continue
+        operators = _operators(action)
+        derivative_order = (
+            1
+            if any(
+                operator in ("grad", "sym-grad", "div", "curl", "normal-trace")
+                for _, operator in operators
+            )
+            else 0
+        )
+        mode = "dense" if str(local_kernel) == "auto" else str(local_kernel)
+        regions = discretization.prepare_local_regions(
+            domain,
+            field_names=fields,
+            maximum_derivative_order=derivative_order,
+            kernel_mode=mode,
+        )
+        if not regions:
+            raise ValueError(
+                "Local provider returned no regions for the requested domain."
+            )
+        for region in regions:
+            if (
+                region.field_names != fields
+                or region.domain.kind != domain.kind
+                or region.domain.support_id != domain.support_id
+                or region.domain.entity_set_id != domain.entity_set_id
+                or any(
+                    reference.maximum_derivative_order < derivative_order
+                    or mode not in reference.kernel_modes
+                    or reference.local_width != binding.local_width
+                    for reference, binding in zip(
+                        region.reference_actions, bindings, strict=True
+                    )
+                )
+            ):
+                raise ValueError(
+                    "Local provider region does not satisfy compiled kernel capabilities."
+                )
+            gathers = dict(zip(fields, region.field_gathers, strict=True))
+            neighbour_gathers = (
+                None
+                if not region.neighbour_gathers
+                else dict(zip(fields, region.neighbour_gathers, strict=True))
+            )
+            references = tuple(
+                reference.action_id for reference in region.reference_actions
+            )
+            rule_id = dict(ir.actions[action_index].region.rule_ids).get(
+                region.block_name,
+                canonical_fingerprint(
+                    {
+                        "kind": "prepared-local-rule",
+                        "reference_actions": references,
+                    }
+                ),
+            )
+            signature = WorksetSignature(
+                "cell",
+                region.block_name,
+                region.cell_kind,
+                rule_id,
+                {
+                    name: reference.local_width
+                    for name, reference in zip(
+                        fields, region.reference_actions, strict=True
+                    )
+                },
+                support_id=region.domain.support_id,
+                entity_set_id=region.domain.entity_set_id,
+                reference_action_ids=references,
+                field_layout_ids=tuple(binding.layout_id for binding in bindings),
+                geometry_action_id=region.geometry_actions.action_id,
+                coefficient_layout_ids=_coefficient_layout_ids(action),
+                precision_id=discretization.precision_policy.policy_id,
+                ir_semantics_id=ir.actions[action_index].action_id,
+                local_kernel=mode,
+            )
+            worksets.append(
+                CompiledWorkset(
+                    signature,
+                    jnp.asarray([action_index], dtype=jnp.int32),
+                    region.entity_indices,
+                    region.owner_cells,
+                    region.neighbour_cells,
+                    gathers,
+                    local_region=region,
+                    neighbour_gathers=neighbour_gathers,
+                    owner_local_entities=region.owner_local_entities,
+                    neighbour_local_entities=region.neighbour_local_entities,
+                    neighbour_trace_permutations=region.trace_permutations,
+                    valid=region.valid,
+                )
+            )
+        common_action_indices.add(action_index)
+    if len(common_action_indices) == len(form.actions):
+        return WorksetProgram(ir, worksets)
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise ValueError(
+            "Non-cell, pairwise, and prepared-operator actions require finite elements."
+        )
     mesh = discretization.mesh
     cell_blocks = np.concatenate(
         tuple(
@@ -440,6 +584,8 @@ def compile_workset_program(
         )
         cell_offset += block.cell_count
         for action_index, action in enumerate(form.actions):
+            if action_index in common_action_indices:
+                continue
             domain = _domain_for_action(action, discretization)
             if domain.kind == "cell":
                 selected = np.flatnonzero(
@@ -543,11 +689,18 @@ def compile_workset_program(
                 widths,
                 support_id=domain.support_id,
                 entity_set_id=domain.entity_set_id,
-                element_id=element.element_id,
-                coordinate_element_id=coordinate_element.element_id,
-                prepared_reference_id=reference_id,
-                representation=element.representation,
-                mapping=element.mapping,
+                reference_action_ids=(reference_id,),
+                field_layout_ids=tuple(
+                    discretization.local_field_binding(field).layout_id
+                    for field in fields
+                ),
+                geometry_action_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-element-geometry-actions",
+                        "coordinate_element": coordinate_element.element_id,
+                        "block": block.name,
+                    }
+                ),
                 coefficient_layout_ids=_coefficient_layout_ids(action),
                 precision_id=discretization.precision_policy.policy_id,
                 ir_semantics_id=ir.actions[action_index].action_id,
@@ -642,13 +795,18 @@ def compile_finite_element_hp_mortar_workset(
         {field_name: owner_trace.size},
         support_id=discretization.support.support_id,
         entity_set_id=entity_set_id,
-        element_id=owner_element.element_id,
-        coordinate_element_id=coordinate_element.element_id,
-        prepared_reference_id=owner_reference.prepared_id,
-        neighbour_element_id=neighbour_element.element_id,
-        neighbour_prepared_reference_id=neighbour_reference.prepared_id,
-        representation=owner_element.representation,
-        mapping=owner_element.mapping,
+        reference_action_ids=(
+            owner_reference.prepared_id,
+            neighbour_reference.prepared_id,
+        ),
+        field_layout_ids=(discretization.local_field_binding(field_name).layout_id,),
+        geometry_action_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-mortar-geometry-actions",
+                "coordinate_element": coordinate_element.element_id,
+                "mortar_metric": metric.metric_id,
+            }
+        ),
         precision_id=discretization.precision_policy.policy_id,
         ir_semantics_id=action_ir.action_id,
         local_kernel="mortar",
@@ -675,7 +833,7 @@ def kernel_table_from_form(
     form: Any,
     ir: LocalActionIR,
     workset_program: WorksetProgram,
-    discretization: FiniteElementDiscretization,
+    discretization: AbstractPreparedLocalDiscretization,
     /,
 ) -> KernelTable:
     if type(form).__name__ != "FiniteElementForm":
@@ -712,13 +870,17 @@ def kernel_table_from_form(
                 action_type,
                 evaluator,
                 local_kernel=strategy,
-                reference_ids=tuple(value.prepared_reference_id for value in signatures),
-                element_ids=tuple(value.element_id for value in signatures),
-                coordinate_element_ids=tuple(
-                    value.coordinate_element_id for value in signatures
+                reference_action_ids=tuple(
+                    reference
+                    for value in signatures
+                    for reference in value.reference_action_ids
                 ),
-                representations=tuple(value.representation for value in signatures),
-                mappings=tuple(value.mapping for value in signatures),
+                field_layout_ids=tuple(
+                    layout for value in signatures for layout in value.field_layout_ids
+                ),
+                geometry_action_ids=tuple(
+                    value.geometry_action_id for value in signatures
+                ),
                 coefficient_layout_ids=_coefficient_layout_ids(action),
                 precision_id=discretization.precision_policy.policy_id,
                 ir_semantics_id=ir.actions[action_index].action_id,

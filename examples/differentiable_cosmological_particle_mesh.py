@@ -79,17 +79,14 @@ def build_workflow():
         dealiasing="three_halves",
         scale=scale,
     )
-    provenance = phx.applications.cosmology.CosmologyProductProvenance(
-        producer="phydrax-example",
-        producer_version="native",
-        model_form_id=background.model_form_id,
-        request_id="native-example-linear-power",
-        numerical_policy_id="example-linear-power",
-        physics_policy_id="linear-cold-baryon-power",
-        scale_id=scale.scale_id,
-        source_kind="native",
-        differentiability="native-parameter",
-    )
+    provenance = phx.applications.cosmology.CosmologyProductProvenance(producer="phydrax-example",
+    producer_version="native",
+    model_form_id=background.model_form_id,
+    request_id="native-example-linear-power",
+    numerical_policy_id="example-linear-power",
+    physics_policy_id="linear-cold-baryon-power",
+    scale_id=scale.scale_id,
+    source_kind="native", differentiation="native-parameter")
     coordinates = tuple(
         (jnp.arange(count_, dtype=float) + 0.5) / count_ for count_ in shape
     )
