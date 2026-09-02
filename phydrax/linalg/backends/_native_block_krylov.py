@@ -12,8 +12,9 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
+from .._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from .._plans import _certified_rank, LinearSolvePlan
-from .._policies import BlockCG, BlockGMRES
+from .._policies import BlockCG, BlockGMRES, RankPolicy
 from .._preconditioners import AbstractPreconditioner
 from .._results import LinearSolveStatus
 from ._native_krylov import (
@@ -339,7 +340,10 @@ def _block_gmres_raw(
                 reduced_rows = (local_index + 2) * block_width
                 reduced_columns = (local_index + 1) * block_width
                 reduced = hessenberg_[:reduced_rows, :reduced_columns]
-                coefficients = _pinv(reduced) @ right[:reduced_rows]
+                coefficients, _ = _pseudoinverse_apply(
+                    reduced,
+                    right[:reduced_rows],
+                )
                 candidate_x = (
                     cycle_base + preconditioned_basis_[:, :reduced_columns] @ coefficients
                 )
@@ -454,8 +458,11 @@ def _block_cg_raw(
                 direction_,
                 action_direction,
             )
-            curvature_rank = _matrix_rank(curvature)
-            alpha = _pinv_hermitian(curvature) @ gram_
+            alpha, curvature_rank = _pseudoinverse_apply(
+                curvature,
+                gram_,
+                hermitian=True,
+            )
             next_correction = correction_ + direction_ @ alpha
             next_residual = residual_ - action_direction @ alpha
             next_value = initial + next_correction @ reconstruction
@@ -482,7 +489,7 @@ def _block_cg_raw(
                 next_residual,
                 next_transformed,
             )
-            beta = _pinv_hermitian(gram_) @ next_gram
+            beta, _ = _pseudoinverse_apply(gram_, next_gram, hermitian=True)
             next_direction = next_transformed + direction_ @ beta
             exhausted = curvature_rank == 0
             breakdown_ = breakdown_ | (exhausted & ~next_converged)
@@ -581,32 +588,15 @@ def _hermitian_gram(block_gram, left: Array, right: Array) -> Array:
     return (gram + jnp.conj(gram.T)) / 2
 
 
-def _matrix_rank(value: Array) -> Array:
-    if min(value.shape) == 0:
-        return jnp.asarray(0, dtype=jnp.int32)
-    singular_values = jnp.linalg.svd(value, compute_uv=False)
-    tolerance = (
-        jnp.asarray(max(value.shape), dtype=singular_values.dtype)
-        * jnp.finfo(value.real.dtype).eps
-        * singular_values[0]
-    )
-    return jnp.sum(singular_values > tolerance, dtype=jnp.int32)
-
-
-def _pinv(value: Array) -> Array:
-    return jnp.linalg.pinv(
-        value,
-        rtol=float(jnp.finfo(value.real.dtype).eps) * float(max(value.shape)),
-    )
-
-
-def _pinv_hermitian(value: Array) -> Array:
-    hermitian = (value + jnp.conj(value.T)) / 2
-    return jnp.linalg.pinv(
-        hermitian,
-        rtol=float(jnp.finfo(value.real.dtype).eps) * float(max(value.shape)),
-        hermitian=True,
-    )
+def _pseudoinverse_apply(
+    value: Array,
+    right_hand_side: Array,
+    /,
+    *,
+    hermitian: bool = False,
+) -> tuple[Array, Array]:
+    factors = factor_pseudoinverse(value, RankPolicy(), hermitian=hermitian)
+    return apply_pseudoinverse(factors, right_hand_side), factors.rank
 
 
 def _column_norms(value: Array, block_gram) -> Array:

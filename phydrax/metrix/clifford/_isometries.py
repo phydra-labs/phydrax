@@ -83,7 +83,10 @@ class MetricIsometryAction(StrictModule, NonTrainableState):
         tolerance: float = 1e-10,
     ):
         host, defect = _validated_matrix(algebra, matrix, tolerance)
-        inverse = np.linalg.inv(host)
+        inverse = np.linalg.solve(
+            host,
+            np.eye(algebra.dimension, dtype=host.dtype),
+        )
         tolerance_ = float(tolerance)
         inverse_defect = float(np.max(np.abs(inverse @ host - np.eye(algebra.dimension))))
         if inverse_defect > tolerance_:
@@ -200,7 +203,14 @@ class FiniteMetricIsometryGroup(StrictModule, NonTrainableState):
             for left in range(host.shape[0])
         )
         inverse_indices = tuple(
-            _matrix_index(host, np.linalg.inv(host[index]), tolerance_)
+            _matrix_index(
+                host,
+                np.linalg.solve(
+                    host[index],
+                    np.eye(algebra.dimension, dtype=host.dtype),
+                ),
+                tolerance_,
+            )
             for index in range(host.shape[0])
         )
         self.algebra = algebra

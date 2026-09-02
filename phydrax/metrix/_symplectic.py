@@ -8,12 +8,14 @@ from collections.abc import Callable
 from itertools import combinations
 from math import factorial
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import inverse as matrix_inverse
 from ._chart import CoordinateChart
 from ._forms import DifferentialForm, exterior_derivative, wedge
 from ._map import DifferentiableMap
@@ -67,11 +69,12 @@ class SymplecticForm(StrictModule):
         return matrix
 
     def inverse(self, coordinates: ArrayLike, /) -> Array:
-        matrix = self.matrix(coordinates)
-        identity = jnp.broadcast_to(
-            jnp.eye(self.chart.dimension, dtype=matrix.dtype), matrix.shape
+        result = matrix_inverse(self.matrix(coordinates))
+        return eqx.error_if(
+            result.value,
+            jnp.any(~result.successful),
+            "Symplectic form is degenerate.",
         )
-        return jnp.linalg.solve(matrix, identity)
 
 
 class PoissonStructure(StrictModule):

@@ -89,7 +89,11 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
         local_faces = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
         for cell in cells:
             vertices = coordinates[cell]
-            inverse = np.linalg.inv((vertices[1:] - vertices[0]).T)
+            jacobian = (vertices[1:] - vertices[0]).T
+            inverse = np.linalg.solve(
+                jacobian,
+                np.eye(3, dtype=jacobian.dtype),
+            )
             grad = np.concatenate(
                 (-np.sum(inverse, axis=0, keepdims=True), inverse), axis=0
             )
@@ -113,7 +117,14 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
                 normal_rows.append(0.5 * np.cross(b - a, c - a))
             cell_faces.append(local_ids)
             cell_signs.append(local_sign)
-            reconstruction.append(np.linalg.pinv(np.asarray(normal_rows)))
+            normal_matrix = np.asarray(normal_rows)
+            reconstruction.append(
+                np.linalg.lstsq(
+                    normal_matrix,
+                    np.eye(normal_matrix.shape[0], dtype=normal_matrix.dtype),
+                    rcond=1.0e-15,
+                )[0]
+            )
         if maxwell.plan.cochain.cell_counts[2] != len(face_map):
             raise ValueError("Whitney face ordering differs from Maxwell degree two.")
         self.maxwell = maxwell

@@ -10,6 +10,7 @@ from typing import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import scipy.linalg as scipy_linalg
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -206,7 +207,13 @@ def general_eigenvalue_derivative(
     overlap = np.conj(left.T) @ mass @ right
     overlap_rank = int(np.linalg.matrix_rank(overlap))
     overlap_condition = float(np.linalg.cond(overlap))
-    dual_left = left @ np.conj(np.linalg.pinv(overlap).T)
+    overlap_pseudoinverse = scipy_linalg.lstsq(
+        overlap,
+        np.eye(overlap.shape[0], dtype=overlap.dtype),
+        cond=1.0e-15,
+        lapack_driver="gelsd",
+    )[0]
+    dual_left = left @ np.conj(overlap_pseudoinverse.T)
     duality_error = float(
         np.linalg.norm(
             np.conj(dual_left.T) @ mass @ right - np.eye(len(indices), dtype=right.dtype)
@@ -504,7 +511,12 @@ def general_invariant_projector_derivative(
     if complete:
         basis_rank = int(np.linalg.matrix_rank(right))
         basis_condition = float(np.linalg.cond(right))
-        dual = np.linalg.pinv(right)
+        dual = scipy_linalg.lstsq(
+            right,
+            np.eye(right.shape[0], dtype=right.dtype),
+            cond=1.0e-15,
+            lapack_driver="gelsd",
+        )[0]
     else:
         basis_rank = 0
         basis_condition = np.inf

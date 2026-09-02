@@ -124,7 +124,12 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
             )
         inertia_host = np.asarray(plan.inertia_body)
         inverse_host = (
-            1.0 / inertia_host if dimension == 2 else np.linalg.inv(inertia_host)
+            1.0 / inertia_host
+            if dimension == 2
+            else np.linalg.solve(
+                inertia_host,
+                np.eye(3, dtype=inertia_host.dtype),
+            )
         )
         active = particles.active_mask
         fixed = plan.fixed_mask & active

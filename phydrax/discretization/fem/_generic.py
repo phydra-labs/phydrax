@@ -16,7 +16,13 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, BlockSpace, OperatorProperties
+from ...linalg import (
+    ArraySpace,
+    BlockSpace,
+    inverse_small_linear,
+    OperatorProperties,
+    SmallLinearSolvePlan,
+)
 from ...sparse import EdgeRelation, RowRelation, SparseLinearMap
 from .._cell_complex import PolygonalConnectivity, PolyhedralConnectivity
 from .._cell_mesh import CellBlock, CellMesh
@@ -1832,78 +1838,6 @@ def _degree_aware_reference_rule(
     raise ValueError("Unsupported finite-element cell kind.")
 
 
-def _small_inverse(metric: Array, /) -> tuple[Array, Array]:
-    dimension = metric.shape[-1]
-    if dimension == 2:
-        a = metric[..., 0, 0]
-        b = metric[..., 0, 1]
-        c = metric[..., 1, 0]
-        d = metric[..., 1, 1]
-        determinant = a * d - b * c
-        inverse = jnp.stack((d, -b, -c, a), axis=-1).reshape(metric.shape)
-        return inverse / determinant[..., None, None], determinant
-    if dimension == 3:
-        determinant = (
-            metric[..., 0, 0]
-            * (
-                metric[..., 1, 1] * metric[..., 2, 2]
-                - metric[..., 1, 2] * metric[..., 2, 1]
-            )
-            - metric[..., 0, 1]
-            * (
-                metric[..., 1, 0] * metric[..., 2, 2]
-                - metric[..., 1, 2] * metric[..., 2, 0]
-            )
-            + metric[..., 0, 2]
-            * (
-                metric[..., 1, 0] * metric[..., 2, 1]
-                - metric[..., 1, 1] * metric[..., 2, 0]
-            )
-        )
-        cofactor = jnp.empty_like(metric)
-        cofactor = cofactor.at[..., 0, 0].set(
-            metric[..., 1, 1] * metric[..., 2, 2] - metric[..., 1, 2] * metric[..., 2, 1]
-        )
-        cofactor = cofactor.at[..., 0, 1].set(
-            -(
-                metric[..., 1, 0] * metric[..., 2, 2]
-                - metric[..., 1, 2] * metric[..., 2, 0]
-            )
-        )
-        cofactor = cofactor.at[..., 0, 2].set(
-            metric[..., 1, 0] * metric[..., 2, 1] - metric[..., 1, 1] * metric[..., 2, 0]
-        )
-        cofactor = cofactor.at[..., 1, 0].set(
-            -(
-                metric[..., 0, 1] * metric[..., 2, 2]
-                - metric[..., 0, 2] * metric[..., 2, 1]
-            )
-        )
-        cofactor = cofactor.at[..., 1, 1].set(
-            metric[..., 0, 0] * metric[..., 2, 2] - metric[..., 0, 2] * metric[..., 2, 0]
-        )
-        cofactor = cofactor.at[..., 1, 2].set(
-            -(
-                metric[..., 0, 0] * metric[..., 2, 1]
-                - metric[..., 0, 1] * metric[..., 2, 0]
-            )
-        )
-        cofactor = cofactor.at[..., 2, 0].set(
-            metric[..., 0, 1] * metric[..., 1, 2] - metric[..., 0, 2] * metric[..., 1, 1]
-        )
-        cofactor = cofactor.at[..., 2, 1].set(
-            -(
-                metric[..., 0, 0] * metric[..., 1, 2]
-                - metric[..., 0, 2] * metric[..., 1, 0]
-            )
-        )
-        cofactor = cofactor.at[..., 2, 2].set(
-            metric[..., 0, 0] * metric[..., 1, 1] - metric[..., 0, 1] * metric[..., 1, 0]
-        )
-        return jnp.swapaxes(cofactor, -1, -2) / determinant[..., None, None], determinant
-    raise ValueError("Only two- and three-dimensional local geometry is supported.")
-
-
 def _prepare_block_geometry(
     mesh: CellMesh,
     block: CellBlock,
@@ -1952,11 +1886,20 @@ def _prepare_block_geometry(
     physical_points = oe.contract("qi,cid->cqd", geometry_values, cell_coordinates)
     jacobian = oe.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
     metric = oe.contract("cqdi,cqdj->cqij", jacobian, jacobian)
-    inverse_metric, determinant = _small_inverse(metric)
+    inverse_result = inverse_small_linear(
+        SmallLinearSolvePlan(metric.shape[-1]),
+        metric,
+    )
+    inverse_metric = inverse_result.value
+    determinant = inverse_result.determinant
     measure_factor = jnp.sqrt(determinant)
     measure_factor = eqx.error_if(
         measure_factor,
-        jnp.any(~jnp.isfinite(measure_factor) | (measure_factor <= 0.0)),
+        jnp.any(
+            ~inverse_result.successful
+            | ~jnp.isfinite(measure_factor)
+            | (measure_factor <= 0.0)
+        ),
         "Finite-element geometry requires positive finite metric determinant.",
     )
     inverse_jacobian = oe.contract(

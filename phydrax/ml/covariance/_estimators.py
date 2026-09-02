@@ -13,6 +13,7 @@ import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel
+from ...linalg._dense_inverse import dense_inverse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -193,7 +194,7 @@ def _regularize(
     floor = jnp.maximum(shift, jnp.finfo(real_dtype).eps * scale)
     shifted = hermitian + shift[..., None, None] * eye
     covariance_, eigenvalues = _spectral_floor(shifted, floor)
-    precision = jnp.linalg.solve(covariance_, eye)
+    precision = dense_inverse(covariance_, positive_definite=True)
     log_det = jnp.linalg.slogdet(covariance_)[1]
     clipped = jnp.maximum(eigenvalues, floor[..., None])
     rank = jnp.sum(eigenvalues > floor[..., None], axis=-1).astype(jnp.int32)
@@ -317,7 +318,7 @@ def _result(
     else:
         precision = _hermitian(jnp.asarray(precision_override))
         eye = jnp.eye(precision.shape[-1], dtype=precision.dtype)
-        covariance_ = jnp.linalg.solve(precision, eye)
+        covariance_ = dense_inverse(precision, positive_definite=True)
         precision_values = _stable_eigvalsh(precision)
         floor = jnp.finfo(_real_dtype(precision.dtype)).eps * jnp.maximum(
             precision_values[..., -1], 1.0
@@ -798,7 +799,7 @@ class GraphicalLasso(AbstractRecipe):
 
         def step(_, state):
             precision, delta, iteration = state
-            covariance = jnp.linalg.solve(precision, eye)
+            covariance = dense_inverse(precision, positive_definite=True)
             proposal = precision - self.step_size * (sample_covariance - covariance)
             diagonal = jnp.diagonal(proposal, axis1=-2, axis2=-1)
             off = proposal - diagonal[..., :, None] * eye
@@ -835,7 +836,7 @@ class GraphicalLasso(AbstractRecipe):
         precision, delta, iterations = jax.lax.fori_loop(
             0, self.max_iterations, step, state
         )
-        covariance = jnp.linalg.solve(precision, eye)
+        covariance = dense_inverse(precision, positive_definite=True)
         converged = delta < self.tolerance
         return _result(
             batch,

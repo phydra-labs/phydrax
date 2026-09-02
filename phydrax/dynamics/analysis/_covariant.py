@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ...linalg import inverse
 from .._evolution import AbstractDifferentiableEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
 
@@ -365,11 +366,23 @@ def covariant_directions(
     for checkpoint in saved:
         values = saved_directions[checkpoint]
         probe_values = saved_probe_directions[checkpoint]
+        adjoint_success = True
         if kind == "adjoint":
-            values = jnp.linalg.inv(values).T
+            inverse_result = inverse(values)
+            probe_inverse_result = inverse(probe_values)
+            values = inverse_result.value.T
             values = values / jnp.linalg.norm(values, axis=0)[None, :]
-            probe_values = jnp.linalg.inv(probe_values).T
-            probe_values = probe_values / jnp.linalg.norm(probe_values, axis=0)[None, :]
+            probe_values = probe_inverse_result.value.T
+            probe_values = (
+                probe_values
+                / jnp.linalg.norm(
+                    probe_values,
+                    axis=0,
+                )[None, :]
+            )
+            adjoint_success = bool(
+                inverse_result.successful & probe_inverse_result.successful
+            )
         direction_values.append(values.reshape(evolution.state_layout.shape + (rank,)))
         drift_values.append(
             jnp.linalg.norm(
@@ -389,6 +402,7 @@ def covariant_directions(
             forward_valid
             and backward_valid
             and checkpoint <= intervals - discard
+            and adjoint_success
             and bool(jnp.all(jnp.isfinite(values)))
         )
     directions = jnp.stack(tuple(direction_values), axis=0)

@@ -8,11 +8,13 @@ from collections.abc import Sequence
 from math import isfinite
 from typing import Literal, TypeAlias
 
+import equinox as eqx
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import inverse
 from ._chart import ChartTransition
 from ._metric import AbstractSemiRiemannianMetric
 
@@ -287,7 +289,15 @@ def reexpress_tensor(
         dimension,
     )
     jacobian = transition.jacobian(points)
-    inverse_transpose = jnp.swapaxes(jnp.linalg.inv(jacobian), -1, -2)
+    inverse_transpose = None
+    if "covariant" in tensor_type.variance:
+        inverse_result = inverse(jacobian)
+        inverse_matrix = eqx.error_if(
+            inverse_result.value,
+            jnp.any(~inverse_result.successful),
+            "Chart-transition Jacobian is singular.",
+        )
+        inverse_transpose = jnp.swapaxes(inverse_matrix, -1, -2)
     result = array
     for axis, variance in enumerate(tensor_type.variance):
         result = _apply_linear_axis(

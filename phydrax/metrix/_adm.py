@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from .._strict import StrictModule
 from ._chart import CoordinateChart
 from ._lorentzian import _assemble_adm_matrix
-from ._metric import LorentzianConvention, LorentzianMetric
+from ._metric import _metric_inverse, LorentzianConvention, LorentzianMetric
 
 
 class ADMDecomposition(StrictModule):
@@ -82,11 +82,7 @@ class ADMDecomposition(StrictModule):
 
     @property
     def spatial_inverse(self) -> Array:
-        identity = jnp.broadcast_to(
-            jnp.eye(self.spatial_dimension, dtype=self.spatial_metric.dtype),
-            self.spatial_metric.shape,
-        )
-        return jnp.linalg.solve(self.spatial_metric, identity)
+        return _metric_inverse(self.spatial_metric, positive_definite=True)
 
     def spacetime_metric(self) -> Array:
         """Reconstruct the spacetime metric in the declared sign convention."""

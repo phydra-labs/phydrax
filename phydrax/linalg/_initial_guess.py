@@ -14,7 +14,9 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._operators import AbstractLinearOperator
+from ._policies import RankPolicy
 from ._spaces import AbstractVectorSpace
 
 
@@ -306,19 +308,19 @@ class LinearSolveHistory(StrictModule):
         active_images = jnp.where(mask[None, :], self.rhs_image_basis, 0.0)
         if self.policy.strategy == "rolling-qr":
             q_basis, upper = jnp.linalg.qr(active_images, mode="reduced")
-            coefficients = jnp.linalg.pinv(upper, rtol=self.policy.rank_tolerance) @ (
-                jnp.conj(q_basis.T) @ rhs_coordinates
+            factors = factor_pseudoinverse(
+                upper,
+                RankPolicy(relative_cutoff=self.policy.rank_tolerance),
+            )
+            coefficients = apply_pseudoinverse(
+                factors,
+                jnp.conj(q_basis.T) @ rhs_coordinates,
             )
             coefficients = jnp.where(mask, coefficients, 0.0)
             coordinates = self.solution_basis @ coefficients
             projected = active_images @ coefficients
             residual = rhs_coordinates - projected
-            singular_values = jnp.linalg.svd(upper, compute_uv=False)
-            largest = jnp.maximum(jnp.max(singular_values), 1.0)
-            rank = jnp.sum(
-                singular_values > self.policy.rank_tolerance * largest,
-                dtype=jnp.int32,
-            )
+            rank = factors.rank
             return self.source.unflatten(
                 jax.lax.stop_gradient(coordinates)
             ), LinearInitialGuessDiagnostics(
@@ -332,13 +334,16 @@ class LinearSolveHistory(StrictModule):
         rhs_projection = jnp.conj(active_images.T) @ rhs_coordinates
         inactive = (~mask).astype(gram.dtype)
         gram = gram + jnp.diag(inactive)
-        eigenvalues = jnp.linalg.eigvalsh(0.5 * (gram + jnp.conj(gram.T)))
-        largest = jnp.maximum(jnp.max(jnp.abs(eigenvalues)), 1.0)
-        threshold = self.policy.rank_tolerance * largest
-        rank = jnp.sum((eigenvalues > threshold) & mask, dtype=jnp.int32)
-        coefficients = (
-            jnp.linalg.pinv(gram, rtol=self.policy.rank_tolerance) @ rhs_projection
+        factors = factor_pseudoinverse(
+            gram,
+            RankPolicy(relative_cutoff=self.policy.rank_tolerance),
+            hermitian=True,
         )
+        rank = jnp.maximum(
+            factors.rank - jnp.sum(~mask, dtype=jnp.int32),
+            0,
+        )
+        coefficients = apply_pseudoinverse(factors, rhs_projection)
         coefficients = jnp.where(mask, coefficients, 0.0)
         coordinates = self.solution_basis @ coefficients
         projected = active_images @ coefficients

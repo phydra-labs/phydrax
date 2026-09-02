@@ -7,12 +7,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
+from ....linalg import (
+    DenseCholesky,
+    DenseLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    RHSLayout,
+    solve,
+)
 from ..data import (
     FunctionSamples,
     OperatorBatch,
@@ -121,7 +131,35 @@ def _inverse_riesz_map(
         raise ValueError(
             "Channel metric must be square and match the trailing channel dimension."
         )
-    return oe.contract("ij,...j->...i", jnp.linalg.inv(matrix), unweighted)
+    channel_count = matrix.shape[-1]
+    right_hand_side = jnp.moveaxis(unweighted, -1, 0).reshape((channel_count, -1))
+    operator = DenseLinearOperator(
+        matrix,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "asserted",
+                "positive_definite": "asserted",
+            },
+        ),
+    )
+    result = solve(
+        LinearSystem(operator),
+        right_hand_side,
+        policy=LinearSolvePolicy(DenseCholesky()),
+        rhs_layout=RHSLayout((right_hand_side.shape[-1],)),
+    )
+    solved = eqx.error_if(
+        result.value,
+        jnp.any(~result.successful),
+        "Channel metric solve failed.",
+    )
+    return jnp.moveaxis(
+        solved.reshape((channel_count,) + unweighted.shape[:-1]),
+        0,
+        -1,
+    )
 
 
 @dataclass(frozen=True)

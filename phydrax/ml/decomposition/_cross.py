@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
+from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -25,6 +26,24 @@ from .._contracts import (
 )
 from .._numerics import effective_sample_size, solve_weighted_least_squares
 from .._numerics._spectral import _canonicalize_rows
+
+
+def _reconstruction_pseudoinverse(matrix: Array, /) -> Array:
+    relative_cutoff = (
+        10.0 * float(max(matrix.shape[-2:])) * float(jnp.finfo(matrix.real.dtype).eps)
+    )
+    result = pseudoinverse(
+        matrix,
+        FactorizationPolicy(
+            "svd",
+            rank=RankPolicy(relative_cutoff=relative_cutoff),
+        ),
+    )
+    return eqx.error_if(
+        result.value,
+        ~result.successful,
+        "Cross-decomposition reconstruction pseudoinverse failed.",
+    )
 
 
 class CrossDecompositionDiagnostics(StrictModule):
@@ -181,7 +200,7 @@ class CCAModel(AbstractArrayModel):
 
     def inverse_transform(self, scores: ArrayLike, /) -> Array:
         value = jnp.asarray(scores)
-        inverse = jnp.linalg.pinv(self.x_rotations)
+        inverse = _reconstruction_pseudoinverse(self.x_rotations)
         reconstruction = _apply_matrix(value, inverse, self.case_shape)
         return reconstruction + self.x_mean.reshape(
             self.case_shape
@@ -197,7 +216,7 @@ class CCAModel(AbstractArrayModel):
             + (self.out_size,)
         )
         scores = raw_scores * correlations
-        inverse = jnp.linalg.pinv(self.y_rotations)
+        inverse = _reconstruction_pseudoinverse(self.y_rotations)
         reconstruction = _apply_matrix(scores, inverse, self.case_shape)
         return reconstruction + self.y_mean.reshape(
             self.case_shape

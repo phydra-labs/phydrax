@@ -213,7 +213,7 @@ class MomentBasisPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Moment transform exceeds the certified condition-number limit."
             )
-        inverse = np.linalg.inv(transform)
+        inverse = np.linalg.solve(transform, np.eye(q, dtype=transform.dtype))
         identity_residual = np.max(np.abs(transform @ inverse - np.eye(q)))
         tolerance = 1.0e-11 if precision.certification_dtype == "float64" else 2.0e-5
         if not np.isfinite(identity_residual) or identity_residual > tolerance:

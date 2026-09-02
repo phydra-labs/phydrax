@@ -66,6 +66,7 @@ class LinearSolveDiagnostics(StrictModule):
     finite: Array
     converged: Array
     singular_values: Array | None
+    rank_cutoff: Array
     compatibility_residual: Array
     gauge_residual: Array
     nullity: Array
@@ -87,6 +88,7 @@ class LinearSolveDiagnostics(StrictModule):
         finite: Any = True,
         converged: Any = True,
         singular_values: Any | None = None,
+        rank_cutoff: Any = jnp.nan,
         compatibility_residual: Any = 0.0,
         gauge_residual: Any = 0.0,
         nullity: Any = -1,
@@ -102,6 +104,7 @@ class LinearSolveDiagnostics(StrictModule):
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.rank = jnp.asarray(rank, dtype=jnp.int32)
         self.condition_estimate = jnp.asarray(condition_estimate)
+        self.rank_cutoff = jnp.asarray(rank_cutoff)
         self.finite = jnp.asarray(finite, dtype=bool)
         self.converged = jnp.asarray(converged, dtype=bool)
         self.compatibility_residual = jnp.asarray(compatibility_residual)
@@ -389,6 +392,47 @@ class LinearSolveResult(StrictModule):
         return self.status == int(LinearSolveStatus.SUCCESS)
 
 
+MatrixInversionKind: TypeAlias = Literal["inverse", "pseudoinverse"]
+
+
+class MatrixInversionResult(StrictModule):
+    """Explicit inverse matrix plus batch-level numerical evidence."""
+
+    value: Array
+    status: Array
+    diagnostics: LinearSolveDiagnostics
+    provenance: LinearSolveProvenance
+    operation: MatrixInversionKind = eqx.field(static=True)
+
+    def __init__(
+        self,
+        value: Any,
+        status: Any,
+        diagnostics: LinearSolveDiagnostics,
+        provenance: LinearSolveProvenance,
+        operation: MatrixInversionKind,
+        /,
+    ):
+        if not isinstance(diagnostics, LinearSolveDiagnostics):
+            raise TypeError("diagnostics must be LinearSolveDiagnostics.")
+        if not isinstance(provenance, LinearSolveProvenance):
+            raise TypeError("provenance must be LinearSolveProvenance.")
+        if operation not in ("inverse", "pseudoinverse"):
+            raise ValueError("operation must be 'inverse' or 'pseudoinverse'.")
+        matrix = jnp.asarray(value)
+        if matrix.ndim < 2:
+            raise ValueError("Matrix inversion values must have at least two axes.")
+        self.value = matrix
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.diagnostics = diagnostics
+        self.provenance = provenance
+        self.operation = operation
+
+    @property
+    def successful(self) -> Array:
+        return self.status == int(LinearSolveStatus.SUCCESS)
+
+
 LinearSolveCheckKind: TypeAlias = Literal["primal", "adjoint"]
 
 
@@ -553,13 +597,15 @@ class RecycledLinearSolveResult(StrictModule):
 
 
 __all__ = [
-    "RecycledLinearSolveResult",
-    "LinearSolveDiagnostics",
     "LinearPrecisionEvidence",
-    "LinearSolveProvenance",
     "LinearSolveCheckEvidence",
     "LinearSolveCheckKind",
+    "LinearSolveDiagnostics",
+    "LinearSolveProvenance",
     "LinearSolveResult",
     "LinearSolveStatus",
+    "MatrixInversionKind",
+    "MatrixInversionResult",
+    "RecycledLinearSolveResult",
     "linear_status_message",
 ]

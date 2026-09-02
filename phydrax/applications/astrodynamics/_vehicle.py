@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -25,18 +26,7 @@ def _cross_matrix(value: Array, /) -> Array:
     return jnp.asarray(((0.0, -z, y), (z, 0.0, -x), (-y, x, 0.0)))
 
 
-def _inverse_3x3(matrix: Array, /) -> tuple[Array, Array]:
-    determinant = jnp.sum(matrix[0] * jnp.cross(matrix[1], matrix[2]))
-    cofactor_rows = jnp.stack(
-        (
-            jnp.cross(matrix[1], matrix[2]),
-            jnp.cross(matrix[2], matrix[0]),
-            jnp.cross(matrix[0], matrix[1]),
-        )
-    )
-    return cofactor_rows.T / jnp.where(
-        jnp.abs(determinant) > 0.0, determinant, 1.0
-    ), determinant
+_INERTIA_SOLVE = SmallLinearSolvePlan(3)
 
 
 def _quaternion_derivative(quaternion: Array, omega: Array, /) -> Array:
@@ -201,7 +191,9 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
         )
         effectors_valid = jnp.all(jnp.stack(tuple(value.valid for value in evaluations)))
         total_mass, _, inertia = self._mass_properties(state)
-        inverse, determinant = _inverse_3x3(inertia)
+        inverse_result = inverse_small_linear(_INERTIA_SOLVE, inertia)
+        inverse = inverse_result.value
+        determinant = inverse_result.determinant
         wheel_angular_momentum = jnp.sum(
             self.configuration.wheel_axes * state.wheel_momentum[:, None], axis=0
         )
@@ -217,7 +209,12 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
             -mass_flow,
             wheel_torque,
         )
-        valid = effectors_valid & (total_mass > 0.0) & (jnp.abs(determinant) > 1.0e-18)
+        valid = (
+            effectors_valid
+            & (total_mass > 0.0)
+            & inverse_result.successful
+            & (jnp.abs(determinant) > 1.0e-18)
+        )
         return derivative, valid
 
     def rollout(

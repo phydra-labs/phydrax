@@ -87,7 +87,10 @@ class PreparedSimplicialCellLocator(StrictModule, NonTrainableState):
             np.abs(determinants) <= float(tolerance)
         ):
             raise ValueError("Simplicial mesh contains degenerate cells.")
-        inverse = np.linalg.inv(jacobians)
+        inverse = np.linalg.solve(
+            jacobians,
+            np.eye(jacobians.shape[-1], dtype=jacobians.dtype),
+        )
         self.mesh = mesh
         self.cells = jnp.asarray(cells)
         self.origins = jnp.asarray(origins)

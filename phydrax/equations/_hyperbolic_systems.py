@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import inverse
 from ._materials import IdealGasMaterial
 from ._transport_closures import AbstractTransportClosure
 
@@ -495,7 +496,12 @@ class EulerSystem(
         )
         columns = (acoustic_minus, contact, *shear_columns, acoustic_plus)
         right_matrix = jnp.stack(columns, axis=-1)
-        left_matrix = jnp.linalg.inv(right_matrix)
+        inverse_result = inverse(right_matrix)
+        left_matrix = eqx.error_if(
+            inverse_result.value,
+            jnp.any(~inverse_result.successful),
+            "Euler characteristic basis is singular.",
+        )
         eigenvalues = jnp.stack(
             (
                 velocity[..., axis_] - sound,

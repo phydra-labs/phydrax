@@ -538,12 +538,14 @@ def leverage_and_cooks_distance(
     def one_case(case_design: Array, case_weight: Array, case_residual: Array):
         sqrt_weight = jnp.sqrt(case_weight)
         weighted_design = sqrt_weight[:, None] * case_design
-        inverse = jnp.linalg.pinv(weighted_design, rtol=cutoff)
-        hat = weighted_design @ inverse
-        leverage = jnp.real(jnp.diag(hat))
-        singular = jnp.linalg.svd(weighted_design, compute_uv=False)
+        left, singular, _ = jnp.linalg.svd(weighted_design, full_matrices=False)
         threshold = jnp.max(singular, initial=0.0) * cutoff
-        parameters = jnp.sum(singular > threshold, dtype=jnp.int32)
+        retained = singular > threshold
+        leverage = jnp.sum(
+            jnp.abs(left) ** 2 * retained[None, :],
+            axis=-1,
+        )
+        parameters = jnp.sum(retained, dtype=jnp.int32)
         degrees = jnp.maximum(jnp.sum(case_weight > 0.0) - parameters, 1)
         squared = jnp.real(case_residual * jnp.conj(case_residual))
         rss = jnp.sum(case_weight[:, None] * squared, axis=0)

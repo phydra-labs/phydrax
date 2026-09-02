@@ -21,7 +21,13 @@ from .._exponential_family import (
 from .._frozendict import frozendict
 from .._sampling import get_sampler
 from .._strict import StrictModule
-from ..linalg import DenseLinearOperator, EmpiricalGramLinearOperator
+from ..linalg import (
+    DenseLinearOperator,
+    EmpiricalGramLinearOperator,
+    FactorizationPolicy,
+    inverse,
+    OperatorProperties,
+)
 from ._distributions import AbstractDistribution
 
 
@@ -1080,8 +1086,20 @@ def experiment_design_objective(
         raw_value = log_determinant
         criterion_valid = base_valid & positive
     elif criterion == "a_optimal":
-        raw_value = -jnp.trace(jnp.linalg.inv(effective))
-        criterion_valid = base_valid & positive
+        inverse_result = inverse(
+            effective,
+            FactorizationPolicy("cholesky"),
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "asserted",
+                    "positive_definite": "asserted",
+                },
+            ),
+        )
+        raw_value = -jnp.trace(inverse_result.value)
+        criterion_valid = base_valid & positive & inverse_result.successful
     elif criterion == "e_optimal":
         raw_value = eigenvalues[0]
         criterion_valid = base_valid

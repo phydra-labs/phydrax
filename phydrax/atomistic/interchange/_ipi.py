@@ -272,7 +272,7 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
             or not np.all(np.isfinite(coordinate))
         ):
             raise ValueError("i-PI provider cell or positions are invalid.")
-        inverse = np.linalg.inv(cell)
+        inverse = np.linalg.solve(cell, np.eye(3, dtype=cell.dtype))
         session.send_command("POSDATA")
         session.connection.sendall(np.asarray(cell, dtype="<f8").tobytes())
         session.connection.sendall(np.asarray(inverse, dtype="<f8").tobytes())

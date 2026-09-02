@@ -420,7 +420,10 @@ def prepare_matching_scalar_interface_trace_3d(
         ),
         axis=2,
     )
-    inverse_affine = np.linalg.inv(affine)[owner_inverse_route]
+    inverse_affine = np.linalg.solve(
+        affine,
+        np.eye(affine.shape[-1], dtype=affine.dtype),
+    )[owner_inverse_route]
     conormal_weights = np.sum(normals[:, :, None] * inverse_affine[:, 1:, :], axis=1)
 
     face_dofs = jnp.asarray(mapped_faces, dtype=jnp.int32)

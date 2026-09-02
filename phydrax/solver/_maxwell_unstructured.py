@@ -105,7 +105,10 @@ def tetrahedral_maxwell_hodge(
             raise ValueError("Tetrahedral Maxwell mesh contains a degenerate cell.")
         cell_volume[cell_index] = volume
         gradient = np.empty((4, 3))
-        gradient[1:] = np.linalg.inv(jacobian).T
+        gradient[1:] = np.linalg.solve(
+            jacobian.T,
+            np.eye(3, dtype=jacobian.dtype),
+        )
         gradient[0] = -np.sum(gradient[1:], axis=0)
         lengths = np.asarray(
             [np.linalg.norm(local_points[j] - local_points[i]) for i, j in _LOCAL_EDGES]
@@ -448,9 +451,8 @@ class PreparedUnstructuredMaxwell(StrictModule):
         )
         if current.shape != state.primary.electric_displacement.shape:
             raise ValueError("Unstructured Maxwell current must be a degree-one cochain.")
-        displacement = (
-            state.primary.electric_displacement
-            + dt * (self.plan.cochain.codifferential(2, magnetic) - current)
+        displacement = state.primary.electric_displacement + dt * (
+            self.plan.cochain.codifferential(2, magnetic) - current
         )
         electric_new = self.constitutive.electric_field(
             displacement, state.auxiliary.material
@@ -459,9 +461,7 @@ class PreparedUnstructuredMaxwell(StrictModule):
             1, electric_new
         )
         del time
-        charge = state.primary.charge - dt * self.plan.cochain.codifferential(
-            1, current
-        )
+        charge = state.primary.charge - dt * self.plan.cochain.codifferential(1, current)
         return CompatibleMaxwellState(
             MaxwellPrimaryState(displacement, magnetic_new, charge),
             state.auxiliary,

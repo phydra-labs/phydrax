@@ -642,7 +642,7 @@ def realize_isoparametric_triangles(
     vandermonde = np.column_stack(
         tuple(reference[:, 0] ** int(a) * reference[:, 1] ** int(b) for a, b in exponents)
     )
-    coefficients = np.matmul(np.linalg.inv(vandermonde)[None, :, :], nodes)
+    coefficients = np.linalg.solve(vandermonde, nodes)
     corners = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
     corner_indices = tuple(
         int(np.flatnonzero(np.all(reference == location, axis=1))[0])

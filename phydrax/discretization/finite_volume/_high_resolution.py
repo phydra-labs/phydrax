@@ -480,10 +480,12 @@ def _polynomial_data(
             (upper ** (power + 1) - lower ** (power + 1)) / ((power + 1) * width)
             for power in range(degree + 1)
         ]
-    inverse = np.linalg.inv(average_matrix)
-    evaluation = (
-        np.asarray([face_coordinate**power for power in range(degree + 1)]) @ inverse
+    inverse = np.linalg.solve(
+        average_matrix,
+        np.eye(degree + 1, dtype=average_matrix.dtype),
     )
+    face_values = np.asarray([face_coordinate**power for power in range(degree + 1)])
+    evaluation = face_values @ inverse
     target_lower, target_upper = _logical_cell_bounds(edges, target_cell)
     target_width = target_upper - target_lower
     smoothness_coeff = np.zeros((degree + 1, degree + 1))

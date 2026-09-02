@@ -205,7 +205,8 @@ class LinearSolvePlan(StrictModule):
                     "adjoint": problem.operator.capabilities.adjoint,
                     "materialize": problem.operator.capabilities.materialize,
                 },
-                "rank_cutoff": policy.rank.relative_cutoff,
+                "rank_relative_cutoff": policy.rank.relative_cutoff,
+                "rank_absolute_cutoff": policy.rank.absolute_cutoff,
                 "require_full_rank": policy.rank.require_full_rank,
                 "relative_tolerance": policy.tolerance.relative,
                 "absolute_tolerance": policy.tolerance.absolute,
@@ -645,7 +646,7 @@ def _auto_method(
         if (
             _cuda_sparse_available()
             and policy.preconditioning is None
-            and policy.rank.relative_cutoff is None
+            and not _has_rank_cutoff(policy)
         ):
             return SparseQR(), "canonical CSR with native CUDA sparse QR", ()
         rejected.append(
@@ -758,7 +759,7 @@ def _validate_method(
             )
         if preconditioner is not None:
             raise ValueError("StructuredDirect does not accept preconditioners.")
-        if policy.rank.relative_cutoff is not None:
+        if _has_rank_cutoff(policy):
             raise ValueError("StructuredDirect cannot enforce a numerical rank cutoff.")
         if policy.rank.require_full_rank and not _certifies_full_rank(operator):
             raise ValueError(
@@ -771,7 +772,7 @@ def _validate_method(
     if isinstance(method, (DenseLU, DenseCholesky)):
         if preconditioner is not None:
             raise ValueError("Dense direct methods do not accept preconditioners.")
-        if policy.rank.relative_cutoff is not None:
+        if _has_rank_cutoff(policy):
             raise ValueError(
                 "Dense square direct methods cannot enforce a numerical rank cutoff."
             )
@@ -816,7 +817,7 @@ def _validate_method(
             raise ValueError(f"{method.name} requires a LinearSystem.")
         if not isinstance(operator, AbstractSparseLinearOperator):
             raise ValueError(f"{method.name} requires canonical sparse storage.")
-        if policy.rank.relative_cutoff is not None:
+        if _has_rank_cutoff(policy):
             raise ValueError(
                 "Sparse direct methods cannot enforce a numerical rank cutoff."
             )
@@ -895,7 +896,7 @@ def _validate_method(
             "Iterative LinearSystem methods require compatible source and target "
             "spaces; use a direct method or represent the map as an endomorphism."
         )
-    if policy.rank.relative_cutoff is not None:
+    if _has_rank_cutoff(policy):
         raise ValueError("Iterative providers cannot enforce a numerical rank cutoff.")
     if policy.rank.require_full_rank and not _certifies_full_rank(operator):
         raise ValueError(
@@ -1221,6 +1222,12 @@ def _structured_solve_workspace_bytes(
     return (operator.source.size + operator.target.size) * itemsize
 
 
+def _has_rank_cutoff(policy: LinearSolvePolicy, /) -> bool:
+    return (
+        policy.rank.relative_cutoff is not None or policy.rank.absolute_cutoff is not None
+    )
+
+
 def _structured_candidate_fits(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
@@ -1229,7 +1236,7 @@ def _structured_candidate_fits(
     operator = problem.operator
     if policy.preconditioning is not None:
         return False, "structured direct execution does not accept preconditioners"
-    if policy.rank.relative_cutoff is not None:
+    if _has_rank_cutoff(policy):
         return False, "structured direct execution cannot enforce a rank cutoff"
     if policy.rank.require_full_rank and not _certifies_full_rank(operator):
         return False, "full-rank execution lacks a full-rank certificate"

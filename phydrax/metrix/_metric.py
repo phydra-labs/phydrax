@@ -15,9 +15,35 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
+from ..linalg import FactorizationPolicy, inverse, OperatorProperties
 from ._chart import ChartTransition, CoordinateChart
 from ._map import DifferentiableMap, Immersion
 from ._utils import _pointwise_array
+
+
+def _metric_inverse(matrix: Array, /, *, positive_definite: bool) -> Array:
+    properties = (
+        OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "asserted",
+            },
+        )
+        if positive_definite
+        else None
+    )
+    result = inverse(
+        matrix,
+        FactorizationPolicy("cholesky" if positive_definite else "lu"),
+        properties=properties,
+    )
+    return eqx.error_if(
+        result.value,
+        jnp.any(~result.successful),
+        "Metric matrix is singular.",
+    )
 
 
 LorentzianConvention: TypeAlias = Literal["mostly_plus", "mostly_minus"]
@@ -69,12 +95,10 @@ class AbstractSemiRiemannianMetric(StrictModule):
         return matrix
 
     def inverse(self, coordinates: ArrayLike, /) -> Array:
-        matrix = self(coordinates)
-        identity = jnp.broadcast_to(
-            jnp.eye(self.chart.dimension, dtype=matrix.dtype),
-            matrix.shape,
+        return _metric_inverse(
+            self(coordinates),
+            positive_definite=isinstance(self, RiemannianMetric),
         )
-        return jnp.linalg.solve(matrix, identity)
 
     @abstractmethod
     def determinant_sign(self, coordinates: ArrayLike, /) -> Array:

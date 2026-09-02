@@ -96,7 +96,10 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         for cell in cells:
             vertices = coordinates[cell]
             jacobian = (vertices[1:] - vertices[0]).T
-            inverse = np.linalg.inv(jacobian)
+            inverse = np.linalg.solve(
+                jacobian,
+                np.eye(dimension, dtype=jacobian.dtype),
+            )
             local_gradients = np.concatenate(
                 (-np.sum(inverse, axis=0, keepdims=True), inverse), axis=0
             )

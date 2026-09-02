@@ -6,11 +6,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseCholesky,
+    DenseLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    RHSLayout,
+    solve,
+)
 from ._complex import ComplexCoordinateConvention, wirtinger_derivatives
 from ._utils import _pointwise_array
 
@@ -84,8 +93,28 @@ class ChernConnection(StrictModule):
             self.frame.convention,
             coordinates,
         )
-        inverse = jnp.linalg.inv(metric)
-        return oe.contract("ab,bci->aci", inverse, partial_metric)
+        operator = DenseLinearOperator(
+            metric.astype(partial_metric.dtype),
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "asserted",
+                },
+            ),
+        )
+        solved = solve(
+            LinearSystem(operator),
+            partial_metric,
+            policy=LinearSolvePolicy(DenseCholesky()),
+            rhs_layout=RHSLayout(partial_metric.shape[1:]),
+        )
+        return eqx.error_if(
+            solved.value,
+            jnp.any(~solved.successful),
+            "Hermitian bundle metric solve failed.",
+        )
 
     def coefficients(self, coordinates: ArrayLike, /) -> Array:
         return _pointwise_array(

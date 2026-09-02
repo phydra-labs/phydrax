@@ -534,18 +534,24 @@ def _precision_dtype(
 
 class RankPolicy(StrictModule):
     relative_cutoff: float | None = eqx.field(static=True)
+    absolute_cutoff: float | None = eqx.field(static=True)
     require_full_rank: bool = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         relative_cutoff: float | None = None,
+        absolute_cutoff: float | None = None,
         require_full_rank: bool = False,
     ):
-        cutoff = None if relative_cutoff is None else float(relative_cutoff)
-        if cutoff is not None and (not math.isfinite(cutoff) or cutoff < 0.0):
+        relative = None if relative_cutoff is None else float(relative_cutoff)
+        absolute = None if absolute_cutoff is None else float(absolute_cutoff)
+        if relative is not None and (not math.isfinite(relative) or relative < 0.0):
             raise ValueError("relative_cutoff must be non-negative and finite or None.")
-        self.relative_cutoff = cutoff
+        if absolute is not None and (not math.isfinite(absolute) or absolute < 0.0):
+            raise ValueError("absolute_cutoff must be non-negative and finite or None.")
+        self.relative_cutoff = relative
+        self.absolute_cutoff = absolute
         self.require_full_rank = bool(require_full_rank)
 
 

@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
+from ._dense_inverse import dense_inverse
 from ._local_blocks import (
     LocalBlockFactorization,
     prepare_local_block_factorization,
@@ -333,7 +334,7 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner):
                 jnp.any(~jnp.isfinite(matrix)),
                 "Preconditioner blocks must contain only finite values.",
             )
-            inverse = jnp.linalg.inv(matrix)
+            inverse = dense_inverse(matrix, positive_definite=positive_definite)
             inverse = _validated(
                 inverse,
                 jnp.any(~jnp.isfinite(inverse)),
@@ -666,14 +667,14 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
         )
         inverse_diagonal = jnp.reciprocal(diagonal_)
         weighted_left = inverse_diagonal[:, None] * left_
-        core_inverse = jnp.linalg.inv(core_)
+        core_inverse = dense_inverse(core_)
         core_inverse = _validated(
             core_inverse,
             jnp.any(~jnp.isfinite(core_inverse)),
             "Woodbury core must be nonsingular.",
         )
         middle = core_inverse + jnp.conj(right_.T) @ weighted_left
-        middle_inverse = jnp.linalg.inv(middle)
+        middle_inverse = dense_inverse(middle)
         middle_inverse = _validated(
             middle_inverse,
             jnp.any(~jnp.isfinite(middle_inverse)),

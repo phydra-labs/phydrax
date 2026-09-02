@@ -17,7 +17,7 @@ from ..._trainable import NonTrainableState
 from ...discretization import FiniteElementDiscretization
 from ...equations import CellResidualAction, ConstitutiveResponse, FiniteElementForm
 from ...equations.fem import FiniteElementAuxiliaryEvaluation, LocalImplicitMaterial
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 
 
 class CrystalSlipSystem(StrictModule, NonTrainableState):
@@ -187,7 +187,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
         )
 
     def _inverse(self, matrix: Array, /) -> tuple[Array, Array]:
-        result = solve_small_linear(self.inverse_plan, matrix, jnp.eye(3))
+        result = inverse_small_linear(self.inverse_plan, matrix)
         return result.value, result.successful
 
     def _stress(self, deformation: Array, plastic: Array, /):

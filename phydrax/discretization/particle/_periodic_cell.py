@@ -108,7 +108,10 @@ class ParticleCell(StrictModule, NonTrainableState):
             unique_radius = 0.5 * shortest
         else:
             unique_radius = float("inf")
-        inverse = np.linalg.inv(matrix)
+        inverse = np.linalg.solve(
+            matrix,
+            np.eye(matrix.shape[0], dtype=matrix.dtype),
+        )
         self.origin = jnp.asarray(origin_host)
         self.vectors = jnp.asarray(matrix)
         self.inverse_vectors = jnp.asarray(inverse, dtype=dtype)

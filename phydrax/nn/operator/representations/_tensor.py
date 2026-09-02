@@ -7,11 +7,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
+import equinox as eqx
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array
 
 from phydrax._strict import StrictModule
+from phydrax.linalg import inverse as matrix_inverse
 
 
 TensorVariance = Literal["contravariant", "covariant"]
@@ -87,7 +89,12 @@ class TensorType(StrictModule):
                 factor = matrix
             else:
                 if inverse_transpose is None:
-                    inverse_transpose = jnp.linalg.inv(matrix).T
+                    inverse_result = matrix_inverse(matrix)
+                    inverse_transpose = eqx.error_if(
+                        inverse_result.value,
+                        ~inverse_result.successful,
+                        "Tensor representation transform is singular.",
+                    ).T
                 factor = inverse_transpose
             action = jnp.kron(action, factor)
         if self.parity == -1:

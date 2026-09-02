@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import FactorizationPolicy, inverse, OperatorProperties
 from ...observation import CholeskyCovarianceAction, CoordinateLayout
 from ._status import AstrodynamicsStatus
 
@@ -118,8 +119,20 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
         )(estimate)
         whitened = jax.vmap(self.covariance.whiten, in_axes=1, out_axes=1)(jacobian)
         information = whitened.T @ whitened
-        covariance = jsp.linalg.inv(information)
-        valid = converged & jnp.all(jnp.isfinite(covariance))
+        covariance_result = inverse(
+            information,
+            FactorizationPolicy("cholesky"),
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "asserted",
+                },
+            ),
+        )
+        covariance = covariance_result.value
+        valid = converged & covariance_result.successful
         status = jnp.where(
             valid, int(AstrodynamicsStatus.SUCCESS), int(AstrodynamicsStatus.NONCONVERGED)
         ).astype(jnp.int32)

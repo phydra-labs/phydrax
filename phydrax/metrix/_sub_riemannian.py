@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from .._strict import StrictModule
 from ._chart import CoordinateChart
 from ._density import VolumeDensity
+from ._metric import _metric_inverse
 from ._utils import _pointwise_array
 
 
@@ -80,11 +81,7 @@ class HorizontalCometric(StrictModule):
     def __call__(self, coordinates: ArrayLike, /) -> Array:
         frame = self.frame(coordinates)
         control = self.control_metric(coordinates)
-        identity = jnp.broadcast_to(
-            jnp.eye(self.rank, dtype=control.dtype),
-            control.shape,
-        )
-        inverse = jnp.linalg.solve(control, identity)
+        inverse = _metric_inverse(control, positive_definite=True)
         return oe.contract("...ia,...ab,...jb->...ij", frame, inverse, frame)
 
 

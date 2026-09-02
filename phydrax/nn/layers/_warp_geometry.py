@@ -16,6 +16,7 @@ from jaxtyping import Array
 
 from ..._interpolation import apply_gather_stencil, rectilinear_stencil
 from ..._strict import StrictModule
+from ...linalg import inverse as matrix_inverse
 from ...metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType
 
 
@@ -399,7 +400,12 @@ def _transform_tensor(
                 matrix = jnp.swapaxes(matrices, -1, -2)
             else:
                 if inverse is None:
-                    inverse = jnp.linalg.inv(matrices)
+                    inverse_result = matrix_inverse(matrices)
+                    inverse = eqx.error_if(
+                        inverse_result.value,
+                        jnp.any(~inverse_result.successful),
+                        "Warp Jacobian is singular.",
+                    )
                 matrix = inverse
             transformed = jnp.moveaxis(transformed, tensor_axis + 1, -1)
             transformed = oe.contract("nij,n...j->n...i", matrix, transformed)

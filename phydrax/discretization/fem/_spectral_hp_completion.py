@@ -1036,7 +1036,9 @@ class CompatibleAuxiliaryMultigrid(StrictModule, NonTrainableState):
         ):
             raise ValueError("Compatible auxiliary hierarchy shapes are invalid.")
         self.injection = jnp.asarray(injection_)
-        self.auxiliary_inverse = jnp.asarray(np.linalg.inv(operator))
+        self.auxiliary_inverse = jnp.asarray(
+            np.linalg.solve(operator, np.eye(operator.shape[0], dtype=operator.dtype))
+        )
 
     def apply(self, residual: ArrayLike, /) -> Array:
         value = jnp.asarray(residual)
@@ -1104,7 +1106,11 @@ class HybridMortarPlan(StrictModule, NonTrainableState):
                 ],
                 axis=1,
             )
-            return evaluation @ np.linalg.pinv(vandermonde)
+            return np.linalg.lstsq(
+                vandermonde.T,
+                evaluation.T,
+                rcond=1.0e-15,
+            )[0].T
 
         left_matrix = interpolation(left)
         right_matrix = interpolation(right)

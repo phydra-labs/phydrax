@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation._rational_spline import RationalSplineJet
 from ..._interpolation._tensor_bspline import TensorBSplineJetPlan
+from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 from .._local_variational import (
     LocalGeometryActions,
     LocalMetricResult,
@@ -382,9 +383,17 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         points = oe.contract("eql,eqld->eqd", values, local_points)
         jacobian = oe.contract("eqlr,eqld->eqdr", gradients, local_points)
         metric = oe.contract("eqdi,eqdj->eqij", jacobian, jacobian)
-        inverse_metric = jnp.linalg.inv(metric)
+        inverse_result = inverse_small_linear(
+            SmallLinearSolvePlan(metric.shape[-1]),
+            metric,
+        )
+        inverse_metric = eqx.error_if(
+            inverse_result.value,
+            jnp.any(~inverse_result.successful),
+            "Isogeometric metric inversion failed.",
+        )
         inverse_jacobian = oe.contract("eqij,eqdj->eqid", inverse_metric, jacobian)
-        determinant = jnp.linalg.det(metric)
+        determinant = inverse_result.determinant
         volume_measure = jnp.sqrt(jnp.maximum(determinant, 0.0))
         normals = None
         physical_weights = self.reference_weights * volume_measure
