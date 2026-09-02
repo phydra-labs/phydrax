@@ -6,6 +6,9 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.discretization`: finite topology, support, field spaces, measures,
   prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,
   and approximation bundles/hierarchies
+- `phydrax.signal`: differentiable windows, framing, finite convolution, causal
+  FIR state, periodic Fourier and fixed wavelet transforms, and finite/streaming
+  polyphase rate conversion
 - `phydrax.topology`: exact finite-complex homology, validated filtrations,
   persistent homology, fixed-capacity diagram layouts, and topology–Hodge evidence
 - `phydrax.metrix`: coordinate charts, tensors, Riemannian metrics, curvature,

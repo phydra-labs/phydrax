@@ -20,11 +20,11 @@ from phydrax._interpolation import (
     bspline_stencil,
     cubic_hermite_interpolate,
     fourier_interpolate,
-    fourier_resample,
     inverse_distance_stencil,
     local_cubic_slopes,
     rectilinear_stencil,
 )
+from phydrax.signal import fourier_resample
 
 
 def _output_bytes(tree: Any) -> int:
@@ -183,7 +183,7 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
             repeats=repeats,
         ),
         "fourier_2d_odd_even": _benchmark(
-            lambda values: fourier_resample(values, (160, 121)),
+            lambda values: fourier_resample(values, (160, 121), axes=(0, 1)),
             fourier_values,
             repeats=repeats,
         ),
@@ -191,6 +191,7 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
             lambda values: fourier_resample(
                 values,
                 (160, 121),
+                axes=(0, 1),
                 phase_offsets=(0.125, -0.2),
             ),
             fourier_values,

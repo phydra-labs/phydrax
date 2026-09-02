@@ -992,13 +992,14 @@ order-ablation studies, not an alias for the stable `FNO` architecture.
 Legendre policies for nonperiodic or nonuniform tensor axes.
 
 Periodic grid reconstruction is shared across spectral architectures and public
-array-level evaluation. `spectral_resample` transfers to an aligned or
-period-shifted uniform grid. `sample_fourier_grid` evaluates paired arbitrary
-coordinates with an exact direct backend or an explicitly tolerance-controlled
-NUFFT backend. Both preserve channel-last fields and leading case axes; the
-point sampler also accepts physical uniform axis nodes and periods.
+array-level evaluation. `phydrax.signal.fourier_resample` transfers explicit
+spatial axes to aligned or period-shifted uniform grids.
+`sample_fourier_grid` evaluates paired arbitrary coordinates with an exact
+direct backend or an explicitly tolerance-controlled NUFFT backend. Both
+preserve channel-last fields and leading case axes; the point sampler also
+accepts physical uniform axis nodes and periods.
 
-::: phydrax.nn.operator.architectures.spectral_resample
+::: phydrax.signal.fourier_resample
 
 ---
 
@@ -1123,7 +1124,7 @@ grouped as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax._spectral.DiscreteWaveletTransform
+::: phydrax.signal.DiscreteWaveletTransform
     options:
         members:
             - __init__
@@ -1142,7 +1143,7 @@ grouped as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax._spectral.MultiresolutionCoefficients
+::: phydrax.signal.MultiresolutionCoefficients
     options:
         members:
             - levels
@@ -1411,7 +1412,9 @@ zero after every block.
 `OperatorBatch` CNO calls require explicit physical source quadrature. Tuple
 calls have no mask or quadrature channel and therefore mean all-valid equal
 measure; the constant physical cell scale cancels from normalized convolution.
-UNO does not consume masks and rejects a masked source or query.
+UNO transports the masked numerator and observed physical mass independently
+through every multiresolution resize, renormalizes only supported targets, and
+zeros source or query sites outside the declared masks.
 
 
 `operator_dependency_support(model, axes)` reports instance-authoritative

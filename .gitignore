@@ -41,6 +41,8 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/signal_profiles.py
+!benchmarks/signal_profiles.json
 !benchmarks/control_lq_nash.py
 !benchmarks/control_lq_nash.json
 !benchmarks/tensor_network_abelian.py

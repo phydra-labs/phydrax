@@ -1130,6 +1130,7 @@ __all__ = [
     "RadiationMeanEvaluation",
     "MultigroupM1RadiationSystem",
     "RadiationScaleContract",
+    "MultigroupM1RadiationSystem",
     "SpectralFrequencyGrid",
     "ChemicalPhaseSpec",
     "ChemicalSpeciesSchema",

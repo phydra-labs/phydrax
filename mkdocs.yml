@@ -128,6 +128,7 @@ nav:
         - Variational Monte Carlo: "cookbook/quantum_vmc.md"
     - Guides:
         - Domains and sampling: "guides_domain.md"
+        - Differentiable signal processing: "guides_signal_processing.md"
         - Discretization: "guides_discretization.md"
         - Computational topology: "guides_computational_topology.md"
         - Advanced topology: "guides_advanced_topology.md"
@@ -336,6 +337,7 @@ nav:
         - External solver backends: "api/backends.md"
         - Sparse derivatives: "api/sparse_derivatives.md"
         - Sampling: "api/sampling.md"
+        - Signal processing: "api/signal.md"
         - Integration: "api/integration.md"
         - Moment weighting: "api/weighting.md"
         - Optimal transport:

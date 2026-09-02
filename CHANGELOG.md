@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.signal` with explicit-axis differentiable windows and framing,
+  finite direct/FFT convolution, causal FIR state, raw and aligned polyphase
+  rate conversion, fixed-capacity causal streaming resampling, periodic Fourier
+  resampling, and public fixed discrete wavelet transforms.
 - Added research-tier conditional-affine chemical transitions with exact
   directional mass-action certification, inverse-free exponential/phi actions,
   reaction-shared positive rate correction, stoichiometric extent
@@ -1636,6 +1640,11 @@
   resource accounting.
 
 ### Changed
+- Periodic Fourier resampling is now owned by `phydrax.signal` with trailing-axis
+  defaults and explicit spatial axes for channel-last neural operators. Removed
+  the `_interpolation.fourier_resample` and
+  `phydrax.nn.operator.architectures.spectral_resample` exposure paths without
+  compatibility aliases.
 - Replaced the independent multispecies and reacting-Euler thermodynamic
   conventions with `HomogeneousMixtureEulerSystem` and full chemical-energy
   conservation. Removed the legacy reacting-flow classes without aliases.
