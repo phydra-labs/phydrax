@@ -316,6 +316,34 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Advanced biophysics
+
+Advanced biophysics is a composition of canonical numerical owners rather than a
+parallel simulation engine. `phydrax.stochastic.path_sampling` adds fixed-capacity
+path-space ensembles, exact proposal accounting, TPS/TIS/RETIS workflows, reactive
+rates, committors, uncertainty, and identity-bound restart. It accepts only dynamics
+with declared path-density or qualified reversible-map semantics and deterministically
+rejects failed propagation without hidden retries.
+
+`phydrax.applications.electrophysiology` compiles stable-ID cable morphologies,
+membrane mechanisms, stimuli, recordings, ion pools, synapses, plasticity, and
+stochastic channel transitions into residual-checked implicit tree solves.
+`phydrax.applications.cellular_mechanics` provides energy-derived Helfrich membranes,
+surface chemistry, fluid-transfer composition, topology-epoch remeshing, polygonal and
+polyhedral vertex tissues, dynamic particle relations, chromatin loop extrusion, actin
+networks, motors, and focal adhesions. Discrete binding and topology changes remain
+candidate/evaluation/commit transactions; derivatives are conditional on the accepted
+fixed event program.
+
+The atomistic owner additionally supplies residual-gated matrix-free polarization,
+prepared alchemical endpoint mappings, elastic networks, differentiable external
+fields, and fixed-capacity distributed decomposition. Systems-biology plans compile
+compartmental stoichiometry, gene-expression kinetics, source evidence, and atomic
+multirate process coupling. Observation plans keep latent physics separate from
+fluorescence, correlation, lifetime, FRET, channel, and current-voltage measurement
+models. See the Advanced biophysics guides in the navigation for the exact support and
+qualification boundaries.
+
 ### Experimental velocimetry from images to trajectories
 
 `phydrax.velocimetry` keeps particle image velocimetry, dense image displacement,

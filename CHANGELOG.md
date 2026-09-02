@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added native advanced-biophysics capability families: exact fixed-capacity
+  path-space sampling and rare-event analysis; differentiable cable
+  electrophysiology; dynamic particle relations and active biopolymers;
+  Helfrich membranes and vertex tissues with transactional topology epochs;
+  residual-gated polarizable and alchemical atomistics; compartmental systems
+  biology with assertion provenance; and experiment-facing biophysical
+  observation and qualification models.
 - Added fixed-capacity open-boundary tensor-network completion with shared
   precision-aware SVD evidence, canonical QR sweeps, MPO construction/algebra,
   MPS action and compression, reusable bra–MPO–ket environments, network-native

@@ -157,7 +157,9 @@ class PreparedMetricCellListParticleNeighborhood(AbstractPreparedParticleNeighbo
         )
         self.artifact_kind = "metric-cell-list-particle-neighborhood"
 
-    def build(self, positions: ArrayLike, /) -> ParticleNeighborhoodState:
+    def build(
+        self, positions: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
         value = jnp.asarray(positions)
         fractional = self.box.fractional(value)
         fractional = jnp.where(
@@ -165,7 +167,7 @@ class PreparedMetricCellListParticleNeighborhood(AbstractPreparedParticleNeighbo
             fractional - jnp.floor(fractional),
             fractional,
         )
-        authority = self.base.build(fractional)
+        authority = self.base.build(fractional, active_mask=active_mask)
         pairs = authority.pair_relation
         displacement = value[pairs.left_indices] - value[pairs.right_indices]
         displacement = self.box.minimum_image(displacement)
