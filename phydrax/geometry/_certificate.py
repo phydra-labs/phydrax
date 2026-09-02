@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -60,6 +61,48 @@ class FieldCertificate:
     def translated(self) -> FieldCertificate:
         """Return the unchanged guarantees with translation provenance."""
         return replace(self, provenance=(*self.provenance, "rigid_translation"))
+
+
+@dataclass(frozen=True, slots=True)
+class ExactSDFEnclosureCertificate:
+    """Numerical inputs for a global Lipschitz enclosure of an exact SDF.
+
+    This certificate qualifies interval sign classification. It does not by
+    itself claim exact cell measures: boxes intersecting the zero set remain
+    as explicit lower/upper measure uncertainty.
+    """
+
+    field: FieldCertificate
+    evaluation_error: float = 0.0
+    lipschitz_upper_bound: float = 1.0
+
+    def __post_init__(self) -> None:
+        error = float(self.evaluation_error)
+        lipschitz = float(self.lipschitz_upper_bound)
+        if (
+            self.field.zero_set_accuracy is not ZeroSetAccuracy.EXACT
+            or self.field.sign_reliability is not SignReliability.RELIABLE
+            or self.field.distance_semantics is not DistanceSemantics.EXACT
+            or self.field.validity_region != "all_space"
+        ):
+            raise ValueError(
+                "Exact-SDF measure enclosure requires a globally reliable exact "
+                "signed-distance certificate."
+            )
+        if (
+            not math.isfinite(error)
+            or not math.isfinite(lipschitz)
+            or error < 0.0
+            or lipschitz < 1.0
+        ):
+            raise ValueError(
+                "SDF evaluation error must be finite/nonnegative and its "
+                "Lipschitz upper bound must be finite and at least one."
+            )
+
+    @property
+    def certifies_global_enclosure(self) -> bool:
+        return True
 
 
 _EXACT_SDF_CERTIFICATE = FieldCertificate(
@@ -123,6 +166,7 @@ def sharp_union_certificate(
 
 
 __all__ = [
+    "ExactSDFEnclosureCertificate",
     "DistanceSemantics",
     "FieldCertificate",
     "FieldRegularity",

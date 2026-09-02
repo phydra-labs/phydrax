@@ -65,9 +65,7 @@ def _measure_graph(shape, repeats, *, capillary, wave):
     dt = jnp.asarray(1.0e-4 if (capillary or wave) else 1.0e-3)
     step = eqx.filter_jit(method.step)
     started = time.perf_counter()
-    first = step(
-        jnp.asarray(0, dtype=jnp.int32), jnp.asarray(0.0), state, dt, None
-    )
+    first = step(jnp.asarray(0, dtype=jnp.int32), jnp.asarray(0.0), state, dt, None)
     jax.block_until_ready(first.accepted_state.state.eta)
     compile_seconds = time.perf_counter() - started
     started = time.perf_counter()
@@ -144,6 +142,75 @@ def _measure_two_phase(repeats):
     }
 
 
+def _measure_passive_tracer(repeats):
+    shape = (64, 64)
+    grid = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformCellAxisSpec(count, periodic=True)
+            for count in shape
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
+    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
+    mac = phx.discretization.MACOperatorPlan(discretization).prepare()
+    space = grid.field_space(
+        "passive-tracer",
+        entity_layout=discretization.cell_layout,
+        dtype=mac.pressure_space.dtype,
+        representation="point_value",
+    )
+    transport = phx.discretization.MACPassiveTracerMacCormackPlan(
+        mac,
+        space,
+    ).prepare()
+    values = jnp.exp(
+        -160.0
+        * jnp.sum((discretization.cell_centers - jnp.asarray((0.35, 0.4))) ** 2, axis=-1)
+    )
+    velocity = (
+        jnp.full(discretization.face_layouts[0].shape, 0.25),
+        jnp.full(discretization.face_layouts[1].shape, -0.1),
+    )
+    dt = jnp.asarray(0.001)
+    advance = eqx.filter_jit(transport.advance)
+    started = time.perf_counter()
+    first = advance(values, velocity, dt)
+    jax.block_until_ready(first.values)
+    compile_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    for _ in range(repeats):
+        result = advance(values, velocity, dt)
+    jax.block_until_ready(result.values)
+    execution = (time.perf_counter() - started) / repeats
+
+    def objective(tracer):
+        return jnp.sum(transport.advance(tracer, velocity, dt).values ** 2)
+
+    gradient = eqx.filter_jit(jax.grad(objective))
+    started = time.perf_counter()
+    first_gradient = gradient(values)
+    jax.block_until_ready(first_gradient)
+    gradient_compile_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    for _ in range(repeats):
+        gradient_result = gradient(values)
+    jax.block_until_ready(gradient_result)
+    gradient_execution = (time.perf_counter() - started) / repeats
+    cells = shape[0] * shape[1]
+    return {
+        "product": "passive-tracer-maccormack",
+        "shape": list(shape),
+        "compile_seconds": compile_seconds,
+        "execution_seconds": execution,
+        "cell_updates_per_second": cells / execution,
+        "gradient_compile_seconds": gradient_compile_seconds,
+        "gradient_execution_seconds": gradient_execution,
+        "integral_defect": float(result.integral_defect),
+        "limiter_cells": int(result.limiter_active_count),
+        "successful": bool(result.success),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--shape", default="4,4,3")
@@ -159,6 +226,7 @@ def main():
         _measure_graph(shape, arguments.repeats, capillary=True, wave=False),
         _measure_graph(shape, arguments.repeats, capillary=True, wave=True),
         _measure_two_phase(arguments.repeats),
+        _measure_passive_tracer(arguments.repeats),
     ]
     print(json.dumps({"benchmarks": reports}, indent=2, sort_keys=True))
 

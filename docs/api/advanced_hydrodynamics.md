@@ -49,3 +49,15 @@
 ---
 
 ::: phydrax.applications.two_phase_flow.two_phase_diagnostic_view
+
+---
+
+::: phydrax.applications.two_phase_flow.two_phase_inspection_frame
+
+---
+
+::: phydrax.applications.two_phase_flow.two_phase_inspection_frames
+
+---
+
+::: phydrax.equations.flip_inspection_frames

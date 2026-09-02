@@ -786,11 +786,10 @@ from ._mac_sharp_interface import (
     MACMovingSharpInterfaceEpochResult,
     MACSharpGeometryProvider,
     MACSharpInterfaceForce,
-    MACSharpInterfaceGeometry,
-    MACSharpInterfaceGeometryData,
     MACSharpInterfaceProjectionPlan,
     MACSharpInterfaceProjectionResult,
     MACSharpInterfaceStatus,
+    MACSharpOperatorEvidence,
 )
 from ._mac_stage_inverse_general import (
     MACOperatorStageInverseMomentum,
@@ -1113,6 +1112,10 @@ from ._particles import (
     InteractingParticleSolution,
     ParticleVectorField,
     solve_interacting_particles,
+)
+from ._passive_tracer import (
+    MACPassiveTracerContinuationState,
+    MACPassiveTracerFixedStepMethod,
 )
 from ._periodic_vector_boundary import *  # noqa: F403
 from ._periodic_vector_boundary import __all__ as _periodic_vector_boundary_all
@@ -2048,11 +2051,10 @@ __all__ = [
     "MACMovingSharpInterfaceEpochResult",
     "MACSharpGeometryProvider",
     "MACSharpInterfaceForce",
-    "MACSharpInterfaceGeometry",
-    "MACSharpInterfaceGeometryData",
     "MACSharpInterfaceProjectionPlan",
     "MACSharpInterfaceProjectionResult",
     "MACSharpInterfaceStatus",
+    "MACSharpOperatorEvidence",
     "MACRigidImmersedEnergyLedger",
     "MACRigidImmersedMidpointMethod",
     "MACRigidImmersedProjectionPlan",
@@ -2435,6 +2437,8 @@ __all__ = [
     "FLIPFixedStepMethod",
     "DFSPHFixedStepMethod",
     "IISPHFixedStepMethod",
+    "MACPassiveTracerContinuationState",
+    "MACPassiveTracerFixedStepMethod",
     "ShepardDensityRenormalizationTransform",
     "TransportVelocityFixedStepMethod",
     "CFDEMCouplingSchedulePlan",

@@ -10,6 +10,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._sharp_measures import QualifiedSharpGeometry
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import (
@@ -39,29 +40,40 @@ class _MaskedMACPressureAction(StrictModule, NonTrainableState):
     boundaries: PreparedMACBoundaryPlan
     face_inverse_momentum: FaceVelocity
     liquid_mask: Array
+    face_aperture: FaceVelocity
+    cell_active: Array
 
     def __call__(self, pressure: Array, /) -> Array:
         value = self.operators.validate_pressure(pressure)
         liquid = self.liquid_mask
-        all_liquid = jnp.all(liquid)
+        all_liquid = jnp.all(liquid | ~self.cell_active)
         volumes = self.operators.discretization.cell_volumes.astype(value.dtype)
-        mean = jnp.sum(volumes * value) / jnp.sum(volumes)
+        denominator = jnp.sum(jnp.where(liquid, volumes, 0.0))
+        mean = jnp.where(
+            denominator > 0.0,
+            jnp.sum(volumes * jnp.where(liquid, value, 0.0))
+            / jnp.where(denominator > 0.0, denominator, 1.0),
+            0.0,
+        )
         restricted = jnp.where(
             all_liquid,
-            value - mean,
+            jnp.where(liquid, value - mean, 0.0),
             jnp.where(liquid, value, 0.0),
         )
         gradient = self.boundaries.pressure_gradient(restricted, None, homogeneous=True)
         weighted = tuple(
-            coefficient * derivative
-            for coefficient, derivative in zip(
-                self.face_inverse_momentum, gradient, strict=True
+            aperture * coefficient * derivative
+            for aperture, coefficient, derivative in zip(
+                self.face_aperture,
+                self.face_inverse_momentum,
+                gradient,
+                strict=True,
             )
         )
         core = -self.operators.divergence(weighted)
         return jnp.where(
             all_liquid,
-            core + mean,
+            jnp.where(liquid, core + mean, value),
             jnp.where(liquid, core, value),
         )
 
@@ -92,6 +104,7 @@ class MACFreeSurfaceProjectionResult(StrictModule):
 
 class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
     """Compatible MAC projection with runtime liquid and atmospheric air cells."""
+
     operators: PreparedMACOperators
     boundaries: PreparedMACBoundaryPlan
     density: float = eqx.field(static=True)
@@ -123,7 +136,9 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             else boundaries
         )
         if not isinstance(boundaries_, PreparedMACBoundaryPlan):
-            raise TypeError("boundaries must be prepared MAC boundaries, a plan, or None.")
+            raise TypeError(
+                "boundaries must be prepared MAC boundaries, a plan, or None."
+            )
         if boundaries_.operators.prepared_id != operators.prepared_id:
             raise ValueError("Free-surface projection boundaries use another MAC grid.")
         density_ = float(density)
@@ -151,7 +166,12 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             }
         )
         action = _MaskedMACPressureAction(
-            operators, boundaries_, unit_face, representative_mask
+            operators,
+            boundaries_,
+            unit_face,
+            representative_mask,
+            unit_face,
+            jnp.ones(shape, dtype=bool),
         )
         operator = FunctionLinearOperator(
             action,
@@ -212,11 +232,36 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         *,
         pressure: ArrayLike | None = None,
         boundary_stage: MACBoundaryStageData | None = None,
+        geometry: QualifiedSharpGeometry | None = None,
     ) -> MACFreeSurfaceProjectionResult:
         values = self.operators.validate_velocity(velocity)
+        if geometry is not None and (
+            not isinstance(geometry, QualifiedSharpGeometry)
+            or geometry.operator_id != self.operators.prepared_id
+        ):
+            raise ValueError("Qualified solid geometry binds another MAC grid.")
         liquid = jnp.asarray(liquid_mask, dtype=bool)
         if liquid.shape != self.operators.discretization.cell_shape:
             raise ValueError("liquid_mask must match the MAC cell shape.")
+        fluid_active = jnp.ones_like(liquid) if geometry is None else geometry.cell_active
+        liquid = liquid & fluid_active
+        aperture = (
+            tuple(
+                jnp.ones(layout.shape, dtype=self.operators.pressure_space.dtype)
+                for layout in self.operators.discretization.face_layouts
+            )
+            if geometry is None
+            else geometry.face_open_fraction
+        )
+        wall = (
+            tuple(jnp.zeros_like(value) for value in values)
+            if geometry is None
+            else geometry.wall_velocity
+        )
+        values = tuple(
+            jnp.where(opened > 0.0, value, prescribed)
+            for opened, value, prescribed in zip(aperture, values, wall, strict=True)
+        )
         dtype = self.operators.pressure_space.dtype
         dt = jnp.asarray(step_size, dtype=dtype).reshape(())
         stage = (
@@ -230,10 +275,26 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             else self.operators.validate_pressure(pressure)
         )
         liquid_count = jnp.sum(liquid, dtype=jnp.int32)
-        air_count = liquid.size - liquid_count
-        all_liquid = jnp.all(liquid)
+        air_count = jnp.sum(fluid_active, dtype=jnp.int32) - liquid_count
+        all_liquid = jnp.all(liquid | ~fluid_active)
         any_liquid = jnp.any(liquid)
 
+        full_volumes = self.operators.discretization.cell_volumes.astype(dtype)
+        fluid_volumes = (
+            full_volumes
+            if geometry is None
+            else geometry.cell_fluid_measure.astype(dtype)
+        )
+
+        def masked_gauge(value):
+            denominator = jnp.sum(jnp.where(liquid, full_volumes, 0.0))
+            mean = jnp.where(
+                denominator > 0.0,
+                jnp.sum(full_volumes * jnp.where(liquid, value, 0.0))
+                / jnp.where(denominator > 0.0, denominator, 1.0),
+                0.0,
+            )
+            return jnp.where(liquid, value - mean, 0.0)
 
         def atmospheric(_):
             coefficient_cell = jnp.full(
@@ -242,31 +303,45 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 dtype=dtype,
             )
             face_inverse = self.operators.interpolate_inverse_momentum(coefficient_cell)
-            divergence_before = self.operators.divergence(values)
+            integrated_before = self.operators.divergence(
+                tuple(
+                    opened * value for opened, value in zip(aperture, values, strict=True)
+                )
+            )
             boundary_gradient = self.boundaries.pressure_gradient(
-                jnp.zeros_like(divergence_before), stage, homogeneous=False
+                jnp.zeros_like(integrated_before), stage, homogeneous=False
             )
             boundary_divergence = self.operators.divergence(
                 tuple(
-                    coefficient * derivative
-                    for coefficient, derivative in zip(
-                        face_inverse, boundary_gradient, strict=True
+                    aperture_value * coefficient * derivative
+                    for aperture_value, coefficient, derivative in zip(
+                        aperture, face_inverse, boundary_gradient, strict=True
                     )
                 )
             )
-            raw_rhs = -divergence_before + boundary_divergence
+            swept_integrated = (
+                jnp.zeros_like(integrated_before)
+                if geometry is None
+                else geometry.swept_cell_measure_rate / full_volumes
+            )
+            raw_rhs = -integrated_before + boundary_divergence + swept_integrated
             rhs = jnp.where(
                 all_liquid,
-                self.operators.compatibility_project(raw_rhs),
+                masked_gauge(raw_rhs),
                 jnp.where(liquid, raw_rhs, 0.0),
             )
             incoming_ = jnp.where(
                 all_liquid,
-                self.operators.gauge_project(incoming),
+                masked_gauge(incoming),
                 jnp.where(liquid, incoming, 0.0),
             )
             action = _MaskedMACPressureAction(
-                self.operators, self.boundaries, face_inverse, liquid
+                self.operators,
+                self.boundaries,
+                face_inverse,
+                liquid,
+                aperture,
+                fluid_active,
             )
             operator = FunctionLinearOperator(
                 action,
@@ -289,7 +364,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             linear = solve(prepared, rhs, initial_guess=incoming_)
             pressure_candidate = jnp.where(
                 all_liquid,
-                self.operators.gauge_project(linear.value),
+                masked_gauge(linear.value),
                 jnp.where(liquid, linear.value, 0.0),
             )
             gradient = self.boundaries.pressure_gradient(
@@ -301,15 +376,50 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                     values, face_inverse, gradient, strict=True
                 )
             )
+            corrected_candidate = tuple(
+                jnp.where(opened > 0.0, value, prescribed)
+                for opened, value, prescribed in zip(
+                    aperture, corrected_candidate, wall, strict=True
+                )
+            )
             corrected_candidate = self.boundaries.enforce(corrected_candidate, stage)
             residual = action(pressure_candidate) - rhs
-            divergence_candidate = self.operators.divergence(corrected_candidate)
-            volumes = self.operators.discretization.cell_volumes.astype(dtype)
-            residual_norm = jnp.sqrt(jnp.sum(volumes * residual**2))
+            integrated_divergence = self.operators.divergence(
+                tuple(
+                    opened * value
+                    for opened, value in zip(aperture, corrected_candidate, strict=True)
+                )
+            )
+            divergence_before = jnp.where(
+                fluid_active,
+                full_volumes
+                * integrated_before
+                / jnp.where(fluid_active, fluid_volumes, 1.0),
+                0.0,
+            )
+            physical_swept = jnp.where(
+                fluid_active,
+                full_volumes
+                * swept_integrated
+                / jnp.where(fluid_active, fluid_volumes, 1.0),
+                0.0,
+            )
+            divergence_candidate = (
+                jnp.where(
+                    fluid_active,
+                    full_volumes
+                    * integrated_divergence
+                    / jnp.where(fluid_active, fluid_volumes, 1.0),
+                    0.0,
+                )
+                - physical_swept
+            )
+            volumes = fluid_volumes
+            residual_norm = jnp.sqrt(jnp.sum(full_volumes * residual**2))
             divergence_norm = jnp.sqrt(
                 jnp.sum(volumes * jnp.where(liquid, divergence_candidate, 0.0) ** 2)
             )
-            rhs_norm = jnp.sqrt(jnp.sum(volumes * rhs**2))
+            rhs_norm = jnp.sqrt(jnp.sum(full_volumes * rhs**2))
             air_defect = jnp.max(
                 jnp.where(~liquid, jnp.abs(pressure_candidate), 0.0), initial=0.0
             )
@@ -318,9 +428,12 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 & jnp.all(jnp.isfinite(pressure_candidate))
                 & jnp.all(
                     jnp.stack(
-                        tuple(jnp.all(jnp.isfinite(value)) for value in corrected_candidate)
+                        tuple(
+                            jnp.all(jnp.isfinite(value)) for value in corrected_candidate
+                        )
                     )
                 )
+                & (jnp.asarray(True) if geometry is None else geometry.accepted)
                 & jnp.isfinite(residual_norm)
                 & jnp.isfinite(divergence_norm)
             )
@@ -328,14 +441,8 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 any_liquid
                 & stage.successful
                 & finite
-                & (
-                    residual_norm
-                    <= 10.0 * self.tolerance * jnp.maximum(rhs_norm, 1.0)
-                )
-                & (
-                    divergence_norm
-                    <= 10.0 * self.tolerance * jnp.maximum(rhs_norm, 1.0)
-                )
+                & (residual_norm <= 10.0 * self.tolerance * jnp.maximum(rhs_norm, 1.0))
+                & (divergence_norm <= 10.0 * self.tolerance * jnp.maximum(rhs_norm, 1.0))
                 & (air_defect <= self.tolerance)
             )
             corrected = tuple(
@@ -343,10 +450,33 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 for candidate, original in zip(corrected_candidate, values, strict=True)
             )
             pressure_value = jnp.where(converged, pressure_candidate, incoming_)
-            divergence_after = self.operators.divergence(corrected)
-            energy_before = 0.5 * jnp.real(self.operators.velocity_space.inner(values, values))
-            energy_after = 0.5 * jnp.real(
-                self.operators.velocity_space.inner(corrected, corrected)
+            integrated_after = self.operators.divergence(
+                tuple(
+                    opened * value
+                    for opened, value in zip(aperture, corrected, strict=True)
+                )
+            )
+            divergence_after = (
+                jnp.where(
+                    fluid_active,
+                    full_volumes
+                    * integrated_after
+                    / jnp.where(fluid_active, fluid_volumes, 1.0),
+                    0.0,
+                )
+                - physical_swept
+            )
+            energy_before = 0.5 * sum(
+                jnp.sum(dual * opened * value**2)
+                for dual, opened, value in zip(
+                    self.operators.face_dual_measures, aperture, values, strict=True
+                )
+            )
+            energy_after = 0.5 * sum(
+                jnp.sum(dual * opened * value**2)
+                for dual, opened, value in zip(
+                    self.operators.face_dual_measures, aperture, corrected, strict=True
+                )
             )
             return MACFreeSurfaceProjectionResult(
                 corrected,

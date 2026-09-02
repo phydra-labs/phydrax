@@ -24,6 +24,8 @@ class FLIPRunStatus(IntEnum):
     STABILITY_LIMIT_EXCEEDED = 5
     BOUNDARY_EXIT = 6
     NONFINITE_STATE = 7
+    GEOMETRY_FAILED = 8
+    COLLISION_FAILED = 9
 
 
 class FLIPRejectionReason(IntFlag):
@@ -35,6 +37,8 @@ class FLIPRejectionReason(IntFlag):
     STABILITY = 16
     BOUNDARY = 32
     NONFINITE = 64
+    GEOMETRY = 128
+    COLLISION = 256
 
 
 class FLIPParticleState(StrictModule):
@@ -48,6 +52,8 @@ class FLIPRuntimeState(StrictModule):
     time: Array
     accepted_step: Array
     status: Array
+    geometry_epoch: Array
+    geometry_id: str = eqx.field(static=True)
 
 
 class FLIPTransferState(StrictModule):
@@ -67,6 +73,7 @@ class FLIPParticleToGridResult(StrictModule):
     momentum_balance_defect: Array
     finite: Array
     successful: Array
+    geometry_id: str = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
 
@@ -76,6 +83,7 @@ class FLIPGridToParticleResult(StrictModule):
     support: Array
     finite: Array
     successful: Array
+    geometry_id: str = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
 
@@ -92,6 +100,10 @@ class FLIPDiagnostics(StrictModule):
     energy_before: Array
     energy_after: Array
     successful: Array
+    geometry_accepted: Array
+    collision_count: Array
+    wall_work: Array
+    maximum_penetration: Array
     rejection_reason: Array
     details: Any
 
@@ -104,6 +116,8 @@ class FLIPStepResult(StrictModule):
     liquid_fraction: Array
     diagnostics: FLIPDiagnostics
     successful: Array
+    solid: Any
+    geometry_id: str = eqx.field(static=True)
 
 
 __all__ = [

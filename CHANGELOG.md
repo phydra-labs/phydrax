@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Added certified exact/bounded sharp-geometry realization with compatible
+  MAC/FLIP/VOF coupling, explicit fixed-step and host-inspection adapters, and
+  bounded nonconservative MacCormack transport for periodic passive tracers.
 - Added deterministic dense local quantum programs with explicit mixed-dimensional
   Hilbert layouts, ordered local unitary and Kraus contractions, CP-by-construction
   and trace-preservation evidence, resource-bounded plan/prepare/refresh execution,

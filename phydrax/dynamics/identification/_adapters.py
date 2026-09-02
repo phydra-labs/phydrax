@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
 
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
         ControlledDifferentialSolution,
         DifferentialAlgebraicSolution,
         DifferentialSolution,
+        FixedStepRolloutResult,
+        FixedStepSolution,
         MemoryEquationSolution,
         RoughDifferentialSolution,
     )
@@ -48,6 +51,79 @@ def trajectory_data_from_evolution(
         coordinate_id=trajectory.grid.grid_id,
         source_id=(
             f"evolution:{trajectory.evolution_id}" if source_id is None else source_id
+        ),
+    )
+
+
+def trajectory_data_from_fixed_step(
+    solution: FixedStepSolution | FixedStepRolloutResult,
+    projection: Callable[[Any], Any],
+    /,
+    *,
+    projection_id: str,
+    state_layout: StateLayout,
+    coordinate_id: str = "time",
+    source_id: str | None = None,
+) -> TrajectoryData:
+    """Project a retained fixed-step state tree without altering its time support.
+
+    ``projection`` receives the complete retained state PyTree and must return an
+    array with shape ``(retained_time, *state_layout.shape)``. A one-sample
+    final-only rollout is not a trajectory and is rejected.
+    """
+    from ...solver import FixedStepRolloutResult, FixedStepSolution
+
+    if not isinstance(solution, (FixedStepSolution, FixedStepRolloutResult)):
+        raise TypeError("solution must be a fixed-step solution or rollout result.")
+    if not callable(projection):
+        raise TypeError("projection must be callable.")
+    identifier = str(projection_id).strip()
+    if not identifier:
+        raise ValueError("projection_id must be a non-empty string.")
+    if not isinstance(state_layout, StateLayout):
+        raise TypeError("state_layout must be a StateLayout.")
+
+    times = jnp.asarray(solution.times)
+    valid = jnp.asarray(solution.valid, dtype=bool)
+    if times.ndim != 1 or valid.shape != times.shape:
+        raise ValueError(
+            "Fixed-step retained times and validity must be aligned vectors."
+        )
+    retained_count = int(times.shape[0])
+    if retained_count < 2:
+        raise ValueError(
+            "A final-only fixed-step rollout is not a trajectory; retain checkpoints "
+            "or the full trajectory before conversion."
+        )
+    states = jnp.asarray(projection(solution.states))
+    expected_shape = (retained_count,) + state_layout.shape
+    if states.shape != expected_shape:
+        raise ValueError(
+            "projection must return retained_time + state_layout.shape; "
+            f"expected {expected_shape}, got {states.shape}."
+        )
+
+    transitions = valid[:-1] & valid[1:]
+    if isinstance(solution, FixedStepRolloutResult):
+        default_source = (
+            f"fixed-step-rollout:{solution.problem_id}:{solution.method_id}:"
+            f"{solution.plan_id}"
+        )
+    else:
+        default_source = f"fixed-step:{solution.problem_id}:{solution.method_id}"
+    source = default_source if source_id is None else str(source_id).strip()
+    if not source:
+        raise ValueError("source_id must be a non-empty string or None.")
+    return TrajectoryData(
+        times,
+        states,
+        state_layout=state_layout,
+        sample_valid=valid,
+        transition_valid=transitions,
+        coordinate_id=coordinate_id,
+        source_id=(
+            f"{source}:source-geometry:{solution.state_geometry_id}:"
+            f"projection:{identifier}"
         ),
     )
 
@@ -289,5 +365,6 @@ __all__ = [
     "trajectory_data_from_control",
     "trajectory_data_from_differential_solution",
     "trajectory_data_from_evolution",
+    "trajectory_data_from_fixed_step",
     "trajectory_data_from_stochastic",
 ]

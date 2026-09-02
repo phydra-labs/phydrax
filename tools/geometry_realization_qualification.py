@@ -269,6 +269,45 @@ def run():
             finite=bool(jnp.all(jnp.isfinite(expired_motion.runtime.coordinates))),
         )
     )
+    sharp_grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(8),
+            phx.discretization.UniformCellAxisSpec(8),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
+    sharp_finite_volume = phx.discretization.FiniteVolumePlan(sharp_grid).prepare()
+    sharp_mac = phx.discretization.MACOperatorPlan(sharp_finite_volume).prepare()
+
+    def plane_signed_distance(points, time, args):
+        del time, args
+        return points[..., 0] - 0.3125
+
+    sharp = phx.discretization.MACExactSDFMeasurePlan(
+        sharp_mac,
+        plane_signed_distance,
+        phx.geometry.ExactSDFEnclosureCertificate(
+            phx.geometry.exact_signed_distance_certificate(smooth=True)
+        ),
+        source_id="qualified-plane",
+        subdivisions=16,
+    ).prepare()
+    volume_lower = float(jnp.sum(sharp.cell_fluid_measure_lower))
+    volume_upper = float(jnp.sum(sharp.cell_fluid_measure_upper))
+    exact_volume = 0.6875
+    cases.append(
+        _case(
+            "qualified_sharp_fluid_measure",
+            bool(sharp.accepted)
+            and volume_lower <= exact_volume <= volume_upper
+            and bool(sharp.evidence.topology_resolved),
+            volume_lower=volume_lower,
+            volume_upper=volume_upper,
+            exact_volume=exact_volume,
+            bound_width=volume_upper - volume_lower,
+            topology_resolved=bool(sharp.evidence.topology_resolved),
+        )
+    )
     return {
         "kind": "geometry-realization-qualification",
         "passed": all(case["passed"] for case in cases),

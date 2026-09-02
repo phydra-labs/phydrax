@@ -61,6 +61,14 @@ region, safe-step information, and parameter differentiability. Approximate CAD
 and reconstruction fields therefore do not masquerade as exact analytic signed
 distances.
 
+`ExactSDFEnclosureCertificate` adds the numerical evaluation error and global
+Lipschitz bound required to certify sign enclosures over cells and faces. It qualifies
+interval classification, not exact curved-interface measures. `QualifiedSharpGeometry`
+then records absolute fluid volumes/open measures, lower/upper bounds, source fidelity,
+topology and epoch identities, GCL evidence, and fail-closed status. Exact measure
+fidelity requires independent clipping evidence; an exact SDF with unresolved
+sub-boxes remains certified bounded error.
+
 ## Interface observables
 
 `phase_geometry_metrics` integrates a flattened phase fraction against explicit
@@ -329,6 +337,18 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.FieldCertificate
+
+---
+
+::: phydrax.geometry.ExactSDFEnclosureCertificate
+
+---
+
+::: phydrax.geometry.QualifiedSharpGeometry
+
+---
+
+::: phydrax.geometry.SharpGeometryEvidence
 
 ---
 ---

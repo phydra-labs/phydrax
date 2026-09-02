@@ -81,7 +81,67 @@ def _two_phase():
     return two_phase, method, method.initial_continuation(two_phase.initial_state(alpha))
 
 
+def _passive_tracer():
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(32, periodic=True),
+            phx.discretization.UniformCellAxisSpec(32, periodic=True),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
+    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
+    mac = phx.discretization.MACOperatorPlan(discretization).prepare()
+    space = grid.field_space(
+        "passive-tracer",
+        entity_layout=discretization.cell_layout,
+        dtype=mac.pressure_space.dtype,
+        representation="point_value",
+    )
+    transport = phx.discretization.MACPassiveTracerMacCormackPlan(
+        mac,
+        space,
+    ).prepare()
+    center = jnp.asarray((0.35, 0.4))
+    values = jnp.exp(
+        -120.0 * jnp.sum((discretization.cell_centers - center) ** 2, axis=-1)
+    )
+    velocity = (
+        jnp.full(discretization.face_layouts[0].shape, 0.25),
+        jnp.full(discretization.face_layouts[1].shape, -0.1),
+    )
+    return discretization, transport, values, velocity, center
+
+
 def run_case(case, dt):
+    if case == "passive-tracer":
+        discretization, transport, values, velocity, center = _passive_tracer()
+        result = transport.advance(values, velocity, jnp.asarray(dt))
+        translated = center + jnp.asarray((0.25, -0.1)) * dt
+        error = jnp.sqrt(
+            jnp.mean(
+                (
+                    result.values
+                    - jnp.exp(
+                        -120.0
+                        * jnp.sum(
+                            (discretization.cell_centers - translated) ** 2,
+                            axis=-1,
+                        )
+                    )
+                )
+                ** 2
+            )
+        )
+        return {
+            "case": case,
+            "successful": bool(result.success),
+            "donor_bounded": bool(result.donor_bounded),
+            "l2_error": float(error),
+            "integral_defect": float(result.integral_defect),
+            "limiter_cells": int(result.limiter_active_count),
+            "maximum_displacement_cells": float(result.maximum_displacement_cell_widths),
+            "passed": bool(result.success) and float(error) <= 5.0e-2,
+        }
     if case == "two-phase":
         two_phase, method, continuation = _two_phase()
         initial_volume = jnp.sum(continuation.state.liquid_content)
@@ -149,7 +209,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",
-        choices=("baseline", "capillary", "wave", "rezone", "two-phase"),
+        choices=(
+            "baseline",
+            "capillary",
+            "wave",
+            "rezone",
+            "two-phase",
+            "passive-tracer",
+        ),
         default="baseline",
     )
     parser.add_argument("--dt", type=float, default=0.001)

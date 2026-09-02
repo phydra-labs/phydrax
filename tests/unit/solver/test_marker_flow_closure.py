@@ -10,6 +10,14 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax._fingerprint import canonical_fingerprint
+from phydrax._sharp_measures import exact_sharp_geometry
+from phydrax.solver._mac_sharp_interface import (
+    MACImmersedInterfaceProjectionPlan,
+    MACInterfaceMethodSelector,
+    MACMovingSharpInterfaceEpochPlan,
+    MACSharpInterfaceProjectionPlan,
+)
 
 
 def _periodic_mac(count=6):
@@ -544,16 +552,27 @@ def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state
         stage_id="variable-density-stage",
     )
     applied = inverse.apply_inverse(one)
-    sharp = phx.solver.MACSharpInterfaceProjectionPlan(
-        operators,
-        boundaries,
-        jnp.ones(finite_volume.cell_shape),
-        one,
-        jnp.zeros(finite_volume.cell_shape),
-        jnp.zeros(finite_volume.cell_shape + (2,)),
-        jnp.zeros(finite_volume.cell_shape + (2,)),
-        -jnp.ones(finite_volume.cell_shape, dtype=jnp.int32),
+    pairing_id = canonical_fingerprint(
+        {
+            "pressure": operators.pressure_space.space_id,
+            "velocity": operators.velocity_space.space_id,
+        }
     )
+    geometry = exact_sharp_geometry(
+        finite_volume.cell_volumes,
+        finite_volume.cell_volumes,
+        finite_volume.face_measures,
+        finite_volume.face_measures,
+        measure_evidence_id="full-fluid-grid-exact-measures",
+        source_id="stationary-sharp-test",
+        source_fidelity="exact-polytope",
+        support_id=finite_volume.support.support_id,
+        cell_field_id=finite_volume.cell_space.field_space_id,
+        face_field_ids=tuple(space.field_space_id for space in finite_volume.face_spaces),
+        operator_id=operators.prepared_id,
+        pairing_id=pairing_id,
+    )
+    sharp = MACSharpInterfaceProjectionPlan(operators, boundaries, geometry)
     momentum = phx.discretization.MACMomentumPlan(
         operators, boundaries=boundaries
     ).prepare()
@@ -568,43 +587,46 @@ def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state
     )
     viscous_action = variable_viscosity.momentum_operator.mv(one)
     result = sharp.project(zero, one, stage)
-    geometry = phx.solver.MACSharpInterfaceGeometryData(
-        jnp.ones(finite_volume.cell_shape),
-        one,
-        jnp.zeros(finite_volume.cell_shape),
-        jnp.zeros(finite_volume.cell_shape + (2,)),
-        jnp.zeros(finite_volume.cell_shape + (2,)),
-        -jnp.ones(finite_volume.cell_shape, dtype=jnp.int32),
-        jnp.zeros(finite_volume.cell_shape),
-    )
-    moving = phx.solver.MACMovingSharpInterfaceEpochPlan(
+    assert result.operator_evidence.passed
+    assert result.operator_evidence.weighted_adjoint_residual < 1.0e-10
+    moving = MACMovingSharpInterfaceEpochPlan(
         operators,
         boundaries,
         lambda _time, _args: geometry,
         geometry_family_id="stationary-sharp-test",
     )
     epoch = moving.transition(0.0, geometry, 0.1)
-    interface = phx.solver.MACImmersedInterfaceProjectionPlan(
+    interface = MACImmersedInterfaceProjectionPlan(
         sharp,
         lambda _time, _geometry, _args: jnp.zeros(finite_volume.cell_shape),
         jump_id="zero-jump",
     )
     interface_result = interface.project(0.0, zero, one, stage)
-    selector = phx.solver.MACInterfaceMethodSelector("immersed-interface", interface)
+    selector = MACInterfaceMethodSelector("immersed-interface", interface)
     cut_fraction = jnp.ones(finite_volume.cell_shape).at[0, 0].set(0.5)
     cut_area = jnp.zeros(finite_volume.cell_shape).at[0, 0].set(0.1)
     cut_normal = jnp.zeros(finite_volume.cell_shape + (2,)).at[0, 0, 0].set(1.0)
     cut_body = (-jnp.ones(finite_volume.cell_shape, dtype=jnp.int32)).at[0, 0].set(0)
-    cut = phx.solver.MACSharpInterfaceProjectionPlan(
-        operators,
-        boundaries,
-        cut_fraction,
-        one,
-        cut_area,
-        jnp.zeros(finite_volume.cell_shape + (2,)),
-        cut_normal,
-        cut_body,
+    cut_geometry = exact_sharp_geometry(
+        finite_volume.cell_volumes * cut_fraction,
+        finite_volume.cell_volumes,
+        finite_volume.face_measures,
+        finite_volume.face_measures,
+        source_id="exact-cut-test",
+        source_fidelity="exact-polytope",
+        measure_evidence_id="single-planar-cut-exact-measures",
+        support_id=finite_volume.support.support_id,
+        cell_field_id=finite_volume.cell_space.field_space_id,
+        face_field_ids=tuple(space.field_space_id for space in finite_volume.face_spaces),
+        operator_id=operators.prepared_id,
+        pairing_id=pairing_id,
+        interface_measure=cut_area,
+        interface_centroid=jnp.zeros(finite_volume.cell_shape + (2,)),
+        interface_normal=cut_normal,
+        body_id=cut_body,
+        interface_moments_qualified=True,
     )
+    cut = MACSharpInterfaceProjectionPlan(operators, boundaries, cut_geometry)
     traction = cut.force(jnp.ones(finite_volume.cell_shape))
 
     assert all(jnp.allclose(value, 0.05) for value in applied)

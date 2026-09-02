@@ -37,6 +37,7 @@ class FLIPSolidBoundaryPlan(StrictModule, NonTrainableState):
     )
     no_slip: bool = eqx.field(static=True)
     bisection_steps: int = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -58,10 +59,11 @@ class FLIPSolidBoundaryPlan(StrictModule, NonTrainableState):
         self.wall_velocity_provider = wall_velocity
         self.no_slip = bool(no_slip)
         self.bisection_steps = steps
+        self.source_id = str(field_id)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "flip-solid-boundary",
-                "field_id": str(field_id),
+                "field_id": self.source_id,
                 "no_slip": bool(no_slip),
                 "steps": steps,
             }

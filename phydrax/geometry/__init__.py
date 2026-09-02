@@ -4,6 +4,13 @@
 
 """Representation-aware geometry sources, kernels, and realizations."""
 
+from .._sharp_measures import (
+    exact_sharp_geometry,
+    QualifiedSharpGeometry,
+    SharpGeometryEvidence,
+    SharpGeometryStatus,
+    SharpMeasureFidelity,
+)
 from . import analytic, brep, complex, design, implicit, reconstruction, simplicial
 from ._atlas import (
     BoundaryAtlas,
@@ -33,6 +40,8 @@ from ._capabilities import (
 )
 from ._certificate import (
     DistanceSemantics,
+    exact_signed_distance_certificate,
+    ExactSDFEnclosureCertificate,
     FieldCertificate,
     FieldRegularity,
     SignReliability,
@@ -332,6 +341,7 @@ __all__ = [
     "DDGOperators",
     "DesignState",
     "DistanceSemantics",
+    "ExactSDFEnclosureCertificate",
     "Cylinder",
     "Extrusion",
     "Difference",
@@ -342,6 +352,12 @@ __all__ = [
     "FixedPoint",
     "GeometryMeasurePartition",
     "FieldCertificate",
+    "QualifiedSharpGeometry",
+    "SharpGeometryEvidence",
+    "SharpGeometryStatus",
+    "SharpMeasureFidelity",
+    "exact_signed_distance_certificate",
+    "exact_sharp_geometry",
     "FixedTopologyBRepRealization",
     "FixedTopologyBRepSource",
     "evaluate_fixed_topology_mesh",

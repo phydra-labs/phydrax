@@ -77,10 +77,13 @@ curvature.
 projection. `MACGhostFluidCapillaryPlan` supplies the jump `sigma times curvature` and surface
 energy without adding a second continuum-surface-force body force.
 
-`MACCutCellGeometryPlan` samples moving solid SDF and wall velocity into cell fluid fractions, face
-open fractions, normals, swept volume, small-cell flags, and a geometric-conservation residual.
-`FLIPSolidBoundaryPlan` performs bounded continuous particle-wall intersection and records impulse
-and moving-wall work.
+`MACDiffuseSDFGeometryPlan` samples a smooth signed-distance ramp and wall velocity for
+diffuse viscosity/visualization models. It is explicitly unqualified and cannot enter
+sharp pressure or conservative transfer. `MACExactSDFMeasurePlan` instead produces
+bounded absolute fluid volumes and open face measures from an exact-SDF enclosure;
+accepted `QualifiedSharpGeometry` may bind matched FLIP transfer, sharp projection,
+and `FLIPSolidBoundaryPlan` collision under one source identity. Collision records
+impulse and moving-wall work.
 
 `MACFreeSurfaceViscousMeasurePlan` combines liquid and solid measures. The matrix-free
 `MACVariationalViscosityPlan` differentiates the symmetric strain dissipation form to obtain a

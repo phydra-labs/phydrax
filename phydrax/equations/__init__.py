@@ -189,6 +189,7 @@ from ._finite_volume_verification import (
     woodward_colella_verification_case,
 )
 from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
+from ._flip_inspection import flip_inspection_frames
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
@@ -629,6 +630,7 @@ __all__ = [
     "MPMLinearizedConstitutiveResponse",
     "MPMKinematics",
     "compile_flip_problem",
+    "flip_inspection_frames",
     "FLIPProblemIR",
     "compile_material_point_problem",
     "CompiledMaterialPointProblem",
