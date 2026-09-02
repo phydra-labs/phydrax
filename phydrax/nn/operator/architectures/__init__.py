@@ -68,6 +68,11 @@ from .conditioning._pde_conditioned import (
     PDEConditionedInput,
     PDEConditionedOperator,
 )
+from .dynamics._conditional_affine import (
+    ChemicalConditionalAffineOperator,
+    ChemicalConditionalAffineScaling,
+    StoichiometricRateCorrection,
+)
 from .dynamics._diagonal_state_space_mixer import DiagonalStateSpaceMixer
 from .dynamics._flower import (
     Flower,
@@ -156,6 +161,7 @@ _PORTABLE_ARCHITECTURES = (
     ("AxialFactorizedFNO", AxialFactorizedFNO),
     ("periodic-fourier-cno", CNO),
     ("CochainNeuralOperator", CochainNeuralOperator),
+    ("ChemicalConditionalAffineOperator", ChemicalConditionalAffineOperator),
     ("CoDANO", CoDANO),
     ("ConditionalFlowFunctionOperator", ConditionalFlowFunctionOperator),
     ("CoordinateConditionedOperator", CoordinateConditionedOperator),
@@ -251,6 +257,8 @@ __all__ = [
     "DPOT",
     "DirectionalSphericalWaveletLayer",
     "DirectionalSphericalWaveletPlan",
+    "ChemicalConditionalAffineOperator",
+    "ChemicalConditionalAffineScaling",
     "DiagonalStateSpaceMixer",
     "dpot_corrupt_history",
     "attach_pde_condition",
@@ -307,6 +315,7 @@ __all__ = [
     "RIGNO",
     "SelectiveStateSpaceDiagnostics",
     "SelectiveStateSpaceMixer",
+    "StoichiometricRateCorrection",
     "SFNO",
     "WeightSpaceOperator",
     "SphericalSpectralConv",

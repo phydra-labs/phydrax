@@ -28,6 +28,49 @@
 
 ---
 
+## Conditional-affine compilation
+
+::: phydrax.equations.ChemicalAffinePivot
+
+---
+
+::: phydrax.equations.ChemicalConditionalAffinePlan
+
+---
+
+::: phydrax.equations.ChemicalConditionalAffineCertificate
+
+---
+
+::: phydrax.equations.ChemicalConditionalAffineDrivers
+
+---
+
+::: phydrax.equations.PreparedChemicalConditionalAffine
+    options:
+        members:
+            - assemble
+            - advance
+
+---
+
+::: phydrax.equations.ChemicalConditionalAffineAssembly
+
+---
+
+::: phydrax.equations.ChemicalConditionalAffineResult
+
+---
+
+::: phydrax.equations.ChemicalConditionalAffineStatus
+
+---
+
+::: phydrax.equations.ChemicalReactionDirection
+
+## Rate plans
+
+
 ::: phydrax.equations.ArrheniusRatePlan
 
 ---

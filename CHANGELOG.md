@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added research-tier conditional-affine chemical transitions with exact
+  directional mass-action certification, inverse-free exponential/phi actions,
+  reaction-shared positive rate correction, stoichiometric extent
+  reconstruction, staged operator losses, portable artifacts, and explicit
+  local `DiscreteSystem` deployment without clipping or hidden fallback.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact

@@ -114,6 +114,26 @@ segment-level failure evidence.
 
 ::: phydrax.dynamics.evolve
 
+## Frozen affine exponential flow
+
+`affine_exponential_step` advances `x' = A x + b` through an existing
+`AbstractLinearOperator` and `MatrixFunctionPolicy`. The forcing contribution
+uses `h phi1(h A) b`, so zero and singular operators require no inverse or
+regularization. `AffineExponentialResult` retains the separate exponential and
+forcing action evidence, aggregated work, and success state. Batched execution
+follows the existing dense matrix-function contract; general matrix-free
+operators remain unbatched.
+
+This primitive freezes caller-supplied `A` and `b`. It does not select temporal
+quadrature nodes, claim time-ordered LTV accuracy, impose positivity or
+conservation, or choose a fallback.
+
+::: phydrax.dynamics.AffineExponentialResult
+
+---
+
+::: phydrax.dynamics.affine_exponential_step
+
 ## Trajectory data and source adapters
 
 `TrajectoryData` has shape `case_shape + (capacity,) + state_shape`. `sample_valid`

@@ -49,6 +49,17 @@ from ._chemical_calibration import (
     ChemicalParameterCoordinate,
 )
 from ._chemical_components import ChemicalComponentCatalog
+from ._chemical_conditional_affine import (
+    ChemicalAffinePivot,
+    ChemicalConditionalAffineAssembly,
+    ChemicalConditionalAffineCertificate,
+    ChemicalConditionalAffineDrivers,
+    ChemicalConditionalAffinePlan,
+    ChemicalConditionalAffineResult,
+    ChemicalConditionalAffineStatus,
+    ChemicalReactionDirection,
+    PreparedChemicalConditionalAffine,
+)
 from ._chemical_mechanism import (
     ChemicalMechanismEvidence,
     ChemicalMechanismIR,
@@ -1056,6 +1067,14 @@ __all__ = [
     "load_chemical_mechanism_yaml",
     "AbstractChemicalRatePlan",
     "ArrheniusRatePlan",
+    "ChemicalAffinePivot",
+    "ChemicalConditionalAffineAssembly",
+    "ChemicalConditionalAffineCertificate",
+    "ChemicalConditionalAffineDrivers",
+    "ChemicalConditionalAffinePlan",
+    "ChemicalConditionalAffineResult",
+    "ChemicalConditionalAffineStatus",
+    "ChemicalReactionDirection",
     "ChemicalMechanismEvidence",
     "ChemicalMechanismIR",
     "ChemicalRateEvaluation",
@@ -1067,6 +1086,7 @@ __all__ = [
     "PhotolysisRatePlan",
     "PLogRatePlan",
     "PreparedChemicalMechanism",
+    "PreparedChemicalConditionalAffine",
     "ThirdBodyRatePlan",
     "TroeRatePlan",
     "AbstractSpeciesThermodynamicsPlan",

@@ -1303,9 +1303,52 @@ promotion still requires benchmark evidence.
 - `LocalGlobalOperator` composes local and global paths.
 - `LaplaceTemporalOperator` implements stable causal pole–residue dynamics with
   constrained negative-real-part poles and explicit conjugate reconstruction.
+- `ChemicalConditionalAffineOperator` predicts auxiliary midpoint chemistry
+  drivers, applies an optional reaction-shared positive correction, and advances
+  the authoritative state through a certified physical affine reconstruction.
 - `OperatorAttention`, `SliceAttention`, `CodomainAttention`, and
   `AxialOperatorAttention` cover continuum self/cross attention, Transolver-style
   slices, variable physical fields, and tensor-axis factorization.
+
+::: phydrax.nn.operator.architectures.ChemicalConditionalAffineScaling
+
+---
+
+::: phydrax.nn.operator.architectures.StoichiometricRateCorrection
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.operator.architectures.ChemicalConditionalAffineOperator
+    options:
+        members:
+            - __init__
+            - predict_drivers
+            - transition_with_drivers
+            - evaluate_transition
+            - __call__
+
+---
+
+::: phydrax.nn.operator.training.ChemicalConditionalAffineDriverLoss
+
+---
+
+::: phydrax.nn.operator.training.ChemicalConditionalAffineTeacherForcedLoss
+
+---
+
+::: phydrax.nn.operator.adapters.TrainedChemicalConditionalAffineTransition
+    options:
+        members:
+            - __init__
+            - evaluate_with_evidence
+            - discrete_system
+
+---
 
 ::: phydrax.nn.operator.architectures.LocalIntegralOperator
     options:
@@ -2169,7 +2212,7 @@ every PDE:
 | --- | --- | --- |
 | Stable | `FNO`, `TFNO`, `DeepONet`, `MIONet`, `PODDeepONet` | Yes |
 | Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO`, `ConditionalFlowFunctionOperator`, `LinearRecurrentOperator` | No |
-| Research | `Flower`, `UNO`, `DiagonalStateSpaceMixer`, `SelectiveStateSpaceMixer`, `WeightSpaceOperator`, `LatticeEquivariantCNO`, `LaplaceTemporalOperator`, `GINO`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
+| Research | `Flower`, `UNO`, `DiagonalStateSpaceMixer`, `SelectiveStateSpaceMixer`, `WeightSpaceOperator`, `LatticeEquivariantCNO`, `OrthogonalEquivariantPointCNO`, `LaplaceTemporalOperator`, `GINO`, `FunctionFrameReconstructor`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `ChemicalConditionalAffineOperator`, `ConditionalFunctionFrameFlowOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
 
 TFNO is `FNO(factorization="tucker")`. MIONet is a product-fusion `DeepONet`
 with a mapping of branch encoders. POD-DeepONet is a `DeepONet` with a fixed

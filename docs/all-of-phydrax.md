@@ -1249,6 +1249,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Conditional-affine chemical operators**: certify a directional mass-action
+  factorization with `ChemicalConditionalAffinePlan`, predict only auxiliary
+  midpoint drivers, and reconstruct the complete physical species state from
+  inverse-free phi-function reaction extents. One positive correction per base
+  reaction is shared by forward and reverse channels. The research-tier
+  `ChemicalConditionalAffineOperator` supports staged driver/correction fitting
+  and explicit `DiscreteSystem` deployment without clipping or hidden fallback.
+  See [Chemical kinetics](guides_chemical_kinetics.md) and
+  [Operator-learning cookbook](cookbook/operator_learning.md).
 - **Autoregressive operator learning**: bind one coincident physical state
   source and prediction with `OperatorRolloutRoute`. Training and deployment use
   the same authored step: raw output is physicalized, constrained, restored to
