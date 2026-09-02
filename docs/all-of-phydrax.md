@@ -783,6 +783,11 @@ linearization and frequency response, Lyapunov/Riccati equations, Gramians,
 finite- and infinite-horizon LQR, iLQR, dense multiple shooting, implicit
 direct collocation, dense or structural-sparse prepared linear-control QPs,
 explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
+`phydrax.control.games` adds finite-horizon affine linear-quadratic
+full-state feedback Nash policies with explicit player control ownership,
+per-player values, nonsymmetric dense-LU solves, diagnostic-only rank SVDs,
+and independent curvature, stationarity, Bellman, conditioning, and causal
+failure evidence.
 Direct collocation accepts explicit systems or controlled state-shaped DAEs,
 shared parameter coordinates, fixed or variable duration, exact sparse
 derivatives, and explicitly selected dense-native, sparse-native, or sparse

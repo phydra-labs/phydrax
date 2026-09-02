@@ -131,6 +131,76 @@ function. Before accepting the result, inspect `lqr.diagnostics.maximum_kkt_resi
 `maximum_riccati_residual`, `maximum_control_condition_number`, and `converged`. LQR does
 not silently regularize an invalid control Hessian.
 
+## Solve a two-player feedback Nash game
+
+`phydrax.control.games` retains one joint physical control vector while naming
+which contiguous rows each player owns. Player costs carry an explicit player
+axis before the stage axis and may couple every joint-control component.
+
+```python
+players = phx.control.games.PlayerControlPartition(
+    ("player-1", "player-2"),
+    (1, 1),
+)
+game_time = phx.dynamics.TimeGrid(
+    jnp.asarray([0.0, 1.0]),
+    time_id="two-player-game",
+)
+A_game = jnp.asarray([[[1.0]]])
+B_game = jnp.asarray([[[1.0, 1.0]]])
+Q_game = jnp.asarray([[[[2.0]]], [[[-1.0]]]])
+R_game = jnp.asarray(
+    [
+        [[[1.0, -0.5], [-0.5, 2.0]]],
+        [[[2.0, -3.0], [-3.0, 1.0]]],
+    ]
+)
+Qf_game = jnp.asarray([[[1.0]], [[2.0]]])
+
+game = phx.control.games.finite_horizon_lq_feedback_nash(
+    A_game,
+    B_game,
+    Q_game,
+    R_game,
+    Qf_game,
+    players,
+    dynamics_bias=jnp.asarray([[1.0]]),
+    state_control_cross=jnp.asarray(
+        [[[[1.0, -1.0]]], [[[0.5, -0.5]]]]
+    ),
+    state_linear=jnp.asarray([[[1.0]], [[-2.0]]]),
+    control_linear=jnp.asarray([[[0.5, -1.0]], [[0.25, 1.0]]]),
+    stage_constants=jnp.asarray([[3.0], [-1.0]]),
+    terminal_linear=jnp.asarray([[0.5], [-1.0]]),
+    terminal_constants=jnp.asarray([0.25, 2.0]),
+    time_grid=game_time,
+)
+if not bool(game.valid):
+    raise RuntimeError(
+        f"feedback Nash solve failed at {game.diagnostics.first_failed_stage}: "
+        f"status={game.status}"
+    )
+
+player_gains = players.split_feedback_gain(game.feedback_gain)
+initial_state = jnp.asarray([0.3])
+initial_values = jnp.stack(
+    [value(game_time.times[0], initial_state) for value in game.values]
+)
+```
+
+Inspect `coupled_ranks`, `coupled_condition_numbers`,
+`own_control_minimum_eigenvalues`, `stationarity_residuals`, and
+`bellman_residuals` before accepting the result. The SVD is diagnostic only;
+the policy comes from the nonsymmetric dense-LU solve. A failed curvature or
+rank certificate means this method did not establish a unique feedback Nash
+policy. It does not establish nonexistence.
+
+The returned policy is an ordinary joint `AffineFeedbackPolicy`. Replay it
+through a `ControlProblem` whose `InputLayout((2,), roles="control")` uses the
+same joint-control order, then use `players.split_controls` to recover the
+player-local trajectories. `examples/lq_nash_game.py` performs that complete
+rollout and compares each direct discrete payoff with its initial value.
+
 ## Compile and solve the canonical QP
 
 `LinearQuadraticControlProblem` is the affine discrete contract used by both direct QP

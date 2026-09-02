@@ -14,6 +14,12 @@
   measures now remain exact across weighted, masked, uneven, lazy, and sharded
   microbatches; optimizer, target, reporting, and checkpoint state advance only
   at accepted positive-support update boundaries.
+- Added `phydrax.control.games` finite-horizon affine linear-quadratic
+  full-state feedback Nash policies with explicit player control ownership,
+  per-player quadratic values, case batching, differentiable nonsymmetric
+  dense-LU solves, diagnostic-only rank SVDs, and independent curvature,
+  stationarity, Bellman, conditioning, linear-status, and causal-failure
+  evidence without regularization, pseudoinverses, clipping, or fallback.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact
