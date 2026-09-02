@@ -184,9 +184,141 @@ def conservative_multirate_flux(
     return DGInterfaceFluxResult(plus=plus, minus=minus, conservation_defect=defect)
 
 
+class TimeSlabFluxLedger(StrictModule):
+    integrated_flux: Array
+    accumulated_duration: Array
+    expected_duration: Array
+    complete: Array
+    ledger_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        integrated_flux: ArrayLike,
+        accumulated_duration: ArrayLike,
+        expected_duration: ArrayLike,
+        /,
+        *,
+        ledger_id: str,
+    ):
+        flux = jnp.asarray(integrated_flux)
+        accumulated = jnp.asarray(accumulated_duration)
+        expected = jnp.asarray(expected_duration)
+        if (
+            flux.ndim < 1
+            or accumulated.shape != ()
+            or expected.shape != ()
+            or not str(ledger_id)
+        ):
+            raise ValueError("Time-slab flux ledger shapes or ID are invalid.")
+        self.integrated_flux = flux
+        self.accumulated_duration = accumulated
+        self.expected_duration = expected
+        self.complete = jnp.isclose(accumulated, expected)
+        self.ledger_id = str(ledger_id)
+
+    @classmethod
+    def zeros(
+        cls,
+        route_count: int,
+        component_shape: tuple[int, ...],
+        duration: ArrayLike,
+        /,
+        *,
+        ledger_id: str,
+        dtype=float,
+    ) -> "TimeSlabFluxLedger":
+        return cls(
+            jnp.zeros((int(route_count),) + tuple(component_shape), dtype=dtype),
+            jnp.asarray(0.0, dtype=dtype),
+            jnp.asarray(duration, dtype=dtype),
+            ledger_id=ledger_id,
+        )
+
+    def add_substep(
+        self, flux_rate: ArrayLike, step_size: ArrayLike, /
+    ) -> "TimeSlabFluxLedger":
+        flux = jnp.asarray(flux_rate)
+        step = jnp.asarray(step_size)
+        if flux.shape != self.integrated_flux.shape or step.shape != ():
+            raise ValueError("Time-slab substep flux or step shape changed.")
+        accumulated = self.accumulated_duration + step
+        return TimeSlabFluxLedger(
+            self.integrated_flux + step * flux,
+            accumulated,
+            self.expected_duration,
+            ledger_id=self.ledger_id,
+        )
+
+    def equal_opposite_contributions(self, /) -> DGInterfaceFluxResult:
+        defect = jnp.sqrt(
+            jnp.sum(jnp.abs(self.integrated_flux - self.integrated_flux) ** 2)
+        )
+        return DGInterfaceFluxResult(
+            self.integrated_flux,
+            -self.integrated_flux,
+            defect,
+        )
+
+
+class ConservativeLocalTimeStepPlan(StrictModule, NonTrainableState):
+    cell_levels: Array
+    macro_step_size: float = eqx.field(static=True)
+    maximum_level: int = eqx.field(static=True)
+    substep_count: int = eqx.field(static=True)
+    trace_plan: DGMultirateTracePlan
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        cell_levels: ArrayLike,
+        macro_step_size: float,
+        trace_plan: DGMultirateTracePlan,
+        /,
+    ):
+        levels = jnp.asarray(cell_levels, dtype=jnp.int32)
+        step = float(macro_step_size)
+        if (
+            levels.ndim != 1
+            or levels.size == 0
+            or float(jnp.min(levels)) < 0
+            or not 0.0 < step
+            or not isinstance(trace_plan, DGMultirateTracePlan)
+        ):
+            raise ValueError("Local time-step levels, macro step, or trace plan invalid.")
+        maximum = int(jnp.max(levels))
+        self.cell_levels = levels
+        self.macro_step_size = step
+        self.maximum_level = maximum
+        self.substep_count = 1 << maximum
+        self.trace_plan = trace_plan
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "conservative-local-time-step-plan",
+                "levels": tuple(int(value) for value in levels),
+                "macro_step_size": step,
+                "trace_plan": trace_plan.plan_id,
+            }
+        )
+
+    def cell_step_sizes(self, /) -> Array:
+        return self.macro_step_size / (2.0**self.cell_levels)
+
+    def active_cells(self, substep: int, /) -> Array:
+        index = int(substep)
+        if index < 0 or index >= self.substep_count:
+            raise ValueError("Local time substep is out of range.")
+        stride = 2 ** (self.maximum_level - self.cell_levels)
+        return (index % stride) == 0
+
+    def synchronized(self, substep: int, /) -> bool:
+        return int(substep) == self.substep_count - 1
+
+
 __all__ = [
     "DGInterfaceFluxResult",
+    "ConservativeLocalTimeStepPlan",
     "DGMultirateTracePlan",
     "DGTraceHistory",
     "conservative_multirate_flux",
+    "TimeSlabFluxLedger",
 ]

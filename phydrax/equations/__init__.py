@@ -24,6 +24,10 @@ from ..discretization.discrete_velocity._smooth_compressible import (
     SmoothCompressibleRealizabilityEvidence,
 )
 from . import advanced, fem, trefftz, vem
+from ._additional_entropy import (
+    ideal_mhd_entropy_pair,
+    shallow_water_energy_pair,
+)
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
@@ -194,7 +198,10 @@ from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
     AbstractConservationSystem,
+    AbstractEntropyDiffusionSystem,
     AbstractEntropySystem,
+    AbstractNormalCharacteristicSystem,
+    AbstractNormalReflectionSystem,
     CompressibleNavierStokesSystem,
     EulerSystem,
     IdealMHDSystem,
@@ -395,6 +402,12 @@ from ._randomized_compile import (
     RandomizedDifferentialPlan,
     RandomizedNodeCoupling,
 )
+from ._reacting_flow import (
+    ArrheniusReaction,
+    reacting_mixture_entropy_pair,
+    ReactingEulerSystem,
+    ReactingMixture,
+)
 from ._reactive_cfd_dem import (
     ParticleContinuumExchangeEvaluation,
     ParticleContinuumExchangePlan,
@@ -467,6 +480,18 @@ from ._transport_closures import (
     PrandtlTransport,
     SutherlandTransport,
     TransportProperties,
+)
+from ._turbulence_closures import (
+    AbstractEddyViscosityPlan,
+    EquilibriumWallModel,
+    EquilibriumWallModelEvidence,
+    KOmegaSSTPlan,
+    SpalartAllmarasPlan,
+    SyntheticTurbulenceInflowPlan,
+    TurbulenceArguments,
+    TurbulentTransportClosure,
+    VremanPlan,
+    WALEPlan,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
 from ._variational import (
@@ -596,6 +621,9 @@ __all__ = [
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
     "AbstractEntropySystem",
+    "AbstractEntropyDiffusionSystem",
+    "AbstractNormalCharacteristicSystem",
+    "AbstractNormalReflectionSystem",
     "AbstractThermodynamicMaterial",
     "AbstractTransportClosure",
     "AbstractTrefftzBasis",
@@ -692,7 +720,23 @@ __all__ = [
     "FiniteDifferenceCompilationPolicy",
     "CompressibleNavierStokesSystem",
     "ConstantTransport",
+    "AbstractEddyViscosityPlan",
+    "EquilibriumWallModel",
+    "EquilibriumWallModelEvidence",
+    "KOmegaSSTPlan",
+    "SpalartAllmarasPlan",
+    "SyntheticTurbulenceInflowPlan",
+    "TurbulenceArguments",
+    "TurbulentTransportClosure",
+    "VremanPlan",
+    "WALEPlan",
     "EulerSystem",
+    "ArrheniusReaction",
+    "reacting_mixture_entropy_pair",
+    "ReactingEulerSystem",
+    "ReactingMixture",
+    "ideal_mhd_entropy_pair",
+    "shallow_water_energy_pair",
     "IdealMHDSystem",
     "BiharmonicPotential2D",
     "ComplexAffineNormalization",

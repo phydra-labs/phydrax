@@ -16,7 +16,7 @@ from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_complex import PolygonalConnectivity
-from ._flux_ledger import FiniteVolumeStageFluxRateBlock
+from .._conservation_ledger import ConservationStageFluxRateBlock
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_embedded_boundary import (
     EmbeddedBoundaryMetrics,
@@ -451,7 +451,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
 
     def redistribution_flux_rate_block(
         self, content_rate: ArrayLike, /
-    ) -> FiniteVolumeStageFluxRateBlock | None:
+    ) -> ConservationStageFluxRateBlock | None:
         """Expose redistribution as an owner-outward stage flux-rate block."""
         route_count = self.evidence.route_count
         if route_count == 0:
@@ -461,7 +461,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         route_flux_rate = flat_contributions[
             jnp.asarray(self.redistribution_route_indices, dtype=jnp.int32)
         ]
-        return FiniteVolumeStageFluxRateBlock(
+        return ConservationStageFluxRateBlock(
             route_flux_rate,
             self.redistribution_owner_cells,
             self.redistribution_neighbour_cells,

@@ -9,10 +9,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..discretization._fv_precision import FiniteVolumePrecisionPolicy
-from ..discretization.finite_volume._flux_ledger import (
-    FiniteVolumeStageFluxRateLedger,
+from ..discretization._conservation_ledger import (
+    ConservationStageLedger,
 )
+from ..discretization._fv_precision import FiniteVolumePrecisionPolicy
 
 
 def _nonempty_identifier(value: str, /, *, name: str) -> str:
@@ -328,7 +328,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
 
 def apply_stage_rate_euler_update(
     state: FiniteVolumeConservativeContentState,
-    ledger: FiniteVolumeStageFluxRateLedger,
+    ledger: ConservationStageLedger,
     local_euler_increment: ArrayLike,
     /,
     *,
@@ -349,8 +349,8 @@ def apply_stage_rate_euler_update(
 
     if not isinstance(state, FiniteVolumeConservativeContentState):
         raise TypeError("state must be FiniteVolumeConservativeContentState.")
-    if not isinstance(ledger, FiniteVolumeStageFluxRateLedger):
-        raise TypeError("ledger must be FiniteVolumeStageFluxRateLedger.")
+    if not isinstance(ledger, ConservationStageLedger):
+        raise TypeError("ledger must be ConservationStageLedger.")
     if ledger.topology_epoch_id != state.topology_epoch_id:
         raise ValueError("Stage rate ledger topology does not match the input state.")
     if ledger.geometry_family_id != state.geometry_family_id:

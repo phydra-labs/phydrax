@@ -9,11 +9,11 @@ from itertools import product
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+from scipy.special import eval_jacobi
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._orthogonal import legendre_rule_data
@@ -670,27 +670,115 @@ class TensorPiolaMap(StrictModule, NonTrainableState):
         return oe.contract("...ij,...j->...i", matrix, value) / determinant[..., None]
 
 
+def _shifted_jacobi(
+    degree: int, alpha: float, beta: float, values: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    polynomial = eval_jacobi(degree, alpha, beta, 2.0 * values - 1.0)
+    derivative = (
+        np.zeros_like(values)
+        if degree == 0
+        else (degree + alpha + beta + 1.0)
+        * eval_jacobi(degree - 1, alpha + 1.0, beta + 1.0, 2.0 * values - 1.0)
+    )
+    return np.asarray(polynomial), np.asarray(derivative)
+
+
+def _pyramid_modal_tabulation(
+    points: np.ndarray,
+    indices: tuple[tuple[int, int, int], ...],
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    values = np.asarray(points, dtype=float)
+    height = values[:, 2]
+    scale = 1.0 - height
+    safe = np.where(scale > 1.0e-12, scale, 1.0)
+    first = np.where(scale > 1.0e-12, (values[:, 0] - 0.5 * height) / safe, 0.5)
+    second = np.where(scale > 1.0e-12, (values[:, 1] - 0.5 * height) / safe, 0.5)
+    modal_values = []
+    modal_gradients = []
+    for first_degree, second_degree, height_degree in indices:
+        maximum = max(first_degree, second_degree)
+        first_value, first_derivative = _shifted_jacobi(first_degree, 0.0, 0.0, first)
+        second_value, second_derivative = _shifted_jacobi(second_degree, 0.0, 0.0, second)
+        height_value, height_derivative = _shifted_jacobi(
+            height_degree, 2.0 * maximum + 2.0, 0.0, height
+        )
+        scale_power = scale**maximum
+        mode = first_value * second_value * scale_power * height_value
+        x_gradient = (
+            first_derivative
+            * second_value
+            * np.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
+            * height_value
+        )
+        y_gradient = (
+            first_value
+            * second_derivative
+            * np.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
+            * height_value
+        )
+        first_height_derivative = np.where(scale > 1.0e-12, (first - 0.5) / safe, 0.0)
+        second_height_derivative = np.where(scale > 1.0e-12, (second - 0.5) / safe, 0.0)
+        scale_derivative = (
+            np.zeros_like(scale) if maximum == 0 else -maximum * scale ** (maximum - 1)
+        )
+        z_gradient = (
+            first_derivative
+            * first_height_derivative
+            * second_value
+            * scale_power
+            * height_value
+            + first_value
+            * second_derivative
+            * second_height_derivative
+            * scale_power
+            * height_value
+            + first_value * second_value * scale_derivative * height_value
+            + first_value * second_value * scale_power * height_derivative
+        )
+        modal_values.append(mode)
+        modal_gradients.append(np.stack((x_gradient, y_gradient, z_gradient), axis=-1))
+    return np.stack(tuple(modal_values), axis=-1), np.stack(
+        tuple(modal_gradients), axis=1
+    )
+
+
 class HybridReferenceFamily(StrictModule, NonTrainableState):
-    """Polynomial prism family and rational linear pyramid family."""
+    """Anisotropic prism and arbitrary-order rational pyramid family."""
 
     cell_kind: Literal["prism", "pyramid"] = eqx.field(static=True)
     degree: int = eqx.field(static=True)
+    orders: tuple[int, int] = eqx.field(static=True)
     nodes: Array
     basis_permutation: tuple[int, ...] = eqx.field(static=True)
+    modal_indices: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
+    coefficients: Array
+    condition_number: float = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_kind: Literal["prism", "pyramid"], degree: int, /):
+    def __init__(
+        self,
+        cell_kind: Literal["prism", "pyramid"],
+        degree: int | tuple[int, int],
+        /,
+    ):
         kind = str(cell_kind)
-        p = int(degree)
-        if kind not in ("prism", "pyramid") or p < 1:
+        if kind == "prism" and isinstance(degree, tuple):
+            if len(degree) != 2:
+                raise ValueError("Prism degree tuples must be (triangle, axial).")
+            triangle_degree, axial_degree = (int(value) for value in degree)
+        else:
+            triangle_degree = axial_degree = int(degree)
+        p = triangle_degree
+        q = axial_degree
+        if kind not in ("prism", "pyramid") or min(p, q) < 1:
             raise ValueError("Hybrid references require prism/pyramid and degree >= 1.")
-        if kind == "pyramid" and p != 1:
-            raise ValueError(
-                "The rational pyramid reference currently supports degree one."
-            )
+        if kind == "pyramid" and p != q:
+            raise ValueError("Pyramid orders must be isotropic.")
+
         if kind == "prism":
             triangle = SimplexNodalFamily("triangle", p)
-            rule = legendre_rule_data(p + 1, "lobatto")
+            rule = legendre_rule_data(q + 1, "lobatto")
             z_nodes = 0.5 * (np.asarray(rule.nodes) + 1.0)
             generated_nodes = np.asarray(
                 [
@@ -699,7 +787,7 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
                     for z in z_nodes
                 ]
             )
-            if p == 1:
+            if (p, q) == (1, 1):
                 nodes = np.asarray(reference_cell_topology("prism").vertices)
                 permutation = tuple(
                     int(
@@ -712,60 +800,92 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
             else:
                 nodes = generated_nodes
                 permutation = tuple(range(nodes.shape[0]))
+            modal_indices: tuple[tuple[int, int, int], ...] = ()
+            coefficients = np.zeros((0, 0))
+            condition_number = 1.0
         else:
-            nodes = np.asarray(reference_cell_topology("pyramid").vertices)
+            height_rule = legendre_rule_data(p + 1, "lobatto")
+            height_nodes = 0.5 * (np.asarray(height_rule.nodes) + 1.0)
+            pyramid_nodes = []
+            for layer, height in enumerate(height_nodes):
+                cross_degree = p - layer
+                if cross_degree == 0:
+                    cross_nodes = np.asarray((0.5,))
+                else:
+                    cross_rule = legendre_rule_data(cross_degree + 1, "lobatto")
+                    cross_nodes = 0.5 * (np.asarray(cross_rule.nodes) + 1.0)
+                scale = 1.0 - height
+                pyramid_nodes.extend(
+                    (
+                        scale * first + 0.5 * height,
+                        scale * second + 0.5 * height,
+                        height,
+                    )
+                    for first in cross_nodes
+                    for second in cross_nodes
+                )
+            nodes = (
+                np.asarray(reference_cell_topology("pyramid").vertices)
+                if p == 1
+                else np.asarray(pyramid_nodes)
+            )
             permutation = tuple(range(nodes.shape[0]))
+            modal_indices = tuple(
+                (first, second, height)
+                for first in range(p + 1)
+                for second in range(p + 1)
+                for height in range(p - max(first, second) + 1)
+            )
+            modal, _modal_gradients = _pyramid_modal_tabulation(nodes, modal_indices)
+            if modal.shape[0] != modal.shape[1]:
+                raise ValueError("Pyramid node and modal dimensions must match.")
+            coefficients = np.linalg.solve(modal, np.eye(modal.shape[0]))
+            condition_number = float(np.linalg.cond(modal))
+
         self.cell_kind = kind
-        self.degree = p
+        self.degree = max(p, q)
+        self.orders = (p, q)
         self.nodes = jnp.asarray(nodes)
         self.basis_permutation = permutation
+        self.modal_indices = modal_indices
+        self.coefficients = jnp.asarray(coefficients)
+        self.condition_number = condition_number
         self.family_id = canonical_fingerprint(
             {
                 "kind": "hybrid-reference-family",
                 "cell_kind": kind,
-                "degree": p,
+                "degree": max(p, q),
+                "orders": (p, q),
                 "basis": (
                     "simplex-times-legendre"
                     if kind == "prism"
-                    else "rational-linear-pyramid"
+                    else "bergot-cohen-durufle-rational-pyramid"
                 ),
                 "nodes": array_tree_fingerprint(nodes),
+                "condition_number": condition_number,
             }
         )
-
-    @staticmethod
-    def _pyramid_values(points: Array) -> Array:
-        def one(point):
-            x, y, z = point
-            scale = 1.0 - z
-            safe = jnp.where(scale > 1.0e-12, scale, 1.0)
-            first = jnp.where(scale > 1.0e-12, (x - 0.5 * z) / safe, 0.5)
-            second = jnp.where(scale > 1.0e-12, (y - 0.5 * z) / safe, 0.5)
-            return jnp.asarray(
-                (
-                    scale * (1.0 - first) * (1.0 - second),
-                    scale * first * (1.0 - second),
-                    scale * first * second,
-                    scale * (1.0 - first) * second,
-                    z,
-                )
-            )
-
-        return jax.vmap(one)(points)
 
     def tabulate_with_gradients(self, points: ArrayLike, /) -> tuple[Array, Array]:
         points_ = jnp.asarray(points)
         if points_.ndim != 2 or points_.shape[-1] != 3:
             raise ValueError("Hybrid reference points must have shape (n, 3).")
         if self.cell_kind == "pyramid":
-            values = self._pyramid_values(points_)
-            gradients = jax.vmap(
-                jax.jacfwd(lambda point: self._pyramid_values(point[None, :])[0])
-            )(points_)
-            return values, gradients
-        triangle = SimplexNodalFamily("triangle", self.degree)
+            modal, modal_gradients = _pyramid_modal_tabulation(
+                np.asarray(points_), self.modal_indices
+            )
+            coefficients = np.asarray(self.coefficients)
+            values = modal @ coefficients
+            gradients = np.stack(
+                tuple(modal_gradients[..., axis] @ coefficients for axis in range(3)),
+                axis=-1,
+            )
+            return jnp.asarray(values), jnp.asarray(gradients)
+
+        triangle_degree, axial_degree = self.orders
+        triangle = SimplexNodalFamily("triangle", triangle_degree)
         triangle_values, triangle_gradients = triangle.tabulate(points_[..., :2])
-        rule = legendre_rule_data(self.degree + 1, "lobatto")
+        rule = legendre_rule_data(axial_degree + 1, "lobatto")
         z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
         z_values, z_gradients = lagrange_1d_tabulation(z_nodes, points_[..., 2])
         values = oe.contract(
@@ -786,22 +906,67 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
     def tabulate(self, points: ArrayLike, /) -> Array:
         return self.tabulate_with_gradients(points)[0]
 
+    def _entity_support(self, point: np.ndarray, /) -> frozenset[int]:
+        tolerance = 2.0e-10
+        if self.cell_kind == "prism":
+            height = float(point[2])
+            triangle = np.asarray(point[:2])
+            barycentric = np.asarray(
+                (1.0 - triangle[0] - triangle[1], triangle[0], triangle[1])
+            )
+            triangle_support = tuple(
+                index for index, value in enumerate(barycentric) if value > tolerance
+            )
+            if height <= tolerance:
+                return frozenset(triangle_support)
+            if height >= 1.0 - tolerance:
+                return frozenset(index + 3 for index in triangle_support)
+            return frozenset(
+                value for index in triangle_support for value in (index, index + 3)
+            )
+
+        height = float(point[2])
+        if height >= 1.0 - tolerance:
+            return frozenset((4,))
+        scale = 1.0 - height
+        first = (float(point[0]) - 0.5 * height) / scale
+        second = (float(point[1]) - 0.5 * height) / scale
+        base_weights = np.asarray(
+            (
+                (1.0 - first) * (1.0 - second),
+                first * (1.0 - second),
+                first * second,
+                (1.0 - first) * second,
+            )
+        )
+        base_support = frozenset(
+            index for index, value in enumerate(base_weights) if value > tolerance
+        )
+        return base_support if height <= tolerance else frozenset((*base_support, 4))
+
     def finite_element(self, /, *, conformity: str = "H1") -> FiniteElementSpec:
         if conformity not in ("H1", "L2"):
             raise ValueError("Hybrid finite elements support H1 or L2 conformity.")
         topology = reference_cell_topology(self.cell_kind)
         entities = [[[] for _entity in dimension] for dimension in topology.entities]
         if conformity == "H1":
-            if self.degree != 1:
-                raise ValueError("H1 hybrid geometry currently requires degree one.")
-            reference_vertices = np.asarray(topology.vertices)
-            for vertex, point in enumerate(reference_vertices):
-                matches = np.flatnonzero(
-                    np.max(np.abs(np.asarray(self.nodes) - point), axis=1) <= 2.0e-12
+            entity_sets = [
+                tuple(frozenset(entity) for entity in dimension)
+                for dimension in topology.entities
+            ]
+            for dof, point in enumerate(np.asarray(self.nodes)):
+                support = self._entity_support(point)
+                matches = tuple(
+                    (dimension, entities_.index(support))
+                    for dimension, entities_ in enumerate(entity_sets)
+                    if support in entities_
                 )
-                if matches.size != 1:
-                    raise ValueError("Hybrid vertex node association is ambiguous.")
-                entities[0][vertex].append(int(matches[0]))
+                if len(matches) != 1:
+                    raise ValueError(
+                        "Hybrid nodal support has ambiguous entity ownership."
+                    )
+                dimension, entity = matches[0]
+                entities[dimension][entity].append(dof)
         else:
             entities[-1][0].extend(range(self.nodes.shape[0]))
         return FiniteElementSpec(

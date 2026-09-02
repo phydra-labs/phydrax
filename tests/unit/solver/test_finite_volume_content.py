@@ -11,11 +11,11 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization._fv_precision import FiniteVolumePrecisionPolicy
-from phydrax.discretization.finite_volume._flux_ledger import (
-    FiniteVolumeStageFluxRateBlock,
-    FiniteVolumeStageFluxRateLedger,
+from phydrax.discretization._conservation_ledger import (
+    ConservationStageFluxRateBlock,
+    ConservationStageLedger,
 )
+from phydrax.discretization._fv_precision import FiniteVolumePrecisionPolicy
 from phydrax.discretization.finite_volume._geometry_protocol import (
     lower_static_unstructured_stage_metrics,
 )
@@ -67,7 +67,7 @@ def _source_ledger(
     source_rate = jnp.asarray(rate)
     if active_cell_mask is None:
         active_cell_mask = jnp.ones((source_rate.shape[0],), dtype=bool)
-    return FiniteVolumeStageFluxRateLedger(
+    return ConservationStageLedger(
         (),
         source_rate,
         jnp.asarray(active_cell_mask),
@@ -246,7 +246,7 @@ def test_stage_rate_update_requires_exact_active_cell_mask():
 
 def test_stage_rate_update_conserves_internal_flux_and_includes_source_once():
     state = _state(content=((5.0, 2.0), (7.0, -1.0)))
-    block = FiniteVolumeStageFluxRateBlock(
+    block = ConservationStageFluxRateBlock(
         jnp.asarray(((3.0, -2.0), (5.0, 1.0))),
         jnp.asarray((0, 1)),
         jnp.asarray((1, -1)),
@@ -254,7 +254,7 @@ def test_stage_rate_update_conserves_internal_flux_and_includes_source_once():
         "block:physical",
         "physical",
     )
-    ledger = FiniteVolumeStageFluxRateLedger(
+    ledger = ConservationStageLedger(
         (block,),
         jnp.asarray(((1.0, 4.0), (-2.0, 3.0))),
         state.active_cell_mask,

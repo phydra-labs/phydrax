@@ -416,7 +416,7 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
     content = jnp.concatenate((jnp.zeros((1, 3)), active_state), axis=0)
     active_cells = jnp.asarray((False, True, True))
     blocks = (
-        phx.discretization.FiniteVolumeStageFluxRateBlock(
+        phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((12.0, 0.0, 0.0),)),
             (1,),
             (-1,),
@@ -424,7 +424,7 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
             "active-physical",
             "physical",
         ),
-        phx.discretization.FiniteVolumeStageFluxRateBlock(
+        phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((8.0, 0.0, 0.0),)),
             (1,),
             (-1,),
@@ -432,7 +432,7 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
             "active-cut",
             "cut",
         ),
-        phx.discretization.FiniteVolumeStageFluxRateBlock(
+        phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((2.0, 0.0, 0.0),)),
             (1,),
             (2,),
@@ -449,13 +449,13 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
         evidence_version=0,
         topology_epoch_id="active-positivity-epoch",
     )
-    high = phx.discretization.FiniteVolumeStageFluxRateLedger(
+    high = phx.discretization.ConservationStageLedger(
         blocks,
         jnp.zeros_like(content),
         active_cells,
         **kwargs,
     )
-    fallback = phx.discretization.FiniteVolumeStageFluxRateLedger(
+    fallback = phx.discretization.ConservationStageLedger(
         tuple(block.with_flux_rate(jnp.zeros_like(block.flux_rate)) for block in blocks),
         jnp.zeros_like(content),
         active_cells,

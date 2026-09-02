@@ -32,21 +32,24 @@ set of child patches under one coarse trace.
 
 ## Robust conservation dynamics
 
-Tensor GLL DGSEM supports explicit physical/periodic facet ownership, arbitrary-
-normal numerical fluxes, diagonal mass inversion, state and weak-residual
-linearizations, conservative SSP-stage entropy/positivity filtering, and one
-two-pass LDG compressible Navier–Stokes path. Certificates continue to distinguish
-periodic inviscid entropy evidence from uncertified physical-boundary and viscous
-extensions.
+Tensor GLL DGSEM supports explicit physical/periodic facet ownership,
+normal-first numerical fluxes, diagonal mass inversion, state and
+weak-residual linearizations, conservative SSP-stage filtering, entropy scope,
+and generic `ViscousDGPlan` diffusion. Generalized-SBP and skew-modal nodal
+formulations represent their algebraic identities directly; sampled flux
+compatibility remains named as sampled evidence.
 
-`NodalDGConservationMethodPlan` supplies exact-mass weak DG on stable simplex
-references, mixed triangle/quadrilateral mortars, curved coordinate fields,
-tetrahedra, prisms, and rational linear pyramids. Nonpolynomial overintegration is
-recorded as heuristic quadrature evidence.
+`NodalDGConservationMethodPlan` supplies interval through hybrid 3-D DG,
+including p=0, anisotropic prisms, arbitrary-order rational pyramids,
+hexahedra, high-order coordinates, transformed periodicity, shape-aware
+mortars, affine/diagonal/weight-adjusted/exact mass policies, physical boundary
+entropy contracts, mixed-cell viscous interfaces, and face/timestep ledgers.
 
-Entropy-mortar defects can be derived from left/right states, entropy variables,
-numerical flux, and entropy potentials through `derived_mortar_entropy_defect`;
-callers do not need to assert a defect manually.
+Robust execution composes shape-generic conservative entropy filtering,
+subcell content projection, face-ledger correction, sensors, optional entropy
+viscosity, stage rejection, and whole-step retry. Entropy-mortar production is
+computed from states, entropy variables, numerical fluxes, and potentials; it
+is not supplied by callers.
 
 ## Compatible tensor spaces
 
@@ -112,8 +115,8 @@ explicitly chooses a relaxed approximate policy.
 
 ## Current boundary
 
-The distributed lowerer provides cost-aware ownership and explicit owned-local,
-halo-update, interface, and contribution-sum phases. JAX named-axis collectives
-are available; an MPI runtime and dynamic migration engine remain external.
-Pyramid approximation is currently degree one, and mixed-cell viscous interfaces
-remain outside the certified implementation.
+The production closure is single-process. Existing named-axis distributed
+phases remain available, but MPI, multi-rank execution, and dynamic
+repartitioning are intentionally excluded. Reacting flow, MHD, turbulence,
+CAD adaptation, and conservative overset coupling use the common conservation,
+geometry, runtime, and adjoint contracts rather than parallel solver stacks.

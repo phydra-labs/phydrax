@@ -16,7 +16,6 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._conservation_boundary import (
     _boundary_value,
-    _require_axis_aligned_ale_normal,
     _static_ale_exterior_state,
     _validate_ale_boundary_context,
     AbstractConservationBoundary,
@@ -591,6 +590,7 @@ class CharacteristicInflowBoundary(AbstractConservationBoundary):
         args: Any,
         /,
     ) -> Array:
+        del axis
         primitive = self.target(
             time,
             system.conserved_to_primitive(interior),
@@ -599,12 +599,11 @@ class CharacteristicInflowBoundary(AbstractConservationBoundary):
             args,
         )
         target = system.primitive_to_conserved(_boundary_value(primitive, interior.shape))
-        left_matrix, right_matrix, speeds = system.eigensystem(
-            interior, target, axis, args
+        left_matrix, right_matrix, speeds = system.normal_eigensystem(
+            interior, target, outward_normal, args
         )
         amplitudes = oe.contract("...ij,...j->...i", left_matrix, target - interior)
-        outward_sign = jnp.sign(outward_normal[..., axis])
-        incoming = speeds * outward_sign[..., None] < 0.0
+        incoming = speeds < 0.0
         correction = oe.contract(
             "...ij,...j->...i",
             right_matrix,
@@ -620,8 +619,7 @@ class CharacteristicInflowBoundary(AbstractConservationBoundary):
         axis: int,
         /,
     ) -> Array:
-        aligned_interior = _require_axis_aligned_ale_normal(context, axis, interior)
-        return _static_ale_exterior_state(self, system, aligned_interior, context, axis)
+        return _static_ale_exterior_state(self, system, interior, context, axis)
 
 
 class CharacteristicOutflowBoundary(AbstractConservationBoundary):
@@ -652,6 +650,7 @@ class CharacteristicOutflowBoundary(AbstractConservationBoundary):
         args: Any,
         /,
     ) -> Array:
+        del axis
         primitive = system.conserved_to_primitive(interior)
         pressure = self.pressure_target(
             time, primitive, coordinates, outward_normal, args
@@ -660,12 +659,11 @@ class CharacteristicOutflowBoundary(AbstractConservationBoundary):
             jnp.broadcast_to(jnp.asarray(pressure), primitive.shape[:-1])
         )
         target = system.primitive_to_conserved(target_primitive)
-        left_matrix, right_matrix, speeds = system.eigensystem(
-            interior, target, axis, args
+        left_matrix, right_matrix, speeds = system.normal_eigensystem(
+            interior, target, outward_normal, args
         )
         amplitudes = oe.contract("...ij,...j->...i", left_matrix, target - interior)
-        outward_sign = jnp.sign(outward_normal[..., axis])
-        incoming = speeds * outward_sign[..., None] < 0.0
+        incoming = speeds < 0.0
         correction = oe.contract(
             "...ij,...j->...i",
             right_matrix,
@@ -681,8 +679,7 @@ class CharacteristicOutflowBoundary(AbstractConservationBoundary):
         axis: int,
         /,
     ) -> Array:
-        aligned_interior = _require_axis_aligned_ale_normal(context, axis, interior)
-        return _static_ale_exterior_state(self, system, aligned_interior, context, axis)
+        return _static_ale_exterior_state(self, system, interior, context, axis)
 
 
 class FarFieldBoundary(AbstractConservationBoundary):
@@ -724,8 +721,7 @@ class FarFieldBoundary(AbstractConservationBoundary):
         axis: int,
         /,
     ) -> Array:
-        aligned_interior = _require_axis_aligned_ale_normal(context, axis, interior)
-        return _static_ale_exterior_state(self, system, aligned_interior, context, axis)
+        return _static_ale_exterior_state(self, system, interior, context, axis)
 
 
 __all__ = [

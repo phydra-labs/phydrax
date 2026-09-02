@@ -234,6 +234,44 @@ class FixedStepResult(StrictModule):
     transform_correction_norm: Array
 
 
+class RobustRetryPolicy(StrictModule, NonTrainableState):
+    maximum_retries: int = eqx.field(static=True)
+    reduction_factor: float = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        /,
+        *,
+        maximum_retries: int = 4,
+        reduction_factor: float = 0.5,
+    ):
+        retries = int(maximum_retries)
+        factor = float(reduction_factor)
+        if retries < 0 or not 0.0 < factor < 1.0:
+            raise ValueError("Retry policy requires retries>=0 and reduction in (0,1).")
+        self.maximum_retries = retries
+        self.reduction_factor = factor
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "robust-fixed-step-retry-policy",
+                "maximum_retries": retries,
+                "reduction_factor": factor,
+                "differentiability": "branchwise",
+            }
+        )
+
+
+class RetriedFixedStepResult(StrictModule):
+    candidate_state: Array
+    accepted_state: Array
+    successful: Array
+    accepted_step_size: Array
+    retry_count: Array
+    attempted_step_sizes: Array
+    decision_id: str = eqx.field(static=True)
+
+
 class AbstractFixedStepMethod(StrictModule, NonTrainableState):
     method_id: AbstractAttribute[str]
 
@@ -514,6 +552,63 @@ class FixedStepProblem(StrictModule, NonTrainableState):
         self.step_size = step
         self.step_count = count
         self.problem_id = identifier
+
+
+def retry_fixed_step(
+    method: AbstractFixedStepMethod,
+    policy: RobustRetryPolicy,
+    step_index: Array,
+    time: Array,
+    state: Array,
+    step_size: Array,
+    args: Any = None,
+    /,
+) -> RetriedFixedStepResult:
+    if not isinstance(method, AbstractFixedStepMethod) or not isinstance(
+        policy, RobustRetryPolicy
+    ):
+        raise TypeError("retry_fixed_step requires method and retry policy.")
+    initial = jnp.asarray(state)
+    current_step = jnp.asarray(step_size)
+    successful = jnp.asarray(False)
+    selected_state = initial
+    selected_candidate = initial
+    accepted_step = jnp.zeros_like(current_step)
+    retry_count = jnp.asarray(policy.maximum_retries, dtype=jnp.int32)
+    attempted = []
+    for attempt in range(policy.maximum_retries + 1):
+        attempted.append(current_step)
+        result = method.step(
+            step_index,
+            time,
+            initial,
+            current_step,
+            args,
+        )
+        take = (~jax.lax.stop_gradient(successful)) & jax.lax.stop_gradient(
+            result.successful
+        )
+        selected_candidate = jnp.where(take, result.candidate_state, selected_candidate)
+        selected_state = jnp.where(take, result.accepted_state, selected_state)
+        accepted_step = jnp.where(take, current_step, accepted_step)
+        retry_count = jnp.where(take, jnp.asarray(attempt, dtype=jnp.int32), retry_count)
+        successful = successful | result.successful
+        current_step = current_step * policy.reduction_factor
+    return RetriedFixedStepResult(
+        selected_candidate,
+        jnp.where(successful, selected_state, initial),
+        successful,
+        accepted_step,
+        retry_count,
+        jnp.stack(tuple(attempted)),
+        canonical_fingerprint(
+            {
+                "kind": "retried-fixed-step-decision",
+                "method": method.method_id,
+                "retry_policy": policy.policy_id,
+            }
+        ),
+    )
 
 
 class FixedStepSolution(StrictModule, NonTrainableState):
@@ -938,6 +1033,9 @@ __all__ = [
     "FixedStepRolloutResult",
     "FixedStepScalarDiagnostics",
     "FixedStepResult",
+    "RetriedFixedStepResult",
+    "RobustRetryPolicy",
+    "retry_fixed_step",
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",
     "IdentitySSPRKStageTransform",

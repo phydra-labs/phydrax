@@ -29,6 +29,25 @@ class OffsetTransform(phx.solver.AbstractAcceptedStepTransform):
         )
 
 
+class ThresholdAcceptedTransform(phx.solver.AbstractAcceptedStepTransform):
+    limit: float = eqx.field(static=True)
+    transform_id: str = eqx.field(static=True)
+
+    def __init__(self, limit):
+        self.limit = float(limit)
+        self.transform_id = f"threshold:{self.limit}"
+
+    def apply(self, step_index, time, previous_state, candidate_state, args, /):
+        del step_index, time, previous_state, args
+        successful = jnp.max(jnp.abs(candidate_state)) <= self.limit
+        return phx.solver.AcceptedStepTransformResult(
+            candidate_state,
+            jnp.asarray(False),
+            successful,
+            jnp.zeros((), dtype=candidate_state.dtype),
+        )
+
+
 class EvidenceStageTransform(phx.solver.AbstractSSPRKStageTransform):
     failed_stage: int = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
@@ -44,6 +63,20 @@ class EvidenceStageTransform(phx.solver.AbstractSSPRKStageTransform):
             jnp.asarray(True),
             jnp.asarray(stage_index != self.failed_stage),
             jnp.asarray(float(stage_index), dtype=candidate_state.dtype),
+        )
+
+
+class NonfiniteFailingStageTransform(phx.solver.AbstractSSPRKStageTransform):
+    transform_id: str = "stage-transform:nonfinite-failure"
+
+    def apply(self, stage_index, time, candidate_state, args, /):
+        del time, args
+        failed = jnp.asarray(stage_index == 1)
+        return phx.solver.StageTransformResult(
+            jnp.where(failed, jnp.full_like(candidate_state, jnp.nan), candidate_state),
+            jnp.asarray(True),
+            ~failed,
+            jnp.asarray(0.0, dtype=candidate_state.dtype),
         )
 
 
@@ -86,6 +119,24 @@ def test_failed_ssprk_stage_rejects_the_complete_step():
         None,
     )
     assert not result.successful
+    assert jnp.array_equal(result.accepted_state, state)
+
+
+def test_failed_stage_uses_prior_accepted_state_for_internal_continuation():
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: -state,
+        stage_transform=NonfiniteFailingStageTransform(),
+    )
+    state = jnp.asarray((1.0,))
+    result = method.step(
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        state,
+        jnp.asarray(0.1),
+        None,
+    )
+    assert not result.successful
+    assert jnp.all(jnp.isfinite(result.candidate_state))
     assert jnp.array_equal(result.accepted_state, state)
 
 
@@ -336,3 +387,23 @@ def test_legacy_fixed_step_replay_preserves_save_stride(replay):
     assert jnp.array_equal(candidate.times, direct.times)
     assert jnp.array_equal(candidate.states, direct.states)
     assert jnp.array_equal(candidate.valid, direct.valid)
+
+
+def test_branchwise_retry_reduces_step_and_commits_first_success():
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.full_like(state, 10.0),
+        transform=ThresholdAcceptedTransform(6.0),
+    )
+    result = phx.solver.retry_fixed_step(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=3, reduction_factor=0.5),
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        jnp.asarray((0.0,)),
+        jnp.asarray(1.0),
+    )
+    assert result.successful
+    assert result.retry_count == 1
+    assert jnp.allclose(result.accepted_step_size, 0.5)
+    assert jnp.allclose(result.accepted_state, jnp.asarray((5.0,)))
+    assert jnp.allclose(result.attempted_step_sizes, jnp.asarray((1.0, 0.5, 0.25, 0.125)))

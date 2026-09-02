@@ -16,16 +16,16 @@ from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._conservation_ledger import (
+    AcceptedConservationIntegralLedger,
+    ConservationStageLedger,
+)
 from ..discretization.finite_volume import (
     AbstractNumericalFluxPlan,
     PreparedFiniteVolumeDynamics,
     PreparedTriangleFiniteVolumeDynamics,
     PreparedUnstructuredFiniteVolumeDynamics,
     ShallowWaterHydrostaticHLLPlan,
-)
-from ..discretization.finite_volume._flux_ledger import (
-    FiniteVolumeAcceptedFluxIntegralLedger,
-    FiniteVolumeStageFluxRateLedger,
 )
 from ..discretization.finite_volume._geometry_protocol import (
     FiniteVolumeGeometryStatus,
@@ -98,11 +98,11 @@ class FiniteVolumeSSPRK3ContentCandidate(StrictModule):
     content_state: FiniteVolumeConservativeContentState
     positivity: FiniteVolumeAdmissibilityReport
     stage_rate_ledgers: tuple[
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
     ]
-    accepted_flux_integrals: FiniteVolumeAcceptedFluxIntegralLedger
+    accepted_flux_integrals: AcceptedConservationIntegralLedger
     stage_maximum_relative_rates: tuple[Array, Array, Array]
     maximum_relative_rate: Array
     relative_cfl_step: Array
@@ -115,11 +115,11 @@ class FiniteVolumeALESSPRK3Candidate(StrictModule):
     content_state: FiniteVolumeConservativeContentState
     positivity: FiniteVolumeAdmissibilityReport
     stage_rate_ledgers: tuple[
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
     ]
-    accepted_flux_integrals: FiniteVolumeAcceptedFluxIntegralLedger
+    accepted_flux_integrals: AcceptedConservationIntegralLedger
     geometry: UnstructuredALEStepGeometry
     stage_maximum_relative_rates: tuple[Array, Array, Array]
     maximum_relative_rate: Array
@@ -423,7 +423,7 @@ def unstructured_ssprk33_content_candidate(
                 limited_3.ledger,
             )
             accepted_flux_integrals = (
-                FiniteVolumeAcceptedFluxIntegralLedger.integrate_ssprk33(
+                AcceptedConservationIntegralLedger.integrate_ssprk33(
                     ledgers[0],
                     ledgers[1],
                     ledgers[2],
@@ -606,7 +606,7 @@ def zero_unstructured_ssprk33_content_candidate(
         dynamics.zero_stage_ledger(stage, redistribution=redistribution)
         for stage in stage_metrics
     )
-    accepted_flux_integrals = FiniteVolumeAcceptedFluxIntegralLedger.integrate_ssprk33(
+    accepted_flux_integrals = AcceptedConservationIntegralLedger.integrate_ssprk33(
         ledgers[0],
         ledgers[1],
         ledgers[2],

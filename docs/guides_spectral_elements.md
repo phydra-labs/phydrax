@@ -81,24 +81,41 @@ metric-identity, free-stream, watertight-face, or opposite-normal evidence.
 - explicit diagonal GLL mass inversion;
 - deterministic, compensated, or fast accumulation.
 
-`certify_dgsem_flux_compatibility` is separate from `ConvexEntropyPair`. It checks
-the concrete physical fluxes against symmetry, consistency, entropy-potential,
-and interface-dissipation identities. Physical boundary patches are explicit
-and exhaustive. A stateful modal entropy/positivity filter can run after every
-SSPRK stage while conserving geometry-weighted means. Compressible
-Navier–Stokes uses one two-pass LDG path; viscous and physical-boundary entropy
-status remains explicitly uncertified.
+`sample_dgsem_flux_compatibility` records finite-state numerical checks against
+symmetry, consistency, entropy-potential, and interface-dissipation identities.
+It is sampled compatibility evidence, not a formal universal certificate.
+Formal tensor, generalized-SBP, and skew-modal obligations are represented by
+`EntropyStableDGPlan` and prepared reference operators. Physical boundaries use
+normal-first characteristic capabilities and explicit entropy-supply contracts.
 
+`ViscousDGPlan` replaces a tensor-only LDG claim with one generic
+entropy-diffusion capability, an entropy-BR1 default, explicit viscous boundary
+closures, mixed-cell interfaces, diffusive stability evidence, and
+primal/JVP/VJP hooks. Shape-generic conservative filters, correction ladders,
+subcell content projections, sensors, entropy viscosity, and whole-step retry
+transactions run at SSP stages without publishing fabricated repaired states.
 
 ## General nodal DG
 
-`NodalDGConservationMethodPlan` lowers ordinary weak-form DG through the same FE
-action compiler. Exact cell-local mass matrices use Phydrax Cholesky
-factorizations. Role-specific quadrature evidence marks nonpolynomial
-overintegration as heuristic rather than exact. Supported executions include
-triangles, quadrilaterals, tetrahedra, prisms, rational linear pyramids, curved
-coordinate fields, mixed triangle/quad mortars, and conforming mixed
-three-dimensional polyhedral interfaces.
+`NodalDGConservationMethodPlan` lowers interval, triangle, quadrilateral,
+tetrahedron, hexahedron, prism, and rational arbitrary-order pyramid DG through
+the same operator program. p=0 fields, anisotropic prism spaces, curved
+coordinates, transformed periodicity, physical mortars, exact/affine/diagonal/
+weight-adjusted mass strategies, and common face/conservation/entropy/timestep
+evidence are first-class. Generalized-SBP flux differencing is an executable
+method rather than an overintegration label.
+
+## Supported single-process envelope
+
+| Capability | Status | Evidence boundary |
+|---|---|---|
+| Tensor GLL DGSEM, Euler and Navier–Stokes | Production | SBP, mapped metrics, conservation, entropy-scope and viscous ledgers |
+| General nodal DG on all reference cells above | Production | reproduction, exact pairing, geometry quality, evolving free streams |
+| Conforming, p/h/mixed, periodic, moving mortars | Production | one physical metric and equal/opposite dual pullbacks |
+| Entropy filtering, subcell correction and retry | Production | accepted-stage admissibility and method-neutral stage ledgers |
+| hp epochs, ALE/GCL, remap, IMEX and LTS | Qualified | atomic transactions, temporal GCL and time-slab flux ledgers |
+| Reacting flow, MHD, turbulence, CAD and overset | Qualified beyond-core | dedicated capability and conservation checks |
+| MPI or multi-rank execution | Excluded | existing distributed code is unchanged by this closure |
 
 ## Transfers, multigrid, mortars, and distribution
 

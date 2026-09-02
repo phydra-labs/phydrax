@@ -650,6 +650,23 @@ def test_multidimensional_euler_roundtrip_and_directional_flux_shapes():
     assert system.physical_flux(state, 1).shape == state.shape
     reflected = system.reflect_state(state, 1)
     np.testing.assert_allclose(reflected[..., 2], -state[..., 2])
+    normal = jnp.asarray((1.0, 1.0)) / jnp.sqrt(2.0)
+    reflected_normal = system.reflect_normal_state(state, normal)
+    momentum = state[..., 1:3]
+    reflected_momentum = reflected_normal[..., 1:3]
+    np.testing.assert_allclose(
+        jnp.sum(reflected_momentum * normal, axis=-1),
+        -jnp.sum(momentum * normal, axis=-1),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    tangent = jnp.asarray((-normal[1], normal[0]))
+    np.testing.assert_allclose(
+        jnp.sum(reflected_momentum * tangent, axis=-1),
+        jnp.sum(momentum * tangent, axis=-1),
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_euler_roe_eigensystem_roundtrips_state_jump_in_two_dimensions():
@@ -665,6 +682,24 @@ def test_euler_roe_eigensystem_roundtrips_state_jump_in_two_dimensions():
     )
 
     np.testing.assert_allclose(recovered, jump, rtol=2e-11, atol=2e-11)
+    assert eigenvalues.shape == jump.shape
+
+
+def test_euler_normal_eigensystem_roundtrips_oblique_state_jump():
+    system = phx.equations.EulerSystem(2)
+    left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.3, 0.1, 1.0]]))
+    right = system.primitive_to_conserved(jnp.asarray([[0.8, -0.1, 0.2, 0.7]]))
+    normal = jnp.asarray(((0.6, 0.8),))
+    left_matrix, right_matrix, eigenvalues = system.normal_eigensystem(
+        left, right, normal
+    )
+    jump = right - left
+    recovered = oe.contract(
+        "...ij,...j->...i",
+        right_matrix,
+        oe.contract("...ij,...j->...i", left_matrix, jump),
+    )
+    np.testing.assert_allclose(recovered, jump, rtol=3e-11, atol=3e-11)
     assert eigenvalues.shape == jump.shape
 
 

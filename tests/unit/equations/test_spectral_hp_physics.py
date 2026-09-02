@@ -8,11 +8,10 @@ import numpy as np
 from phydrax.equations.fem import (
     derived_mortar_entropy_defect,
     entropy_stable_wall_evidence,
-    WellBalancedSourceLedger,
 )
 
 
-def test_wall_evidence_and_well_balancing():
+def test_wall_evidence():
     evidence = entropy_stable_wall_evidence(
         jnp.asarray(((1.0, 0.0, 0.0, 2.0),)),
         jnp.zeros((1, 4)),
@@ -20,8 +19,6 @@ def test_wall_evidence_and_well_balancing():
         jnp.asarray(((1.0, 0.0),)),
     )
     assert bool(evidence.passed)
-    ledger = WellBalancedSourceLedger(jnp.ones((3, 2)), jnp.ones((3, 2)))
-    assert ledger.balance_error == 0.0
 
 
 def test_derived_entropy_defect_uses_declared_thermodynamic_values():

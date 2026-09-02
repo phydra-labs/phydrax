@@ -43,6 +43,20 @@
 - Added prepared harmonic-balance planning, resource evidence, numeric refresh,
   and provenance around the existing Fourier-collocation circuit residual and
   matrix-free native nonlinear solve.
+- Closed the single-process production high-order conservation surface with
+  normal-first boundary capabilities, typed boundary traces, method-neutral
+  stage ledgers, generalized operator programs, affine/weight-adjusted/exact
+  mass strategies, arbitrary-order prism/pyramid references, transformed
+  periodicity, generalized SBP entropy flux differencing, entropy-compatible
+  mortars and boundary contracts, generic entropy-diffusion viscous DG,
+  shape-generic filtering, conservative subcell/correction ledgers, hp/ALE/GCL,
+  IMEX/LTS, resource and sensitivity evidence, durable run transactions, and
+  byte-bounded exactly-once output.
+- Added beyond-core reacting multispecies flow, ideal-MHD and shallow-water
+  entropy pairs, LES/RANS and wall closures, CAD curvature adaptation,
+  conservative sliding/cut-cell/overset coupling, and frozen-event reverse-time
+  topology adjoints. MPI and distributed execution remain intentionally outside
+  this closure.
 - Added high-order conservation completion with physical DGSEM boundaries,
   conservative SSP-stage entropy filtering, tensor LDG Navier–Stokes, stable
   simplex and hybrid references, exact-mass nodal DG, mixed 2-D/3-D mortars,

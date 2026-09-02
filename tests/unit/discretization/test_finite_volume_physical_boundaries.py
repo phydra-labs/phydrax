@@ -191,6 +191,41 @@ def test_characteristic_boundaries_return_finite_admissible_states():
     assert jnp.all(system.admissible(outflow_state))
 
 
+def test_characteristic_boundaries_are_axis_independent_for_oblique_normals():
+    system = phx.equations.EulerSystem(2)
+    interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, -0.1, 1.0]]))
+    normal = jnp.asarray([[0.6, 0.8]])
+
+    def target(time, primitive, coordinates, outward_normal, args):
+        del time, primitive, coordinates, outward_normal, args
+        return jnp.asarray([1.05, 0.1, 0.05, 0.95])
+
+    boundary = phx.discretization.CharacteristicInflowBoundary(
+        target, boundary_id="oblique-inflow"
+    )
+    first = boundary.exterior_state(
+        system,
+        jnp.asarray(0.0),
+        interior,
+        jnp.zeros((1, 2)),
+        normal,
+        0,
+        None,
+    )
+    second = boundary.exterior_state(
+        system,
+        jnp.asarray(0.0),
+        interior,
+        jnp.zeros((1, 2)),
+        normal,
+        1,
+        None,
+    )
+    np.testing.assert_allclose(first, second, rtol=2.0e-12, atol=2.0e-12)
+    assert jnp.all(jnp.isfinite(first))
+    assert jnp.all(system.admissible(first))
+
+
 def test_prepared_periodic_halo_wraps_declared_reconstruction_depth():
     grid = _grid(12, periodic=True)
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
@@ -594,27 +629,30 @@ def test_static_slip_wall_accepts_oblique_ale_normal():
     np.testing.assert_allclose(exterior, expected, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.parametrize(
-    "kind",
-    (
-        "reflective",
-        "characteristic-inflow",
-        "characteristic-outflow",
-        "far-field",
-    ),
-)
-def test_axis_based_ale_boundaries_reject_oblique_normals(kind):
+def test_axis_based_reflective_ale_boundary_rejects_oblique_normal():
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, -0.1, 1.0]]))
     context = _ale_context(_moving_wall(), [0.0, 0.0], [0.6, 0.8])
-    boundary = _axis_based_ale_boundary(kind)
-
+    boundary = _axis_based_ale_boundary("reflective")
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError),
         match="oblique",
     ):
         exterior = boundary.ale_exterior_state(system, interior, context, 0)
         jax.block_until_ready(exterior)
+
+
+@pytest.mark.parametrize(
+    "kind", ("characteristic-inflow", "characteristic-outflow", "far-field")
+)
+def test_characteristic_ale_boundaries_accept_oblique_normals(kind):
+    system = phx.equations.EulerSystem(2)
+    interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, -0.1, 1.0]]))
+    context = _ale_context(_moving_wall(), [0.0, 0.0], [0.6, 0.8])
+    boundary = _axis_based_ale_boundary(kind)
+    exterior = boundary.ale_exterior_state(system, interior, context, 0)
+    assert jnp.all(jnp.isfinite(exterior))
+    assert jnp.all(system.admissible(exterior))
 
 
 @pytest.mark.parametrize(

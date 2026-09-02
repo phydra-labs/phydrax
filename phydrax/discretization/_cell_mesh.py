@@ -15,6 +15,9 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._cell_complex import (
+    interval_cell_complex,
+    interval_connectivity,
+    IntervalConnectivity,
     polygonal_cell_complex,
     polygonal_connectivity,
     PolygonalConnectivity,
@@ -35,6 +38,7 @@ from ._topology import CellComplexTopology, EntitySet
 
 
 _CELL_ARITIES = {
+    "interval": 2,
     "triangle": 3,
     "quadrilateral": 4,
     "tetrahedron": 4,
@@ -43,6 +47,7 @@ _CELL_ARITIES = {
     "pyramid": 5,
 }
 _CELL_DIMENSIONS = {
+    "interval": 1,
     "triangle": 2,
     "quadrilateral": 2,
     "tetrahedron": 3,
@@ -77,7 +82,7 @@ class CellBlock(StrictModule, NonTrainableState):
             raise ValueError("Cell block name must be non-empty.")
         if kind not in (*_CELL_ARITIES, "polygon"):
             raise ValueError(
-                "cell_kind must be triangle, quadrilateral, polygon, "
+                "cell_kind must be interval, triangle, quadrilateral, polygon, "
                 "tetrahedron, hexahedron, prism, or pyramid."
             )
         cells = np.asarray(vertices, dtype=np.int32)
@@ -90,7 +95,8 @@ class CellBlock(StrictModule, NonTrainableState):
             cells.ndim != 2
             or cells.shape[0] == 0
             or cells.shape[1] != arity
-            or arity < 3
+            or arity < 2
+            or (kind != "interval" and arity < 3)
             or (kind == "polygon" and arity < 5)
         ):
             raise ValueError(f"{kind} cell vertices have incompatible arity {arity}.")
@@ -147,7 +153,8 @@ class CellMesh(StrictModule, NonTrainableState):
     blocks: tuple[CellBlock, ...]
     vertex_global_ids: Array
     connectivity: (
-        PolygonalConnectivity
+        IntervalConnectivity
+        | PolygonalConnectivity
         | TetrahedralConnectivity
         | HexahedralConnectivity
         | PolyhedralConnectivity
@@ -222,7 +229,24 @@ class CellMesh(StrictModule, NonTrainableState):
                 for block in normalized_blocks
             )
         )
-        if topological_dimension == 2:
+        if topological_dimension == 1:
+            if any(block.cell_kind != "interval" for block in normalized_blocks):
+                raise ValueError("One-dimensional meshes support interval blocks only.")
+            intervals = np.concatenate(
+                tuple(
+                    np.asarray(block.vertices, dtype=np.int32)
+                    for block in normalized_blocks
+                ),
+                axis=0,
+            )
+            connectivity = interval_connectivity(intervals, points.shape[0])
+            topology = interval_cell_complex(
+                intervals,
+                points.shape[0],
+                vertex_global_ids=global_ids,
+                cell_global_ids=cell_global_ids,
+            )
+        elif topological_dimension == 2:
             if any(
                 block.cell_kind not in ("triangle", "quadrilateral", "polygon")
                 for block in normalized_blocks

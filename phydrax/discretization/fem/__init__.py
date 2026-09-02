@@ -24,6 +24,7 @@ from ._boundary import (
     FiniteElementBoundaryPatch,
     FiniteElementBoundarySet,
     FiniteElementPeriodicFacetPair,
+    FiniteElementPeriodicTransform,
 )
 from ._constraints import (
     affine_dof_constraint,
@@ -82,6 +83,10 @@ from ._geometry_motion import (
     FiniteElementMeshMotionStatus,
     FiniteElementMeshRealization,
 )
+from ._geometry_quality import (
+    finite_element_geometry_quality,
+    FiniteElementGeometryQualityEvidence,
+)
 from ._hdg import HDGCondensationPlan, HDGTraceSpace
 from ._high_order import (
     lagrange_1d_tabulation,
@@ -103,6 +108,15 @@ from ._hp import (
     FiniteElementHPTransferKind,
     FiniteElementHPTransferPlan,
     FiniteElementHPWorksetPlan,
+)
+from ._hp_general import (
+    GeneralHPForest,
+    NonconformingFacetOverlay,
+    prism_axial_refinement_template,
+    pyramid_transition_refinement_template,
+    ReferenceRefinementTemplate,
+    tensor_bisection_template,
+    triangle_red_refinement_template,
 )
 from ._hp_runtime import (
     balanced_hp_refinement_ids,
@@ -276,6 +290,7 @@ __all__ = [
     "FiniteElementBoundaryPatch",
     "FiniteElementBoundarySet",
     "FiniteElementPeriodicFacetPair",
+    "FiniteElementPeriodicTransform",
     "FiniteElementAdaptationMap",
     "FiniteElementDWRIndicators",
     "FiniteElementErrorEstimate",
@@ -325,6 +340,8 @@ __all__ = [
     "FastDiagonalizationEligibility",
     "TensorFastDiagonalizationBuilder",
     "TensorFastDiagonalizationPreconditioner",
+    "finite_element_geometry_quality",
+    "FiniteElementGeometryQualityEvidence",
     "DistributedFiniteElementConstraint",
     "distributed_finite_element_mortar_plan",
     "finite_element_partition_workset_plan",
@@ -383,6 +400,13 @@ __all__ = [
     "prepare_multi_field_finite_element_hp_epoch",
     "FiniteElementHPGeometry",
     "FiniteElementHPGeometryEvidence",
+    "GeneralHPForest",
+    "NonconformingFacetOverlay",
+    "prism_axial_refinement_template",
+    "pyramid_transition_refinement_template",
+    "ReferenceRefinementTemplate",
+    "tensor_bisection_template",
+    "triangle_red_refinement_template",
     "FiniteElementHPStateTransferPolicy",
     "FiniteElementHPInterfacePlan",
     "FiniteElementHPTraceConstraintPlan",

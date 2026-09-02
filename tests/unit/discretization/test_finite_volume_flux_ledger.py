@@ -10,13 +10,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax.discretization._conservation_ledger import (
+    AcceptedConservationIntegralLedger,
+    ConservationStageFluxRateBlock,
+    ConservationStageLedger,
+)
 from phydrax.discretization.finite_volume._amr import (
     flux_register_from_accepted_steps,
-)
-from phydrax.discretization.finite_volume._flux_ledger import (
-    FiniteVolumeAcceptedFluxIntegralLedger,
-    FiniteVolumeStageFluxRateBlock,
-    FiniteVolumeStageFluxRateLedger,
 )
 
 
@@ -39,7 +39,7 @@ def _stage(
 ):
     if evidence_version is None:
         evidence_version = geometry_version
-    block = FiniteVolumeStageFluxRateBlock(
+    block = ConservationStageFluxRateBlock(
         jnp.asarray(flux_rate),
         jnp.asarray(owner, dtype=jnp.int32),
         jnp.asarray(neighbour, dtype=jnp.int32),
@@ -47,7 +47,7 @@ def _stage(
         block_id,
         block_kind,
     )
-    return FiniteVolumeStageFluxRateLedger(
+    return ConservationStageLedger(
         (block,),
         jnp.asarray(source_rate),
         jnp.asarray(active_cell_mask),
@@ -82,7 +82,7 @@ def _integrate(
         end_evidence_version = end_version
     if end_time is None:
         end_time = start_time + dt
-    return FiniteVolumeAcceptedFluxIntegralLedger.integrate_ssprk33(
+    return AcceptedConservationIntegralLedger.integrate_ssprk33(
         stage1,
         stage2,
         stage3,
@@ -114,7 +114,7 @@ def test_stage_scatter_uses_owner_outward_signs_and_adds_source_rate():
 
 
 def test_stage_rate_block_schema_contains_no_time_increment():
-    field_names = {field.name for field in fields(FiniteVolumeStageFluxRateBlock)}
+    field_names = {field.name for field in fields(ConservationStageFluxRateBlock)}
 
     assert "flux_rate" in field_names
     assert "dt" not in field_names
@@ -146,7 +146,7 @@ def test_ssprk33_integrates_rates_exactly_and_multiplies_by_dt_once():
 
 def test_accepted_ledger_retains_dynamic_temporal_provenance_without_fingerprinting_it():
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
-    field_names = {field.name for field in fields(FiniteVolumeAcceptedFluxIntegralLedger)}
+    field_names = {field.name for field in fields(AcceptedConservationIntegralLedger)}
     assert {"start_time", "end_time", "accepted_step"} <= field_names
     assert "dt" not in field_names
 
@@ -250,7 +250,7 @@ def test_accepted_ledger_requires_nonnegative_scalar_integer_step(accepted_step,
 
 
 def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_unique():
-    left_patch = FiniteVolumeStageFluxRateBlock(
+    left_patch = ConservationStageFluxRateBlock(
         jnp.asarray([[2.0]]),
         jnp.asarray([0], dtype=jnp.int32),
         jnp.asarray([-1], dtype=jnp.int32),
@@ -258,7 +258,7 @@ def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_uniqu
         "faces:wall-left",
         "physical",
     )
-    right_patch = FiniteVolumeStageFluxRateBlock(
+    right_patch = ConservationStageFluxRateBlock(
         jnp.asarray([[3.0]]),
         jnp.asarray([1], dtype=jnp.int32),
         jnp.asarray([-1], dtype=jnp.int32),
@@ -267,7 +267,7 @@ def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_uniqu
         "physical",
     )
 
-    ledger = FiniteVolumeStageFluxRateLedger(
+    ledger = ConservationStageLedger(
         (left_patch, right_patch),
         jnp.zeros((2, 1)),
         jnp.asarray([True, True]),
@@ -293,7 +293,7 @@ def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_uniqu
 
 
 def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
-    first = FiniteVolumeStageFluxRateBlock(
+    first = ConservationStageFluxRateBlock(
         jnp.ones((1, 1)),
         jnp.asarray([0], dtype=jnp.int32),
         jnp.asarray([-1], dtype=jnp.int32),
@@ -301,7 +301,7 @@ def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
         "faces:a",
         "physical",
     )
-    repeated_id = FiniteVolumeStageFluxRateBlock(
+    repeated_id = ConservationStageFluxRateBlock(
         jnp.ones((1, 1)),
         jnp.asarray([1], dtype=jnp.int32),
         jnp.asarray([-1], dtype=jnp.int32),
@@ -309,7 +309,7 @@ def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
         "faces:a",
         "physical",
     )
-    repeated_route = FiniteVolumeStageFluxRateBlock(
+    repeated_route = ConservationStageFluxRateBlock(
         jnp.ones((1, 1)),
         jnp.asarray([0], dtype=jnp.int32),
         jnp.asarray([-1], dtype=jnp.int32),
@@ -327,11 +327,11 @@ def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes():
     }
 
     with pytest.raises(ValueError, match="IDs must be unique"):
-        FiniteVolumeStageFluxRateLedger(
+        ConservationStageLedger(
             (first, repeated_id), jnp.zeros((2, 1)), jnp.ones(2, dtype=bool), **kwargs
         )
     with pytest.raises(ValueError, match="routes must be unique"):
-        FiniteVolumeStageFluxRateLedger(
+        ConservationStageLedger(
             (first, repeated_route), jnp.zeros((2, 1)), jnp.ones(2, dtype=bool), **kwargs
         )
 
@@ -358,7 +358,7 @@ def test_stage_ledger_rejects_every_nonzero_source_rate_on_inactive_cells(source
 
 def test_accepted_ledger_rejects_nonzero_source_integral_on_inactive_cells():
     with pytest.raises(Exception, match="exactly zero on inactive cells"):
-        FiniteVolumeAcceptedFluxIntegralLedger(
+        AcceptedConservationIntegralLedger(
             (),
             jnp.asarray([[0.0], [1.0]]),
             jnp.asarray([True, False]),
@@ -461,7 +461,7 @@ def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout():
     ):
         trace_count["value"] += 1
         stages = tuple(
-            FiniteVolumeStageFluxRateLedger(
+            ConservationStageLedger(
                 (template.blocks[0].with_flux_rate(rate),),
                 jnp.zeros((2, 1)),
                 template.active_cell_mask,
@@ -476,7 +476,7 @@ def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout():
                 stage_rates, geometry_versions, evidence_versions
             )
         )
-        return FiniteVolumeAcceptedFluxIntegralLedger.integrate_ssprk33(
+        return AcceptedConservationIntegralLedger.integrate_ssprk33(
             stages[0],
             stages[1],
             stages[2],
@@ -673,7 +673,7 @@ def test_ssprk33_cannot_span_a_topology_epoch_change():
     with pytest.raises(ValueError, match="one topology epoch"):
         _integrate(stage1, changed_stage, stage1, start_version=1)
     with pytest.raises(ValueError, match="end_topology_epoch_id"):
-        FiniteVolumeAcceptedFluxIntegralLedger.integrate_ssprk33(
+        AcceptedConservationIntegralLedger.integrate_ssprk33(
             stage1,
             stage1,
             stage1,
@@ -689,7 +689,7 @@ def test_ssprk33_cannot_span_a_topology_epoch_change():
             accepted_step=jnp.asarray(1),
         )
     with pytest.raises(ValueError, match="cannot span a topology epoch change"):
-        FiniteVolumeAcceptedFluxIntegralLedger(
+        AcceptedConservationIntegralLedger(
             (),
             jnp.zeros((2, 1)),
             jnp.asarray([True, True]),
@@ -780,7 +780,7 @@ def test_accepted_conservation_sums_use_content_without_measure_division():
 
 def test_ledger_validates_routes_components_masks_and_finiteness():
     with pytest.raises(TypeError, match="boolean dtype"):
-        FiniteVolumeStageFluxRateBlock(
+        ConservationStageFluxRateBlock(
             jnp.ones((1, 2)),
             jnp.asarray([0], dtype=jnp.int32),
             jnp.asarray([-1], dtype=jnp.int32),
@@ -789,7 +789,7 @@ def test_ledger_validates_routes_components_masks_and_finiteness():
             "physical",
         )
     with pytest.raises(ValueError, match="connect a cell to itself"):
-        FiniteVolumeStageFluxRateBlock(
+        ConservationStageFluxRateBlock(
             jnp.ones((1, 2)),
             jnp.asarray([0], dtype=jnp.int32),
             jnp.asarray([0], dtype=jnp.int32),
@@ -876,7 +876,7 @@ def test_static_ledger_ids_include_evidence_policy_but_exclude_dynamic_versions(
 
 
 def test_empty_block_ledger_derives_concrete_shape_and_is_immutable():
-    ledger = FiniteVolumeStageFluxRateLedger(
+    ledger = ConservationStageLedger(
         (),
         jnp.asarray([[1.0, 2.0], [3.0, 4.0]]),
         jnp.asarray([True, True]),

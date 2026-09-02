@@ -89,6 +89,61 @@ def _tensor_tabulation(nodes: np.ndarray, points: np.ndarray, /) -> np.ndarray:
     return result
 
 
+def _total_degree_exponents(dimension: int, count: int, /) -> np.ndarray:
+    for degree in range(32):
+        exponents = np.asarray(
+            tuple(
+                powers
+                for powers in product(range(degree + 1), repeat=dimension)
+                if sum(powers) <= degree
+            ),
+            dtype=np.int32,
+        )
+        if exponents.shape[0] == count:
+            return exponents
+        if exponents.shape[0] > count:
+            break
+    raise ValueError("Trace nodes do not match a complete total-degree space.")
+
+
+def _total_degree_tabulation(nodes: np.ndarray, points: np.ndarray, /) -> np.ndarray:
+    if nodes.shape[1] != points.shape[1]:
+        raise ValueError("Trace nodes and points have different dimensions.")
+    exponents = _total_degree_exponents(nodes.shape[1], nodes.shape[0])
+    nodal_vandermonde = np.stack(
+        tuple(np.prod(nodes ** powers[None, :], axis=1) for powers in exponents),
+        axis=-1,
+    )
+    point_vandermonde = np.stack(
+        tuple(np.prod(points ** powers[None, :], axis=1) for powers in exponents),
+        axis=-1,
+    )
+    return point_vandermonde @ np.linalg.solve(nodal_vandermonde, np.eye(nodes.shape[0]))
+
+
+def _facet_shape(nodes: np.ndarray, requested: str, /) -> str:
+    if requested != "auto":
+        if requested not in ("edge", "triangle", "quadrilateral"):
+            raise ValueError("Unknown mortar facet shape.")
+        return requested
+    if nodes.shape[1] == 1:
+        return "edge"
+    axes = tuple(np.unique(nodes[:, axis]) for axis in range(nodes.shape[1]))
+    return (
+        "quadrilateral"
+        if int(np.prod(tuple(axis.size for axis in axes))) == nodes.shape[0]
+        else "triangle"
+    )
+
+
+def _facet_tabulation(nodes: np.ndarray, points: np.ndarray, shape: str, /) -> np.ndarray:
+    return (
+        _total_degree_tabulation(nodes, points)
+        if shape == "triangle"
+        else _tensor_tabulation(nodes, points)
+    )
+
+
 def _mass_solve(matrix: Array, right_hand_side: Array, name: str, /) -> Array:
     space = ArraySpace((matrix.shape[0],), dtype=matrix.dtype)
     operator = DenseLinearOperator(
@@ -257,7 +312,7 @@ class FiniteElementMortarEvidence(StrictModule, NonTrainableState):
 
 
 class FiniteElementMortarPlan(StrictModule, NonTrainableState):
-    """One serial tensor-product mortar patch with explicit transfer roles."""
+    """One serial shape-aware mortar patch with explicit transfer roles."""
 
     left_interpolation: Array
     right_interpolation: Array
@@ -279,6 +334,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
     left_mass_projection: Array
     right_mass_projection: Array
     evidence: FiniteElementMortarEvidence
+    facet_shape: str = eqx.field(static=True)
     interface_id: str = eqx.field(static=True)
     child_index: int = eqx.field(static=True)
     child_count: int = eqx.field(static=True)
@@ -301,6 +357,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         right_pairing_adjoint: ArrayLike,
         left_mass_projection: ArrayLike,
         right_mass_projection: ArrayLike,
+        facet_shape: str,
         evidence: FiniteElementMortarEvidence,
         interface_id: str,
         child_index: int,
@@ -333,6 +390,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         right_adjoint = jnp.asarray(right_pairing_adjoint)
         left_projection = jnp.asarray(left_mass_projection)
         right_projection = jnp.asarray(right_mass_projection)
+        shape = str(facet_shape)
         identifier = str(interface_id)
         child = int(child_index)
         children = int(child_count)
@@ -358,6 +416,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
             or right_adjoint.shape != (right.shape[1], mortar.shape[1])
             or left_projection.shape != (mortar.shape[1], left.shape[1])
             or right_projection.shape != (mortar.shape[1], right.shape[1])
+            or shape not in ("edge", "triangle", "quadrilateral")
         ):
             raise ValueError("Mortar transfer matrices have incompatible shapes.")
         if (
@@ -389,12 +448,14 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         self.left_mass_projection = left_projection
         self.right_mass_projection = right_projection
         self.evidence = evidence
+        self.facet_shape = shape
         self.interface_id = identifier
         self.child_index = child
         self.child_count = children
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-element-serial-mortar-plan",
+                "facet_shape": shape,
                 "interface": identifier,
                 "child": child,
                 "child_count": children,
@@ -524,6 +585,7 @@ def serial_finite_element_mortar_plan(
     *,
     left_evaluation_points: ArrayLike | None = None,
     right_evaluation_points: ArrayLike | None = None,
+    facet_shape: str = "auto",
     left_orientation: ArrayLike | None = None,
     right_orientation: ArrayLike | None = None,
     left_polynomial_coordinates: ArrayLike | None = None,
@@ -578,9 +640,15 @@ def serial_finite_element_mortar_plan(
     right_permutation = _permutation(
         right_orientation, right_nodes.shape[0], "right_orientation"
     )
-    left_base = _tensor_tabulation(left_nodes, left_points)
-    right_base = _tensor_tabulation(right_nodes, right_points)
-    mortar_basis = _tensor_tabulation(mortar_nodes_, quadrature)
+    shape = _facet_shape(left_nodes, facet_shape)
+    if (
+        _facet_shape(right_nodes, shape) != shape
+        or _facet_shape(mortar_nodes_, shape) != shape
+    ):
+        raise ValueError("Mortar side and common nodes use different facet shapes.")
+    left_base = _facet_tabulation(left_nodes, left_points, shape)
+    right_base = _facet_tabulation(right_nodes, right_points, shape)
+    mortar_basis = _facet_tabulation(mortar_nodes_, quadrature, shape)
     left_matrix = left_base @ np.eye(left_nodes.shape[0])[left_permutation]
     right_matrix = right_base @ np.eye(right_nodes.shape[0])[right_permutation]
 
@@ -661,7 +729,17 @@ def serial_finite_element_mortar_plan(
         raise ValueError(
             "Polynomial coordinates must match their trace/mortar point arrays."
         )
-    monomials = np.asarray(tuple(product(*(range(value + 1) for value in degree))))
+    monomials = (
+        np.asarray(
+            tuple(
+                powers
+                for powers in product(range(max(degree) + 1), repeat=dimension)
+                if sum(powers) <= max(degree)
+            )
+        )
+        if shape == "triangle"
+        else np.asarray(tuple(product(*(range(value + 1) for value in degree))))
+    )
     left_errors = []
     right_errors = []
     mortar_errors = []
@@ -724,6 +802,7 @@ def serial_finite_element_mortar_plan(
         right_adjoint,
         left_projection,
         right_projection,
+        shape,
         evidence,
         interface_id,
         child_index,

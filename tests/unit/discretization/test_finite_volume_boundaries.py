@@ -68,12 +68,8 @@ def test_rusanov_flux_is_consistent_and_orientation_reversing():
     state = jnp.asarray([[0.2], [0.7], [-0.3]])
 
     equal = solver.face_flux(system, state, state, 0)
-    positive = solver.normal_face_flux(
-        system, state, state, jnp.ones((3, 1))
-    )
-    negative = solver.normal_face_flux(
-        system, state, state, -jnp.ones((3, 1))
-    )
+    positive = solver.normal_face_flux(system, state, state, jnp.ones((3, 1)))
+    negative = solver.normal_face_flux(system, state, state, -jnp.ones((3, 1)))
 
     np.testing.assert_allclose(equal.normal_flux, state)
     np.testing.assert_allclose(positive.normal_flux, -negative.normal_flux)
@@ -133,9 +129,7 @@ def test_prescribed_outward_flux_controls_global_balance():
     problem = phx.equations.ConservationProblemIR(
         "forced-flux", "state", system, boundaries
     )
-    compiled = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     residual, diagnostics = compiled.residual_with_diagnostics(
         0.0, jnp.ones(discretization.state_shape)
     )
@@ -160,3 +154,39 @@ def test_prescribed_outward_flux_controls_global_balance():
         atol=1e-12,
     )
     np.testing.assert_allclose(diagnostics.conservation_defect, [0.0], atol=1e-12)
+
+
+def test_typed_boundary_trace_distinguishes_state_and_direct_flux():
+    system = _scalar_system()
+    interior = jnp.asarray(((0.2,), (0.7,)))
+    points = jnp.asarray(((0.0,), (1.0,)))
+    normal = jnp.ones((2, 1))
+    state_trace = phx.discretization.evaluate_conservation_boundary(
+        phx.discretization.ExtrapolationBoundary(),
+        system,
+        jnp.asarray(0.0),
+        interior,
+        points,
+        normal,
+        0,
+        None,
+    )
+    np.testing.assert_allclose(state_trace.exterior_state, interior)
+    assert state_trace.direct_normal_flux is None
+    assert jnp.all(state_trace.admissible)
+
+    direct = phx.discretization.evaluate_conservation_boundary(
+        phx.discretization.PrescribedNormalFluxBoundary(
+            lambda time, state, coordinates, outward_normal, args: 2.0 * state,
+            boundary_id="direct-flux",
+        ),
+        system,
+        jnp.asarray(0.0),
+        interior,
+        points,
+        normal,
+        0,
+        None,
+    )
+    assert direct.exterior_state is None
+    np.testing.assert_allclose(direct.direct_normal_flux, 2.0 * interior)

@@ -45,24 +45,6 @@ def entropy_stable_wall_evidence(
     return EntropyStableWallEvidence(mass_flux, entropy_flux, passed)
 
 
-class WellBalancedSourceLedger(StrictModule):
-    flux_divergence: Array
-    source: Array
-    residual: Array
-    balance_error: Array
-
-    def __init__(self, flux_divergence: ArrayLike, source: ArrayLike, /):
-        divergence = jnp.asarray(flux_divergence)
-        source_ = jnp.asarray(source)
-        if divergence.shape != source_.shape:
-            raise ValueError("Well-balanced flux and source arrays must match.")
-        residual = divergence - source_
-        self.flux_divergence = divergence
-        self.source = source_
-        self.residual = residual
-        self.balance_error = jnp.max(jnp.abs(residual))
-
-
 def derived_mortar_entropy_defect(
     left_state: ArrayLike,
     right_state: ArrayLike,
@@ -127,6 +109,5 @@ __all__ = [
     "certify_derived_dgsem_mortar",
     "derived_mortar_entropy_defect",
     "EntropyStableWallEvidence",
-    "WellBalancedSourceLedger",
     "entropy_stable_wall_evidence",
 ]

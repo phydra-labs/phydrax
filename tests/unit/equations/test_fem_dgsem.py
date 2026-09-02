@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization.fem._boundary import (
     FiniteElementBoundarySet,
@@ -44,12 +45,15 @@ from phydrax.equations._hyperbolic_systems import (
 )
 from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.equations.fem._conservation import (
-    certify_dgsem_flux_compatibility,
     DGSEMConservationMethodPlan,
     PreparedDGSEMConservationDynamics,
+    sample_dgsem_flux_compatibility,
 )
 from phydrax.equations.fem._entropy_filter import EntropyFilterPlan
-from phydrax.equations.fem._viscous_conservation import LDGViscousFluxPlan
+from phydrax.equations.fem._viscous_conservation import (
+    entropy_diffusion_evidence,
+    ViscousDGPlan,
+)
 from phydrax.solver._fixed_step import SSPRK33FixedStepMethod
 
 
@@ -143,7 +147,7 @@ def _hex_discretization(order=1, *, curved=False):
     ).prepare()
 
 
-def _certificate(system, interface_flux):
+def _sampled_evidence(system, interface_flux):
     entropy_pair = ideal_gas_euler_entropy_pair(system)
     left_primitive = jnp.asarray(
         (
@@ -158,7 +162,7 @@ def _certificate(system, interface_flux):
         )
     )
     volume_flux = EntropyConservativeEulerFluxPlan()
-    certificate = certify_dgsem_flux_compatibility(
+    certificate = sample_dgsem_flux_compatibility(
         system,
         volume_flux,
         interface_flux,
@@ -179,7 +183,7 @@ def _compiled(*, curved=False, stable=True, entropy=True):
     compatibility = None
     volume_flux = EntropyConservativeEulerFluxPlan()
     if entropy:
-        pair, volume_flux, compatibility = _certificate(system, interface_flux)
+        pair, volume_flux, compatibility = _sampled_evidence(system, interface_flux)
     method = DGSEMConservationMethodPlan(
         volume_flux,
         interface_flux,
@@ -300,9 +304,9 @@ def test_arbitrary_normal_flux_has_conservative_orientation():
     np.testing.assert_allclose(forward.max_speed, reverse.max_speed)
 
 
-def test_flux_compatibility_certificate_separates_all_entropy_evidence():
+def test_sampled_flux_compatibility_separates_entropy_evidence():
     system = EulerSystem(2)
-    pair, volume, certificate = _certificate(system, EntropyStableEulerFluxPlan())
+    pair, volume, certificate = _sampled_evidence(system, EntropyStableEulerFluxPlan())
     assert certificate.system_id == system.system_id
     assert certificate.entropy_pair_id == pair.pair_id
     assert certificate.volume_flux_id == volume.flux_id
@@ -311,7 +315,7 @@ def test_flux_compatibility_certificate_separates_all_entropy_evidence():
     assert certificate.boundary_evidence == "periodic_pair_cancellation"
     assert certificate.source_evidence == "absent"
     assert certificate.viscous_evidence == "absent"
-    assert certificate.complete_entropy_stability
+    assert certificate.sampled_periodic_entropy_compatibility
     assert float(jnp.max(certificate.interface_entropy_residual)) <= certificate.tolerance
 
 
@@ -401,7 +405,7 @@ def test_pair_fluxes_cancel_and_global_conservation_rate_is_zero():
 
 
 @pytest.mark.parametrize("stable", (False, True))
-def test_certified_entropy_rate_is_conservative_or_dissipative(stable):
+def test_sampled_entropy_rate_is_conservative_or_dissipative(stable):
     compiled, system, discretization = _compiled(stable=stable)
     coordinates = discretization.dof_maps[0].dof_coordinates
     primitive = jnp.stack(
@@ -415,7 +419,7 @@ def test_certified_entropy_rate_is_conservative_or_dissipative(stable):
     )
     state = system.primitive_to_conserved(primitive)
     _rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
-    assert diagnostics.certified_entropy_inequality
+    assert diagnostics.sampled_entropy_inequality
     assert diagnostics.admissible
     if stable:
         assert float(diagnostics.convective_entropy_rate) <= 7.0e-5
@@ -565,7 +569,7 @@ def test_finite_element_boundary_set_requires_exact_exterior_ownership():
         )
 
 
-def test_physical_slip_wall_is_conservative_and_disables_periodic_certificate():
+def test_physical_slip_wall_disables_sampled_periodic_evidence():
     system, discretization = _quad_discretization()
     exterior = tuple(
         int(value)
@@ -576,7 +580,7 @@ def test_physical_slip_wall_is_conservative_and_disables_periodic_certificate():
         {"walls": (exterior, SlipWallBoundary())},
     )
     interface_flux = EntropyStableEulerFluxPlan()
-    entropy_pair, volume_flux, compatibility = _certificate(system, interface_flux)
+    entropy_pair, volume_flux, compatibility = _sampled_evidence(system, interface_flux)
     method = DGSEMConservationMethodPlan(
         volume_flux,
         interface_flux,
@@ -601,7 +605,7 @@ def test_physical_slip_wall_is_conservative_and_disables_periodic_certificate():
     np.testing.assert_allclose(diagnostics.boundary_flux_rate[0], 0.0, atol=3.0e-6)
     assert np.all(np.asarray(faces.is_boundary))
     assert np.all(np.asarray(faces.neighbour_cells) == -1)
-    assert not diagnostics.certified_entropy_inequality
+    assert not diagnostics.sampled_entropy_inequality
     assert compiled.dynamics.stable_step_evidence(state).positive
 
 
@@ -649,6 +653,9 @@ def test_entropy_filter_is_identity_on_smooth_state_and_rejects_invalid_mean():
     assert not evidence.applied
 
     invalid = state.at[:, 0].set(-1.0)
+    rejected, rejected_evidence = filter_.filter(0.0, invalid)
+    assert not rejected_evidence.successful
+    assert jnp.array_equal(rejected, invalid)
     method = SSPRK33FixedStepMethod(
         lambda time, value, args: jnp.zeros_like(value),
         stage_transform=filter_,
@@ -688,6 +695,8 @@ def test_compressible_navier_stokes_constitutive_gradient_and_flux():
     flux = system.viscous_flux(state, gradient)
     assert flux.shape == (system.component_count, system.dimension)
     np.testing.assert_allclose(flux[0], 0.0, atol=2.0e-12)
+    diffusion = entropy_diffusion_evidence(system, state, gradient)
+    assert diffusion.nonnegative
 
 
 def test_tensor_ldg_constant_state_is_zero_and_has_positive_stability_step():
@@ -696,7 +705,7 @@ def test_tensor_ldg_constant_state_is_zero_and_has_positive_stability_step():
     method = DGSEMConservationMethodPlan(
         EntropyConservativeEulerFluxPlan(),
         RusanovFluxPlan(),
-        viscous=LDGViscousFluxPlan(beta=0.0, penalty=1.0),
+        viscous=ViscousDGPlan(beta=0.0, penalty=1.0),
     )
     compiled = compile_conservation_problem(
         ConservationProblemIR("periodic-navier-stokes", "state", system, None),
@@ -736,7 +745,13 @@ def test_tensor_ldg_stationary_no_slip_wall_preserves_rest_state():
     method = DGSEMConservationMethodPlan(
         EntropyConservativeEulerFluxPlan(),
         RusanovFluxPlan(),
-        viscous=LDGViscousFluxPlan(),
+        viscous=ViscousDGPlan(
+            boundary_closures=(
+                phx.equations.fem.ViscousBoundaryClosure(
+                    boundaries.patches[0].boundary.boundary_id
+                ),
+            )
+        ),
     )
     compiled = compile_conservation_problem(
         ConservationProblemIR("wall-navier-stokes", "state", system, boundaries),

@@ -7,14 +7,17 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._conservation_boundary import AbstractConservationBoundary
 from .._integration_domain import IntegrationDomain
 from ._generic import FiniteElementDiscretization
+from ._reference_topology import FacetOrientationAction
 
 
 def _canonical_patch_name(value: object, /) -> str:
@@ -100,25 +103,125 @@ class FiniteElementBoundaryPatch(StrictModule, NonTrainableState):
         )
 
 
+class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
+    """Affine coordinate, facet-orientation, and component periodic transform."""
+
+    coordinate_matrix: jnp.ndarray
+    coordinate_offset: jnp.ndarray
+    component_matrix: jnp.ndarray
+    orientation: FacetOrientationAction = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    transform_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        coordinate_matrix,
+        coordinate_offset,
+        orientation: FacetOrientationAction,
+        /,
+        *,
+        component_matrix=None,
+        tolerance: float = 1.0e-10,
+    ):
+        matrix = np.asarray(coordinate_matrix, dtype=float)
+        offset = np.asarray(coordinate_offset, dtype=float)
+        if (
+            matrix.ndim != 2
+            or matrix.shape[0] != matrix.shape[1]
+            or offset.shape != (matrix.shape[0],)
+            or not np.all(np.isfinite(matrix))
+            or not np.all(np.isfinite(offset))
+            or not isinstance(orientation, FacetOrientationAction)
+        ):
+            raise ValueError("Periodic coordinate transform is invalid.")
+        components = (
+            np.eye(1, dtype=float)
+            if component_matrix is None
+            else np.asarray(component_matrix, dtype=float)
+        )
+        if (
+            components.ndim != 2
+            or components.shape[0] != components.shape[1]
+            or not np.all(np.isfinite(components))
+        ):
+            raise ValueError("Periodic component transform must be finite and square.")
+        tolerance_ = float(tolerance)
+        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
+            raise ValueError("Periodic transform tolerance must be positive.")
+        coordinate_orthogonality = matrix.T @ matrix
+        component_orthogonality = components.T @ components
+        if (
+            np.max(np.abs(coordinate_orthogonality - np.eye(matrix.shape[0])))
+            > tolerance_
+            or np.max(np.abs(component_orthogonality - np.eye(components.shape[0])))
+            > tolerance_
+        ):
+            raise ValueError("Periodic transforms must be orthogonal affine actions.")
+        self.coordinate_matrix = jnp.asarray(matrix)
+        self.coordinate_offset = jnp.asarray(offset)
+        self.component_matrix = jnp.asarray(components)
+        self.orientation = orientation
+        self.tolerance = tolerance_
+        self.transform_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-periodic-transform",
+                "coordinate_matrix": array_tree_fingerprint(matrix),
+                "coordinate_offset": array_tree_fingerprint(offset),
+                "component_matrix": array_tree_fingerprint(components),
+                "orientation": orientation.orientation_id,
+                "tolerance": tolerance_,
+            }
+        )
+
+    def map_coordinates(self, coordinates, /):
+        values = jnp.asarray(coordinates)
+        return (
+            oe.contract("ij,...j->...i", self.coordinate_matrix, values, backend="jax")
+            + self.coordinate_offset
+        )
+
+    def map_components(self, values, /):
+        data = jnp.asarray(values)
+        if self.component_matrix.shape == (1, 1):
+            return data
+        if data.shape[-1] != self.component_matrix.shape[1]:
+            raise ValueError("Periodic component transform shape is incompatible.")
+        return oe.contract("ij,...j->...i", self.component_matrix, data, backend="jax")
+
+
 class FiniteElementPeriodicFacetPair(StrictModule, NonTrainableState):
     """One explicit pair of exterior facets forming a periodic interface."""
 
     owner_facet: int = eqx.field(static=True)
     neighbour_facet: int = eqx.field(static=True)
+    transform: FiniteElementPeriodicTransform | None
     pair_id: str = eqx.field(static=True)
 
-    def __init__(self, owner_facet: int, neighbour_facet: int, /):
+    def __init__(
+        self,
+        owner_facet: int,
+        neighbour_facet: int,
+        /,
+        *,
+        transform: FiniteElementPeriodicTransform | None = None,
+    ):
         owner = _facet_id(owner_facet, "owner_facet")
         neighbour = _facet_id(neighbour_facet, "neighbour_facet")
         if owner == neighbour:
             raise ValueError("A periodic facet cannot be paired with itself.")
+        if transform is not None and not isinstance(
+            transform, FiniteElementPeriodicTransform
+        ):
+            raise TypeError("transform must be FiniteElementPeriodicTransform or None.")
         self.owner_facet = owner
         self.neighbour_facet = neighbour
+        self.transform = transform
         self.pair_id = canonical_fingerprint(
             {
                 "kind": "finite-element-periodic-facet-pair",
                 "owner": owner,
                 "neighbour": neighbour,
+                "transform": (None if transform is None else transform.transform_id),
             }
         )
 
@@ -247,5 +350,6 @@ __all__ = [
     "FiniteElementBoundaryPatch",
     "FiniteElementBoundarySet",
     "FiniteElementPeriodicFacetPair",
+    "FiniteElementPeriodicTransform",
     "tensor_local_face",
 ]
