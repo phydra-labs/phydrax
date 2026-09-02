@@ -156,7 +156,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
             (np.ones((1, quadrature.population_count)), velocities.T), axis=0
         )
         gram = matrix @ matrix.T
-        lift = matrix.T @ np.linalg.solve(gram, np.eye(matrix.shape[0]))
+        lift = np.linalg.solve(gram, matrix).T
         projector = np.eye(quadrature.population_count) - lift @ matrix
         program_manifest = smooth_compressible_dvm_manifest(
             quadrature.quadrature_id,

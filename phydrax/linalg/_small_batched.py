@@ -100,6 +100,8 @@ def solve_small_linear(
     /,
 ) -> SmallLinearSolveResult:
     matrix_ = jnp.asarray(matrix)
+    if not jnp.issubdtype(matrix_.dtype, jnp.inexact):
+        matrix_ = matrix_.astype(float)
     right = jnp.asarray(right_hand_side)
     dimension = plan.dimension
     if matrix_.shape[-2:] != (dimension, dimension):
@@ -109,26 +111,51 @@ def solve_small_linear(
         right = right[..., :, None]
     if right.shape[:-2] != matrix_.shape[:-2] or right.shape[-2] != dimension:
         raise ValueError("Small linear right-hand side shape is incompatible.")
-    inverse, determinant = _inverse(matrix_, dimension)
     scale = jnp.max(jnp.abs(matrix_), axis=(-2, -1))
-    determinant_scale = jnp.maximum(scale**dimension, jnp.finfo(matrix_.dtype).tiny)
-    nonsingular = jnp.abs(determinant) > plan.singular_tolerance * determinant_scale
+    safe_scale = jnp.where(scale > 0.0, scale, 1.0)
+    scaled_matrix = matrix_ / safe_scale[..., None, None]
+    scaled_inverse, scaled_determinant = _inverse(scaled_matrix, dimension)
+    inverse = scaled_inverse / safe_scale[..., None, None]
+    determinant = scaled_determinant * safe_scale**dimension
+    dtype_tolerance = float(dimension) * jnp.finfo(matrix_.real.dtype).eps
+    singular_tolerance = jnp.maximum(
+        jnp.asarray(plan.singular_tolerance, dtype=matrix_.real.dtype),
+        jnp.asarray(dtype_tolerance, dtype=matrix_.real.dtype),
+    )
+    nonsingular = jnp.abs(scaled_determinant) > singular_tolerance
     value = contract("...ij,...jk->...ik", inverse, right)
     refinement_count = jnp.zeros(determinant.shape, dtype=jnp.int32)
     for _ in range(plan.refinement_iterations):
         residual = right - contract("...ij,...jk->...ik", matrix_, value)
         correction = contract("...ij,...jk->...ik", inverse, residual)
-        apply = nonsingular[..., None, None] & jnp.all(
-            jnp.isfinite(correction), axis=(-2, -1), keepdims=True
+        candidate = value + correction
+        candidate_residual = right - contract(
+            "...ij,...jk->...ik",
+            matrix_,
+            candidate,
         )
-        value = value + jnp.where(apply, correction, 0.0)
-        refinement_count = refinement_count + apply[..., 0, 0].astype(jnp.int32)
+        residual_size = jnp.sum(jnp.abs(residual) ** 2, axis=(-2, -1))
+        candidate_size = jnp.sum(
+            jnp.abs(candidate_residual) ** 2,
+            axis=(-2, -1),
+        )
+        apply = (
+            nonsingular
+            & jnp.all(jnp.isfinite(correction), axis=(-2, -1))
+            & (candidate_size < residual_size)
+        )
+        value = jnp.where(apply[..., None, None], candidate, value)
+        refinement_count = refinement_count + apply.astype(jnp.int32)
     residual = right - contract("...ij,...jk->...ik", matrix_, value)
-    residual_norm = jnp.sqrt(jnp.sum(residual * residual, axis=(-2, -1)))
+    residual_norm = jnp.sqrt(jnp.sum(jnp.abs(residual) ** 2, axis=(-2, -1)))
     matrix_norm = jnp.max(jnp.sum(jnp.abs(matrix_), axis=-1), axis=-1)
     inverse_norm = jnp.max(jnp.sum(jnp.abs(inverse), axis=-1), axis=-1)
     condition = matrix_norm * inverse_norm
-    finite = jnp.all(jnp.isfinite(value), axis=(-2, -1))
+    finite = (
+        jnp.all(jnp.isfinite(matrix_), axis=(-2, -1))
+        & jnp.all(jnp.isfinite(right), axis=(-2, -1))
+        & jnp.all(jnp.isfinite(value), axis=(-2, -1))
+    )
     successful = nonsingular & finite & (condition <= plan.maximum_condition)
     rank = jnp.where(successful, dimension, 0).astype(jnp.int32)
     status = jnp.where(successful, 0, jnp.where(nonsingular, 2, 1)).astype(jnp.int32)
@@ -147,4 +174,23 @@ def solve_small_linear(
     )
 
 
-__all__ = ["SmallLinearSolvePlan", "SmallLinearSolveResult", "solve_small_linear"]
+def inverse_small_linear(
+    plan: SmallLinearSolvePlan,
+    matrix: ArrayLike,
+    /,
+) -> SmallLinearSolveResult:
+    """Materialize a batched 1x1, 2x2, or 3x3 inverse with solve evidence."""
+    value = jnp.asarray(matrix)
+    dimension = plan.dimension
+    if value.shape[-2:] != (dimension, dimension):
+        raise ValueError("Small matrix shape does not match the plan dimension.")
+    identity = jnp.broadcast_to(jnp.eye(dimension, dtype=value.dtype), value.shape)
+    return solve_small_linear(plan, value, identity)
+
+
+__all__ = [
+    "SmallLinearSolvePlan",
+    "SmallLinearSolveResult",
+    "inverse_small_linear",
+    "solve_small_linear",
+]

@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import AbstractLinearOperator, adjoint
 from ._policies import FailurePolicy, RankPolicy
+from ._rank import numerical_rank_data
 from ._spaces import (
     _coordinate_dtype,
     _coordinate_pairing_matrix,
@@ -255,7 +256,8 @@ class SVDSolvePlan(StrictModule):
                 "method": policy.method.name,
                 "count": policy.count,
                 "which": policy.which,
-                "rank_cutoff": policy.rank.relative_cutoff,
+                "rank_relative_cutoff": policy.rank.relative_cutoff,
+                "rank_absolute_cutoff": policy.rank.absolute_cutoff,
                 "require_full_rank": policy.rank.require_full_rank,
                 "differentiation": policy.differentiation,
                 "failure": policy.failure.mode,
@@ -769,14 +771,14 @@ def _solve_dense_svd(prepared: PreparedSVDSolve, /) -> _SVDNumerics:
         right_orthogonality,
     ) <= jnp.asarray(policy.tolerance.orthogonality, relative.dtype)
     converged = converged & orthogonality_ok
-    rank_scale = jnp.maximum(jnp.max(all_values), 1)
-    relative_cutoff = (
-        max(state.reduced_operator.shape) * jnp.finfo(all_values.dtype).eps
-        if policy.rank.relative_cutoff is None
-        else policy.rank.relative_cutoff
+    rank_data = numerical_rank_data(
+        all_values,
+        prepared.problem.operator.target.size,
+        prepared.problem.operator.source.size,
+        policy.rank,
     )
-    rank_cutoff = jnp.asarray(relative_cutoff, all_values.dtype) * rank_scale
-    numerical_rank = jnp.sum(all_values > rank_cutoff, dtype=jnp.int32)
+    rank_cutoff = rank_data.cutoff
+    numerical_rank = rank_data.rank
     isolation_gaps = _singular_value_gaps(
         values,
         all_values,

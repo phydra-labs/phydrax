@@ -337,6 +337,152 @@ An explicit infeasible method raises during planning. Phydrax does not silently
 change the mathematical problem, discard weights, materialize an operator
 outside policy, or reinterpret a failed factorization as another method.
 
+## Explicit inverse and pseudoinverse matrices
+
+An inverse action is a solve. Code that needs `A⁻¹ b` must use `solve`, a
+prepared factorization, or a structured operator action. `inverse` exists for
+the narrower case where the dense inverse matrix is itself an observable result
+or an intentionally cached transform.
+
+```python
+matrix = jnp.array([[3.0, 1.0], [0.5, 2.0]])
+result = phx.linalg.inverse(matrix)
+
+inverse_matrix = result.value
+successful = result.successful
+residual = result.diagnostics.relative_residual
+```
+
+`inverse` accepts an array or an `AbstractLinearOperator`. Array inputs become
+dense Euclidean-coordinate operators. The default path uses partial-pivot LU.
+A certified positive-definite operator selects Cholesky, or callers may request
+it explicitly:
+
+```python
+properties = phx.linalg.OperatorProperties(
+    self_adjoint=True,
+    positive_definite=True,
+    evidence={
+        "self_adjoint": "construction",
+        "positive_definite": "asserted",
+    },
+)
+result = phx.linalg.inverse(
+    information,
+    phx.linalg.FactorizationPolicy("cholesky"),
+    properties=properties,
+)
+```
+
+The Cholesky request is a static mathematical assertion. Failure does not fall
+back to LU. A singular LU inverse likewise does not fall back to a
+pseudoinverse.
+
+`pseudoinverse` computes the Moore-Penrose result through an economy SVD. A
+certified self-adjoint square operator uses the Hermitian decomposition path.
+Rank deficiency is successful unless `require_full_rank=True`:
+
+```python
+policy = phx.linalg.FactorizationPolicy(
+    "svd",
+    rank=phx.linalg.RankPolicy(
+        relative_cutoff=1.0e-10,
+        absolute_cutoff=1.0e-12,
+    ),
+)
+result = phx.linalg.pseudoinverse(rectangular_matrix, policy)
+```
+
+The retained-mode condition is
+
+```text
+singular_value > absolute_cutoff + relative_cutoff * largest_singular_value
+```
+
+When a cutoff is omitted, the resolved absolute cutoff is zero and the
+resolved relative cutoff is `max(rows, columns) * eps(dtype)`. The resolved
+cutoff, numerical rank, retained-mode condition estimate, and singular values
+are retained in diagnostics.
+
+Both functions return `MatrixInversionResult`:
+
+- `value` is the canonical coordinate matrix;
+- `status` has the operator batch shape;
+- `diagnostics` carries residual, rank, condition, finite, convergence, and
+  precision evidence;
+- `provenance` identifies the selected method, provider, plan, and numeric
+  version;
+- `operation` is `"inverse"` or `"pseudoinverse"`;
+- `successful` is a JAX boolean array.
+
+Reusable factors expose the same materialization operations:
+
+```python
+factorization = phx.linalg.factorize(operator)
+inverse_result = factorization.materialize_inverse()
+
+svd_factorization = phx.linalg.factorize(
+    rectangular_operator,
+    phx.linalg.FactorizationPolicy("svd"),
+)
+pseudoinverse_result = svd_factorization.materialize_pseudoinverse()
+```
+
+Prepared dense factorizations support leading operator batches. Explicit
+`LinearSubspace` nullspace artifacts remain unbatched, so a batched
+factorization truthfully reports `nullspaces=False`.
+
+### Pairings
+
+For a raw array, `pseudoinverse` has ordinary Euclidean coordinate semantics.
+For an operator between declared Hilbert spaces, Phydrax transforms both
+pairings. With source Riesz matrix `Gx` and target Riesz matrix `Gy`, the
+Euclidean reduced matrix is
+
+```text
+B = Gy^(1/2) A Gx^(-1/2)
+```
+
+and the canonical operator pseudoinverse is
+
+```text
+A+ = Gx^(-1/2) B+ Gy^(1/2)
+```
+
+This gives the minimum-source-norm solution among target-metric
+least-squares minimizers. Dense execution currently supports Euclidean and
+coordinate-diagonal pairings for this path.
+
+### Differentiation and failure
+
+Mathematical differentiation of an inverse uses
+`d(A⁻¹) = -A⁻¹ (dA) A⁻¹`. Pseudoinverse differentiation uses the fixed-rank
+Moore-Penrose derivative. Rank masks are locally constant; a cutoff crossing is
+a nondifferentiable boundary.
+
+`DifferentiationPolicy("algorithmic")` differentiates the selected numerical
+factorization. `"none"` stops output gradients. `"rhs-only"` is rejected for
+matrix materialization because there is no independent user right-hand side.
+
+`FailurePolicy("status")` returns evidence without hiding the value.
+`FailurePolicy("error")` raises through JAX-compatible runtime checks. Ordinary
+rank deficiency is not a pseudoinverse failure; nonfinite input/output,
+factorization failure, an explicitly required full rank, or an excessive
+certification residual is.
+
+### Tiny matrices and host construction
+
+`inverse_small_linear` is the specialized 1x1, 2x2, and 3x3 path. It scales
+before determinant/cofactor evaluation, reports determinant/rank/condition and
+residual evidence, and applies residual-decreasing refinement. Geometry and
+mechanics kernels with statically tiny matrices should use it rather than
+duplicating local adjugate formulas.
+
+NumPy/SciPy plan construction remains host-native. Host code should solve
+against its actual right-hand side, retain a factor when reused, and form an
+explicit inverse only for a protocol value or persistent transform. It must not
+route fixed host preprocessing through JAX merely to share spelling.
+
 ## Preconditioning as a prepared subsystem
 
 Preconditioning has its own plan, preparation, refresh, property, and

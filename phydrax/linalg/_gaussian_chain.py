@@ -16,6 +16,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
+from ._dense_inverse import dense_inverse
 from ._operators import DenseLinearOperator
 from ._policies import DenseLU, LinearSolvePolicy
 from ._problems import LinearSystem
@@ -1235,7 +1236,10 @@ def gaussian_markov_information_from_moments(
     initial_covariance = jnp.where(
         node_valid[..., 0, None, None], covariances[..., 0, :, :], identity
     )
-    initial_precision = jnp.linalg.solve(initial_covariance, identity)
+    initial_precision = dense_inverse(
+        initial_covariance,
+        positive_definite=True,
+    )
     initial_information = _matvec(initial_precision, means[..., 0, :])
     diagonal = jnp.zeros_like(covariances)
     vector = jnp.zeros_like(means)
@@ -1257,7 +1261,10 @@ def gaussian_markov_information_from_moments(
         conditional_covariance = jnp.where(
             edge_valid[..., None, None], conditional_covariance, identity
         )
-        conditional_precision = jnp.linalg.solve(conditional_covariance, identity)
+        conditional_precision = dense_inverse(
+            conditional_covariance,
+            positive_definite=True,
+        )
         precision_transition = conditional_precision @ transition_matrix
         transition_precision = -jnp.swapaxes(precision_transition, -1, -2)
         source_precision = (

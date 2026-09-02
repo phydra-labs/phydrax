@@ -75,6 +75,8 @@ benchmarks/*
 !benchmarks/mac_immersed_boundary.json
 !benchmarks/marker_flow_closure.py
 !benchmarks/marker_flow_closure.json
+!benchmarks/linalg_inverse.py
+!benchmarks/linalg_inverse.json
 !benchmarks/partitioned_coupling.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json

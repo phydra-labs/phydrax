@@ -11,6 +11,7 @@ import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+from ..linalg import FactorizationPolicy, inverse, OperatorProperties
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
     _mean_domain_result,
@@ -29,6 +30,26 @@ def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
     if bool(predicate):
         raise eqx.EquinoxRuntimeError(message)
     return value
+
+
+def _positive_definite_inverse(matrix: Array, /) -> Array:
+    result = inverse(
+        matrix,
+        FactorizationPolicy("cholesky"),
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "asserted",
+                "positive_definite": "asserted",
+            },
+        ),
+    )
+    return jnp.where(
+        result.successful[..., None, None],
+        result.value,
+        jnp.nan,
+    )
 
 
 class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
@@ -113,10 +134,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
             covariance_array,
             batch_shape + (self.event_size, self.event_size),
         )
-        identity = jnp.broadcast_to(
-            jnp.eye(self.event_size, dtype=dtype), covariance_array.shape
-        )
-        precision = jnp.linalg.solve(covariance_array, identity)
+        precision = _positive_definite_inverse(covariance_array)
         linear = oe.contract("...ij,...j->...i", precision, location_array)
         return self.natural(jnp.concatenate((linear, svec(-0.5 * precision)), axis=-1))
 
@@ -144,10 +162,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
     def _location_covariance(self, natural_values: Array, /) -> tuple[Array, Array]:
         linear, _ = self._split(natural_values)
         precision = self._precision(natural_values)
-        identity = jnp.broadcast_to(
-            jnp.eye(self.event_size, dtype=natural_values.dtype), precision.shape
-        )
-        covariance = jnp.linalg.solve(precision, identity)
+        covariance = _positive_definite_inverse(precision)
         location = oe.contract("...ij,...j->...i", covariance, linear)
         return location, covariance
 
@@ -228,10 +243,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         location, second_packed = self._split(mean_values)
         second = smat(second_packed, matrix_dimension=self.event_size)
         covariance = second - oe.contract("...i,...j->...ij", location, location)
-        identity = jnp.broadcast_to(
-            jnp.eye(self.event_size, dtype=mean_values.dtype), covariance.shape
-        )
-        precision = jnp.linalg.solve(covariance, identity)
+        precision = _positive_definite_inverse(covariance)
         linear = oe.contract("...ij,...j->...i", precision, location)
         return jnp.concatenate((linear, svec(-0.5 * precision)), axis=-1)
 

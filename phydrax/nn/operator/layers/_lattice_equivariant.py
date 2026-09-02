@@ -76,7 +76,10 @@ def _kernel_group_action_numpy(
         "oa,n...ab,bi->n...oi",
         output_actions[element],
         spatial,
-        np.linalg.inv(input_actions[element]),
+        np.linalg.solve(
+            input_actions[element],
+            np.eye(input_actions.shape[-1], dtype=input_actions.dtype),
+        ),
         optimize=True,
     )
 

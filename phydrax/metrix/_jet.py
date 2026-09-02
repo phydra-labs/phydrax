@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ._metric import AbstractSemiRiemannianMetric, RiemannianMetric
+from ._metric import _metric_inverse, AbstractSemiRiemannianMetric, RiemannianMetric
 from ._utils import _coordinates
 
 
@@ -75,8 +75,10 @@ class _MetricJetEvaluator(StrictModule):
             raise ValueError(
                 f"Pointwise metric matrix must have shape {expected}; got {matrix.shape}."
             )
-        identity = jnp.eye(self.dimension, dtype=matrix.dtype)
-        inverse = jnp.linalg.solve(matrix, identity)
+        inverse = _metric_inverse(
+            matrix,
+            positive_definite=self.positive_definite,
+        )
         if self.positive_definite:
             factor = jnp.linalg.cholesky(matrix)
             log_abs_determinant = 2.0 * jnp.sum(jnp.log(jnp.diagonal(factor)))

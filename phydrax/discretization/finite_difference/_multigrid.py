@@ -22,6 +22,7 @@ from ...linalg import (
     ArraySpace,
     DiagonalPairing,
     DiagonalPreconditioner,
+    FactorizationPolicy,
     MultigridCycleKind,
     MultigridCyclePolicy,
     MultigridHierarchy,
@@ -30,6 +31,8 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
     PreconditionerProperties,
+    pseudoinverse,
+    RankPolicy,
 )
 from .._axis import TensorGridPlan, UniformAxisSpec, UniformCellAxisSpec
 from .._tensor_support import PreparedTensorGrid
@@ -443,7 +446,18 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner):
 
     def __init__(self, operator: AbstractLinearOperator, /):
         matrix = operator._materialize()
-        inverse = jnp.linalg.pinv(matrix, rtol=1e-12)
+        inverse_result = pseudoinverse(
+            matrix,
+            FactorizationPolicy(
+                "svd",
+                rank=RankPolicy(relative_cutoff=1.0e-12),
+            ),
+        )
+        inverse = eqx.error_if(
+            inverse_result.value,
+            ~inverse_result.successful,
+            "Dense coarse pseudoinverse failed.",
+        )
         self.space = operator.source
         self.properties = PreconditionerProperties(
             linear=True,

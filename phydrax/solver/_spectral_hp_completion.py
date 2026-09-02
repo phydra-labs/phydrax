@@ -172,7 +172,15 @@ class HPRestrictedSchwarz(StrictModule, NonTrainableState):
         matrices = tuple(np.asarray(value) for value in local_matrices)
         if not restriction or len(restriction) != len(matrices):
             raise ValueError("Schwarz restrictions and local matrices disagree.")
-        inverses = tuple(jnp.asarray(np.linalg.inv(value)) for value in matrices)
+        inverses = tuple(
+            jnp.asarray(
+                np.linalg.solve(
+                    value,
+                    np.eye(value.shape[0], dtype=value.dtype),
+                )
+            )
+            for value in matrices
+        )
         multiplicity = sum(
             np.asarray(value).T @ np.ones(value.shape[0]) for value in restriction
         )

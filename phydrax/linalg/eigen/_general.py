@@ -17,6 +17,10 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from .._dense_pseudoinverse import (
+    factor_pseudoinverse,
+    materialize_pseudoinverse,
+)
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator, IdentityLinearOperator
 from .._policies import (
@@ -24,6 +28,7 @@ from .._policies import (
     FailurePolicy,
     GMRES,
     LinearSolvePolicy,
+    RankPolicy,
     TolerancePolicy,
 )
 from .._prepared import PreparedLinearSolve
@@ -1104,7 +1109,9 @@ def _general_eigensolve_native(
         <= policy.tolerance.cluster_relative * value_scale
     )
     cluster_overlap = jnp.where(same_cluster, overlap, 0)
-    left = left @ jnp.conj(jnp.linalg.pinv(cluster_overlap).T)
+    overlap_factors = factor_pseudoinverse(cluster_overlap, RankPolicy())
+    overlap_pseudoinverse = materialize_pseudoinverse(overlap_factors)
+    left = left @ jnp.conj(overlap_pseudoinverse.T)
     mass_right = (
         right
         if prepared.problem.mass_operator is None
@@ -2350,7 +2357,13 @@ def _normalize_paired_vectors(
     metric_columns = np.where(finite[None, :], mass_right, matrix_right)
     for group in _cluster_groups(alpha, beta, finite, infinite, tolerance):
         overlap = np.conj(left[:, group].T) @ metric_columns[:, group]
-        left[:, group] = left[:, group] @ np.conj(np.linalg.pinv(overlap).T)
+        overlap_pseudoinverse = scipy_linalg.lstsq(
+            overlap,
+            np.eye(overlap.shape[0], dtype=overlap.dtype),
+            cond=1.0e-15,
+            lapack_driver="gelsd",
+        )[0]
+        left[:, group] = left[:, group] @ np.conj(overlap_pseudoinverse.T)
     pairing = np.conj(left.T) @ metric_columns
     diagonal = np.diag(pairing)
     condition = np.empty((alpha.size,), dtype=np.float64)

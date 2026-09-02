@@ -4,16 +4,56 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseCholesky,
+    DenseLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    RHSLayout,
+    solve,
+)
 from ._chart import ChartTransition
 from ._connection import LeviCivitaConnection
 from ._map import DifferentiableMap, Immersion
 from ._metric import RiemannianMetric
 from ._utils import _pointwise_array
+
+
+def _solve_positive_metric(
+    metric: Array,
+    right_hand_side: Array,
+    rhs_shape: tuple[int, ...],
+    /,
+) -> Array:
+    operator = DenseLinearOperator(
+        metric,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "asserted",
+            },
+        ),
+    )
+    result = solve(
+        LinearSystem(operator),
+        right_hand_side,
+        policy=LinearSolvePolicy(DenseCholesky()),
+        rhs_layout=RHSLayout(rhs_shape),
+    )
+    return eqx.error_if(
+        result.value,
+        jnp.any(~result.successful),
+        "Induced Riemannian metric solve failed.",
+    )
 
 
 CoordinateMap = DifferentiableMap | Immersion | ChartTransition
@@ -111,14 +151,17 @@ class RiemannianMapGeometry(StrictModule):
         jacobian = self.map.jacobian(coordinates)
         target_metric = self.target_metric(self.map(coordinates))
         induced = self.pullback_metric(coordinates)
-        induced_inverse = jnp.linalg.inv(induced)
-        return oe.contract(
-            "...ai,...ij,...bj,...bc->...ac",
-            jacobian,
-            induced_inverse,
+        right_hand_side = oe.contract(
+            "...bj,...bc->...jc",
             jacobian,
             target_metric,
         )
+        solved = _solve_positive_metric(
+            induced,
+            right_hand_side,
+            (self.map.target.dimension,),
+        )
+        return oe.contract("...ai,...ic->...ac", jacobian, solved)
 
     def target_normal_projector(self, coordinates: ArrayLike, /) -> Array:
         tangent = self.target_tangent_projector(coordinates)
@@ -133,12 +176,15 @@ class RiemannianMapGeometry(StrictModule):
         )
 
     def mean_curvature_vector(self, coordinates: ArrayLike, /) -> Array:
-        induced_inverse = jnp.linalg.inv(self.pullback_metric(coordinates))
-        return oe.contract(
-            "...ij,...aij->...a",
-            induced_inverse,
-            self.second_fundamental_form(coordinates),
-        ) / float(self.map.source.dimension)
+        induced = self.pullback_metric(coordinates)
+        second_form = self.second_fundamental_form(coordinates)
+        right_hand_side = jnp.moveaxis(second_form, -3, -1)
+        solved = _solve_positive_metric(
+            induced,
+            right_hand_side,
+            (self.map.source.dimension, self.map.target.dimension),
+        )
+        return oe.contract("...iia->...a", solved) / float(self.map.source.dimension)
 
 
 __all__ = ["RiemannianMapGeometry"]

@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import BoundaryAtlas, BoundaryFrame
+from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 
 
 def _positive_finite(name: str, value: float, /) -> float:
@@ -25,32 +26,6 @@ def _positive_finite(name: str, value: float, /) -> float:
     if not np.isfinite(result) or result <= 0.0:
         raise ValueError(f"{name} must be finite and positive.")
     return result
-
-
-def _metric_inverse(metric: Array, dimension: int, /) -> tuple[Array, Array]:
-    if dimension == 1:
-        determinant = metric[..., 0, 0]
-        return (1.0 / determinant)[..., None, None], determinant
-    if dimension == 2:
-        first = metric[..., 0, 0]
-        off_diagonal = metric[..., 0, 1]
-        second = metric[..., 1, 1]
-        determinant = first * second - off_diagonal * off_diagonal
-        inverse = jnp.stack(
-            (second, -off_diagonal, -off_diagonal, first), axis=-1
-        ).reshape(metric.shape)
-        return inverse / determinant[..., None, None], determinant
-    if dimension == 3:
-        first = metric[..., 0, :]
-        second = metric[..., 1, :]
-        third = metric[..., 2, :]
-        cofactors = jnp.stack(
-            (jnp.cross(second, third), jnp.cross(third, first), jnp.cross(first, second)),
-            axis=-2,
-        )
-        determinant = jnp.sum(first * cofactors[..., 0, :], axis=-1)
-        return jnp.swapaxes(cofactors, -1, -2) / determinant[..., None, None], determinant
-    raise ValueError("Manifold metrics support parameter dimensions one through three.")
 
 
 def _mapping_hessian(
@@ -261,8 +236,16 @@ class AtlasManifold(StrictModule, NonTrainableState):
             | jnp.any(rank_ratio <= self.rank_tolerance),
             "Atlas differential is not full column rank at every query point.",
         )
-        inverse_metric, determinant = _metric_inverse(
-            metric, self.atlas.reference_dimension
+        inverse_result = inverse_small_linear(
+            SmallLinearSolvePlan(self.atlas.reference_dimension),
+            metric,
+        )
+        inverse_metric = inverse_result.value
+        determinant = inverse_result.determinant
+        inverse_metric = eqx.error_if(
+            inverse_metric,
+            jnp.any(~inverse_result.successful),
+            "Atlas metric inversion failed.",
         )
         measure = jnp.sqrt(determinant)
         reported_measure = jnp.asarray(frame.jacobian, dtype=measure.dtype)

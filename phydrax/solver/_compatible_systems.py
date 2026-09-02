@@ -16,6 +16,15 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
+from ..linalg import (
+    FactorizationPolicy,
+    pseudoinverse as matrix_pseudoinverse,
+    RankPolicy,
+)
+from ..linalg._dense_pseudoinverse import (
+    apply_pseudoinverse,
+    factor_pseudoinverse,
+)
 
 
 class CompatibleElasticityState(StrictModule):
@@ -142,7 +151,18 @@ class CompatibleIncompressibleProjection(StrictModule, NonTrainableState):
             )
         )(identity)
         poisson = columns.T
-        pseudoinverse = jnp.linalg.pinv(poisson, rtol=1e-12)
+        pseudoinverse_result = matrix_pseudoinverse(
+            poisson,
+            FactorizationPolicy(
+                "svd",
+                rank=RankPolicy(relative_cutoff=1.0e-12),
+            ),
+        )
+        pseudoinverse = eqx.error_if(
+            pseudoinverse_result.value,
+            ~pseudoinverse_result.successful,
+            "Compatible Poisson pseudoinverse failed.",
+        )
         self.bridge = bridge
         self.poisson_pseudoinverse = pseudoinverse
         self.projection_id = canonical_fingerprint(
@@ -301,7 +321,17 @@ class CompatibleVariableDensityProjection(StrictModule, NonTrainableState):
         size = self.bridge.cochain.cell_counts[0]
         matrix = jax.vmap(poisson_action)(jnp.eye(size)).T
         divergence = self.bridge.codifferential(1, velocity_)
-        pressure = jnp.linalg.pinv(matrix, rtol=1e-12) @ divergence
+        factors = factor_pseudoinverse(
+            matrix,
+            RankPolicy(relative_cutoff=1.0e-12),
+            hermitian=True,
+        )
+        pressure = apply_pseudoinverse(factors, divergence)
+        pressure = eqx.error_if(
+            pressure,
+            ~factors.finite,
+            "Variable-density Poisson pseudoinverse failed.",
+        )
         projected = velocity_ - inverse_density * self.bridge.exterior_derivative(
             0, pressure
         )

@@ -12,8 +12,9 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._plans import LinearSolvePlan
-from ._policies import FGMRES, GMRES, LinearSolveControl, LinearSolvePolicy
+from ._policies import FGMRES, GMRES, LinearSolveControl, LinearSolvePolicy, RankPolicy
 from ._prepared import PreparedLinearSolve
 from ._problems import AbstractLinearProblem, LinearSystem
 from ._recycling import (
@@ -715,7 +716,8 @@ def _augmented_harmonic_ritz_sources(
     image_gram = jnp.where(active, image_gram, 0)
     coupling = jnp.where(active, coupling, 0)
     safe_coupling = coupling + jnp.diag((~search_active).astype(coupling.dtype))
-    harmonic = jnp.linalg.pinv(safe_coupling) @ image_gram
+    coupling_factors = factor_pseudoinverse(safe_coupling, RankPolicy())
+    harmonic = apply_pseudoinverse(coupling_factors, image_gram)
     scale = jnp.maximum(jnp.linalg.norm(harmonic), 1.0)
     inactive_value = scale / jnp.sqrt(jnp.finfo(harmonic.real.dtype).eps)
     harmonic = harmonic + jnp.diag(

@@ -1,0 +1,918 @@
+{
+  "environment": {
+    "fingerprint": "d5b7935cb843f83dcabe8397ee6bdc6bb79dff8c6aa8ee03b149bb548d29df54",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.4.6",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "e67a33f71eba046d56e53da208c0164e3209c5acffa049964b62c8e5071c44ee",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "cases": [
+    {
+      "name": "phydrax_inverse",
+      "input_shape": [
+        2,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.304864792,
+      "compilation_seconds": 0.038629333,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.030667000000000003,
+          0.019625,
+          0.015291999999999998
+        ],
+        "min_ms": 0.015291999999999998,
+        "median_ms": 0.019625,
+        "mean_ms": 0.021861333333333333,
+        "std_ms": 0.0064729460749251505,
+        "max_ms": 0.030667000000000003
+      },
+      "logical_input_bytes": 32,
+      "logical_output_bytes": 32,
+      "compiler": {
+        "flops": 53,
+        "bytes_accessed": 542,
+        "argument_bytes": 32,
+        "output_bytes": 32,
+        "temporary_bytes": 664,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.1102230246251565e-16
+    },
+    {
+      "name": "jax_inverse",
+      "input_shape": [
+        2,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.019695042,
+      "compilation_seconds": 0.032053,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.033209,
+          0.046583,
+          0.030042000000000003
+        ],
+        "min_ms": 0.030042000000000003,
+        "median_ms": 0.033209,
+        "mean_ms": 0.036611333333333336,
+        "std_ms": 0.007168592345936697,
+        "max_ms": 0.046583
+      },
+      "logical_input_bytes": 32,
+      "logical_output_bytes": 32,
+      "compiler": {
+        "flops": 41,
+        "bytes_accessed": 482,
+        "argument_bytes": 32,
+        "output_bytes": 32,
+        "temporary_bytes": 516,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.1102230246251565e-16
+    },
+    {
+      "name": "phydrax_inverse",
+      "input_shape": [
+        8,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.252406333,
+      "compilation_seconds": 0.04534825,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.022125,
+          0.012792000000000001,
+          0.01925
+        ],
+        "min_ms": 0.012792000000000001,
+        "median_ms": 0.01925,
+        "mean_ms": 0.018055666666666668,
+        "std_ms": 0.0039026526306546357,
+        "max_ms": 0.022125
+      },
+      "logical_input_bytes": 512,
+      "logical_output_bytes": 512,
+      "compiler": {
+        "flops": 259,
+        "bytes_accessed": 4150,
+        "argument_bytes": 512,
+        "output_bytes": 512,
+        "temporary_bytes": 744,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 2.220446049250313e-16
+    },
+    {
+      "name": "jax_inverse",
+      "input_shape": [
+        8,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.018828792,
+      "compilation_seconds": 0.035523542,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.019125,
+          0.012041999999999999,
+          0.015208000000000001
+        ],
+        "min_ms": 0.012041999999999999,
+        "median_ms": 0.015208000000000001,
+        "mean_ms": 0.015458333333333333,
+        "std_ms": 0.0028970355346265414,
+        "max_ms": 0.019125
+      },
+      "logical_input_bytes": 512,
+      "logical_output_bytes": 512,
+      "compiler": {
+        "flops": 245,
+        "bytes_accessed": 4034,
+        "argument_bytes": 512,
+        "output_bytes": 512,
+        "temporary_bytes": 672,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 2.220446049250313e-16
+    },
+    {
+      "name": "phydrax_inverse",
+      "input_shape": [
+        32,
+        2,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.435173209,
+      "compilation_seconds": 0.052996333,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.031042,
+          0.018917,
+          0.016708
+        ],
+        "min_ms": 0.016708,
+        "median_ms": 0.018917,
+        "mean_ms": 0.022222333333333334,
+        "std_ms": 0.006301312579314109,
+        "max_ms": 0.031042
+      },
+      "logical_input_bytes": 1024,
+      "logical_output_bytes": 1024,
+      "compiler": {
+        "flops": 671,
+        "bytes_accessed": 11952,
+        "argument_bytes": 1024,
+        "output_bytes": 1024,
+        "temporary_bytes": 1560,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 2.220446049250313e-16
+    },
+    {
+      "name": "jax_inverse",
+      "input_shape": [
+        32,
+        2,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.01947775,
+      "compilation_seconds": 0.056551584,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.027583,
+          0.019208,
+          0.017750000000000002
+        ],
+        "min_ms": 0.017750000000000002,
+        "median_ms": 0.019208,
+        "mean_ms": 0.021513666666666667,
+        "std_ms": 0.004332747114193898,
+        "max_ms": 0.027583
+      },
+      "logical_input_bytes": 1024,
+      "logical_output_bytes": 1024,
+      "compiler": {
+        "flops": 671,
+        "bytes_accessed": 11952,
+        "argument_bytes": 1024,
+        "output_bytes": 1024,
+        "temporary_bytes": 1560,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 2.220446049250313e-16
+    },
+    {
+      "name": "phydrax_inverse",
+      "input_shape": [
+        32,
+        8,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.241553291,
+      "compilation_seconds": 0.066627,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.08224999999999999,
+          0.056666999999999995,
+          0.066458
+        ],
+        "min_ms": 0.056666999999999995,
+        "median_ms": 0.066458,
+        "mean_ms": 0.06845833333333333,
+        "std_ms": 0.010539559520629353,
+        "max_ms": 0.08224999999999999
+      },
+      "logical_input_bytes": 16384,
+      "logical_output_bytes": 16384,
+      "compiler": {
+        "flops": 3481,
+        "bytes_accessed": 127952,
+        "argument_bytes": 16384,
+        "output_bytes": 16384,
+        "temporary_bytes": 17504,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 4.440892098500626e-16
+    },
+    {
+      "name": "jax_inverse",
+      "input_shape": [
+        32,
+        8,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.018628125,
+      "compilation_seconds": 0.069192,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.069041,
+          0.067791,
+          0.062084
+        ],
+        "min_ms": 0.062084,
+        "median_ms": 0.067791,
+        "mean_ms": 0.06630533333333334,
+        "std_ms": 0.00302824111031837,
+        "max_ms": 0.069041
+      },
+      "logical_input_bytes": 16384,
+      "logical_output_bytes": 16384,
+      "compiler": {
+        "flops": 3481,
+        "bytes_accessed": 127952,
+        "argument_bytes": 16384,
+        "output_bytes": 16384,
+        "temporary_bytes": 17504,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 4.440892098500626e-16
+    },
+    {
+      "name": "phydrax_pseudoinverse",
+      "input_shape": [
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.026813292,
+      "compilation_seconds": 0.026474208,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.024457999999999997,
+          0.015625,
+          0.015000000000000001
+        ],
+        "min_ms": 0.015000000000000001,
+        "median_ms": 0.015625,
+        "mean_ms": 0.018361,
+        "std_ms": 0.004318773977260984,
+        "max_ms": 0.024457999999999997
+      },
+      "logical_input_bytes": 48,
+      "logical_output_bytes": 48,
+      "compiler": {
+        "flops": 68,
+        "bytes_accessed": 503,
+        "argument_bytes": 48,
+        "output_bytes": 48,
+        "temporary_bytes": 424,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.3381766573708809e-16
+    },
+    {
+      "name": "jax_pseudoinverse",
+      "input_shape": [
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.007956125,
+      "compilation_seconds": 0.023147417,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.023666,
+          0.015708,
+          0.015583
+        ],
+        "min_ms": 0.015583,
+        "median_ms": 0.015708,
+        "mean_ms": 0.018319,
+        "std_ms": 0.003781244327819437,
+        "max_ms": 0.023666
+      },
+      "logical_input_bytes": 48,
+      "logical_output_bytes": 48,
+      "compiler": {
+        "flops": 48,
+        "bytes_accessed": 407,
+        "argument_bytes": 48,
+        "output_bytes": 48,
+        "temporary_bytes": 324,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.3381766573708809e-16
+    },
+    {
+      "name": "phydrax_fused_pseudoinverse_apply",
+      "input_shape": [
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.007728,
+      "compilation_seconds": 0.027367292,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.025084,
+          0.017708,
+          0.014957999999999999
+        ],
+        "min_ms": 0.014957999999999999,
+        "median_ms": 0.017708,
+        "mean_ms": 0.01925,
+        "std_ms": 0.004275300535245056,
+        "max_ms": 0.025084
+      },
+      "logical_input_bytes": 48,
+      "logical_output_bytes": 64,
+      "compiler": {
+        "flops": 129,
+        "bytes_accessed": 875,
+        "argument_bytes": 48,
+        "output_bytes": 64,
+        "temporary_bytes": 424,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 5.551115123125783e-17
+    },
+    {
+      "name": "phydrax_materialized_pseudoinverse_apply",
+      "input_shape": [
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 9.3792e-05,
+      "compilation_seconds": 2.7917e-05,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.025625,
+          0.026875,
+          0.023375
+        ],
+        "min_ms": 0.023375,
+        "median_ms": 0.025625,
+        "mean_ms": 0.025291666666666667,
+        "std_ms": 0.001448178933081897,
+        "max_ms": 0.026875
+      },
+      "logical_input_bytes": 48,
+      "logical_output_bytes": 64,
+      "compiler": {
+        "flops": 116,
+        "bytes_accessed": 711,
+        "argument_bytes": 48,
+        "output_bytes": 64,
+        "temporary_bytes": 424,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 5.551115123125783e-17
+    },
+    {
+      "name": "phydrax_pseudoinverse",
+      "input_shape": [
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.025203708,
+      "compilation_seconds": 0.041504583,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.113625,
+          0.085958,
+          0.06125
+        ],
+        "min_ms": 0.06125,
+        "median_ms": 0.085958,
+        "mean_ms": 0.08694433333333333,
+        "std_ms": 0.0213933758647131,
+        "max_ms": 0.113625
+      },
+      "logical_input_bytes": 768,
+      "logical_output_bytes": 768,
+      "compiler": {
+        "flops": 1868,
+        "bytes_accessed": 6503,
+        "argument_bytes": 768,
+        "output_bytes": 768,
+        "temporary_bytes": 2216,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.1057479699328928e-15
+    },
+    {
+      "name": "jax_pseudoinverse",
+      "input_shape": [
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.006856042,
+      "compilation_seconds": 0.035853458,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.07037500000000001,
+          0.058832999999999996,
+          0.050624999999999996
+        ],
+        "min_ms": 0.050624999999999996,
+        "median_ms": 0.058832999999999996,
+        "mean_ms": 0.05994433333333333,
+        "std_ms": 0.008101107798045624,
+        "max_ms": 0.07037500000000001
+      },
+      "logical_input_bytes": 768,
+      "logical_output_bytes": 768,
+      "compiler": {
+        "flops": 1818,
+        "bytes_accessed": 6215,
+        "argument_bytes": 768,
+        "output_bytes": 768,
+        "temporary_bytes": 2180,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.1057479699328928e-15
+    },
+    {
+      "name": "phydrax_fused_pseudoinverse_apply",
+      "input_shape": [
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.008745833,
+      "compilation_seconds": 0.042413292,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.074042,
+          0.062,
+          0.048958
+        ],
+        "min_ms": 0.048958,
+        "median_ms": 0.062,
+        "mean_ms": 0.06166666666666667,
+        "std_ms": 0.010243212299968316,
+        "max_ms": 0.074042
+      },
+      "logical_input_bytes": 768,
+      "logical_output_bytes": 256,
+      "compiler": {
+        "flops": 1581,
+        "bytes_accessed": 7403,
+        "argument_bytes": 768,
+        "output_bytes": 256,
+        "temporary_bytes": 2280,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 2.498001805406602e-16
+    },
+    {
+      "name": "phydrax_materialized_pseudoinverse_apply",
+      "input_shape": [
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 9.35e-05,
+      "compilation_seconds": 8.791e-06,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.06925,
+          0.055833,
+          0.046917
+        ],
+        "min_ms": 0.046917,
+        "median_ms": 0.055833,
+        "mean_ms": 0.05733333333333334,
+        "std_ms": 0.00917892413206593,
+        "max_ms": 0.06925
+      },
+      "logical_input_bytes": 768,
+      "logical_output_bytes": 256,
+      "compiler": {
+        "flops": 2636,
+        "bytes_accessed": 7911,
+        "argument_bytes": 768,
+        "output_bytes": 256,
+        "temporary_bytes": 2664,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 2.498001805406602e-16
+    },
+    {
+      "name": "phydrax_pseudoinverse",
+      "input_shape": [
+        32,
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.027920917,
+      "compilation_seconds": 0.029281458,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.134375,
+          0.117667,
+          0.109084
+        ],
+        "min_ms": 0.109084,
+        "median_ms": 0.117667,
+        "mean_ms": 0.12037533333333333,
+        "std_ms": 0.010501110174114394,
+        "max_ms": 0.134375
+      },
+      "logical_input_bytes": 1536,
+      "logical_output_bytes": 1536,
+      "compiler": {
+        "flops": 2207,
+        "bytes_accessed": 16127,
+        "argument_bytes": 1536,
+        "output_bytes": 1536,
+        "temporary_bytes": 4776,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 3.2021761295743213e-16
+    },
+    {
+      "name": "jax_pseudoinverse",
+      "input_shape": [
+        32,
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.008360083,
+      "compilation_seconds": 0.020531083,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.134917,
+          0.109292,
+          0.107584
+        ],
+        "min_ms": 0.107584,
+        "median_ms": 0.109292,
+        "mean_ms": 0.11726433333333335,
+        "std_ms": 0.012501781108661637,
+        "max_ms": 0.134917
+      },
+      "logical_input_bytes": 1536,
+      "logical_output_bytes": 1536,
+      "compiler": {
+        "flops": 1567,
+        "bytes_accessed": 13055,
+        "argument_bytes": 1536,
+        "output_bytes": 1536,
+        "temporary_bytes": 4800,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 3.2021761295743213e-16
+    },
+    {
+      "name": "phydrax_fused_pseudoinverse_apply",
+      "input_shape": [
+        32,
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.008121333,
+      "compilation_seconds": 0.038988167,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.137042,
+          0.128875,
+          0.150333
+        ],
+        "min_ms": 0.128875,
+        "median_ms": 0.137042,
+        "mean_ms": 0.13875,
+        "std_ms": 0.008843053356543016,
+        "max_ms": 0.150333
+      },
+      "logical_input_bytes": 1536,
+      "logical_output_bytes": 2048,
+      "compiler": {
+        "flops": 4159,
+        "bytes_accessed": 28031,
+        "argument_bytes": 1536,
+        "output_bytes": 2048,
+        "temporary_bytes": 6056,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 4.440892098500626e-16
+    },
+    {
+      "name": "phydrax_materialized_pseudoinverse_apply",
+      "input_shape": [
+        32,
+        3,
+        2
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 9.9417e-05,
+      "compilation_seconds": 8e-06,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.181542,
+          0.130458,
+          0.128542
+        ],
+        "min_ms": 0.128542,
+        "median_ms": 0.130458,
+        "mean_ms": 0.14684733333333333,
+        "std_ms": 0.024545300776772378,
+        "max_ms": 0.181542
+      },
+      "logical_input_bytes": 1536,
+      "logical_output_bytes": 2048,
+      "compiler": {
+        "flops": 3743,
+        "bytes_accessed": 22783,
+        "argument_bytes": 1536,
+        "output_bytes": 2048,
+        "temporary_bytes": 4264,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 4.440892098500626e-16
+    },
+    {
+      "name": "phydrax_pseudoinverse",
+      "input_shape": [
+        32,
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.025497875,
+      "compilation_seconds": 0.044858792,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.20016599999999998,
+          0.220042,
+          0.208166
+        ],
+        "min_ms": 0.20016599999999998,
+        "median_ms": 0.208166,
+        "mean_ms": 0.209458,
+        "std_ms": 0.008165610489526591,
+        "max_ms": 0.220042
+      },
+      "logical_input_bytes": 24576,
+      "logical_output_bytes": 24576,
+      "compiler": {
+        "flops": 59807,
+        "bytes_accessed": 208127,
+        "argument_bytes": 24576,
+        "output_bytes": 24576,
+        "temporary_bytes": 67752,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 3.65297692822694e-15
+    },
+    {
+      "name": "jax_pseudoinverse",
+      "input_shape": [
+        32,
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.007606625,
+      "compilation_seconds": 0.042658375,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.213417,
+          0.18554199999999998,
+          0.219459
+        ],
+        "min_ms": 0.18554199999999998,
+        "median_ms": 0.213417,
+        "mean_ms": 0.2061393333333333,
+        "std_ms": 0.014771911325966667,
+        "max_ms": 0.219459
+      },
+      "logical_input_bytes": 24576,
+      "logical_output_bytes": 24576,
+      "compiler": {
+        "flops": 58207,
+        "bytes_accessed": 198911,
+        "argument_bytes": 24576,
+        "output_bytes": 24576,
+        "temporary_bytes": 67776,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 3.65297692822694e-15
+    },
+    {
+      "name": "phydrax_fused_pseudoinverse_apply",
+      "input_shape": [
+        32,
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 0.007623417,
+      "compilation_seconds": 0.043564583,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.2325,
+          0.225959,
+          0.229416
+        ],
+        "min_ms": 0.225959,
+        "median_ms": 0.229416,
+        "mean_ms": 0.22929166666666667,
+        "std_ms": 0.0026717989362142498,
+        "max_ms": 0.2325
+      },
+      "logical_input_bytes": 24576,
+      "logical_output_bytes": 8192,
+      "compiler": {
+        "flops": 50623,
+        "bytes_accessed": 236927,
+        "argument_bytes": 24576,
+        "output_bytes": 8192,
+        "temporary_bytes": 68008,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.5543122344752192e-15
+    },
+    {
+      "name": "phydrax_materialized_pseudoinverse_apply",
+      "input_shape": [
+        32,
+        12,
+        8
+      ],
+      "input_dtype": "float64",
+      "lowering_seconds": 8.5834e-05,
+      "compilation_seconds": 8.459e-06,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.21962500000000001,
+          0.18925,
+          0.19370800000000002
+        ],
+        "min_ms": 0.18925,
+        "median_ms": 0.19370800000000002,
+        "mean_ms": 0.20086100000000004,
+        "std_ms": 0.013392391197990001,
+        "max_ms": 0.21962500000000001
+      },
+      "logical_input_bytes": 24576,
+      "logical_output_bytes": 8192,
+      "compiler": {
+        "flops": 84383,
+        "bytes_accessed": 253183,
+        "argument_bytes": 24576,
+        "output_bytes": 8192,
+        "temporary_bytes": 82088,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "residual": 1.5543122344752192e-15
+    }
+  ],
+  "maximum_residual": 3.65297692822694e-15,
+  "all_finite": true
+}

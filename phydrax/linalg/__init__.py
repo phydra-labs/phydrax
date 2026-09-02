@@ -88,7 +88,9 @@ from ._factorizations import (
     FactorizationKind,
     FactorizationPolicy,
     factorize,
+    inverse,
     PreparedFactorization,
+    pseudoinverse,
     refresh_factorization,
 )
 from ._hermitian_precision import HermitianPrecisionPolicy
@@ -380,6 +382,7 @@ from ._results import (
     LinearSolveProvenance,
     LinearSolveResult,
     LinearSolveStatus,
+    MatrixInversionResult,
     RecycledLinearSolveResult,
 )
 from ._runtime import (
@@ -420,6 +423,7 @@ from ._shifted import (
     solve_shifted,
 )
 from ._small_batched import (
+    inverse_small_linear,
     SmallLinearSolvePlan,
     SmallLinearSolveResult,
     solve_small_linear,
@@ -714,6 +718,7 @@ __all__ = [
     "PreparedSparseAssembly",
     "LinearSolveProvenance",
     "LinearSolveResult",
+    "MatrixInversionResult",
     "LinearSolveStatus",
     "LinearSubspace",
     "LinearSystem",
@@ -908,6 +913,8 @@ __all__ = [
     "estimate_spectral_bounds",
     "estimate_spectral_radius",
     "factorize",
+    "inverse",
+    "pseudoinverse",
     "eigen",
     "krylov",
     "linear_status_message",
@@ -1012,6 +1019,7 @@ __all__ = [
     "sparse_provider_capabilities",
     "SmallLinearSolvePlan",
     "SmallLinearSolveResult",
+    "inverse_small_linear",
     "solve_small_linear",
     "LinearDerivativeSolvePolicy",
     "LinearSolveCheckEvidence",

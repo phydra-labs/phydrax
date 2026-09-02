@@ -12,6 +12,11 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from ...linalg import RankPolicy
+from ...linalg._dense_pseudoinverse import (
+    apply_pseudoinverse,
+    factor_pseudoinverse,
+)
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -214,8 +219,6 @@ def _normal_solve(
         gram = gram.at[..., -1, -1].set(jnp.sum(weights, axis=1) + intercept_penalty)
         rhs = rhs.at[..., -1].set(rhs_intercept)
 
-    singular = jnp.linalg.svd(gram, compute_uv=False)
-    largest = jnp.max(singular, axis=-1)
     cutoff = (
         max(prepared.design.samples, parameter_count)
         * jnp.finfo(jnp.real(gram).dtype).eps
@@ -223,14 +226,15 @@ def _normal_solve(
         else float(rcond)
     )
     gram_cutoff = cutoff * cutoff
-    retained = singular > largest[..., None] * gram_cutoff
-    rank = jnp.sum(retained, axis=-1, dtype=jnp.int32)
-    smallest = jnp.min(jnp.where(retained, singular, jnp.inf), axis=-1)
-    condition = jnp.sqrt(
-        largest / jnp.maximum(smallest, jnp.finfo(jnp.real(gram).dtype).tiny)
+    factors = factor_pseudoinverse(
+        gram,
+        RankPolicy(relative_cutoff=gram_cutoff),
+        hermitian=True,
     )
-    parameters = jnp.linalg.pinv(gram, rtol=gram_cutoff, hermitian=True) @ rhs[..., None]
-    parameters = parameters[..., 0]
+    singular = factors.singular_values
+    rank = factors.rank
+    condition = jnp.sqrt(factors.condition_estimate)
+    parameters = apply_pseudoinverse(factors, rhs)
     coefficients = jnp.swapaxes(parameters[..., :features], 1, 2)
     intercept = (
         parameters[..., -1]

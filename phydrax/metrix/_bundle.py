@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import inverse as matrix_inverse
 from ._chart import CoordinateChart
 from ._utils import _pointwise_array
 
@@ -96,7 +98,12 @@ class _GaugeTransformedCoefficients(StrictModule):
 
     def __call__(self, coordinates: Array, /) -> Array:
         gauge = self._gauge(coordinates)
-        inverse = jnp.linalg.inv(gauge)
+        inverse_result = matrix_inverse(gauge)
+        inverse = eqx.error_if(
+            inverse_result.value,
+            ~inverse_result.successful,
+            "Gauge transformation must be nonsingular.",
+        )
         derivative = jax.jacfwd(self._gauge)(coordinates)
         coefficients = self.connection._coefficients_point(coordinates)
         conjugated = oe.contract("ac,cdi,db->abi", inverse, coefficients, gauge)
@@ -182,7 +189,12 @@ def gauge_curvature_residual(
 
     def evaluate(point: Array) -> Array:
         matrix = jnp.asarray(gauge(point))
-        inverse = jnp.linalg.inv(matrix)
+        inverse_result = matrix_inverse(matrix)
+        inverse = eqx.error_if(
+            inverse_result.value,
+            ~inverse_result.successful,
+            "Gauge transformation must be nonsingular.",
+        )
         curvature = bundle_curvature(connection, point)
         expected = oe.contract("ac,cdij,db->abij", inverse, curvature, matrix)
         actual = bundle_curvature(transformed, point)

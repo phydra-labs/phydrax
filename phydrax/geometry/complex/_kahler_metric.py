@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ...linalg import FactorizationPolicy, inverse, OperatorProperties
 from ...metrix import KahlerPotentialGeometry
 from ._hypersurface import ProjectiveHypersurface
 from ._hypersurface_patch import HypersurfacePatchGeometry
@@ -105,6 +106,18 @@ class HypersurfaceKahlerGeometry(StrictModule):
         )
         ambient_metric = local_geometry.metric()(patch.affine_coordinates)
         induced = patch.tangent_basis.T @ ambient_metric @ patch.tangent_basis
+        inverse_result = inverse(
+            induced,
+            FactorizationPolicy("cholesky"),
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "asserted",
+                },
+            ),
+        )
         eigenvalues = jnp.linalg.eigvalsh(induced)
         margin = jnp.min(eigenvalues)
         log_determinant = 0.5 * jnp.linalg.slogdet(induced)[1]
@@ -114,11 +127,12 @@ class HypersurfaceKahlerGeometry(StrictModule):
             patch.valid
             & jnp.all(jnp.isfinite(induced))
             & (margin > self.positivity_floor)
+            & inverse_result.successful
             & jnp.isfinite(residual)
         )
         return HypersurfaceKahlerEvaluation(
             metric=induced,
-            inverse_metric=jnp.linalg.inv(induced),
+            inverse_metric=inverse_result.value,
             log_determinant=log_determinant,
             target_log_volume=target_log_volume,
             monge_ampere_residual=residual,

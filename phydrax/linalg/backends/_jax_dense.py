@@ -15,6 +15,7 @@ from jax import core as jax_core
 from jaxtyping import Array
 
 from ..._strict import StrictModule
+from .._dense_pseudoinverse import factor_pseudoinverse
 from .._materialization import materialize
 from .._operators import DenseLinearOperator
 from .._pairings import DiagonalPairing, EuclideanPairing
@@ -22,6 +23,7 @@ from .._plans import LinearSolvePlan
 from .._policies import DenseCholesky, DenseLU, DenseQR, DenseSVD
 from .._problems import LeastSquaresProblem, MinimumNormProblem
 from .._properties import LinearCapabilityError
+from .._rank import numerical_rank_data
 from .._results import LinearSolveStatus
 from .._space_extensions import CoordaxSpace, TensorProductSpace
 from .._spaces import ArraySpace, BlockSpace, DualSpace, PyTreeSpace
@@ -92,6 +94,7 @@ class DenseSVDState(StrictModule):
     retained: Array
     rank: Array
     condition_estimate: Array
+    hermitian: bool = eqx.field(static=True)
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     target_size: int = eqx.field(static=True)
 
@@ -153,6 +156,12 @@ def prepare_dense(problem, plan: LinearSolvePlan, /) -> Any:
                 problem.operator.target.size,
                 plan,
             )
+        hermitian = (
+            rank_design is None
+            and design.shape[-2] == design.shape[-1]
+            and problem.operator.source.compatible(problem.operator.target)
+            and problem.operator.properties.certifies("self_adjoint")
+        )
         return _prepare_svd(
             matrix,
             design,
@@ -161,6 +170,7 @@ def prepare_dense(problem, plan: LinearSolvePlan, /) -> Any:
             problem.operator.batch_shape,
             problem.operator.target.size,
             rank_design,
+            hermitian,
             plan,
         )
     raise ValueError(f"Unsupported dense method {method_name!r}.")
@@ -393,17 +403,10 @@ def _least_squares_design(
     ):
         raise ValueError("DenseSVD damping is defined only for least-squares problems.")
     batch_shape = problem.operator.batch_shape
-    if isinstance(problem, MinimumNormProblem):
-        source_metric = _metric_diagonal(problem.operator.source)
-        source_inverse_square_root = jax.lax.rsqrt(source_metric)
-        design = matrix * source_inverse_square_root
-        return design, None, source_inverse_square_root, None
-    if not isinstance(problem, LeastSquaresProblem):
-        raise TypeError("Dense rectangular methods require a least-squares problem.")
     target_size = problem.operator.target.size
-    metric = _metric_diagonal(problem.operator.target)
-    metric = jnp.broadcast_to(metric, batch_shape + (target_size,))
-    if problem.weights is not None:
+    target_metric = _metric_diagonal(problem.operator.target)
+    target_metric = jnp.broadcast_to(target_metric, batch_shape + (target_size,))
+    if isinstance(problem, LeastSquaresProblem) and problem.weights is not None:
         if not isinstance(problem.operator.target, ArraySpace):
             raise TypeError("Explicit weights currently require ArraySpace targets.")
         weights = jnp.asarray(problem.weights, dtype=matrix.real.dtype)
@@ -413,25 +416,41 @@ def _least_squares_design(
         expected = batch_shape + event_shape
         if weights.shape != expected:
             raise ValueError(f"weights must have shape {event_shape} or {expected}.")
-        metric = metric * weights.reshape(batch_shape + (target_size,))
-    square_root_weights = jnp.sqrt(metric)
-    rank_design = square_root_weights[..., :, None] * matrix
-    design = rank_design
+        target_metric = target_metric * weights.reshape(batch_shape + (target_size,))
+    square_root_weights = jnp.sqrt(target_metric)
+
+    source_inverse_square_root = None
+    if isinstance(method, DenseSVD):
+        source_metric = _metric_diagonal(problem.operator.source)
+        source_inverse_square_root = jax.lax.rsqrt(source_metric)
+    design = square_root_weights[..., :, None] * matrix
+    if source_inverse_square_root is not None:
+        design = design * source_inverse_square_root
+
+    if isinstance(problem, MinimumNormProblem):
+        return design, square_root_weights, source_inverse_square_root, None
+    if not isinstance(problem, LeastSquaresProblem):
+        raise TypeError("Dense rectangular methods require a least-squares problem.")
+
+    rank_design = design
     if problem.regularizer is not None:
         regularizer = materialize(problem.regularizer, plan.policy.materialization)
         regularizer_metric = _metric_diagonal(problem.regularizer.target)
         regularizer = jnp.sqrt(regularizer_metric)[..., :, None] * regularizer
+        if source_inverse_square_root is not None:
+            regularizer = regularizer * source_inverse_square_root
         design = jnp.concatenate((design, regularizer), axis=-2)
+    rank_cutoff_requested = (
+        plan.policy.rank.relative_cutoff is not None
+        or plan.policy.rank.absolute_cutoff is not None
+    )
     return (
         design,
         square_root_weights,
-        None,
-        (
-            rank_design
-            if problem.regularizer is not None
-            and plan.policy.rank.relative_cutoff is not None
-            else None
-        ),
+        source_inverse_square_root,
+        rank_design
+        if problem.regularizer is not None and rank_cutoff_requested
+        else None,
     )
 
 
@@ -442,16 +461,13 @@ def _rank_data(
     plan: LinearSolvePlan,
     /,
 ) -> tuple[Array, Array, Array]:
-    maximum = jnp.max(singular_values, axis=-1)
-    if plan.policy.rank.relative_cutoff is None:
-        cutoff = jnp.finfo(singular_values.dtype).eps * float(max(rows, columns))
-    else:
-        cutoff = plan.policy.rank.relative_cutoff
-    retained = singular_values > cutoff * maximum[..., None]
-    rank = jnp.sum(retained, axis=-1, dtype=jnp.int32)
-    minimum = jnp.min(jnp.where(retained, singular_values, jnp.inf), axis=-1)
-    condition = jnp.where(rank > 0, maximum / minimum, jnp.inf)
-    return retained, rank, condition
+    data = numerical_rank_data(
+        singular_values,
+        rows,
+        columns,
+        plan.policy.rank,
+    )
+    return data.retained, data.rank, data.condition_estimate
 
 
 def _prepare_qr(
@@ -494,15 +510,24 @@ def _prepare_svd(
     batch_shape: tuple[int, ...],
     target_size: int,
     rank_design: Array | None,
+    hermitian: bool,
     plan: LinearSolvePlan,
     /,
 ) -> DenseSVDState:
     factor_design = design
     source_projection = None
     if rank_design is None:
-        u, singular_values, vh = jnp.linalg.svd(factor_design, full_matrices=False)
-        rows, columns = (int(size) for size in factor_design.shape[-2:])
-        retained, rank, condition = _rank_data(singular_values, rows, columns, plan)
+        factors = factor_pseudoinverse(
+            factor_design,
+            plan.policy.rank,
+            hermitian=hermitian,
+        )
+        u = factors.left_vectors
+        singular_values = factors.singular_values
+        vh = factors.right_adjoint
+        retained = factors.retained
+        rank = factors.rank
+        condition = factors.condition_estimate
         reported_singular_values = singular_values
     else:
         _, reported_singular_values, rank_vh = jnp.linalg.svd(
@@ -537,6 +562,7 @@ def _prepare_svd(
         square_root_weights=square_root_weights,
         source_inverse_square_root=source_inverse_square_root,
         source_projection=source_projection,
+        hermitian=hermitian,
         retained=retained,
         rank=rank,
         condition_estimate=condition,
@@ -787,6 +813,7 @@ def _solve_svd(
     value = jnp.matmul(jnp.conj(jnp.swapaxes(state.vh, -1, -2)), scaled)
     if state.source_projection is not None:
         value = jnp.matmul(state.source_projection, value)
+    design_value = value
     if state.source_inverse_square_root is not None:
         value = state.source_inverse_square_root[..., :, None] * value
     required_rank = min(state.original_matrix.shape[-2], state.original_matrix.shape[-1])
@@ -794,7 +821,7 @@ def _solve_svd(
     status = _rectangular_status(
         state.design,
         transformed,
-        value,
+        design_value,
         rank_deficient,
         plan.policy.rank.require_full_rank,
     )

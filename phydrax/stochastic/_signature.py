@@ -301,7 +301,15 @@ class PrimitiveBasis(StrictModule):
                     ],
                     dtype=float,
                 )
-                inverse = tuple(map(tuple, np.linalg.inv(restricted).tolist()))
+                inverse = tuple(
+                    map(
+                        tuple,
+                        np.linalg.solve(
+                            restricted,
+                            np.eye(restricted.shape[0], dtype=restricted.dtype),
+                        ).tolist(),
+                    )
+                )
             else:
                 inverse = ()
             inverses.append(inverse)

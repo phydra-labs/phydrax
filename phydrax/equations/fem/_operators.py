@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 
 
 class FiniteElementMetricData(StrictModule):
@@ -51,14 +52,20 @@ class FiniteElementMetricData(StrictModule):
             raise ValueError("Tensor cell metrics require square 2-D or 3-D geometry.")
         physical_points = oe.contract("qi,cid->cqd", basis, coordinates)
         jacobian = oe.contract("qir,cid->cqdr", gradients, coordinates)
-        determinant = jnp.linalg.det(jacobian)
+        inverse_result = inverse_small_linear(
+            SmallLinearSolvePlan(dimension),
+            jacobian,
+        )
+        determinant = inverse_result.determinant
         measure = jnp.abs(determinant)
         measure = eqx.error_if(
             measure,
-            jnp.any(~jnp.isfinite(measure) | (measure <= 0.0)),
+            jnp.any(
+                ~inverse_result.successful | ~jnp.isfinite(measure) | (measure <= 0.0)
+            ),
             "Finite-element metric determinant must be positive and finite.",
         )
-        inverse_jacobian = jnp.linalg.inv(jacobian)
+        inverse_jacobian = inverse_result.value
         cofactor = measure[..., None, None] * inverse_jacobian
         inverse_metric = oe.contract(
             "cqrd,cqsd->cqrs", inverse_jacobian, inverse_jacobian

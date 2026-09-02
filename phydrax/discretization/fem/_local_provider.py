@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 from .._integration_domain import IntegrationDomain
 from .._local_variational import (
     LocalFieldBinding,
@@ -213,14 +214,20 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
         points = oe.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
         jacobian = oe.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
-        determinant = jnp.linalg.det(jacobian)
+        inverse_result = inverse_small_linear(
+            SmallLinearSolvePlan(jacobian.shape[-1]),
+            jacobian,
+        )
+        determinant = inverse_result.determinant
         measure = jnp.abs(determinant)
         measure = eqx.error_if(
             measure,
-            jnp.any(~jnp.isfinite(measure) | (measure <= 0.0)),
+            jnp.any(
+                ~inverse_result.successful | ~jnp.isfinite(measure) | (measure <= 0.0)
+            ),
             "Finite-element metric determinant must be positive and finite.",
         )
-        inverse = jnp.linalg.inv(jacobian)
+        inverse = inverse_result.value
         return LocalMetricResult(
             points,
             measure * self.reference_weights[None, :],

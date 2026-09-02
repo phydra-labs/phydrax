@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
+from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -341,7 +342,23 @@ class ICAModel(AbstractArrayModel):
     def __init__(self, mean, unmixing):
         self.mean = jnp.asarray(mean)
         self.unmixing = jnp.asarray(unmixing)
-        self.mixing = jnp.linalg.pinv(self.unmixing)
+        relative_cutoff = (
+            10.0
+            * float(max(self.unmixing.shape[-2:]))
+            * float(jnp.finfo(self.unmixing.real.dtype).eps)
+        )
+        mixing_result = pseudoinverse(
+            self.unmixing,
+            FactorizationPolicy(
+                "svd",
+                rank=RankPolicy(relative_cutoff=relative_cutoff),
+            ),
+        )
+        self.mixing = eqx.error_if(
+            mixing_result.value,
+            ~mixing_result.successful,
+            "ICA mixing pseudoinverse failed.",
+        )
         self.in_size = int(self.mean.shape[-1])
         self.out_size = int(self.unmixing.shape[-2])
         self.case_shape = tuple(int(size) for size in self.mean.shape[:-1])
