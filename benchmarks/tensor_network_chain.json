@@ -1,0 +1,81 @@
+{
+  "environment": {
+    "fingerprint": "d5b7935cb843f83dcabe8397ee6bdc6bb79dff8c6aa8ee03b149bb548d29df54",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.4.6",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "e67a33f71eba046d56e53da208c0164e3209c5acffa049964b62c8e5071c44ee",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "cases": [
+    {
+      "sites": 4,
+      "physical_dimension": 2,
+      "bond_dimension": 2,
+      "logical_input_bytes": 576,
+      "expectation": {
+        "lowering_seconds": 0.009524541,
+        "compilation_seconds": 0.051733583,
+        "execution": {
+          "count": 2,
+          "samples_ms": [
+            0.08666700000000001,
+            0.067167
+          ],
+          "min_ms": 0.067167,
+          "median_ms": 0.07691700000000001,
+          "mean_ms": 0.07691700000000001,
+          "std_ms": 0.009750000000000002,
+          "max_ms": 0.08666700000000001
+        },
+        "finite": true
+      },
+      "apply": {
+        "lowering_seconds": 0.034182166,
+        "compilation_seconds": 0.1122145,
+        "execution": {
+          "count": 2,
+          "samples_ms": [
+            0.343167,
+            0.249625
+          ],
+          "min_ms": 0.249625,
+          "median_ms": 0.296396,
+          "mean_ms": 0.296396,
+          "std_ms": 0.04677099999999999,
+          "max_ms": 0.343167
+        },
+        "output_bytes": 236,
+        "discarded_weight": 0.0022608557006715455
+      }
+    }
+  ]
+}

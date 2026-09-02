@@ -1,7 +1,7 @@
-# Dense local quantum programs
+# Local quantum programs
 
-See [Dense local quantum programs](../../guides_quantum_programs.md) for target-order,
-state, physicality, resource, and transformation contracts.
+See [Local quantum programs](../../guides_quantum_programs.md) for target-order,
+state, physicality, resource, routing, and transformation contracts.
 
 ## Policy, cost, and lifecycle
 
@@ -21,6 +21,38 @@ state, physicality, resource, and transformation contracts.
 
 ::: phydrax.solver.execute_dense_quantum_program
 
+## Open-chain MPS lifecycle
+
+::: phydrax.solver.MPSQuantumProgramPolicy
+
+::: phydrax.solver.MPSQuantumProgramPlan
+
+::: phydrax.solver.PreparedMPSQuantumProgram
+
+::: phydrax.solver.plan_mps_quantum_program
+
+::: phydrax.solver.prepare_mps_quantum_program
+
+::: phydrax.solver.refresh_mps_quantum_program
+
+::: phydrax.solver.execute_mps_quantum_program
+
+## Open-chain LPDO lifecycle
+
+::: phydrax.solver.LPDOQuantumProgramPolicy
+
+::: phydrax.solver.LPDOQuantumProgramPlan
+
+::: phydrax.solver.PreparedLPDOQuantumProgram
+
+::: phydrax.solver.plan_lpdo_quantum_program
+
+::: phydrax.solver.prepare_lpdo_quantum_program
+
+::: phydrax.solver.refresh_lpdo_quantum_program
+
+::: phydrax.solver.execute_lpdo_quantum_program
+
 ## Results and evidence
 
 ::: phydrax.solver.DenseQuantumProgramStatus
@@ -30,3 +62,11 @@ state, physicality, resource, and transformation contracts.
 ::: phydrax.solver.DenseQuantumProgramDiagnostics
 
 ::: phydrax.solver.DenseQuantumProgramResult
+
+::: phydrax.solver.MPSQuantumProgramDiagnostics
+
+::: phydrax.solver.MPSQuantumProgramResult
+
+::: phydrax.solver.LPDOQuantumProgramDiagnostics
+
+::: phydrax.solver.LPDOQuantumProgramResult

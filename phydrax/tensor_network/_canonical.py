@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ._core import LocallyPurifiedDensity, MatrixProductState
+from ._precision import TensorNetworkPrecisionPolicy
 
 
 class MPSCanonicalEvidence(StrictModule):
@@ -67,28 +69,67 @@ class LPDOCanonicalEvidence(StrictModule):
         self.center = int(center)
 
 
-def _evidence(tensors: tuple[Array, ...], center: int, /) -> MPSCanonicalEvidence:
+def _canonical_sweep(
+    tensors: tuple[Array, ...],
+    center: int,
+    precision: TensorNetworkPrecisionPolicy,
+    /,
+) -> tuple[Array, ...]:
+    values = list(precision.factorization(tensors))
+    for index in range(center):
+        tensor = values[index]
+        matrix = tensor.reshape((-1, tensor.shape[-1]))
+        q, r = jnp.linalg.qr(matrix)
+        rank = q.shape[-1]
+        values[index] = q.reshape(tensor.shape[:-1] + (rank,))
+        values[index + 1] = oe.contract("ab,b...->a...", r, values[index + 1])
+    for index in range(len(values) - 1, center, -1):
+        tensor = values[index]
+        matrix = tensor.reshape((tensor.shape[0], -1))
+        q, r = jnp.linalg.qr(matrix.T)
+        rank = q.shape[-1]
+        values[index] = q.T.reshape((rank,) + tensor.shape[1:])
+        values[index - 1] = oe.contract("...a,ab->...b", values[index - 1], r.T)
+    return tuple(precision.storage(values))
+
+
+def _canonical_residuals(
+    tensors: tuple[Array, ...],
+    center: int,
+    precision: TensorNetworkPrecisionPolicy,
+    /,
+) -> tuple[Array, Array]:
+    values = precision.accumulation(tensors)
+    real_dtype = values[0].real.dtype
     left = []
     right = []
-    for index, tensor in enumerate(tensors):
+    for index, tensor in enumerate(values):
         if index < center:
             matrix = tensor.reshape((-1, tensor.shape[-1]))
-            left.append(
-                jnp.max(jnp.abs(jnp.conj(matrix.T) @ matrix - jnp.eye(matrix.shape[-1])))
-            )
+            identity = jnp.eye(matrix.shape[-1], dtype=matrix.dtype)
+            left.append(precision.norm(jnp.conj(matrix.T) @ matrix - identity))
         else:
-            left.append(jnp.asarray(0.0))
+            left.append(jnp.asarray(0.0, dtype=real_dtype))
         if index > center:
             matrix = tensor.reshape((tensor.shape[0], -1))
-            right.append(
-                jnp.max(jnp.abs(matrix @ jnp.conj(matrix.T) - jnp.eye(matrix.shape[0])))
-            )
+            identity = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
+            right.append(precision.norm(matrix @ jnp.conj(matrix.T) - identity))
         else:
-            right.append(jnp.asarray(0.0))
+            right.append(jnp.asarray(0.0, dtype=real_dtype))
+    return jnp.stack(left), jnp.stack(right)
+
+
+def _mps_evidence(
+    tensors: tuple[Array, ...],
+    center: int,
+    precision: TensorNetworkPrecisionPolicy,
+    /,
+) -> MPSCanonicalEvidence:
+    left, right = _canonical_residuals(tensors, center, precision)
     return MPSCanonicalEvidence(
-        jnp.stack(left),
-        jnp.stack(right),
-        jnp.linalg.norm(tensors[center]),
+        left,
+        right,
+        precision.norm(tensors[center]),
         center=center,
     )
 
@@ -105,22 +146,8 @@ def canonicalize_mps(
     center_ = int(center)
     if not 0 <= center_ < state.site_count:
         raise ValueError("center is outside the MPS.")
-    tensors = list(state.tensors)
-    for index in range(center_):
-        tensor = tensors[index]
-        matrix = tensor.reshape((-1, tensor.shape[-1]))
-        q, r = jnp.linalg.qr(matrix)
-        rank = q.shape[-1]
-        tensors[index] = q.reshape((tensor.shape[0], tensor.shape[1], rank))
-        tensors[index + 1] = jnp.tensordot(r, tensors[index + 1], axes=(1, 0))
-    for index in range(state.site_count - 1, center_, -1):
-        tensor = tensors[index]
-        matrix = tensor.reshape((tensor.shape[0], -1))
-        q, r = jnp.linalg.qr(matrix.T)
-        rank = q.shape[-1]
-        tensors[index] = q.T.reshape((rank, tensor.shape[1], tensor.shape[2]))
-        tensors[index - 1] = jnp.tensordot(tensors[index - 1], r.T, axes=(-1, 0))
-    canonical = MatrixProductState(tuple(tensors), precision=state.precision)
+    tensors = _canonical_sweep(state.tensors, center_, state.precision)
+    canonical = MatrixProductState(tensors, precision=state.precision)
     if normalize:
         norm = canonical.norm()
         norm = eqx.error_if(
@@ -131,7 +158,7 @@ def canonicalize_mps(
         tensors = list(canonical.tensors)
         tensors[center_] = tensors[center_] / norm
         canonical = MatrixProductState(tuple(tensors), precision=state.precision)
-    return canonical, _evidence(canonical.tensors, center_)
+    return canonical, _mps_evidence(canonical.tensors, center_, canonical.precision)
 
 
 def canonicalize_lpdo(
@@ -145,53 +172,12 @@ def canonicalize_lpdo(
     center_ = int(center)
     if not 0 <= center_ < state.site_count:
         raise ValueError("center is outside the LPDO.")
-    tensors = list(state.tensors)
-    for index in range(center_):
-        tensor = tensors[index]
-        matrix = tensor.reshape((-1, tensor.shape[-1]))
-        q, r = jnp.linalg.qr(matrix)
-        rank = q.shape[-1]
-        tensors[index] = q.reshape(
-            (tensor.shape[0], tensor.shape[1], tensor.shape[2], rank)
-        )
-        tensors[index + 1] = jnp.tensordot(r, tensors[index + 1], axes=(1, 0))
-    for index in range(state.site_count - 1, center_, -1):
-        tensor = tensors[index]
-        matrix = tensor.reshape((tensor.shape[0], -1))
-        q, r = jnp.linalg.qr(matrix.T)
-        rank = q.shape[-1]
-        tensors[index] = q.T.reshape(
-            (rank, tensor.shape[1], tensor.shape[2], tensor.shape[3])
-        )
-        tensors[index - 1] = jnp.tensordot(tensors[index - 1], r.T, axes=(-1, 0))
-    result = LocallyPurifiedDensity(tuple(tensors), precision=state.precision)
-    left = []
-    right = []
-    for index, tensor in enumerate(result.tensors):
-        left_matrix = tensor.reshape((-1, tensor.shape[-1]))
-        right_matrix = tensor.reshape((tensor.shape[0], -1))
-        left.append(
-            jnp.max(
-                jnp.abs(
-                    jnp.conj(left_matrix.T) @ left_matrix - jnp.eye(left_matrix.shape[-1])
-                )
-            )
-            if index < center_
-            else jnp.asarray(0.0)
-        )
-        right.append(
-            jnp.max(
-                jnp.abs(
-                    right_matrix @ jnp.conj(right_matrix.T)
-                    - jnp.eye(right_matrix.shape[0])
-                )
-            )
-            if index > center_
-            else jnp.asarray(0.0)
-        )
+    tensors = _canonical_sweep(state.tensors, center_, state.precision)
+    result = LocallyPurifiedDensity(tensors, precision=state.precision)
+    left, right = _canonical_residuals(result.tensors, center_, result.precision)
     return result, LPDOCanonicalEvidence(
-        jnp.stack(left),
-        jnp.stack(right),
+        left,
+        right,
         result.raw_trace(),
         center=center_,
     )

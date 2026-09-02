@@ -14,7 +14,8 @@ from jaxtyping import Array, ArrayLike
 from .._strict import StrictModule
 from ._canonical import canonicalize_mps
 from ._core import MatrixProductState
-from ._evolution import apply_two_site_gate, TensorTruncationEvidence
+from ._evolution import apply_two_site_gate
+from ._split import TensorTruncationEvidence
 
 
 class NearestNeighborHamiltonian(StrictModule):
@@ -69,6 +70,7 @@ class TEBDEvidence(StrictModule):
     norm_residual: Array
     valid: Array
     trotter_order: int = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -77,6 +79,7 @@ class TEBDEvidence(StrictModule):
         /,
         *,
         trotter_order: int,
+        precision_policy_id: str,
     ):
         self.discarded_weights = jnp.asarray(discarded_weights)
         self.cumulative_discarded_weight = jnp.sum(self.discarded_weights)
@@ -87,6 +90,7 @@ class TEBDEvidence(StrictModule):
             & jnp.isfinite(self.norm_residual)
         )
         self.trotter_order = int(trotter_order)
+        self.precision_policy_id = str(precision_policy_id)
 
 
 def _layer(
@@ -194,6 +198,7 @@ def tebd_step(
         discarded,
         jnp.abs(current.norm() - 1.0),
         trotter_order=order,
+        precision_policy_id=state.precision.policy_id,
     )
 
 
