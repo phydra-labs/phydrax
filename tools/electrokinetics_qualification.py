@@ -19,7 +19,7 @@ def qualification():
         axis_names=("x",),
     ).prepare(jnp.asarray(((0.0,), (1.0,))))
     bridge = phx.discretization.StructuredCochainBridge(grid)
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("cation", "anion"),
         (
             phx.equations.ChemicalPhaseKind.LIQUID,
@@ -29,6 +29,7 @@ def qualification():
         ("M", "X"),
         jnp.asarray(((1, 0), (0, 1)), dtype=jnp.int32),
         jnp.asarray((1, -1), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     parameters = phx.equations.ElectrolyteTransportParameters(
         schema, jnp.asarray((1e-3, 1e-3)), 300.0, 1e8

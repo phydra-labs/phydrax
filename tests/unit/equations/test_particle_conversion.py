@@ -13,13 +13,14 @@ def _schema(phases=(None, None)):
         if phases == (None, None)
         else phases
     )
-    return phx.equations.ChemicalSpeciesSchema(
+    return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         selected,
         jnp.asarray([0.01, 0.01]),
         ("X",),
         jnp.asarray([[1, 1]]),
         jnp.zeros_like(jnp.asarray([0.01, 0.01]), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
 
 

@@ -213,7 +213,7 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
         scale = jnp.maximum(jnp.abs(energy), 1.0)
         successful = (
             jnp.all(energy_admissible)
-            & thermo.successful
+            & jnp.all(thermo.successful)
             & jnp.all(capacity > 0.0)
             & jnp.all(
                 jnp.abs(residual)

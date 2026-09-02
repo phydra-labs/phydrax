@@ -8,13 +8,14 @@ import phydrax as phx
 
 
 def _problem():
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A",),
         (phx.equations.ChemicalPhaseKind.SOLID,),
         jnp.asarray([0.01]),
         ("X",),
         jnp.asarray([[1]]),
         jnp.zeros_like(jnp.asarray([0.01]), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(

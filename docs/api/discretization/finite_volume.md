@@ -506,7 +506,7 @@ fixed-flux feedback.
 
 ---
 
-::: phydrax.equations.MultispeciesEulerSystem
+::: phydrax.equations.HomogeneousMixtureEulerSystem
 
 ---
 

@@ -66,7 +66,7 @@ def test_jump_event_batch_has_explicit_status_and_left_right_state_semantics():
 
 
 def test_chemical_jump_propensities_and_conservation_are_combinatorial():
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
             phx.equations.ChemicalPhaseKind.GAS,
@@ -76,6 +76,7 @@ def test_chemical_jump_propensities_and_conservation_are_combinatorial():
         ("X",),
         jnp.asarray(((1, 1),), dtype=jnp.int32),
         jnp.asarray((0, 0), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,

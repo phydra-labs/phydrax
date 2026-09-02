@@ -176,8 +176,8 @@ class ParticleReactionProcessPlan(StrictModule, NonTrainableState):
         )
         successful = (
             metrics.successful
-            & thermo.successful
-            & fields.successful
+            & jnp.all(thermo.successful)
+            & jnp.all(fields.successful)
             & jnp.all(jnp.isfinite(extent_rate))
             & jnp.all(jnp.isfinite(species_rate))
             & jnp.all(jnp.isfinite(reaction_energy))
@@ -353,7 +353,7 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
         element_residual = self.schema.element_amount(species_rate)
         tolerance = 128.0 * jnp.finfo(state.internal_energy.dtype).eps
         successful = (
-            thermodynamics.successful
+            jnp.all(thermodynamics.successful)
             & metrics.successful
             & jnp.all(jnp.isfinite(extent_rate))
             & jnp.all(jnp.isfinite(energy_rate))

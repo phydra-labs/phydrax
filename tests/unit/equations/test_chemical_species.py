@@ -10,7 +10,7 @@ import phydrax as phx
 
 
 def _schema():
-    return phx.equations.ChemicalSpeciesSchema(
+    return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("cation", "anion", "solid"),
         (
             phx.equations.ChemicalPhaseKind.LIQUID,
@@ -21,6 +21,7 @@ def _schema():
         ("M", "X"),
         jnp.asarray(((1, 0, 1), (0, 1, 1)), dtype=jnp.int32),
         jnp.asarray((1, -1, 0), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
 
 
@@ -40,22 +41,24 @@ def test_chemical_species_schema_tracks_elements_charge_and_phases():
 
 def test_chemical_species_schema_rejects_invalid_charge_and_surface_phase():
     with pytest.raises(ValueError, match="integer"):
-        phx.equations.ChemicalSpeciesSchema(
+        phx.equations.ChemicalSpeciesSchema.from_unique_species(
             ("A",),
             (phx.equations.ChemicalPhaseKind.GAS,),
             jnp.asarray((1.0,)),
             ("X",),
             jnp.asarray(((1,),), dtype=jnp.int32),
             jnp.asarray((0.5,)),
+            gas_standard_pressure=101325.0,
         )
     with pytest.raises(ValueError, match="explicit ChemicalPhaseSpec"):
-        phx.equations.ChemicalSpeciesSchema(
+        phx.equations.ChemicalSpeciesSchema.from_unique_species(
             ("A*",),
             (phx.equations.ChemicalPhaseKind.SURFACE,),
             jnp.asarray((1.0,)),
             ("X",),
             jnp.asarray(((1,),), dtype=jnp.int32),
             jnp.asarray((0,), dtype=jnp.int32),
+            gas_standard_pressure=101325.0,
         )
 
 
@@ -72,7 +75,7 @@ def test_surface_phase_requires_positive_site_density():
         2,
         site_density=2.5,
     )
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A*",),
         (phx.equations.ChemicalPhaseKind.SURFACE,),
         jnp.asarray((1.0,)),
@@ -80,5 +83,6 @@ def test_surface_phase_requires_positive_site_density():
         jnp.asarray(((1,),), dtype=jnp.int32),
         jnp.asarray((0,), dtype=jnp.int32),
         phase_specs=(phase,),
+        gas_standard_pressure=101325.0,
     )
     assert schema.phase_specs == (phase,)

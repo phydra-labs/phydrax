@@ -40,11 +40,11 @@ def test_wcs_imaging_and_survey_closure():
 
 def test_radiative_waveform_and_exoplanet_closure():
     physics = phx.applications.astrophysics
-    transfer = physics.ScalarRadiativeTransferPlan(jnp.ones(4)).evaluate(
+    transfer = physics.RayTransferPlan(jnp.ones(4), ray_id="closure").evaluate(
         jnp.ones(4), jnp.zeros(4)
     )
     assert bool(transfer.valid)
-    np.testing.assert_allclose(transfer.emergent, 4.0)
+    np.testing.assert_allclose(transfer.intensity, 4.0)
 
     provenance = physics.ObservationDataProvenance.native("qnm")
     modes = physics.QnmModeTable(
@@ -65,3 +65,20 @@ def test_radiative_waveform_and_exoplanet_closure():
     lens = physics.FiniteSourceMicrolensingPlan(0.01).evaluate(jnp.asarray([1.0, 0.0]))
     assert bool(lens.valid)
     assert float(lens.magnification) > 1.0
+
+
+def test_ray_transfer_zero_extinction_and_polarized_singular_operator():
+    physics = phx.applications.astrophysics
+    ray = physics.RayTransferPlan(jnp.ones(4), ray_id="zero-extinction")
+    scalar = ray.evaluate(jnp.ones(4), jnp.zeros(4), jnp.asarray(2.0))
+    np.testing.assert_allclose(scalar.intensity, 6.0, atol=1.0e-12)
+    assert bool(scalar.valid)
+
+    polarized = physics.PolarizedRadiativeTransferPlan(jnp.ones(2))
+    result = polarized.evaluate(
+        jnp.ones((2, 4)),
+        jnp.zeros((2, 4, 4)),
+        jnp.zeros((4,)),
+    )
+    np.testing.assert_allclose(result.emergent, 2.0 * jnp.ones((4,)), atol=1.0e-12)
+    assert bool(result.valid)

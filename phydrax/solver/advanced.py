@@ -53,6 +53,11 @@ from ._isolated_gravity import (
     IsolatedCartesianGravityPlan,
     IsolatedGravityDiagnostics,
 )
+from ._kinetic_synthetic import (
+    KineticSyntheticAccelerationPlan,
+    KineticSyntheticCorrection,
+    KineticSyntheticResidual,
+)
 from ._mapped_mhd import (
     MappedALEConstrainedTransportPlan,
     MappedCochainGeometry,
@@ -91,7 +96,7 @@ from ._nonideal_mhd import (
     NonIdealMHDPlan,
 )
 from ._radiation import (
-    GrayRadiationDiffusionPlan,
+    GrayLinearRadiationDiffusionPlan,
     RadiationDiffusionDiagnostics,
     RadiationMatterState,
 )
@@ -147,7 +152,10 @@ __all__ = [
     "ElectromotiveForceRegister",
     "FieldObservationPlan",
     "FluxCTElectromotivePlan",
-    "GrayRadiationDiffusionPlan",
+    "GrayLinearRadiationDiffusionPlan",
+    "KineticSyntheticAccelerationPlan",
+    "KineticSyntheticCorrection",
+    "KineticSyntheticResidual",
     "HLLUCTElectromotivePlan",
     "LearnedClosureDiagnostics",
     "LocalMHDPositivityPlan",
