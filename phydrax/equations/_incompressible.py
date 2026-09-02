@@ -102,6 +102,7 @@ class _PeriodicRotationalDrift(StrictModule):
     discretization: TensorSpectralDiscretization
     method: PreparedPseudospectralMethod
     projector: PeriodicLerayProjector
+    nonlinear_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -115,6 +116,16 @@ class _PeriodicRotationalDrift(StrictModule):
         self.discretization = discretization
         self.method = method
         self.projector = projector
+        self.nonlinear_id = canonical_fingerprint(
+            {
+                "kind": "periodic-incompressible-rotational-drift-v1",
+                "dimension": problem.spatial_dimension,
+                "forcing": problem.forcing_id,
+                "discretization": discretization.prepared_id,
+                "spatial_method": method.prepared_id,
+                "projector": projector.projector_id,
+            }
+        )
 
     def _rotational_product(self, state: Array, /) -> Array:
         dealiasing = self.method.dealiasing
@@ -398,11 +409,13 @@ def compile_periodic_incompressible_flow(
         nonlinear,
         state_shape=projector.state_shape,
         operator_id=linear.operator_id,
+        nonlinear_id=nonlinear.nonlinear_id,
     )
     compilation_id = canonical_fingerprint(
         {
             "kind": "periodic-incompressible-compiler-v1",
             "problem": problem.problem_id,
+            "nonlinear": nonlinear.nonlinear_id,
             "discretization": discretization.prepared_id,
             "method": prepared_method.prepared_id,
             "projector": projector.projector_id,

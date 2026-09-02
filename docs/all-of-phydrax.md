@@ -97,7 +97,26 @@ geometry, DOF layouts, measures, prepared operators, transfers, and complete
 approximation bundles. Tensor support is independent of finite-difference,
 spectral, or collocation calculus. Global tensor spectral spaces separate mathematical
 modes, physical grids, modal DOFs, dealiasing, constrained/Galerkin/tau formulations,
-periodic Leray projection, channel Stokes constraints, and temporal integration.
+and periodic Leray projection. Periodic incompressible integration retains
+full-complex live state; independent-real Hermitian coordinates are optional
+backend/checkpoint encodings. Constant-power forcing uses volume-mean native-modal
+normalization and fails closed below its declared forced-energy threshold. OU forcing
+continues exactly in real solenoidal modal coordinates; its prepared ETDRK wrapper
+uses the declared start/half/end stage values and commits coefficients atomically
+with velocity. This exact stochastic transition does not make the fluid quadrature
+exact. Full-complex shell statistics conserve native modal integrals, and
+accepted-step statistical windows provide sample/time weighting and completed-block
+uncertainty.
+
+Fourier--Chebyshev--Fourier channels retain primitive public velocity/pressure fields
+while the default internal Stokes route eliminates pressure into fixed-band
+ultraspherical systems with fixed-rank corrections. The zero mode owns
+pressure-gradient or bulk-flux control; nonzero modes use wall-normal
+velocity/vorticity elimination. Restartable SBDF2 carries complete nonlinear,
+velocity, pressure, and history state and requires its prepared step exactly.
+`dense_reference` is an explicit channel oracle and carries no banded-route
+production or qualification evidence.
+
 Axis domains cover bounded, periodic, half-line, and real-line support; rational
 Chebyshev bases, canonical modal transfers, physical modal-tail diagnostics, and
 cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
@@ -107,12 +126,35 @@ bases, and the prepared discretization consumed by SFNO.
 Local stencil programs, structured compact and transform-line solves,
 periodic/bounded SBP calculus, entropy-conservative SBP flux differencing, and
 compatible finite-volume MAC flow compose without conflating quadrature sites, mesh
-entities, and field DOFs. The MAC substrate includes dynamic wall/inflow/open
-closures, symmetry-preserving momentum, named scalar/Boussinesq and conservative
+entities, and field DOFs. Constant-density separable all-Neumann MAC pressure may use
+a three-dimensional hybrid route: transforms on two uniform transverse axes plus a
+nonuniform physical Neumann line, with explicit compatibility and volume gauge.
+Variable-density, mixed/open, distributed, and sharded-line cases are excluded from
+that hybrid route, and MAC has no fixed-bulk-flux controller.
+
+The broader MAC substrate includes dynamic wall/inflow/open closures,
+symmetry-preserving momentum, named scalar/Boussinesq and conservative
 variable-density dynamics, implicit diffusion, resolved face-marker coupling,
 sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
-certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
-and distributed halo plans remain available to the wider finite-volume family.
+bounded sensitivity modes. Its raw plane/wall statistic route centers staggered
+components to cells for exact-volume plane moments, retains native wall-normal
+boundary faces, and reports separate signed one-sided shears relative to explicit
+lower/upper wall velocities. WENO fluxes, fixed-capacity AMR, and distributed halo
+plans remain available to the wider finite-volume family.
+Route-specific periodic-spectral, channel, and structured-MAC production assemblers
+carry accepted PyTrees through bounded compiled segments to an absolute end
+time/capacity, with content-derived checkpoint IDs, exact-time scheduled output,
+typed trigger actions, and windowed/block moments.
+These capabilities do not constitute a universal DNS claim or distributed
+spectral/hybrid-line support.
+
+Qualification remains route and case specific. When generated, separate
+periodic-spectral, spectral-channel, and MAC artifacts bind exact
+support/input/reference/configuration identities. Assembly of passed artifacts
+produces an unsigned `CapabilityProfile` candidate with `released=false`, not a
+library-wide badge.
+
+
 The S1 isogeometric path binds two clamped isotropic B-spline grids to a
 positive, mean-one-gauge NURBS control net and an exactly isoparametric scalar
 H1 field. It covers regular, untrimmed, full-dimensional two-dimensional
@@ -315,6 +357,34 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Atomistic interoperability](guides_atomistic_interop.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
+
+### Advanced biophysics
+
+Advanced biophysics is a composition of canonical numerical owners rather than a
+parallel simulation engine. `phydrax.stochastic.path_sampling` adds fixed-capacity
+path-space ensembles, exact proposal accounting, TPS/TIS/RETIS workflows, reactive
+rates, committors, uncertainty, and identity-bound restart. It accepts only dynamics
+with declared path-density or qualified reversible-map semantics and deterministically
+rejects failed propagation without hidden retries.
+
+`phydrax.applications.electrophysiology` compiles stable-ID cable morphologies,
+membrane mechanisms, stimuli, recordings, ion pools, synapses, plasticity, and
+stochastic channel transitions into residual-checked implicit tree solves.
+`phydrax.applications.cellular_mechanics` provides energy-derived Helfrich membranes,
+surface chemistry, fluid-transfer composition, topology-epoch remeshing, polygonal and
+polyhedral vertex tissues, dynamic particle relations, chromatin loop extrusion, actin
+networks, motors, and focal adhesions. Discrete binding and topology changes remain
+candidate/evaluation/commit transactions; derivatives are conditional on the accepted
+fixed event program.
+
+The atomistic owner additionally supplies residual-gated matrix-free polarization,
+prepared alchemical endpoint mappings, elastic networks, differentiable external
+fields, and fixed-capacity distributed decomposition. Systems-biology plans compile
+compartmental stoichiometry, gene-expression kinetics, source evidence, and atomic
+multirate process coupling. Observation plans keep latent physics separate from
+fluorescence, correlation, lifetime, FRET, channel, and current-voltage measurement
+models. See the Advanced biophysics guides in the navigation for the exact support and
+qualification boundaries.
 
 ### Experimental velocimetry from images to trajectories
 

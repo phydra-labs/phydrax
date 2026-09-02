@@ -11,20 +11,22 @@ of gyration, coordination, native-contact similarity, aligned RMSD, volume, dens
 path progress/distance. Periodic metrics provide wrapped differences for torsions and other
 cyclic variables. Every evaluation includes a branch margin and success flag.
 
-## Bias programs
+## Bias plans
 
-`BiasProgramPlan` composes static harmonic, flat-bottom, wall, moving, umbrella,
-metadynamics, and adaptive-biasing-force terms. History is a fixed-capacity
-`BiasProgramState`. Only an accepted dynamics step advances schedules, deposits a hill, or
-updates ABF statistics; rejected proposals leave history unchanged. Checkpoint the physical
-state and bias state together.
+`AtomisticBiasPlan` represents one static harmonic, flat-bottom, wall, moving,
+umbrella, metadynamics, or adaptive-biasing-force plan over a
+`CollectiveVariableProgram`. Its fixed-capacity history is stored in
+`AtomisticBiasState`. Only an accepted dynamics step advances schedules, deposits a
+hill, or updates ABF statistics; rejected proposals leave history unchanged.
+Checkpoint the physical state and bias state together.
 
 ## Replica ensembles
 
-`ReplicaEnsemblePlan` separates replica slots from thermodynamic labels. Exchange proposals
-swap labels rather than coordinate arrays and record a deterministic ledger. The same
-acceptance rule supports temperature, Hamiltonian, lambda, and umbrella exchange when the
-reduced-potential matrix contains all cross evaluations.
+`AtomisticReplicaEnsemblePlan` separates replica slots from thermodynamic labels.
+Exchange proposals swap labels rather than coordinate arrays and record a
+deterministic ledger. The same acceptance rule supports temperature, Hamiltonian,
+lambda, and umbrella exchange when the reduced-potential matrix contains all cross
+evaluations.
 
 ## Free energy
 

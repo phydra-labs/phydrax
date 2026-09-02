@@ -479,6 +479,7 @@ def run_multiplicative_reaction_diffusion_benchmark(
         t1=duration,
         kappa=diffusivity,
         reaction=lambda t, state, args: (reaction_shape / mode) * state,
+        reaction_id="lognormal-mode-linear-reaction-v1",
         noise_basis=basis,
         noise_amplitude=lambda t, state, args: noise_scale * state,
         noise_structure="commutative",

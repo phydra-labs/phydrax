@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from .._fingerprint import canonical_fingerprint
 from .._precision import (
     precision_dtype_name,
     PrecisionEvidenceEnvelope,
@@ -87,6 +88,35 @@ def _spatial_id(discretization: SpatialDiscretization, /) -> str:
     )
 
 
+_ZERO_SEMILINEAR_NONLINEAR_ID = canonical_fingerprint(
+    {"kind": "semilinear-zero-nonlinear-drift-v1"}
+)
+_NO_REACTION_ID = canonical_fingerprint({"kind": "reaction-diffusion-no-reaction-v1"})
+
+
+def _resolve_optional_callable_id(
+    value: Callable[..., Any] | None,
+    identifier: str | None,
+    /,
+    *,
+    value_name: str,
+    identifier_name: str,
+    zero_identifier: str,
+) -> str:
+    if value is None:
+        if identifier is not None:
+            raise ValueError(f"{identifier_name} must be None when {value_name} is None.")
+        return zero_identifier
+    if not callable(value):
+        raise TypeError(f"{value_name} must be callable or None.")
+    if not isinstance(identifier, str) or not identifier:
+        raise ValueError(
+            f"{identifier_name} is required and must be non-empty when "
+            f"{value_name} is callable."
+        )
+    return identifier
+
+
 class _ValidatedVectorField(StrictModule):
     field: Callable[[Array, Array, Any], ArrayLike]
     output_shape: tuple[int, ...] = eqx.field(static=True)
@@ -133,6 +163,7 @@ class _ReactionDiffusionDrift(StrictModule):
     discretization: SpatialDiscretization
     kappa: Any
     reaction: Callable[[Array, Array, Any], ArrayLike] | None
+    reaction_id: str = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
@@ -385,7 +416,14 @@ class SemidiscreteSPDE(StrictModule):
             DiscretizationRecord(
                 form_key,
                 "semidiscrete-spde",
-                f"spde:{spatial_discretization.prepared_id}:{basis_id or 'deterministic'}",
+                canonical_fingerprint(
+                    {
+                        "kind": "semidiscrete-spde-form-v2",
+                        "problem": problem.problem_id,
+                        "spatial_discretization": spatial_discretization.prepared_id,
+                        "noise_basis": basis_id,
+                    }
+                ),
                 dependency_key_ids=tuple(dependencies),
                 precision_evidence_id=self.precision_evidence_id,
             )
@@ -562,6 +600,34 @@ def semidiscretize_spde(
             ),
         )
     )
+    if semilinear_drift is not None:
+        dynamics_identity = {"semilinear_drift": semilinear_drift.drift_id}
+    elif isinstance(drift, _ReactionDiffusionDrift):
+        dynamics_identity = {"reaction": drift.reaction_id}
+    else:
+        dynamics_identity = None
+    problem_id = (
+        None
+        if dynamics_identity is None
+        else (
+            "semidiscrete-spde:"
+            + canonical_fingerprint(
+                {
+                    "kind": "semidiscrete-spde-v1",
+                    "dynamics": dynamics_identity,
+                    "spatial_discretization": _spatial_id(spatial_discretization),
+                    "state_shape": list(state_shape),
+                    "state_dtype": str(state.dtype),
+                    "noise_shape": list(resolved_noise_shape),
+                    "noise_basis": resolved_basis_id,
+                    "noise_structure": (
+                        None if validated_diffusion is None else resolved_structure
+                    ),
+                    "interpretation": interpretation,
+                }
+            )
+        )
+    )
     problem = DifferentialProblem(
         validated_drift,
         state,
@@ -570,6 +636,7 @@ def semidiscretize_spde(
         args=args,
         wiener_terms=wiener_terms,
         interpretation=interpretation,
+        problem_id=problem_id,
     )
     return SemidiscreteSPDE(
         problem=problem,
@@ -593,6 +660,7 @@ def semidiscretize_semilinear_spde(
     t0: ArrayLike,
     t1: ArrayLike,
     operator_id: str,
+    nonlinear_id: str | None = None,
     args: Any = None,
     diffusion: Callable[[Array, Array, Any], ArrayLike] | None = None,
     noise_basis: SpatialNoiseBasis | None = None,
@@ -607,7 +675,18 @@ def semidiscretize_semilinear_spde(
     spectral_representation: TransformDiagonalRepresentation | None = None,
     compatible_noise_eigenvalues: ArrayLike | None = None,
 ) -> SemidiscreteSPDE:
-    """Semidiscretize an explicitly decomposed semilinear stochastic equation."""
+    """Semidiscretize an explicitly identified semilinear stochastic equation.
+
+    ``nonlinear_id`` is required when ``nonlinear_drift`` is callable. When the
+    nonlinear drift is ``None``, the API binds a canonical zero-drift identity.
+    """
+    resolved_nonlinear_id = _resolve_optional_callable_id(
+        nonlinear_drift,
+        nonlinear_id,
+        value_name="nonlinear_drift",
+        identifier_name="nonlinear_id",
+        zero_identifier=_ZERO_SEMILINEAR_NONLINEAR_ID,
+    )
     state_shape = tuple(int(size) for size in jnp.asarray(initial_state).shape)
     if not isinstance(linear_operator, AbstractLinearOperator):
         raise TypeError("linear_operator must be an AbstractLinearOperator.")
@@ -625,6 +704,7 @@ def semidiscretize_semilinear_spde(
         nonlinear_drift,
         state_shape=state_shape,
         operator_id=operator_id,
+        nonlinear_id=resolved_nonlinear_id,
         mass_self_adjoint=mass_self_adjoint,
         mass_weights=mass_weights,
         spectral_bounds=spectral_bounds,
@@ -659,6 +739,7 @@ def semidiscretize_reaction_diffusion(
     t1: ArrayLike,
     kappa: ArrayLike | Callable[[Array, Array, Any], ArrayLike],
     reaction: Callable[[Array, Array, Any], ArrayLike] | None = None,
+    reaction_id: str | None = None,
     args: Any = None,
     noise_basis: SpatialNoiseBasis | None = None,
     noise_amplitude: Callable[[Array, Array, Any], ArrayLike] | None = None,
@@ -682,9 +763,17 @@ def semidiscretize_reaction_diffusion(
     therefore modal. Evaluate physical nonlinearities through a prepared
     ``PreparedPseudospectralMethod.nonlinear_action`` so the declared dealiasing
     policy remains explicit.
+
+    A callable ``reaction`` requires an explicit stable ``reaction_id``. Omitting
+    the reaction binds a canonical no-reaction identity.
     """
-    if reaction is not None and not callable(reaction):
-        raise TypeError("reaction must be callable or None.")
+    resolved_reaction_id = _resolve_optional_callable_id(
+        reaction,
+        reaction_id,
+        value_name="reaction",
+        identifier_name="reaction_id",
+        zero_identifier=_NO_REACTION_ID,
+    )
     state_shape = tuple(int(size) for size in jnp.asarray(initial_state).shape)
     semilinear: SemilinearDrift | None
     if callable(kappa):
@@ -692,6 +781,7 @@ def semidiscretize_reaction_diffusion(
             spatial_discretization,
             kappa,
             reaction,
+            resolved_reaction_id,
             state_shape,
         )
         semilinear = None
@@ -796,6 +886,7 @@ def semidiscretize_reaction_diffusion(
             reaction,
             state_shape=state_shape,
             operator_id=operator_id,
+            nonlinear_id=resolved_reaction_id,
             mass_self_adjoint=coefficient.shape == (),
             mass_weights=weights,
             spectral_bounds=bounds,

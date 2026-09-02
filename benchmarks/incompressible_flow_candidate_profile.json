@@ -1,0 +1,66 @@
+{
+  "candidate_id": "0ff1ebc75df99f2b039773b235739dda94f27a3c8e79ae233b9ff38f9dca635c",
+  "kind": "incompressible-flow-capability-profile-candidate",
+  "profile": {
+    "dependencies": [],
+    "kind": "capability-profile",
+    "name": "incompressible-flow.candidate",
+    "profile_id": "1cfb3a855a29dfda74af5829a386f4fa4611e426fa63e5b337e90931739215d1",
+    "provider": "phydrax",
+    "release_evidence": [],
+    "released": false,
+    "required_gates": [],
+    "support_tuples": [
+      {
+        "attributes": {
+          "geometry": "uniform-periodic+stretched-wall-normal",
+          "momentum": "symmetry-preserving",
+          "pressure_routes": "full+hybrid+iterative",
+          "route": "mac",
+          "statistics": "mac-plane-wall"
+        },
+        "capability": "incompressible-flow",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "0decc3e5a3bb440b47e39c1e89a8951ea03f5acb340f986370ea6e05cc4e463e"
+      },
+      {
+        "attributes": {
+          "forcing": "compiler-modal",
+          "route": "spectral-channel",
+          "spatial_method": "fourier-chebyshev-fourier",
+          "statistics": "spectral-channel",
+          "stokes_route": "ultraspherical_banded",
+          "temporal_method": "sbdf2"
+        },
+        "capability": "incompressible-flow",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "232c3acf3819722f4ef9bc34ce33f9fd8c61fe82d17a44ab25fcd4f40d7fac60"
+      },
+      {
+        "attributes": {
+          "forcing": "compiler-modal",
+          "route": "periodic-spectral",
+          "spatial_method": "periodic-incompressible-rotational-diagonal",
+          "statistics": "periodic-modal",
+          "temporal_method": "etdrk4"
+        },
+        "capability": "incompressible-flow",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "57231b8b8dcdce56c627bfa63105302cbeab2b501d1820fddd3e1fc42fe7bdec"
+      }
+    ],
+    "version": "candidate"
+  },
+  "qualification_artifact_ids": [
+    "1f3507fd5cd60e26df1e478aaeddf1ad181ec0131a8d802334eeae9b95eaa90f",
+    "2b80a42c177c48a95e2617b2f2c10e819cd55e39f9d8578553a7ee11563cbd21",
+    "71638f25af18c02356a66babc342e86eb48a8648ece221b95e143c6a57898bf4"
+  ],
+  "qualified_routes": [
+    "mac",
+    "periodic-spectral",
+    "spectral-channel"
+  ],
+  "release_ready": false,
+  "signed": false
+}

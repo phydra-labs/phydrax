@@ -135,6 +135,8 @@ from ._channel_flow import (
     ChannelFlowDiagnosticsHistory,
     ChannelFlowSolution,
     ChannelSBDF2Method,
+    ChannelSBDF2State,
+    PreparedChannelSBDF2Method,
     solve_channel_sbdf2,
 )
 from ._chemical_reactor import (
@@ -429,7 +431,7 @@ from ._electrostatic_pic import (
     ElectrostaticPICState,
     ElectrostaticPICStepResult,
 )
-from ._etdrk import ETDRKMethod, solve_etdrk
+from ._etdrk import ETDRKMethod, PreparedETDRKMethod, solve_etdrk
 from ._evolution_observation import (
     BoundedEvolutionObservation,
     BoundedEvolutionObservationPlan,
@@ -1440,6 +1442,8 @@ from ._production_runtime import (
     ProductionRunResult,
     ProductionRunState,
     ProductionTerminalManifest,
+    ProductionTriggerAction,
+    ProductionTriggerBinding,
 )
 from ._pseudomode import (
     jaynes_cummings_pseudomode_problem,
@@ -1694,8 +1698,11 @@ from ._runtime_lifecycle import (
     BoundedAsyncPublisher,
     ByteBoundedAsyncPublisher,
     ExactTimeSchedule,
+    MomentWeighting,
     read_runtime_checkpoint,
+    RuntimeCheckpointEncodingPlan,
     RuntimeCheckpointEnvelope,
+    RuntimeCheckpointLeafBinding,
     StreamingMomentPlan,
     StreamingMomentState,
     StreamingObservablePlan,
@@ -2184,6 +2191,8 @@ __all__ = [
     "ChannelFlowDiagnosticsHistory",
     "ChannelFlowSolution",
     "ChannelSBDF2Method",
+    "ChannelSBDF2State",
+    "PreparedChannelSBDF2Method",
     "CochainMultirateDiagnostics",
     "CochainMultiratePlan",
     "CochainRatePartition",
@@ -2292,6 +2301,8 @@ __all__ = [
     "ProductionRunResult",
     "ProductionRunState",
     "ProductionTerminalManifest",
+    "ProductionTriggerAction",
+    "ProductionTriggerBinding",
     "DurableCheckpointStore",
     "PreparedProductionRun",
     "ProductionResourceForecast",
@@ -2424,6 +2435,7 @@ __all__ = [
     "RosenbrockAdaptivePolicy",
     "RosenbrockWMethod",
     "ETDRKMethod",
+    "PreparedETDRKMethod",
     "HermitianCoordinateEvolution",
     "HERMITIAN_COORDINATE_INVALID",
     "HydrostaticFreeSurfaceResult",
@@ -3018,8 +3030,11 @@ __all__ = [
     "BoundedAsyncPublisher",
     "ByteBoundedAsyncPublisher",
     "ExactTimeSchedule",
+    "MomentWeighting",
     "read_runtime_checkpoint",
     "RuntimeCheckpointEnvelope",
+    "RuntimeCheckpointEncodingPlan",
+    "RuntimeCheckpointLeafBinding",
     "StreamingObservablePlan",
     "StreamingObservableState",
     "StreamingMomentPlan",

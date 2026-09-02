@@ -532,6 +532,8 @@ from ._subspaces import LinearSubspace, NullspacePolicy
 from ._transform_line import (
     PreparedTransformLineSolve,
     TransformLineFactors,
+    TransformLineNullspaceKind,
+    TransformLineNullspacePolicy,
     TransformLineReport,
     TransformLineRepresentation,
     TransformLineResourceEstimate,
@@ -868,6 +870,8 @@ __all__ = [
     "SpectralEstimate",
     "PreparedTransformLineSolve",
     "TransformLineFactors",
+    "TransformLineNullspaceKind",
+    "TransformLineNullspacePolicy",
     "TransformLineReport",
     "TransformLineRepresentation",
     "TransformLineResourceEstimate",

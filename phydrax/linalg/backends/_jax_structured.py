@@ -155,20 +155,21 @@ def solve_structured(
 
 def _prepare_lu(matrix: Array, /) -> _LUState:
     factor, pivots = jsp.linalg.lu_factor(matrix)
-    diagonal = jnp.diag(factor)
-    scale = jnp.maximum(jnp.max(jnp.abs(matrix)), 1.0)
-    threshold = jnp.finfo(matrix.real.dtype).eps * float(matrix.shape[0]) * scale
+    diagonal = jnp.diagonal(factor, axis1=-2, axis2=-1)
+    scale = jnp.maximum(jnp.max(jnp.abs(matrix), axis=(-2, -1)), 1.0)
+    threshold = jnp.finfo(matrix.real.dtype).eps * float(matrix.shape[-1]) * scale
     singular = (
-        jnp.any(jnp.abs(diagonal) <= threshold)
-        | jnp.any(~jnp.isfinite(matrix))
-        | jnp.any(~jnp.isfinite(factor))
+        jnp.any(jnp.abs(diagonal) <= threshold[..., None], axis=-1)
+        | jnp.any(~jnp.isfinite(matrix), axis=(-2, -1))
+        | jnp.any(~jnp.isfinite(factor), axis=(-2, -1))
     )
     return _LUState(factor, pivots, singular)
 
 
 def _solve_lu(state: _LUState, rhs: Array, /) -> tuple[Array, Array]:
     value = jsp.linalg.lu_solve((state.factor, state.pivots), rhs)
-    return value, state.singular | jnp.any(~jnp.isfinite(value))
+    failed = state.singular[..., None] | jnp.any(~jnp.isfinite(value), axis=-2)
+    return value, failed
 
 
 def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
@@ -197,7 +198,9 @@ def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
             )
             pivot_row = column + jnp.argmax(candidates).astype(jnp.int32)
             pivots = pivots.at[column].set(pivot_row)
-            for target_column in range(size):
+            active_start = max(0, column - lower)
+            active_stop = min(size, column + upper + lower + 1)
+            for target_column in range(active_start, active_stop):
                 first_index = diagonal + column - target_column
                 second_index = diagonal + pivot_row - target_column
                 first_valid = (first_index >= 0) & (first_index < factor_width)
@@ -236,11 +239,10 @@ def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
                 factor = factor.at[lower_index, column].set(multiplier)
                 for column_offset in range(1, min(upper + lower, size - column - 1) + 1):
                     band_index = diagonal + row_offset - column_offset
-                    if 0 <= band_index < factor_width:
-                        target = column + column_offset
-                        factor = factor.at[band_index, target].add(
-                            -multiplier * factor[diagonal - column_offset, target]
-                        )
+                    target = column + column_offset
+                    factor = factor.at[band_index, target].add(
+                        -multiplier * factor[diagonal - column_offset, target]
+                    )
         return factor, pivots, singular, minimum_margin
 
     factors, pivots, singular, margins = jax.vmap(factor_one)(flattened_bands)

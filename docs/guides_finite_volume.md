@@ -260,15 +260,28 @@ face contributions remain separate until conservative divergence.
 `MACOperatorPlan` prepares geometry-only normal-face velocity and cell-pressure
 operators. `PreparedMACOperators` owns the compatible divergence, gradient,
 constant/variable-coefficient pressure actions, volume gauge, coefficient
-interpolation, weighted-adjoint evidence, and exact transform eligibility.
+interpolation, weighted-adjoint evidence, and transform eligibility.
 
 `phydrax.solver.MACPressureProjectionPlan` owns closure-aware pressure execution.
-Uniform constant-coefficient periodic/Neumann operators may use an exact FFT/DCT
-transform after an independent action-identity check; general positive coefficients
-and mixed/open closures use prepared `phydrax.linalg` problems. Neumann-only closures
-project compatibility and impose a volume gauge. A pressure outlet removes the
-constant nullspace and does neither. Every route reports its boundary closure, mass
-defect, gauge, pressure residual, pre/post divergence, and atomic commit status.
+The constant-density, constant inverse-momentum path chooses among three explicit
+routes. A fully uniform periodic/Neumann tensor may use the transform-diagonal
+route after an independent physical-action identity check. The `hybrid` route is
+three-dimensional and all-Neumann: the caller names one explicitly nonperiodic
+physical line, the other two axes must be uniform and transform-compatible, and
+preparation certifies the transform-plus-line action against the MAC positive
+Laplacian. Transverse axes are transformed in tensor-axis order, one nonuniform
+tridiagonal Neumann line is solved per transverse mode, and synthesis reverses the
+transform order.
+
+For the single all-zero transverse mode, the hybrid route volume-projects the
+right-hand side, pins one line row only for factorization, then removes the
+volume-weighted pressure mean. The result reports compatibility defect, gauge defect,
+physical residual, factor evidence, resource counts, selected line axis, and
+action-identity defect. General positive coefficients, a runtime
+`inverse_momentum_diagonal`, variable density, mixed/open pressure closure, or an
+ineligible tensor use the prepared iterative route. Neither the hybrid pressure line
+nor the spectral channel line exposes a distributed line solve or communication
+path; the acted-on physical line must remain locally available.
 
 ### Runtime liquid masks and atmospheric pressure
 
@@ -294,10 +307,22 @@ skew-adjoint action, componentwise viscous diffusion, and skew, diffusion-symmet
 and dissipation evidence under the MAC face-dual measure. The public physical
 velocity remains one differently shaped normal-face array per axis;
 `PreparedMACOperators.velocity_space` supplies canonical flat temporal coordinates.
-The construction independently follows
-[Verstappen and Veldman (2003)](https://doi.org/10.1016/S0021-9991(03)00126-8);
-the compatible stage projection is qualified against
-[Costa (2018)](https://doi.org/10.1016/j.camwa.2018.07.034).
+The momentum construction uses the compatible symmetry and conservation identities
+described by [Verstappen and Veldman (2003)](https://doi.org/10.1016/S0021-9991(03)00126-8)
+and the stage-projection formulation in
+[Costa (2018)](https://doi.org/10.1016/j.camwa.2018.07.034). Those references and
+small benchmark cases do not qualify every MAC boundary, coefficient, resolution,
+backend, or time-integration route.
+
+Run the `mac` route of `tools/incompressible_flow_qualification.py` with
+`--output benchmarks/mac_incompressible_qualification.json` for the canonical
+candidate artifact. A generated artifact
+is valid only for its exact support tuple and input/reference/configuration IDs; it
+retains raw metrics, gates, status, failure/inconclusive reasons, and artifact ID.
+`release_ready` remains false. Assembly can reference a passed artifact in an
+unsigned `CapabilityProfile` candidate with `profile.released=false`, but that does
+not qualify other MAC closures, coefficients, grids, integrators, or distributed
+routes.
 
 ```python
 finite_volume = phx.discretization.FiniteVolumePlan(grid).prepare()
@@ -322,6 +347,42 @@ pressure, energy, boundary, divergence, residual, gauge, and step-restriction
 evidence. Explicit SSPRK, implicit-diffusion `MACIMEXEulerMethod`, and fixed-step
 `MACSBDF2Method` consume the same compiled state. `MACHelmholtzSolvePlan` supports
 iterative, certified uniform-transform, and resource-gated transform-line routes.
+
+MAC has no controller that adjusts a body force or pressure gradient to maintain a
+target bulk flux. `normal-flux` is a prescribed boundary condition, not a fixed-flux
+flow controller. Channel `ChannelMeanConstraint("bulk_flux", ...)` is a separate
+spectral zero-mode contract and does not transfer to MAC.
+
+`MACConstantPressureGradientForcing` is a fixed compiler-space acceleration
+`-pressure_gradient / density` on each face component. It has no feedback state.
+When supplied to `StructuredMACProductionPlan`, the compiled dynamics must already
+bind the same forcing identity; the production plan never inserts or retunes it.
+
+`MACPlaneWallStatisticsPlan` is an instantaneous raw-statistics route for a two- or
+three-dimensional MAC grid with one nonperiodic wall axis and periodic homogeneous
+axes. Each normal-face component is arithmetically centered between adjacent faces
+before exact cell-volume-weighted plane means, raw second moments, and Reynolds
+stresses are formed. Wall-normal means are face-measure-weighted reductions of the
+native boundary-face values. Separate lower/upper tangential shear vectors use
+one-sided derivatives from explicitly declared no-slip wall velocities to the
+nearest cell center in increasing wall coordinate. Both wall velocities default to
+zero and are part of the statistics-plan identity. The statistics plan does not
+bind or inspect a `MACBoundaryPlan`, so the caller must supply values matching the
+prepared flow boundary contract.
+Kinetic energy and forcing power use face-dual measures; bulk velocity, divergence
+norm, and the exact conventions are reported with the result. Time or ensemble
+averaging belongs to production `StreamingMomentPlan`, not this instantaneous
+evaluator.
+
+`StructuredMACProductionPlan` requires a prepared fixed-step method, compiled
+constant-density MAC dynamics, matching `MACPlaneWallStatisticsPlan`, absolute
+`start_time`/`end_time`, `step_size`, and `checkpoint_interval`. Optional output
+targets and statistical windows are bounded by that horizon. `maximum_steps` defaults
+to the capacity needed to reach the end; the prepared runtime still enforces any
+method-specific exact-step lattice. `plan.prepare(checkpoint_root, ...)` binds the
+durable store, and `prepared.initialize(face_velocity)` projects physical staggered
+faces into the compiled state. MAC checkpoints retain the native real state rather
+than applying Hermitian encoding.
 
 ### Scalar, variable-density, and coupled dynamics
 

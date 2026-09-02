@@ -95,14 +95,38 @@ tests.
 
 ## Runtime lifecycle
 
-`RuntimeCheckpointEnvelope` captures accepted state, temporal/controller state,
-observer accumulators, RNG state, exact-time cursor, and mesh/method/precision/
-topology/partition identities in one atomic pickle-free archive.
-`ExactTimeSchedule` clamps pure solver segments to declared targets.
-`StreamingObservablePlan` supplies associative online sums, means, extrema, and
-last values. `AcceptedStepTrigger` adds deterministic threshold, direction, and
-hysteresis semantics. `BoundedAsyncPublisher` publishes immutable host snapshots
-through one bounded writer with explicit backpressure.
+`RuntimeCheckpointEnvelope` captures an accepted PyTree together with temporal and
+controller state, observer accumulators, RNG state, the exact-time cursor, and
+mesh/method/precision/topology/partition identities. Its ID includes a digest of the
+stored array contents. `RuntimeCheckpointEncodingPlan` may map selected full-complex
+Hermitian state leaves to independent real coordinates in the archive; unbound leaves
+stay in their native representation, and restore requires the identical tree paths,
+shapes, dtypes, coordinate evidence, and runtime identities.
+
+`ProductionRunPlan` declares a positive nominal step, an absolute `end_time`, an
+absolute `maximum_steps` capacity, checkpoint cadence, and compiled segment length.
+`PreparedProductionRun` executes bounded JIT scans while retaining the complete
+accepted PyTree. Preflight rejects a restart past either absolute bound or a capacity
+that cannot reach the end time. `ExactTimeSchedule` clamps only methods that permit
+step reduction; a method with an exact prepared step must have its end time and every
+remaining output target on that step lattice. Periodic and trigger-requested
+checkpoints have content-derived IDs; their immutable generations are monotonically
+numbered behind an atomically replaced durable pointer. A terminal checkpoint and
+terminal manifest are written after output drain unless output itself failed.
+
+`StreamingMomentPlan` updates accepted-endpoint sample- or time-weighted mean,
+second moment, extrema, optional histogram, and fixed-capacity block totals. Its
+time window clips step intervals at `window_start` and `window_end`; block-mean
+standard error uses only completed nonempty blocks. `AcceptedStepTriggerGraph`
+adds typed `checkpoint`, `publish`, or `stop` actions through
+`ProductionTriggerBinding`. Scalar moments bind directly; each trigger consuming a
+vector moment must declare its flattened component explicitly. Inactive capacity at
+the end of a compiled segment never invokes the numerical method.
+`ByteBoundedAsyncPublisher` copies immutable host
+snapshots, enforces count and byte backpressure, rejects duplicate event IDs within
+the publisher, and surfaces writer/drain failures as production failures. Scheduled
+outputs use deterministic run/schedule/cursor event IDs and checkpoint commits wait
+for earlier publications to drain.
 
 ## Structured support
 
@@ -332,12 +356,21 @@ allocate a dense all-pairs state tensor. Initial compilation supports periodic
 inviscid Euler. Bounded SAT fluxes and viscous entropy production remain separate
 future contracts.
 
-The compact, SBP conservation, and MAC projection qualification campaign is:
+`tools/structured_flow_benchmarks.py` and
+`benchmarks/structured_flow.json` are legacy compact/SBP/MAC case and performance
+artifacts. They do not qualify the MAC hybrid pressure route, variable-density
+projection, boundary families, or production execution.
 
-```bash
-python tools/structured_flow_benchmarks.py \
-  --output benchmarks/structured_flow.json
-```
+The incompressible candidate generator is route separated:
+`tools/incompressible_flow_qualification.py` exposes `periodic-spectral`,
+`spectral-channel`, and `mac`, each with a required output path. The three canonical
+artifact paths are documented by the spectral and finite-volume guides and may be
+absent until generated. Each artifact binds exact support/input/reference/
+configuration identities and reports status plus failure or inconclusive reasons;
+`release_ready` remains false. Assembly only consumes passed existing artifacts and
+produces an unsigned `CapabilityProfile` candidate with `signed=false` and
+`profile.released=false`. It does not turn benchmark timing into a gate or generalize
+evidence to another route.
 
 
 `MappedTensorGridPlan` prepares one-, two-, or three-dimensional stationary mappings.

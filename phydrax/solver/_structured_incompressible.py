@@ -39,9 +39,24 @@ from ..linalg import (
     TolerancePolicy,
     TransformDiagonalSolveResult,
 )
+from ..linalg._transform_line import (
+    PreparedTransformLineSolve,
+    TransformLineNullspacePolicy,
+    TransformLineRepresentation,
+    TransformLineSolvePlan,
+    TransformLineSolveResult,
+)
+from ._mac_separable import (
+    certify_separable_action,
+    diagonal_resource_counts,
+    iterative_workspace_bytes,
+    modal_sum,
+    pressure_cell_axis_transform,
+    pressure_cell_line_coefficients,
+)
 
 
-MACPressureSolveMethod: TypeAlias = Literal["auto", "transform", "iterative"]
+MACPressureSolveMethod: TypeAlias = Literal["auto", "transform", "hybrid", "iterative"]
 MACPressureGaugeKind: TypeAlias = Literal["zero-mean", "none"]
 MACPressureCompatibilityKind: TypeAlias = Literal["projected", "unprojected"]
 
@@ -108,6 +123,10 @@ class MACPressureProjectionResult(StrictModule):
     solve_method: str = eqx.field(static=True)
     linear: LinearSolveResult | None
     transform: TransformDiagonalSolveResult | None
+    hybrid: TransformLineSolveResult | None
+    hybrid_action_defect: Array
+    hybrid_line_axis: int | None = eqx.field(static=True)
+    maximum_resource_bytes: int = eqx.field(static=True)
     finite: Array
     converged: Array
     projection_id: str = eqx.field(static=True)
@@ -128,6 +147,10 @@ class MACRateProjectionResult(StrictModule):
     solve_method: str = eqx.field(static=True)
     linear: LinearSolveResult | None
     transform: TransformDiagonalSolveResult | None
+    hybrid: TransformLineSolveResult | None
+    hybrid_action_defect: Array
+    hybrid_line_axis: int | None = eqx.field(static=True)
+    maximum_resource_bytes: int = eqx.field(static=True)
     finite: Array
     converged: Array
     projection_id: str = eqx.field(static=True)
@@ -148,6 +171,11 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
     linear_problem: LinearSystem
     prepared_linear: PreparedLinearSolve
     transform_plan: FDLaplacianSolvePlan | None
+    hybrid_plan: PreparedTransformLineSolve | None
+    hybrid_action_defect: Array
+    hybrid_line_axis: int | None = eqx.field(static=True)
+    maximum_resource_bytes: int = eqx.field(static=True)
+    constant_route: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
     pressure_problem_id: str = eqx.field(static=True)
     closure_id: str = eqx.field(static=True)
@@ -164,6 +192,8 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         solve_method: MACPressureSolveMethod = "auto",
         linear_policy: LinearSolvePolicy | None = None,
+        hybrid_line_axis: int | None = None,
+        maximum_resource_bytes: int = 512 * 1024**2,
     ):
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
@@ -183,16 +213,36 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         density_ = float(density)
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
+        budget = int(maximum_resource_bytes)
         if (
             not np.isfinite(density_)
             or density_ <= 0.0
             or not np.isfinite(tolerance_)
             or tolerance_ <= 0.0
             or iterations <= 0
+            or budget <= 0
         ):
-            raise ValueError("Projection density, tolerance, and iterations are invalid.")
-        if solve_method not in ("auto", "transform", "iterative"):
-            raise ValueError("solve_method must be 'auto', 'transform', or 'iterative'.")
+            raise ValueError(
+                "Projection density, tolerance, iterations, and resources are invalid."
+            )
+        if solve_method not in ("auto", "transform", "hybrid", "iterative"):
+            raise ValueError(
+                "solve_method must be 'auto', 'transform', 'hybrid', or 'iterative'."
+            )
+        line_axis = None if hybrid_line_axis is None else int(hybrid_line_axis)
+        dimension = len(operators.discretization.cell_shape)
+        if line_axis is not None and (line_axis < 0 or line_axis >= dimension):
+            raise ValueError("hybrid_line_axis is outside the MAC tensor rank.")
+        if solve_method == "hybrid" and line_axis is None:
+            raise ValueError(
+                "Hybrid MAC projection requires an explicit hybrid_line_axis."
+            )
+        iterative_workspace_bytes(
+            operators.discretization.cell_shape,
+            operators.pressure_space.dtype,
+            budget,
+            "MAC pressure iterative",
+        )
         closure_kind = boundaries_.closure_kind
         gauge_kind: MACPressureGaugeKind = (
             "zero-mean" if closure_kind == "neumann" else "none"
@@ -253,11 +303,41 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         if not isinstance(policy, LinearSolvePolicy):
             raise TypeError("linear_policy must be LinearSolvePolicy or None.")
         prepared_linear = prepare(problem, policy)
-        transform_plan = self._prepare_transform(operators, boundaries_, tolerance_)
+        transform_plan = (
+            self._prepare_transform(operators, boundaries_, tolerance_, budget)
+            if solve_method in ("auto", "transform")
+            else None
+        )
         if solve_method == "transform" and transform_plan is None:
             raise ValueError(
                 "Transform MAC projection requires a uniform all-Neumann tensor closure."
             )
+        hybrid_plan = None
+        hybrid_action_defect = jnp.asarray(jnp.inf, dtype=operators.pressure_space.dtype)
+        if line_axis is not None and (
+            solve_method == "hybrid"
+            or (solve_method == "auto" and transform_plan is None)
+        ):
+            hybrid_plan, hybrid_action_defect = self._prepare_hybrid(
+                operators,
+                boundaries_,
+                line_axis,
+                tolerance_,
+                policy,
+                budget,
+            )
+        if solve_method == "hybrid":
+            constant_route = "hybrid"
+        elif solve_method == "transform":
+            constant_route = "transform"
+        elif solve_method == "iterative":
+            constant_route = "iterative"
+        elif transform_plan is not None:
+            constant_route = "transform"
+        elif hybrid_plan is not None:
+            constant_route = "hybrid"
+        else:
+            constant_route = "iterative"
         identifier = canonical_fingerprint(
             {
                 "kind": "mac-pressure-projection-plan",
@@ -271,6 +351,12 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
                 "transform_plan": (
                     None if transform_plan is None else transform_plan.plan_id
                 ),
+                "hybrid_plan": (
+                    None if hybrid_plan is None else hybrid_plan.plan.plan_id
+                ),
+                "hybrid_line_axis": line_axis,
+                "maximum_resource_bytes": budget,
+                "constant_route": constant_route,
             }
         )
         self.operators = operators
@@ -285,6 +371,11 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         self.linear_problem = problem
         self.prepared_linear = prepared_linear
         self.transform_plan = transform_plan
+        self.hybrid_plan = hybrid_plan
+        self.hybrid_action_defect = hybrid_action_defect
+        self.hybrid_line_axis = line_axis
+        self.maximum_resource_bytes = budget
+        self.constant_route = constant_route
         self.operator_id = operator_id
         self.pressure_problem_id = pressure_problem_id
         self.closure_id = closure_id
@@ -295,6 +386,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         operators: PreparedMACOperators,
         boundaries: PreparedMACBoundaryPlan,
         tolerance: float,
+        maximum_resource_bytes: int,
         /,
     ) -> FDLaplacianSolvePlan | None:
         if (
@@ -302,17 +394,27 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             or boundaries.closure_kind != "neumann"
         ):
             return None
+        grid = operators.discretization.grid
+        resource_dtype = (
+            np.result_type(operators.pressure_space.dtype, np.complex64)
+            if any(axis.periodic for axis in grid.structured_axes)
+            else operators.pressure_space.dtype
+        )
+        diagonal_resource_counts(
+            operators.discretization.cell_shape,
+            resource_dtype,
+            maximum_resource_bytes,
+            "MAC pressure transform",
+        )
         boundary_kinds = {
             name: (("periodic", "periodic") if axis.periodic else ("neumann", "neumann"))
             for name, axis in zip(
-                operators.discretization.grid.axis_names,
-                operators.discretization.grid.structured_axes,
+                grid.axis_names,
+                grid.structured_axes,
                 strict=True,
             )
         }
-        diagonalization = diagonalize_fd_laplacian(
-            operators.discretization.grid, boundary_kinds
-        )
+        diagonalization = diagonalize_fd_laplacian(grid, boundary_kinds)
         probe = jnp.arange(
             int(np.prod(operators.discretization.cell_shape)),
             dtype=operators.pressure_space.dtype,
@@ -331,6 +433,92 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             gauge="zero_mean",
             zero_tolerance=tolerance,
         )
+
+    @staticmethod
+    def _prepare_hybrid(
+        operators: PreparedMACOperators,
+        boundaries: PreparedMACBoundaryPlan,
+        line_axis: int,
+        tolerance: float,
+        policy: LinearSolvePolicy,
+        maximum_resource_bytes: int,
+        /,
+    ) -> tuple[PreparedTransformLineSolve, Array]:
+        shape = operators.discretization.cell_shape
+        if len(shape) != 3:
+            raise ValueError(
+                "Hybrid MAC projection requires a three-dimensional tensor product."
+            )
+        if boundaries.closure_kind != "neumann":
+            raise ValueError(
+                "Hybrid MAC projection requires an all-Neumann pressure closure."
+            )
+        grid = operators.discretization.grid
+        physical_line = grid.structured_axes[line_axis]
+        if physical_line.periodic:
+            raise ValueError(
+                "Hybrid MAC projection requires an explicitly nonperiodic line axis."
+            )
+        dtype = operators.pressure_space.dtype
+        transverse_data = []
+        for axis_index, axis in enumerate(grid.structured_axes):
+            if axis_index == line_axis:
+                continue
+            axis_data = pressure_cell_axis_transform(axis, dtype)
+            if axis_data is None:
+                raise ValueError(
+                    "Hybrid MAC projection requires uniform transform-compatible "
+                    "transverse axes."
+                )
+            transverse_data.append(axis_data)
+        lower, diagonal, upper = pressure_cell_line_coefficients(physical_line, dtype)
+        transverse_modal = modal_sum(
+            tuple(item[1] for item in transverse_data), dtype=dtype
+        )
+        representation = TransformLineRepresentation(
+            tuple(item[0] for item in transverse_data),
+            line_axis,
+            lower,
+            diagonal,
+            upper,
+            transverse_modal,
+            certification_tolerance=tolerance,
+            representation_id=canonical_fingerprint(
+                {
+                    "kind": "mac-pressure-transform-line",
+                    "operators": operators.prepared_id,
+                    "boundaries": boundaries.prepared_id,
+                    "line_axis": line_axis,
+                }
+            ),
+        )
+        probe = jnp.sin(
+            0.31 * jnp.arange(int(np.prod(shape)), dtype=dtype).reshape(shape) + 0.17
+        )
+        action_defect, action_certified = certify_separable_action(
+            representation.apply(probe),
+            operators.positive_laplacian(probe),
+            tolerance,
+        )
+        if not action_certified:
+            raise RuntimeError(
+                "Hybrid MAC pressure action failed exact physical-action evidence."
+            )
+        nullspace = TransformLineNullspacePolicy(
+            jnp.asarray(physical_line.interval_widths, dtype=dtype),
+            zero_mode_index=0,
+            pin_row=0,
+        )
+        prepared = TransformLineSolvePlan(
+            representation,
+            operator_scale=1.0,
+            diagonal_shift=0.0,
+            nullspace=nullspace,
+            tolerance=tolerance,
+            differentiation=policy.differentiation,
+            maximum_resource_bytes=maximum_resource_bytes,
+        ).prepare()
+        return prepared, action_defect
 
     def _stage(self, stage: MACBoundaryStageData | None, /) -> MACBoundaryStageData:
         return (
@@ -399,23 +587,20 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             if self.closure_kind == "neumann"
             else raw_rhs
         )
-        constant_inverse = inverse_momentum_diagonal is None
-        use_transform = (
-            self.solve_method != "iterative"
-            and constant_inverse
-            and self.transform_plan is not None
-        )
-        if self.solve_method == "transform" and not use_transform:
-            raise ValueError(
-                "Transform projection does not support this closure or variable momentum."
-            )
-        if use_transform:
-            alpha = step / self.density
+        route = self.constant_route if inverse_momentum_diagonal is None else "iterative"
+        alpha = step / self.density
+        if route == "transform":
             transform = self.transform_plan.solve(rhs / alpha)
             solution_candidate = self.operators.gauge_project(transform.value)
             solve_success = transform.converged
             linear = None
-            route = "transform"
+            hybrid = None
+        elif route == "hybrid":
+            hybrid = self.hybrid_plan.solve(rhs / alpha)
+            solution_candidate = self.operators.gauge_project(hybrid.candidate)
+            solve_success = hybrid.converged
+            linear = None
+            transform = None
         else:
             pressure_operator = FunctionLinearOperator(
                 _WeightedMACPressureAction(self.operators, self.boundaries, face_inverse),
@@ -439,7 +624,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
                 solution_candidate = self.operators.gauge_project(solution_candidate)
             solve_success = linear.successful
             transform = None
-            route = "iterative"
+            hybrid = None
         if self.closure_kind == "neumann":
             increment_candidate = solution_candidate
             pressure_candidate = self.operators.gauge_project(
@@ -527,6 +712,10 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             solve_method=route,
             linear=linear,
             transform=transform,
+            hybrid_action_defect=self.hybrid_action_defect,
+            hybrid=hybrid,
+            hybrid_line_axis=self.hybrid_line_axis,
+            maximum_resource_bytes=self.maximum_resource_bytes,
             finite=finite,
             converged=converged,
             projection_id=self.plan_id,
@@ -554,6 +743,10 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             solve_method=projected.solve_method,
             linear=projected.linear,
             transform=projected.transform,
+            hybrid_action_defect=projected.hybrid_action_defect,
+            hybrid=projected.hybrid,
+            hybrid_line_axis=projected.hybrid_line_axis,
+            maximum_resource_bytes=projected.maximum_resource_bytes,
             finite=projected.finite,
             converged=projected.converged,
             projection_id=self.plan_id,

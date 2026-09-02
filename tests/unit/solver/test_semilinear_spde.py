@@ -107,6 +107,96 @@ def test_semilinear_solver_propagates_linear_heat_mode_exactly():
     assert jnp.allclose(solution.states[-1], expected, rtol=1e-10, atol=1e-10)
 
 
+def test_spde_callable_drift_identities_are_explicit_and_transitive():
+    discretization = _periodic_discretization(4)
+    initial = jnp.zeros(discretization.state_shape)
+
+    def reaction(time, state, args):
+        del time, args
+        return state - state**3
+
+    with pytest.raises(ValueError, match="reaction_id"):
+        phx.solver.semidiscretize_reaction_diffusion(
+            initial,
+            discretization,
+            t0=0.0,
+            t1=0.1,
+            kappa=0.02,
+            reaction=reaction,
+        )
+
+    identified = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=0.02,
+        reaction=reaction,
+        reaction_id="unit-cubic-reaction-v1",
+    )
+    zero_first = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=0.02,
+    )
+    zero_second = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=0.02,
+    )
+
+    assert identified.semilinear_drift is not None
+    assert identified.semilinear_drift.nonlinear_id == "unit-cubic-reaction-v1"
+    assert zero_first.semilinear_drift is not None
+    assert zero_second.semilinear_drift is not None
+    assert (
+        zero_first.semilinear_drift.nonlinear_id
+        == zero_second.semilinear_drift.nonlinear_id
+    )
+    assert identified.problem.problem_id != zero_first.problem.problem_id
+
+    operator = identified.semilinear_drift.linear_operator
+    with pytest.raises(ValueError, match="nonlinear_id"):
+        phx.solver.semidiscretize_semilinear_spde(
+            operator,
+            reaction,
+            initial,
+            discretization,
+            t0=0.0,
+            t1=0.1,
+            operator_id=operator.operator_id,
+        )
+    semilinear = phx.solver.semidiscretize_semilinear_spde(
+        operator,
+        reaction,
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        operator_id=operator.operator_id,
+        nonlinear_id="unit-cubic-semilinear-v1",
+    )
+    zero_semilinear = phx.solver.semidiscretize_semilinear_spde(
+        operator,
+        None,
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        operator_id=operator.operator_id,
+    )
+
+    assert semilinear.semilinear_drift is not None
+    assert semilinear.semilinear_drift.nonlinear_id == "unit-cubic-semilinear-v1"
+    assert zero_semilinear.semilinear_drift is not None
+    assert zero_semilinear.semilinear_drift.nonlinear_id
+    assert semilinear.problem.problem_id != zero_semilinear.problem.problem_id
+
+
 def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
     discretization = _periodic_discretization(4)
     duration = 0.08

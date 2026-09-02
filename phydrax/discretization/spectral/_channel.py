@@ -141,7 +141,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             raise ValueError("constraint_tolerance must be finite and positive.")
         identifier = canonical_fingerprint(
             {
-                "kind": "channel-stokes-plan-v2",
+                "kind": "channel-stokes-plan-v3",
                 "discretization": discretization.prepared_id,
                 "viscosity": float(viscosity_),
                 "lower_wall": [float(value) for value in lower],
@@ -171,11 +171,17 @@ class ChannelStokesPreparationReport(StrictModule, NonTrainableState):
     lower_bandwidth: int = eqx.field(static=True)
     upper_bandwidth: int = eqx.field(static=True)
     horizontal_batch_size: int = eqx.field(static=True)
+    correction_rank: int = eqx.field(static=True)
+    constraint_rank: int = eqx.field(static=True)
+    shared_basis_bytes: int = eqx.field(static=True)
+    operator_bytes: int = eqx.field(static=True)
     factor_bytes: int = eqx.field(static=True)
     workspace_bytes: int = eqx.field(static=True)
+    persistent_bytes: int = eqx.field(static=True)
+    preparation_bytes: int = eqx.field(static=True)
     pivot_margin: float = eqx.field(static=True)
-    constraint_rank: int = eqx.field(static=True)
     requires_unsharded_axis: bool = eqx.field(static=True)
+    required_unsharded_axes: tuple[str, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
 
@@ -307,12 +313,18 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 lower_bandwidth=ultraspherical.lower_bandwidth,
                 upper_bandwidth=ultraspherical.upper_bandwidth,
                 horizontal_batch_size=int(kx_grid.size),
-                factor_bytes=ultraspherical.factor_bytes,
-                workspace_bytes=ultraspherical.workspace_bytes,
-                pivot_margin=ultraspherical.pivot_margin,
+                correction_rank=ultraspherical.correction_rank,
                 constraint_rank=7
                 + (2 if plan.mean_constraint.kind == "bulk_flux" else 0),
+                shared_basis_bytes=ultraspherical.shared_basis_bytes,
+                operator_bytes=ultraspherical.operator_bytes,
+                factor_bytes=ultraspherical.factor_bytes,
+                workspace_bytes=ultraspherical.workspace_bytes,
+                persistent_bytes=ultraspherical.persistent_bytes,
+                preparation_bytes=ultraspherical.preparation_bytes,
+                pivot_margin=ultraspherical.pivot_margin,
                 requires_unsharded_axis=True,
+                required_unsharded_axes=(discretization.plan.axis_names[1],),
                 report_id=canonical_fingerprint(
                     {
                         "kind": "channel-stokes-preparation-report",
@@ -321,13 +333,38 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                             ultraspherical.lower_bandwidth,
                             ultraspherical.upper_bandwidth,
                         ),
-                        "factor_bytes": ultraspherical.factor_bytes,
+                        "tau_rank": ultraspherical.correction_rank,
+                        "persistent_bytes": ultraspherical.persistent_bytes,
+                        "preparation_bytes": ultraspherical.preparation_bytes,
                         "pivot_margin": ultraspherical.pivot_margin,
                     }
                 ),
             )
             self.prepared_id = identifier
             return
+        dense_batch_size = int(kx.size * kz.size)
+        dense_block_size = 4 * mode_count
+        dense_dtype = np.dtype(jnp.result_type(synthesis.dtype, 1j))
+        dense_real_dtype = np.dtype(real_dtype)
+        factor_bytes_preflight = dense_batch_size * (
+            dense_block_size * dense_block_size * dense_dtype.itemsize
+            + dense_block_size * np.dtype(np.int32).itemsize
+            + dense_block_size * dense_real_dtype.itemsize
+            + np.dtype(np.bool_).itemsize
+        )
+        if plan.mean_constraint.kind == "bulk_flux":
+            bulk_size = dense_block_size + 2
+            factor_bytes_preflight += (
+                bulk_size * bulk_size * dense_dtype.itemsize
+                + bulk_size * np.dtype(np.int32).itemsize
+                + bulk_size * dense_real_dtype.itemsize
+                + np.dtype(np.bool_).itemsize
+            )
+        if factor_bytes_preflight > plan.maximum_factor_bytes:
+            raise ValueError(
+                f"Channel Stokes factors require at least {factor_bytes_preflight} "
+                f"bytes, exceeding maximum_factor_bytes={plan.maximum_factor_bytes}."
+            )
         matrices = []
         zero_mode_index = -1
         for ix, kx_value in enumerate(np.asarray(kx)):
@@ -358,22 +395,29 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 wall_axis.length,
                 horizontal_scale,
             )
-        factor_entries = blocks.size + (0 if bulk_block is None else bulk_block.size)
-        factor_bytes = int(factor_entries * blocks.dtype.itemsize * 2)
-        if factor_bytes > plan.maximum_factor_bytes:
-            raise ValueError(
-                f"Channel Stokes factors require {factor_bytes} bytes, exceeding "
-                f"maximum_factor_bytes={plan.maximum_factor_bytes}."
-            )
         if bulk_block is not None:
             bulk_factorization = prepare_local_block_factorization(bulk_block[None, ...])
         factorization = prepare_local_block_factorization(blocks)
+        factor_arrays = (
+            factorization.factors,
+            factorization.pivots,
+            factorization.metric_sqrt,
+            factorization.failed_blocks,
+        )
+        if bulk_factorization is not None:
+            factor_arrays = factor_arrays + (
+                bulk_factorization.factors,
+                bulk_factorization.pivots,
+                bulk_factorization.metric_sqrt,
+                bulk_factorization.failed_blocks,
+            )
+        factor_bytes = sum(int(array.nbytes) for array in factor_arrays)
         admissible = (~x_axis.modes.nyquist_mask)[:, None] & (~z_axis.modes.nyquist_mask)[
             None, :
         ]
         identifier = canonical_fingerprint(
             {
-                "kind": "prepared-channel-stokes-v1",
+                "kind": "prepared-channel-stokes-dense-reference-v2",
                 "plan": plan.plan_id,
                 "shift": float(shift_),
                 "block_shape": list(blocks.shape),
@@ -400,25 +444,47 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         factor_scale = jnp.maximum(jnp.max(jnp.abs(blocks)), 1.0)
         pivot_margin = float(jnp.min(factor_diagonal) / factor_scale)
         bandwidth = self.block_size - 1
+        shared_basis_bytes = sum(
+            int(array.nbytes)
+            for array in (
+                synthesis,
+                derivative,
+                wall_axis.quadrature_weights,
+                kx_grid,
+                kz_grid,
+                admissible,
+            )
+        )
+        operator_bytes = int(blocks.nbytes) + (
+            0 if bulk_block is None else int(bulk_block.nbytes)
+        )
+        workspace_bytes = int(blocks.shape[0] * self.block_size * blocks.dtype.itemsize)
+        persistent_bytes = shared_basis_bytes + operator_bytes + factor_bytes
+        preparation_bytes = persistent_bytes + workspace_bytes
         self.report = ChannelStokesPreparationReport(
             route=plan.route,
             lower_bandwidth=bandwidth,
             upper_bandwidth=bandwidth,
             horizontal_batch_size=int(blocks.shape[0]),
-            factor_bytes=factor_bytes,
-            workspace_bytes=int(
-                blocks.shape[0] * self.block_size * blocks.dtype.itemsize
-            ),
-            pivot_margin=pivot_margin,
+            correction_rank=0,
             constraint_rank=7 + (2 if plan.mean_constraint.kind == "bulk_flux" else 0),
+            shared_basis_bytes=shared_basis_bytes,
+            operator_bytes=operator_bytes,
+            factor_bytes=factor_bytes,
+            workspace_bytes=workspace_bytes,
+            persistent_bytes=persistent_bytes,
+            preparation_bytes=preparation_bytes,
+            pivot_margin=pivot_margin,
             requires_unsharded_axis=True,
+            required_unsharded_axes=(discretization.plan.axis_names[1],),
             report_id=canonical_fingerprint(
                 {
                     "kind": "channel-stokes-preparation-report",
                     "plan": plan.plan_id,
                     "route": plan.route,
                     "bandwidth": bandwidth,
-                    "factor_bytes": factor_bytes,
+                    "persistent_bytes": persistent_bytes,
+                    "preparation_bytes": preparation_bytes,
                     "pivot_margin": pivot_margin,
                 }
             ),
@@ -432,24 +498,26 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             (-1, self.wall_normal_count, 3)
         )
         if self.ultraspherical is not None:
-            solution, residual, failed, pressure_gradient = self.ultraspherical.solve(
-                modal_modes,
-                self.plan.lower_wall_velocity,
-                self.plan.upper_wall_velocity,
-                self.plan.mean_constraint.values,
-                mean_kind=self.plan.mean_constraint.kind,
+            modal_velocity, modal_pressure, residual, failed, pressure_gradient = (
+                self.ultraspherical.solve(
+                    modal_modes,
+                    self.plan.lower_wall_velocity,
+                    self.plan.upper_wall_velocity,
+                    self.plan.mean_constraint.values,
+                    mean_kind=self.plan.mean_constraint.kind,
+                )
             )
-            fields = solution.reshape((-1, self.wall_normal_count, 4))
             x_count, _, z_count = self.plan.discretization.modal_shape
-            fields = fields.reshape(
-                (x_count, z_count, self.wall_normal_count, 4)
+            velocity = modal_velocity.reshape(
+                (x_count, z_count, self.wall_normal_count, 3)
             ).transpose((0, 2, 1, 3))
+            pressure = modal_pressure.reshape(
+                (x_count, z_count, self.wall_normal_count)
+            ).transpose((0, 2, 1))
             velocity = jnp.where(
-                self.horizontal_admissibility[:, None, :, None], fields[..., :3], 0.0
+                self.horizontal_admissibility[:, None, :, None], velocity, 0.0
             )
-            pressure = jnp.where(
-                self.horizontal_admissibility[:, None, :], fields[..., 3], 0.0
-            )
+            pressure = jnp.where(self.horizontal_admissibility[:, None, :], pressure, 0.0)
             active_modes = self.horizontal_admissibility.reshape((-1,))
             residual = jnp.where(active_modes[:, None], residual, 0.0)
             failed = failed & active_modes

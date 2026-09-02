@@ -22,7 +22,6 @@ from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ..linalg import (
     ArraySpace,
     ConjugateGradient,
-    FFTLinearTransform,
     FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSolveResult,
@@ -30,7 +29,6 @@ from ..linalg import (
     OperatorProperties,
     prepare,
     PreparedLinearSolve,
-    RealTrigonometricTransform,
     refresh,
     solve,
     TensorLinearTransform,
@@ -44,6 +42,15 @@ from ..linalg._transform_line import (
     TransformLineSolvePlan,
     TransformLineSolveResult,
 )
+from ._mac_separable import (
+    certify_separable_action,
+    diagonal_resource_counts,
+    iterative_workspace_bytes,
+    modal_sum,
+    normal_velocity_is_essential,
+    velocity_face_axis_transform,
+    velocity_face_line_coefficients,
+)
 from ._structured_incompressible import MACPressureProjectionResult
 
 
@@ -53,13 +60,6 @@ MAC_VISCOUS_HELMHOLTZ_FAILURE = -1
 MAC_VISCOUS_PROJECTION_FAILURE = -2
 MAC_VISCOUS_BOUNDARY_FAILURE = -3
 MAC_VISCOUS_HISTORY_INVALID = -4
-_ESSENTIAL_NORMAL_KINDS = (
-    "no-slip",
-    "free-slip",
-    "symmetry",
-    "velocity-inflow",
-    "normal-flux-inflow",
-)
 
 
 def _zeros(momentum: PreparedMACMomentumOperators, /) -> FaceVelocity:
@@ -139,147 +139,6 @@ class _PositiveUnknownLaplacian(StrictModule, NonTrainableState):
             _single_component(self.momentum, self.component, full)
         )[self.component]
         return -_extract_unknown(self.momentum, self.component, laplacian)
-
-
-def _normal_is_essential(
-    momentum: PreparedMACMomentumOperators, component: int, /
-) -> bool:
-    axis = momentum.operators.discretization.grid.structured_axes[component]
-    return axis.periodic or all(
-        momentum.boundaries.side_kind(component, side) in _ESSENTIAL_NORMAL_KINDS
-        for side in ("lower", "upper")
-    )
-
-
-def _uniform_spacing(axis, /) -> float | None:
-    widths = np.asarray(axis.interval_widths, dtype=float)
-    if widths.size == 0:
-        return None
-    spacing = float(widths[0])
-    if (
-        not np.isfinite(spacing)
-        or spacing <= 0.0
-        or not np.allclose(widths, spacing, rtol=1e-10, atol=1e-12)
-    ):
-        return None
-    return spacing
-
-
-def _axis_transform(
-    momentum: PreparedMACMomentumOperators,
-    component: int,
-    derivative_axis: int,
-    /,
-) -> tuple[AbstractLinearTransform, Array, float] | None:
-    axis = momentum.operators.discretization.grid.structured_axes[derivative_axis]
-    spacing = _uniform_spacing(axis)
-    if spacing is None:
-        return None
-    dtype = momentum.operators.pressure_space.dtype
-    if axis.periodic:
-        count = int(axis.interval_widths.size)
-        transform: AbstractLinearTransform = FFTLinearTransform(
-            count, dtype=np.result_type(dtype, np.complex64)
-        )
-        angles = 2.0 * np.pi * np.arange(count) / count
-        trace = 0.0 if count == 1 else 2.0 * count / spacing**2
-    elif derivative_axis == component:
-        if not _normal_is_essential(momentum, component):
-            return None
-        count = int(axis.interval_widths.size) - 1
-        if count < 1:
-            return None
-        transform = RealTrigonometricTransform("dst", 1, count, dtype=dtype)
-        angles = (np.arange(count) + 1.0) * np.pi / (count + 1.0)
-        trace = 2.0 * count / spacing**2
-    else:
-        count = int(axis.interval_widths.size)
-        lower_d = momentum.boundaries.tangential_dirichlet(derivative_axis, "lower")
-        upper_d = momentum.boundaries.tangential_dirichlet(derivative_axis, "upper")
-        if lower_d and upper_d:
-            transform = RealTrigonometricTransform("dst", 2, count, dtype=dtype)
-            angles = (np.arange(count) + 1.0) * np.pi / count
-            trace = (2.0 * count + 2.0) / spacing**2
-        elif not lower_d and not upper_d:
-            transform = RealTrigonometricTransform("dct", 2, count, dtype=dtype)
-            angles = np.arange(count) * np.pi / count
-            trace = max(2.0 * count - 2.0, 0.0) / spacing**2
-        elif lower_d:
-            transform = RealTrigonometricTransform("dst", 4, count, dtype=dtype)
-            angles = (np.arange(count) + 0.5) * np.pi / count
-            trace = 2.0 * count / spacing**2
-        else:
-            transform = RealTrigonometricTransform("dct", 4, count, dtype=dtype)
-            angles = (np.arange(count) + 0.5) * np.pi / count
-            trace = 2.0 * count / spacing**2
-    spectrum = 4.0 * np.sin(0.5 * angles) ** 2 / spacing**2
-    return transform, jnp.asarray(spectrum, dtype=dtype), trace
-
-
-def _modal_sum(spectra: tuple[Array, ...], /) -> Array:
-    shape = tuple(int(value.size) for value in spectra)
-    result = jnp.zeros(shape, dtype=jnp.result_type(*[value.dtype for value in spectra]))
-    for axis, spectrum in enumerate(spectra):
-        reshape = [1] * len(shape)
-        reshape[axis] = int(spectrum.size)
-        result = result + spectrum.reshape(tuple(reshape))
-    return result
-
-
-def _line_coefficients(
-    momentum: PreparedMACMomentumOperators,
-    component: int,
-    line_axis: int,
-    /,
-) -> tuple[Array, Array, Array, tuple[Array, Array] | None]:
-    axis = momentum.operators.discretization.grid.structured_axes[line_axis]
-    dtype = momentum.operators.pressure_space.dtype
-    widths = jnp.asarray(axis.interval_widths, dtype=dtype)
-    centers = jnp.asarray(axis.interval_centers, dtype=dtype)
-    if axis.periodic:
-        period = jnp.asarray(axis.bounds[1] - axis.bounds[0], dtype=dtype)
-        previous = jnp.roll(centers, 1).at[0].add(-period)
-        distances = centers - previous
-        if line_axis == component:
-            dual = momentum.face_dual_widths[component]
-            lower_full = -1.0 / (dual * jnp.roll(widths, 1))
-            upper_full = -1.0 / (dual * widths)
-        else:
-            lower_full = -1.0 / (widths * distances)
-            upper_full = -1.0 / (widths * jnp.roll(distances, -1))
-        return (
-            lower_full[1:],
-            -(lower_full + upper_full),
-            upper_full[:-1],
-            (lower_full[0], upper_full[-1]),
-        )
-    if line_axis == component:
-        dual = momentum.face_dual_widths[component][1:-1]
-        diagonal = 1.0 / (dual * widths[:-1]) + 1.0 / (dual * widths[1:])
-        if dual.size == 1:
-            empty = jnp.zeros((0,), dtype=dtype)
-            return empty, diagonal, empty, None
-        return (
-            -1.0 / (dual[1:] * widths[1:-1]),
-            diagonal,
-            -1.0 / (dual[:-1] * widths[1:-1]),
-            None,
-        )
-    count = int(widths.size)
-    distances = centers[1:] - centers[:-1]
-    lower = -1.0 / (widths[1:] * distances)
-    upper = -1.0 / (widths[:-1] * distances)
-    diagonal = jnp.zeros((count,), dtype=dtype)
-    if count > 1:
-        diagonal = diagonal.at[1:].add(1.0 / (widths[1:] * distances))
-        diagonal = diagonal.at[:-1].add(1.0 / (widths[:-1] * distances))
-    if momentum.boundaries.tangential_dirichlet(line_axis, "lower"):
-        diagonal = diagonal.at[0].add(1.0 / (widths[0] * (centers[0] - axis.bounds[0])))
-    if momentum.boundaries.tangential_dirichlet(line_axis, "upper"):
-        diagonal = diagonal.at[-1].add(
-            1.0 / (widths[-1] * (axis.bounds[1] - centers[-1]))
-        )
-    return lower, diagonal, upper, None
 
 
 class MACHelmholtzResourceEstimate(StrictModule, NonTrainableState):
@@ -497,19 +356,29 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
         modal_values = None
         action_defect = jnp.asarray(jnp.inf, dtype=space.dtype)
         trace_defect = jnp.asarray(jnp.inf, dtype=space.dtype)
-        direct_eligible = _normal_is_essential(momentum, component)
+        direct_eligible = method in (
+            "auto",
+            "transform",
+        ) and normal_velocity_is_essential(momentum, component)
         data: list[tuple[AbstractLinearTransform, Array, float]] = []
+        direct_resource_data = None
         if direct_eligible:
             for derivative_axis in range(momentum.dimension):
-                axis_data = _axis_transform(momentum, component, derivative_axis)
+                axis_data = velocity_face_axis_transform(
+                    momentum, component, derivative_axis
+                )
                 if axis_data is None:
                     direct_eligible = False
                     break
                 data.append(axis_data)
         if direct_eligible:
-            transform = TensorLinearTransform(tuple(item[0] for item in data))
-            modal_values = _modal_sum(tuple(item[1] for item in data))
             shape = _unknown_shape(momentum, component)
+            direct_dtype = jnp.result_type(*[item[0].modal_space.dtype for item in data])
+            direct_resource_data = diagonal_resource_counts(
+                shape, direct_dtype, budget, "MAC transform"
+            )
+            transform = TensorLinearTransform(tuple(item[0] for item in data))
+            modal_values = modal_sum(tuple(item[1] for item in data))
             probe = jnp.sin(
                 0.37 * jnp.arange(int(np.prod(shape)), dtype=space.dtype).reshape(shape)
                 + component
@@ -518,22 +387,18 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             represented = jnp.real(
                 transform.synthesize(modal_values * transform.analyze(probe))
             ).astype(exact.dtype)
-            action_defect = jnp.linalg.norm((represented - exact).reshape((-1,)))
+            action_defect, action_certified = certify_separable_action(
+                represented, exact, tolerance
+            )
             expected_trace = sum(
                 int(np.prod(shape)) // shape[axis] * item[2]
                 for axis, item in enumerate(data)
             )
             trace_defect = jnp.abs(jnp.sum(modal_values) - expected_trace)
             epsilon = jnp.finfo(space.dtype).eps
-            scale = jnp.maximum(1.0, jnp.linalg.norm(exact.reshape((-1,))))
-            direct_eligible = bool(
+            direct_eligible = action_certified and bool(
                 np.asarray(
-                    jnp.isfinite(action_defect)
-                    & jnp.isfinite(trace_defect)
-                    & (
-                        action_defect
-                        <= jnp.maximum(100.0 * tolerance, 4096.0 * epsilon * scale)
-                    )
+                    jnp.isfinite(trace_defect)
                     & (
                         trace_defect
                         <= jnp.maximum(
@@ -549,15 +414,20 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
 
         hybrid = None
         prepared_hybrid = None
-        hybrid_eligible = hybrid_line_axis is not None and _normal_is_essential(
-            momentum, component
+        hybrid_eligible = (
+            method in ("auto", "hybrid")
+            and (method == "hybrid" or not direct_eligible)
+            and hybrid_line_axis is not None
+            and normal_velocity_is_essential(momentum, component)
         )
         transverse_data: list[tuple[AbstractLinearTransform, Array, float]] = []
         if hybrid_eligible:
             for derivative_axis in range(momentum.dimension):
                 if derivative_axis == hybrid_line_axis:
                     continue
-                axis_data = _axis_transform(momentum, component, derivative_axis)
+                axis_data = velocity_face_axis_transform(
+                    momentum, component, derivative_axis
+                )
                 if axis_data is None:
                     hybrid_eligible = False
                     break
@@ -571,11 +441,11 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                 count -= 1
             hybrid_eligible = count >= 1 and (not grid_axis.periodic or count >= 3)
         if hybrid_eligible:
-            lower, diagonal, upper, corners = _line_coefficients(
+            lower, diagonal, upper, corners = velocity_face_line_coefficients(
                 momentum, component, hybrid_line_axis
             )
             transverse_modal = (
-                _modal_sum(tuple(item[1] for item in transverse_data))
+                modal_sum(tuple(item[1] for item in transverse_data))
                 if transverse_data
                 else jnp.asarray(0.0, dtype=space.dtype)
             )
@@ -603,17 +473,8 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                 + component
             )
             exact = _PositiveUnknownLaplacian(momentum, component)(probe)
-            action_defect = jnp.linalg.norm((hybrid.apply(probe) - exact).reshape((-1,)))
-            epsilon = jnp.finfo(space.dtype).eps
-            scale = jnp.maximum(1.0, jnp.linalg.norm(exact.reshape((-1,))))
-            hybrid_eligible = bool(
-                np.asarray(
-                    jnp.isfinite(action_defect)
-                    & (
-                        action_defect
-                        <= jnp.maximum(100.0 * tolerance, 4096.0 * epsilon * scale)
-                    )
-                )
+            action_defect, hybrid_eligible = certify_separable_action(
+                hybrid.apply(probe), exact, tolerance
             )
             trace_defect = hybrid.report.trace_defect
             if not hybrid_eligible:
@@ -659,23 +520,19 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                 estimate.total_bytes,
             )
         elif route == "transform":
-            count = int(np.prod(transform.modal_space.shape))
-            factor_bytes = count * np.dtype(transform.modal_space.dtype).itemsize
-            workspace_bytes = 3 * factor_bytes
-            if factor_bytes + workspace_bytes > budget:
-                raise ValueError("MAC transform resources exceed the configured budget.")
+            count, factor_bytes, workspace_bytes, total_bytes = direct_resource_data
             resources = MACHelmholtzResourceEstimate(
                 component,
                 route,
                 count,
                 factor_bytes,
                 workspace_bytes,
-                factor_bytes + workspace_bytes,
+                total_bytes,
             )
         else:
-            workspace_bytes = 6 * space.size * np.dtype(space.dtype).itemsize
-            if workspace_bytes > budget:
-                raise ValueError("MAC iterative resources exceed the configured budget.")
+            workspace_bytes = iterative_workspace_bytes(
+                space.shape, space.dtype, budget, "MAC iterative"
+            )
             resources = MACHelmholtzResourceEstimate(
                 component, route, 0, 0, workspace_bytes, workspace_bytes
             )

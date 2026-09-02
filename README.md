@@ -279,6 +279,15 @@ exchange, free-energy estimators, and committee acquisition. See the
 [sampling guide](docs/guides_atomistic_sampling.md), and the
 [atomistic API](docs/api/atomistic.md).
 
+Advanced biophysics composes those owners rather than introducing a second
+simulation engine. Native modules cover fixed-capacity TPS/TIS/RETIS path
+sampling, cable electrophysiology, dynamic particle relations and active
+biopolymers, Helfrich membranes, vertex tissues, polarizable and alchemical
+atomistics, compartmental systems biology, and experiment-facing observation
+models. Every discrete binding or topology change is transactional, and every
+continuous derivative is conditioned on the accepted fixed event program. See
+the [advanced-biophysics API](docs/api/advanced_biophysics.md) and its guides.
+
 ## Example
 
 This example trains a neural field $u_\theta(x,y)$ to satisfy

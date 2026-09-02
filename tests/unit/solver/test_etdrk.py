@@ -43,6 +43,7 @@ def _semilinear_logistic(rate=-1.5):
         lambda time, state, args: state**2,
         state_shape=(1,),
         operator_id=operator.operator_id,
+        nonlinear_id="logistic-quadratic",
     )
 
 
@@ -74,3 +75,98 @@ def test_etdrk_orders_converge_and_step_is_jittable():
     assert error2_fine < 0.35 * error2_coarse
     assert error4_fine < 0.1 * error4_coarse
     assert jnp.allclose(eager, compiled, rtol=1e-12, atol=1e-12)
+
+
+def test_prepared_etdrk_binds_full_drift_identity_and_shared_transition():
+    method = phx.solver.ETDRKMethod(4)
+    drift = _semilinear_logistic()
+    changed = phx.solver.SemilinearDrift(
+        drift.linear_operator,
+        lambda time, state, args: 2.0 * state**2,
+        state_shape=(1,),
+        operator_id=drift.operator_id,
+        nonlinear_id="logistic-double-quadratic",
+    )
+    prepared = method.prepare(drift)
+    changed_prepared = method.prepare(changed)
+    initial = jnp.asarray([0.2])
+    fixed = prepared.step(
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        initial,
+        jnp.asarray(0.1),
+        None,
+    )
+    direct = method.step(drift, 0.0, initial, 0.1, None)
+    convenience = phx.solver.solve_etdrk(
+        method,
+        drift,
+        initial,
+        jnp.asarray([0.0, 0.1]),
+    )
+
+    def transition(state):
+        return prepared.step(
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0.0),
+            state,
+            jnp.asarray(0.1),
+            None,
+        ).accepted_state
+
+    primal, tangent = jax.jvp(
+        jax.jit(transition),
+        (initial,),
+        (jnp.asarray([0.3]),),
+    )
+
+    assert isinstance(prepared, phx.solver.AbstractFixedStepMethod)
+    assert drift.drift_id != changed.drift_id
+    assert prepared.method_id != changed_prepared.method_id
+    assert bool(fixed.successful)
+    assert jnp.allclose(fixed.accepted_state, direct, rtol=1e-12, atol=1e-12)
+    assert jnp.allclose(
+        fixed.accepted_state,
+        convenience.states[-1],
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert jnp.allclose(primal, fixed.accepted_state, rtol=1e-12, atol=1e-12)
+    assert jnp.all(jnp.isfinite(tangent))
+
+
+def test_prepared_etdrk_projects_roundoff_but_rejects_nonhermitian_boundary():
+    discretization = phx.discretization.TensorSpectralPlan(
+        (phx.discretization.FourierBasisPlan(4),)
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
+    coordinates = phx.discretization.HermitianSpectralCoordinates(
+        discretization,
+        reality_tolerance=1e-5,
+    )
+    operator = phx.linalg.DiagonalLinearOperator(
+        jnp.zeros((4,)),
+        space=coordinates.source_space,
+        operator_id="zero-hermitian-etdrk",
+    )
+    drift = phx.solver.SemilinearDrift(
+        operator,
+        None,
+        state_shape=(4,),
+        operator_id=operator.operator_id,
+        nonlinear_id="none",
+    )
+    prepared = phx.solver.ETDRKMethod(2).prepare(
+        drift,
+        coordinates=coordinates,
+    )
+    initial = discretization.project(jnp.cos(2.0 * jnp.pi * discretization.axes[0].nodes))
+    roundoff = initial.at[1].add(jnp.asarray(1e-7j, dtype=initial.dtype))
+    corrected = prepared.step(0, 0.0, roundoff, 0.1, None)
+    invalid = initial.at[1].add(jnp.asarray(1e-2j, dtype=initial.dtype))
+    rejected = prepared.step(0, 0.0, invalid, 0.1, None)
+
+    assert bool(corrected.successful)
+    assert bool(corrected.transform_applied)
+    assert coordinates.reality_defect(corrected.accepted_state) == 0.0
+    assert not bool(rejected.successful)
+    assert jnp.array_equal(rejected.accepted_state, invalid)
