@@ -17,7 +17,12 @@ from ...._data_plane import (
     IndexEpochPlan,
 )
 from ...._fingerprint import canonical_fingerprint, canonical_mapping
-from ..data import OperatorBatch, OperatorCaseProvenance, OperatorTargetBatch
+from ..data import (
+    OperatorBatch,
+    OperatorCaseProvenance,
+    OperatorTargetBatch,
+    slice_operator_batch,
+)
 from ..sampling import (
     AnchorQuerySamplingPolicy,
     InMemoryOperatorCaseSource,
@@ -28,6 +33,7 @@ from ..sampling import (
 from ..sharding import (
     OperatorShardingPolicy,
     shard_operator_batch,
+    shard_operator_case_array,
     shard_operator_targets,
 )
 from ._dataset import OperatorDataset
@@ -36,6 +42,40 @@ from ._normalization import OperatorNormalizationPolicy
 
 
 _LOADER_FINGERPRINT_FORMAT = "phydrax-operator-loader-v2"
+
+
+def _pad_case_payload(
+    batch: OperatorBatch,
+    targets: OperatorTargetBatch,
+    case_log_weights,
+    case_mask,
+    /,
+    *,
+    capacity: int,
+):
+    size = int(batch.case_shape[0])
+    if size == capacity:
+        return batch, targets, case_log_weights, case_mask
+    if capacity < size:
+        raise ValueError("Padded operator capacity cannot be smaller than the batch.")
+    index = jnp.concatenate(
+        (
+            jnp.arange(size, dtype=jnp.int32),
+            jnp.full((capacity - size,), size - 1, dtype=jnp.int32),
+        )
+    )
+    padded_mask = jnp.concatenate(
+        (
+            jnp.asarray(case_mask, dtype=bool),
+            jnp.zeros((capacity - size,), dtype=bool),
+        )
+    )
+    return (
+        slice_operator_batch(batch, index, axis=0),
+        targets.take(index, axis=0),
+        jnp.take(jnp.asarray(case_log_weights), index, axis=0),
+        padded_mask,
+    )
 
 
 @dataclass(frozen=True)
@@ -158,6 +198,12 @@ class OperatorBatchLoader:
         )
         if not isinstance(source, OperatorCaseSource):
             raise TypeError("dataset must be an OperatorDataset or OperatorCaseSource.")
+        if isinstance(source, InMemoryOperatorCaseSource):
+            active_mass = source.dataset.case_mask & jnp.isfinite(
+                source.dataset.case_log_weights
+            )
+            if not bool(jnp.any(active_mass)):
+                raise ValueError("Operator training data requires positive case mass.")
         self.source = source
         self.batch_size = int(batch_size)
         self.shuffle = bool(shuffle)
@@ -326,39 +372,56 @@ class OperatorBatchLoader:
         )
         batch = selected.batch
         targets = selected.targets
-        physical_batch = batch
-        physical_targets = targets
         case_log_weights = selected.case_log_weights
         case_mask = selected.case_mask
-        if isinstance(self.source, InMemoryOperatorCaseSource):
-            index = jnp.asarray(indices, dtype=int)
-            case_log_weights = jnp.take(
-                self.source.dataset.case_log_weights,
-                index,
-                axis=0,
+        sharding = self.sharding_policy
+        if sharding is not None:
+            divisor = sharding.data_axis_size
+            size = int(batch.case_shape[0])
+            capacity = ((size + divisor - 1) // divisor) * divisor
+            batch, targets, case_log_weights, case_mask = _pad_case_payload(
+                batch,
+                targets,
+                case_log_weights,
+                case_mask,
+                capacity=capacity,
             )
-            case_mask = jnp.take(
-                self.source.dataset.case_mask,
-                index,
-                axis=0,
-            )
+        physical_batch = batch
+        physical_targets = targets
+        sampling_probabilities = jnp.ones(
+            jnp.asarray(case_log_weights).shape,
+            dtype=jnp.asarray(case_log_weights).dtype,
+        )
         if self.normalization is not None:
             batch = self.normalization.normalize_batch(batch)
             targets = self.normalization.normalize_targets(targets)
         if self.dtype_policy is not None:
             batch = self.dtype_policy.cast_batch(batch)
             targets = self.dtype_policy.cast_targets(targets)
-        if self.sharding_policy is not None:
-            batch = shard_operator_batch(batch, self.sharding_policy)
-            targets = shard_operator_targets(targets, self.sharding_policy)
+            case_log_weights = jnp.asarray(
+                case_log_weights,
+                dtype=self.dtype_policy.reduction_dtype,
+            )
+            sampling_probabilities = sampling_probabilities.astype(
+                self.dtype_policy.reduction_dtype
+            )
+        if sharding is not None:
+            batch = shard_operator_batch(batch, sharding)
+            targets = shard_operator_targets(targets, sharding)
+            case_log_weights = shard_operator_case_array(case_log_weights, sharding)
+            case_mask = shard_operator_case_array(case_mask, sharding)
+            sampling_probabilities = shard_operator_case_array(
+                sampling_probabilities,
+                sharding,
+            )
             if physical_batch is not batch:
                 physical_batch = shard_operator_batch(
                     physical_batch,
-                    self.sharding_policy,
+                    sharding,
                 )
                 physical_targets = shard_operator_targets(
                     physical_targets,
-                    self.sharding_policy,
+                    sharding,
                 )
         else:
             batch = jax.tree_util.tree_map(
@@ -367,6 +430,9 @@ class OperatorBatchLoader:
                 ),
                 batch,
             )
+            case_log_weights = jax.device_put(case_log_weights)
+            case_mask = jax.device_put(case_mask)
+            sampling_probabilities = jax.device_put(sampling_probabilities)
             if physical_batch is not batch:
                 physical_batch = jax.tree_util.tree_map(
                     lambda leaf: (
@@ -387,11 +453,7 @@ class OperatorBatchLoader:
             provenance=tuple(selected.provenance),
             case_log_weights=case_log_weights,
             case_mask=case_mask,
-            sampling_probabilities=jnp.full(
-                (len(indices),),
-                len(indices) / self.source.size,
-                dtype=case_log_weights.dtype,
-            ),
+            sampling_probabilities=sampling_probabilities,
             physical_batch=physical_batch,
             physical_targets=physical_targets,
         )

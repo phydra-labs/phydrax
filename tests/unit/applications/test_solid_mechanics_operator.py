@@ -303,10 +303,12 @@ def test_energy_loss_integrates_each_geometry_before_parameter_risk():
     distribution = _distribution((1.0, 2.0), (0.25, 0.75), distribution_id="train")
     problem = _problem(distribution, reduction)
     prediction = _prediction(problem, ((1.0, 1.0), (2.0, 2.0)))
-    result = mop.ExpectedMechanicsEnergyLoss(problem, reduction).evaluate(
+    loss = mop.ExpectedMechanicsEnergyLoss(problem, reduction)
+    result = loss.evaluate(
         prediction,
         problem.batch(),
     )
+    assert loss.accumulation_kind == "single_batch"
     assert jnp.allclose(result.cases.values, jnp.asarray([1.0, 8.0]))
     assert result.value == pytest.approx(6.25)
     assert result.cases.measure_ids["internal_energy"][0]

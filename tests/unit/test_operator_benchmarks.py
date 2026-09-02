@@ -74,6 +74,8 @@ def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
         model,
         scenario,
         steps=1,
+        batch_size=1,
+        gradient_accumulation=2,
         repeats=1,
     )
     assert result.parameter_count > 0

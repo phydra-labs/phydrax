@@ -524,7 +524,7 @@ def _prediction_energy(
     del batch, targets, model, key, step, training
     values = prediction.field("output").values
     assert context.physical_batch.case_shape == values.shape[:1]
-    return jnp.mean(values**2)
+    return jnp.mean(values**2, axis=tuple(range(1, values.ndim)))
 
 
 def _fit_model(*, seed=0):
@@ -557,6 +557,7 @@ def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
                 _prediction_energy,
                 weight=1e-3,
                 identity="tests.prediction_energy.v1",
+                case_reduction="per_case",
             ),
         ),
     )
@@ -568,6 +569,168 @@ def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
         set(metrics) == {"loss", "supervised_l2", "prediction_energy"}
         for metrics in result.history.train_metrics
     )
+    assert jnp.isfinite(result.final_loss)
+
+
+def _assert_operator_models_close(left, right):
+    left_leaves = jax.tree_util.tree_leaves(left)
+    right_leaves = jax.tree_util.tree_leaves(right)
+    for left_leaf, right_leaf in zip(left_leaves, right_leaves, strict=True):
+        if isinstance(left_leaf, jax.Array):
+            assert jnp.allclose(left_leaf, right_leaf, rtol=2e-5, atol=2e-6)
+
+
+def test_weighted_masked_accumulation_matches_one_logical_batch():
+    base = _dataset(cases=4)
+    dataset = phx.nn.operator.training.OperatorDataset(
+        base.batch,
+        base.targets,
+        base.provenance,
+        case_log_weights=jnp.log(jnp.asarray((1.0, 9.0, 4.0, 2.0))),
+        case_mask=jnp.asarray((True, True, False, True)),
+    )
+    common = {
+        "epochs": 1,
+        "steps": 1,
+        "shuffle": False,
+        "optimizer": optax.sgd(1e-2),
+        "optimizer_id": "tests.sgd.weighted",
+        "include_model_losses": False,
+    }
+    full = phx.nn.operator.training.fit_operator(
+        _fit_model(seed=11),
+        dataset,
+        batch_size=4,
+        gradient_accumulation=1,
+        **common,
+    )
+    accumulated = phx.nn.operator.training.fit_operator(
+        _fit_model(seed=11),
+        dataset,
+        batch_size=2,
+        gradient_accumulation=2,
+        **common,
+    )
+
+    _assert_operator_models_close(
+        full.last_execution_model,
+        accumulated.last_execution_model,
+    )
+    assert full.history.train_metrics[0]["loss"] == pytest.approx(
+        accumulated.history.train_metrics[0]["loss"],
+        rel=2e-5,
+        abs=2e-6,
+    )
+
+
+def test_extreme_log_weights_and_uneven_tail_are_partition_invariant():
+    base = _dataset(cases=3)
+    dataset = phx.nn.operator.training.OperatorDataset(
+        base.batch,
+        base.targets,
+        base.provenance,
+        case_log_weights=jnp.asarray((1000.0, 999.0, 850.0)),
+    )
+    common = {
+        "epochs": 1,
+        "steps": 1,
+        "shuffle": False,
+        "optimizer": optax.sgd(1e-2),
+        "optimizer_id": "tests.sgd.extreme-measure",
+        "include_model_losses": False,
+    }
+    full = phx.nn.operator.training.fit_operator(
+        _fit_model(seed=12),
+        dataset,
+        batch_size=3,
+        gradient_accumulation=1,
+        **common,
+    )
+    accumulated = phx.nn.operator.training.fit_operator(
+        _fit_model(seed=12),
+        dataset,
+        batch_size=2,
+        gradient_accumulation=2,
+        **common,
+    )
+
+    _assert_operator_models_close(
+        full.last_execution_model,
+        accumulated.last_execution_model,
+    )
+    assert jnp.isfinite(accumulated.final_loss)
+
+
+def test_zero_support_window_skips_every_update_lifecycle_transition():
+    base = _dataset(cases=4)
+    dataset = phx.nn.operator.training.OperatorDataset(
+        base.batch,
+        base.targets,
+        base.provenance,
+        case_mask=jnp.asarray((False, False, True, True)),
+    )
+    events = []
+
+    def record(event):
+        events.append(event.name)
+        return False
+
+    result = phx.nn.operator.training.fit_operator(
+        _fit_model(seed=13),
+        dataset,
+        epochs=1,
+        steps=2,
+        batch_size=2,
+        gradient_accumulation=1,
+        shuffle=False,
+        callbacks=(record,),
+    )
+
+    assert result.completed_steps == 1
+    assert result.progress.microstep == 2
+    assert events.count("batch_end") == 1
+
+
+@pytest.mark.parametrize(
+    "term",
+    (
+        phx.nn.operator.training.SupervisedOperatorLoss(reduction="sum"),
+        phx.nn.operator.training.OperatorLossTerm(
+            "scalar",
+            _prediction_energy,
+            identity="tests.scalar-nonadditive",
+        ),
+        phx.nn.operator.training.OperatorDistributionNLL(reduction="sum"),
+        phx.nn.operator.training.OperatorClassificationNLL(
+            phx.nn.operator.OperatorClassificationSpec("binary", ("off", "on")),
+            case_reduction="sum",
+        ),
+    ),
+)
+def test_accumulation_rejects_nonadditive_operator_reductions(term):
+    with pytest.raises(ValueError, match="case-additive mean"):
+        phx.nn.operator.training.fit_operator(
+            _fit_model(seed=14),
+            _dataset(cases=2),
+            loss_terms=(term,),
+            gradient_accumulation=2,
+            epochs=1,
+            batch_size=1,
+        )
+
+
+def test_single_batch_sum_reduction_remains_supported():
+    result = phx.nn.operator.training.fit_operator(
+        _fit_model(seed=15),
+        _dataset(cases=2),
+        loss_terms=(phx.nn.operator.training.SupervisedOperatorLoss(reduction="sum"),),
+        gradient_accumulation=1,
+        epochs=1,
+        steps=1,
+        batch_size=2,
+    )
+
+    assert result.completed_steps == 1
     assert jnp.isfinite(result.final_loss)
 
 
@@ -700,11 +863,13 @@ def test_fit_operator_callbacks_can_stop_at_an_update_boundary():
         _dataset(cases=8),
         epochs=4,
         steps=8,
-        batch_size=4,
+        batch_size=2,
+        gradient_accumulation=2,
         callbacks=(stop_after_first,),
     )
 
     assert result.completed_steps == 1
+    assert result.progress.microstep == 2
     assert result.stopped_by_callback
     assert events[0] == "train_begin"
     assert "batch_end" in events

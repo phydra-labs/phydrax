@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added log-stable numerator/support gradient accumulation shared by operator,
+  discrete-dynamics, and standard-Optax functional training. Operator case
+  measures now remain exact across weighted, masked, uneven, lazy, and sharded
+  microbatches; optimizer, target, reporting, and checkpoint state advance only
+  at accepted positive-support update boundaries.
 - Added content-identified homogeneous Helmholtz thermodynamics with canonical
   component/phase-occurrence identity, explicit gas reference pressure,
   ideal-mixture calorics, Peng--Robinson residual properties and exhaustive
