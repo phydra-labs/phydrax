@@ -788,21 +788,22 @@ def test_stochastic_replay_checkpoint_and_output_are_reproducible(tmp_path):
         rigid_fields={"position": jnp.asarray([[0.5, 0.5]])},
         diagnostics={"divergence": jnp.asarray(0.0)},
     )
-    load = phx.solver.HydrodynamicLoadPlan(jnp.asarray([0]), 2).record(
+    load = phx.solver.HydrodynamicLoadPlan(
+        jnp.asarray([0]),
+        2,
+        marker_set_id="marker-set",
+        geometry_id="geometry",
+        route_id="route",
+        topology_epoch_id="epoch",
+        reference_point_id="body-origin",
+    ).record(
         0.0,
         0.1,
         jnp.asarray([[0.2, 0.0]]),
         jnp.zeros((1, 1)),
-        pressure_force=jnp.zeros((1, 2)),
-        pressure_torque=jnp.zeros((1, 1)),
-        viscous_force=jnp.zeros((1, 2)),
-        viscous_torque=jnp.zeros((1, 1)),
+        interval_id="step-2",
         marker_force=jnp.asarray([[1.0, 0.0]]),
         marker_torque=jnp.zeros((1, 1)),
-        lubrication_force=jnp.zeros((1, 2)),
-        lubrication_torque=jnp.zeros((1, 1)),
-        contact_impulse=jnp.zeros((1, 2)),
-        contact_angular_impulse=jnp.zeros((1, 1)),
     )
     restriction = phx.solver.MarkerFlowAdaptiveStepPlan(maximum_step=0.1).restrict(
         advection=0.05,

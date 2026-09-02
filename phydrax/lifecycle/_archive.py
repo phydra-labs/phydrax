@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,8 +23,14 @@ from .._array_archive import (
     read_array_archive,
     write_array_archive,
 )
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import canonical_fingerprint, canonical_json
 from ..diagnostics import Diagnostic, DiagnosticError
+from ._chunk_repository import (
+    ArtifactManifest,
+    ArtifactRepository,
+    RepositoryConflictError,
+)
+from ._migration import CompatibilityRegistry, MigrationReport
 from ._models import (
     AnalysisPlan,
     CheckpointManifest,
@@ -47,6 +54,23 @@ LifecycleRecord: TypeAlias = (
     | ResultManifest
     | ResultRevision
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalLogicalArrays:
+    """Canonical logical arrays whose payloads can be chunked independently."""
+
+    manifest: bytes
+    payloads: Mapping[str, bytes]
+    collection_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationLineageArtifact:
+    """One explicitly migrated configuration and its immutable repository commit."""
+
+    report: MigrationReport
+    manifest: ArtifactManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +123,262 @@ def payload_byte_count(value: Any, /) -> int:
 def collection_digest(values: Mapping[str, Any], /) -> str:
     """Return one content identity for a named payload collection."""
     return array_collection_digest(values)
+
+
+def _reject_nonfinite_json(value: str, /) -> None:
+    raise ValueError(f"Non-finite JSON value {value!r} is not permitted.")
+
+
+def encode_logical_arrays(
+    values: Mapping[str, Any],
+    /,
+    *,
+    logical_prefix: str = "array",
+) -> CanonicalLogicalArrays:
+    """Encode named native arrays as deterministic, independently chunkable bytes."""
+
+    if not isinstance(values, Mapping) or not values:
+        raise TypeError("Logical arrays must be a non-empty mapping.")
+    prefix = str(logical_prefix)
+    if (
+        not prefix
+        or len(prefix) > 240
+        or not prefix[0].isalnum()
+        or any(not (character.isalnum() or character in "._:-") for character in prefix)
+    ):
+        raise ValueError("logical_prefix must be a path-safe repository identifier.")
+    normalized_values = {str(name): value for name, value in values.items()}
+    normalized_names = tuple(sorted(normalized_values))
+    if len(normalized_values) != len(values) or any(
+        not name for name in normalized_names
+    ):
+        raise ValueError("Logical array names must be unique and non-empty.")
+    records: list[dict[str, object]] = []
+    payloads: dict[str, bytes] = {}
+    for index, name in enumerate(normalized_names):
+        value = np.asarray(normalized_values[name])
+        if value.dtype.hasobject or value.dtype.fields is not None:
+            raise TypeError("Logical arrays must have native, non-object dtypes.")
+        dtype = value.dtype
+        if dtype.itemsize > 1 and dtype.byteorder != "|":
+            dtype = dtype.newbyteorder("<")
+        canonical = np.asarray(value, dtype=dtype)
+        if not canonical.flags.c_contiguous:
+            canonical = np.ascontiguousarray(canonical)
+        payload = canonical.tobytes(order="C")
+        logical_name = f"{prefix}-{index:06d}"
+        records.append(
+            {
+                "name": name,
+                "logical_name": logical_name,
+                "dtype": dtype.str,
+                "shape": list(canonical.shape),
+                "byte_count": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+        payloads[logical_name] = payload
+    content = {"kind": "canonical-logical-arrays", "arrays": records}
+    collection_id = canonical_fingerprint(content)
+    manifest = canonical_json({**content, "collection_id": collection_id}).encode("utf-8")
+    return CanonicalLogicalArrays(
+        manifest,
+        MappingProxyType(payloads),
+        collection_id,
+    )
+
+
+def decode_logical_arrays(
+    manifest: bytes | bytearray | memoryview,
+    payloads: Mapping[str, bytes | bytearray | memoryview],
+    /,
+) -> Mapping[str, np.ndarray]:
+    """Decode and content-verify canonical logical arrays without execution caches."""
+
+    try:
+        record = json.loads(
+            bytes(manifest).decode("utf-8"),
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Logical-array manifest is not canonical JSON.") from error
+    if (
+        not isinstance(record, Mapping)
+        or set(record) != {"kind", "arrays", "collection_id"}
+        or record["kind"] != "canonical-logical-arrays"
+        or not isinstance(record["arrays"], list)
+        or not record["arrays"]
+    ):
+        raise ValueError("Logical-array manifest schema is invalid.")
+    content = {"kind": record["kind"], "arrays": record["arrays"]}
+    if record["collection_id"] != canonical_fingerprint(content):
+        raise ValueError("Logical-array manifest content address is invalid.")
+    expected_logical_names: set[str] = set()
+    arrays: dict[str, np.ndarray] = {}
+    for item in record["arrays"]:
+        if not isinstance(item, Mapping) or set(item) != {
+            "name",
+            "logical_name",
+            "dtype",
+            "shape",
+            "byte_count",
+            "sha256",
+        }:
+            raise ValueError("Logical-array record schema is invalid.")
+        name = item["name"]
+        logical_name = item["logical_name"]
+        shape = item["shape"]
+        byte_count = item["byte_count"]
+        digest = item["sha256"]
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(logical_name, str)
+            or not logical_name
+            or not isinstance(shape, list)
+            or any(type(dimension) is not int or dimension < 0 for dimension in shape)
+            or type(byte_count) is not int
+            or byte_count < 0
+            or not isinstance(digest, str)
+            or len(digest) != 64
+        ):
+            raise ValueError("Logical-array record values are invalid.")
+        if name in arrays or logical_name in expected_logical_names:
+            raise ValueError("Logical-array names must be unique.")
+        try:
+            dtype = np.dtype(item["dtype"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("Logical-array dtype is invalid.") from error
+        if dtype.hasobject or dtype.fields is not None:
+            raise TypeError("Logical arrays must have native, non-object dtypes.")
+        if logical_name not in payloads:
+            raise ValueError("Logical-array payload collection is incomplete.")
+        payload = bytes(payloads[logical_name])
+        if (
+            len(payload) != byte_count
+            or hashlib.sha256(payload).hexdigest() != digest
+            or math.prod(shape) * dtype.itemsize != byte_count
+        ):
+            raise ValueError("Logical-array payload checksum or byte count failed.")
+        value = np.frombuffer(payload, dtype=dtype).reshape(tuple(shape)).copy()
+        value.setflags(write=False)
+        arrays[name] = value
+        expected_logical_names.add(logical_name)
+    if set(payloads) != expected_logical_names:
+        raise ValueError("Logical-array payload collection contains unknown members.")
+    return MappingProxyType(arrays)
+
+
+def migrate_configuration(
+    repository: ArtifactRepository,
+    registry: CompatibilityRegistry,
+    record: Mapping[str, object],
+    /,
+    *,
+    source_format_id: str,
+    writer_id: str,
+    lineage: Sequence[str] = (),
+    allow_lossy: bool = False,
+) -> ConfigurationLineageArtifact:
+    """Migrate and commit a new immutable configuration-lineage artifact."""
+
+    if not isinstance(registry, CompatibilityRegistry):
+        raise TypeError("registry must be CompatibilityRegistry.")
+    report = registry.resolve(
+        record,
+        source_format_id=source_format_id,
+        lineage=lineage,
+        allow_lossy=allow_lossy,
+    )
+    payload = canonical_json(
+        {
+            "kind": "configuration-lineage-artifact",
+            "report": report.to_record(),
+        }
+    ).encode("utf-8")
+    maximum = int(repository.maximum_chunk_bytes)
+    if maximum <= 0:
+        raise ValueError("Repository maximum_chunk_bytes must be positive.")
+    try:
+        transaction = repository.begin(
+            report.output_digest,
+            writer_id,
+            attempt_id=report.report_id,
+        )
+        chunks = tuple(
+            repository.write_chunk(
+                transaction,
+                "configuration",
+                index,
+                offset,
+                payload[offset : offset + maximum],
+            )
+            for index, offset in enumerate(range(0, len(payload), maximum))
+        )
+        committed = repository.commit(
+            transaction,
+            chunks,
+            metadata={
+                "kind": "configuration-lineage",
+                "format_id": report.output_format_id,
+                "parent_artifact_id": report.input_digest,
+                "report_id": report.report_id,
+            },
+        )
+    except RepositoryConflictError:
+        committed = repository.get_manifest(report.output_digest)
+    metadata = dict(committed.metadata)
+    if (
+        committed.artifact_id != report.output_digest
+        or metadata.get("kind") != "configuration-lineage"
+        or metadata.get("format_id") != report.output_format_id
+        or metadata.get("parent_artifact_id") != report.input_digest
+        or metadata.get("report_id") != report.report_id
+    ):
+        raise ValueError("Repository contains a conflicting configuration artifact.")
+    if any(chunk.logical_name != "configuration" for chunk in committed.chunks):
+        raise ValueError("Configuration artifact contains an unknown logical payload.")
+    stored_payload = b"".join(
+        repository.read_chunk(
+            committed,
+            chunk,
+            maximum_plaintext_bytes=maximum,
+        )
+        for chunk in sorted(committed.chunks, key=lambda value: value.index)
+    )
+    try:
+        stored = json.loads(
+            stored_payload.decode("utf-8"),
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Configuration lineage payload is not valid JSON.") from error
+    if (
+        not isinstance(stored, Mapping)
+        or set(stored) != {"kind", "report"}
+        or stored["kind"] != "configuration-lineage-artifact"
+        or not isinstance(stored["report"], Mapping)
+        or MigrationReport.from_record(stored["report"]).report_id != report.report_id
+    ):
+        raise ValueError("Repository configuration lineage payload is inconsistent.")
+    return ConfigurationLineageArtifact(report, committed)
+
+
+def rollback_configuration(
+    registry: CompatibilityRegistry,
+    artifact: ConfigurationLineageArtifact | MigrationReport,
+    /,
+) -> dict[str, object]:
+    """Select the immutable parent configuration; never reverse-transform a child."""
+
+    if not isinstance(registry, CompatibilityRegistry):
+        raise TypeError("registry must be CompatibilityRegistry.")
+    report = (
+        artifact.report
+        if isinstance(artifact, ConfigurationLineageArtifact)
+        else artifact
+    )
+    return registry.rollback(report)
 
 
 def create(
@@ -633,19 +913,25 @@ register_exporter("npz", _export_npz)
 
 
 __all__ = [
+    "CanonicalLogicalArrays",
+    "ConfigurationLineageArtifact",
     "LifecycleArchive",
     "LifecycleQuery",
     "LifecycleRecord",
     "SampledExporter",
     "SampledField",
+    "collection_digest",
     "create",
+    "decode_logical_arrays",
+    "encode_logical_arrays",
     "export",
     "list_fields",
-    "collection_digest",
+    "migrate_configuration",
+    "open",
     "payload_byte_count",
     "payload_digest",
-    "open",
     "query",
     "register_exporter",
+    "rollback_configuration",
     "support_bundle",
 ]

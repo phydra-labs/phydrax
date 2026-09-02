@@ -293,18 +293,57 @@
 ---
 
 MAC pressure route eligibility belongs to the prepared solver, not to the grid alone.
-The transform-diagonal route requires a uniform constant-coefficient
-periodic/Neumann tensor. The hybrid route additionally requires rank three, an
-all-Neumann pressure closure, one explicitly nonperiodic physical line, and two
-uniform transform-compatible transverse axes. It transforms the transverse axes in
-axis order, solves the nonuniform Neumann tridiagonal lines, and synthesizes in reverse
-order. Preparation checks the represented physical action and resource budget.
+`MACPressureOperatorSpec` freezes the positive coefficient and the closure-aware
+matrix-free action `A p = -D(beta G_h p)`. Static Robin traces use
+`alpha p + beta_r dp/dn = value`. Preparation records coefficient contrast and
+structure, affine lift, symmetry, JVP/VJP, resource, and geometry-epoch evidence.
 
-The hybrid all-zero transverse mode uses volume compatibility and a zero-mean volume
-gauge; pinning one physical-line row is only a factorization device. Supplying a
-runtime inverse-momentum diagonal forces iterative projection. Variable-density,
-mixed/open-closure, distributed, and sharded-line execution are not hybrid routes.
-MAC also has no fixed-bulk-flux controller.
+`transform` is an exact uniform constant-coefficient tensor route. `hybrid` is an exact
+three-dimensional all-Neumann transform-line route for constant or line-structured
+coefficients with one named nonperiodic line. Both require the matching prepared
+`direct_solve` callback at execution. General positive coefficients and symmetric
+mixed/Robin closures use PCG with a frozen constant preconditioner; stabilized
+nonsymmetric traction uses FGMRES. Distributed projection remains a separate
+collective PCG plan, and partition-aware line solvers do not silently make the hybrid
+route multi-device.
+
+`MACFlowControlTarget` separately declares pressure-gradient, bulk-velocity, or
+frozen-density mass-flux control. `MACFlowControlPlan.prepare()` binds SSPRK,
+IMEX-Euler, or SBDF2 method-stage response maps. A prepared step solves only the finite
+control response system and atomically rejects rank/conditioning, target, response,
+boundary, projection, pressure, resource, or underlying-method failures.
+
+::: phydrax.solver.MACPressureRobinSide
+
+---
+
+::: phydrax.solver.MACPressureOperatorSpec
+
+---
+
+::: phydrax.solver.PreparedMACPressureOperator
+
+---
+
+::: phydrax.solver.MACPressureSolveResult
+
+---
+
+::: phydrax.applications.incompressible_flow.MACFlowControlTarget
+
+---
+
+::: phydrax.applications.incompressible_flow.MACFlowControlPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedMACFlowControl
+
+---
+
+::: phydrax.applications.incompressible_flow.MACFlowControlStepResult
+
+---
 
 ::: phydrax.discretization.MACOperatorPlan
 
@@ -455,11 +494,24 @@ fixed-flux feedback.
 
 ## Multiblock and AMR
 
+`ConservativeMultiblockInterfacePlan` supports conforming and nested 2:1
+upper-to-lower interfaces. It evaluates one fine-mortar flux, returns equal-and-opposite
+integrated block fluxes, and reports the compensated conservation defect.
+`FiniteVolumeMultiblockRuntimePlan.limit_stage()` applies one secondary positivity
+factor to every block candidate and shared mortar integral; if the monotone fallback is
+inadmissible, all blocks retain their base states.
+
 ::: phydrax.discretization.ConservativeMultiblockInterfacePlan
 
 ---
 
 ::: phydrax.discretization.ConservativeMultiblockFluxResult
+
+::: phydrax.discretization.FiniteVolumeMultiblockRuntimePlan
+
+---
+
+::: phydrax.discretization.MultiblockPositivityResult
 
 ---
 
@@ -531,6 +583,113 @@ fixed-flux feedback.
 ---
 
 ::: phydrax.equations.compile_conservation_problem
+
+## Compressible and reacting application facades
+
+`phydrax.applications.compressible_flow` binds smooth DG, high-resolution FV,
+all-speed, shock, finite-x boundary, and frozen slow-growth application contracts.
+Every profile is route-exact; `dns-candidate` does not make `claims_dns` true.
+
+::: phydrax.applications.compressible_flow.CompressibleFlowCaseSpec
+
+---
+
+::: phydrax.applications.compressible_flow.AllSpeedCompressiblePolicy
+
+---
+
+::: phydrax.applications.compressible_flow.AllSpeedHLLFluxPlan
+
+---
+::: phydrax.applications.compressible_flow.ShockAwareAllSpeedFluxPlan
+
+---
+
+
+::: phydrax.applications.compressible_flow.ShockResolvingPolicy
+
+---
+
+::: phydrax.applications.compressible_flow.SmoothCompressibleProductionPlan
+
+---
+
+::: phydrax.applications.compressible_flow.NodalDGCompressibleProductionPlan
+
+---
+
+::: phydrax.applications.compressible_flow.StructuredFVCompressibleProductionPlan
+
+---
+
+::: phydrax.applications.compressible_flow.PreparedCompressibleProduction
+
+---
+
+::: phydrax.applications.compressible_flow.CompressiblePlaneBaseflowPlan
+
+---
+
+::: phydrax.applications.compressible_flow.TemporalSlowGrowthModelPlan
+
+---
+
+::: phydrax.applications.compressible_flow.SpatialSlowGrowthModelPlan
+
+---
+
+::: phydrax.applications.compressible_flow.PreparedSlowGrowthSource
+
+---
+
+::: phydrax.applications.compressible_flow.SlowGrowthFiniteXEvidence
+
+`phydrax.applications.reacting_flow` stores total density, `S-1` species densities,
+momentum, and total energy. It keeps ideal-mixture thermodynamics, mechanism
+compilation, structured/mapped FV transport, Strang/IMEX chemistry, low-Mach
+constraint, and host-only Cantera reference boundaries separate.
+
+::: phydrax.applications.reacting_flow.ReactingGasModel
+
+---
+
+::: phydrax.applications.reacting_flow.ReactiveConservedLayout
+
+---
+
+::: phydrax.applications.reacting_flow.ChemicalMechanismCompiler
+
+---
+
+::: phydrax.applications.reacting_flow.ReactiveStructuredFiniteVolumePlan
+
+---
+
+::: phydrax.applications.reacting_flow.ReactiveStrangPlan
+
+---
+
+::: phydrax.applications.reacting_flow.ReactiveIMEXPlan
+
+---
+
+::: phydrax.applications.reacting_flow.LowMachReactingFormulation
+
+---
+
+::: phydrax.applications.reacting_flow.CanteraYAMLAdapter
+
+---
+
+::: phydrax.applications.reacting_flow.CanteraReferenceAdapter
+
+---
+
+::: phydrax.applications.reacting_flow.ReactiveClosureTargetPlan
+
+---
+
+::: phydrax.applications.reacting_flow.ReactiveFlowStatisticsPlan
 
 ## Time execution
 

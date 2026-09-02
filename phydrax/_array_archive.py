@@ -19,6 +19,12 @@ import jax.numpy as jnp
 import numpy as np
 
 
+_DEFAULT_MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+_DEFAULT_MAX_ARRAY_BYTES = 4 * 1024 * 1024 * 1024
+_DEFAULT_MAX_TOTAL_BYTES = 16 * 1024 * 1024 * 1024
+_DEFAULT_MAX_MEMBERS = 100_001
+
+
 class ArrayArchiveError(RuntimeError):
     """Base class for portable array-archive failures."""
 
@@ -208,33 +214,61 @@ def write_array_archive(
 def read_array_archive(
     path: str | os.PathLike[str],
     /,
+    *,
+    max_manifest_bytes: int = _DEFAULT_MAX_MANIFEST_BYTES,
+    max_array_bytes: int = _DEFAULT_MAX_ARRAY_BYTES,
+    max_total_bytes: int = _DEFAULT_MAX_TOTAL_BYTES,
+    max_members: int = _DEFAULT_MAX_MEMBERS,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
-    """Read and checksum-validate one canonical pickle-free array archive."""
+    """Read a checksum-validated archive without performing unbounded reads."""
     source = Path(path)
+    manifest_limit = _positive_archive_limit(max_manifest_bytes, "max_manifest_bytes")
+    array_limit = _positive_archive_limit(max_array_bytes, "max_array_bytes")
+    total_limit = _positive_archive_limit(max_total_bytes, "max_total_bytes")
+    member_limit = _positive_archive_limit(max_members, "max_members")
     try:
         with zipfile.ZipFile(source, mode="r") as archive:
             members = archive.infolist()
+            if len(members) > member_limit:
+                raise ArrayArchiveCorruptionError(
+                    "Archive contains too many members for the configured bound."
+                )
             member_names = [member.filename for member in members]
             if len(set(member_names)) != len(member_names):
                 raise ArrayArchiveCorruptionError("Archive contains duplicate members.")
             if any(
-                member.compress_type != zipfile.ZIP_STORED
+                member.is_dir()
+                or member.compress_type != zipfile.ZIP_STORED
+                or member.flag_bits & 0x1
                 or member.file_size != member.compress_size
+                or not _canonical_member_name(member.filename)
                 for member in members
             ):
                 raise ArrayArchiveCorruptionError(
-                    "Archive members must use canonical stored encoding."
+                    "Archive members must be canonical bounded stored files."
                 )
-            if archive.testzip() is not None:
-                raise ArrayArchiveCorruptionError("Archive CRC validation failed.")
+            if sum(member.file_size for member in members) > total_limit:
+                raise ArrayArchiveCorruptionError(
+                    "Archive exceeds the configured total byte bound."
+                )
             names = set(member_names)
             if "manifest.json" not in names:
                 raise ArrayArchiveCorruptionError("Archive manifest is missing.")
+            manifest_payload = _read_zip_member(archive, "manifest.json", manifest_limit)
             try:
-                manifest = json.loads(archive.read("manifest.json"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                manifest = json.loads(
+                    manifest_payload,
+                    object_pairs_hook=_unique_json_object,
+                    parse_constant=_reject_json_constant,
+                )
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                RecursionError,
+                ValueError,
+            ) as error:
                 raise ArrayArchiveCorruptionError(
-                    "Archive manifest is invalid JSON."
+                    "Archive manifest is invalid finite JSON."
                 ) from error
             if not isinstance(manifest, dict):
                 raise ArrayArchiveCorruptionError("Archive manifest must be an object.")
@@ -244,17 +278,25 @@ def read_array_archive(
             expected_members = {"manifest.json"}
             values: dict[str, np.ndarray] = {}
             for logical_name, record in inventory.items():
-                if not isinstance(logical_name, str) or not isinstance(record, dict):
+                if (
+                    not isinstance(logical_name, str)
+                    or not logical_name
+                    or not isinstance(record, dict)
+                ):
                     raise ArrayArchiveCorruptionError(
                         "Archive array inventory is invalid."
                     )
                 member = record.get("member")
-                if not isinstance(member, str) or member not in names:
+                if (
+                    not isinstance(member, str)
+                    or member not in names
+                    or member in expected_members
+                ):
                     raise ArrayArchiveCorruptionError(
-                        f"Archive member for array {logical_name!r} is missing."
+                        f"Archive member for array {logical_name!r} is missing or reused."
                     )
                 expected_members.add(member)
-                payload = archive.read(member)
+                payload = _read_zip_member(archive, member, array_limit)
                 if hashlib.sha256(payload).hexdigest() != record.get("sha256"):
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} checksum failed."
@@ -265,9 +307,11 @@ def read_array_archive(
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} is invalid."
                     ) from error
-                if list(value.shape) != record.get(
-                    "shape"
-                ) or value.dtype.str != record.get("dtype"):
+                if (
+                    value.dtype.hasobject
+                    or list(value.shape) != record.get("shape")
+                    or value.dtype.str != record.get("dtype")
+                ):
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} metadata is inconsistent."
                     )
@@ -282,6 +326,62 @@ def read_array_archive(
         raise ArrayArchiveCorruptionError(
             f"Cannot read array archive {source}."
         ) from error
+
+
+def _read_zip_member(
+    archive: zipfile.ZipFile,
+    name: str,
+    maximum_bytes: int,
+    /,
+) -> bytes:
+    information = archive.getinfo(name)
+    if information.file_size > maximum_bytes:
+        raise ArrayArchiveCorruptionError(
+            f"Archive member {name!r} exceeds its configured byte bound."
+        )
+    with archive.open(information, mode="r") as stream:
+        payload = stream.read(maximum_bytes + 1)
+    if len(payload) > maximum_bytes or len(payload) != information.file_size:
+        raise ArrayArchiveCorruptionError(
+            f"Archive member {name!r} changed size while reading."
+        )
+    return payload
+
+
+def _canonical_member_name(name: str, /) -> bool:
+    if name == "manifest.json":
+        return True
+    parts = name.split("/")
+    return (
+        len(parts) == 2
+        and parts[0] == "arrays"
+        and len(parts[1]) == 10
+        and parts[1].endswith(".npy")
+        and parts[1][:6].isdigit()
+    )
+
+
+def _unique_json_object(
+    pairs: list[tuple[str, object]],
+    /,
+) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for name, item in pairs:
+        if name in value:
+            raise ValueError(f"Duplicate JSON member {name!r} is forbidden.")
+        value[name] = item
+    return value
+
+
+def _reject_json_constant(value: str, /) -> object:
+    raise ValueError(f"Non-finite JSON constant {value!r} is forbidden.")
+
+
+def _positive_archive_limit(value: int, name: str, /) -> int:
+    normalized = int(value)
+    if normalized <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return normalized
 
 
 __all__ = [

@@ -352,7 +352,17 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
             ~(jnp.isfinite(step) & (step > 0.0)),
             "OU-forced ETDRK step size must be finite and positive.",
         )
-        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        scheduled_start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        start = state.forcing_state.time
+        schedule_defect = jnp.abs(scheduled_start - start)
+        schedule_tolerance = (
+            32.0
+            * jnp.finfo(step.dtype).eps
+            * jnp.maximum(1.0, jnp.maximum(jnp.abs(scheduled_start), jnp.abs(start)))
+        )
+        schedule_valid = jnp.isfinite(scheduled_start) & (
+            schedule_defect <= schedule_tolerance
+        )
         advance = self.forcing.advance(
             state.forcing_state,
             start,
@@ -383,7 +393,9 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
         projected, candidate_valid, candidate_defect = self.base._boundary_evidence(
             candidate_velocity
         )
-        successful = incoming_valid & candidate_valid & advance.successful
+        successful = (
+            incoming_valid & candidate_valid & advance.successful & schedule_valid
+        )
         accepted_velocity = jnp.where(successful, projected, value)
         accepted_forcing = SolenoidalOUForcingState(
             time=jnp.where(successful, advance.state.time, state.forcing_state.time),
@@ -404,10 +416,14 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
             jnp.all(jnp.isfinite(candidate_velocity))
             & jnp.all(jnp.isfinite(advance.state.coefficients))
             & advance.finite
+            & jnp.isfinite(schedule_defect)
         )
         residual = jnp.where(
             finite_transition,
-            jnp.maximum(incoming_defect, candidate_defect),
+            jnp.maximum(
+                jnp.maximum(incoming_defect, candidate_defect),
+                schedule_defect,
+            ),
             jnp.asarray(jnp.inf, dtype=value.real.dtype),
         )
         return FixedStepResult(

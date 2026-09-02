@@ -224,6 +224,50 @@
 
 ::: phydrax.discretization.SpectralEntropyDiagnostics
 
+## Distributed full-complex execution
+
+`DistributedSpectralExecutionPlan` binds slab, pencil, or channel layouts to one real
+`SpectralMeshTopology`. Preparation fixes every physical/modal redistribution,
+canonical/padded shape, precision, transform scale, collective count, local shape, and
+byte bound. Execution keeps JAX `NamedSharding`, performs no host gather, and refuses
+unavailable devices or incompatible global arrays.
+
+Slab and pencil routes provide full-complex Fourier transforms. The channel schedule
+partitions horizontal Fourier axes while replicating Chebyshev axis 1 and only invokes
+a supplied modal action; it is not a distributed `ChannelStokesPlan`. One-device
+topology is local. Caller meshes provide actual multi-device execution, while
+multi-host launch and scaling evidence remain outside this plan.
+
+::: phydrax.discretization.SpectralMeshTopology
+
+---
+
+::: phydrax.discretization.SpectralLayout
+
+---
+
+::: phydrax.discretization.SpectralTranspose
+
+---
+
+::: phydrax.discretization.SpectralResourceReport
+
+---
+
+::: phydrax.discretization.DistributedSpectralExecutionPlan
+
+---
+
+::: phydrax.discretization.DistributedSpectralPreparationReport
+
+---
+
+::: phydrax.discretization.SpectralExecutionResult
+
+---
+
+::: phydrax.discretization.SpectralGlobalDiagnostics
+
 ## Incompressible channel solves
 
 The default `ultraspherical_banded` channel route uses pressure-eliminated

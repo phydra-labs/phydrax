@@ -27,6 +27,17 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.linalg`: paired vector spaces, composable dense/matrix-free/block
   operators, linear problem contracts, reusable solve and factorization plans,
   and standard/generalized eigensolvers
+- `phydrax.qualification`: exact support tuples, current evidence matrices,
+  unsigned candidates, signed release indexes, and fail-closed admission
+- `phydrax.lifecycle`: resolved run identities, explicit configuration migration,
+  transactional repositories, topology-aware direct restart, and provenance
+- `phydrax.service`: in-process reference orchestration, durable stores, injected
+  scheduler/identity providers, tenant isolation, observability, and signing/trust
+- `phydrax.closure_data`: identified flow series, filters and closure targets,
+  chunked datasets, leakage-safe partitions, train-only normalization, and
+  artifact-bound learned deployment
+- `phydrax.statistical_dynamics`: finite CE2/GCE2 cumulants, beta-plane quadratic
+  coordinates, segmented NILSS, and logical distributed/restart layouts
 - `phydrax.backends`: explicit lazy PETSc, SLEPc, PyAMGCL, and NVIDIA AmgX
   lifecycle bridges with capability, transfer, convergence, and provenance evidence
 - `phydrax.enforcement`: exact condition transforms and enforcement programs
@@ -268,3 +279,184 @@ ID, and coupling ID include every named component.
 ---
 
 ::: phydrax.stochastic.StochasticTrajectory
+
+## Qualification, lifecycle, and release admission
+
+Candidate evidence is not release evidence. `QualificationMatrix.evaluate()` resolves
+every named predicate against current `QualificationEvidence`.
+`CapabilityProfile(released=False)` remains an unsigned candidate; `ReleaseIndex` and
+`require_profile` are the separate signed, time-scoped, exact-support admission
+boundary.
+
+::: phydrax.qualification.SupportTuple
+
+---
+
+::: phydrax.qualification.QualificationEvidence
+
+---
+
+::: phydrax.qualification.ObservedResourceRecord
+
+---
+
+::: phydrax.qualification.ForecastResourceRecord
+
+---
+
+::: phydrax.qualification.QualificationMatrix
+
+---
+
+::: phydrax.qualification.CapabilityProfile
+
+---
+
+::: phydrax.qualification.ReleaseIndex
+
+---
+
+::: phydrax.qualification.require_profile
+
+---
+
+::: phydrax.qualification.ReferenceArtifactManifest
+
+`ResolvedRunSpec` binds support dependencies and execution identities before launch.
+Migration follows only explicit acyclic forward edges and retains complete lineage.
+Repositories expose transactional immutable chunks; direct restart validates canonical
+source ranges and destination ownership before injected range I/O.
+
+::: phydrax.lifecycle.ResolvedRunSpec
+
+---
+
+::: phydrax.lifecycle.CompatibilityRegistry
+
+---
+
+::: phydrax.lifecycle.MigrationReport
+
+---
+
+::: phydrax.lifecycle.POSIXArtifactRepository
+
+---
+
+::: phydrax.lifecycle.S3ArtifactRepository
+
+---
+
+::: phydrax.lifecycle.TopologyRestartRelation
+
+---
+
+::: phydrax.lifecycle.prepare_direct_restore
+
+---
+
+::: phydrax.lifecycle.execute_direct_restore
+
+## Service and security providers
+
+`InProcessReferenceService` is a synchronous reference implementation, not a network
+server. Durable storage, Slurm/Kubernetes scheduling, JWKS retrieval, KMS, and
+certificate validation are explicit injected providers. Ed25519, asymmetric JWT, and
+X.509 operations require optional cryptography support; no provider fallback is hidden.
+
+::: phydrax.service.InProcessReferenceService
+
+---
+
+::: phydrax.service.SQLiteServiceStore
+
+---
+
+::: phydrax.service.ReleaseIndexDependencyAdmitter
+
+---
+
+::: phydrax.service.OIDCJWKSTokenValidator
+
+---
+
+::: phydrax.service.HTTPSJWKSProvider
+
+---
+
+::: phydrax.service.SlurmScheduler
+
+---
+
+::: phydrax.service.KubernetesScheduler
+
+---
+
+::: phydrax.service.LocalSecretHandleBroker
+
+---
+
+::: phydrax.service.Ed25519Signer
+
+---
+
+::: phydrax.service.KMSSigner
+
+---
+
+::: phydrax.service.SigningTrustStore
+
+## Closure-data plane
+
+Closure data keeps simulation ownership external. `FlowStateSchema`,
+`ClosureSnapshot`, and `ClosureSeries` bind physical components, units, mesh, case,
+trajectory, realization, and time identities. Filters and target constructors create
+an immutable `ClosureAnalysisDAG`. `ChunkedClosureDatasetManifest` verifies complete,
+non-overlapping sample/byte coverage and delegates storage only through
+`ClosureArtifactRepository`.
+
+`LeakageSafePartitionPlan` groups by declared case/trajectory/realization/time-block
+identity. `TrainOnlyNormalizer` records the exact training assignments used for its
+statistics. `LearnedClosureBindingPlan` binds predictor ABI, model artifact, component
+ordering, normalizer provenance, and differentiability. Conservative-face deployment
+uses the finite-volume closure owner. Spectral drift is explicitly dealiased,
+projected, Hermitian constrained, and energy checked; invalid prediction produces zero
+drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
+
+::: phydrax.closure_data.FlowStateSchema
+
+---
+
+::: phydrax.closure_data.ClosureSeries
+
+---
+
+::: phydrax.closure_data.FilterSpec
+
+---
+
+::: phydrax.closure_data.ClosureAnalysisDAG
+
+---
+
+::: phydrax.closure_data.ChunkedClosureDatasetManifest
+
+---
+
+::: phydrax.closure_data.LeakageSafePartitionPlan
+
+---
+
+::: phydrax.closure_data.TrainOnlyNormalizer
+
+---
+
+::: phydrax.closure_data.LearnedClosureBindingPlan
+
+---
+
+::: phydrax.closure_data.PreparedSpectralDriftHook
+
+---
+
+::: phydrax.closure_data.SpectralFallbackArtifact

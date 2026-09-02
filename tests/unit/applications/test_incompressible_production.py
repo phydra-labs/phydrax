@@ -350,3 +350,50 @@ def test_ou_forced_periodic_production_couples_and_restarts(tmp_path):
         0,
     )
     assert bool(snapshot.forcing_available)
+
+
+def test_ou_method_uses_continuation_time_with_fixed_step_scheduler_roundoff():
+    method, _, statistics, initial_velocity = _periodic_production_inputs()
+    basis = flow.SolenoidalHermitianFourierBasis(
+        statistics.projector,
+        maximum_wavenumber=1.1,
+    )
+    forcing = flow.SolenoidalOUForcingPlan(
+        basis,
+        correlation_time=0.7,
+        rms_acceleration=0.2,
+    )
+    realization = phx.stochastic.OrnsteinUhlenbeckRealization(
+        jax.random.key(31),
+        (basis.coordinate_size,),
+        support=(0.0, 1.0),
+        tolerance=1.0e-6,
+    )
+    prepared = flow.prepare_ou_forced_periodic_method(method, forcing, realization)
+    state = prepared.initial_state(initial_velocity, 0.0)
+
+    for step_index in range(8):
+        result = prepared.step(
+            jnp.asarray(step_index, dtype=jnp.int32),
+            jnp.asarray(0.1 * step_index),
+            state,
+            jnp.asarray(0.1),
+            None,
+        )
+        assert bool(result.successful)
+        state = result.accepted_state
+
+    np.testing.assert_allclose(state.forcing_state.time, 0.8)
+    mismatched = prepared.step(
+        jnp.asarray(8, dtype=jnp.int32),
+        state.forcing_state.time + 1.0e-6,
+        state,
+        jnp.asarray(0.1),
+        None,
+    )
+    assert not bool(mismatched.successful)
+    np.testing.assert_array_equal(mismatched.accepted_state.velocity, state.velocity)
+    np.testing.assert_array_equal(
+        mismatched.accepted_state.forcing_state.coefficients,
+        state.forcing_state.coefficients,
+    )

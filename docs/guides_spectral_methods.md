@@ -313,6 +313,47 @@ pivot margin, and the required unsharded wall-normal axis. Variable viscosity,
 failed pivots or constraints, and distributed spectral/line execution remain outside
 the channel contract.
 
+## Distributed spectral execution
+
+`SpectralMeshTopology` binds a real caller-visible JAX `Mesh`, its shape, axis names,
+platform, and device IDs. Construction never simulates unavailable devices.
+`DistributedSpectralExecutionPlan` then prepares one of three fixed schedules:
+
+- `slab`: one-dimensional mesh and all-Fourier full-complex transforms;
+- `pencil`: a two-dimensional mesh, spatial rank at least three, and divisible
+  canonical and padded transform dimensions;
+- `channel`: rank-three Fourier–Chebyshev–Fourier layout with the Chebyshev axis 1
+  replicated and only the two horizontal axes partitioned.
+
+Preparation fixes physical/modal and padded layouts, every all-to-all transpose,
+coefficient and accumulation precision, normalization, local shapes, collective count,
+checkpoint/stage memory, and a hard byte ceiling. `prepare()` verifies that the named
+devices remain available. `place`, `execute_transform`, `pad_modal`, `unpad_modal`,
+`modal_derivative`, and `diagnostics` preserve the prepared sharding and perform no
+host gather; `rotational_nonlinear` is restricted to periodic three-dimensional vector
+plans. Channel execution calls a supplied modal action through `execute_channel`; it
+does not implement a distributed Chebyshev transform or turn `ChannelStokesPlan` into
+a distributed line solve.
+
+```python
+topology = phx.discretization.SpectralMeshTopology.one_device()
+distributed = phx.discretization.DistributedSpectralExecutionPlan.from_discretization(
+    topology,
+    prepared_spectral_space,
+    schedule="slab",
+    maximum_bytes=memory_limit,
+).prepare()
+modal = distributed.execute_transform(
+    physical_state,
+    direction="physical_to_modal",
+)
+```
+
+The one-device topology is the local route. A caller-supplied mesh is the actual
+multi-device route; the plan does not initialize a distributed job, invent a device,
+or claim scaling. A multi-host JAX deployment remains an external process-launch and
+platform-evidence responsibility even when its devices participate in the mesh.
+
 ## Nonlinear evaluation and dealiasing
 
 Nonlinear pseudospectral compilation requires an explicit policy. Quadratic Fourier
