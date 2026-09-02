@@ -8,8 +8,8 @@ Q = phx.operators.quantum
 tn = phx.tensor_network
 
 
-def test_mps_program_executes_noncontiguous_ordered_target_window():
-    layout = Q.HilbertRegisterLayout(("q0", "q1", "q2"), (2, 2, 2))
+def test_mps_program_executes_adjacent_ordered_target_window():
+    layout = Q.HilbertRegisterLayout(("q0", "q1"), (2, 2))
     swap = jnp.asarray(
         [
             [1.0, 0.0, 0.0, 0.0],
@@ -21,15 +21,13 @@ def test_mps_program_executes_noncontiguous_ordered_target_window():
     )
     program = Q.QuantumProgram(
         layout,
-        (Q.LocalUnitaryOperation(swap, ("q2", "q0")),),
+        (Q.LocalUnitaryOperation(swap, ("q1", "q0")),),
         state_kind="state-vector",
     )
-    state = tn.product_mps(
-        jnp.asarray([[0.0, 1.0], [1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128)
-    )
+    state = tn.product_mps(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128))
     policy = phx.solver.MPSQuantumProgramPolicy(
         maximum_bond_dimension=4,
-        maximum_window_sites=3,
+        maximum_window_sites=2,
         maximum_discarded_weight=1e-10,
     )
     plan = phx.solver.plan_mps_quantum_program(program, state, policy)
@@ -41,9 +39,9 @@ def test_mps_program_executes_noncontiguous_ordered_target_window():
 
     assert result.diagnostics.successful
     assert jnp.allclose(result.final_state.to_dense(), dense.final_state, atol=1e-9)
-    assert plan.routes[0].target_positions == (2, 0)
+    assert plan.routes[0].target_positions == (1, 0)
     assert plan.routes[0].window_start == 0
-    assert plan.routes[0].window_stop == 2
+    assert plan.routes[0].window_stop == 1
 
 
 def test_mps_program_refresh_preserves_prepared_identity():

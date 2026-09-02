@@ -149,10 +149,14 @@ class LPDOQuantumProgramDiagnostics(StrictModule):
     final_trace_residual: Array
     accumulated_bond_discarded_weight: Array
     accumulated_purification_discarded_weight: Array
+    completely_positive_by_construction: Array
+    trace_preserving_operations: Array
+    positive_semidefinite_by_construction: Array
+    trace_within_tolerance: Array
+    truncation_within_budget: Array
     operation_evidence: tuple[LPDOQuantumOperationEvidence, ...]
     bond_truncations: tuple[TensorTruncationEvidence, ...]
     purification_truncations: tuple[TensorTruncationEvidence, ...]
-    positive_semidefinite_by_construction: bool = eqx.field(static=True)
 
     @property
     def successful(self) -> Array:
@@ -204,6 +208,25 @@ def plan_lpdo_quantum_program(
     if template_state.physical_dimensions != program.layout.local_dimensions:
         raise ValueError("LPDO physical dimensions must match the program layout.")
     routes = tuple(_route(program, operation) for operation in program.operations)
+    for operation, route in zip(program.operations, routes, strict=True):
+        if len(route.target_indices) > 2:
+            raise ValueError(
+                "LPDO execution supports only one-site channels and one/two-site "
+                "unitaries; decompose larger operations before planning."
+            )
+        if (
+            len(route.target_indices) == 2
+            and abs(route.target_indices[1] - route.target_indices[0]) != 1
+        ):
+            raise ValueError(
+                "Non-nearest-neighbor LPDO operations require an explicit "
+                "caller-visible SWAP compilation."
+            )
+        if (
+            isinstance(operation, LocalKrausChannelOperation)
+            and len(route.target_indices) != 1
+        ):
+            raise ValueError("LPDO Kraus channels must act on exactly one site.")
     maximum_window = 0
     split_count = 0
     maximum_kraus = 0
@@ -284,7 +307,7 @@ def _operation_evidence(program, policy):
             valid = finite & (residual <= policy.unitarity_tolerance)
             records.append(
                 LPDOQuantumOperationEvidence(
-                    finite, residual, valid, "unitary", operation.schema_id, False
+                    finite, residual, valid, "unitary", operation.schema_id, True
                 )
             )
         else:
@@ -506,22 +529,13 @@ def execute_lpdo_quantum_program(prepared, state, /):
     ):
         window = _contract_window(current, route)
         if isinstance(operation, LocalUnitaryOperation):
-            dimension = operation.unitary.shape[0]
-            safe = jnp.where(
-                evidence.valid,
-                operation.unitary,
-                jnp.eye(dimension, dtype=operation.unitary.dtype),
+            transformed = _apply_unitary(
+                window, route, current.physical_dimensions, operation.unitary
             )
-            transformed = _apply_unitary(window, route, current.physical_dimensions, safe)
         else:
-            _, dimension, _ = operation.kraus.shape
-            identity_stack = (
-                jnp.zeros_like(operation.kraus)
-                .at[0]
-                .set(jnp.eye(dimension, dtype=operation.kraus.dtype))
+            transformed = _apply_kraus(
+                window, route, current.physical_dimensions, operation.kraus
             )
-            safe = jnp.where(evidence.valid, operation.kraus, identity_stack)
-            transformed = _apply_kraus(window, route, current.physical_dimensions, safe)
         replacement, records = _split_window(
             current, route, transformed, prepared.plan.policy
         )
@@ -556,6 +570,17 @@ def execute_lpdo_quantum_program(prepared, state, /):
     bond_total = jnp.sum(bond_weights)
     purification_total = jnp.sum(purification_weights)
     total = bond_total + purification_total
+    cp_by_construction = jnp.asarray(
+        all(record.cp_by_construction for record in prepared.operation_evidence)
+    )
+    trace_preserving = prepared.operations_valid
+    psd_by_construction = jnp.asarray(True)
+    trace_within_tolerance = jnp.isfinite(final_trace_residual) & (
+        final_trace_residual <= prepared.plan.policy.trace_tolerance
+    )
+    truncation_within_budget = jnp.isfinite(total) & (
+        total <= prepared.plan.policy.maximum_discarded_weight
+    )
     status = jnp.asarray(int(LPDOQuantumProgramStatus.SUCCESS), dtype=jnp.int32)
     status = jnp.where(
         ~prepared.operations_valid,
@@ -598,10 +623,14 @@ def execute_lpdo_quantum_program(prepared, state, /):
         final_trace_residual,
         bond_total,
         purification_total,
+        cp_by_construction,
+        trace_preserving,
+        psd_by_construction,
+        trace_within_tolerance,
+        truncation_within_budget,
         prepared.operation_evidence,
         tuple(bond_truncations),
         tuple(purification_truncations),
-        True,
     )
     return LPDOQuantumProgramResult(
         current,

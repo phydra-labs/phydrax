@@ -13,8 +13,8 @@ def test_one_site_real_time_tdvp_matches_exact_evolution():
         jnp.asarray([[1.0, 1.0]], dtype=jnp.complex128) / jnp.sqrt(2.0)
     )
     hamiltonian = tn.product_mpo(pauli_z[None, ...])
-    problem = phx.solver.MatrixProductTDVPProblem(state, hamiltonian)
-    policy = phx.solver.MatrixProductTDVPPolicy(
+    problem = phx.solver.FiniteTDVPProblem(state, hamiltonian)
+    policy = phx.solver.FiniteTDVPPolicy(
         "real-time",
         step_size=0.05,
         steps=1,
@@ -23,7 +23,7 @@ def test_one_site_real_time_tdvp_matches_exact_evolution():
             "lanczos", max_dimension=4, error_tolerance=1e-10
         ),
     )
-    result = phx.solver.solve_matrix_product_tdvp(problem, policy)
+    result = phx.solver.solve_finite_tdvp(problem, policy)
     expected = jsp.linalg.expm(-0.05j * pauli_z) @ state.to_dense()
 
     assert result.successful
@@ -35,9 +35,9 @@ def test_zero_hamiltonian_preserves_multisite_state_without_normalization():
     zero = jnp.zeros((2, 2), dtype=jnp.complex128)
     state = tn.product_mps(jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128))
     hamiltonian = tn.product_mpo(jnp.stack((zero, jnp.eye(2, dtype=zero.dtype))))
-    result = phx.solver.solve_matrix_product_tdvp(
-        phx.solver.MatrixProductTDVPProblem(state, hamiltonian),
-        phx.solver.MatrixProductTDVPPolicy(
+    result = phx.solver.solve_finite_tdvp(
+        phx.solver.FiniteTDVPProblem(state, hamiltonian),
+        phx.solver.FiniteTDVPPolicy(
             "real-time", step_size=0.1, steps=1, norm_tolerance=1e-7
         ),
     )

@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from itertools import product
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._array_archive import array_collection_digest
 from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -71,6 +72,9 @@ class AbelianGroup(StrictModule):
     def negate(self, charge: Sequence[int], /) -> AbelianCharge:
         return self.normalize(tuple(-value for value in self.normalize(charge)))
 
+    def subtract(self, left: Sequence[int], right: Sequence[int], /) -> AbelianCharge:
+        return self.add(left, self.negate(right))
+
 
 class AbelianLeg(StrictModule):
     group: AbelianGroup = eqx.field(static=True)
@@ -79,6 +83,8 @@ class AbelianLeg(StrictModule):
     orientation: int = eqx.field(static=True)
     active_degeneracies: Array
     leg_id: str = eqx.field(static=True)
+    basis_id: str = eqx.field(static=True)
+    allocation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -122,15 +128,22 @@ class AbelianLeg(StrictModule):
         self.capacities = capacities_
         self.orientation = orientation_
         self.active_degeneracies = active
-        self.leg_id = canonical_fingerprint(
+        self.basis_id = canonical_fingerprint(
             {
-                "kind": "abelian-leg",
+                "kind": "abelian-leg-basis",
                 "group": group.group_id,
                 "charges": charges_,
-                "capacities": capacities_,
                 "orientation": orientation_,
             }
         )
+        self.allocation_id = canonical_fingerprint(
+            {
+                "kind": "abelian-leg-allocation",
+                "basis": self.basis_id,
+                "capacities": capacities_,
+            }
+        )
+        self.leg_id = self.allocation_id
 
     @property
     def size(self) -> int:
@@ -143,6 +156,18 @@ class AbelianLeg(StrictModule):
             self.capacities,
             orientation=self.orientation,
             active_degeneracies=active_degeneracies,
+        )
+
+    def support_identity(self, /) -> str:
+        """Content identity of the active support, evaluated at an archive boundary."""
+
+        arrays = {"active_degeneracies": self.active_degeneracies}
+        return canonical_fingerprint(
+            {
+                "kind": "abelian-leg-support",
+                "allocation": self.allocation_id,
+                "arrays": array_collection_digest(arrays),
+            }
         )
 
     def dual(self) -> AbelianLeg:
@@ -202,8 +227,9 @@ class AbelianTensorLayout(StrictModule):
                         for leg, ordinal in zip(values, sector, strict=True)
                     )
                 )
-        if not sectors:
-            raise ValueError("Abelian tensor layout has no charge-conserving sectors.")
+        # An empty sector catalogue is a valid, explicitly unreachable support.
+        # It is useful when static charge routes are prepared before dynamic support
+        # is populated; numerical operations then carry an exact structural zero.
         self.legs = values
         self.total_charge = total
         self.sectors = tuple(sectors)
@@ -223,6 +249,7 @@ class AbelianTensor(StrictModule):
     blocks: tuple[Array, ...]
     precision: TensorNetworkPrecisionPolicy
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    allocation_id: str = eqx.field(static=True)
     tensor_id: str = eqx.field(static=True)
 
     def __init__(
@@ -261,26 +288,49 @@ class AbelianTensor(StrictModule):
                 )
             )
         values = tuple(checked)
-        precision_.validate_storage(values)
+        evidence_values = (
+            values
+            if values
+            else (
+                jnp.zeros(
+                    (),
+                    dtype=(
+                        jnp.dtype(precision_.storage_dtype)
+                        if precision_.storage_dtype is not None
+                        else jnp.complex128
+                    ),
+                ),
+            )
+        )
+        precision_.validate_storage(evidence_values)
         self.layout = layout
         self.blocks = values
         self.precision = precision_
-        self.precision_evidence = precision_.evidence_for(values)
-        self.tensor_id = canonical_fingerprint(
+        self.precision_evidence = precision_.evidence_for(evidence_values)
+        self.allocation_id = canonical_fingerprint(
             {
-                "kind": "abelian-tensor",
+                "kind": "abelian-tensor-allocation",
                 "layout": layout.layout_id,
-                "dtype": str(values[0].dtype) if values else "empty",
+                "dtype": str(evidence_values[0].dtype),
                 "precision": precision_.policy_id,
             }
         )
+        self.tensor_id = self.allocation_id
 
     @property
     def shape(self) -> tuple[int, ...]:
         return tuple(leg.size for leg in self.layout.legs)
 
     def to_dense(self) -> Array:
-        dtype = self.blocks[0].dtype if self.blocks else jnp.float64
+        dtype = (
+            self.blocks[0].dtype
+            if self.blocks
+            else (
+                jnp.dtype(self.precision.storage_dtype)
+                if self.precision.storage_dtype is not None
+                else jnp.complex128
+            )
+        )
         output = jnp.zeros(self.shape, dtype=dtype)
         offsets = []
         for leg in self.layout.legs:
@@ -297,6 +347,32 @@ class AbelianTensor(StrictModule):
             )
             output = output.at[slices].set(block)
         return self.precision.output(output)
+
+    def support_identity(self, /) -> str:
+        """Identity of active leg support, separate from allocated capacities."""
+
+        return canonical_fingerprint(
+            {
+                "kind": "abelian-tensor-support",
+                "allocation": self.allocation_id,
+                "legs": tuple(leg.support_identity() for leg in self.layout.legs),
+            }
+        )
+
+    def value_identity(self, /) -> str:
+        """Canonical value identity evaluated outside transformed execution."""
+
+        arrays = {f"block/{index:06d}": block for index, block in enumerate(self.blocks)}
+        return canonical_fingerprint(
+            {
+                "kind": "abelian-tensor-value",
+                "support": self.support_identity(),
+                "arrays": array_collection_digest(arrays),
+            }
+        )
+
+    def archive_payload(self, /) -> tuple[dict[str, Any], dict[str, Array]]:
+        return abelian_tensor_archive_payload(self)
 
     @classmethod
     def from_dense(
@@ -338,6 +414,143 @@ class AbelianTensor(StrictModule):
         )
         return cls(layout, tuple(blocks), precision=precision)
 
+    @classmethod
+    def from_archive_payload(
+        cls,
+        manifest: Mapping[str, Any],
+        arrays: Mapping[str, Any],
+        /,
+        *,
+        precision: TensorNetworkPrecisionPolicy | None = None,
+    ) -> AbelianTensor:
+        return abelian_tensor_from_archive_payload(manifest, arrays, precision=precision)
+
+
+def abelian_tensor_archive_payload(
+    tensor: AbelianTensor, /
+) -> tuple[dict[str, Any], dict[str, Array]]:
+    """Return canonical current-format metadata and arrays for one block tensor."""
+
+    if not isinstance(tensor, AbelianTensor):
+        raise TypeError("tensor must be AbelianTensor.")
+    arrays: dict[str, Array] = {}
+    legs = []
+    for index, leg in enumerate(tensor.layout.legs):
+        active_name = f"leg/{index:06d}/active"
+        arrays[active_name] = leg.active_degeneracies
+        legs.append(
+            {
+                "group_components": list(leg.group.components),
+                "charges": [list(charge) for charge in leg.charges],
+                "capacities": list(leg.capacities),
+                "orientation": leg.orientation,
+                "active": active_name,
+                "basis_id": leg.basis_id,
+                "allocation_id": leg.allocation_id,
+            }
+        )
+    block_names = []
+    for index, block in enumerate(tensor.blocks):
+        name = f"block/{index:06d}"
+        arrays[name] = block
+        block_names.append(name)
+    base: dict[str, Any] = {
+        "kind": "phydrax-abelian-tensor",
+        "legs": legs,
+        "total_charge": list(tensor.layout.total_charge),
+        "sectors": [list(sector) for sector in tensor.layout.sectors],
+        "blocks": block_names,
+        "layout_id": tensor.layout.layout_id,
+        "allocation_id": tensor.allocation_id,
+        "support_id": tensor.support_identity(),
+        "value_id": tensor.value_identity(),
+        "precision": {
+            "storage_dtype": tensor.precision.storage_dtype,
+            "contraction_dtype": tensor.precision.contraction_dtype,
+            "factorization_dtype": tensor.precision.factorization_dtype,
+            "accumulation_dtype": tensor.precision.accumulation_dtype,
+            "decision_dtype": tensor.precision.decision_dtype,
+            "output_dtype": tensor.precision.output_dtype,
+        },
+        "precision_policy_id": tensor.precision.policy_id,
+    }
+    base["payload_id"] = canonical_fingerprint(
+        {"manifest": base, "arrays": array_collection_digest(arrays)}
+    )
+    return base, arrays
+
+
+def abelian_tensor_from_archive_payload(
+    manifest: Mapping[str, Any],
+    arrays: Mapping[str, Any],
+    /,
+    *,
+    precision: TensorNetworkPrecisionPolicy | None = None,
+) -> AbelianTensor:
+    """Restore one tensor from the canonical current payload with full identities."""
+
+    if manifest.get("kind") != "phydrax-abelian-tensor":
+        raise ValueError("Archive payload is not an Abelian tensor.")
+    payload = dict(manifest)
+    payload_id = payload.pop("payload_id", None)
+    if payload_id != canonical_fingerprint(
+        {"manifest": payload, "arrays": array_collection_digest(arrays)}
+    ):
+        raise ValueError("Abelian tensor archive payload identity changed.")
+    leg_records = manifest.get("legs")
+    if not isinstance(leg_records, list) or not leg_records:
+        raise ValueError("Abelian tensor archive legs are invalid.")
+    legs = []
+    for record in leg_records:
+        if not isinstance(record, Mapping):
+            raise TypeError("Abelian tensor archive leg record is invalid.")
+        active_name = record["active"]
+        if not isinstance(active_name, str) or active_name not in arrays:
+            raise ValueError("Abelian tensor archive active support is missing.")
+        group = AbelianGroup(tuple(record["group_components"]))
+        leg = AbelianLeg(
+            group,
+            tuple(tuple(charge) for charge in record["charges"]),
+            tuple(record["capacities"]),
+            orientation=int(record["orientation"]),
+            active_degeneracies=arrays[active_name],
+        )
+        if (
+            leg.basis_id != record["basis_id"]
+            or leg.allocation_id != record["allocation_id"]
+        ):
+            raise ValueError("Abelian tensor archive leg identity changed.")
+        legs.append(leg)
+    layout = AbelianTensorLayout(
+        tuple(legs), total_charge=tuple(manifest["total_charge"])
+    )
+    names = manifest.get("blocks")
+    if not isinstance(names, list) or any(
+        not isinstance(name, str) or name not in arrays for name in names
+    ):
+        raise ValueError("Abelian tensor archive blocks are incomplete.")
+    precision_record = manifest.get("precision")
+    if not isinstance(precision_record, Mapping):
+        raise TypeError("Abelian tensor archive precision policy is missing.")
+    precision_ = (
+        TensorNetworkPrecisionPolicy(**dict(precision_record))
+        if precision is None
+        else precision
+    )
+    if precision_.policy_id != manifest["precision_policy_id"]:
+        raise ValueError("Abelian tensor archive precision policy changed.")
+    tensor = AbelianTensor(
+        layout, tuple(arrays[name] for name in names), precision=precision_
+    )
+    if (
+        layout.layout_id != manifest["layout_id"]
+        or tensor.allocation_id != manifest["allocation_id"]
+        or tensor.support_identity() != manifest["support_id"]
+        or tensor.value_identity() != manifest["value_id"]
+    ):
+        raise ValueError("Abelian tensor archive identities changed.")
+    return tensor
+
 
 __all__ = [
     "AbelianCharge",
@@ -345,4 +558,6 @@ __all__ = [
     "AbelianLeg",
     "AbelianTensor",
     "AbelianTensorLayout",
+    "abelian_tensor_archive_payload",
+    "abelian_tensor_from_archive_payload",
 ]

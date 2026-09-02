@@ -36,20 +36,19 @@
     }
   },
   "logical_input_bytes": 352,
-  "logical_output_bytes": 131,
-  "lowering_seconds": 0.082862375,
-  "compilation_seconds": 0.095976916,
+  "logical_output_bytes": 140,
+  "lowering_seconds": 0.087232542,
+  "compilation_seconds": 0.082744125,
   "execution": {
-    "count": 2,
+    "count": 1,
     "samples_ms": [
-      0.35474999999999995,
-      0.348375
+      0.448583
     ],
-    "min_ms": 0.348375,
-    "median_ms": 0.3515625,
-    "mean_ms": 0.3515625,
-    "std_ms": 0.003187499999999982,
-    "max_ms": 0.35474999999999995
+    "min_ms": 0.448583,
+    "median_ms": 0.448583,
+    "mean_ms": 0.448583,
+    "std_ms": 0.0,
+    "max_ms": 0.448583
   },
   "discarded_weight": 0.4999999999999999,
   "dense_residual": 0.0

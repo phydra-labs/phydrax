@@ -98,18 +98,17 @@ for a density program and a template locally purified density. The template is
 required because the Hilbert layout determines physical dimensions but not
 virtual bonds or purification capacities.
 
-Targets are resolved once against the layout. An operation on noncontiguous or
-out-of-order sites contracts its smallest enclosing open-chain interval, applies
-the matrix factors in the exact declared target order, preserves pass-through
-sites, and splits the interval at the declared bond capacity. This is not an
-implicit SWAP network. Planning reports and bounds the enclosing-window cost.
+Targets are resolved once against the layout. MPS and LPDO execution accepts only
+one-site or adjacent two-site operations and preserves the exact declared target
+factor order. Non-nearest operations require an explicit compilation result with
+caller-visible SWAP or other declared routing; the executor never contracts a
+hidden long interval or inserts hidden SWAPs.
 
-MPS execution accepts unitaries only. LPDO execution accepts unitaries and Kraus
-channels; a multi-site channel attaches its global Kraus choice to the spatially
-leftmost target before fixed-capacity purification compression. Purified
-construction preserves positive semidefiniteness, while bond or purification
-truncation can perturb trace. The executor reports raw trace drift and never
-normalizes, projects, symmetrizes, or clips the result.
+MPS execution accepts unitaries only. LPDO execution accepts adjacent unitaries
+and one-site Kraus channels. Purified construction preserves positive
+semidefiniteness, while bond or purification truncation can perturb trace. The
+executor reports raw trace drift and never normalizes, projects, symmetrizes, or
+clips the result.
 
 Both lifecycles preserve prepared identity under numeric refresh and reject any
 change to layout, representation, template structure, operation order or kind,
@@ -127,11 +126,20 @@ The default density policy audits initial and final positivity. The optional
 then propagates the CP/TP-by-construction certificate and checks final trace and
 Hermiticity; the omitted final numerical eigenvalue audit is reported as unaudited.
 
-## Deliberate limits
+## Instruments, experiments, and deliberate limits
 
-The local-program layer is deterministic. It does not provide measurement,
-mid-circuit classical control, a string gate registry, parameter-shift rules,
-continuous Hamiltonian segments, automatic gate factorization, implicit SWAP
-networks, or a universal executor. Dense state-vector and density storage still
-scale with the full Hilbert dimension. MPS and LPDO execution is finite,
-open-boundary, fixed-capacity, and reports every approximation.
+`QuantumPOVM` and `QuantumInstrument` validate finite outcomes, positivity, and
+completeness. `QuantumExperimentProgram` adds bounded classical registers,
+static feed-forward tables, exact branch enumeration, and address-derived typed
+shot randomness. Sampling replay is invariant to shot batching. Mixed
+multi-Kraus branches require LPDO execution; pure MPS branches fail closed.
+
+Hardware compilation records logical placement, native decomposition, and every
+SWAP edge. Fixed-grid controls materialize deterministic local-map programs from
+an immutable time grid and control basis.
+
+The platform does not provide unbounded branch graphs, arbitrary Python
+callbacks, hidden provider calls, global entropy, automatic gate factorization,
+implicit routing, or a universal executor. Dense state-vector and density
+storage still scale with the full Hilbert dimension. MPS and LPDO execution is
+finite, open-boundary, fixed-capacity, and reports every approximation.
