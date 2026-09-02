@@ -18,15 +18,12 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-
-
-def _morton3(integer_coordinates: Array, depth: int, /) -> Array:
-    coordinates = integer_coordinates.astype(jnp.uint32)
-    key = jnp.zeros((coordinates.shape[0],), dtype=jnp.uint32)
-    for bit in range(depth):
-        for axis in range(3):
-            key = key | (((coordinates[:, axis] >> bit) & 1) << (3 * bit + axis))
-    return key
+from ..discretization.spatial import (
+    MortonAddressPlan,
+    MortonPointHierarchyPlan,
+    MortonPointHierarchyState,
+    SparseLevelOctreePlan,
+)
 
 
 class NewtonianPairKernel(StrictModule, NonTrainableState):
@@ -198,6 +195,8 @@ class DistributedParticleLayout(StrictModule, NonTrainableState):
 
 
 class PreparedParticleOctree3D(StrictModule):
+    """Particle payloads, sparse octree topology, and node multipoles."""
+
     positions: Array
     masses: Array
     active_mask: Array
@@ -209,49 +208,53 @@ class PreparedParticleOctree3D(StrictModule):
     leaf_quadrupole: Array
     leaf_centers: Array
     leaf_half_size: Array
+    hierarchy: MortonPointHierarchyState
     box_size: tuple[float, float, float] = eqx.field(static=True)
     depth: int = eqx.field(static=True)
+    target_leaf_occupancy: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
 
 class ParticleOctreePlan3D(StrictModule, NonTrainableState):
+    """Prepare a sparse occupied octree without a dense finest-level lattice."""
+
+    address_plan: MortonAddressPlan
     box_size: tuple[float, float, float] = eqx.field(static=True)
     depth: int = eqx.field(static=True)
     leaf_count: int = eqx.field(static=True)
-    leaf_centers: Array
-    leaf_half_size: Array
+    target_leaf_occupancy: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, box_size: tuple[float, float, float], depth: int, /):
+    def __init__(
+        self,
+        box_size: tuple[float, float, float],
+        depth: int,
+        /,
+        *,
+        target_leaf_occupancy: int = 4,
+    ):
         lengths = tuple(float(value) for value in box_size)
         depth_ = int(depth)
+        target = int(target_leaf_occupancy)
         if len(lengths) != 3 or any(
             not np.isfinite(value) or value <= 0.0 for value in lengths
         ):
             raise ValueError("Particle octree requires a finite positive 3-D box.")
         if depth_ < 1 or depth_ > 10:
             raise ValueError("Particle octree depth must lie in [1,10].")
-        count_axis = 1 << depth_
-        integer = np.stack(
-            np.meshgrid(
-                np.arange(count_axis),
-                np.arange(count_axis),
-                np.arange(count_axis),
-                indexing="ij",
-            ),
-            axis=-1,
-        ).reshape((-1, 3))
-        centers = (integer + 0.5) * np.asarray(lengths)[None, :] / count_axis
+        if target < 1:
+            raise ValueError("target_leaf_occupancy must be positive.")
+        self.address_plan = MortonAddressPlan((0.0, 0.0, 0.0), lengths, depth_)
         self.box_size = lengths
         self.depth = depth_
-        self.leaf_count = count_axis**3
-        self.leaf_centers = jnp.asarray(centers)
-        self.leaf_half_size = jnp.asarray(lengths) / (2.0 * count_axis)
+        self.leaf_count = (1 << depth_) ** 3
+        self.target_leaf_occupancy = target
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "uniform-particle-octree-3d",
+                "kind": "sparse-particle-octree-3d",
                 "box_size": list(lengths),
                 "depth": depth_,
+                "target_leaf_occupancy": target,
             }
         )
 
@@ -278,74 +281,142 @@ class ParticleOctreePlan3D(StrictModule, NonTrainableState):
             raise ValueError(
                 "Particle octree positions, masses, and active mask disagree."
             )
-        position = eqx.error_if(
-            position,
+        invalid_payload = (
             jnp.any(jnp.where(active[:, None], ~jnp.isfinite(position), False))
             | jnp.any(jnp.where(active, ~jnp.isfinite(mass), False))
             | jnp.any(jnp.where(active, mass <= 0.0, False))
-            | jnp.any(jnp.where(active[:, None], position < 0.0, False))
-            | jnp.any(
-                jnp.where(
-                    active[:, None],
-                    position >= jnp.asarray(self.box_size),
-                    False,
-                )
-            ),
+        )
+        safe_position = jnp.where(active[:, None], position, 0.0)
+        hierarchy_plan = MortonPointHierarchyPlan(
+            self.address_plan,
+            position.shape[0],
+            node_capacity=(self.depth + 1) * position.shape[0],
+            target_leaf_occupancy=self.target_leaf_occupancy,
+        )
+        hierarchy = hierarchy_plan.build(
+            safe_position,
+            active_mask=active,
+            stable_ids=jnp.arange(position.shape[0], dtype=jnp.int64),
+        )
+        position = eqx.error_if(
+            safe_position,
+            invalid_payload | ~hierarchy.evidence.successful,
             "Active octree particles must be finite, positive-mass, and inside the box.",
         )
-        count_axis = 1 << self.depth
-        integer = jnp.floor(position / jnp.asarray(self.box_size) * count_axis).astype(
-            jnp.int32
+        sorted_position = position[hierarchy.storage_to_logical]
+        sorted_mass = mass[hierarchy.storage_to_logical]
+        sorted_active = hierarchy.sorted_active
+        node_capacity = hierarchy.node_active.size
+        point_capacity = position.shape[0]
+        node_slots = jnp.arange(node_capacity, dtype=jnp.int32)
+        leaf_slots = jnp.nonzero(
+            hierarchy.node_is_leaf,
+            size=node_capacity,
+            fill_value=node_capacity,
+        )[0].astype(jnp.int32)
+        leaf_valid = node_slots < hierarchy.evidence.active_leaves
+        safe_leaf_slots = jnp.minimum(leaf_slots, node_capacity - 1)
+        leaf_starts = jnp.where(
+            leaf_valid,
+            hierarchy.node_item_starts[safe_leaf_slots],
+            point_capacity,
         )
-        integer = jnp.clip(integer, 0, count_axis - 1)
-        keys = _morton3(integer, self.depth)
-        inactive_key = jnp.asarray((1 << (3 * self.depth)) - 1, dtype=keys.dtype)
-        sorted_keys = jnp.where(active, keys, inactive_key)
-        permutation = jnp.lexsort((jnp.arange(position.shape[0]), sorted_keys))
-        leaf_indices = (
-            integer[:, 0] * count_axis**2 + integer[:, 1] * count_axis + integer[:, 2]
-        )
-        safe_mass = jnp.where(active, mass, 0.0)
-        leaf_mass = (
-            jnp.zeros((self.leaf_count,), dtype=mass.dtype)
-            .at[leaf_indices]
+        leaf_order = jnp.argsort(leaf_starts, stable=True)
+        ordered_leaf_slots = leaf_slots[leaf_order]
+        ordered_leaf_starts = leaf_starts[leaf_order]
+        storage_slots = jnp.arange(point_capacity, dtype=jnp.int32)
+        leaf_rank = jnp.searchsorted(ordered_leaf_starts, storage_slots, side="right") - 1
+        safe_leaf_rank = jnp.maximum(leaf_rank, 0)
+        sorted_leaf_indices = jnp.where(
+            sorted_active,
+            ordered_leaf_slots[safe_leaf_rank],
+            -1,
+        ).astype(jnp.int32)
+        safe_point_leaf = jnp.maximum(sorted_leaf_indices, 0)
+        safe_mass = jnp.where(sorted_active, sorted_mass, 0.0)
+        node_mass = (
+            jnp.zeros((node_capacity,), dtype=mass.dtype)
+            .at[safe_point_leaf]
             .add(safe_mass)
         )
         weighted_position = (
-            jnp.zeros((self.leaf_count, 3), dtype=position.dtype)
-            .at[leaf_indices]
-            .add(safe_mass[:, None] * position)
+            jnp.zeros((node_capacity, 3), dtype=position.dtype)
+            .at[safe_point_leaf]
+            .add(safe_mass[:, None] * sorted_position)
         )
-        safe_leaf_mass = jnp.where(leaf_mass > 0.0, leaf_mass, 1.0)
-        center_of_mass = weighted_position / safe_leaf_mass[:, None]
-        centered = position - center_of_mass[leaf_indices]
+        safe_node_mass = jnp.where(node_mass > 0.0, node_mass, 1.0)
+        node_center = weighted_position / safe_node_mass[:, None]
+        centered = sorted_position - node_center[safe_point_leaf]
         outer = centered[:, :, None] * centered[:, None, :]
         radius_squared = jnp.sum(centered**2, axis=-1)
-        quadrupole_particle = safe_mass[:, None, None] * (
+        particle_quadrupole = safe_mass[:, None, None] * (
             3.0 * outer - radius_squared[:, None, None] * jnp.eye(3, dtype=position.dtype)
         )
-        quadrupole = (
-            jnp.zeros((self.leaf_count, 3, 3), dtype=position.dtype)
-            .at[leaf_indices]
-            .add(quadrupole_particle)
+        node_quadrupole = (
+            jnp.zeros((node_capacity, 3, 3), dtype=position.dtype)
+            .at[safe_point_leaf]
+            .add(particle_quadrupole)
         )
+        identity = jnp.eye(3, dtype=position.dtype)
+        for level in range(self.depth - 1, -1, -1):
+            internal = (
+                hierarchy.node_active
+                & ~hierarchy.node_is_leaf
+                & (hierarchy.node_levels == level)
+            )
+            children = hierarchy.node_children
+            child_valid = children >= 0
+            safe_children = jnp.maximum(children, 0)
+            child_mass = jnp.where(child_valid, node_mass[safe_children], 0.0)
+            parent_mass = jnp.sum(child_mass, axis=1)
+            child_center = node_center[safe_children]
+            parent_center = (
+                jnp.sum(child_mass[..., None] * child_center, axis=1)
+                / jnp.where(parent_mass > 0.0, parent_mass, 1.0)[:, None]
+            )
+            displacement = child_center - parent_center[:, None, :]
+            displacement_outer = displacement[..., :, None] * displacement[..., None, :]
+            displacement_squared = jnp.sum(displacement**2, axis=-1)
+            translation = child_mass[..., None, None] * (
+                3.0 * displacement_outer
+                - displacement_squared[..., None, None] * identity
+            )
+            child_quadrupole = jnp.where(
+                child_valid[..., None, None],
+                node_quadrupole[safe_children],
+                0.0,
+            )
+            parent_quadrupole = jnp.sum(child_quadrupole + translation, axis=1)
+            node_mass = jnp.where(internal, parent_mass, node_mass)
+            node_center = jnp.where(internal[:, None], parent_center, node_center)
+            node_quadrupole = jnp.where(
+                internal[:, None, None], parent_quadrupole, node_quadrupole
+            )
+        leaf_indices = (
+            jnp.full((point_capacity,), -1, dtype=jnp.int32)
+            .at[hierarchy.storage_to_logical]
+            .set(sorted_leaf_indices)
+        )
+        morton_keys = hierarchy.sorted_codes[hierarchy.logical_to_storage]
         return PreparedParticleOctree3D(
-            position,
-            mass,
-            active,
-            keys,
-            permutation,
-            leaf_indices,
-            leaf_mass,
-            center_of_mass,
-            quadrupole,
-            self.leaf_centers.astype(position.dtype),
-            self.leaf_half_size.astype(position.dtype),
-            self.box_size,
-            self.depth,
-            canonical_fingerprint(
+            positions=position,
+            masses=mass,
+            active_mask=active,
+            morton_keys=morton_keys,
+            permutation=hierarchy.storage_to_logical,
+            leaf_indices=leaf_indices,
+            leaf_mass=node_mass,
+            leaf_center_of_mass=node_center,
+            leaf_quadrupole=node_quadrupole,
+            leaf_centers=hierarchy.node_centers.astype(position.dtype),
+            leaf_half_size=hierarchy.node_half_widths.astype(position.dtype),
+            hierarchy=hierarchy,
+            box_size=self.box_size,
+            depth=self.depth,
+            target_leaf_occupancy=self.target_leaf_occupancy,
+            prepared_id=canonical_fingerprint(
                 {
-                    "kind": "prepared-particle-octree",
+                    "kind": "prepared-sparse-particle-octree",
                     "plan": self.plan_id,
                     "capacity": position.shape[0],
                 }
@@ -358,7 +429,9 @@ class TreeGravityEvidence(StrictModule):
     maximum_acceleration: Array
     accepted_leaf_interactions: Array
     direct_particle_interactions: Array
-    estimated_relative_error: Array
+    maximum_opening_indicator: Array
+    traversal_complete: Array
+    active_nodes: Array
     finite: Array
     successful: Array
 
@@ -374,6 +447,8 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
     softening: float = eqx.field(static=True)
     opening_angle: float = eqx.field(static=True)
     use_quadrupole: bool = eqx.field(static=True)
+    direct_chunk_size: int = eqx.field(static=True)
+    target_batch_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -384,24 +459,32 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
         softening: float,
         opening_angle: float = 0.5,
         use_quadrupole: bool = True,
+        direct_chunk_size: int = 32,
+        target_batch_size: int = 32,
     ):
         gravity = float(gravitational_constant)
         epsilon = float(softening)
         theta = float(opening_angle)
+        chunk = int(direct_chunk_size)
+        target_batch = int(target_batch_size)
         if (
             not np.isfinite(gravity)
             or gravity <= 0.0
             or not np.isfinite(epsilon)
             or epsilon <= 0.0
             or not np.isfinite(theta)
-            or theta <= 0.0
+            or theta < 0.0
             or theta >= 1.0
+            or chunk <= 0
+            or target_batch <= 0
         ):
             raise ValueError("Barnes-Hut policy is invalid.")
         self.gravitational_constant = gravity
         self.softening = epsilon
         self.opening_angle = theta
         self.use_quadrupole = bool(use_quadrupole)
+        self.direct_chunk_size = chunk
+        self.target_batch_size = target_batch
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "barnes-hut-gravity",
@@ -409,8 +492,495 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                 "softening": epsilon,
                 "opening_angle": theta,
                 "use_quadrupole": bool(use_quadrupole),
+                "direct_chunk_size": chunk,
+                "target_batch_size": target_batch,
             }
         )
+
+    def _evaluate_branchless(
+        self,
+        tree: PreparedParticleOctree3D,
+        /,
+        *,
+        short_range_scale: float | None,
+        cutoff: float | None,
+    ) -> TreeGravityResult:
+        position = tree.positions
+        hierarchy = tree.hierarchy
+        point_capacity = position.shape[0]
+        node_capacity = hierarchy.node_active.size
+        sorted_logical = hierarchy.storage_to_logical
+        sorted_position = position[sorted_logical]
+        sorted_mass = tree.masses[sorted_logical]
+        sorted_active = hierarchy.sorted_active
+        sorted_leaf = tree.leaf_indices[sorted_logical]
+        scale = (
+            None
+            if short_range_scale is None
+            else jnp.asarray(short_range_scale, dtype=position.dtype)
+        )
+        cutoff_value = (
+            None if cutoff is None else jnp.asarray(cutoff, dtype=position.dtype)
+        )
+
+        def radial_kernel(distance_squared, distance):
+            kernel = distance_squared ** (-1.5)
+            if scale is not None:
+                argument = distance / (2.0 * scale)
+                kernel = kernel * (
+                    jax.scipy.special.erfc(argument)
+                    + distance / (scale * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
+                )
+            return kernel
+
+        def evaluate_target(inputs):
+            target_position, target_storage, target_active = inputs
+            node_displacement = tree.leaf_center_of_mass - target_position
+            node_distance_squared = (
+                jnp.sum(node_displacement**2, axis=-1) + self.softening**2
+            )
+            node_distance = jnp.sqrt(node_distance_squared)
+            node_radius = jnp.sqrt(jnp.sum(hierarchy.node_half_widths**2, axis=-1))
+            node_size = 2.0 * jnp.max(hierarchy.node_half_widths, axis=-1)
+            opening_indicator = node_size / node_distance
+            contains_target = (target_storage >= hierarchy.node_item_starts) & (
+                target_storage < hierarchy.node_item_starts + hierarchy.node_item_counts
+            )
+            node_valid = hierarchy.node_active & (tree.leaf_mass > 0.0)
+            outside_cutoff = jnp.zeros((node_capacity,), dtype=bool)
+            fully_inside_cutoff = jnp.ones((node_capacity,), dtype=bool)
+            if cutoff_value is not None:
+                outside_cutoff = node_distance - node_radius > cutoff_value
+                fully_inside_cutoff = node_distance + node_radius <= cutoff_value
+            accept = (
+                node_valid
+                & ~hierarchy.node_is_leaf
+                & ~contains_target
+                & (opening_indicator < self.opening_angle)
+                & fully_inside_cutoff
+            )
+            terminal = accept | (node_valid & outside_cutoff)
+
+            def propagate_blocked(node, blocked):
+                parent = hierarchy.node_parents[node]
+                safe_parent = jnp.maximum(parent, 0)
+                value = (parent >= 0) & (blocked[safe_parent] | terminal[safe_parent])
+                return blocked.at[node].set(value)
+
+            blocked = jax.lax.fori_loop(
+                0,
+                node_capacity,
+                propagate_blocked,
+                jnp.zeros((node_capacity,), dtype=bool),
+            )
+            selected_far = target_active & accept & ~blocked
+            selected_leaf = (
+                target_active
+                & node_valid
+                & hierarchy.node_is_leaf
+                & ~outside_cutoff
+                & ~blocked
+            )
+            far_kernel = radial_kernel(node_distance_squared, node_distance)
+            far_contribution = (
+                self.gravitational_constant
+                * tree.leaf_mass[:, None]
+                * node_displacement
+                * far_kernel[:, None]
+            )
+            if self.use_quadrupole:
+                q_r = contract(
+                    "nij,nj->ni",
+                    tree.leaf_quadrupole,
+                    node_displacement,
+                )
+                r_q_r = jnp.sum(node_displacement * q_r, axis=-1)
+                far_contribution = far_contribution + self.gravitational_constant * (
+                    2.5 * r_q_r[:, None] * node_displacement / node_distance[:, None] ** 7
+                    - q_r / node_distance[:, None] ** 5
+                )
+            far_acceleration = jnp.sum(
+                jnp.where(selected_far[:, None], far_contribution, 0.0),
+                axis=0,
+            )
+            safe_sorted_leaf = jnp.maximum(sorted_leaf, 0)
+            direct_mask = (
+                target_active
+                & sorted_active
+                & selected_leaf[safe_sorted_leaf]
+                & (jnp.arange(point_capacity, dtype=jnp.int32) != target_storage)
+            )
+            source_displacement = sorted_position - target_position
+            source_distance_squared = (
+                jnp.sum(source_displacement**2, axis=-1) + self.softening**2
+            )
+            source_distance = jnp.sqrt(source_distance_squared)
+            if cutoff_value is not None:
+                direct_mask = direct_mask & (source_distance <= cutoff_value)
+            direct_contribution = (
+                self.gravitational_constant
+                * sorted_mass[:, None]
+                * source_displacement
+                * radial_kernel(source_distance_squared, source_distance)[:, None]
+            )
+            direct_acceleration = jnp.sum(
+                jnp.where(direct_mask[:, None], direct_contribution, 0.0),
+                axis=0,
+            )
+            return (
+                far_acceleration + direct_acceleration,
+                jnp.sum(selected_far, dtype=jnp.int32),
+                jnp.sum(direct_mask, dtype=jnp.int32),
+                jnp.max(
+                    jnp.where(selected_far, opening_indicator, 0.0),
+                    initial=0.0,
+                ),
+                hierarchy.evidence.successful,
+            )
+
+        (
+            sorted_acceleration,
+            accepted,
+            direct,
+            indicator,
+            complete,
+        ) = jax.lax.map(
+            evaluate_target,
+            (
+                sorted_position,
+                jnp.arange(point_capacity, dtype=jnp.int32),
+                sorted_active,
+            ),
+            batch_size=min(self.target_batch_size, point_capacity),
+        )
+        acceleration = (
+            jnp.zeros_like(position).at[sorted_logical].set(sorted_acceleration)
+        )
+        acceleration = jnp.where(tree.active_mask[:, None], acceleration, 0.0)
+        finite = jnp.all(jnp.isfinite(acceleration))
+        traversal_complete = jnp.all(complete)
+        successful = hierarchy.evidence.successful & traversal_complete & finite
+        evidence = TreeGravityEvidence(
+            net_force=jnp.sum(
+                jnp.where(tree.active_mask, tree.masses, 0.0)[:, None] * acceleration,
+                axis=0,
+            ),
+            maximum_acceleration=jnp.max(
+                jnp.sqrt(jnp.sum(acceleration**2, axis=-1)),
+                initial=0.0,
+            ),
+            accepted_leaf_interactions=jnp.sum(accepted, dtype=jnp.int32),
+            direct_particle_interactions=jnp.sum(direct, dtype=jnp.int32),
+            maximum_opening_indicator=jnp.max(indicator, initial=0.0),
+            traversal_complete=traversal_complete,
+            active_nodes=hierarchy.evidence.active_nodes,
+            finite=finite,
+            successful=successful,
+        )
+        return TreeGravityResult(acceleration, evidence, successful)
+
+    def _evaluate_impl(
+        self,
+        tree: PreparedParticleOctree3D,
+        /,
+        *,
+        short_range_scale: float | None,
+        cutoff: float | None,
+        fixed_iterations: bool,
+    ) -> TreeGravityResult:
+        if tree.positions.shape[0] <= 4096:
+            return self._evaluate_branchless(
+                tree,
+                short_range_scale=short_range_scale,
+                cutoff=cutoff,
+            )
+        position = tree.positions
+        hierarchy = tree.hierarchy
+        point_capacity = position.shape[0]
+        node_capacity = hierarchy.node_active.size
+        stack_capacity = 1 + 7 * tree.depth
+        sorted_logical = hierarchy.storage_to_logical
+        sorted_position = position[sorted_logical]
+        sorted_mass = tree.masses[sorted_logical]
+        sorted_active = hierarchy.sorted_active
+        chunk_offsets = jnp.arange(self.direct_chunk_size, dtype=jnp.int32)
+        scale = (
+            None
+            if short_range_scale is None
+            else jnp.asarray(short_range_scale, dtype=position.dtype)
+        )
+        cutoff_value = (
+            None if cutoff is None else jnp.asarray(cutoff, dtype=position.dtype)
+        )
+
+        def radial_kernel(distance_squared, distance):
+            kernel = distance_squared ** (-1.5)
+            if scale is not None:
+                argument = distance / (2.0 * scale)
+                kernel = kernel * (
+                    jax.scipy.special.erfc(argument)
+                    + distance / (scale * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
+                )
+            return kernel
+
+        def evaluate_target(inputs):
+            target_position, target_storage, target_active = inputs
+            stack = jnp.zeros((stack_capacity,), dtype=jnp.int32)
+            has_root = target_active & (hierarchy.root_slot >= 0)
+            stack = stack.at[0].set(jnp.maximum(hierarchy.root_slot, 0))
+            initial = (
+                stack,
+                has_root.astype(jnp.int32),
+                jnp.zeros((3,), dtype=position.dtype),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(0.0, dtype=position.dtype),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(False),
+            )
+
+            def traversal_body(state):
+                (
+                    current_stack,
+                    top,
+                    acceleration,
+                    accepted_count,
+                    direct_count,
+                    maximum_indicator,
+                    visits,
+                    overflow,
+                ) = state
+                next_top = top - 1
+                node = current_stack[next_top]
+                node_mass = tree.leaf_mass[node]
+                displacement = tree.leaf_center_of_mass[node] - target_position
+                distance_squared = jnp.sum(displacement**2) + self.softening**2
+                distance = jnp.sqrt(distance_squared)
+                node_radius = jnp.sqrt(jnp.sum(hierarchy.node_half_widths[node] ** 2))
+                node_size = 2.0 * jnp.max(hierarchy.node_half_widths[node])
+                opening_indicator = node_size / distance
+                contains_target = (target_storage >= hierarchy.node_item_starts[node]) & (
+                    target_storage
+                    < hierarchy.node_item_starts[node] + hierarchy.node_item_counts[node]
+                )
+                node_valid = hierarchy.node_active[node] & (node_mass > 0.0)
+                outside_cutoff = jnp.asarray(False)
+                fully_inside_cutoff = jnp.asarray(True)
+                if cutoff_value is not None:
+                    outside_cutoff = distance - node_radius > cutoff_value
+                    fully_inside_cutoff = distance + node_radius <= cutoff_value
+                accept = (
+                    node_valid
+                    & ~hierarchy.node_is_leaf[node]
+                    & ~contains_target
+                    & (opening_indicator < self.opening_angle)
+                    & fully_inside_cutoff
+                )
+                far_kernel = radial_kernel(distance_squared, distance)
+                far_contribution = (
+                    self.gravitational_constant * node_mass * displacement * far_kernel
+                )
+                if self.use_quadrupole:
+                    q_r = tree.leaf_quadrupole[node] @ displacement
+                    r_q_r = jnp.sum(displacement * q_r)
+                    far_contribution = far_contribution + self.gravitational_constant * (
+                        2.5 * r_q_r * displacement / distance**7 - q_r / distance**5
+                    )
+                acceleration = acceleration + jnp.where(accept, far_contribution, 0.0)
+                accepted_count = accepted_count + accept.astype(jnp.int32)
+                maximum_indicator = jnp.maximum(
+                    maximum_indicator,
+                    jnp.where(accept, opening_indicator, 0.0),
+                )
+
+                evaluate_leaf = (
+                    node_valid & hierarchy.node_is_leaf[node] & ~outside_cutoff
+                )
+
+                def direct_leaf(direct_state):
+                    offset, direct_acceleration, interactions = direct_state
+                    source_storage = (
+                        hierarchy.node_item_starts[node] + offset + chunk_offsets
+                    )
+                    source_in_leaf = (
+                        source_storage
+                        < hierarchy.node_item_starts[node]
+                        + hierarchy.node_item_counts[node]
+                    ) & (source_storage < point_capacity)
+                    safe_storage = jnp.minimum(source_storage, point_capacity - 1)
+                    source_displacement = sorted_position[safe_storage] - target_position
+                    source_distance_squared = (
+                        jnp.sum(source_displacement**2, axis=-1) + self.softening**2
+                    )
+                    source_distance = jnp.sqrt(source_distance_squared)
+                    source_valid = (
+                        source_in_leaf
+                        & sorted_active[safe_storage]
+                        & (source_storage != target_storage)
+                    )
+                    if cutoff_value is not None:
+                        source_valid = source_valid & (source_distance <= cutoff_value)
+                    contribution = (
+                        self.gravitational_constant
+                        * sorted_mass[safe_storage, None]
+                        * source_displacement
+                        * radial_kernel(source_distance_squared, source_distance)[:, None]
+                    )
+                    direct_acceleration = direct_acceleration + jnp.sum(
+                        jnp.where(source_valid[:, None], contribution, 0.0),
+                        axis=0,
+                    )
+                    return (
+                        offset + self.direct_chunk_size,
+                        direct_acceleration,
+                        interactions + jnp.sum(source_valid, dtype=jnp.int32),
+                    )
+
+                direct_initial = (
+                    jnp.asarray(0, dtype=jnp.int32),
+                    jnp.zeros((3,), dtype=position.dtype),
+                    jnp.asarray(0, dtype=jnp.int32),
+                )
+
+                def evaluate_direct_leaf(_):
+                    if not fixed_iterations:
+                        _, leaf_acceleration, leaf_interactions = jax.lax.while_loop(
+                            lambda direct_state: (
+                                direct_state[0] < hierarchy.node_item_counts[node]
+                            ),
+                            direct_leaf,
+                            direct_initial,
+                        )
+                        return leaf_acceleration, leaf_interactions
+
+                    def run_chunks(chunk_count):
+                        _, leaf_acceleration, leaf_interactions = jax.lax.fori_loop(
+                            0,
+                            chunk_count,
+                            lambda _, direct_state: direct_leaf(direct_state),
+                            direct_initial,
+                        )
+                        return leaf_acceleration, leaf_interactions
+
+                    return jax.lax.cond(
+                        hierarchy.node_item_counts[node] > tree.target_leaf_occupancy,
+                        lambda: run_chunks(
+                            (point_capacity + self.direct_chunk_size - 1)
+                            // self.direct_chunk_size
+                        ),
+                        lambda: run_chunks(
+                            (tree.target_leaf_occupancy + self.direct_chunk_size - 1)
+                            // self.direct_chunk_size
+                        ),
+                    )
+
+                leaf_acceleration, leaf_interactions = jax.lax.cond(
+                    evaluate_leaf,
+                    evaluate_direct_leaf,
+                    lambda _: (
+                        jnp.zeros((3,), dtype=position.dtype),
+                        jnp.asarray(0, dtype=jnp.int32),
+                    ),
+                    operand=None,
+                )
+                acceleration = acceleration + leaf_acceleration
+                direct_count = direct_count + leaf_interactions
+
+                descend = (
+                    node_valid & ~hierarchy.node_is_leaf[node] & ~accept & ~outside_cutoff
+                )
+                children = hierarchy.node_children[node]
+                for child_index in range(children.shape[0]):
+                    child = children[child_index]
+                    push = descend & (child >= 0)
+                    has_capacity = next_top < stack_capacity
+                    write = push & has_capacity
+                    safe_top = jnp.minimum(next_top, stack_capacity - 1)
+                    current_stack = current_stack.at[safe_top].set(
+                        jnp.where(write, child, current_stack[safe_top])
+                    )
+                    next_top = next_top + write.astype(jnp.int32)
+                    overflow = overflow | (push & ~has_capacity)
+                return (
+                    current_stack,
+                    next_top,
+                    acceleration,
+                    accepted_count,
+                    direct_count,
+                    maximum_indicator,
+                    visits + 1,
+                    overflow,
+                )
+
+            if fixed_iterations:
+
+                def traversal_iteration(_, state):
+                    active_step = (state[1] > 0) & ~state[7]
+                    return jax.lax.cond(
+                        active_step,
+                        traversal_body,
+                        lambda current: current,
+                        state,
+                    )
+
+                final = jax.lax.fori_loop(
+                    0,
+                    node_capacity,
+                    traversal_iteration,
+                    initial,
+                )
+            else:
+                final = jax.lax.while_loop(
+                    lambda state: (state[1] > 0) & (state[6] < node_capacity) & ~state[7],
+                    traversal_body,
+                    initial,
+                )
+            _, remaining, acceleration, accepted, direct, indicator, visits, overflow = (
+                final
+            )
+            complete = (remaining == 0) & ~overflow & (visits <= node_capacity)
+            return acceleration, accepted, direct, indicator, complete
+
+        (
+            sorted_acceleration,
+            accepted,
+            direct,
+            indicator,
+            complete,
+        ) = jax.lax.map(
+            evaluate_target,
+            (
+                sorted_position,
+                jnp.arange(point_capacity, dtype=jnp.int32),
+                sorted_active,
+            ),
+            batch_size=min(self.target_batch_size, point_capacity),
+        )
+        acceleration = (
+            jnp.zeros_like(position).at[sorted_logical].set(sorted_acceleration)
+        )
+        acceleration = jnp.where(tree.active_mask[:, None], acceleration, 0.0)
+        finite = jnp.all(jnp.isfinite(acceleration))
+        traversal_complete = jnp.all(complete)
+        successful = hierarchy.evidence.successful & traversal_complete & finite
+        evidence = TreeGravityEvidence(
+            net_force=jnp.sum(
+                jnp.where(tree.active_mask, tree.masses, 0.0)[:, None] * acceleration,
+                axis=0,
+            ),
+            maximum_acceleration=jnp.max(
+                jnp.sqrt(jnp.sum(acceleration**2, axis=-1)),
+                initial=0.0,
+            ),
+            accepted_leaf_interactions=jnp.sum(accepted, dtype=jnp.int32),
+            direct_particle_interactions=jnp.sum(direct, dtype=jnp.int32),
+            maximum_opening_indicator=jnp.max(indicator, initial=0.0),
+            traversal_complete=traversal_complete,
+            active_nodes=hierarchy.evidence.active_nodes,
+            finite=finite,
+            successful=successful,
+        )
+        return TreeGravityResult(acceleration, evidence, successful)
 
     def evaluate(
         self,
@@ -420,89 +990,40 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
         short_range_scale: float | None = None,
         cutoff: float | None = None,
     ) -> TreeGravityResult:
-        position = tree.positions
-        leaf_displacement = tree.leaf_center_of_mass[None, :, :] - position[:, None, :]
-        leaf_distance_squared = jnp.sum(leaf_displacement**2, axis=-1) + self.softening**2
-        leaf_distance = jnp.sqrt(leaf_distance_squared)
-        size = 2.0 * jnp.max(tree.leaf_half_size)
-        same_leaf = tree.leaf_indices[:, None] == jnp.arange(tree.leaf_mass.size)[None, :]
-        accept = (
-            (tree.leaf_mass[None, :] > 0.0)
-            & ~same_leaf
-            & (size / leaf_distance < self.opening_angle)
-        )
-        kernel = leaf_distance_squared ** (-1.5)
-        if short_range_scale is not None:
-            scale = jnp.asarray(short_range_scale, dtype=position.dtype)
-            argument = leaf_distance / (2.0 * scale)
-            kernel = kernel * (
-                jax.scipy.special.erfc(argument)
-                + leaf_distance / (scale * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
+        plan = self
+
+        @jax.custom_vjp
+        def run(current_tree):
+            return plan._evaluate_impl(
+                current_tree,
+                short_range_scale=short_range_scale,
+                cutoff=cutoff,
+                fixed_iterations=False,
             )
-        if cutoff is not None:
-            kernel = jnp.where(leaf_distance <= cutoff, kernel, 0.0)
-            accept = accept & (leaf_distance <= cutoff)
-        monopole = (
-            self.gravitational_constant
-            * tree.leaf_mass[None, :, None]
-            * leaf_displacement
-            * kernel[..., None]
-        )
-        far = jnp.where(accept[..., None], monopole, 0.0)
-        if self.use_quadrupole:
-            q_r = contract("lij,nlj->nli", tree.leaf_quadrupole, leaf_displacement)
-            r_q_r = contract("nli,nli->nl", leaf_displacement, q_r)
-            quadrupole = self.gravitational_constant * (
-                2.5 * r_q_r[..., None] * leaf_displacement / leaf_distance[..., None] ** 7
-                - q_r / leaf_distance[..., None] ** 5
+
+        def forward(current_tree):
+            result = plan._evaluate_impl(
+                current_tree,
+                short_range_scale=short_range_scale,
+                cutoff=cutoff,
+                fixed_iterations=False,
             )
-            far = far + jnp.where(accept[..., None], quadrupole, 0.0)
-        source_displacement = position[None, :, :] - position[:, None, :]
-        source_distance_squared = (
-            jnp.sum(source_displacement**2, axis=-1) + self.softening**2
-        )
-        source_distance = jnp.sqrt(source_distance_squared)
-        source_leaf_far = accept[:, tree.leaf_indices]
-        direct_mask = tree.active_mask[None, :] & ~source_leaf_far
-        direct_mask = direct_mask & ~jnp.eye(position.shape[0], dtype=bool)
-        direct_kernel = source_distance_squared ** (-1.5)
-        if short_range_scale is not None:
-            scale = jnp.asarray(short_range_scale, dtype=position.dtype)
-            argument = source_distance / (2.0 * scale)
-            direct_kernel = direct_kernel * (
-                jax.scipy.special.erfc(argument)
-                + source_distance / (scale * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
+            return result, current_tree
+
+        def backward(current_tree, cotangent):
+            _, pullback = jax.vjp(
+                lambda value: plan._evaluate_impl(
+                    value,
+                    short_range_scale=short_range_scale,
+                    cutoff=cutoff,
+                    fixed_iterations=True,
+                ),
+                current_tree,
             )
-        if cutoff is not None:
-            direct_mask = direct_mask & (source_distance <= cutoff)
-        direct = (
-            self.gravitational_constant
-            * tree.masses[None, :, None]
-            * source_displacement
-            * direct_kernel[..., None]
-        )
-        acceleration = jnp.sum(far, axis=1) + jnp.sum(
-            jnp.where(direct_mask[..., None], direct, 0.0), axis=1
-        )
-        acceleration = jnp.where(tree.active_mask[:, None], acceleration, 0.0)
-        finite = jnp.all(jnp.isfinite(acceleration))
-        net_force = jnp.sum(tree.masses[:, None] * acceleration, axis=0)
-        evidence = TreeGravityEvidence(
-            net_force,
-            jnp.max(jnp.sqrt(jnp.sum(acceleration**2, axis=-1))),
-            jnp.sum(accept),
-            jnp.sum(direct_mask),
-            jnp.max(
-                jnp.where(
-                    accept,
-                    (size / leaf_distance) ** (3 if self.use_quadrupole else 2),
-                    0.0,
-                )
-            ),
-            finite,
-            finite,
-        )
-        return TreeGravityResult(acceleration, evidence, finite)
+            return (pullback(cotangent)[0],)
+
+        run.defvjp(forward, backward)
+        return run(tree)
 
 
 class CartesianExpansionSpace(StrictModule, NonTrainableState):
@@ -672,18 +1193,15 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         )
 
 
-class FMMEvidence(StrictModule):
-    near_interactions: Array
-    far_interactions: Array
-    estimated_relative_error: Array
-    finite: Array
-    successful: Array
-
-
 class UniformFMMPlan(StrictModule, NonTrainableState):
+    """Sparse occupied-level first-order Cartesian fast multipole method."""
+
     gravitational_constant: float = eqx.field(static=True)
     softening: float = eqx.field(static=True)
     expansion: CartesianExpansionSpace
+    maximum_far_interactions: int | None = eqx.field(static=True)
+    maximum_near_interactions: int | None = eqx.field(static=True)
+    direct_chunk_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -693,79 +1211,316 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         /,
         *,
         softening: float,
+        maximum_far_interactions: int | None = None,
+        maximum_near_interactions: int | None = None,
+        direct_chunk_size: int = 32,
     ):
         gravity = float(gravitational_constant)
         epsilon = float(softening)
+        far_capacity = (
+            None if maximum_far_interactions is None else int(maximum_far_interactions)
+        )
+        near_capacity = (
+            None if maximum_near_interactions is None else int(maximum_near_interactions)
+        )
+        chunk = int(direct_chunk_size)
         if (
             not np.isfinite(gravity)
             or gravity <= 0.0
             or not np.isfinite(epsilon)
             or epsilon <= 0.0
+            or expansion.order != 1
+            or (far_capacity is not None and far_capacity <= 0)
+            or (near_capacity is not None and near_capacity <= 0)
+            or chunk <= 0
         ):
-            raise ValueError("Uniform FMM policy is invalid.")
+            raise ValueError(
+                "Sparse Cartesian FMM requires positive constants, order one, "
+                "and positive capacities."
+            )
         self.gravitational_constant = gravity
         self.softening = epsilon
         self.expansion = expansion
+        self.maximum_far_interactions = far_capacity
+        self.maximum_near_interactions = near_capacity
+        self.direct_chunk_size = chunk
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "uniform-cartesian-fmm",
+                "kind": "sparse-cartesian-fmm",
                 "gravitational_constant": gravity,
                 "softening": epsilon,
                 "order": expansion.order,
+                "maximum_far_interactions": far_capacity,
+                "maximum_near_interactions": near_capacity,
+                "direct_chunk_size": chunk,
             }
         )
 
     def evaluate(self, tree: PreparedParticleOctree3D, /) -> TreeGravityResult:
-        leaf_centers = tree.leaf_centers
-        displacement = tree.leaf_center_of_mass[None, :, :] - leaf_centers[:, None, :]
-        distance_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
-        distance = jnp.sqrt(distance_squared)
-        cell_size = 2.0 * jnp.max(tree.leaf_half_size)
-        far = (distance > 2.0 * cell_size) & (tree.leaf_mass[None, :] > 0.0)
-        far = far & ~jnp.eye(tree.leaf_mass.size, dtype=bool)
-        leaf_local_acceleration = jnp.sum(
+        point_capacity = tree.positions.shape[0]
+        parent_stencil = 27
+        far_stencil = 189
+        far_capacity = (
+            point_capacity * max(tree.depth - 1, 1) * min(far_stencil, point_capacity)
+            if self.maximum_far_interactions is None
+            else self.maximum_far_interactions
+        )
+        near_capacity = (
+            point_capacity * min(parent_stencil, point_capacity)
+            if self.maximum_near_interactions is None
+            else self.maximum_near_interactions
+        )
+        level_tree = SparseLevelOctreePlan(
+            MortonAddressPlan((0.0, 0.0, 0.0), tree.box_size, tree.depth),
+            point_capacity,
+            far_interaction_capacity=far_capacity,
+            near_interaction_capacity=near_capacity,
+        ).prepare(
+            tree.positions,
+            active_mask=tree.active_mask,
+            stable_ids=jnp.arange(point_capacity, dtype=jnp.int64),
+        )
+        hierarchy = level_tree.hierarchy
+        operators = CartesianFMMOperators(
+            self.expansion, self.gravitational_constant, self.softening
+        )
+        node_capacity = hierarchy.node_active.size
+        node_slots = jnp.arange(node_capacity, dtype=jnp.int32)
+        sorted_logical = hierarchy.storage_to_logical
+        sorted_position = tree.positions[sorted_logical]
+        sorted_mass = tree.masses[sorted_logical]
+        sorted_active = hierarchy.sorted_active
+        leaf_slots = jnp.nonzero(
+            hierarchy.node_is_leaf,
+            size=node_capacity,
+            fill_value=node_capacity,
+        )[0].astype(jnp.int32)
+        leaf_valid = node_slots < hierarchy.evidence.active_leaves
+        safe_leaf_slots = jnp.minimum(leaf_slots, node_capacity - 1)
+        leaf_starts = jnp.where(
+            leaf_valid,
+            hierarchy.node_item_starts[safe_leaf_slots],
+            point_capacity,
+        )
+        leaf_order = jnp.argsort(leaf_starts, stable=True)
+        ordered_leaf_slots = leaf_slots[leaf_order]
+        ordered_leaf_starts = leaf_starts[leaf_order]
+        storage_slots = jnp.arange(point_capacity, dtype=jnp.int32)
+        leaf_rank = jnp.searchsorted(ordered_leaf_starts, storage_slots, side="right") - 1
+        point_leaf = jnp.where(
+            sorted_active,
+            ordered_leaf_slots[jnp.maximum(leaf_rank, 0)],
+            -1,
+        ).astype(jnp.int32)
+        safe_point_leaf = jnp.maximum(point_leaf, 0)
+        relative = sorted_position - hierarchy.node_centers[safe_point_leaf]
+        safe_mass = jnp.where(sorted_active, sorted_mass, 0.0)
+        multipole = jnp.zeros(
+            (node_capacity, self.expansion.coefficient_count),
+            dtype=tree.positions.dtype,
+        )
+        for coefficient, exponent in enumerate(self.expansion.exponents):
+            particle_coefficient = safe_mass
+            for axis in range(3):
+                particle_coefficient = (
+                    particle_coefficient * relative[:, axis] ** exponent[axis]
+                )
+            multipole = multipole.at[safe_point_leaf, coefficient].add(
+                particle_coefficient
+            )
+        for level in range(tree.depth - 1, -1, -1):
+            at_level = (
+                hierarchy.node_active
+                & ~hierarchy.node_is_leaf
+                & (hierarchy.node_levels == level)
+            )
+            children = hierarchy.node_children
+            child_valid = children >= 0
+            safe_children = jnp.maximum(children, 0)
+            child_values = multipole[safe_children]
+            shifts = (
+                hierarchy.node_centers[safe_children] - hierarchy.node_centers[:, None, :]
+            )
+            translated = jax.vmap(jax.vmap(operators.m2m))(child_values, shifts)
+            parent_values = jnp.sum(
+                jnp.where(child_valid[..., None], translated, 0.0), axis=1
+            )
+            multipole = jnp.where(at_level[:, None], parent_values, multipole)
+
+        safe_far_targets = jnp.maximum(level_tree.far_targets, 0)
+        safe_far_sources = jnp.maximum(level_tree.far_sources, 0)
+        far_local = jax.vmap(operators.m2l)(
+            multipole[safe_far_sources],
+            hierarchy.node_centers[safe_far_sources],
+            hierarchy.node_centers[safe_far_targets],
+        )
+        far_local = jnp.where(level_tree.far_active[:, None], far_local, 0.0)
+        local = jnp.zeros_like(multipole).at[safe_far_targets].add(far_local)
+        for level in range(1, tree.depth + 1):
+            at_level = hierarchy.node_active & (hierarchy.node_levels == level)
+            parents = jnp.maximum(hierarchy.node_parents, 0)
+            shifts = hierarchy.node_centers - hierarchy.node_centers[parents]
+            inherited = jax.vmap(operators.l2l)(local[parents], shifts)
+            local = local + jnp.where(at_level[:, None], inherited, 0.0)
+        _, local_acceleration = jax.vmap(operators.l2p)(
+            local[safe_point_leaf],
+            relative,
+        )
+        local_acceleration = jnp.where(sorted_active[:, None], local_acceleration, 0.0)
+
+        chunk_offsets = jnp.arange(self.direct_chunk_size, dtype=jnp.int32)
+
+        def near_relation_body(relation, acceleration):
+            target_node = jnp.maximum(level_tree.near_targets[relation], 0)
+            source_node = jnp.maximum(level_tree.near_sources[relation], 0)
+            relation_active = level_tree.near_active[relation]
+            target_start = hierarchy.node_item_starts[target_node]
+            target_count = jnp.where(
+                relation_active, hierarchy.node_item_counts[target_node], 0
+            )
+            source_start = hierarchy.node_item_starts[source_node]
+            source_count = jnp.where(
+                relation_active, hierarchy.node_item_counts[source_node], 0
+            )
+
+            def target_body(state):
+                target_offset, current, interaction_count = state
+                target_storage = target_start + target_offset
+                target_position = sorted_position[target_storage]
+
+                def source_body(source_state):
+                    source_offset, contribution, count = source_state
+                    source_storage = source_start + source_offset + chunk_offsets
+                    source_valid = (source_storage < source_start + source_count) & (
+                        source_storage < point_capacity
+                    )
+                    safe_source = jnp.minimum(source_storage, point_capacity - 1)
+                    source_valid = (
+                        source_valid
+                        & sorted_active[safe_source]
+                        & (safe_source != target_storage)
+                    )
+                    displacement = sorted_position[safe_source] - target_position
+                    distance_squared = (
+                        jnp.sum(displacement**2, axis=-1) + self.softening**2
+                    )
+                    value = (
+                        self.gravitational_constant
+                        * sorted_mass[safe_source, None]
+                        * displacement
+                        / distance_squared[:, None] ** 1.5
+                    )
+                    contribution = contribution + jnp.sum(
+                        jnp.where(source_valid[:, None], value, 0.0), axis=0
+                    )
+                    return (
+                        source_offset + self.direct_chunk_size,
+                        contribution,
+                        count + jnp.sum(source_valid, dtype=jnp.int32),
+                    )
+
+                _, contribution, count = jax.lax.fori_loop(
+                    0,
+                    (point_capacity + self.direct_chunk_size - 1)
+                    // self.direct_chunk_size,
+                    lambda _, source_state: source_body(source_state),
+                    (
+                        jnp.asarray(0, dtype=jnp.int32),
+                        jnp.zeros((3,), dtype=tree.positions.dtype),
+                        jnp.asarray(0, dtype=jnp.int32),
+                    ),
+                )
+                current = current.at[target_storage].add(contribution)
+                return target_offset + 1, current, interaction_count + count
+
+            target_initial = (
+                jnp.asarray(0, dtype=jnp.int32),
+                acceleration,
+                jnp.asarray(0, dtype=jnp.int32),
+            )
+
+            def evaluate_relation(initial):
+                def target_iteration(_, state):
+                    return jax.lax.cond(
+                        state[0] < target_count,
+                        target_body,
+                        lambda current: current,
+                        state,
+                    )
+
+                return jax.lax.fori_loop(
+                    0,
+                    point_capacity,
+                    target_iteration,
+                    initial,
+                )
+
+            _, updated, count = jax.lax.cond(
+                relation_active,
+                evaluate_relation,
+                lambda initial: initial,
+                target_initial,
+            )
+            return updated, count
+
+        def accumulate_relation(relation, state):
+            acceleration, count = state
+            updated, relation_count = near_relation_body(relation, acceleration)
+            return updated, count + relation_count
+
+        near_acceleration, direct_count = jax.lax.fori_loop(
+            0,
+            level_tree.near_active.size,
+            accumulate_relation,
+            (
+                jnp.zeros_like(local_acceleration),
+                jnp.asarray(0, dtype=jnp.int32),
+            ),
+        )
+        sorted_acceleration = local_acceleration + near_acceleration
+        acceleration = (
+            jnp.zeros_like(tree.positions).at[sorted_logical].set(sorted_acceleration)
+        )
+        acceleration = jnp.where(tree.active_mask[:, None], acceleration, 0.0)
+        safe_far_distance = jnp.sqrt(
+            jnp.sum(
+                (
+                    hierarchy.node_centers[safe_far_sources]
+                    - hierarchy.node_centers[safe_far_targets]
+                )
+                ** 2,
+                axis=-1,
+            )
+            + self.softening**2
+        )
+        far_size = 2.0 * jnp.max(hierarchy.node_half_widths[safe_far_sources], axis=-1)
+        error_indicator = jnp.max(
             jnp.where(
-                far[..., None],
-                self.gravitational_constant
-                * tree.leaf_mass[None, :, None]
-                * displacement
-                / distance[..., None] ** 3,
+                level_tree.far_active,
+                (far_size / safe_far_distance) ** 2,
                 0.0,
             ),
-            axis=1,
+            initial=0.0,
         )
-        local = leaf_local_acceleration[tree.leaf_indices]
-        particle_displacement = tree.positions[None, :, :] - tree.positions[:, None, :]
-        particle_distance_squared = (
-            jnp.sum(particle_displacement**2, axis=-1) + self.softening**2
-        )
-        source_far = far[tree.leaf_indices[:, None], tree.leaf_indices[None, :]]
-        near = (
-            tree.active_mask[None, :]
-            & ~source_far
-            & ~jnp.eye(tree.positions.shape[0], dtype=bool)
-        )
-        direct = (
-            self.gravitational_constant
-            * tree.masses[None, :, None]
-            * particle_displacement
-            / particle_distance_squared[..., None] ** 1.5
-        )
-        acceleration = local + jnp.sum(jnp.where(near[..., None], direct, 0.0), axis=1)
-        acceleration = jnp.where(tree.active_mask[:, None], acceleration, 0.0)
         finite = jnp.all(jnp.isfinite(acceleration))
-        ratio = cell_size / jnp.maximum(distance, cell_size)
-        error = jnp.max(jnp.where(far, ratio ** (self.expansion.order + 1), 0.0))
+        successful = level_tree.evidence.successful & finite
         evidence = TreeGravityEvidence(
-            jnp.sum(tree.masses[:, None] * acceleration, axis=0),
-            jnp.max(jnp.sqrt(jnp.sum(acceleration**2, axis=-1))),
-            jnp.sum(far),
-            jnp.sum(near),
-            error,
-            finite,
-            finite,
+            net_force=jnp.sum(
+                jnp.where(tree.active_mask, tree.masses, 0.0)[:, None] * acceleration,
+                axis=0,
+            ),
+            maximum_acceleration=jnp.max(
+                jnp.sqrt(jnp.sum(acceleration**2, axis=-1)), initial=0.0
+            ),
+            accepted_leaf_interactions=jnp.sum(level_tree.far_active, dtype=jnp.int32),
+            direct_particle_interactions=direct_count,
+            maximum_opening_indicator=error_indicator,
+            traversal_complete=level_tree.evidence.successful,
+            active_nodes=level_tree.evidence.active_nodes,
+            finite=finite,
+            successful=successful,
         )
-        return TreeGravityResult(acceleration, evidence, finite)
+        return TreeGravityResult(acceleration, evidence, successful)
 
 
 class PeriodicEwaldEvidence(StrictModule):
@@ -969,13 +1724,19 @@ class PeriodicBarnesHutPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(acceleration))
         )
         evidence = TreeGravityEvidence(
-            jnp.sum(tree.masses[:, None] * acceleration, axis=0),
-            jnp.max(jnp.sqrt(jnp.sum(acceleration**2, axis=-1))),
-            approximate.evidence.accepted_leaf_interactions,
-            approximate.evidence.direct_particle_interactions,
-            approximate.evidence.estimated_relative_error,
-            finite,
-            finite,
+            net_force=jnp.sum(tree.masses[:, None] * acceleration, axis=0),
+            maximum_acceleration=jnp.max(
+                jnp.sqrt(jnp.sum(acceleration**2, axis=-1)), initial=0.0
+            ),
+            accepted_leaf_interactions=(approximate.evidence.accepted_leaf_interactions),
+            direct_particle_interactions=(
+                approximate.evidence.direct_particle_interactions
+            ),
+            maximum_opening_indicator=(approximate.evidence.maximum_opening_indicator),
+            traversal_complete=approximate.evidence.traversal_complete,
+            active_nodes=approximate.evidence.active_nodes,
+            finite=finite,
+            successful=finite,
         )
         return TreeGravityResult(acceleration, evidence, finite)
 
@@ -1109,7 +1870,6 @@ __all__ = [
     "CartesianFMMOperators",
     "DirectParticleGravityPlan",
     "DistributedParticleLayout",
-    "FMMEvidence",
     "MeshComplementCalibrationEvidence",
     "MeshComplementCalibrationPlan",
     "NewtonianPairKernel",

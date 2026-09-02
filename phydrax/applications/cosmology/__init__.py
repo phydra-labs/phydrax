@@ -271,7 +271,6 @@ from ._tree_gravity import (
     CartesianExpansionSpace,
     CartesianFMMOperators,
     DistributedParticleLayout,
-    FMMEvidence,
     MeshComplementCalibrationEvidence,
     MeshComplementCalibrationPlan,
     ParticleOctreePlan3D,

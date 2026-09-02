@@ -141,6 +141,19 @@ gather, route gradients and moments, source/target provenance, boundary loss,
 reduction order, and balance evidence remain explicit. See
 [Particle-grid splatting](guides_particle_splatting.md).
 
+## Sparse spatial supports
+
+`MortonAddressPlan` provides canonical integer addressing for one-, two-, and
+three-dimensional dyadic boxes. `MortonPointHierarchyPlan` binds moving points
+to occupied prefixes and contiguous leaf ranges. `SparseVoxelGridPlan` binds
+fixed-resolution voxel samples to aligned bricks. `AdaptiveDyadicGridPlan`
+binds mixed-resolution cells to atomic refinement/coarsening and optional 2:1
+balance. These representations share addresses but not physical semantics.
+
+`DyadicCellTopology` is a supported `DiscreteTopology` value. It can therefore
+own a `DiscreteSupport` without materializing a complete cell complex. See
+[Sparse spatial hierarchies](guides_sparse_spatial_hierarchies.md).
+
 
 ## Spectral bases
 

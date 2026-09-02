@@ -11,6 +11,7 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....discretization.spatial import morton_encode_integer
 from ....discretization.vortex._source import VortexSourceState
 
 
@@ -82,14 +83,6 @@ class VortexMortonHierarchyPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _spread_bits(self, value: Array, /) -> Array:
-        result = jnp.zeros_like(value, dtype=jnp.uint64)
-        for bit in range(self.bits_per_axis):
-            result = result | (
-                ((value.astype(jnp.uint64) >> bit) & 1) << (self.dimension * bit)
-            )
-        return result
-
     def build(self, source: VortexSourceState, /) -> MortonHierarchyState:
         if source.dimension != self.dimension:
             raise ValueError("Morton hierarchy source dimension is incompatible.")
@@ -99,9 +92,7 @@ class VortexMortonHierarchyPlan(StrictModule, NonTrainableState):
         )
         scale = 2**self.bits_per_axis
         integer = jnp.clip(jnp.floor(normalized * scale).astype(jnp.uint32), 0, scale - 1)
-        codes = jnp.zeros((source.capacity,), dtype=jnp.uint64)
-        for axis in range(self.dimension):
-            codes = codes | (self._spread_bits(integer[:, axis]) << axis)
+        codes = morton_encode_integer(integer, self.bits_per_axis)
         codes = jnp.where(source.active_mask, codes, jnp.iinfo(jnp.uint64).max)
         permutation = jnp.lexsort((jnp.arange(source.capacity), codes))
         inverse = (

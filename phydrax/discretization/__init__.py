@@ -18,6 +18,7 @@ from . import (
     multiblock,
     particle,
     pic,
+    spatial as spatial,
     spectral,
     splatting,
     vem,
@@ -602,6 +603,8 @@ from .finite_volume import (
     DistributedMarkerExchange,
     DistributedMarkerOwnershipPlan,
     DistributedMarkerTransferDiagnostics,
+    DyadicFiniteVolumeDiscretization,
+    DyadicFiniteVolumePlan,
     EinfeldtHLLFluxPlan,
     EmbeddedBoundaryContactAngleSet,
     EmbeddedBoundaryEvidence,
@@ -1694,6 +1697,8 @@ from .pic import (
     UnstructuredWhitneyCurrentPlan,
     UnstructuredWhitneyCurrentResult,
 )
+from .spatial import *  # noqa: F403
+from .spatial import __all__ as _spatial_all
 from .spectral import (
     AbstractDealiasingPlan,
     AbstractSpectralBasisPlan,
@@ -2157,6 +2162,8 @@ __all__ = [
     "FDRegridPlan",
     "FDRegridResult",
     "FiniteVolumeDiscretization",
+    "DyadicFiniteVolumeDiscretization",
+    "DyadicFiniteVolumePlan",
     "DerivativeRequest",
     "DistributedStencilPartition",
     "DistributedHaloSchedule",
@@ -3711,7 +3718,12 @@ __all__ = [
 
 __all__ += [
     name
-    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all, *_vortex_all)
+    for name in (
+        *_discrete_velocity_all,
+        *_lattice_boltzmann_all,
+        *_spatial_all,
+        *_vortex_all,
+    )
     if name not in __all__
 ]
 __all__ += [name for name in _bem_all if name not in __all__]

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
+  traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
+  FMM, brick-backed sparse voxel fields and qualified geometry sampling,
+  atomic balanced dyadic adaptation with conservative field transfer, and
+  explicit coarse/fine finite-volume lowering.
 - Added `phydrax.signal` with explicit-axis differentiable windows and framing,
   finite direct/FFT convolution, causal FIR state, raw and aligned polyphase
   rate conversion, fixed-capacity causal streaming resampling, periodic Fourier
