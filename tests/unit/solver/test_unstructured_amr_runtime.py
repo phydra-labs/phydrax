@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization.finite_volume._flux_ledger import (
-    FiniteVolumeAcceptedFluxIntegralBlock,
-    FiniteVolumeAcceptedFluxIntegralLedger,
+from phydrax.discretization._conservation_ledger import (
+    AcceptedConservationFluxIntegralBlock,
+    AcceptedConservationIntegralLedger,
 )
 from phydrax.solver._finite_volume_runtime import PreparedFiniteVolumeRuntime
 from phydrax.solver._unstructured_amr_runtime import (
@@ -630,7 +630,7 @@ def test_amr_non_interface_ledger_rates_do_not_enter_reflux_scatter():
         "hierarchy",
         SimpleNamespace(coarse_fine_interface_map=np.asarray(((0, 0),))),
     )
-    block = FiniteVolumeAcceptedFluxIntegralBlock(
+    block = AcceptedConservationFluxIntegralBlock(
         jnp.asarray(((2.0,), (17.0,))),
         jnp.asarray((0, 1), dtype=jnp.int32),
         jnp.asarray((1, -1), dtype=jnp.int32),
@@ -638,7 +638,7 @@ def test_amr_non_interface_ledger_rates_do_not_enter_reflux_scatter():
         "synthetic-route",
         "physical",
     )
-    ledger = FiniteVolumeAcceptedFluxIntegralLedger(
+    ledger = AcceptedConservationIntegralLedger(
         (block,),
         jnp.zeros((2, 1)),
         jnp.asarray((True, True)),

@@ -17,6 +17,12 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._conservation_ledger import (
+    AcceptedConservationFluxIntegralBlock,
+    AcceptedConservationIntegralLedger,
+    ConservationStageFluxRateBlock,
+    ConservationStageLedger,
+)
 from ..discretization.finite_volume import (
     AbstractWavePropagationPlan,
     ConservativeSmallCellRedistributionPlan,
@@ -37,12 +43,6 @@ from ..discretization.finite_volume import (
     TriangleFiniteVolumeDiscretization,
     UnstructuredEmbeddedBoundarySet,
     UnstructuredFiniteVolumeDiscretization,
-)
-from ..discretization.finite_volume._flux_ledger import (
-    FiniteVolumeAcceptedFluxIntegralBlock,
-    FiniteVolumeAcceptedFluxIntegralLedger,
-    FiniteVolumeStageFluxRateBlock,
-    FiniteVolumeStageFluxRateLedger,
 )
 from ..discretization.finite_volume._geometry_protocol import (
     FiniteVolumeGeometryStatus,
@@ -220,9 +220,9 @@ class FiniteVolumeALEAdvanceEvidence(StrictModule):
 
     accepted: Array
     stage_rate_ledgers: tuple[
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
     ]
     geometry: UnstructuredALEStepGeometry
     maximum_relative_rate: Array
@@ -235,9 +235,9 @@ class FiniteVolumeEmbeddedAdvanceEvidence(StrictModule):
 
     accepted: Array
     stage_rate_ledgers: tuple[
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
-        FiniteVolumeStageFluxRateLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
+        ConservationStageLedger,
     ]
     stage_metrics: tuple[
         FiniteVolumeStageMetrics,
@@ -258,7 +258,7 @@ class FiniteVolumeAdvanceResult(StrictModule):
     attempted_step_size: Array
     accepted_step_size: Array
     positivity: FiniteVolumeAdmissibilityReport
-    accepted_flux_integrals: FiniteVolumeAcceptedFluxIntegralLedger
+    accepted_flux_integrals: AcceptedConservationIntegralLedger
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     ale: FiniteVolumeALEAdvanceEvidence | None
     embedded: FiniteVolumeEmbeddedAdvanceEvidence | None
@@ -296,7 +296,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
     effective_cell_volumes: Array
     active_cell_mask: Array
     precision: FiniteVolumePrecisionPolicy
-    static_flux_rate_block_templates: tuple[FiniteVolumeStageFluxRateBlock, ...]
+    static_flux_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...]
     embedded_redistribution: ConservativeSmallCellRedistributionPlan | None
     embedded_stage_template: FiniteVolumeStageMetrics | None
     sliding_plan: PeriodicSlidingInterfacePlan | None
@@ -521,7 +521,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         elif isinstance(discretization, TriangleFiniteVolumeDiscretization):
             face_block = discretization.face_block
             static_flux_rate_block_templates = (
-                FiniteVolumeStageFluxRateBlock(
+                ConservationStageFluxRateBlock(
                     jnp.zeros(
                         (
                             discretization.face_measures.size,
@@ -578,7 +578,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     }
                 )
                 templates.append(
-                    FiniteVolumeStageFluxRateBlock(
+                    ConservationStageFluxRateBlock(
                         jnp.zeros(
                             (int(np.prod(face_shape)), discretization.component_count),
                             dtype=jnp.dtype(dynamics.precision.reduction_dtype),
@@ -1044,7 +1044,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         end_time: Array,
         accepted_step: Array,
         /,
-    ) -> FiniteVolumeAcceptedFluxIntegralLedger:
+    ) -> AcceptedConservationIntegralLedger:
         if len(integrated_flux_rates) != len(self.static_flux_rate_block_templates):
             raise ValueError("Static flux rates must match the prepared ledger routes.")
         discretization = self.dynamics.discretization
@@ -1072,7 +1072,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 lower_face[axis] = 0
                 integral = integral.at[tuple(lower_face)].multiply(-1)
             blocks.append(
-                FiniteVolumeAcceptedFluxIntegralBlock._from_stage_rate_block(
+                AcceptedConservationFluxIntegralBlock._from_stage_rate_block(
                     integral.reshape(template.flux_rate.shape),
                     template,
                 )
@@ -1092,7 +1092,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 )
             )
         source_integral = content_change - face_change
-        return FiniteVolumeAcceptedFluxIntegralLedger(
+        return AcceptedConservationIntegralLedger(
             tuple(blocks),
             source_integral,
             original_content.active_cell_mask,

@@ -279,6 +279,17 @@ def _boundary_value(value: ArrayLike, shape: tuple[int, ...], /) -> Array:
     return array
 
 
+class BoundaryTraceResult(StrictModule):
+    exterior_state: Array | None
+    direct_normal_flux: Array | None
+    viscous_state_trace: Array | None
+    viscous_gradient_trace: Array | None
+    entropy_supply: Array | None
+    admissible: Array
+    incoming_characteristic_count: Array | None
+    evidence_id: str = eqx.field(static=True)
+
+
 class AbstractConservationBoundary(StrictModule, NonTrainableState):
     """Physical boundary policy that constructs an exterior face state."""
 
@@ -511,9 +522,77 @@ class PrescribedNormalFluxBoundary(AbstractConservationBoundary):
         return _boundary_value(value, interior.shape)
 
 
+def evaluate_conservation_boundary(
+    boundary: AbstractConservationBoundary,
+    system: Any,
+    time: Array,
+    interior: Array,
+    coordinates: Array,
+    outward_normal: Array,
+    axis: int,
+    args: Any,
+    /,
+) -> BoundaryTraceResult:
+    if not isinstance(boundary, AbstractConservationBoundary):
+        raise TypeError("boundary must be AbstractConservationBoundary.")
+    if isinstance(boundary, PrescribedNormalFluxBoundary):
+        flux = boundary.normal_flux(
+            time,
+            interior,
+            coordinates,
+            outward_normal,
+            args,
+        )
+        return BoundaryTraceResult(
+            None,
+            flux,
+            None,
+            None,
+            None,
+            system.admissible(interior),
+            None,
+            canonical_fingerprint(
+                {
+                    "kind": "boundary-trace-result",
+                    "boundary": boundary.boundary_id,
+                    "system": system.system_id,
+                    "mode": "direct-normal-flux",
+                }
+            ),
+        )
+    exterior = boundary.exterior_state(
+        system,
+        time,
+        interior,
+        coordinates,
+        outward_normal,
+        axis,
+        args,
+    )
+    return BoundaryTraceResult(
+        exterior,
+        None,
+        exterior,
+        None,
+        None,
+        system.admissible(exterior),
+        None,
+        canonical_fingerprint(
+            {
+                "kind": "boundary-trace-result",
+                "boundary": boundary.boundary_id,
+                "system": system.system_id,
+                "mode": "exterior-state",
+            }
+        ),
+    )
+
+
 __all__ = [
     "ALEBoundaryContext",
     "AbstractConservationBoundary",
+    "BoundaryTraceResult",
+    "evaluate_conservation_boundary",
     "ConstantStateBoundary",
     "ExtrapolationBoundary",
     "PrescribedNormalFluxBoundary",

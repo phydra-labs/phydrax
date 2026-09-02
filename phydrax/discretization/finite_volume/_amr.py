@@ -15,12 +15,12 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._conservation_ledger import AcceptedConservationIntegralLedger
 from ..amr import (
     ConservativeAMRSubcyclingPlan,
     ConservativeBlockTransfer,
     FluxRegister,
 )
-from ._flux_ledger import FiniteVolumeAcceptedFluxIntegralLedger
 from ._precision import FiniteVolumePrecisionPolicy
 
 
@@ -170,8 +170,8 @@ def flux_register_from_accepted_steps(
     )
     coarse_ledger = coarse_result.accepted_flux_integrals
     fine_ledgers = tuple(result.accepted_flux_integrals for result in fine_results)
-    if not isinstance(coarse_ledger, FiniteVolumeAcceptedFluxIntegralLedger) or any(
-        not isinstance(ledger, FiniteVolumeAcceptedFluxIntegralLedger)
+    if not isinstance(coarse_ledger, AcceptedConservationIntegralLedger) or any(
+        not isinstance(ledger, AcceptedConservationIntegralLedger)
         for ledger in fine_ledgers
     ):
         raise TypeError("AMR reflux requires accepted flux-integral ledgers.")

@@ -69,6 +69,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         ):
             raise ValueError("Unknown finite-element coefficient representation.")
         if cell not in (
+            "interval",
             "triangle",
             "quadrilateral",
             "tetrahedron",
@@ -81,6 +82,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError("Finite-element degree must be non-negative.")
         nodes = np.asarray(reference_nodes, dtype=float)
         dimension = {
+            "interval": 1,
             "triangle": 2,
             "quadrilateral": 2,
             "tetrahedron": 3,
@@ -431,11 +433,11 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
                 ((),),
             ),
         )
-    if cell in ("triangle", "tetrahedron") and order >= 1:
+    if cell in ("triangle", "tetrahedron") and order >= 0:
         from ._high_order import SimplexNodalFamily
 
         return SimplexNodalFamily(cell, order).finite_element()
-    if cell in ("quadrilateral", "hexahedron") and order >= 1:
+    if cell in ("interval", "quadrilateral", "hexahedron") and order >= 0:
         from ._high_order import ReferenceNodalFamily
 
         return ReferenceNodalFamily(cell, order).finite_element()
@@ -479,6 +481,7 @@ def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSp
     dimension = {
         "triangle": 2,
         "quadrilateral": 2,
+        "interval": 1,
         "tetrahedron": 3,
         "hexahedron": 3,
         "prism": 3,
@@ -487,12 +490,16 @@ def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSp
     if dimension is None:
         raise ValueError("Unsupported discontinuous reference cell.")
     center = {
+        "interval": ((0.5,),),
         "triangle": ((1.0 / 3.0, 1.0 / 3.0),),
         "quadrilateral": ((0.5, 0.5),),
         "tetrahedron": ((0.25, 0.25, 0.25),),
         "hexahedron": ((0.5, 0.5, 0.5),),
+        "prism": ((1.0 / 3.0, 1.0 / 3.0, 0.5),),
+        "pyramid": ((0.5, 0.5, 0.25),),
     }[cell]
     entities = {
+        "interval": (((), ()), ((0,),)),
         "triangle": (((), (), ()), ((), (), ()), ((0,),)),
         "quadrilateral": (((), (), (), ()), ((), (), (), ()), ((0,),)),
         "tetrahedron": (
@@ -507,6 +514,8 @@ def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSp
             ((),) * 6,
             ((0,),),
         ),
+        "prism": (((),) * 6, ((),) * 9, ((),) * 5, ((0,),)),
+        "pyramid": (((),) * 5, ((),) * 8, ((),) * 5, ((0,),)),
     }[cell]
     return FiniteElementSpec(
         "DiscontinuousLagrange",

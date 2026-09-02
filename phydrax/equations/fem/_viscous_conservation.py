@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -21,57 +23,212 @@ from ...discretization.fem._boundary import tensor_local_face
 from ...discretization.finite_volume._physical_boundaries import (
     PrescribedHeatFluxWallBoundary,
 )
-from .._hyperbolic_systems import CompressibleNavierStokesSystem
+from .._hyperbolic_systems import (
+    AbstractEntropyDiffusionSystem,
+)
 
 
-class LDGViscousFluxPlan(StrictModule, NonTrainableState):
-    beta: float = eqx.field(static=True)
-    penalty: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+class EntropyDiffusionEvidence(StrictModule, NonTrainableState):
+    production: Array
+    minimum_production: Array
+    nonnegative: Array
+    evidence_id: str = eqx.field(static=True)
 
-    def __init__(self, /, *, beta: float = 0.0, penalty: float = 1.0):
-        beta_ = float(beta)
-        penalty_ = float(penalty)
-        if not math.isfinite(beta_) or abs(beta_) > 0.5:
-            raise ValueError("LDG beta must be finite and lie in [-0.5, 0.5].")
-        if not math.isfinite(penalty_) or penalty_ <= 0.0:
-            raise ValueError("LDG penalty must be finite and positive.")
-        self.beta = beta_
-        self.penalty = penalty_
-        self.plan_id = canonical_fingerprint(
+
+def entropy_diffusion_evidence(
+    system: AbstractEntropyDiffusionSystem,
+    state: ArrayLike,
+    conserved_gradient: ArrayLike,
+    args: Any = None,
+    /,
+    *,
+    tolerance: float = 1.0e-10,
+) -> EntropyDiffusionEvidence:
+    if not isinstance(system, AbstractEntropyDiffusionSystem):
+        raise TypeError("system must implement AbstractEntropyDiffusionSystem.")
+    production = system.entropy_viscous_production(
+        jnp.asarray(state), jnp.asarray(conserved_gradient), args
+    )
+    minimum = jnp.min(production)
+    evidence_id = canonical_fingerprint(
+        {
+            "kind": "entropy-diffusion-evidence",
+            "system": system.system_id,
+            "tolerance": float(tolerance),
+        }
+    )
+    return EntropyDiffusionEvidence(
+        production,
+        minimum,
+        minimum >= -float(tolerance),
+        evidence_id,
+    )
+
+
+class ViscousBoundaryClosure(StrictModule, NonTrainableState):
+    boundary_id: str = eqx.field(static=True)
+    gradient_provider: Any = eqx.field(static=True)
+    normal_flux_provider: Any = eqx.field(static=True)
+    closure_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        boundary_id: str,
+        /,
+        *,
+        gradient_provider=None,
+        normal_flux_provider=None,
+    ):
+        identifier = str(boundary_id)
+        gradient = lambda time, state, gradient, points, normal, args: (
+            gradient if gradient_provider is None else gradient_provider
+        )
+        normal_flux = (
+            lambda time, plus, minus, plus_gradient, minus_gradient, normal, default, args: (
+                default if normal_flux_provider is None else normal_flux_provider
+            )
+        )
+        if not identifier or not callable(gradient) or not callable(normal_flux):
+            raise ValueError("Viscous boundary closure definition is invalid.")
+        self.boundary_id = identifier
+        self.gradient_provider = gradient
+        self.normal_flux_provider = normal_flux
+        self.closure_id = canonical_fingerprint(
             {
-                "kind": "ldg-viscous-flux",
-                "beta": beta_,
-                "penalty": penalty_,
-                "entropy_evidence": "uncertified",
+                "kind": "viscous-boundary-closure",
+                "boundary": identifier,
             }
         )
 
+    def gradient_trace(
+        self,
+        time: Array,
+        state: Array,
+        gradient: Array,
+        points: Array,
+        normal: Array,
+        args: Any,
+        /,
+    ) -> Array:
+        value = jnp.asarray(
+            self.gradient_provider(time, state, gradient, points, normal, args)
+        )
+        if value.shape != gradient.shape:
+            raise ValueError("Viscous boundary gradient trace changed shape.")
+        return value
 
-class LDGViscousStabilityEvidence(StrictModule, NonTrainableState):
+    def normal_flux(
+        self,
+        time: Array,
+        plus: Array,
+        minus: Array,
+        plus_gradient: Array,
+        minus_gradient: Array,
+        normal: Array,
+        default_flux: Array,
+        args: Any,
+        /,
+    ) -> Array:
+        value = jnp.asarray(
+            self.normal_flux_provider(
+                time,
+                plus,
+                minus,
+                plus_gradient,
+                minus_gradient,
+                normal,
+                default_flux,
+                args,
+            )
+        )
+        if value.shape != default_flux.shape:
+            raise ValueError("Viscous boundary normal flux changed shape.")
+        return value
+
+
+class ViscousDGPlan(StrictModule, NonTrainableState):
+    formulation: str = eqx.field(static=True)
+    beta: float = eqx.field(static=True)
+    penalty: float = eqx.field(static=True)
+    boundary_closures: tuple[ViscousBoundaryClosure, ...]
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        /,
+        *,
+        formulation: str = "entropy_br1",
+        beta: float = 0.0,
+        penalty: float = 1.0,
+        boundary_closures: Sequence[ViscousBoundaryClosure] = (),
+    ):
+        formulation_ = str(formulation)
+        beta_ = float(beta)
+        penalty_ = float(penalty)
+        if formulation_ not in ("entropy_br1", "ldg"):
+            raise ValueError("Viscous DG formulation must be entropy_br1 or ldg.")
+        if not math.isfinite(beta_) or abs(beta_) > 0.5:
+            raise ValueError("Viscous DG beta must be finite and lie in [-0.5, 0.5].")
+        if formulation_ == "entropy_br1" and beta_ != 0.0:
+            raise ValueError("Entropy BR1 requires beta=0.")
+        if not math.isfinite(penalty_) or penalty_ <= 0.0:
+            raise ValueError("Viscous DG penalty must be finite and positive.")
+        closures = tuple(boundary_closures)
+        if any(
+            not isinstance(value, ViscousBoundaryClosure) for value in closures
+        ) or len({value.boundary_id for value in closures}) != len(closures):
+            raise ValueError("Viscous boundary closures must be typed and unique.")
+        self.formulation = formulation_
+        self.beta = beta_
+        self.penalty = penalty_
+        self.boundary_closures = closures
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "viscous-dg-plan",
+                "formulation": formulation_,
+                "beta": beta_,
+                "penalty": penalty_,
+                "entropy_evidence": (
+                    "entropy-diffusion-capability"
+                    if formulation_ == "entropy_br1"
+                    else "uncertified"
+                ),
+                "boundary_closures": tuple(value.closure_id for value in closures),
+            }
+        )
+
+    def boundary_closure(self, boundary_id: str, /) -> ViscousBoundaryClosure:
+        identifier = str(boundary_id)
+        for closure in self.boundary_closures:
+            if closure.boundary_id == identifier:
+                return closure
+        raise ValueError(f"Missing viscous closure for physical boundary {identifier!r}.")
+
+
+class ViscousDGStabilityEvidence(StrictModule, NonTrainableState):
     step: Array
     maximum_diffusive_rate: Array
     positive: Array
     plan_id: str = eqx.field(static=True)
 
 
-class PreparedLDGViscousOperator(StrictModule):
-    plan: LDGViscousFluxPlan
+class PreparedViscousDGOperator(StrictModule):
+    plan: ViscousDGPlan
     dynamics: Any
     operator_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: LDGViscousFluxPlan, dynamics: Any, /):
-        if not isinstance(plan, LDGViscousFluxPlan):
-            raise TypeError("plan must be LDGViscousFluxPlan.")
-        if not isinstance(dynamics.system, CompressibleNavierStokesSystem):
-            raise TypeError("LDG viscosity requires CompressibleNavierStokesSystem.")
+    def __init__(self, plan: ViscousDGPlan, dynamics: Any, /):
+        if not isinstance(plan, ViscousDGPlan):
+            raise TypeError("plan must be ViscousDGPlan.")
+        if not isinstance(dynamics.system, AbstractEntropyDiffusionSystem):
+            raise TypeError("Viscous DG requires AbstractEntropyDiffusionSystem.")
         if (
             dynamics.discretization.mesh.topological_dimension
             != dynamics.system.dimension
         ):
-            raise ValueError("LDG mesh and system dimensions must match.")
+            raise ValueError("Viscous DG mesh and system dimensions must match.")
         if dynamics.sbp.order < 1:
-            raise ValueError("LDG viscosity requires polynomial degree >= 1.")
+            raise ValueError("Viscous DG requires polynomial degree >= 1.")
         if dynamics.boundaries is not None and any(
             isinstance(patch.boundary, PrescribedNormalFluxBoundary)
             for patch in dynamics.boundaries.patches
@@ -79,11 +236,14 @@ class PreparedLDGViscousOperator(StrictModule):
             raise ValueError(
                 "Prescribed normal-flux boundaries lack a viscous state closure."
             )
+        if dynamics.boundaries is not None:
+            for patch in dynamics.boundaries.patches:
+                plan.boundary_closure(patch.boundary.boundary_id)
         self.plan = plan
         self.dynamics = dynamics
         self.operator_id = canonical_fingerprint(
             {
-                "kind": "prepared-ldg-viscous-operator",
+                "kind": "prepared-viscous-dg-operator",
                 "plan": plan.plan_id,
                 "dynamics": dynamics.dynamics_id,
             }
@@ -420,24 +580,21 @@ class PreparedLDGViscousOperator(StrictModule):
     def weak_residual(self, time: Array, state: ArrayLike, args: Any = None, /) -> Array:
         return -self.dynamics.mass_operator.mv(self.rate(time, state, args))
 
+    def linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
+        value = self.dynamics._state(state)
+        residual, pushforward = jax.linearize(
+            lambda candidate: self.rate(time, candidate, args), value
+        )
+        _, pullback = jax.vjp(lambda candidate: self.rate(time, candidate, args), value)
+        return residual, pushforward, pullback
+
     def stability_evidence(
         self, state: ArrayLike, args: Any = None, /, *, cfl: float = 0.2
-    ) -> LDGViscousStabilityEvidence:
+    ) -> ViscousDGStabilityEvidence:
         value = self.dynamics._state(state)
         local = self.dynamics._local_state(value)
-        temperature = self.dynamics.system.temperature(local)
         context = self.dynamics._context(jnp.asarray(0.0, dtype=value.dtype), args)
-        properties = self.dynamics.system.transport.properties(
-            temperature, local, context.user_args
-        )
-        density = local[..., 0]
-        heat_capacity_cv = self.dynamics.system.material.gas_constant / (
-            self.dynamics.system.gamma - 1.0
-        )
-        diffusivity = jnp.maximum(
-            properties.dynamic_viscosity / density,
-            properties.thermal_conductivity / (density * heat_capacity_cv),
-        )
+        diffusivity = self.dynamics.system.maximum_diffusivity(local, context.user_args)
         inverse_metric_scale = (
             jnp.sum(self.dynamics.metrics.contravariant_cofactors**2, axis=(-2, -1))
             / self.dynamics.metrics.determinant**2
@@ -451,7 +608,7 @@ class PreparedLDGViscousOperator(StrictModule):
         step = jnp.asarray(cfl_, dtype=maximum.dtype) / jnp.where(
             maximum > 0.0, maximum, jnp.inf
         )
-        return LDGViscousStabilityEvidence(
+        return ViscousDGStabilityEvidence(
             step,
             maximum,
             jnp.isfinite(step) & (step > 0.0),
@@ -460,7 +617,10 @@ class PreparedLDGViscousOperator(StrictModule):
 
 
 __all__ = [
-    "LDGViscousFluxPlan",
-    "LDGViscousStabilityEvidence",
-    "PreparedLDGViscousOperator",
+    "EntropyDiffusionEvidence",
+    "entropy_diffusion_evidence",
+    "PreparedViscousDGOperator",
+    "ViscousBoundaryClosure",
+    "ViscousDGPlan",
+    "ViscousDGStabilityEvidence",
 ]

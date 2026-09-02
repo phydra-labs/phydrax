@@ -144,6 +144,41 @@ def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact():
         np.eye(pyramid.nodes.shape[0]),
         atol=2.0e-11,
     )
+    anisotropic_prism = HybridReferenceFamily("prism", (2, 3))
+    assert anisotropic_prism.orders == (2, 3)
+    assert anisotropic_prism.nodes.shape == (24, 3)
+    np.testing.assert_allclose(
+        np.asarray(anisotropic_prism.tabulate(anisotropic_prism.nodes)),
+        np.eye(24),
+        atol=3.0e-10,
+    )
+    h1_prism = anisotropic_prism.finite_element(conformity="H1")
+    owned_dofs = sorted(
+        dof
+        for dimension in h1_prism.entity_dofs
+        for entity in dimension
+        for dof in entity
+    )
+    assert owned_dofs == list(range(24))
+
+    for order in (2, 3):
+        high_order_pyramid = HybridReferenceFamily("pyramid", order)
+        expected = (order + 1) * (order + 2) * (2 * order + 3) // 6
+        assert high_order_pyramid.nodes.shape == (expected, 3)
+        values, gradients = high_order_pyramid.tabulate_with_gradients(
+            high_order_pyramid.nodes
+        )
+        np.testing.assert_allclose(values, np.eye(expected), atol=2.0e-8)
+        assert jnp.all(jnp.isfinite(gradients))
+        h1_pyramid = high_order_pyramid.finite_element(conformity="H1")
+        pyramid_dofs = sorted(
+            dof
+            for dimension in h1_pyramid.entity_dofs
+            for entity in dimension
+            for dof in entity
+        )
+        assert pyramid_dofs == list(range(expected))
+        assert high_order_pyramid.condition_number < 1.0e8
 
 
 def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction():

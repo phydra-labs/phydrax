@@ -24,7 +24,11 @@ from ...linalg import (
     SmallLinearSolvePlan,
 )
 from ...sparse import EdgeRelation, RowRelation, SparseLinearMap
-from .._cell_complex import PolygonalConnectivity, PolyhedralConnectivity
+from .._cell_complex import (
+    IntervalConnectivity,
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+)
 from .._cell_mesh import CellBlock, CellMesh
 from .._core import (
     DiscretizationCapability,
@@ -964,7 +968,11 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
 
 def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
     connectivity = mesh.connectivity
-    if isinstance(connectivity, PolygonalConnectivity):
+    if isinstance(connectivity, IntervalConnectivity):
+        cell_facets = np.asarray(connectivity.cell_vertices, dtype=np.int32)
+        valid = np.ones_like(cell_facets, dtype=bool)
+        facet_count = connectivity.vertex_count
+    elif isinstance(connectivity, PolygonalConnectivity):
         cell_facets = np.asarray(connectivity.cell_edges, dtype=np.int32)
         valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
         facet_count = int(connectivity.edges.shape[0])
@@ -1001,7 +1009,10 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
     for block in mesh.blocks:
         cells = np.asarray(block.vertices, dtype=np.int32)
         points = coordinates[cells]
-        if block.cell_kind == "triangle":
+        if block.cell_kind == "interval":
+            difference = points[:, 1] - points[:, 0]
+            determinant = np.sum(difference * difference, axis=-1)
+        elif block.cell_kind == "triangle":
             first = points[:, 1] - points[:, 0]
             second = points[:, 2] - points[:, 0]
             determinant = (
@@ -1770,6 +1781,8 @@ def _degree_aware_reference_rule(
     axis, weights = np.polynomial.legendre.leggauss(count)
     axis = 0.5 * (axis + 1.0)
     weights = 0.5 * weights
+    if cell_kind == "interval":
+        return jnp.asarray(axis[:, None]), jnp.asarray(weights)
     if cell_kind == "triangle":
         first, second = np.meshgrid(axis, axis, indexing="ij")
         points = np.stack((first, (1.0 - first) * second), axis=-1)

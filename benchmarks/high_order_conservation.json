@@ -1,31 +1,234 @@
 {
+  "profile": "production",
   "backend": "cpu",
   "device": "TFRT_CPU_0",
   "dtype": "float64",
-  "repeats": 10,
-  "tensor_dgsem": {
-    "dofs": 9,
-    "components": 4,
-    "compile_seconds": 1.1398339999868767,
-    "seconds_per_rhs": 7.514589960919694e-05,
-    "dof_updates_per_second": 119767.01385977567,
-    "finite": true
+  "limits": {
+    "maximum_compile_seconds": 600.0,
+    "maximum_rhs_seconds": 2.0,
+    "minimum_dof_updates_per_second": 1000.0,
+    "maximum_variation": 0.1,
+    "maximum_resident_bytes_per_dof": 512.0,
+    "maximum_jvp_ratio": 3.0,
+    "maximum_vjp_ratio": 5.0
   },
-  "tensor_ldg": {
-    "dofs": 9,
-    "components": 4,
-    "compile_seconds": 1.2272639170114417,
-    "seconds_per_rhs": 0.00024527920031687246,
-    "dof_updates_per_second": 36692.87892480503,
-    "finite": true
-  },
-  "triangle_nodal_dg": {
-    "dofs": 12,
-    "components": 4,
-    "compile_seconds": 2.758587375006755,
-    "seconds_per_rhs": 0.00011985840101260691,
-    "dof_updates_per_second": 100118.13855866322,
-    "finite": true
+  "cases": {
+    "tensor_dgsem": {
+      "primal": {
+        "dofs": 102400,
+        "compile_seconds": 0.8243827910046093,
+        "seconds_per_call_median": 0.0036699302062515927,
+        "seconds_per_call_samples": [
+          0.0036461058593886264,
+          0.0037796161436745024,
+          0.0036438437499782595,
+          0.003675754687446897,
+          0.0036699302062515927
+        ],
+        "repeats_per_trial": 320,
+        "dof_updates_per_second": 27902437.987939205,
+        "coefficient_of_variation": 0.013549815456627751,
+        "resident_bytes_per_dof": 16.0,
+        "finite": true
+      },
+      "ad_primal": {
+        "dofs": 2304,
+        "compile_seconds": 0.9395047920115758,
+        "seconds_per_call_median": 0.0002811891763656149,
+        "seconds_per_call_samples": [
+          0.0002801211425776273,
+          0.00028214116210847353,
+          0.0002811891763656149,
+          0.00028072260742533216,
+          0.00028168759765776483
+        ],
+        "repeats_per_trial": 5120,
+        "dof_updates_per_second": 8193771.999972839,
+        "coefficient_of_variation": 0.0025207125057318085,
+        "resident_bytes_per_dof": 16.0,
+        "finite": true
+      },
+      "jvp": {
+        "dofs": 2304,
+        "compile_seconds": 1.250064708001446,
+        "seconds_per_call_median": 0.000435181217585523,
+        "seconds_per_call_samples": [
+          0.00043464524726459785,
+          0.000435181217585523,
+          0.00043512944334906934,
+          0.0004372517742126547,
+          0.00043594500311883166
+        ],
+        "repeats_per_trial": 2560,
+        "dof_updates_per_second": 5294346.141092846,
+        "coefficient_of_variation": 0.0020915926776870182,
+        "resident_bytes_per_dof": 24.0,
+        "finite": true,
+        "cost_ratio_to_primal": 1.5476456925201154
+      },
+      "vjp": {
+        "dofs": 2304,
+        "compile_seconds": 1.825203624990536,
+        "seconds_per_call_median": 0.000824893392177728,
+        "seconds_per_call_samples": [
+          0.0008240330078024272,
+          0.0008264194335879438,
+          0.000824893392177728,
+          0.000822409570309901,
+          0.0008360548499922515
+        ],
+        "repeats_per_trial": 1280,
+        "dof_updates_per_second": 2793088.2000611178,
+        "coefficient_of_variation": 0.005834867556597858,
+        "resident_bytes_per_dof": 24.0,
+        "finite": true,
+        "cost_ratio_to_primal": 2.933588706505417
+      }
+    },
+    "tensor_viscous_dg": {
+      "primal": {
+        "dofs": 102400,
+        "compile_seconds": 464.1979645419924,
+        "seconds_per_call_median": 0.19197158750030213,
+        "seconds_per_call_samples": [
+          0.20620984180131927,
+          0.19196077089873143,
+          0.18305620420142077,
+          0.19197158750030213,
+          0.1930778084002668
+        ],
+        "repeats_per_trial": 10,
+        "dof_updates_per_second": 533412.2686245892,
+        "coefficient_of_variation": 0.03838888603901902,
+        "resident_bytes_per_dof": 16.0,
+        "finite": true
+      },
+      "ad_primal": {
+        "dofs": 2304,
+        "compile_seconds": 7.753526625019731,
+        "seconds_per_call_median": 0.0010193999351713501,
+        "seconds_per_call_samples": [
+          0.0010138016929658988,
+          0.001015938183581966,
+          0.0010275605789047404,
+          0.0010193999351713501,
+          0.0010300147132738858
+        ],
+        "repeats_per_trial": 1280,
+        "dof_updates_per_second": 2260153.1749290554,
+        "coefficient_of_variation": 0.006249649734900528,
+        "resident_bytes_per_dof": 16.0,
+        "finite": true
+      },
+      "jvp": {
+        "dofs": 2304,
+        "compile_seconds": 10.919015750027029,
+        "seconds_per_call_median": 0.0012262291343859034,
+        "seconds_per_call_samples": [
+          0.0012551900062589994,
+          0.0012562309890654434,
+          0.0012262291343859034,
+          0.0012241329429798498,
+          0.0012188109695216553
+        ],
+        "repeats_per_trial": 1280,
+        "dof_updates_per_second": 1878931.0540675134,
+        "coefficient_of_variation": 0.013090738130973122,
+        "resident_bytes_per_dof": 24.0,
+        "finite": true,
+        "cost_ratio_to_primal": 1.2028930864899334
+      },
+      "vjp": {
+        "dofs": 2304,
+        "compile_seconds": 17.519791583006736,
+        "seconds_per_call_median": 0.004207951693751965,
+        "seconds_per_call_samples": [
+          0.004207951693751965,
+          0.004222363018743636,
+          0.004210750000038388,
+          0.004205865493713645,
+          0.004207091015541664
+        ],
+        "repeats_per_trial": 320,
+        "dof_updates_per_second": 547534.8026026573,
+        "coefficient_of_variation": 0.0014246073912283599,
+        "resident_bytes_per_dof": 24.0,
+        "finite": true,
+        "cost_ratio_to_primal": 4.127871258932986
+      }
+    },
+    "triangle_nodal_dg": {
+      "primal": {
+        "dofs": 110592,
+        "compile_seconds": 1.9864302500209305,
+        "seconds_per_call_median": 0.008389217968579032,
+        "seconds_per_call_samples": [
+          0.008403190106218972,
+          0.008437133068764525,
+          0.008389217968579032,
+          0.008349956250094692,
+          0.008382180731314293
+        ],
+        "repeats_per_trial": 160,
+        "dof_updates_per_second": 13182635.188906899,
+        "coefficient_of_variation": 0.003384326949752092,
+        "resident_bytes_per_dof": 16.0,
+        "finite": true
+      },
+      "ad_primal": {
+        "dofs": 3072,
+        "compile_seconds": 0.6246889169851784,
+        "seconds_per_call_median": 0.0003418346191381261,
+        "seconds_per_call_samples": [
+          0.00034090996913960225,
+          0.0003416628335969563,
+          0.0003427334878892907,
+          0.00034193679199461257,
+          0.0003418346191381261
+        ],
+        "repeats_per_trial": 5120,
+        "dof_updates_per_second": 8986801.886085996,
+        "coefficient_of_variation": 0.001706414645184746,
+        "resident_bytes_per_dof": 16.0,
+        "finite": true
+      },
+      "jvp": {
+        "dofs": 3072,
+        "compile_seconds": 0.8281908750068396,
+        "seconds_per_call_median": 0.0004157919761723861,
+        "seconds_per_call_samples": [
+          0.00041562542344308895,
+          0.0004179940593758147,
+          0.00041328452149400616,
+          0.0004157919761723861,
+          0.00041640945624976666
+        ],
+        "repeats_per_trial": 2560,
+        "dof_updates_per_second": 7388309.962783789,
+        "coefficient_of_variation": 0.003653722365967079,
+        "resident_bytes_per_dof": 24.0,
+        "finite": true,
+        "cost_ratio_to_primal": 1.216354204324682
+      },
+      "vjp": {
+        "dofs": 3072,
+        "compile_seconds": 1.308109666017117,
+        "seconds_per_call_median": 0.00047021741523849413,
+        "seconds_per_call_samples": [
+          0.0004676492187513759,
+          0.0004693866210914166,
+          0.00047108603515653156,
+          0.00047021741523849413,
+          0.00047081243515094683
+        ],
+        "repeats_per_trial": 2560,
+        "dof_updates_per_second": 6533148.072454702,
+        "coefficient_of_variation": 0.002631908395020676,
+        "resident_bytes_per_dof": 24.0,
+        "finite": true,
+        "cost_ratio_to_primal": 1.3755699069452414
+      }
+    }
   },
   "passed": true
 }

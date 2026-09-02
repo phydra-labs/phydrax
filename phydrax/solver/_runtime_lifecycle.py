@@ -462,14 +462,315 @@ class BoundedAsyncPublisher:
         self.close()
 
 
+class ByteBoundedAsyncPublisher:
+    """Immutable exactly-once publisher bounded by item count and resident bytes."""
+
+    def __init__(
+        self,
+        writer: Callable[[str, Any], Any],
+        /,
+        *,
+        maximum_pending: int = 2,
+        maximum_pending_bytes: int,
+    ):
+        if (
+            not callable(writer)
+            or int(maximum_pending) <= 0
+            or int(maximum_pending_bytes) <= 0
+        ):
+            raise ValueError("Byte-bounded publisher capacity is invalid.")
+        self._writer = writer
+        self._maximum_pending = int(maximum_pending)
+        self._maximum_pending_bytes = int(maximum_pending_bytes)
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="phydrax-output"
+        )
+        self._pending: deque[tuple[Future, int, str]] = deque()
+        self._pending_bytes = 0
+        self._submitted: set[str] = set()
+        self._acknowledged: set[str] = set()
+        self._closed = False
+
+    @staticmethod
+    def _snapshot(value: Any, /) -> tuple[Any, int]:
+        snapshot = jax.tree.map(lambda leaf: np.array(leaf, copy=True), value)
+        byte_count = sum(
+            int(np.asarray(leaf).nbytes) for leaf in jax.tree.leaves(snapshot)
+        )
+        return snapshot, byte_count
+
+    @property
+    def pending_bytes(self) -> int:
+        return self._pending_bytes
+
+    @property
+    def acknowledged_event_ids(self) -> frozenset[str]:
+        return frozenset(self._acknowledged)
+
+    def _complete_oldest(self) -> None:
+        future, byte_count, event_id = self._pending.popleft()
+        future.result()
+        self._pending_bytes -= byte_count
+        self._acknowledged.add(event_id)
+
+    def publish(self, event_id: str, value: Any, /) -> Future:
+        identifier = str(event_id)
+        if self._closed:
+            raise RuntimeError("Async publisher is closed.")
+        if not identifier or identifier in self._submitted:
+            raise ValueError("Async publication event IDs must be unique.")
+        snapshot, byte_count = self._snapshot(value)
+        if byte_count > self._maximum_pending_bytes:
+            raise ValueError("One output snapshot exceeds the pending-byte budget.")
+        while (
+            len(self._pending) >= self._maximum_pending
+            or self._pending_bytes + byte_count > self._maximum_pending_bytes
+        ):
+            self._complete_oldest()
+        future = self._executor.submit(self._writer, identifier, snapshot)
+        self._pending.append((future, byte_count, identifier))
+        self._pending_bytes += byte_count
+        self._submitted.add(identifier)
+        return future
+
+    def drain(self) -> None:
+        while self._pending:
+            self._complete_oldest()
+
+    def close(self) -> None:
+        if not self._closed:
+            self.drain()
+            self._executor.shutdown(wait=True)
+            self._closed = True
+
+    def __enter__(self) -> "ByteBoundedAsyncPublisher":
+        return self
+
+    def __exit__(self, exception_type, exception, traceback) -> None:
+        del exception_type, exception, traceback
+        self.close()
+
+
+class StreamingMomentState(StrictModule):
+    weight: Array
+    mean: Array
+    second_moment: Array
+    minimum: Array
+    maximum: Array
+    histogram: Array
+
+
+class StreamingMomentPlan(StrictModule, NonTrainableState):
+    evaluator: Callable = eqx.field(static=True)
+    value_shape: tuple[int, ...] = eqx.field(static=True)
+    histogram_edges: Array
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        evaluator: Callable,
+        /,
+        *,
+        value_shape: tuple[int, ...] = (),
+        histogram_edges: ArrayLike = (),
+        plan_id: str,
+    ):
+        edges = jnp.asarray(histogram_edges)
+        shape = tuple(int(value) for value in value_shape)
+        if (
+            not callable(evaluator)
+            or any(value <= 0 for value in shape)
+            or edges.ndim != 1
+            or (edges.size not in (0, 1) and bool(jnp.any(jnp.diff(edges) <= 0.0)))
+            or not str(plan_id)
+        ):
+            raise ValueError("Streaming moment plan is invalid.")
+        self.evaluator = evaluator
+        self.value_shape = shape
+        self.histogram_edges = edges
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "streaming-moment-plan",
+                "name": str(plan_id),
+                "value_shape": shape,
+                "histogram_bins": max(int(edges.size) - 1, 0),
+            }
+        )
+
+    def initial_state(self, dtype=float, /) -> StreamingMomentState:
+        return StreamingMomentState(
+            jnp.asarray(0.0, dtype=dtype),
+            jnp.zeros(self.value_shape, dtype=dtype),
+            jnp.zeros(self.value_shape, dtype=dtype),
+            jnp.full(self.value_shape, jnp.inf, dtype=dtype),
+            jnp.full(self.value_shape, -jnp.inf, dtype=dtype),
+            jnp.zeros((max(int(self.histogram_edges.size) - 1, 0),), dtype=jnp.int64),
+        )
+
+    def update(
+        self,
+        time: ArrayLike,
+        simulation_state: Any,
+        state: StreamingMomentState,
+        /,
+        *,
+        weight: ArrayLike = 1.0,
+        args: Any = None,
+    ) -> StreamingMomentState:
+        value = jnp.asarray(self.evaluator(jnp.asarray(time), simulation_state, args))
+        weight_ = jnp.asarray(weight, dtype=value.real.dtype)
+        if value.shape != self.value_shape or weight_.shape != ():
+            raise ValueError("Streaming moment value or weight shape changed.")
+        total_weight = state.weight + weight_
+        delta = value - state.mean
+        mean = (
+            state.mean
+            + jnp.where(total_weight > 0.0, weight_ / total_weight, 0.0) * delta
+        )
+        second = state.second_moment + weight_ * delta * (value - mean)
+        histogram = state.histogram
+        if self.histogram_edges.size > 1:
+            if value.shape != ():
+                raise ValueError("Histograms require scalar streaming moments.")
+            index = jnp.clip(
+                jnp.searchsorted(self.histogram_edges, value, side="right") - 1,
+                0,
+                histogram.size - 1,
+            )
+            histogram = histogram.at[index].add(1)
+        return StreamingMomentState(
+            total_weight,
+            mean,
+            second,
+            jnp.minimum(state.minimum, value),
+            jnp.maximum(state.maximum, value),
+            histogram,
+        )
+
+    def merge(
+        self, left: StreamingMomentState, right: StreamingMomentState, /
+    ) -> StreamingMomentState:
+        total = left.weight + right.weight
+        delta = right.mean - left.mean
+        mean = left.mean + jnp.where(total > 0.0, right.weight / total, 0.0) * delta
+        second = (
+            left.second_moment
+            + right.second_moment
+            + jnp.where(
+                total > 0.0,
+                left.weight * right.weight / total,
+                0.0,
+            )
+            * delta**2
+        )
+        return StreamingMomentState(
+            total,
+            mean,
+            second,
+            jnp.minimum(left.minimum, right.minimum),
+            jnp.maximum(left.maximum, right.maximum),
+            left.histogram + right.histogram,
+        )
+
+    def variance(self, state: StreamingMomentState, /) -> Array:
+        return state.second_moment / jnp.maximum(state.weight, 1.0)
+
+
+class AcceptedStepTriggerGraphState(StrictModule):
+    trigger_states: tuple[AcceptedStepTriggerState, ...]
+    debounce_counter: Array
+    fire_count: Array
+
+
+class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
+    triggers: tuple[AcceptedStepTrigger, ...]
+    operation: Literal["all", "any"] = eqx.field(static=True)
+    debounce_steps: int = eqx.field(static=True)
+    graph_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        triggers: tuple[AcceptedStepTrigger, ...],
+        /,
+        *,
+        operation: Literal["all", "any"] = "all",
+        debounce_steps: int = 0,
+    ):
+        if (
+            not triggers
+            or any(not isinstance(value, AcceptedStepTrigger) for value in triggers)
+            or operation not in ("all", "any")
+            or int(debounce_steps) < 0
+        ):
+            raise ValueError("Accepted-step trigger graph is invalid.")
+        self.triggers = tuple(triggers)
+        self.operation = operation
+        self.debounce_steps = int(debounce_steps)
+        self.graph_id = canonical_fingerprint(
+            {
+                "kind": "accepted-step-trigger-graph",
+                "triggers": tuple(value.trigger_id for value in triggers),
+                "operation": operation,
+                "debounce_steps": int(debounce_steps),
+            }
+        )
+
+    def initial_state(self, dtype=float, /) -> AcceptedStepTriggerGraphState:
+        return AcceptedStepTriggerGraphState(
+            tuple(value.initial_state(dtype) for value in self.triggers),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int64),
+        )
+
+    def evaluate(
+        self,
+        values: tuple[ArrayLike, ...],
+        state: AcceptedStepTriggerGraphState,
+        /,
+        *,
+        accepted: ArrayLike,
+    ) -> tuple[Array, AcceptedStepTriggerGraphState]:
+        if len(values) != len(self.triggers):
+            raise ValueError("Trigger graph value count changed.")
+        fires = []
+        states = []
+        for trigger, value, trigger_state in zip(
+            self.triggers, values, state.trigger_states, strict=True
+        ):
+            fire, updated = trigger.evaluate(value, trigger_state, accepted=accepted)
+            fires.append(fire)
+            states.append(updated)
+        active = (
+            jnp.all(jnp.stack(tuple(fires)))
+            if self.operation == "all"
+            else jnp.any(jnp.stack(tuple(fires)))
+        )
+        counter = jnp.where(
+            active,
+            state.debounce_counter + 1,
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+        fire = active & (counter > self.debounce_steps)
+        return fire, AcceptedStepTriggerGraphState(
+            tuple(states),
+            counter,
+            state.fire_count + fire.astype(jnp.int64),
+        )
+
+
 __all__ = [
     "AcceptedStepTrigger",
     "AcceptedStepTriggerState",
+    "AcceptedStepTriggerGraph",
+    "AcceptedStepTriggerGraphState",
     "BoundedAsyncPublisher",
     "ExactTimeSchedule",
+    "ByteBoundedAsyncPublisher",
     "RuntimeCheckpointEnvelope",
     "StreamingObservablePlan",
     "StreamingObservableState",
     "read_runtime_checkpoint",
+    "StreamingMomentPlan",
+    "StreamingMomentState",
     "write_runtime_checkpoint",
 ]

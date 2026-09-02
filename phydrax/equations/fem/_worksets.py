@@ -20,7 +20,11 @@ from ...discretization.fem._mortar import (
     FiniteElementMortarPlan,
 )
 from ...discretization.fem._reference_operator import PreparedFiniteElementReference
-from ._ir import LocalActionIR
+from ._ir import (
+    LocalActionIR,
+    operator_program_from_local_ir,
+    OperatorProgram,
+)
 
 
 class WorksetSignature(StrictModule, NonTrainableState):
@@ -435,50 +439,65 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         )
 
 
-class CompiledMortarWorksetBatch(StrictModule, NonTrainableState):
+class WorksetBucket(StrictModule, NonTrainableState):
     worksets: tuple[CompiledWorkset, ...]
     signature_id: str = eqx.field(static=True)
     entity_count: int = eqx.field(static=True)
-    batch_id: str = eqx.field(static=True)
+    entity_capacity: int = eqx.field(static=True)
+    resident_bytes: int = eqx.field(static=True)
+    bucket_id: str = eqx.field(static=True)
 
     def __init__(self, worksets: Sequence[CompiledWorkset], /):
         values = tuple(worksets)
-        if (
-            not values
-            or any(value.mortar is None for value in values)
-            or len({value.signature.signature_id for value in values}) != 1
-        ):
+        if not values or len({value.signature.signature_id for value in values}) != 1:
             raise ValueError(
-                "Mortar batches require one or more equal-signature mortar worksets."
+                "Workset buckets require one or more equal-signature worksets."
             )
+        arrays = []
+        for value in values:
+            arrays.extend(
+                (
+                    value.entity_indices,
+                    value.owner_cells,
+                    value.neighbour_cells,
+                    value.owner_local_entities,
+                    value.neighbour_local_entities,
+                    value.valid,
+                )
+            )
+            arrays.extend(route for _name, route in value.gathers)
+            arrays.extend(route for _name, route in value.neighbour_gathers)
         self.worksets = values
         self.signature_id = values[0].signature.signature_id
         self.entity_count = sum(int(value.entity_indices.size) for value in values)
-        self.batch_id = canonical_fingerprint(
+        self.entity_capacity = max(int(value.entity_indices.size) for value in values)
+        self.resident_bytes = sum(int(np.asarray(value).nbytes) for value in arrays)
+        self.bucket_id = canonical_fingerprint(
             {
-                "kind": "compiled-mortar-workset-batch",
+                "kind": "compiled-workset-bucket",
                 "signature": self.signature_id,
                 "worksets": [value.workset_id for value in values],
+                "entity_capacity": self.entity_capacity,
+                "resident_bytes": self.resident_bytes,
             }
         )
 
 
-def batch_mortar_worksets(
+def bucket_worksets(
     worksets: Sequence[CompiledWorkset],
     /,
-) -> tuple[CompiledMortarWorksetBatch, ...]:
+) -> tuple[WorksetBucket, ...]:
     groups: dict[str, list[CompiledWorkset]] = {}
     for workset in worksets:
-        if workset.mortar is not None:
-            groups.setdefault(workset.signature.signature_id, []).append(workset)
-    return tuple(
-        CompiledMortarWorksetBatch(groups[identifier]) for identifier in sorted(groups)
-    )
+        groups.setdefault(workset.signature.signature_id, []).append(workset)
+    return tuple(WorksetBucket(groups[identifier]) for identifier in sorted(groups))
 
 
 class WorksetProgram(StrictModule, NonTrainableState):
     ir: LocalActionIR
     worksets: tuple[CompiledWorkset, ...]
+    operator_program: OperatorProgram
+    buckets: tuple[WorksetBucket, ...]
     program_id: str = eqx.field(static=True)
 
     def __init__(
@@ -486,25 +505,46 @@ class WorksetProgram(StrictModule, NonTrainableState):
         ir: LocalActionIR,
         worksets: Sequence[CompiledWorkset],
         /,
+        *,
+        operator_program: OperatorProgram | None = None,
     ):
         worksets_ = tuple(worksets)
         if not isinstance(ir, LocalActionIR) or not worksets_:
             raise ValueError("WorksetProgram requires an IR and worksets.")
+        bucket_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-operator-program-buckets",
+                "signatures": tuple(
+                    sorted(value.signature.signature_id for value in worksets_)
+                ),
+            }
+        )
+        operator_program_ = (
+            operator_program_from_local_ir(ir, bucket_id=bucket_id)
+            if operator_program is None
+            else operator_program
+        )
+        if not isinstance(operator_program_, OperatorProgram):
+            raise TypeError("operator_program must be OperatorProgram or None.")
         self.ir = ir
         self.worksets = worksets_
+        self.operator_program = operator_program_
+        self.buckets = bucket_worksets(worksets_)
         self.program_id = canonical_fingerprint(
             {
                 "kind": "local-workset-program",
                 "ir": ir.ir_id,
                 "worksets": [workset.workset_id for workset in worksets_],
+                "operator_program": operator_program_.program_id,
+                "buckets": [value.bucket_id for value in self.buckets],
             }
         )
 
 
 __all__ = [
-    "CompiledMortarWorksetBatch",
     "CompiledWorkset",
+    "WorksetBucket",
     "WorksetProgram",
     "WorksetSignature",
-    "batch_mortar_worksets",
+    "bucket_worksets",
 ]

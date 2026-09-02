@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -19,6 +19,10 @@ from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._conservation_boundary import PrescribedNormalFluxBoundary
+from .._conservation_policy import (
+    DifferentiabilityPolicy,
+    validate_differentiability_policy,
+)
 from ._boundary import FiniteVolumeBoundarySet
 from ._closure import ConservativeFaceClosurePlan
 from ._entropy import (
@@ -58,12 +62,6 @@ if TYPE_CHECKING:
     from ...equations import ConvexEntropyPair
 
 
-DifferentiabilityPolicy: TypeAlias = Literal[
-    "smooth_discrete",
-    "branchwise",
-    "smooth_surrogate",
-    "unsupported",
-]
 SourceFunction = Callable[[Array, Array, Array, Any], ArrayLike]
 
 
@@ -193,13 +191,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             raise TypeError("viscous must be ViscousFluxPlan or None.")
         if closure is not None and not isinstance(closure, ConservativeFaceClosurePlan):
             raise TypeError("closure must be ConservativeFaceClosurePlan or None.")
-        if differentiability not in (
-            "smooth_discrete",
-            "branchwise",
-            "smooth_surrogate",
-            "unsupported",
-        ):
-            raise ValueError("Unknown differentiability policy.")
+        differentiability_ = validate_differentiability_policy(differentiability)
         if isinstance(interface_solver, AbstractNumericalFluxPlan):
             interface_id = interface_solver.flux_id
         elif isinstance(interface_solver, AbstractWavePropagationPlan):
@@ -213,7 +205,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         self.wave_limiter = wave_limiter
         self.viscous = viscous
         self.closure = closure
-        self.differentiability = differentiability
+        self.differentiability = differentiability_
         self.method_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-method",
@@ -223,7 +215,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
                 "wave_limiter": None if wave_limiter is None else wave_limiter.limiter_id,
                 "viscous": None if viscous is None else viscous.plan_id,
                 "closure": None if closure is None else closure.closure_id,
-                "differentiability": differentiability,
+                "differentiability": differentiability_,
             }
         )
 

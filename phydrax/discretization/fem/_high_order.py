@@ -35,9 +35,11 @@ def _normalize_orders(
     cell_kind: str, order: TensorOrder, /
 ) -> tuple[str, tuple[int, ...]]:
     cell = str(cell_kind)
-    dimensions = {"quadrilateral": 2, "hexahedron": 3}
+    dimensions = {"interval": 1, "quadrilateral": 2, "hexahedron": 3}
     if cell not in dimensions:
-        raise ValueError("Tensor nodal families require a quadrilateral or hexahedron.")
+        raise ValueError(
+            "Tensor nodal families require interval, quadrilateral, or hexahedron."
+        )
     if isinstance(order, bool):
         raise TypeError("Tensor polynomial orders must be integers.")
     if isinstance(order, Integral):
@@ -52,8 +54,8 @@ def _normalize_orders(
         orders = tuple(int(value) for value in order)
     else:
         raise TypeError("Tensor polynomial order must be an integer or integer tuple.")
-    if any(value < 1 for value in orders):
-        raise ValueError("Tensor polynomial orders must be positive.")
+    if any(value < 0 for value in orders):
+        raise ValueError("Tensor polynomial orders must be nonnegative.")
     return cell, orders
 
 
@@ -123,7 +125,10 @@ def lagrange_1d_tabulation(
 def _dense_tensor_tabulation(
     basis: tuple[Array, ...], gradients: tuple[Array, ...], /
 ) -> tuple[Array, Array]:
-    if len(basis) == 2:
+    if len(basis) == 1:
+        values = basis[0]
+        components = (gradients[0],)
+    elif len(basis) == 2:
         values = oe.contract("qi,qj->qij", basis[0], basis[1])
         components = (
             oe.contract("qi,qj->qij", gradients[0], basis[1]),
@@ -137,7 +142,7 @@ def _dense_tensor_tabulation(
             oe.contract("qi,qj,qk->qijk", basis[0], basis[1], gradients[2]),
         )
     else:
-        raise ValueError("Tensor tabulation requires two or three axes.")
+        raise ValueError("Tensor tabulation requires one, two, or three axes.")
     point_count = int(values.shape[0])
     return values.reshape((point_count, -1)), jnp.stack(
         tuple(component.reshape((point_count, -1)) for component in components),
@@ -205,8 +210,20 @@ def _hex_entity_dofs(
     return vertices, edges, faces, (interior,)
 
 
+def _interval_entity_dofs(
+    index: np.ndarray, orders: tuple[int, ...], /
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
+    order = orders[0]
+    if order == 0:
+        return (((), ()), ((int(index[0]),),))
+    return (
+        ((int(index[0]),), (int(index[-1]),)),
+        (tuple(int(value) for value in index[1:-1]),),
+    )
+
+
 class ReferenceNodalFamily(StrictModule, NonTrainableState):
-    """An anisotropic tensor-product nodal family on a unit quad or hex."""
+    """An anisotropic tensor-product nodal family on interval, quad, or hex."""
 
     cell_kind: str = eqx.field(static=True)
     orders: tuple[int, ...] = eqx.field(static=True)
@@ -218,7 +235,7 @@ class ReferenceNodalFamily(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        cell_kind: Literal["quadrilateral", "hexahedron"],
+        cell_kind: Literal["interval", "quadrilateral", "hexahedron"],
         order: TensorOrder,
         /,
         *,
@@ -296,11 +313,12 @@ class ReferenceNodalFamily(StrictModule, NonTrainableState):
         index = np.arange(np.prod(self.nodal_shape), dtype=np.int32).reshape(
             self.nodal_shape
         )
-        entity_dofs = (
-            _quad_entity_dofs(index, self.orders)
-            if self.cell_kind == "quadrilateral"
-            else _hex_entity_dofs(index, self.orders)
-        )
+        if self.cell_kind == "interval":
+            entity_dofs = _interval_entity_dofs(index, self.orders)
+        elif self.cell_kind == "quadrilateral":
+            entity_dofs = _quad_entity_dofs(index, self.orders)
+        else:
+            entity_dofs = _hex_entity_dofs(index, self.orders)
         return FiniteElementSpec(
             "TensorProductLagrange",
             self.cell_kind,
@@ -375,6 +393,8 @@ class TensorProductTabulation(StrictModule, NonTrainableState):
 
 
 def _factorized_forward(factors: tuple[Array, ...], values: Array, /) -> Array:
+    if len(factors) == 1:
+        return oe.contract("ai,...i->...a", factors[0], values)
     if len(factors) == 2:
         return oe.contract("ai,...ij,bj->...ab", factors[0], values, factors[1])
     if len(factors) == 3:
@@ -385,10 +405,12 @@ def _factorized_forward(factors: tuple[Array, ...], values: Array, /) -> Array:
             factors[1],
             factors[2],
         )
-    raise ValueError("Factorized actions require two or three tensor axes.")
+    raise ValueError("Factorized actions require one, two, or three tensor axes.")
 
 
 def _factorized_transpose(factors: tuple[Array, ...], values: Array, /) -> Array:
+    if len(factors) == 1:
+        return oe.contract("ai,...a->...i", factors[0], values)
     if len(factors) == 2:
         return oe.contract("ai,...ab,bj->...ij", factors[0], values, factors[1])
     if len(factors) == 3:
@@ -399,7 +421,7 @@ def _factorized_transpose(factors: tuple[Array, ...], values: Array, /) -> Array
             factors[1],
             factors[2],
         )
-    raise ValueError("Factorized actions require two or three tensor axes.")
+    raise ValueError("Factorized actions require one, two, or three tensor axes.")
 
 
 class SumFactorizationPlan(StrictModule, NonTrainableState):
@@ -504,16 +526,20 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         cell = str(cell_kind)
         p = int(order)
         dimension = {"triangle": 2, "tetrahedron": 3}.get(cell)
-        if dimension is None or p < 1:
+        if dimension is None or p < 0:
             raise ValueError(
-                "Simplex nodal families require triangle/tetrahedron and p>=1."
+                "Simplex nodal families require triangle/tetrahedron and p>=0."
             )
         space = mp.PN(dimension, p)
         node_tuples = tuple(tuple(index) for index in mp.node_tuples_for_space(space))
-        unit_nodes = np.asarray(
-            mp.warp_and_blend_nodes(dimension, p, node_tuples), dtype=float
-        )
-        nodes = 0.5 * (unit_nodes.T + 1.0)
+        if p == 0:
+            nodes = np.full((1, dimension), 1.0 / (dimension + 1.0))
+            unit_nodes = (2.0 * nodes - 1.0).T
+        else:
+            unit_nodes = np.asarray(
+                mp.warp_and_blend_nodes(dimension, p, node_tuples), dtype=float
+            )
+            nodes = 0.5 * (unit_nodes.T + 1.0)
         basis = mp.orthonormal_basis_for_space(space, mp.Simplex(dimension))
         modal = np.stack(
             tuple(np.asarray(function(unit_nodes)) for function in basis.functions),
@@ -580,6 +606,22 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             tuple(frozenset(entity) for entity in entities)
             for entities in topology.entities
         ]
+        if self.order == 0:
+            entity_dofs[-1][0].append(0)
+            return FiniteElementSpec(
+                "SimplexLagrange",
+                self.cell_kind,
+                self.order,
+                self.nodes,
+                tuple(
+                    tuple(tuple(values) for values in dimension)
+                    for dimension in entity_dofs
+                ),
+                conformity="H1",
+                representation="point_value",
+                tabulator=self.tabulate,
+                tabulator_id=self.family_id,
+            )
         for dof, alpha in enumerate(self.multiindices):
             support = frozenset(index for index, value in enumerate(alpha) if value > 0)
             dimension = len(support) - 1

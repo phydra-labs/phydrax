@@ -7,12 +7,21 @@
 from .._conservation_boundary import (
     AbstractConservationBoundary,
     ALEBoundaryContext,
+    BoundaryTraceResult,
     ConstantStateBoundary,
+    evaluate_conservation_boundary,
     ExtrapolationBoundary,
     PrescribedNormalFluxBoundary,
     PrescribedStateBoundary,
     ReflectiveBoundary,
 )
+from .._conservation_ledger import (
+    AcceptedConservationFluxIntegralBlock,
+    AcceptedConservationIntegralLedger,
+    ConservationStageFluxRateBlock,
+    ConservationStageLedger,
+)
+from .._conservation_policy import DifferentiabilityPolicy
 from ._amr import (
     ConservativeAMRSynchronizationPlan,
     ConservativeAMRSynchronizationResult,
@@ -79,7 +88,6 @@ from ._distributed_marker_transfer import (
 )
 from ._dynamics import (
     ConvexStateLimiterPlan,
-    DifferentiabilityPolicy,
     FiniteVolumeMethodPlan,
     FiniteVolumeResidualDiagnostics,
     PreparedFiniteVolumeDynamics,
@@ -91,12 +99,6 @@ from ._embedded_dynamics import (
 from ._entropy import (
     FiniteVolumeEntropyDiagnostics,
     integrated_finite_volume_relative_entropy,
-)
-from ._flux_ledger import (
-    FiniteVolumeAcceptedFluxIntegralBlock,
-    FiniteVolumeAcceptedFluxIntegralLedger,
-    FiniteVolumeStageFluxRateBlock,
-    FiniteVolumeStageFluxRateLedger,
 )
 from ._geometry_protocol import (
     ALEGeometryConsistencyPolicy,
@@ -454,10 +456,10 @@ __all__ = [
     "ContactAngleStatus",
     "EmbeddedBoundaryContactAngleSet",
     "reconstruct_wall_interface_normal",
-    "FiniteVolumeAcceptedFluxIntegralBlock",
-    "FiniteVolumeAcceptedFluxIntegralLedger",
-    "FiniteVolumeStageFluxRateBlock",
-    "FiniteVolumeStageFluxRateLedger",
+    "AcceptedConservationFluxIntegralBlock",
+    "AcceptedConservationIntegralLedger",
+    "ConservationStageFluxRateBlock",
+    "ConservationStageLedger",
     "PreparedUnstructuredFiniteVolumeCoupling",
     "UnstructuredFiniteVolumeCouplingPlan",
     "UnstructuredFiniteVolumeDiscretization",
@@ -547,6 +549,8 @@ __all__ = [
     "PreparedConservativeDiffusion",
     "AbstractFaceReconstructionPlan",
     "AbstractConservationBoundary",
+    "BoundaryTraceResult",
+    "evaluate_conservation_boundary",
     "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",

@@ -799,7 +799,7 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
     owner = jnp.asarray((0,), dtype=jnp.int32)
     neighbour = jnp.asarray((1,), dtype=jnp.int32)
     active_face = jnp.asarray((True,))
-    high_block = phx.discretization.FiniteVolumeStageFluxRateBlock(
+    high_block = phx.discretization.ConservationStageFluxRateBlock(
         jnp.asarray(((10.0, 0.0, 0.0),)),
         owner,
         neighbour,
@@ -816,10 +816,10 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
         evidence_version=0,
         topology_epoch_id="positivity-epoch",
     )
-    high = phx.discretization.FiniteVolumeStageFluxRateLedger(
+    high = phx.discretization.ConservationStageLedger(
         (high_block,), jnp.zeros_like(content), jnp.ones(2, dtype=bool), **kwargs
     )
-    fallback = phx.discretization.FiniteVolumeStageFluxRateLedger(
+    fallback = phx.discretization.ConservationStageLedger(
         (fallback_block,), jnp.zeros_like(content), jnp.ones(2, dtype=bool), **kwargs
     )
 

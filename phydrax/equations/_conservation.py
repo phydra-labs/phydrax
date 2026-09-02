@@ -501,11 +501,11 @@ def compile_conservation_problem(
             )
         if isinstance(problem.system, EulerSystem):
             if method.viscous is not None:
-                raise ValueError("Euler DGSEM cannot compile a viscous LDG plan.")
+                raise ValueError("Euler DGSEM cannot compile a viscous DG plan.")
         elif isinstance(problem.system, CompressibleNavierStokesSystem):
             if method.viscous is None:
                 raise ValueError(
-                    "Compressible Navier–Stokes DGSEM requires an LDG viscous plan."
+                    "Compressible Navier–Stokes DGSEM requires a viscous DG plan."
                 )
         else:
             raise TypeError(

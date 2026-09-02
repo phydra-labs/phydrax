@@ -10,8 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax.discretization.finite_volume._flux_ledger import (
-    FiniteVolumeStageFluxRateLedger,
+from phydrax.discretization._conservation_ledger import (
+    ConservationStageLedger,
 )
 from phydrax.discretization.finite_volume._small_cell import (
     ConservativeSmallCellRedistributionPlan,
@@ -77,7 +77,7 @@ def _scatter_rate_block(block, cell_count):
 
 
 def _ledger_scatter(plan, block, source_rate):
-    return FiniteVolumeStageFluxRateLedger(
+    return ConservationStageLedger(
         (block,),
         source_rate,
         plan.active_cells,
@@ -315,10 +315,7 @@ def test_scale_separated_defect_matches_accurate_signed_sum(dtype):
         axis=0,
     )
     expected = np.asarray(
-        [
-            math.fsum(combined[:, index].tolist())
-            for index in range(combined.shape[1])
-        ],
+        [math.fsum(combined[:, index].tolist()) for index in range(combined.shape[1])],
         dtype=np.dtype(dtype),
     )
 

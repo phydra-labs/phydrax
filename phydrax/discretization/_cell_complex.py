@@ -83,6 +83,78 @@ def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
     return identifiers
 
 
+class IntervalConnectivity(StrictModule, NonTrainableState):
+    """Canonical vertex incidence for one-dimensional interval cells."""
+
+    cell_vertices: Array
+    vertex_cell_counts: Array
+    boundary_vertices: Array
+    vertex_count: int = eqx.field(static=True)
+    cell_count: int = eqx.field(static=True)
+
+
+def interval_connectivity(
+    intervals: ArrayLike,
+    vertex_count: int,
+    /,
+) -> IntervalConnectivity:
+    cells = _validated_cells("intervals", intervals, 2, int(vertex_count))
+    counts = np.bincount(cells.reshape((-1,)), minlength=int(vertex_count))
+    if np.any(counts > 2):
+        raise ValueError("Interval cells must form a vertex-manifold mesh.")
+    return IntervalConnectivity(
+        jnp.asarray(cells),
+        jnp.asarray(counts, dtype=jnp.int32),
+        jnp.asarray(counts == 1),
+        int(vertex_count),
+        int(cells.shape[0]),
+    )
+
+
+def interval_cell_complex(
+    intervals: ArrayLike,
+    vertex_count: int,
+    /,
+    *,
+    vertex_global_ids: ArrayLike | None = None,
+    cell_global_ids: ArrayLike | None = None,
+) -> CellComplexTopology:
+    connectivity = interval_connectivity(intervals, vertex_count)
+    cells = np.asarray(connectivity.cell_vertices, dtype=np.int32)
+    vertex_ids = _resolved_entity_ids(
+        "vertex_global_ids", vertex_global_ids, int(vertex_count)
+    )
+    cell_ids = _resolved_entity_ids(
+        "cell_global_ids", cell_global_ids, int(cells.shape[0])
+    )
+    vertex_entities = EntitySet(
+        "vertices",
+        0,
+        vertex_ids,
+        subsets=(EntitySubset("boundary", connectivity.boundary_vertices),),
+    )
+    cell_entities = EntitySet(
+        "cells",
+        1,
+        cell_ids,
+        subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=bool)),),
+    )
+    relation = EdgeRelation(
+        cells.reshape((-1,)),
+        np.repeat(np.arange(cells.shape[0], dtype=np.int32), 2),
+        source_size=int(vertex_count),
+        target_size=int(cells.shape[0]),
+    )
+    incidence = OrientedIncidence(
+        1,
+        vertex_entities,
+        cell_entities,
+        relation,
+        np.tile(np.asarray((-1.0, 1.0)), cells.shape[0]),
+    )
+    return CellComplexTopology((vertex_entities, cell_entities), (incidence,))
+
+
 class PolygonalConnectivity(StrictModule, NonTrainableState):
     """Canonical edge incidence for mixed two-dimensional polygonal cells."""
 
@@ -751,6 +823,9 @@ def polyhedral_cell_complex(
 
 __all__ = [
     "PolygonalConnectivity",
+    "IntervalConnectivity",
+    "interval_cell_complex",
+    "interval_connectivity",
     "PolyhedralConnectivity",
     "TetrahedralConnectivity",
     "polygonal_cell_complex",

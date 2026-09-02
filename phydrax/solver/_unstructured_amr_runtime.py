@@ -14,15 +14,15 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._conservation_ledger import (
+    AcceptedConservationFluxIntegralBlock,
+    AcceptedConservationIntegralLedger,
+)
 from ..discretization.finite_volume import (
     PreparedUnstructuredFiniteVolumeDynamics,
     UnstructuredAMRFluxRegister,
     UnstructuredAMRHierarchyPlan,
     UnstructuredAMRSelection,
-)
-from ..discretization.finite_volume._flux_ledger import (
-    FiniteVolumeAcceptedFluxIntegralBlock,
-    FiniteVolumeAcceptedFluxIntegralLedger,
 )
 from ._finite_volume import FiniteVolumeStageStateProvider
 from ._finite_volume_content import FiniteVolumeConservativeContentState
@@ -127,9 +127,9 @@ class UnstructuredAMRAdvanceResult(StrictModule):
     accepted_step_size: Array
     coarse_advance: FiniteVolumeAdvanceResult | None
     fine_advances: tuple[FiniteVolumeAdvanceResult, ...]
-    coarse_accepted_flux_integrals: FiniteVolumeAcceptedFluxIntegralLedger | None
-    fine_accepted_flux_integrals: FiniteVolumeAcceptedFluxIntegralLedger | None
-    fine_substep_ledgers: tuple[FiniteVolumeAcceptedFluxIntegralLedger, ...]
+    coarse_accepted_flux_integrals: AcceptedConservationIntegralLedger | None
+    fine_accepted_flux_integrals: AcceptedConservationIntegralLedger | None
+    fine_substep_ledgers: tuple[AcceptedConservationIntegralLedger, ...]
     reflux_register: UnstructuredAMRFluxRegister
     reflux_report: UnstructuredAMRRefluxReport
     composite_state: Array
@@ -689,12 +689,12 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
 
     def _validate_ledger_interval(
         self,
-        ledger: FiniteVolumeAcceptedFluxIntegralLedger,
+        ledger: AcceptedConservationIntegralLedger,
         start: FiniteVolumeRuntimeState,
         end: FiniteVolumeRuntimeState,
         /,
     ) -> None:
-        if not isinstance(ledger, FiniteVolumeAcceptedFluxIntegralLedger):
+        if not isinstance(ledger, AcceptedConservationIntegralLedger):
             raise TypeError("Accepted level output must contain an accepted ledger.")
         if ledger.units != "content":
             raise ValueError("AMR synchronization requires content-unit ledgers.")
@@ -720,17 +720,17 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
 
     def _aggregate_fine_ledgers(
         self,
-        ledgers: tuple[FiniteVolumeAcceptedFluxIntegralLedger, ...],
+        ledgers: tuple[AcceptedConservationIntegralLedger, ...],
         start: FiniteVolumeRuntimeState,
         end: FiniteVolumeRuntimeState,
         /,
-    ) -> FiniteVolumeAcceptedFluxIntegralLedger:
+    ) -> AcceptedConservationIntegralLedger:
         if len(ledgers) != self.refinement_ratio:
             raise ValueError("AMR must aggregate exactly refinement_ratio ledgers.")
         if start.content_state.geometry_family_id != end.content_state.geometry_family_id:
             raise ValueError("Fine AMR level states changed geometry family.")
         for ledger in ledgers:
-            if not isinstance(ledger, FiniteVolumeAcceptedFluxIntegralLedger):
+            if not isinstance(ledger, AcceptedConservationIntegralLedger):
                 raise TypeError("Accepted fine output must contain an accepted ledger.")
             if ledger.units != "content":
                 raise ValueError("AMR synchronization requires content-unit ledgers.")
@@ -776,7 +776,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                     raise ValueError("Fine accepted ledgers changed a flux route.")
                 integral = integral + block.flux_integral
             blocks.append(
-                FiniteVolumeAcceptedFluxIntegralBlock(
+                AcceptedConservationFluxIntegralBlock(
                     integral,
                     reference.owner_cells,
                     reference.neighbour_cells,
@@ -788,7 +788,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
         source = jnp.zeros_like(first.source_integral)
         for ledger in ledgers:
             source = source + ledger.source_integral
-        return FiniteVolumeAcceptedFluxIntegralLedger(
+        return AcceptedConservationIntegralLedger(
             tuple(blocks),
             source,
             first.active_cell_mask,
@@ -810,7 +810,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
 
     def _interface_scatter(
         self,
-        ledger: FiniteVolumeAcceptedFluxIntegralLedger,
+        ledger: AcceptedConservationIntegralLedger,
         endpoint_mask: Array,
         route_ids: tuple[str, ...] | None = None,
         allowed_cells: Array | None = None,
@@ -925,10 +925,10 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
 
     def _reflux(
         self,
-        coarse_ledger: FiniteVolumeAcceptedFluxIntegralLedger,
-        fine_ledger: FiniteVolumeAcceptedFluxIntegralLedger,
+        coarse_ledger: AcceptedConservationIntegralLedger,
+        fine_ledger: AcceptedConservationIntegralLedger,
         selection: UnstructuredAMRSelection,
-        fine_ledgers: tuple[FiniteVolumeAcceptedFluxIntegralLedger, ...],
+        fine_ledgers: tuple[AcceptedConservationIntegralLedger, ...],
         /,
     ) -> tuple[UnstructuredAMRFluxRegister, UnstructuredAMRRefluxReport]:
         """Build one interface-only coarse/fine accepted-flux mismatch."""
@@ -1141,7 +1141,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
             step_size=fine_dt,
         )
         fine_advances: list[FiniteVolumeAdvanceResult] = []
-        fine_ledgers: list[FiniteVolumeAcceptedFluxIntegralLedger] = []
+        fine_ledgers: list[AcceptedConservationIntegralLedger] = []
         fine_start = fine_work
         fine_failed = False
         for substep in range(self.refinement_ratio):

@@ -179,7 +179,7 @@ def test_amr_register_consumes_accepted_flux_integrals_once():
     def accepted_ledger(
         flux_integral, owner_cells, cell_count, level, start_time, end_time, step
     ):
-        block = phx.discretization.FiniteVolumeAcceptedFluxIntegralBlock(
+        block = phx.discretization.AcceptedConservationFluxIntegralBlock(
             jnp.asarray(flux_integral),
             jnp.asarray(owner_cells, dtype=jnp.int32),
             jnp.full((len(owner_cells),), -1, dtype=jnp.int32),
@@ -188,7 +188,7 @@ def test_amr_register_consumes_accepted_flux_integrals_once():
             "mapped-amr-interface",
         )
         versions = (jnp.asarray(0),) * 3
-        return phx.discretization.FiniteVolumeAcceptedFluxIntegralLedger(
+        return phx.discretization.AcceptedConservationIntegralLedger(
             (block,),
             jnp.zeros((cell_count, 1)),
             jnp.ones((cell_count,), dtype=bool),

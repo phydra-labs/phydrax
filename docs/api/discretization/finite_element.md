@@ -259,11 +259,11 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ---
 
-::: phydrax.equations.fem.DGSEMFluxCompatibilityCertificate
+::: phydrax.equations.fem.DGSEMSampledFluxCompatibilityEvidence
 
 ---
 
-::: phydrax.equations.fem.certify_dgsem_flux_compatibility
+::: phydrax.equations.fem.sample_dgsem_flux_compatibility
 
 ## High-order hierarchy, mortars, and hp
 
@@ -335,6 +335,10 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ---
 
+::: phydrax.discretization.fem.FiniteElementPeriodicTransform
+
+---
+
 ::: phydrax.equations.fem.DGSEMConservationMethodPlan
 
 ---
@@ -343,11 +347,35 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ---
 
+::: phydrax.equations.fem.EntropyStableDGPlan
+
+---
+
 ::: phydrax.equations.fem.EntropyFilterPlan
 
 ---
 
-::: phydrax.equations.fem.LDGViscousFluxPlan
+::: phydrax.equations.fem.ViscousDGPlan
+
+---
+
+::: phydrax.equations.fem.ConservativeSubcellPlan
+
+---
+
+::: phydrax.equations.fem.ConservationCorrectionLadderPlan
+
+---
+
+::: phydrax.discretization.fem.FiniteElementGeometryQualityEvidence
+
+---
+
+::: phydrax.equations.fem.FiniteElementGeometrySnapshot
+
+---
+
+::: phydrax.equations.fem.ConservativeRemapPlan
 
 ---
 
@@ -360,7 +388,6 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 ---
 
 ::: phydrax.discretization.fem.FiniteElementDistributedPhasePlan
-
 ## Complete spectral hp
 
 ::: phydrax.discretization.fem.AnisotropicHPattern

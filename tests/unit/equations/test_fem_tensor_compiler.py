@@ -307,6 +307,18 @@ def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_value
     assert first.coefficient_layout_ids == second.coefficient_layout_ids
     assert first.local_kernel == "collocated"
     assert (
+        programs[0].operator_program.program_id == programs[1].operator_program.program_id
+    )
+    node = programs[0].operator_program.nodes[0]
+    executed = programs[0].operator_program.execute(
+        {"u": jnp.asarray((1.0, 2.0))},
+        {node.kernel_id: lambda value: 2.0 * value},
+    )
+    np.testing.assert_allclose(executed[0], (2.0, 4.0))
+    assert len(programs[0].buckets) == 1
+    assert programs[0].buckets[0].entity_count > 0
+    assert programs[0].buckets[0].resident_bytes > 0
+    assert (
         tables[0].bindings[0].reference_action_ids
         == tables[1].bindings[0].reference_action_ids
     )

@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -136,6 +137,92 @@ class AbstractCharacteristicSystem(AbstractConservationSystem):
         raise NotImplementedError
 
 
+class AbstractNormalReflectionSystem(abc.ABC):
+    """Optional capability for reflection across an arbitrary unit normal."""
+
+    @abc.abstractmethod
+    def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
+        raise NotImplementedError
+
+
+class AbstractNormalCharacteristicSystem(abc.ABC):
+    """Optional capability for characteristic decomposition along a normal."""
+
+    @abc.abstractmethod
+    def normal_eigensystem(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array, Array]:
+        raise NotImplementedError
+
+
+class AbstractEntropyDiffusionSystem(abc.ABC):
+    """Optional capability for entropy-dissipative viscous fluxes."""
+
+    @abc.abstractmethod
+    def viscous_flux(
+        self,
+        state: Array,
+        conserved_gradient: Array,
+        args: Any = None,
+        /,
+    ) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def maximum_diffusivity(self, state: Array, args: Any = None, /) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def entropy_viscous_production(
+        self,
+        state: Array,
+        conserved_gradient: Array,
+        args: Any = None,
+        /,
+    ) -> Array:
+        raise NotImplementedError
+
+
+def _orthonormal_normal_frame(normal: Array, dimension: int, /) -> Array:
+    value = jnp.asarray(normal)
+    if value.shape[-1] != dimension:
+        raise ValueError("Normal frame dimension is incompatible with the system.")
+    norm = jnp.sqrt(oe.contract("...d,...d->...", value, value, backend="jax"))
+    unit = value / norm[..., None]
+    if dimension == 1:
+        return unit[..., None, :]
+    if dimension == 2:
+        tangent = jnp.stack((-unit[..., 1], unit[..., 0]), axis=-1)
+        return jnp.stack((unit, tangent), axis=-2)
+    if dimension == 3:
+        seed = jax.nn.one_hot(jnp.argmin(jnp.abs(unit), axis=-1), 3, dtype=unit.dtype)
+        first = jnp.cross(seed, unit)
+        first = (
+            first
+            / jnp.sqrt(oe.contract("...d,...d->...", first, first, backend="jax"))[
+                ..., None
+            ]
+        )
+        second = jnp.cross(unit, first)
+        return jnp.stack((unit, first, second), axis=-2)
+    raise ValueError("Normal characteristic frames require dimension one, two, or three.")
+
+
+def _conserved_normal_rotation(frame: Array, /) -> Array:
+    dimension = frame.shape[-1]
+    component_count = dimension + 2
+    matrix = jnp.broadcast_to(
+        jnp.eye(component_count, dtype=frame.dtype),
+        frame.shape[:-2] + (component_count, component_count),
+    )
+    return matrix.at[..., 1 : 1 + dimension, 1 : 1 + dimension].set(frame)
+
+
 class AbstractAdmissibleSystem(AbstractConservationSystem):
     """Conservation system with a convex admissible-state predicate."""
 
@@ -152,9 +239,9 @@ class AbstractEntropySystem(AbstractConservationSystem):
         raise NotImplementedError
 
 
-class ScalarConservationSystem(AbstractConservationSystem):
-    """One-component conservation system from stable-ID callables."""
-
+class ScalarConservationSystem(
+    AbstractConservationSystem, AbstractNormalReflectionSystem
+):
     flux: ScalarFlux = eqx.field(static=True)
     wave_speed: ScalarWaveSpeed = eqx.field(static=True)
 
@@ -236,11 +323,17 @@ class ScalarConservationSystem(AbstractConservationSystem):
         del axis
         return jnp.asarray(state)
 
+    def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
+        del normal
+        return jnp.asarray(state)
+
 
 class EulerSystem(
     AbstractCharacteristicSystem,
     AbstractAdmissibleSystem,
     AbstractEntropySystem,
+    AbstractNormalReflectionSystem,
+    AbstractNormalCharacteristicSystem,
 ):
     """Ideal-gas Euler equations in one, two, or three dimensions."""
 
@@ -422,6 +515,16 @@ class EulerSystem(
         value = jnp.asarray(state)
         return value.at[..., 1 + int(axis)].multiply(-1.0)
 
+    def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
+        value = jnp.asarray(state)
+        normal_ = jnp.asarray(normal)
+        norm = jnp.sqrt(oe.contract("...d,...d->...", normal_, normal_, backend="jax"))
+        unit = normal_ / norm[..., None]
+        momentum = value[..., 1 : 1 + self.dimension]
+        normal_momentum = oe.contract("...d,...d->...", momentum, unit, backend="jax")
+        reflected = momentum - 2.0 * normal_momentum[..., None] * unit
+        return value.at[..., 1 : 1 + self.dimension].set(reflected)
+
     def eigensystem(
         self,
         left: Array,
@@ -513,6 +616,29 @@ class EulerSystem(
         )
         return left_matrix, right_matrix, eigenvalues
 
+    def normal_eigensystem(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array, Array]:
+        frame = _orthonormal_normal_frame(normal, self.dimension)
+        rotation = _conserved_normal_rotation(frame)
+        left_local = oe.contract("...ij,...j->...i", rotation, left, backend="jax")
+        right_local = oe.contract("...ij,...j->...i", rotation, right, backend="jax")
+        left_matrix, right_matrix, speeds = self.eigensystem(
+            left_local, right_local, 0, args
+        )
+        right_global = oe.contract(
+            "...ji,...jk->...ik", rotation, right_matrix, backend="jax"
+        )
+        left_global = oe.contract(
+            "...ij,...jk->...ik", left_matrix, rotation, backend="jax"
+        )
+        return left_global, right_global, speeds
+
     def entropy_variables(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
         primitive = self.conserved_to_primitive(value)
@@ -538,6 +664,9 @@ class CompressibleNavierStokesSystem(
     AbstractCharacteristicSystem,
     AbstractAdmissibleSystem,
     AbstractEntropySystem,
+    AbstractNormalReflectionSystem,
+    AbstractNormalCharacteristicSystem,
+    AbstractEntropyDiffusionSystem,
 ):
     """Ideal-gas compressible Navier–Stokes physical system."""
 
@@ -637,6 +766,31 @@ class CompressibleNavierStokesSystem(
         )
         return velocity_gradient, temperature_gradient
 
+    def entropy_viscous_production(
+        self,
+        state: Array,
+        conserved_gradient: Array,
+        args: Any = None,
+        /,
+    ) -> Array:
+        value = jnp.asarray(state)
+        gradient = jnp.asarray(conserved_gradient)
+        flat_state = value.reshape((-1, value.shape[-1]))
+        flat_gradient = gradient.reshape((-1, gradient.shape[-2], gradient.shape[-1]))
+        hessian = jax.vmap(jax.jacfwd(lambda point: self.entropy_variables(point)))(
+            flat_state
+        )
+        entropy_gradient = oe.contract(
+            "nij,njd->nid", hessian, flat_gradient, backend="jax"
+        )
+        viscous_flux = self.viscous_flux(value, gradient, args).reshape(
+            entropy_gradient.shape
+        )
+        production = oe.contract(
+            "nid,nid->n", entropy_gradient, viscous_flux, backend="jax"
+        )
+        return production.reshape(value.shape[:-1])
+
     def viscous_flux(
         self,
         state: ArrayLike,
@@ -710,6 +864,17 @@ class CompressibleNavierStokesSystem(
         )
         return jnp.concatenate((mass_flux, stress, energy_flux[..., None, :]), axis=-2)
 
+    def maximum_diffusivity(self, state: Array, args: Any = None, /) -> Array:
+        value = jnp.asarray(state)
+        temperature = self.temperature(value)
+        properties = self.transport.properties(temperature, value, args)
+        density = value[..., 0]
+        heat_capacity = self.material.gas_constant / (self.gamma - 1.0)
+        return jnp.maximum(
+            properties.dynamic_viscosity / density,
+            properties.thermal_conductivity / (density * heat_capacity),
+        )
+
     def viscous_normal_flux(
         self,
         state: ArrayLike,
@@ -763,6 +928,9 @@ class CompressibleNavierStokesSystem(
     def reflect_state(self, state: Array, axis: int, /) -> Array:
         return self.inviscid.reflect_state(state, axis)
 
+    def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
+        return self.inviscid.reflect_normal_state(state, normal)
+
     def eigensystem(
         self,
         left: Array,
@@ -772,6 +940,16 @@ class CompressibleNavierStokesSystem(
         /,
     ) -> tuple[Array, Array, Array]:
         return self.inviscid.eigensystem(left, right, axis, args)
+
+    def normal_eigensystem(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array, Array]:
+        return self.inviscid.normal_eigensystem(left, right, normal, args)
 
     def entropy_variables(self, state: Array, /) -> Array:
         return self.inviscid.entropy_variables(state)
@@ -943,7 +1121,7 @@ class MultispeciesEulerSystem(AbstractAdmissibleSystem):
         return jnp.asarray(state).at[..., self.species_count + int(axis)].multiply(-1.0)
 
 
-class IdealMHDSystem(AbstractAdmissibleSystem):
+class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
     """Ideal MHD with three-vector momentum and magnetic field."""
 
     material: IdealGasMaterial
@@ -1139,6 +1317,32 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
     def reflect_state(self, state: Array, axis: int, /) -> Array:
         return jnp.asarray(state).at[..., 1 + int(axis)].multiply(-1.0)
 
+    def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
+        value = jnp.asarray(state)
+        normal_ = jnp.asarray(normal)
+        unit = (
+            normal_
+            / jnp.sqrt(oe.contract("...d,...d->...", normal_, normal_, backend="jax"))[
+                ..., None
+            ]
+        )
+        momentum = value[..., 1:4]
+        magnetic = value[..., 5:8]
+        reflected_momentum = (
+            momentum
+            - 2.0
+            * oe.contract("...d,...d->...", momentum, unit, backend="jax")[..., None]
+            * unit
+        )
+        reflected_magnetic = (
+            2.0
+            * oe.contract("...d,...d->...", magnetic, unit, backend="jax")[..., None]
+            * unit
+            - magnetic
+        )
+        result = value.at[..., 1:4].set(reflected_momentum)
+        return result.at[..., 5:8].set(reflected_magnetic)
+
 
 class ShallowWaterSystem(AbstractAdmissibleSystem):
     """One- or two-dimensional shallow-water conservation system."""
@@ -1286,7 +1490,10 @@ __all__ = [
     "AbstractAdmissibleSystem",
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
+    "AbstractEntropyDiffusionSystem",
     "AbstractEntropySystem",
+    "AbstractNormalCharacteristicSystem",
+    "AbstractNormalReflectionSystem",
     "CompressibleNavierStokesSystem",
     "EulerSystem",
     "IdealMHDSystem",

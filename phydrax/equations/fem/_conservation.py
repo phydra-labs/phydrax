@@ -17,7 +17,11 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization._conservation_boundary import PrescribedNormalFluxBoundary
+from ...discretization._conservation_boundary import evaluate_conservation_boundary
+from ...discretization._conservation_policy import (
+    DifferentiabilityPolicy,
+    validate_differentiability_policy,
+)
 from ...discretization.fem._boundary import (
     FiniteElementBoundarySet,
     tensor_local_face,
@@ -55,17 +59,16 @@ from .._finite_element_variational import (
     PairwiseVolumeFluxAction,
 )
 from ._viscous_conservation import (
-    LDGViscousFluxPlan,
-    PreparedLDGViscousOperator,
+    PreparedViscousDGOperator,
+    ViscousDGPlan,
 )
 
 
-class DGSEMFluxCompatibilityCertificate(StrictModule, NonTrainableState):
-    """Sampled evidence for physical two-point and entropy-flux identities.
+class DGSEMSampledFluxCompatibilityEvidence(StrictModule, NonTrainableState):
+    """Sampled compatibility evidence for concrete flux and entropy identities.
 
-    This certificate is intentionally distinct from :class:`ConvexEntropyPair`: the
-    pair supplies thermodynamic functions, while this object records compatibility of
-    concrete volume/interface flux plans with that pair.
+    The entropy pair supplies thermodynamic functions; this object records only
+    finite-state numerical checks for concrete volume/interface flux plans.
     """
 
     system_id: str = eqx.field(static=True)
@@ -82,8 +85,8 @@ class DGSEMFluxCompatibilityCertificate(StrictModule, NonTrainableState):
     boundary_evidence: str = eqx.field(static=True)
     source_evidence: str = eqx.field(static=True)
     viscous_evidence: str = eqx.field(static=True)
-    complete_entropy_stability: bool = eqx.field(static=True)
-    certificate_id: str = eqx.field(static=True)
+    sampled_periodic_entropy_compatibility: bool = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -138,15 +141,15 @@ class DGSEMFluxCompatibilityCertificate(StrictModule, NonTrainableState):
         consistency_max = float(np.max(np.abs(np.asarray(consistency)), initial=0.0))
         potential_max = float(np.max(np.abs(np.asarray(potential)), initial=0.0))
         interface_upper = float(np.max(np.asarray(interface), initial=-np.inf))
-        volume_certified = bool(
+        volume_compatible = bool(
             symmetry_max <= tolerance_
             and consistency_max <= tolerance_
             and potential_max <= tolerance_
         )
-        interface_certified = bool(interface_upper <= tolerance_)
-        complete = bool(
-            volume_certified
-            and interface_certified
+        interface_compatible = bool(interface_upper <= tolerance_)
+        sampled_periodic_compatible = bool(
+            volume_compatible
+            and interface_compatible
             and boundary == "periodic_pair_cancellation"
             and source == "absent"
             and viscous == "absent"
@@ -160,15 +163,15 @@ class DGSEMFluxCompatibilityCertificate(StrictModule, NonTrainableState):
         self.entropy_potential_defect = potential
         self.interface_entropy_residual = interface
         self.tolerance = tolerance_
-        self.volume_entropy_conservative = volume_certified
-        self.interface_entropy_stable = interface_certified
+        self.volume_entropy_conservative = volume_compatible
+        self.interface_entropy_stable = interface_compatible
         self.boundary_evidence = boundary
         self.source_evidence = source
         self.viscous_evidence = viscous
-        self.complete_entropy_stability = complete
-        self.certificate_id = canonical_fingerprint(
+        self.sampled_periodic_entropy_compatibility = sampled_periodic_compatible
+        self.evidence_id = canonical_fingerprint(
             {
-                "kind": "dgsem-flux-compatibility-certificate",
+                "kind": "dgsem-sampled-flux-compatibility-evidence",
                 "system": identifiers[0],
                 "entropy_pair": identifiers[1],
                 "volume_flux": identifiers[2],
@@ -180,8 +183,8 @@ class DGSEMFluxCompatibilityCertificate(StrictModule, NonTrainableState):
                 "interface_entropy_residual": array_tree_fingerprint(
                     np.asarray(interface)
                 ),
-                "volume_entropy_conservative": volume_certified,
-                "interface_entropy_stable": interface_certified,
+                "sampled_volume_entropy_compatible": volume_compatible,
+                "sampled_interface_entropy_compatible": interface_compatible,
                 "boundary_evidence": boundary,
                 "source_evidence": source,
                 "viscous_evidence": viscous,
@@ -189,7 +192,7 @@ class DGSEMFluxCompatibilityCertificate(StrictModule, NonTrainableState):
         )
 
 
-def certify_dgsem_flux_compatibility(
+def sample_dgsem_flux_compatibility(
     system: Any,
     volume_flux: AbstractSymmetricTwoPointFluxPlan,
     interface_flux: AbstractArbitraryNormalNumericalFluxPlan,
@@ -204,7 +207,7 @@ def certify_dgsem_flux_compatibility(
     boundary_evidence: str = "periodic_pair_cancellation",
     source_evidence: str = "absent",
     viscous_evidence: str = "absent",
-) -> DGSEMFluxCompatibilityCertificate:
+) -> DGSEMSampledFluxCompatibilityEvidence:
     """Evaluate symmetry, consistency, Tadmor identity, and interface inequality."""
 
     if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
@@ -214,7 +217,7 @@ def certify_dgsem_flux_compatibility(
     if not isinstance(entropy_pair, ConvexEntropyPair):
         raise TypeError("entropy_pair must be ConvexEntropyPair.")
     if entropy_pair.system.system_id != system.system_id:
-        raise ValueError("Entropy pair and flux certificate system must match.")
+        raise ValueError("Entropy pair and sampled flux evidence system must match.")
     left = jnp.asarray(left_states)
     right = jnp.asarray(right_states)
     if (
@@ -224,12 +227,12 @@ def certify_dgsem_flux_compatibility(
         or left.shape[-1] != system.component_count
     ):
         raise ValueError(
-            "Certificate left/right states must have equal batched component shape."
+            "Sampled-evidence left/right states need equal batched component shape."
         )
     if not bool(jnp.all(entropy_pair.admissible(left))) or not bool(
         jnp.all(entropy_pair.admissible(right))
     ):
-        raise ValueError("Certificate states must lie in the entropy admissible set.")
+        raise ValueError("Sampled states must lie in the entropy admissible set.")
     symmetry = []
     consistency = []
     potential = []
@@ -279,11 +282,11 @@ def certify_dgsem_flux_compatibility(
         or not np.all(np.isfinite(normal_values))
     ):
         raise ValueError(
-            "Certificate normals must have shape (normal_count, system.dimension)."
+            "Sampled normals must have shape (normal_count, system.dimension)."
         )
     normal_lengths = np.linalg.norm(normal_values, axis=-1)
     if np.any(normal_lengths <= 0.0):
-        raise ValueError("Certificate normals must be nonzero.")
+        raise ValueError("Sampled normals must be nonzero.")
     normal_values = normal_values / normal_lengths[:, None]
     variables_jump = entropy_pair.entropy_variables(
         right
@@ -310,7 +313,7 @@ def certify_dgsem_flux_compatibility(
             )
             - (potential_right - potential_left)
         )
-    return DGSEMFluxCompatibilityCertificate(
+    return DGSEMSampledFluxCompatibilityEvidence(
         system.system_id,
         entropy_pair.pair_id,
         volume_flux.flux_id,
@@ -545,10 +548,11 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
 
     volume_flux: AbstractSymmetricTwoPointFluxPlan
     interface_flux: AbstractArbitraryNormalNumericalFluxPlan
-    compatibility: DGSEMFluxCompatibilityCertificate | None
-    viscous: LDGViscousFluxPlan | None
+    compatibility: DGSEMSampledFluxCompatibilityEvidence | None
+    viscous: ViscousDGPlan | None
     explicit_mass: str = eqx.field(static=True)
     accumulation: str = eqx.field(static=True)
+    differentiability: DifferentiabilityPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -557,10 +561,11 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
         interface_flux: AbstractArbitraryNormalNumericalFluxPlan,
         /,
         *,
-        compatibility: DGSEMFluxCompatibilityCertificate | None = None,
-        viscous: LDGViscousFluxPlan | None = None,
+        compatibility: DGSEMSampledFluxCompatibilityEvidence | None = None,
+        viscous: ViscousDGPlan | None = None,
         explicit_mass: str = "diagonal_gll",
         accumulation: str = "deterministic",
+        differentiability: DifferentiabilityPolicy = "branchwise",
     ):
         if not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan):
             raise TypeError("DGSEM volume_flux must be a symmetric two-point flux plan.")
@@ -571,11 +576,11 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
                 "DGSEM interface_flux requires typed arbitrary-normal capability."
             )
         if compatibility is not None and not isinstance(
-            compatibility, DGSEMFluxCompatibilityCertificate
+            compatibility, DGSEMSampledFluxCompatibilityEvidence
         ):
-            raise TypeError("compatibility must be a DGSEM flux certificate or None.")
-        if viscous is not None and not isinstance(viscous, LDGViscousFluxPlan):
-            raise TypeError("viscous must be LDGViscousFluxPlan or None.")
+            raise TypeError("compatibility must be sampled DGSEM flux evidence or None.")
+        if viscous is not None and not isinstance(viscous, ViscousDGPlan):
+            raise TypeError("viscous must be ViscousDGPlan or None.")
         mass = str(explicit_mass)
         if mass != "diagonal_gll":
             raise ValueError(
@@ -584,23 +589,26 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
         accumulation_ = str(accumulation)
         if accumulation_ not in ("fast", "deterministic", "compensated"):
             raise ValueError("Unknown DGSEM finite-element accumulation policy.")
+        differentiability_ = validate_differentiability_policy(differentiability)
         self.volume_flux = volume_flux
         self.interface_flux = interface_flux
         self.compatibility = compatibility
         self.viscous = viscous
         self.explicit_mass = mass
         self.accumulation = accumulation_
+        self.differentiability = differentiability_
         self.method_id = canonical_fingerprint(
             {
                 "kind": "dgsem-conservation-method",
                 "volume_flux": volume_flux.flux_id,
                 "interface_flux": interface_flux.flux_id,
                 "compatibility": (
-                    None if compatibility is None else compatibility.certificate_id
+                    None if compatibility is None else compatibility.evidence_id
                 ),
                 "viscous": None if viscous is None else viscous.plan_id,
                 "explicit_mass": mass,
                 "accumulation": accumulation_,
+                "differentiability": differentiability_,
                 "shock_capturing": None,
                 "positivity": None,
                 "motion": None,
@@ -703,8 +711,8 @@ class DGSEMConservationDiagnostics(StrictModule, NonTrainableState):
     entropy_inequality_defect: Array | None
     admissible: Array | None
     free_stream_residual: Array
-    certificate_id: str | None = eqx.field(static=True)
-    certified_entropy_inequality: bool = eqx.field(static=True)
+    sampled_evidence_id: str | None = eqx.field(static=True)
+    sampled_entropy_inequality: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
 
@@ -1159,28 +1167,27 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                     plus_physical = system.physical_normal_flux(
                         plus, normal, context.user_args
                     )
-                    if isinstance(boundary, PrescribedNormalFluxBoundary):
-                        numerical = boundary.normal_flux(
-                            context.time,
-                            plus,
-                            points,
-                            normal,
-                            context.user_args,
-                        )
+                    trace = evaluate_conservation_boundary(
+                        boundary,
+                        system,
+                        context.time,
+                        plus,
+                        points,
+                        normal,
+                        axis,
+                        context.user_args,
+                    )
+                    if trace.direct_normal_flux is not None:
+                        numerical = trace.direct_normal_flux
                     else:
-                        minus = boundary.exterior_state(
-                            system,
-                            context.time,
-                            plus,
-                            points,
-                            normal,
-                            axis,
-                            context.user_args,
-                        )
+                        if trace.exterior_state is None:
+                            raise RuntimeError(
+                                "Boundary trace supplied neither state nor normal flux."
+                            )
                         numerical = method.interface_flux.normal_face_flux(
                             system,
                             plus,
-                            minus,
+                            trace.exterior_state,
                             normal,
                             context.user_args,
                         ).normal_flux
@@ -1346,7 +1353,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             if method.viscous is not None and certificate.viscous_evidence == "absent":
                 raise ValueError(
                     "An entropy certificate advertising absent viscosity cannot "
-                    "compile an LDG viscous operator."
+                    "compile a viscous DG operator."
                 )
         elif entropy_pair is not None:
             raise ValueError(
@@ -1412,11 +1419,11 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         return self.compiled_finite_element_problem.residual_space
 
     @property
-    def viscous_operator(self) -> PreparedLDGViscousOperator | None:
+    def viscous_operator(self) -> PreparedViscousDGOperator | None:
         return (
             None
             if self.method.viscous is None
-            else PreparedLDGViscousOperator(self.method.viscous, self)
+            else PreparedViscousDGOperator(self.method.viscous, self)
         )
 
     def _state(self, state: ArrayLike, /) -> Array:
@@ -1573,31 +1580,30 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                         )
                     )
                     normal = scaled_normal / surface_jacobian[:, None]
-                    if isinstance(patch.boundary, PrescribedNormalFluxBoundary):
-                        normal_flux = patch.boundary.normal_flux(
-                            time_,
-                            plus,
-                            points,
-                            normal,
-                            user_args,
-                        )
+                    trace = evaluate_conservation_boundary(
+                        patch.boundary,
+                        self.system,
+                        time_,
+                        plus,
+                        points,
+                        normal,
+                        axis,
+                        user_args,
+                    )
+                    if trace.direct_normal_flux is not None:
+                        normal_flux = trace.direct_normal_flux
                         speed = self.system.max_normal_wave_speed(
                             plus, plus, normal, user_args
                         )
                     else:
-                        minus = patch.boundary.exterior_state(
-                            self.system,
-                            time_,
-                            plus,
-                            points,
-                            normal,
-                            axis,
-                            user_args,
-                        )
+                        if trace.exterior_state is None:
+                            raise RuntimeError(
+                                "Boundary trace supplied neither state nor normal flux."
+                            )
                         result = self.method.interface_flux.normal_face_flux(
                             self.system,
                             plus,
-                            minus,
+                            trace.exterior_state,
                             normal,
                             user_args,
                         )
@@ -1800,10 +1806,12 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             entropy_inequality_defect=inequality_defect,
             admissible=admissible,
             free_stream_residual=self.metrics.report.free_stream_residual,
-            certificate_id=(None if certificate is None else certificate.certificate_id),
-            certified_entropy_inequality=bool(
+            sampled_evidence_id=(
+                None if certificate is None else certificate.evidence_id
+            ),
+            sampled_entropy_inequality=bool(
                 certificate is not None
-                and certificate.complete_entropy_stability
+                and certificate.sampled_periodic_entropy_compatibility
                 and (self.boundaries is None or not self.boundaries.patches)
             ),
             method_id=self.method.method_id,
@@ -1917,11 +1925,11 @@ __all__ = [
     "DGSEMNonconformingMortarPlan",
     "DGSEMConservationMethodPlan",
     "DGSEMFaceFluxes",
-    "DGSEMFluxCompatibilityCertificate",
+    "DGSEMSampledFluxCompatibilityEvidence",
     "DGSEMPreparationReport",
     "DGSEMStableStepEvidence",
     "PreparedDGSEMConservationDynamics",
     "certify_dgsem_mortar_compatibility",
-    "certify_dgsem_flux_compatibility",
+    "sample_dgsem_flux_compatibility",
     "dgsem_mortar_flux_ledger",
 ]

@@ -22,6 +22,10 @@ from ..._numerics._ssp_runge_kutta import (
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._conservation_boundary import PrescribedNormalFluxBoundary
+from ...discretization._conservation_policy import (
+    DifferentiabilityPolicy,
+    validate_differentiability_policy,
+)
 from ...discretization.fem._boundary import tensor_local_face
 from .._hyperbolic_systems import EulerSystem
 from ._conservation import PreparedDGSEMConservationDynamics
@@ -47,6 +51,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
     maximum_strength: float = eqx.field(static=True)
     bisection_iterations: int = eqx.field(static=True)
     mean_tolerance: float = eqx.field(static=True)
+    differentiability: DifferentiabilityPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -60,6 +65,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         maximum_strength: float = 36.0,
         bisection_iterations: int = 24,
         mean_tolerance: float = 1.0e-10,
+        differentiability: DifferentiabilityPolicy = "branchwise",
     ):
         density = None if density_floor is None else float(density_floor)
         pressure = None if pressure_floor is None else float(pressure_floor)
@@ -68,6 +74,11 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         strength = float(maximum_strength)
         iterations = int(bisection_iterations)
         mean = float(mean_tolerance)
+        differentiability_ = validate_differentiability_policy(differentiability)
+        if differentiability_ not in ("branchwise", "unsupported"):
+            raise ValueError(
+                "The hard entropy filter supports branchwise or unsupported AD."
+            )
         if density is not None and (not math.isfinite(density) or density <= 0.0):
             raise ValueError("density_floor must be finite and positive when supplied.")
         if pressure is not None and (not math.isfinite(pressure) or pressure <= 0.0):
@@ -90,6 +101,7 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
         self.maximum_strength = strength
         self.bisection_iterations = iterations
         self.mean_tolerance = mean
+        self.differentiability = differentiability_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "entropy-filter-plan",
@@ -100,17 +112,23 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
                 "maximum_strength": strength,
                 "bisection_iterations": iterations,
                 "mean_tolerance": mean,
-                "differentiability": "branchwise-stopped-decisions",
+                "differentiability": differentiability_,
             }
         )
 
-    def prepare(
-        self, dynamics: PreparedDGSEMConservationDynamics, /
-    ) -> PreparedEntropyFilter:
-        return PreparedEntropyFilter(self, dynamics)
+    def prepare(self, dynamics, /) -> PreparedEntropyFilter:
+        from ._nodal_conservation import PreparedNodalDGConservationDynamics
+
+        if isinstance(dynamics, PreparedDGSEMConservationDynamics):
+            implementation = _PreparedTensorEntropyFilter(self, dynamics)
+        elif isinstance(dynamics, PreparedNodalDGConservationDynamics):
+            implementation = _PreparedNodalEntropyFilter(self, dynamics)
+        else:
+            raise TypeError("Entropy filters require prepared tensor or nodal DG.")
+        return PreparedEntropyFilter(implementation)
 
 
-class PreparedEntropyFilter(AbstractSSPRKStageTransform):
+class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
     plan: EntropyFilterPlan
     dynamics: PreparedDGSEMConservationDynamics
     nodal_to_modal: Array
@@ -289,15 +307,6 @@ class PreparedEntropyFilter(AbstractSSPRKStageTransform):
         filtered = self._apply_axes(self.modal_to_nodal, modal * factor)
         return self._restore_mean(filtered, target_mean)
 
-    def _safe_mean_state(self, mean: Array, /) -> Array:
-        density = jnp.maximum(jnp.abs(mean[..., :1]), 2.0 * self.density_floor)
-        momentum = jnp.zeros_like(mean[..., 1:-1])
-        energy = jnp.full_like(
-            mean[..., -1:],
-            2.0 * self.pressure_floor / (self.dynamics.system.material.gamma - 1.0),
-        )
-        return jnp.concatenate((density, momentum, energy), axis=-1)
-
     def filter(
         self, time: Array, state: ArrayLike, args: Any = None, /
     ) -> tuple[Array, EntropyFilterEvidence]:
@@ -345,14 +354,12 @@ class PreparedEntropyFilter(AbstractSSPRKStageTransform):
         mean_defect = jnp.max(jnp.abs(self._weighted_mean(final) - target_mean))
         cell_success = final_valid & mean_valid
         successful = jnp.all(cell_success) & (mean_defect <= self.plan.mean_tolerance)
-        safe_mean = self._safe_mean_state(target_mean)
-        safe_local = jnp.broadcast_to(self._broadcast_mean(safe_mean), local.shape)
         accepted_local = jnp.where(
             cell_success.reshape(
                 (cell_count,) + (1,) * self.dynamics.metrics.dimension + (1,)
             ),
             final,
-            safe_local,
+            local,
         )
         routes = self.dynamics.discretization.dof_maps[0].cell_dofs[0]
         result = (
@@ -392,6 +399,212 @@ class PreparedEntropyFilter(AbstractSSPRKStageTransform):
             evidence.successful,
             jnp.sqrt(jnp.sum(jnp.abs(filtered - candidate_state) ** 2)),
         )
+
+
+class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
+    plan: EntropyFilterPlan
+    dynamics: Any
+    cell_by_dof: Array
+    density_floor: float = eqx.field(static=True)
+    pressure_floor: float = eqx.field(static=True)
+    transform_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: EntropyFilterPlan, dynamics: Any, /):
+        if dynamics.entropy_pair is None:
+            raise ValueError("Nodal entropy filtering requires an entropy pair.")
+        cell_by_dof = np.full((dynamics.state_space.shape[0],), -1, dtype=np.int32)
+        cell = 0
+        for routes in dynamics.mass_inverse.routes:
+            for local_routes in np.asarray(routes, dtype=np.int32):
+                cell_by_dof[local_routes] = cell
+                cell += 1
+        if np.any(cell_by_dof < 0):
+            raise ValueError("Every nodal DG degree of freedom must own one cell.")
+        self.plan = plan
+        self.dynamics = dynamics
+        self.cell_by_dof = jnp.asarray(cell_by_dof)
+        self.density_floor = 0.0 if plan.density_floor is None else plan.density_floor
+        self.pressure_floor = 0.0 if plan.pressure_floor is None else plan.pressure_floor
+        self.transform_id = canonical_fingerprint(
+            {
+                "kind": "prepared-nodal-entropy-filter",
+                "plan": plan.plan_id,
+                "dynamics": dynamics.dynamics_id,
+            }
+        )
+
+    def _safe_entropy(self, local: Array, invalid_value: float, /) -> Array:
+        admissible = self.dynamics.system.admissible(local)
+        first_index = jnp.argmax(admissible.astype(jnp.int32), axis=1)
+        first = jnp.take_along_axis(
+            local,
+            first_index[:, None, None],
+            axis=1,
+        )
+        safe = jnp.where(admissible[..., None], local, first)
+        entropy = self.dynamics.entropy_pair._entropy_unchecked(safe)
+        entropy = jnp.nan_to_num(
+            entropy,
+            nan=invalid_value,
+            posinf=invalid_value,
+            neginf=invalid_value,
+        )
+        return jnp.where(admissible, entropy, invalid_value)
+
+    def _entropy_bounds(self, state: Array, /) -> Array:
+        bounds = []
+        for routes in self.dynamics.mass_inverse.routes:
+            local_entropy = self._safe_entropy(state[routes], -jnp.inf)
+            bounds.append(jnp.max(local_entropy, axis=1))
+        bound = jnp.concatenate(tuple(bounds), axis=0)
+        for route in (
+            *self.dynamics.mortar_routes,
+            *self.dynamics.periodic_routes,
+            *self.dynamics.three_dimensional_interface_routes,
+        ):
+            owner = self.cell_by_dof[route.owner_dofs[0]]
+            neighbour = self.cell_by_dof[route.neighbour_dofs[0]]
+            common = jnp.maximum(bound[owner], bound[neighbour])
+            bound = bound.at[owner].set(common)
+            bound = bound.at[neighbour].set(common)
+        return bound
+
+    def filter(
+        self, time: Array, state: ArrayLike, args: Any = None, /
+    ) -> tuple[Array, EntropyFilterEvidence]:
+        del time, args
+        value = self.dynamics._state(state)
+        entropy_bounds = self._entropy_bounds(value)
+        result = jnp.zeros_like(value)
+        cell_offset = 0
+        maximum_strength = jnp.zeros((), dtype=value.dtype)
+        minimum_theta = jnp.ones((), dtype=value.dtype)
+        maximum_mean_defect = jnp.zeros((), dtype=value.dtype)
+        all_successful = jnp.asarray(True)
+        minimum_density = jnp.asarray(jnp.inf, dtype=value.dtype)
+        minimum_entropy = jnp.asarray(jnp.inf, dtype=value.dtype)
+        for routes, matrices in zip(
+            self.dynamics.mass_inverse.routes,
+            self.dynamics.mass_inverse.mass_matrices,
+            strict=True,
+        ):
+            local = value[routes]
+            integration_weights = jnp.sum(matrices, axis=1)
+            denominator = jnp.sum(integration_weights, axis=1)
+            mean = (
+                oe.contract("ci,civ->cv", integration_weights, local, backend="jax")
+                / denominator[:, None]
+            )
+            mean_local = jnp.broadcast_to(mean[:, None, :], local.shape)
+            block_bounds = entropy_bounds[cell_offset : cell_offset + local.shape[0]]
+
+            def admissible(candidate):
+                physical = jnp.all(self.dynamics.system.admissible(candidate), axis=1)
+                entropy = self._safe_entropy(candidate, jnp.inf)
+                entropy_ok = jnp.max(entropy, axis=1) <= (
+                    block_bounds + self.plan.entropy_tolerance
+                )
+                finite = jnp.all(jnp.isfinite(candidate), axis=(1, 2))
+                return physical & entropy_ok & finite
+
+            mean_valid = admissible(mean_local)
+            full_valid = admissible(local)
+            lower = jnp.zeros((local.shape[0],), dtype=value.dtype)
+            upper = jnp.ones_like(lower)
+            for _iteration in range(self.plan.bisection_iterations):
+                midpoint = 0.5 * (lower + upper)
+                candidate = mean_local + midpoint[:, None, None] * (local - mean_local)
+                valid = admissible(candidate)
+                lower = jnp.where(valid, midpoint, lower)
+                upper = jnp.where(valid, upper, midpoint)
+            theta = jnp.where(full_valid, jnp.ones_like(lower), lower)
+            filtered = mean_local + theta[:, None, None] * (local - mean_local)
+            final_valid = admissible(filtered)
+            cell_success = mean_valid & final_valid
+            accepted = jnp.where(cell_success[:, None, None], filtered, local)
+            result = result.at[routes].set(accepted)
+            filtered_mean = (
+                oe.contract("ci,civ->cv", integration_weights, filtered, backend="jax")
+                / denominator[:, None]
+            )
+            maximum_mean_defect = jnp.maximum(
+                maximum_mean_defect, jnp.max(jnp.abs(filtered_mean - mean))
+            )
+            minimum_theta = jnp.minimum(minimum_theta, jnp.min(theta))
+            maximum_strength = jnp.maximum(maximum_strength, jnp.max(1.0 - theta))
+            all_successful = all_successful & jnp.all(cell_success)
+            minimum_density = jnp.minimum(minimum_density, jnp.min(filtered[..., 0]))
+            minimum_entropy = jnp.minimum(
+                minimum_entropy,
+                jnp.min(self._safe_entropy(filtered, jnp.inf)),
+            )
+            cell_offset += local.shape[0]
+        applied = minimum_theta < 1.0 - self.plan.entropy_tolerance
+        evidence = EntropyFilterEvidence(
+            minimum_density,
+            jnp.asarray(jnp.nan, dtype=value.dtype),
+            minimum_entropy,
+            maximum_strength,
+            minimum_theta,
+            maximum_mean_defect,
+            applied,
+            all_successful & (maximum_mean_defect <= self.plan.mean_tolerance),
+            self.transform_id,
+        )
+        return result, evidence
+
+    def apply(
+        self,
+        stage_index: int,
+        time: Array,
+        candidate_state: Array,
+        args: Any,
+        /,
+    ) -> StageTransformResult:
+        del stage_index
+        filtered, evidence = self.filter(time, candidate_state, args)
+        return StageTransformResult(
+            filtered,
+            evidence.applied,
+            evidence.successful,
+            jnp.sqrt(jnp.sum(jnp.abs(filtered - candidate_state) ** 2)),
+        )
+
+
+class PreparedEntropyFilter(AbstractSSPRKStageTransform):
+    implementation: Any
+    transform_id: str = eqx.field(static=True)
+
+    def __init__(self, implementation: Any, /):
+        if not isinstance(
+            implementation, (_PreparedTensorEntropyFilter, _PreparedNodalEntropyFilter)
+        ):
+            raise TypeError("Unknown prepared entropy-filter implementation.")
+        self.implementation = implementation
+        self.transform_id = implementation.transform_id
+
+    @property
+    def density_floor(self) -> float:
+        return self.implementation.density_floor
+
+    @property
+    def pressure_floor(self) -> float:
+        return self.implementation.pressure_floor
+
+    def filter(
+        self, time: Array, state: ArrayLike, args: Any = None, /
+    ) -> tuple[Array, EntropyFilterEvidence]:
+        return self.implementation.filter(time, state, args)
+
+    def apply(
+        self,
+        stage_index: int,
+        time: Array,
+        candidate_state: Array,
+        args: Any,
+        /,
+    ) -> StageTransformResult:
+        return self.implementation.apply(stage_index, time, candidate_state, args)
 
 
 __all__ = [

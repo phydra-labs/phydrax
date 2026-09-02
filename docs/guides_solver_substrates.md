@@ -463,3 +463,25 @@ python tools/direct_collocation_ipopt_qualification.py --intervals 16 64
 
 They write fingerprinted artifacts under `benchmarks/` without promoting sampled
 off-grid evidence to a continuous-time certificate.
+
+## Production conservation runtime
+
+`ProductionRunPlan` and `PreparedProductionRun` bind one accepted-step
+transaction around SSPRK retry, exact-time clamping, weighted moments, trigger
+graphs, checkpoint generations, and immutable output publication. Failed
+stages and failed retry ladders retain the prior accepted state. Terminal
+success or failure always writes a readable manifest pointing at the last
+committed checkpoint.
+
+`DurableCheckpointStore` writes temporary generations, atomically commits a
+pointer, validates case identities and archive checksums on resume, and applies
+bounded retention. `ByteBoundedAsyncPublisher` owns copied host snapshots,
+item/byte backpressure, unique event IDs, writer error propagation, draining,
+and acknowledgement.
+
+`ConservationIMEXMethod`, `ElementBlockPreconditioner`,
+`ConservativeLocalTimeStepPlan`, and `TimeSlabFluxLedger` compose stiff
+diffusion, local element solves, subcycling, and one equal/opposite
+time-integrated interface flux. `ProductionResourceForecast` rejects cases
+whose compilation, memory, AD, or output budgets exceed declared limits before
+execution.

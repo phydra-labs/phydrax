@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._flux_ledger import FiniteVolumeStageFluxRateLedger
+from .._conservation_ledger import ConservationStageLedger
 from ._mapped import MappedFiniteVolumeDiscretization
 from ._riemann import (
     _NORMAL_ALE_CONTRACT,
@@ -231,7 +231,7 @@ class StageRatePositivityResult(StrictModule):
 
     euler_content: Array
     euler_cell_average: Array
-    ledger: FiniteVolumeStageFluxRateLedger
+    ledger: ConservationStageLedger
     report: FiniteVolumeAdmissibilityReport
     face_blend_factors: tuple[Array, ...]
 
@@ -709,18 +709,18 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
         self,
         system: Any,
         base_content: ArrayLike,
-        high_order_ledger: FiniteVolumeStageFluxRateLedger,
-        fallback_ledger: FiniteVolumeStageFluxRateLedger,
+        high_order_ledger: ConservationStageLedger,
+        fallback_ledger: ConservationStageLedger,
         local_euler_increment: ArrayLike,
         target_cell_volumes: ArrayLike,
         /,
     ) -> StageRatePositivityResult:
         """Blend aligned content rates and test the Euler target as cell averages."""
 
-        if not isinstance(high_order_ledger, FiniteVolumeStageFluxRateLedger):
-            raise TypeError("high_order_ledger must be FiniteVolumeStageFluxRateLedger.")
-        if not isinstance(fallback_ledger, FiniteVolumeStageFluxRateLedger):
-            raise TypeError("fallback_ledger must be FiniteVolumeStageFluxRateLedger.")
+        if not isinstance(high_order_ledger, ConservationStageLedger):
+            raise TypeError("high_order_ledger must be ConservationStageLedger.")
+        if not isinstance(fallback_ledger, ConservationStageLedger):
+            raise TypeError("fallback_ledger must be ConservationStageLedger.")
         high = high_order_ledger
         fallback = fallback_ledger
         if (
@@ -904,8 +904,8 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 )
             )
 
-        def make_ledger(blocks) -> FiniteVolumeStageFluxRateLedger:
-            return FiniteVolumeStageFluxRateLedger(
+        def make_ledger(blocks) -> ConservationStageLedger:
+            return ConservationStageLedger(
                 tuple(blocks),
                 high.source_rate,
                 high.active_cell_mask,

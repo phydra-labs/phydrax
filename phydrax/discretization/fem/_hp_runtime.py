@@ -490,6 +490,14 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
     lineage: FiniteElementHPLineage
     p_transfers: tuple[FiniteElementHPTransferPlan, ...]
     h_transfers: tuple[FiniteElementHPTransferPlan, ...]
+    state_payload: object
+    temporal_payload: object
+    robustness_payload: object
+    observer_payload: object
+    conservation_error: Array
+    admissible: Array
+    geometry_valid: Array
+    conservation_tolerance: float = eqx.field(static=True)
     diagnostics: tuple[str, ...] = eqx.field(static=True)
     transaction_id: str = eqx.field(static=True)
 
@@ -503,6 +511,14 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
         p_transfers: Sequence[FiniteElementHPTransferPlan] = (),
         h_transfers: Sequence[FiniteElementHPTransferPlan] = (),
         diagnostics: Sequence[str] = (),
+        state_payload: object = (),
+        temporal_payload: object = (),
+        robustness_payload: object = (),
+        observer_payload: object = (),
+        conservation_error: ArrayLike = 0.0,
+        admissible: ArrayLike = True,
+        geometry_valid: ArrayLike = True,
+        conservation_tolerance: float = 1.0e-10,
     ):
         if (
             not isinstance(accepted, FiniteElementHPEpoch)
@@ -513,8 +529,7 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
         source = accepted.topology
         target = candidate.topology
         if (
-            source.cell_kind != target.cell_kind
-            or source.capacity != target.capacity
+            source.capacity != target.capacity
             or lineage.source_topology_id != source.topology_id
             or lineage.target_topology_id != target.topology_id
         ):
@@ -540,12 +555,32 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
             ):
                 raise ValueError("hp transaction transfer identities disagree.")
         diagnostics_ = tuple(str(value) for value in diagnostics)
+        conservation = jnp.asarray(conservation_error)
+        admissible_ = jnp.asarray(admissible, dtype=bool)
+        geometry_valid_ = jnp.asarray(geometry_valid, dtype=bool)
+        tolerance = float(conservation_tolerance)
+        if (
+            conservation.shape != ()
+            or admissible_.shape != ()
+            or geometry_valid_.shape != ()
+            or not np.isfinite(tolerance)
+            or tolerance < 0.0
+        ):
+            raise ValueError("hp transaction acceptance evidence is invalid.")
         self.accepted = accepted
         self.candidate = candidate
         self.lineage = lineage
         self.p_transfers = p_transfers_
         self.h_transfers = h_transfers_
         self.diagnostics = diagnostics_
+        self.state_payload = state_payload
+        self.temporal_payload = temporal_payload
+        self.robustness_payload = robustness_payload
+        self.observer_payload = observer_payload
+        self.conservation_error = conservation
+        self.admissible = admissible_
+        self.geometry_valid = geometry_valid_
+        self.conservation_tolerance = tolerance
         self.transaction_id = canonical_fingerprint(
             {
                 "kind": "finite-element-hp-transaction",
@@ -555,6 +590,11 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
                 "p_transfers": [value.transfer_id for value in p_transfers_],
                 "h_transfers": [value.transfer_id for value in h_transfers_],
                 "diagnostics": list(diagnostics_),
+                "state_payload": array_tree_fingerprint(state_payload),
+                "temporal_payload": array_tree_fingerprint(temporal_payload),
+                "robustness_payload": array_tree_fingerprint(robustness_payload),
+                "observer_payload": array_tree_fingerprint(observer_payload),
+                "conservation_tolerance": tolerance,
             }
         )
 
@@ -564,7 +604,19 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
     def promote(self, candidate_accepted: bool, /) -> FiniteElementHPEpoch:
         if not isinstance(candidate_accepted, (bool, np.bool_)):
             raise TypeError("hp candidate promotion is one explicit host decision.")
-        return self.candidate if bool(candidate_accepted) else self.accepted
+        evidence_accepted = bool(
+            np.asarray(self.admissible)
+            & np.asarray(self.geometry_valid)
+            & (
+                abs(float(np.asarray(self.conservation_error)))
+                <= self.conservation_tolerance
+            )
+        )
+        return (
+            self.candidate
+            if bool(candidate_accepted) and evidence_accepted
+            else self.accepted
+        )
 
 
 class FiniteElementHPRefinementResult(StrictModule, NonTrainableState):

@@ -437,3 +437,77 @@ def test_modepy_simplex_family_and_prepared_reference_reproduce_polynomials(cell
         assert facet.normals.shape == facet.points.shape
         assert jnp.all(facet.weights > 0.0)
     assert family.condition_number < 1.0e5
+
+
+def test_facet_orientation_groups_have_exact_inverses_and_composition():
+    from phydrax.discretization.fem._reference_topology import (
+        facet_orientation_actions,
+        facet_orientation_between,
+    )
+
+    for shape, size in (
+        ("point", 1),
+        ("edge", 2),
+        ("triangle", 3),
+        ("quadrilateral", 4),
+    ):
+        identity = facet_orientation_actions(shape)[0]
+        values = jnp.arange(size)
+        for action in facet_orientation_actions(shape):
+            assert action.compose(action.inverse) == identity
+            assert action.inverse.compose(action) == identity
+            np.testing.assert_array_equal(
+                action.inverse.apply(action.apply(values)), values
+            )
+    action = facet_orientation_between((10, 20, 30), (20, 30, 10))
+    assert action.permutation == (2, 0, 1)
+
+
+def test_triangular_physical_mortar_reproduces_total_degree_space():
+    from phydrax.discretization.fem._mortar import (
+        serial_finite_element_mortar_plan,
+    )
+    from phydrax.integration import GaussLegendreRule, ReferenceTriangleRule
+
+    family = SimplexNodalFamily("triangle", 2)
+    rule = ReferenceTriangleRule(GaussLegendreRule(4)).materialize()
+    mortar = serial_finite_element_mortar_plan(
+        family.nodes,
+        family.nodes,
+        family.nodes,
+        rule.points,
+        rule.weights,
+        facet_shape="triangle",
+        declared_reproduction_degree=2,
+        left_physical_coordinates=rule.points,
+        right_physical_coordinates=rule.points,
+        interface_id="triangle-mortar",
+    )
+    assert mortar.facet_shape == "triangle"
+    assert mortar.evidence.declared_polynomials_reproduced
+    flux = jnp.linspace(-0.4, 0.6, rule.points.shape[0])
+    np.testing.assert_allclose(mortar.conservation_residual(flux), 0.0, atol=3.0e-12)
+
+
+def test_entropy_reference_operators_close_generalized_sbp_identity():
+    from phydrax.equations.fem._entropy_stability import (
+        prepare_entropy_reference_operator,
+    )
+    from phydrax.integration import (
+        GaussLegendreRule,
+        ReferenceIntervalRule,
+        ReferenceTriangleRule,
+    )
+
+    family = SimplexNodalFamily("triangle", 3)
+    axis = GaussLegendreRule(6)
+    operator = prepare_entropy_reference_operator(
+        family.finite_element(),
+        ReferenceTriangleRule(axis),
+        (ReferenceIntervalRule(axis),) * 3,
+        tolerance=3.0e-9,
+    )
+    assert operator.formal_sbp
+    assert operator.minimum_mass_eigenvalue > 0.0
+    assert operator.sbp_defect <= 3.0e-9
+    assert operator.constant_defect <= 3.0e-9

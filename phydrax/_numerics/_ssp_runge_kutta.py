@@ -62,6 +62,7 @@ def _stage(
     index: int,
     time: Array,
     value: Array,
+    fallback_state: Array,
     args: Any,
     transform: StageTransform | None,
     /,
@@ -89,7 +90,7 @@ def _stage(
     ):
         raise TypeError("SSP stage transform evidence must contain scalar arrays.")
     return StageTransformResult(
-        state,
+        jnp.where(result.successful, state, jnp.asarray(fallback_state)),
         result.applied,
         result.successful,
         jnp.asarray(result.correction_norm, dtype=candidate.real.dtype),
@@ -148,7 +149,7 @@ def ssprk33_step_with_evidence(
     first_candidate = accumulation(y0_) + accumulation(
         h_ * stage_value(vector_field(t, y0_, args))
     )
-    first = _stage(1, t + h_, stage_value(first_candidate), args, stage_transform)
+    first = _stage(1, t + h_, stage_value(first_candidate), y0_, args, stage_transform)
     y1 = stage_value(first.state)
     second_increment = accumulation(y1 + h_ * stage_value(vector_field(t + h_, y1, args)))
     second_candidate = accumulation(0.75 * y0_) + accumulation(0.25 * second_increment)
@@ -156,6 +157,7 @@ def ssprk33_step_with_evidence(
         2,
         t + 0.5 * h_,
         stage_value(second_candidate),
+        y0_,
         args,
         stage_transform,
     )
@@ -170,6 +172,7 @@ def ssprk33_step_with_evidence(
         3,
         t + h_,
         stage_value(third_candidate),
+        y0_,
         args,
         stage_transform,
     )
@@ -241,6 +244,7 @@ def ssprk54_step_with_evidence(
         1,
         t + 0.391752226571890 * h_,
         stage_value(first_candidate),
+        y0_,
         args,
         stage_transform,
     )
@@ -258,6 +262,7 @@ def ssprk54_step_with_evidence(
         2,
         t + 0.586079689311540 * h_,
         stage_value(second_candidate),
+        y0_,
         args,
         stage_transform,
     )
@@ -275,6 +280,7 @@ def ssprk54_step_with_evidence(
         3,
         t + 0.474542363026870 * h_,
         stage_value(third_candidate),
+        y0_,
         args,
         stage_transform,
     )
@@ -292,6 +298,7 @@ def ssprk54_step_with_evidence(
         4,
         t + 0.935010631009240 * h_,
         stage_value(fourth_candidate),
+        y0_,
         args,
         stage_transform,
     )
@@ -315,6 +322,7 @@ def ssprk54_step_with_evidence(
         5,
         t + h_,
         stage_value(fifth_candidate),
+        y0_,
         args,
         stage_transform,
     )

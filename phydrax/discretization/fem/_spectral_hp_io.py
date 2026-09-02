@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._cell_complex import PolyhedralConnectivity
 from .._cell_mesh import CellBlock, CellMesh
 from ._generic import FiniteElementCoordinateSpec
 from ._hp_runtime import FiniteElementHPEpoch
@@ -353,6 +354,11 @@ _MESHIO_VOLUME_TYPES = {
     "tetra": ("tetrahedron", 1, 4),
     "tetra10": ("tetrahedron", 2, 4),
     "hexahedron": ("hexahedron", 1, 8),
+    "hexahedron27": ("hexahedron", 2, 8),
+    "wedge": ("prism", 1, 6),
+    "wedge18": ("prism", 2, 6),
+    "pyramid": ("pyramid", 1, 5),
+    "pyramid14": ("pyramid", 2, 5),
 }
 
 
@@ -406,6 +412,86 @@ def _meshio_reference_nodes(cell_type: str, /) -> np.ndarray:
             (1.0, 0.0, 1.0),
             (1.0, 1.0, 1.0),
             (0.0, 1.0, 1.0),
+        ),
+        "hexahedron27": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (0.0, 1.0, 1.0),
+            (0.5, 0.0, 0.0),
+            (1.0, 0.5, 0.0),
+            (0.5, 1.0, 0.0),
+            (0.0, 0.5, 0.0),
+            (0.5, 0.0, 1.0),
+            (1.0, 0.5, 1.0),
+            (0.5, 1.0, 1.0),
+            (0.0, 0.5, 1.0),
+            (0.0, 0.0, 0.5),
+            (1.0, 0.0, 0.5),
+            (1.0, 1.0, 0.5),
+            (0.0, 1.0, 0.5),
+            (0.5, 0.5, 0.0),
+            (0.5, 0.5, 1.0),
+            (0.5, 0.0, 0.5),
+            (1.0, 0.5, 0.5),
+            (0.5, 1.0, 0.5),
+            (0.0, 0.5, 0.5),
+            (0.5, 0.5, 0.5),
+        ),
+        "wedge": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0),
+            (0.0, 1.0, 1.0),
+        ),
+        "wedge18": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0),
+            (0.0, 1.0, 1.0),
+            (0.5, 0.0, 0.0),
+            (0.5, 0.5, 0.0),
+            (0.0, 0.5, 0.0),
+            (0.5, 0.0, 1.0),
+            (0.5, 0.5, 1.0),
+            (0.0, 0.5, 1.0),
+            (0.0, 0.0, 0.5),
+            (1.0, 0.0, 0.5),
+            (0.0, 1.0, 0.5),
+            (0.5, 0.0, 0.5),
+            (0.5, 0.5, 0.5),
+            (0.0, 0.5, 0.5),
+        ),
+        "pyramid": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.5, 0.5, 1.0),
+        ),
+        "pyramid14": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.5, 0.5, 1.0),
+            (0.5, 0.0, 0.0),
+            (1.0, 0.5, 0.0),
+            (0.5, 1.0, 0.0),
+            (0.0, 0.5, 0.0),
+            (0.25, 0.25, 0.5),
+            (0.75, 0.25, 0.5),
+            (0.75, 0.75, 0.5),
+            (0.25, 0.75, 0.5),
+            (0.5, 0.5, 0.0),
         ),
     }
     if cell_type not in values:
@@ -503,10 +589,17 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
         if topological_dimension == 2
         else np.asarray(mesh.connectivity.faces)
     )
-    facets_by_key = {
-        tuple(sorted(int(value) for value in vertices)): index
-        for index, vertices in enumerate(facet_vertices)
-    }
+    if isinstance(mesh.connectivity, PolyhedralConnectivity):
+        arities = np.asarray(mesh.connectivity.face_arities, dtype=np.int32)
+        facets_by_key = {
+            tuple(sorted(int(value) for value in vertices[: int(arities[index])])): index
+            for index, vertices in enumerate(facet_vertices)
+        }
+    else:
+        facets_by_key = {
+            tuple(sorted(int(value) for value in vertices)): index
+            for index, vertices in enumerate(facet_vertices)
+        }
     boundary_groups: dict[str, set[int]] = {}
     for group_name, selections in source.cell_sets.items():
         selected_facets = boundary_groups.setdefault(str(group_name), set())

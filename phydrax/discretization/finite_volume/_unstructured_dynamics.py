@@ -26,6 +26,10 @@ from .._conservation_boundary import (
     ExtrapolationBoundary,
     PrescribedStateBoundary,
 )
+from .._conservation_ledger import (
+    ConservationStageFluxRateBlock,
+    ConservationStageLedger,
+)
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._contact_angle import reconstruct_wall_interface_normal
 from ._coupling import (
@@ -35,10 +39,6 @@ from ._coupling import (
 from ._embedded_dynamics import (
     lower_embedded_stage_metrics,
     UnstructuredEmbeddedBoundarySet,
-)
-from ._flux_ledger import (
-    FiniteVolumeStageFluxRateBlock,
-    FiniteVolumeStageFluxRateLedger,
 )
 from ._geometry_protocol import (
     FiniteVolumeGeometryStatus,
@@ -179,7 +179,7 @@ class UnstructuredFiniteVolumeDiagnostics(StrictModule):
 class UnstructuredFiniteVolumeStageEvaluation(StrictModule):
     """One certified ALE stage rate and its relative-wave CFL accounting."""
 
-    ledger: FiniteVolumeStageFluxRateLedger
+    ledger: ConservationStageLedger
     relative_signal_speeds: tuple[Array, ...]
     cell_relative_rate: Array
     maximum_relative_rate: Array
@@ -197,10 +197,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     coupling: PreparedUnstructuredFiniteVolumeCoupling
     precision: FiniteVolumePrecisionPolicy
     boundary_face_indices: tuple[Array, ...]
-    stage_rate_block_templates: tuple[FiniteVolumeStageFluxRateBlock, ...]
+    stage_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...]
     stage_boundary_face_indices: tuple[tuple[Array, ...], ...]
     source_cell_indices: Array
-    overset_rate_block_template: FiniteVolumeStageFluxRateBlock | None
+    overset_rate_block_template: ConservationStageFluxRateBlock | None
     overset_active_cell_mask: Array
     overset_effective_cell_volumes: Array
     overset_policy_id: str | None = eqx.field(static=True)
@@ -382,7 +382,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 & receptor_fringe[template_neighbour_cells]
                 & (template_owner_cells != template_neighbour_cells)
             )
-            overset_rate_block_template = FiniteVolumeStageFluxRateBlock(
+            overset_rate_block_template = ConservationStageFluxRateBlock(
                 jnp.zeros(
                     (template_owner_cells.size, discretization.component_count),
                     dtype=jnp.dtype(precision_.reduction_dtype),
@@ -458,7 +458,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
             layout.validate_boundary_policy_count(policy_count)
         stage_rate_block_templates = tuple(
-            FiniteVolumeStageFluxRateBlock(
+            ConservationStageFluxRateBlock(
                 jnp.zeros(
                     (layout.face_count, discretization.component_count),
                     dtype=jnp.dtype(precision_.reduction_dtype),
@@ -600,12 +600,12 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         self,
         metrics: FiniteVolumeStageMetrics,
         /,
-    ) -> tuple[FiniteVolumeStageFluxRateBlock, ...]:
+    ) -> tuple[ConservationStageFluxRateBlock, ...]:
         if len(metrics.face_blocks) != len(self.stage_rate_block_templates):
             raise ValueError(
                 "Stage geometry does not match the prepared face-block layout."
             )
-        templates: list[FiniteVolumeStageFluxRateBlock] = []
+        templates: list[ConservationStageFluxRateBlock] = []
         for geometry_block, prepared in zip(
             metrics.face_blocks,
             self.stage_rate_block_templates,
@@ -872,7 +872,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         metrics: FiniteVolumeStageMetrics,
         args: Any,
         /,
-    ) -> tuple[FiniteVolumeStageFluxRateBlock | None, Array, Array]:
+    ) -> tuple[ConservationStageFluxRateBlock | None, Array, Array]:
         """Evaluate one moved, stage-bound conservative sliding correction."""
 
         template = self.overset_rate_block_template
@@ -1068,13 +1068,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
 
     def _append_overset_block(
         self,
-        ledger: FiniteVolumeStageFluxRateLedger,
-        block: FiniteVolumeStageFluxRateBlock | None,
+        ledger: ConservationStageLedger,
+        block: ConservationStageFluxRateBlock | None,
         /,
-    ) -> FiniteVolumeStageFluxRateLedger:
+    ) -> ConservationStageLedger:
         if block is None:
             return ledger
-        return FiniteVolumeStageFluxRateLedger(
+        return ConservationStageLedger(
             (*ledger.blocks, block),
             ledger.source_rate,
             ledger.active_cell_mask,
@@ -1088,10 +1088,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
 
     def _append_redistribution_block(
         self,
-        ledger: FiniteVolumeStageFluxRateLedger,
+        ledger: ConservationStageLedger,
         redistribution: ConservativeSmallCellRedistributionPlan | None,
         /,
-    ) -> FiniteVolumeStageFluxRateLedger:
+    ) -> ConservationStageLedger:
         embedded = self.coupling.embedded_metrics is not None
         if embedded != (redistribution is not None):
             raise ValueError(
@@ -1109,7 +1109,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
         if block is None:
             return ledger
-        return FiniteVolumeStageFluxRateLedger(
+        return ConservationStageLedger(
             (*ledger.blocks, block),
             ledger.source_rate,
             ledger.active_cell_mask,
@@ -1127,13 +1127,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         /,
         *,
         redistribution: ConservativeSmallCellRedistributionPlan | None = None,
-    ) -> FiniteVolumeStageFluxRateLedger:
+    ) -> ConservationStageLedger:
         """Create a routed zero rate without invoking reconstruction or physics."""
 
         if not isinstance(metrics, FiniteVolumeStageMetrics):
             raise TypeError("metrics must be FiniteVolumeStageMetrics.")
         blocks = self._stage_rate_templates(metrics)
-        ledger = FiniteVolumeStageFluxRateLedger(
+        ledger = ConservationStageLedger(
             blocks,
             jnp.zeros(
                 (metrics.cell_count, self.discretization.component_count),
@@ -1241,7 +1241,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             primitive = self.system.conserved_to_primitive(average)
         traces = self._stage_face_states(average, metrics, args)
         templates = self._stage_rate_templates(metrics)
-        blocks: list[FiniteVolumeStageFluxRateBlock] = []
+        blocks: list[ConservationStageFluxRateBlock] = []
         speeds: list[Array] = []
         cell_rate = jnp.zeros(
             (metrics.cell_count,),
@@ -1510,7 +1510,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 density,
                 interface_active=stage_plic.interface_active,
             )
-        ledger = FiniteVolumeStageFluxRateLedger(
+        ledger = ConservationStageLedger(
             tuple(blocks),
             source_rate,
             metrics.active_cell_mask,
