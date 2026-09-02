@@ -6,6 +6,16 @@
 - Added certified exact/bounded sharp-geometry realization with compatible
   MAC/FLIP/VOF coupling, explicit fixed-step and host-inspection adapters, and
   bounded nonconservative MacCormack transport for periodic passive tracers.
+- Added a stateful functional-training runtime with canonical measure-weighted
+  residual roots, named residual blocks, finite-width empirical neural tangent
+  operators and diagnostics, pseudo-transient and causal residual transforms,
+  gradient-norm and NTK-trace balancing, gradient alignment evidence, fixed
+  evaluation selection, exact checkpoint/resume, named-axis sharding, physical
+  time-window orchestration, and exact nonlinear defect correction.
+- Added a Phydrax-native SOAP optimizer with resource-bounded per-axis Shampoo
+  covariances, Adam moments in adaptive orthogonal bases, periodic QR refresh,
+  independent moment/preconditioner dtypes, decoupled weight decay, JIT-safe
+  mixed precision, and exact functional-training checkpoint state.
 - Added deterministic dense local quantum programs with explicit mixed-dimensional
   Hilbert layouts, ordered local unitary and Kraus contractions, CP-by-construction
   and trace-preservation evidence, resource-bounded plan/prepare/refresh execution,

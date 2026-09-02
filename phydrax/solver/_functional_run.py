@@ -16,6 +16,7 @@ import numpy as np
 from .._training import EvaluationParametersFn
 from ._functional_objective import _FunctionalObjective
 from ._functional_precision import FunctionalPrecisionPolicy
+from ._functional_training import FunctionalTrainingPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,8 @@ class FunctionalSolveConfig:
     profile_adaptive: bool = False
     train_term_sample_size: int | None = None
     precision: FunctionalPrecisionPolicy | None = None
+    training: FunctionalTrainingPlan | None = None
+    resume: bool = False
 
     def __post_init__(self):
         iterations = int(self.num_iter)
@@ -54,6 +57,10 @@ class FunctionalSolveConfig:
             self.precision, FunctionalPrecisionPolicy
         ):
             raise TypeError("precision must be a FunctionalPrecisionPolicy or None.")
+        if self.training is not None and not isinstance(
+            self.training, FunctionalTrainingPlan
+        ):
+            raise TypeError("training must be a FunctionalTrainingPlan or None.")
         if self.parameter_paths is None:
             if self.parameter_shapes or self.parameter_dtypes:
                 raise ValueError(

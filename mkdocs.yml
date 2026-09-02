@@ -264,6 +264,7 @@ nav:
         - Euclidean path integrals and Feynman–Kac: "guides_path_integrals.md"
         - Conditions, terms, and enforcement: "guides_conditions.md"
         - Solvers and training: "guides_solver.md"
+        - Functional training runtime: "guides_functional_training.md"
         - Uncertainty quantification: "guides_uncertainty.md"
         - Probabilistic graphical models: "guides_probabilistic_graphical_models.md"
         - Optimal transport: "guides_transport.md"
@@ -453,6 +454,7 @@ nav:
             - Wrappers: "api/nn/wrappers.md"
             - Embeddings: "api/nn/embeddings.md"
             - Activations: "api/nn/activations.md"
+            - Neural tangent kernels: "api/nn/neural_tangent.md"
         - Stochastic processes:
             - Overview: "api/stochastic/index.md"
             - Gaussian score diffusions: "api/stochastic/diffusion.md"

@@ -30,9 +30,9 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..terms import ResidualPenalty
-from ._kfac_problem import (
-    frozen_term_residual_vector,
-    materialize_frozen_residual_terms,
+from ._functional_residual import (
+    materialize_prepared_residual_terms,
+    prepared_term_residual_vector,
 )
 
 
@@ -143,21 +143,21 @@ def solve_linear_trial_space(
         sampling_key=sampling_key,
         iteration=jnp.asarray(0, dtype=jnp.int32),
     )
-    frozen_terms = materialize_frozen_residual_terms(prepared)
-    if len(frozen_terms) != len(solver.terms):
+    residual_terms = materialize_prepared_residual_terms(prepared, require_all=True)
+    if len(residual_terms) != len(solver.terms):
         raise RuntimeError("Failed to materialize every linear trial-space residual term.")
 
     def residual_vector(flat):
         current = unravel(flat)
         pieces = tuple(
-            frozen_term_residual_vector(
+            prepared_term_residual_vector(
                 current,
                 non_trainable,
-                solver,
+                solver.enforcement,
                 term,
-                iter_=prepared.iteration,
+                iteration=prepared.iteration,
             )
-            for term in frozen_terms
+            for term in residual_terms
         )
         if not pieces:
             return jnp.zeros((0,), dtype=flat.dtype)

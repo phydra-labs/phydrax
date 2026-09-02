@@ -69,6 +69,8 @@ class _GradientBackend:
             profile_adaptive=config.profile_adaptive,
             train_term_sample_size=config.train_term_sample_size,
             precision=config.precision,
+            training=config.training,
+            resume=config.resume,
         )
 
 
@@ -135,6 +137,8 @@ class _KFACBackend:
             tensorboard_every=config.tensorboard_every,
             tensorboard_flush_every=config.tensorboard_flush_every,
             profile_adaptive=config.profile_adaptive,
+            training=config.training,
+            resume=config.resume,
             train_term_sample_size=config.train_term_sample_size,
         )
 

@@ -140,6 +140,7 @@ from ._randomized_residual import (
     ResidualEvaluator,
 )
 from ._residual import ResidualPenalty
+from ._residual_layout import ResidualBlockLayout, ResidualBlockRef
 from ._ricci_flat import ricci_flat_kahler_term
 from ._score_matching import (
     ScoreMatchingBatch,
@@ -282,6 +283,8 @@ __all__ = [
     "RandomizedResidualSamplingMode",
     "RandomizedResidualTerm",
     "ResidualEvaluator",
+    "ResidualBlockLayout",
+    "ResidualBlockRef",
     "ResidualPenalty",
     "ScoreMatchingBatch",
     "ScoreMatchingDiagnostics",

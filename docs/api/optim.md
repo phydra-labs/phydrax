@@ -391,6 +391,82 @@ mixed-PyTree constraint diagnostics without comparisons to external libraries.
 
 ::: phydrax.optim.riemannian_lbfgs
 
+## Stateful orthogonal adaptive preconditioning: SOAP
+
+`phydrax.optim.soap(...)` is the Phydrax-owned SOAP implementation. It combines
+per-axis Shampoo covariance estimates with Adam moments maintained in the
+covariance eigenbases. It is an ordinary Optax-compatible transformation and
+therefore works with `FunctionalSolver`, explicit parameter subspaces, JIT, and
+functional-training checkpoints without an optional provider.
+
+!!! example
+    ```python
+    import phydrax as phx
+
+
+    optimizer = phx.optim.soap(
+        learning_rate=1e-3,
+        b1=0.9,
+        b2=0.999,
+        preconditioner_decay=0.999,
+        precondition_frequency=10,
+        max_preconditioner_size=4096,
+        weight_decay=1e-4,
+    )
+    trained = solver.solve(
+        num_iter=10_000,
+        optim=optimizer,
+        training=training_plan,
+    )
+    ```
+
+For a parameter with shape `(d0, ..., dn)`, SOAP maintains at most one
+`di × di` covariance and orthogonal basis per axis. Axes larger than
+`max_preconditioner_size` are skipped independently rather than forcing an
+unbounded allocation. Rank-zero parameters use Adam coordinates. Rank-one
+parameters do the same by default; set `precondition_1d=True` to allocate their
+full covariance.
+
+The first gradient call initializes the covariance bases and intentionally
+returns a zero update. Adam moment count and learning-rate schedules begin with
+the first subsequent parameter update. `precondition_frequency` counts those
+effective updates. Decoupled weight decay is likewise inactive during basis
+initialization.
+
+`moment_dtype` controls Adam state. `preconditioner_dtype` controls retained
+covariance and basis matrices; when omitted, half-precision parameters promote
+this state to float32 while float32/float64 parameters retain their dtype. An
+explicit preconditioner dtype below 32-bit precision is rejected because dense
+eigendecomposition and QR do not provide the required numerical contract.
+Mixed float64 parameters with float32 preconditioners retain branch-consistent
+state and are JIT-safe.
+
+`scale_by_soap(...)` exposes the unscaled adaptive direction for deliberate
+Optax composition. `SOAPState` contains the exact update count, first and second
+moments, covariance matrices, and orthogonal bases; all are checkpointed by the
+functional runtime.
+
+Run the bounded functional smoke campaign with:
+
+```bash
+python tools/pinn_training_strategy_campaign.py \
+  --smoke --optimizer soap --strategy combined
+```
+
+::: phydrax.optim.soap
+
+---
+
+::: phydrax.optim.scale_by_soap
+
+---
+
+::: phydrax.optim.SOAPState
+
+---
+
+::: phydrax.optim.SOAPPreconditioner
+
 ## Structured residual optimization: KFAC
 
 `phydrax.optim.kfac(...)` constructs the Phydrax-native structured optimizer used by
@@ -1719,6 +1795,7 @@ global evidence.
 | Object | Standalone nonlinear API | `FunctionalSolver` | `fit_operator` | Geometry/UQ search |
 |---|---:|---:|---:|---:|
 | Optax transformations | No | Yes | Yes | No |
+| `phydrax.optim.soap` | No | Yes | Yes | No |
 | `phydrax.optim.kfac` | No | Yes | No | No |
 | Phydrax scalar, least-squares, and composite methods | Yes | Yes | No | No |
 | Phydrax constrained/state-design/stochastic methods | Yes | No | No | No |
@@ -1730,9 +1807,10 @@ global evidence.
 | `IpoptMinimize` | Yes when cyipopt is installed | No | No | No |
 | `ceres_least_squares` | Explicit callback boundary | No | No | No |
 
-`FunctionalSolver.solve` accepts standard and extra-argument Optax transformations,
-Phydrax KFAC and Riemannian optimizers, and native scalar, least-squares, and composite
-iterative methods. Operator fitting accepts supplied Optax transformations.
+`FunctionalSolver.solve` accepts standard and extra-argument Optax
+transformations, native SOAP, Phydrax KFAC and Riemannian optimizers, and native
+scalar, least-squares, and composite iterative methods. Operator fitting
+accepts supplied Optax-compatible transformations, including SOAP.
 Resumable `fit_operator` runs require a stable `optimizer_id` whenever the transformation
 is supplied externally so checkpoint identity does not depend on an opaque Python object.
 

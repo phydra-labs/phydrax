@@ -2,11 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import pytest
-
 import phydrax as phx
-from phydrax.operators.differential import laplacian, partial_n
-from phydrax.solver._kfac_derivative_requests import trace_derivative_requests
+from phydrax.operators.differential import (
+    laplacian,
+    partial_n,
+    plan_derivative_execution,
+    trace_derivative_requests,
+)
 
 
 def test_trace_derivative_requests_keeps_laplacian_contracted():
@@ -33,7 +35,7 @@ def test_trace_derivative_requests_keeps_laplacian_contracted():
     assert all(request.order <= 2 for request in requests)
 
 
-def test_trace_derivative_requests_rejects_derivatives_above_order_two():
+def test_trace_derivative_requests_retains_high_order_for_generic_planning():
     domain = phx.domain.Interval1d(0.0, 1.0)
 
     @domain.Function("x")
@@ -50,11 +52,13 @@ def test_trace_derivative_requests_rejects_derivatives_above_order_two():
             order=3,
         ),
     )
-    with pytest.raises(ValueError, match="through order two"):
-        trace_derivative_requests(condition.residual, {"u": u})
+    requests = trace_derivative_requests(condition.residual, {"u": u})
+
+    assert tuple(request.order for request in requests) == (1, 2, 3)
+    assert plan_derivative_execution(requests).strategy == "jet"
 
 
-def test_trace_derivative_requests_rejects_nested_laplacians():
+def test_trace_derivative_requests_retains_nested_laplacians():
     domain = phx.domain.Interval1d(0.0, 1.0)
 
     @domain.Function("x")
@@ -69,5 +73,7 @@ def test_trace_derivative_requests_rejects_nested_laplacians():
             var="x",
         ),
     )
-    with pytest.raises(ValueError, match="order 4"):
-        trace_derivative_requests(condition.residual, {"u": u})
+    requests = trace_derivative_requests(condition.residual, {"u": u})
+
+    assert tuple(request.order for request in requests) == (2, 4)
+    assert plan_derivative_execution(requests).strategy == "jet"

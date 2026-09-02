@@ -5,95 +5,28 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
 from typing import Any, Literal
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
-from phydrax._trainable import combine_trainable
 from phydrax.domain import DomainFunction
-from phydrax.integration import IntegrationRealization
-from phydrax.operators.differential._runtime import derivative_runtime_context
 from phydrax.terms import ResidualPenalty
 
+from ..operators.differential._requests import trace_derivative_requests
 from ..optim._kfac._blocks import (
     AffineFactorObservation,
     BlockCurvatureObservation,
     estimate_kron_factors_from_chunks,
 )
-from ._functional_objective import _PreparedObjective
-from ._kfac_derivative_requests import trace_derivative_requests
+from ._functional_residual import (
+    prepared_term_residual_vector,
+    PreparedFunctionalResidual,
+    PreparedResidualTerm,
+)
 from ._kfac_layout import ParameterLayout
-
-
-@dataclass(frozen=True, slots=True)
-class FrozenResidualTerm:
-    """One materialized ResidualPenalty reused for curvature, gradient, and search."""
-
-    term: ResidualPenalty
-    realization: IntegrationRealization
-    scale: Array | float = 1.0
-
-
-def materialize_frozen_terms(
-    prepared: _PreparedObjective,
-    /,
-) -> tuple[FrozenResidualTerm, ...]:
-    """Lower one prepared objective to KFAC residual-root realizations."""
-    frozen: list[FrozenResidualTerm] = []
-    for prepared_term in prepared.terms:
-        term = prepared_term.term
-        if not isinstance(term, ResidualPenalty):
-            raise TypeError(
-                "KFAC supports ResidualPenalty training terms only; "
-                f"got {type(term).__name__}."
-            )
-        if prepared_term.payload_kind != "realization" or not isinstance(
-            prepared_term.payload,
-            IntegrationRealization,
-        ):
-            raise TypeError(
-                "KFAC residual terms require a prepared IntegrationRealization."
-            )
-        realization = prepared_term.payload
-        frozen.append(
-            FrozenResidualTerm(
-                term=term,
-                realization=realization,
-                scale=jnp.asarray(prepared.selection.scale),
-            )
-        )
-    return tuple(frozen)
-
-
-def materialize_frozen_residual_terms(
-    prepared: _PreparedObjective,
-    /,
-) -> tuple[FrozenResidualTerm, ...]:
-    """Lower only ResidualPenalty terms from one mixed prepared objective."""
-
-    frozen: list[FrozenResidualTerm] = []
-    for prepared_term in prepared.terms:
-        term = prepared_term.term
-        if not isinstance(term, ResidualPenalty):
-            continue
-        if prepared_term.payload_kind != "realization" or not isinstance(
-            prepared_term.payload,
-            IntegrationRealization,
-        ):
-            raise TypeError("Residual terms require a prepared IntegrationRealization.")
-        frozen.append(
-            FrozenResidualTerm(
-                term=term,
-                realization=prepared_term.payload,
-                scale=jnp.asarray(prepared.selection.scale),
-            )
-        )
-    return tuple(frozen)
 
 
 def validate_derivative_coverage(
@@ -109,52 +42,14 @@ def validate_derivative_coverage(
                 "KFAC supports ResidualPenalty training terms only; "
                 f"got {type(term).__name__}."
             )
-        trace_derivative_requests(term.condition.residual, functions)
+        requests = trace_derivative_requests(term.condition.residual, functions)
+        for request in requests:
+            if request.order > 2:
+                raise ValueError(
+                    "KFAC supports residual derivatives through order two; "
+                    f"field {request.field!r} requested order {request.order}."
+                )
 
-
-def _scaled_residual_data(data, /, *, scale: Any) -> Array:
-    pieces: list[Array] = []
-    for residual, coefficient in zip(
-        data.residuals,
-        data.coefficients,
-        strict=True,
-    ):
-        root = cx.Field(
-            jnp.sqrt(jnp.asarray(scale) * jnp.asarray(coefficient.data)),
-            dims=coefficient.dims,
-        )
-        scaled = root * residual
-        values = jnp.asarray(scaled.data)
-        pieces.append(jnp.real(values).reshape((-1,)))
-        if jnp.iscomplexobj(values):
-            pieces.append(jnp.imag(values).reshape((-1,)))
-    if not pieces:
-        return jnp.zeros((0,), dtype=float)
-    return jnp.concatenate(tuple(pieces), axis=0)
-
-
-def frozen_term_residual_vector(
-    params: PyTree[Any],
-    non_trainable: PyTree[Any],
-    solver,
-    term: FrozenResidualTerm,
-    /,
-    *,
-    iter_: Array | int | None,
-) -> Array:
-    """Evaluate square-root-weighted residual roots for one frozen term."""
-
-    functions = combine_trainable(params, non_trainable)
-    enforced = (
-        functions if solver.enforcement is None else solver.enforcement.apply(functions)
-    )
-    with derivative_runtime_context():
-        data = term.term._quadratic_residual_data(
-            enforced,
-            realization=term.realization,
-            iter_=iter_,
-        )
-    return _scaled_residual_data(data, scale=term.scale)
 
 
 def _block_jacobian_chunks(
@@ -162,12 +57,13 @@ def _block_jacobian_chunks(
     unravel,
     non_trainable: PyTree[Any],
     solver,
-    term: FrozenResidualTerm,
+    term: PreparedResidualTerm,
     indices: tuple[int, ...],
     /,
     *,
     chunk_size: int,
     iter_: Array | int | None,
+    functional_residual: PreparedFunctionalResidual | None = None,
 ) -> Iterator[Array]:
     """Differentiate bounded residual chunks with respect to one parameter block."""
 
@@ -175,13 +71,17 @@ def _block_jacobian_chunks(
     block_params = jnp.take(flat_params, index_array)
 
     def residual_from_block(values):
-        candidate = flat_params.at[index_array].set(values)
-        return frozen_term_residual_vector(
-            unravel(candidate),
+        candidate = unravel(flat_params.at[index_array].set(values))
+        if functional_residual is not None:
+            blocks = functional_residual.blocks_for(candidate, term)
+            pieces = tuple(block.values for block in blocks)
+            return pieces[0] if len(pieces) == 1 else jnp.concatenate(pieces)
+        return prepared_term_residual_vector(
+            candidate,
             non_trainable,
-            solver,
+            solver.enforcement,
             term,
-            iter_=iter_,
+            iteration=iter_,
         )
 
     residual_size = int(residual_from_block(block_params).size)
@@ -214,13 +114,14 @@ def term_block_curvature_observations(
     params: PyTree[Any],
     non_trainable: PyTree[Any],
     solver,
-    terms: tuple[FrozenResidualTerm, ...],
+    terms: tuple[PreparedResidualTerm, ...],
     layout: ParameterLayout,
     /,
     *,
     approximation: Literal["expand", "reduce"],
     chunk_size: int,
     iter_: Array | int | None,
+    functional_residual: PreparedFunctionalResidual | None = None,
 ) -> tuple[Array, tuple[BlockCurvatureObservation, ...]]:
     """Extract block-local type-II GGN observations without a global Jacobian."""
 
@@ -242,6 +143,7 @@ def term_block_curvature_observations(
                 block.indices,
                 chunk_size=chunk_size,
                 iter_=iter_,
+                functional_residual=functional_residual,
             )
             activation, sensitivity = estimate_kron_factors_from_chunks(
                 chunks,
@@ -263,6 +165,7 @@ def term_block_curvature_observations(
                 uncovered_spec.indices,
                 chunk_size=chunk_size,
                 iter_=iter_,
+                functional_residual=functional_residual,
             )
             if uncovered_spec.approximation == "exact":
                 uncovered = sum(
@@ -285,96 +188,9 @@ def term_block_curvature_observations(
     return flat_params, tuple(observations)
 
 
-def term_residual_jacobians(
-    params: PyTree[Any],
-    non_trainable: PyTree[Any],
-    solver,
-    terms: tuple[FrozenResidualTerm, ...],
-    /,
-    *,
-    iter_: Array | int | None,
-) -> tuple[Array, tuple[Array, ...], Any]:
-    """Differentiate each residual term separately through its complete ansatz graph."""
-
-    flat_params, unravel = ravel_pytree(params)
-    jacobians: list[Array] = []
-    for term in terms:
-
-        def residual_from_flat(flat):
-            return frozen_term_residual_vector(
-                unravel(flat),
-                non_trainable,
-                solver,
-                term,
-                iter_=iter_,
-            )
-
-        jacobian = jax.jacrev(residual_from_flat)(flat_params)
-        jacobians.append(jnp.asarray(jacobian).reshape((-1, int(flat_params.size))))
-    return flat_params, tuple(jacobians), unravel
-
-
-def frozen_loss(
-    params: PyTree[Any],
-    non_trainable: PyTree[Any],
-    solver,
-    terms: tuple[FrozenResidualTerm, ...],
-    /,
-    *,
-    iter_: Array | int | None,
-) -> Array:
-    """Evaluate the total loss while reusing every materialized term."""
-
-    functions = combine_trainable(params, non_trainable)
-    enforced = (
-        functions if solver.enforcement is None else solver.enforcement.apply(functions)
-    )
-    total = jnp.asarray(0.0, dtype=float)
-    with derivative_runtime_context():
-        for term in terms:
-            data = term.term._quadratic_residual_data(
-                enforced,
-                realization=term.realization,
-                iter_=iter_,
-            )
-            total = total + jnp.asarray(term.scale) * jnp.asarray(data.loss).reshape(())
-    return total
-
-
-def frozen_loss_and_flat_gradient(
-    params: PyTree[Any],
-    non_trainable: PyTree[Any],
-    solver,
-    terms: tuple[FrozenResidualTerm, ...],
-    /,
-    *,
-    iter_: Array | int | None,
-) -> tuple[Array, Array, Any]:
-    """Return frozen-batch loss and gradient in the shared flat parameter order."""
-
-    flat_params, unravel = ravel_pytree(params)
-
-    def loss_from_flat(flat):
-        return frozen_loss(
-            unravel(flat),
-            non_trainable,
-            solver,
-            terms,
-            iter_=iter_,
-        )
-
-    loss, gradient = jax.value_and_grad(loss_from_flat)(flat_params)
-    return loss, gradient, unravel
 
 
 __all__ = [
-    "FrozenResidualTerm",
-    "frozen_loss",
-    "frozen_loss_and_flat_gradient",
-    "frozen_term_residual_vector",
-    "materialize_frozen_residual_terms",
-    "materialize_frozen_terms",
     "term_block_curvature_observations",
-    "term_residual_jacobians",
     "validate_derivative_coverage",
 ]

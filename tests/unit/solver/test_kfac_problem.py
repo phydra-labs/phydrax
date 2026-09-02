@@ -16,13 +16,15 @@ from phydrax.optim._kfac._blocks import (
     update_block_state,
     update_block_state_from_observations,
 )
+from phydrax.solver._functional_residual import (
+    prepare_functional_residual,
+    prepared_residual_jacobians,
+    prepared_residual_loss_and_flat_gradient,
+    prepared_term_residual_vector,
+)
 from phydrax.solver._kfac_layout import discover_parameter_layout
 from phydrax.solver._kfac_problem import (
-    frozen_loss_and_flat_gradient,
-    frozen_term_residual_vector,
-    materialize_frozen_terms,
     term_block_curvature_observations,
-    term_residual_jacobians,
     validate_derivative_coverage,
 )
 
@@ -50,7 +52,7 @@ def _residual_term(domain, fields, operator, *, samples, density=None):
     )
 
 
-def _materialize_terms(solver, *, key):
+def _prepare_residual(solver, params, non_trainable, *, key):
     prepared = solver.objective.prepare_training(
         range(len(solver.terms)),
         scale=1.0,
@@ -58,7 +60,13 @@ def _materialize_terms(solver, *, key):
         sampling_key=key,
         iteration=1,
     )
-    return materialize_frozen_terms(prepared)
+    return prepare_functional_residual(
+        prepared,
+        params,
+        non_trainable,
+        solver.enforcement,
+        require_all=True,
+    )
 
 
 def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
@@ -76,20 +84,14 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     term = _residual_term(domain, "u", lambda field: field, samples=7)
     solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=term)
     params, non_trainable = solver.partition_functions()
-    terms = _materialize_terms(solver, key=jr.key(5))
-    flat, jacobians, _ = term_residual_jacobians(
+    residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(5))
+    flat, jacobians, _ = prepared_residual_jacobians(residual_map, params)
+    residual = prepared_term_residual_vector(
         params,
         non_trainable,
-        solver,
-        terms,
-        iter_=1,
-    )
-    residual = frozen_term_residual_vector(
-        params,
-        non_trainable,
-        solver,
-        terms[0],
-        iter_=1,
+        solver.enforcement,
+        residual_map.terms[0],
+        iteration=1,
     )
 
     assert flat.size > 0
@@ -123,20 +125,20 @@ def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
         terms=term,
     )
     params, non_trainable = solver.partition_functions()
-    terms = _materialize_terms(solver, key=jr.key(34))
-    loss, gradient, _ = frozen_loss_and_flat_gradient(
+    residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(34))
+    loss, gradient, _ = prepared_residual_loss_and_flat_gradient(
         params,
         non_trainable,
-        solver,
-        terms,
-        iter_=jnp.asarray(1.0),
+        solver.enforcement,
+        residual_map.terms,
+        iteration=jnp.asarray(1.0),
     )
-    residual = frozen_term_residual_vector(
+    residual = prepared_term_residual_vector(
         params,
         non_trainable,
-        solver,
-        terms[0],
-        iter_=jnp.asarray(1.0),
+        solver.enforcement,
+        residual_map.terms[0],
+        iteration=jnp.asarray(1.0),
     )
 
     assert jnp.allclose(loss, 0.0)
@@ -182,14 +184,8 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
         solver.terms,
         solver.enforcement.apply(solver.functions),
     )
-    terms = _materialize_terms(solver, key=jr.key(7))
-    _, jacobians, _ = term_residual_jacobians(
-        params,
-        non_trainable,
-        solver,
-        terms,
-        iter_=1,
-    )
+    residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(7))
+    _, jacobians, _ = prepared_residual_jacobians(residual_map, params)
 
     assert jnp.all(jnp.isfinite(jacobians[0]))
     assert jnp.linalg.norm(jacobians[0]) > 0.0
@@ -223,19 +219,13 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
         exact_block_max_size=64,
         uncovered="error",
     )
-    terms = _materialize_terms(solver, key=jr.key(9))
-    flat, jacobians, _ = term_residual_jacobians(
-        params,
-        non_trainable,
-        solver,
-        terms,
-        iter_=1,
-    )
+    residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(9))
+    flat, jacobians, _ = prepared_residual_jacobians(residual_map, params)
     streamed_flat, observations = term_block_curvature_observations(
         params,
         non_trainable,
         solver,
-        terms,
+        residual_map.terms,
         layout,
         approximation=approximation,
         chunk_size=2,
@@ -266,3 +256,17 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
         strict=True,
     ):
         assert jnp.allclose(streamed, dense, rtol=1e-9, atol=1e-10)
+
+
+def test_kfac_derivative_coverage_rejects_orders_above_two():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    field = domain.Parameter(1.0)
+    term = _residual_term(
+        domain,
+        "u",
+        lambda value: phx.operators.partial_n(value, var="x", order=3),
+        samples=4,
+    )
+
+    with pytest.raises(ValueError, match="through order two"):
+        validate_derivative_coverage((term,), {"u": field})

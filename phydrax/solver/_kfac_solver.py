@@ -22,7 +22,9 @@ from .._training import (
     log_training_signal_stop as _log_training_signal_stop,
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger,
+    TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
+    update_training_selection,
 )
 from ..optim._iterative._globalization import (
     armijo_backtracking,
@@ -34,6 +36,10 @@ from ..optim._kfac._blocks import (
 )
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import KFACMetrics, KFACState
+from ._functional_checkpoint import (
+    load_functional_training_checkpoint,
+    save_functional_training_checkpoint,
+)
 from ._functional_objective import (
     evaluate_prepared_objective,
     prepared_data_metrics,
@@ -43,17 +49,21 @@ from ._functional_reporting import (
     metric_suffix as _metric_suffix,
     term_label as _term_label,
 )
+from ._functional_residual import materialize_prepared_residual_terms
 from ._functional_run import (
     expand_train_terms as _expanded_train_terms,
     replace_solver_state,
     select_train_terms as _active_train_terms,
     validate_term_sample_size as _train_term_sample_size,
 )
+from ._functional_surrogate import (
+    _functional_ntk_diagnostic_values,
+    _functional_ntk_diagnostics,
+    prepare_functional_update,
+)
+from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
 from ._kfac_layout import build_kfac_plan
 from ._kfac_problem import (
-    frozen_loss,
-    frozen_loss_and_flat_gradient,
-    materialize_frozen_terms,
     term_block_curvature_observations,
     validate_derivative_coverage,
 )
@@ -176,6 +186,8 @@ def solve_kfac(
     tensorboard_flush_every: int,
     profile_adaptive: bool,
     train_term_sample_size: int | None,
+    training: FunctionalTrainingPlan | None = None,
+    resume: bool = False,
 ):
     """Run Phydrax-native KFAC over frozen residual terms."""
 
@@ -202,24 +214,119 @@ def solve_kfac(
             f"residual roots; found {', '.join(model_loss_labels)}."
         )
 
-    params, non_trainable = partition_trainable(self.functions)
+    resume_state = self.training_state if resume else None
+    source_functions = (
+        self.functions
+        if resume_state is None
+        else resume_state.current_functions
+    )
+    params, non_trainable = partition_trainable(source_functions)
+    sharding_policy = None if training is None else training.sharding
+    if sharding_policy is not None:
+        params = sharding_policy.place_parameters(params)
+        non_trainable = sharding_policy.place_tree(non_trainable)
     plan = build_kfac_plan(
         optim,
-        self.functions,
+        source_functions,
         params,
         num_terms=len(self.terms),
     )
-    state = plan.initialize(params)
+    state = (
+        plan.initialize(params)
+        if resume_state is None
+        else resume_state.optimizer_state
+    )
     term_sample_size = _train_term_sample_size(
         train_term_sample_size,
         num_terms=len(self.terms),
     )
     term_names = tuple(_term_label(term) for term in self.terms)
     evaluation_term_names = tuple(_term_label(term) for term in self.evaluation_terms)
-    root_key = jr.key(int(seed))
+    root_key = jr.key(int(seed)) if resume_state is None else resume_state.key
     objective = self.objective
-    best_loss = float("inf")
-    best_params = params
+    if (
+        resume
+        and resume_state is None
+        and training is not None
+        and training.checkpoint is not None
+    ):
+        state_template = FunctionalTrainingState(
+            current_functions=source_functions,
+            best_functions=source_functions,
+            previous_functions=(
+                source_functions if training.pseudo_transient else None
+            ),
+            optimizer_state=state,
+            key=root_key,
+            pseudo_inverse_steps=tuple(
+                policy.initial_inverse_step for policy in training.pseudo_transient
+            ),
+            term_multipliers=jnp.ones(
+                (
+                    0
+                    if training.term_balance is None
+                    else len(training.term_balance.blocks)
+                ),
+                dtype=float,
+            ),
+            progress=TrainingProgress(),
+            run_id=training.plan_id,
+        )
+        restored = load_functional_training_checkpoint(
+            training.checkpoint.path,
+            self,
+            state_template,
+            training,
+        )
+        resume_state = restored.state
+        source_functions = resume_state.current_functions
+        params, non_trainable = partition_trainable(source_functions)
+        if sharding_policy is not None:
+            params = sharding_policy.place_parameters(params)
+            non_trainable = sharding_policy.place_tree(non_trainable)
+        plan = build_kfac_plan(
+            optim,
+            source_functions,
+            params,
+            num_terms=len(self.terms),
+        )
+        state = resume_state.optimizer_state
+        if sharding_policy is not None:
+            state = sharding_policy.place_tree(state)
+        root_key = resume_state.key
+        objective = restored.objective
+    selection_policy = None if training is None else training.selection
+    selection_progress = (
+        TrainingProgress() if resume_state is None else resume_state.progress
+    )
+    best_loss = (
+        float("inf")
+        if selection_progress.best_value is None
+        else float(selection_progress.best_value)
+    )
+    best_params = (
+        params
+        if resume_state is None
+        else partition_trainable(resume_state.best_functions)[0]
+    )
+    if keep_best and selection_policy is not None and resume_state is None:
+        initial_selection = objective.prepare_evaluation(
+            key=jr.fold_in(root_key, 1200),
+            iteration=jnp.asarray(0.0),
+        )
+        initial_functions = combine_trainable(params, non_trainable)
+        initial_value = evaluate_prepared_objective(
+            initial_selection, initial_functions
+        ).total
+        selection_progress, _ = update_training_selection(
+            selection_progress,
+            float(initial_value),
+            step=0,
+            mode=selection_policy.mode,
+            min_delta=selection_policy.min_delta,
+            patience=selection_policy.patience,
+        )
+        best_loss = float(initial_value)
     completed = 0
     refresh_wall_time = 0.0
     optimizer_wall_time = 0.0
@@ -237,12 +344,97 @@ def solve_kfac(
         accepted_step_size=jnp.asarray(0.0),
         line_search_steps=jnp.asarray(0, dtype=jnp.int32),
     )
+    training_started = time.perf_counter()
+    latest_ntk_diagnostics = None
+    update = None
+    start_step = 0 if resume_state is None else resume_state.progress.update_step
+    if start_step >= int(num_iter):
+        resumed_result = replace_solver_state(
+            self,
+            functions=resume_state.best_functions,
+            objective=objective,
+        )
+        return eqx.tree_at(
+            lambda solver: solver.training_state,
+            resumed_result,
+            resume_state,
+            is_leaf=lambda value: value is None,
+        )
+    previous_functions = (
+        None
+        if training is None or not training.pseudo_transient
+        else source_functions
+        if resume_state is None or resume_state.previous_functions is None
+        else resume_state.previous_functions
+    )
+    pseudo_inverse_steps = (
+        ()
+        if training is None
+        else resume_state.pseudo_inverse_steps
+        if resume_state is not None
+        else tuple(
+            policy.initial_inverse_step for policy in training.pseudo_transient
+        )
+    )
+    term_multipliers = (
+        jnp.zeros((0,), dtype=float)
+        if training is None or training.term_balance is None
+        else resume_state.term_multipliers
+        if resume_state is not None
+        else jnp.ones((len(training.term_balance.blocks),), dtype=float)
+    )
+    previous_gradient = (
+        None if resume_state is None else resume_state.previous_gradient
+    )
+
+    def make_training_state(current_params, selected_params):
+        if training is None:
+            raise RuntimeError("Functional training state requires a training plan.")
+        current_functions_ = combine_trainable(current_params, non_trainable)
+        selected_functions_ = combine_trainable(selected_params, non_trainable)
+        return FunctionalTrainingState(
+            current_functions=current_functions_,
+            best_functions=selected_functions_,
+            previous_functions=previous_functions,
+            optimizer_state=state,
+            key=root_key,
+            pseudo_inverse_steps=pseudo_inverse_steps,
+            term_multipliers=term_multipliers,
+            previous_gradient=previous_gradient,
+            progress=selection_progress,
+            run_id=training.plan_id,
+            training_seconds=(
+                (0.0 if resume_state is None else resume_state.training_seconds)
+                + time.perf_counter()
+                - training_started
+            ),
+            resumed_from_step=start_step,
+        )
 
     log_context = (
         open(Path(log_path), "w", encoding="utf-8")
         if log_path is not None
         else nullcontext(None)
     )
+
+    def publish_checkpoint(checkpoint_solver, checkpoint_state):
+        if training is None or training.checkpoint is None:
+            return
+        if sharding_policy is not None:
+            sharding_policy.synchronize(
+                f"functional-kfac-checkpoint-before-{checkpoint_state.progress.update_step}"
+            )
+        if sharding_policy is None or sharding_policy.is_primary_process:
+            save_functional_training_checkpoint(
+                training.checkpoint.path,
+                checkpoint_solver,
+                checkpoint_state,
+                training,
+            )
+        if sharding_policy is not None:
+            sharding_policy.synchronize(
+                f"functional-kfac-checkpoint-after-{checkpoint_state.progress.update_step}"
+            )
     tensorboard_context = (
         TensorBoardLogger(tensorboard_log_dir)
         if tensorboard_log_dir is not None
@@ -259,7 +451,7 @@ def solve_kfac(
         tensorboard_context as tensorboard_writer,
         _TrainingSignalGuard() as signal_guard,
     ):
-        for epoch in range(int(num_iter)):
+        for epoch in range(start_step, int(num_iter)):
             if signal_guard.stop_requested:
                 _log_training_signal_stop(
                     "kfac",
@@ -300,22 +492,76 @@ def solve_kfac(
                 sampling_key=jr.fold_in(iteration_key, 31),
                 iteration=term_iteration,
             )
-            frozen_terms = materialize_frozen_terms(prepared)
+            if sharding_policy is not None:
+                prepared = sharding_policy.place_prepared(prepared)
+            update = (
+                None
+                if training is None
+                else prepare_functional_update(
+                    prepared,
+                    params,
+                    non_trainable,
+                    self.enforcement,
+                    training=training,
+                    previous_functions=previous_functions,
+                    pseudo_inverse_steps=pseudo_inverse_steps,
+                    term_multipliers=term_multipliers,
+                    previous_gradient=previous_gradient,
+                )
+            )
+            if update is not None:
+                pseudo_inverse_steps = update.pseudo_inverse_steps
+                term_multipliers = update.term_multipliers
+                if update.diagnostic_gradient is not None:
+                    previous_gradient = update.diagnostic_gradient
+                if (
+                    training is not None
+                    and training.diagnostics is not None
+                    and training.diagnostics.ntk
+                    and training.diagnostics.due(iteration)
+                ):
+                    if update.residual is None:
+                        raise ValueError("NTK diagnostics require residual roots.")
+                    latest_ntk_diagnostics = _functional_ntk_diagnostics(
+                        update.residual,
+                        params,
+                        training.diagnostics,
+                        jr.fold_in(iteration_key, 1701),
+                    )
+            residual_terms = (
+                materialize_prepared_residual_terms(prepared, require_all=True)
+                if update is None
+                else update.residual.terms
+            )
             optimizer_started = time.perf_counter()
             gradient_started = time.perf_counter()
-            loss, gradient, unravel = frozen_loss_and_flat_gradient(
-                params,
-                non_trainable,
-                self,
-                frozen_terms,
-                iter_=term_iteration,
-            )
+            flat_parameters, unravel = ravel_pytree(params)
+            if update is None:
+
+                def physical_loss(flat, _prepared=prepared, _unravel=unravel):
+                    functions = combine_trainable(_unravel(flat), non_trainable)
+                    return evaluate_prepared_objective(
+                        _prepared,
+                        functions,
+                    ).total
+
+                loss, gradient = jax.value_and_grad(physical_loss)(flat_parameters)
+            else:
+
+                def surrogate_loss(flat, _update=update, _unravel=unravel):
+                    return _update.surrogate_loss(_unravel(flat), non_trainable)
+
+                loss, gradient = jax.value_and_grad(surrogate_loss)(flat_parameters)
             if profile_adaptive:
                 jax.block_until_ready((loss, gradient))
                 gradient_wall_time += time.perf_counter() - gradient_started
             if not bool(jnp.isfinite(loss)) or not bool(jnp.all(jnp.isfinite(gradient))):
                 raise FloatingPointError("KFAC encountered a nonfinite loss or gradient.")
-            if keep_best and float(loss) < best_loss:
+            if (
+                keep_best
+                and selection_policy is None
+                and float(loss) < best_loss
+            ):
                 best_loss = float(loss)
                 best_params = params
             refresh_factors = epoch % optim.factor_update_period == 0
@@ -323,16 +569,18 @@ def solve_kfac(
             factor_updates = state.factor_updates
             factor_started = time.perf_counter()
             if refresh_factors:
-                factor_terms = tuple(replace(term, scale=1.0) for term in frozen_terms)
                 flat_parameters, observations = term_block_curvature_observations(
                     params,
                     non_trainable,
                     self,
-                    factor_terms,
+                    residual_terms,
                     plan.layout,
                     approximation=optim.approximation,
                     chunk_size=optim.factor_chunk_size,
                     iter_=term_iteration,
+                    functional_residual=(
+                        None if update is None else update.residual
+                    ),
                 )
                 curvature = update_block_state_from_observations(
                     curvature,
@@ -369,14 +617,21 @@ def solve_kfac(
                 )
                 linear_solve_wall_time += time.perf_counter() - linear_solve_started
 
-            def candidate_loss(flat_candidate):
-                return frozen_loss(
-                    unravel(flat_candidate),
+            def candidate_loss(
+                flat_candidate,
+                _update=update,
+                _unravel=unravel,
+                _prepared=prepared,
+            ):
+                if _update is not None:
+                    return _update.surrogate_loss(
+                        _unravel(flat_candidate), non_trainable
+                    )
+                functions = combine_trainable(
+                    _unravel(flat_candidate),
                     non_trainable,
-                    self,
-                    frozen_terms,
-                    iter_=term_iteration,
                 )
+                return evaluate_prepared_objective(_prepared, functions).total
 
             line_search_started = time.perf_counter()
             if optim.line_search:
@@ -409,8 +664,13 @@ def solve_kfac(
                 curvature=curvature,
                 factor_updates=factor_updates,
             )
+            if training is not None and training.pseudo_transient:
+                previous_functions = functions_snapshot
             objective = objective.record_training_evaluations(term_indices=active_indices)
             completed = iteration
+            selection_progress = replace(
+                selection_progress, update_step=iteration
+            )
             if profile_adaptive:
                 jax.block_until_ready((params, accepted_loss, state))
                 optimizer_step_wall_time = time.perf_counter() - optimizer_started
@@ -421,7 +681,34 @@ def solve_kfac(
                     steady_optimizer_step_wall_time += optimizer_step_wall_time
 
             accepted_loss_float = float(accepted_loss)
-            if keep_best and accepted_loss_float < best_loss:
+            selection_evaluation_loss = None
+            selection_stopped = False
+            if (
+                keep_best
+                and selection_policy is not None
+                and selection_policy.due(iteration)
+            ):
+                selection_prepared = objective.prepare_evaluation(
+                    key=jr.fold_in(iteration_key, 1201),
+                    iteration=term_iteration,
+                )
+                selection_functions = combine_trainable(params, non_trainable)
+                selection_evaluation_loss = evaluate_prepared_objective(
+                    selection_prepared, selection_functions
+                ).total
+                selection_progress, improved = update_training_selection(
+                    selection_progress,
+                    float(selection_evaluation_loss),
+                    step=iteration,
+                    mode=selection_policy.mode,
+                    min_delta=selection_policy.min_delta,
+                    patience=selection_policy.patience,
+                )
+                if improved:
+                    best_loss = float(selection_evaluation_loss)
+                    best_params = params
+                selection_stopped = selection_progress.stopped_early
+            elif keep_best and selection_policy is None and accepted_loss_float < best_loss:
                 best_loss = accepted_loss_float
                 best_params = params
             elif not keep_best:
@@ -435,6 +722,29 @@ def solve_kfac(
                 accepted_step_size=step_size,
                 line_search_steps=line_search_steps,
             )
+            if (
+                training is not None
+                and training.checkpoint is not None
+                and training.checkpoint.due(iteration)
+            ):
+                checkpoint_selected = best_params if keep_best else params
+                checkpoint_state = make_training_state(
+                    params, checkpoint_selected
+                )
+                checkpoint_solver = replace_solver_state(
+                    self,
+                    functions=checkpoint_state.best_functions,
+                    objective=objective,
+                )
+                checkpoint_solver = eqx.tree_at(
+                    lambda solver: solver.training_state,
+                    checkpoint_solver,
+                    checkpoint_state,
+                    is_leaf=lambda value: value is None,
+                )
+                publish_checkpoint(checkpoint_solver, checkpoint_state)
+            if selection_stopped:
+                break
 
             console_step = int(log_every) > 0 and iteration % int(log_every) == 0
             tensorboard_step = (
@@ -521,7 +831,7 @@ def solve_kfac(
                     step=iteration,
                     loss=accepted_loss,
                     best_loss=best_loss,
-                    evaluation_loss=None,
+                    evaluation_loss=selection_evaluation_loss,
                     iter_time_s=elapsed,
                     train_term_names=term_names,
                     train_terms=train_terms,
@@ -610,6 +920,24 @@ def solve_kfac(
         functions=functions,
         objective=objective,
     )
+    if training is not None:
+        training_state = make_training_state(params, chosen)
+        result = eqx.tree_at(
+            lambda solver: solver.training_state,
+            result,
+            training_state,
+            is_leaf=lambda value: value is None,
+        )
+        if training.checkpoint is not None and training.checkpoint.save_final:
+            publish_checkpoint(result, training_state)
+    objective_plane_diagnostics: dict[str, Any] = {}
+    if update is not None:
+        objective_plane_diagnostics = {
+            "objective/physical": update.physical_values(functions).total,
+            "objective/surrogate": update.surrogate_loss(chosen, non_trainable),
+            "gradient_alignment/intra": update.intra_gradient_alignment,
+            "gradient_alignment/inter": update.inter_gradient_alignment,
+        }
     diagnostics = frozendict(
         {
             "profile_enabled": jnp.asarray(profile_adaptive),
@@ -648,6 +976,8 @@ def solve_kfac(
             "optimizer/kfac/factor_chunk_size": jnp.asarray(optim.factor_chunk_size),
             "optimizer/kfac/jit_requested": jnp.asarray(bool(jit)),
         }
+        | objective_plane_diagnostics
+        | _functional_ntk_diagnostic_values(latest_ntk_diagnostics)
     )
     return eqx.tree_at(lambda solver: solver.training_diagnostics, result, diagnostics)
 
