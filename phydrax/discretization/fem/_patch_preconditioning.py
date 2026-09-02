@@ -8,8 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -255,7 +256,7 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
         local = coordinates[safe_routes]
         local = jnp.where(self.plan.valid, local, 0.0)
         if self.local_inverse is not None:
-            correction = oe.contract("pij,pj->pi", self.local_inverse, local)
+            correction = ein.contract("pij,pj->pi", self.local_inverse, local)
         else:
             local_corrections = []
             valid_host = np.asarray(self.plan.valid)

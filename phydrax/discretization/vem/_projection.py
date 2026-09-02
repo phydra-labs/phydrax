@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._polynomial import ScaledMonomialBasis, total_degree_multiindices
@@ -138,7 +139,7 @@ def _prepare_h1_virtual_element_projections(
             tuple(exponent_to_polynomial[index] for index in moment_indices),
             dtype=jnp.int32,
         )
-        moments = oe.contract(
+        moments = ein.contract(
             "cq,cqa,cqb->cab",
             cell_weights / geometry.areas[:, None],
             basis_values[..., moment_columns],
@@ -146,7 +147,7 @@ def _prepare_h1_virtual_element_projections(
         )
         dof_matrix = dof_matrix.at[:, cursor : cursor + len(moment_indices)].set(moments)
 
-    boundary = oe.contract(
+    boundary = ein.contract(
         "cenad,ced,n,ce->cena",
         edge_gradient,
         geometry.outward_normals,
@@ -189,8 +190,8 @@ def _prepare_h1_virtual_element_projections(
     else:
         functionals = functionals.at[:, 0, moment_start].set(1.0)
 
-    augmented_gram = oe.contract("cai,cib->cab", functionals, dof_matrix)
-    gradient_gram = oe.contract(
+    augmented_gram = ein.contract("cai,cib->cab", functionals, dof_matrix)
+    gradient_gram = ein.contract(
         "cq,cqad,cqbd->cab", cell_weights, basis_gradients, basis_gradients
     )
     energy_factorization = prepare_local_block_factorization(augmented_gram)
@@ -200,10 +201,10 @@ def _prepare_h1_virtual_element_projections(
         jnp.any(h1_failed | ~geometry.evidence.valid),
         "Virtual-element H1 projector factorization failed.",
     )
-    h1_dof = oe.contract("cia,caj->cij", dof_matrix, h1_coefficients)
+    h1_dof = ein.contract("cia,caj->cij", dof_matrix, h1_coefficients)
 
-    mass_gram = oe.contract("cq,cqa,cqb->cab", cell_weights, basis_values, basis_values)
-    l2_rhs = oe.contract("cab,cbj->caj", mass_gram, h1_coefficients)
+    mass_gram = ein.contract("cq,cqa,cqb->cab", cell_weights, basis_values, basis_values)
+    l2_rhs = ein.contract("cab,cbj->caj", mass_gram, h1_coefficients)
     if moment_indices:
         for beta, exponent in enumerate(moment_indices):
             alpha = exponent_to_polynomial[exponent]
@@ -218,13 +219,13 @@ def _prepare_h1_virtual_element_projections(
         jnp.any(l2_failed | ~geometry.evidence.valid),
         "Virtual-element L2 projector factorization failed.",
     )
-    l2_dof = oe.contract("cia,caj->cij", dof_matrix, l2_coefficients)
+    l2_dof = ein.contract("cia,caj->cij", dof_matrix, l2_coefficients)
 
     identity = jnp.eye(polynomial_count, dtype=cell_points.dtype)
-    h1_reproduction = oe.contract("cai,cib->cab", h1_coefficients, dof_matrix)
-    l2_reproduction = oe.contract("cai,cib->cab", l2_coefficients, dof_matrix)
-    h1_idempotence = oe.contract("cij,cjk->cik", h1_dof, h1_dof) - h1_dof
-    l2_idempotence = oe.contract("cij,cjk->cik", l2_dof, l2_dof) - l2_dof
+    h1_reproduction = ein.contract("cai,cib->cab", h1_coefficients, dof_matrix)
+    l2_reproduction = ein.contract("cai,cib->cab", l2_coefficients, dof_matrix)
+    h1_idempotence = ein.contract("cij,cjk->cik", h1_dof, h1_dof) - h1_dof
+    l2_idempotence = ein.contract("cij,cjk->cik", l2_dof, l2_dof) - l2_dof
     g_singular = jnp.linalg.svd(augmented_gram, compute_uv=False)
     h_singular = jnp.linalg.svd(mass_gram, compute_uv=False)
     gradient_comparison = augmented_gram.at[:, 0].set(gradient_gram[:, 0])
@@ -392,7 +393,7 @@ def _prepare_vector_virtual_element_projections(
     dof_matrix = jnp.zeros(
         (cells, local_dofs, vector_polynomial_count), dtype=cell_points.dtype
     )
-    edge_scalar_moments = oe.contract(
+    edge_scalar_moments = ein.contract(
         "q,qm,ceqp->cemp", edge_weights, legendre, edge_basis
     )
     edge_vector_moments = (
@@ -402,7 +403,7 @@ def _prepare_vector_virtual_element_projections(
     dof_matrix = dof_matrix.at[:, :edge_dof_count].set(
         edge_vector_moments.reshape((cells, edge_dof_count, vector_polynomial_count))
     )
-    cell_cross_mass = oe.contract(
+    cell_cross_mass = ein.contract(
         "cq,cqa,cqb->cab",
         cell_weights / geometry.areas[:, None],
         differential_values,
@@ -418,7 +419,7 @@ def _prepare_vector_virtual_element_projections(
         ].set(cell_cross_mass)
 
     energy_functionals = jnp.swapaxes(dof_matrix, -1, -2)
-    augmented_gram = oe.contract("cia,cib->cab", dof_matrix, dof_matrix)
+    augmented_gram = ein.contract("cia,cib->cab", dof_matrix, dof_matrix)
     projection_factorization = prepare_local_block_factorization(
         augmented_gram, positive_definite=True
     )
@@ -431,7 +432,9 @@ def _prepare_vector_virtual_element_projections(
         f"Virtual-element {element.conformity} functional projector failed.",
     )
 
-    scalar_mass = oe.contract("cq,cqa,cqb->cab", cell_weights, basis_values, basis_values)
+    scalar_mass = ein.contract(
+        "cq,cqa,cqb->cab", cell_weights, basis_values, basis_values
+    )
     mass_gram = jnp.zeros(
         (cells, vector_polynomial_count, vector_polynomial_count),
         dtype=cell_points.dtype,
@@ -443,7 +446,7 @@ def _prepare_vector_virtual_element_projections(
             start_column : start_column + polynomial_count,
             start_column : start_column + polynomial_count,
         ].set(scalar_mass)
-    l2_rhs = oe.contract("cab,cbj->caj", mass_gram, preliminary_coefficients)
+    l2_rhs = ein.contract("cab,cbj->caj", mass_gram, preliminary_coefficients)
     exponent_to_differential = {
         tuple(int(value) for value in exponent): index
         for index, exponent in enumerate(np.asarray(differential_basis.exponents))
@@ -467,12 +470,12 @@ def _prepare_vector_virtual_element_projections(
         jnp.any(l2_failed | ~geometry.evidence.valid),
         f"Virtual-element {element.conformity} enhanced L2 projector failed.",
     )
-    l2_dof = oe.contract("cia,caj->cij", dof_matrix, l2_coefficients)
+    l2_dof = ein.contract("cia,caj->cij", dof_matrix, l2_coefficients)
 
     differential_rhs = jnp.zeros(
         (cells, differential_count, local_dofs), dtype=cell_points.dtype
     )
-    edge_test_moments = oe.contract(
+    edge_test_moments = ein.contract(
         "q,qm,ceqa->cema",
         edge_weights,
         legendre,
@@ -515,7 +518,7 @@ def _prepare_vector_virtual_element_projections(
             differential_rhs = differential_rhs.at[:, alpha, column].add(
                 sign * geometry.areas * power / geometry.characteristic_lengths
             )
-    differential_mass = oe.contract(
+    differential_mass = ein.contract(
         "cq,cqa,cqb->cab",
         cell_weights,
         differential_values,
@@ -536,18 +539,18 @@ def _prepare_vector_virtual_element_projections(
     polynomial_differential = _polynomial_differential(
         basis, differential_basis, geometry, element.family
     )
-    gradient_gram = oe.contract(
+    gradient_gram = ein.contract(
         "cai,cab,cbj->cij",
         polynomial_differential,
         differential_mass,
         polynomial_differential,
     )
     identity = jnp.eye(vector_polynomial_count, dtype=cell_points.dtype)
-    reproduction = oe.contract("cai,cib->cab", l2_coefficients, dof_matrix)
-    differential_reproduction = oe.contract(
+    reproduction = ein.contract("cai,cib->cab", l2_coefficients, dof_matrix)
+    differential_reproduction = ein.contract(
         "cai,cib->cab", differential_coefficients, dof_matrix
     )
-    idempotence = oe.contract("cij,cjk->cik", l2_dof, l2_dof) - l2_dof
+    idempotence = ein.contract("cij,cjk->cik", l2_dof, l2_dof) - l2_dof
     g_singular = jnp.linalg.svd(augmented_gram, compute_uv=False)
     h_singular = jnp.linalg.svd(mass_gram, compute_uv=False)
     tiny = jnp.finfo(cell_points.dtype).tiny
@@ -621,7 +624,7 @@ def _prepare_discontinuous_l2_virtual_element_projections(
     basis_values = basis.evaluate(
         cell_points, geometry.centroids, geometry.characteristic_lengths
     )
-    mass_gram = oe.contract(
+    mass_gram = ein.contract(
         "cq,cqa,cqb->cab", cubature.weights, basis_values, basis_values
     )
     dof_matrix = mass_gram / geometry.areas[:, None, None]
@@ -636,9 +639,9 @@ def _prepare_discontinuous_l2_virtual_element_projections(
         jnp.any(failed | ~geometry.evidence.valid),
         "Discontinuous virtual-element L2 projector factorization failed.",
     )
-    l2_dof = oe.contract("cia,caj->cij", dof_matrix, l2_coefficients)
-    reproduction = oe.contract("cai,cib->cab", l2_coefficients, dof_matrix)
-    idempotence = oe.contract("cij,cjk->cik", l2_dof, l2_dof) - l2_dof
+    l2_dof = ein.contract("cia,caj->cij", dof_matrix, l2_coefficients)
+    reproduction = ein.contract("cai,cib->cab", l2_coefficients, dof_matrix)
+    idempotence = ein.contract("cij,cjk->cik", l2_dof, l2_dof) - l2_dof
     singular = jnp.linalg.svd(dof_matrix, compute_uv=False)
     mass_singular = jnp.linalg.svd(mass_gram, compute_uv=False)
     tiny = jnp.finfo(cell_points.dtype).tiny

@@ -9,8 +9,8 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 
+import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
@@ -131,7 +131,7 @@ def fractional_laplacian(
 
         if grad_u is not None:
             gu = jnp.asarray(grad_u.func(*args, key=key, **kwargs))
-            corr = oe.contract("nd,...d->n...", offsets, gu)
+            corr = ein.contract("nd,...d->n...", offsets, gu)
             num = (ux - uy) + corr
         else:
             num = ux - uy

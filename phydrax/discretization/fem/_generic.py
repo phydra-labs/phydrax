@@ -10,8 +10,9 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -733,7 +734,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 cell_coordinates = mesh_coordinates[
                     np.asarray(block.vertices, dtype=np.int32)
                 ]
-                mapped = oe.contract(
+                mapped = ein.contract(
                     "ia,cad->cid",
                     np.asarray(weights_),
                     cell_coordinates,
@@ -785,7 +786,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     block_dofs,
                     strict=True,
                 ):
-                    mapped = oe.contract(
+                    mapped = ein.contract(
                         "ia,cad->cid",
                         np.asarray(weights_),
                         np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
@@ -880,7 +881,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 self.cell_dofs,
                 strict=True,
             ):
-                mapped = oe.contract(
+                mapped = ein.contract(
                     "ia,cad->cid",
                     weights_,
                     points[block.vertices],
@@ -895,7 +896,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 self.cell_coordinate_weights,
                 strict=True,
             ):
-                mapped = oe.contract(
+                mapped = ein.contract(
                     "ia,cad->cid",
                     weights_,
                     points[block.vertices],
@@ -1633,8 +1634,8 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             orientation.shape + (1,) * (local.ndim - orientation.ndim)
         )
         if geometry.basis_values.ndim == 2:
-            return oe.contract("qi,ci...->cq...", geometry.basis_values, local)
-        return oe.contract("cqiv,ci->cqv", geometry.basis_values, local)
+            return ein.contract("qi,ci...->cq...", geometry.basis_values, local)
+        return ein.contract("cqiv,ci->cqv", geometry.basis_values, local)
 
     def _field_index(self, field_name: str, /) -> int:
         requested = str(field_name)
@@ -1742,13 +1743,13 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
 
 def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
     if geometry.basis_values.ndim == 2:
-        return oe.contract(
+        return ein.contract(
             "cq,qi,qj->cij",
             geometry.physical_weights,
             geometry.basis_values,
             geometry.basis_values,
         )
-    return oe.contract(
+    return ein.contract(
         "cq,cqiv,cqjv->cij",
         geometry.physical_weights,
         geometry.basis_values,
@@ -1758,13 +1759,13 @@ def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
 
 def _local_stiffness_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
     if geometry.physical_gradients.ndim == 4:
-        return oe.contract(
+        return ein.contract(
             "cq,cqid,cqjd->cij",
             geometry.physical_weights,
             geometry.physical_gradients,
             geometry.physical_gradients,
         )
-    return oe.contract(
+    return ein.contract(
         "cq,cqivd,cqjvd->cij",
         geometry.physical_weights,
         geometry.physical_gradients,
@@ -1875,12 +1876,12 @@ def _evaluate_coordinate_map(
             raise ValueError(
                 "Paired cell-map evaluation requires one reference point per cell index."
             )
-        physical_points = oe.contract("qi,qid->qd", geometry_values, cell_coordinates)
-        jacobian = oe.contract("qir,qid->qdr", geometry_gradients, cell_coordinates)
+        physical_points = ein.contract("qi,qid->qd", geometry_values, cell_coordinates)
+        jacobian = ein.contract("qir,qid->qdr", geometry_gradients, cell_coordinates)
     else:
-        physical_points = oe.contract("qi,cid->cqd", geometry_values, cell_coordinates)
-        jacobian = oe.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
-    metric = oe.contract("...di,...dj->...ij", jacobian, jacobian)
+        physical_points = ein.contract("qi,cid->cqd", geometry_values, cell_coordinates)
+        jacobian = ein.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
+    metric = ein.contract("...di,...dj->...ij", jacobian, jacobian)
     inverse_result = inverse_small_linear(
         SmallLinearSolvePlan(metric.shape[-1]),
         metric,
@@ -1892,7 +1893,7 @@ def _evaluate_coordinate_map(
         0.0,
     )
     measure = jnp.sqrt(gram_determinant)
-    inverse_jacobian = oe.contract("...ij,...dj->...id", inverse_metric, jacobian)
+    inverse_jacobian = ein.contract("...ij,...dj->...id", inverse_metric, jacobian)
     if jacobian.shape[-2] == jacobian.shape[-1]:
         determinant = jnp.where(
             inverse_result.successful,
@@ -1972,7 +1973,7 @@ def _prepare_block_geometry(
     )
     if element.mapping == "identity":
         physical_basis = basis_values
-        physical_gradients = oe.contract(
+        physical_gradients = ein.contract(
             "cqdi,cqij,qkj->cqkd",
             jacobian,
             inverse_metric,
@@ -1980,7 +1981,7 @@ def _prepare_block_geometry(
         )
     elif element.mapping == "contravariant_piola":
         physical_basis = (
-            oe.contract(
+            ein.contract(
                 "cqdm,qkm->cqkd",
                 jacobian,
                 basis_values,
@@ -1988,7 +1989,7 @@ def _prepare_block_geometry(
             / measure_factor[..., None, None]
         )
         physical_gradients = (
-            oe.contract(
+            ein.contract(
                 "cqdm,qkmr,cqrn->cqkdn",
                 jacobian,
                 reference_gradients,
@@ -1997,12 +1998,12 @@ def _prepare_block_geometry(
             / measure_factor[..., None, None, None]
         )
     elif element.mapping == "covariant_piola":
-        physical_basis = oe.contract(
+        physical_basis = ein.contract(
             "cqmd,qkm->cqkd",
             inverse_jacobian,
             basis_values,
         )
-        physical_gradients = oe.contract(
+        physical_gradients = ein.contract(
             "cqmd,qkmr,cqrn->cqkdn",
             inverse_jacobian,
             reference_gradients,

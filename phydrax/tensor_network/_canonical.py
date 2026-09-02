@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._core import LocallyPurifiedDensity, MatrixProductState
@@ -82,14 +83,14 @@ def _canonical_sweep(
         q, r = jnp.linalg.qr(matrix)
         rank = q.shape[-1]
         values[index] = q.reshape(tensor.shape[:-1] + (rank,))
-        values[index + 1] = oe.contract("ab,b...->a...", r, values[index + 1])
+        values[index + 1] = ein.contract("ab,b...->a...", r, values[index + 1])
     for index in range(len(values) - 1, center, -1):
         tensor = values[index]
         matrix = tensor.reshape((tensor.shape[0], -1))
         q, r = jnp.linalg.qr(matrix.T)
         rank = q.shape[-1]
         values[index] = q.T.reshape((rank,) + tensor.shape[1:])
-        values[index - 1] = oe.contract("...a,ab->...b", values[index - 1], r.T)
+        values[index - 1] = ein.contract("...a,ab->...b", values[index - 1], r.T)
     return tuple(precision.storage(values))
 
 

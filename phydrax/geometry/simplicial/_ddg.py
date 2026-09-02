@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ._mesh import TriangleMesh
@@ -129,14 +130,14 @@ class DDGOperators(StrictModule):
     def gradient(self, vertex_values: Array, /) -> Array:
         """Map scalar or vector vertex values to piecewise-constant face gradients."""
         values = jnp.asarray(vertex_values)[self.faces]
-        return oe.contract("fka,fk...->fa...", self.basis_gradients, values)
+        return ein.contract("fka,fk...->fa...", self.basis_gradients, values)
 
     def divergence(self, face_vectors: Array, /) -> Array:
         """Return the mass-adjoint divergence of piecewise-constant face vectors."""
         vectors = jnp.asarray(face_vectors)
         if vectors.shape[:2] != (self.faces.shape[0], 3):
             raise ValueError("face_vectors must have shape (num_faces, 3, ...).")
-        contractions = oe.contract(
+        contractions = ein.contract(
             "fa...,fka->fk...",
             vectors,
             self.basis_gradients,

@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -82,7 +83,7 @@ def _hermitian_projection(value: Array, conjugate_indices: Array, /) -> Array:
 
 
 def _native_real_inner_product(left: Array, right: Array, /) -> Array:
-    return jnp.real(oe.contract("...i,...i->", jnp.conj(left), right))
+    return jnp.real(ein.contract("...i,...i->", jnp.conj(left), right))
 
 
 class ConstantPowerFourierForcingResult(StrictModule):
@@ -423,8 +424,8 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
             "OU coefficients must be finite.",
         )
         coordinates = values.reshape((self.pair_count, 2, self.polarization_count))
-        real = oe.contract("mp,mpd->md", coordinates[:, 0], self.polarizations)
-        imaginary = oe.contract("mp,mpd->md", coordinates[:, 1], self.polarizations)
+        real = ein.contract("mp,mpd->md", coordinates[:, 0], self.polarizations)
+        imaginary = ein.contract("mp,mpd->md", coordinates[:, 1], self.polarizations)
         scale = jnp.sqrt(jnp.asarray(2.0, dtype=values.dtype))
         representatives = jax.lax.complex(real / scale, imaginary / scale)
         dtype = jnp.dtype(self.projector.discretization.plan.precision.coefficient_dtype)
@@ -442,7 +443,7 @@ class SolenoidalHermitianFourierBasis(StrictModule, NonTrainableState):
     def analyze(self, field: ArrayLike, /) -> Array:
         value = self.projector.validate_state(field)
         flat = value.reshape((-1, self.projector.spatial_dimension))
-        amplitudes = oe.contract(
+        amplitudes = ein.contract(
             "md,mpd->mp",
             flat[self.representative_indices],
             self.polarizations.astype(value.dtype),

@@ -16,8 +16,9 @@ import jax
 import jax.numpy as jnp
 import jax.scipy.linalg as jsp_linalg
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..dynamics import DiscreteStepContext, TimeGrid
@@ -163,7 +164,7 @@ class ILQRPolicy(AbstractControlParameterization):
         controls = self.nominal_controls.reshape(
             self.case_shape + (self.time_grid.num_steps, control_size)
         )
-        intercept = controls - oe.contract("...tij,...tj->...ti", self.feedback, states)
+        intercept = controls - ein.contract("...tij,...tj->...ti", self.feedback, states)
         return intercept.reshape(
             self.case_shape + (self.time_grid.num_steps,) + self.control_shape
         )
@@ -225,7 +226,7 @@ class ILQRPolicy(AbstractControlParameterization):
         prefix = self.case_shape + tuple(query.shape)
         flat_delta = (states - nominal_states).reshape(prefix + (state_size,))
         flat_gains = gains.reshape(prefix + (control_size, state_size))
-        correction = oe.contract("...ij,...j->...i", flat_gains, flat_delta)
+        correction = ein.contract("...ij,...j->...i", flat_gains, flat_delta)
         return nominal_controls + correction.reshape(prefix + self.control_shape)
 
     def sample(

@@ -9,8 +9,9 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._canonical import canonicalize_mps
@@ -69,13 +70,13 @@ def _identity_environments(
     dtype = tensors[0].dtype
     left = [jnp.ones((1, 1), dtype=dtype)]
     for tensor in tensors:
-        left.append(oe.contract("ab,api,bpj->ij", left[-1], jnp.conj(tensor), tensor))
+        left.append(ein.contract("ab,api,bpj->ij", left[-1], jnp.conj(tensor), tensor))
     right: list[Array] = [jnp.zeros((0, 0), dtype=dtype) for _ in tensors] + [
         jnp.ones((1, 1), dtype=dtype)
     ]
     for index in range(state.site_count - 1, -1, -1):
         tensor = tensors[index]
-        right[index] = oe.contract(
+        right[index] = ein.contract(
             "api,bpj,ij->ab", jnp.conj(tensor), tensor, right[index + 1]
         )
     return tuple(left), tuple(right)
@@ -125,7 +126,7 @@ def finite_correlation_matrix(
                     insertion = second
                 else:
                     insertion = jnp.eye(dimension, dtype=values.dtype)
-                environment = oe.contract(
+                environment = ein.contract(
                     "ab,api,pq,bqj->ij",
                     environment,
                     jnp.conj(tensor),
@@ -143,14 +144,14 @@ def finite_correlation_matrix(
             insertion_second = (
                 second if index == site else jnp.eye(dimension, dtype=values.dtype)
             )
-            environment_first = oe.contract(
+            environment_first = ein.contract(
                 "ab,api,pq,bqj->ij",
                 environment_first,
                 jnp.conj(tensor),
                 insertion_first,
                 tensor,
             )
-            environment_second = oe.contract(
+            environment_second = ein.contract(
                 "ab,api,pq,bqj->ij",
                 environment_second,
                 jnp.conj(tensor),
@@ -194,11 +195,11 @@ def finite_reduced_density(
     tensors = state.precision.accumulation(state.tensors)
     block = tensors[start_]
     for tensor in tensors[start_ + 1 : stop_]:
-        joined = oe.contract("apr,rsb->apsb", block, tensor)
+        joined = ein.contract("apr,rsb->apsb", block, tensor)
         block = joined.reshape(
             (joined.shape[0], joined.shape[1] * joined.shape[2], joined.shape[3])
         )
-    density = oe.contract(
+    density = ein.contract(
         "ab,apc,bqd,cd->pq",
         left[start_],
         jnp.conj(block),
@@ -288,7 +289,7 @@ def finite_transfer_spectrum(
             jnp.asarray(int(FiniteTransferStatus.NONSQUARE_TRANSFER), dtype=jnp.int32),
             site_,
         )
-    transfer = oe.contract("apr,bps->abrs", jnp.conj(tensor), tensor).reshape(
+    transfer = ein.contract("apr,bps->abrs", jnp.conj(tensor), tensor).reshape(
         (left * left, right * right)
     )
     computed = jnp.linalg.eigvals(transfer)

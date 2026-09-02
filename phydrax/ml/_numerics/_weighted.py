@@ -8,8 +8,9 @@ from math import isfinite, prod
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 
 def _expanded_weights(weights: Array, values: Array, /) -> Array:
@@ -114,7 +115,9 @@ def weighted_covariance(
     )
     centered = safe_x - mean[..., None, :]
     centered = jnp.where(_expanded_weights(safe_w > 0.0, centered), centered, 0)
-    scatter = oe.contract("...ni,...n,...nj->...ij", jnp.conj(centered), safe_w, centered)
+    scatter = ein.contract(
+        "...ni,...n,...nj->...ij", jnp.conj(centered), safe_w, centered
+    )
     total = jnp.sum(safe_w, axis=-1)
     denominator = jnp.maximum(total - correction_, jnp.finfo(float).tiny)
     covariance = scatter / denominator[..., None, None]
@@ -160,7 +163,7 @@ def segmented_weighted_sum(
     value_count = prod(value_shape)
     flat_membership = membership.reshape((case_count, sample_count, count))
     flat_values = safe_x.reshape((case_count, sample_count, value_count))
-    totals = oe.contract("cnk,cnp->ckp", flat_membership, flat_values)
+    totals = ein.contract("cnk,cnp->ckp", flat_membership, flat_values)
     mass = jnp.sum(flat_membership, axis=1)
     return (
         totals.reshape(case_shape + (count,) + value_shape),
@@ -217,7 +220,7 @@ def class_weighted_moments(
     membership = jax.nn.one_hot(y, classes, dtype=safe_w.dtype)
     class_weights = safe_w[..., :, None] * membership
     mass = jnp.sum(class_weights, axis=-2)
-    means = oe.contract("...nc,...nf->...cf", class_weights, safe_x)
+    means = ein.contract("...nc,...nf->...cf", class_weights, safe_x)
     means = means / jnp.maximum(mass[..., :, None], jnp.finfo(float).tiny)
     centered = safe_x[..., :, None, :] - means[..., None, :, :]
     active = class_weights[..., :, :, None] > 0.0

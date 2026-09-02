@@ -14,11 +14,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
-from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
 from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
@@ -32,6 +31,7 @@ from phydrax.nn.layers._dropout import _dropout_probabilities, Dropout
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+from phydrax.signal import fourier_resample as _fourier_resample
 
 
 Factorization = Literal["dense", "cp", "tucker"]
@@ -218,7 +218,7 @@ class SpectralConvND(StrictModule):
         assert self.core is not None
         core = self.core[(corner, slice(None), slice(None), *mode_slices)]
         letters = ascii_lowercase[: len(modes)]
-        return oe.contract(
+        return ein.contract(
             f"ir,os,rs{letters}->io{letters}",
             self.factor_in,
             self.factor_out,
@@ -268,7 +268,7 @@ class SpectralConvND(StrictModule):
             spatial_slices = tuple(slices)
             block = transformed[(..., *spatial_slices, slice(None))]
             weight = self._dense_weight(corner, modes)
-            result = oe.contract(
+            result = ein.contract(
                 f"...{letters}i,io{letters}->...{letters}o",
                 block,
                 weight,
@@ -282,21 +282,6 @@ class SpectralConvND(StrictModule):
             norm="ortho",
         )
         return output.astype(source_dtype)
-
-
-def spectral_resample(
-    values: Array,
-    output_shape: Sequence[int],
-    /,
-    *,
-    phase_offsets: Sequence[ArrayLike] | None = None,
-) -> Array:
-    """Band-limited resampling over spatial axes, with optional period shifts."""
-    return _fourier_resample(
-        values,
-        output_shape,
-        phase_offsets=phase_offsets,
-    )
 
 
 class MultiScaleSpectralConvND(StrictModule):
@@ -350,6 +335,7 @@ class MultiScaleSpectralConvND(StrictModule):
         if array.ndim < ndim + 1:
             raise ValueError("MultiScaleSpectralConvND input rank is too small.")
         source_shape = tuple(int(size) for size in array.shape[-ndim - 1 : -1])
+        spatial_axes = tuple(range(array.ndim - ndim - 1, array.ndim - 1))
         output = jnp.zeros(
             (*array.shape[:-1], self.out_channels),
             dtype=jnp.result_type(array.dtype, float),
@@ -361,11 +347,15 @@ class MultiScaleSpectralConvND(StrictModule):
             branch_input = (
                 array
                 if branch_shape == source_shape
-                else spectral_resample(array, branch_shape)
+                else _fourier_resample(array, branch_shape, axes=spatial_axes)
             )
             branch_output = branch(branch_input)
             if branch_shape != source_shape:
-                branch_output = spectral_resample(branch_output, source_shape)
+                branch_output = _fourier_resample(
+                    branch_output,
+                    source_shape,
+                    axes=spatial_axes,
+                )
             output = output + gain * branch_output
         return output
 
@@ -1236,5 +1226,4 @@ __all__ = [
     "SpectralConv1d",
     "SpectralConv2d",
     "SpectralConvND",
-    "spectral_resample",
 ]

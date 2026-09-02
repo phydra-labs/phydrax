@@ -11,8 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -58,7 +59,7 @@ class WALEPlan(AbstractEddyViscosityPlan):
         del state
         gradient = jnp.asarray(arguments.velocity_gradient)
         symmetric = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
-        squared = oe.contract("...ik,...kj->...ij", gradient, gradient, backend="jax")
+        squared = ein.contract("...ik,...kj->...ij", gradient, gradient, backend="jax")
         squared_symmetric = 0.5 * (squared + jnp.swapaxes(squared, -1, -2))
         dimension = gradient.shape[-1]
         trace = jnp.trace(squared_symmetric, axis1=-2, axis2=-1)
@@ -68,8 +69,10 @@ class WALEPlan(AbstractEddyViscosityPlan):
             * jnp.eye(dimension, dtype=gradient.dtype)
             / dimension
         )
-        strain_norm = oe.contract("...ij,...ij->...", symmetric, symmetric, backend="jax")
-        deviatoric_norm = oe.contract(
+        strain_norm = ein.contract(
+            "...ij,...ij->...", symmetric, symmetric, backend="jax"
+        )
+        deviatoric_norm = ein.contract(
             "...ij,...ij->...", deviatoric, deviatoric, backend="jax"
         )
         numerator = deviatoric_norm**1.5
@@ -98,8 +101,8 @@ class VremanPlan(AbstractEddyViscosityPlan):
     ) -> Array:
         del state
         gradient = jnp.asarray(arguments.velocity_gradient)
-        beta = oe.contract("...ki,...kj->...ij", gradient, gradient, backend="jax")
-        alpha = oe.contract("...ij,...ij->...", gradient, gradient, backend="jax")
+        beta = ein.contract("...ki,...kj->...ij", gradient, gradient, backend="jax")
+        alpha = ein.contract("...ij,...ij->...", gradient, gradient, backend="jax")
         dimension = gradient.shape[-1]
         invariant = jnp.zeros_like(alpha)
         for first in range(dimension):
@@ -141,7 +144,7 @@ class SpalartAllmarasPlan(AbstractEddyViscosityPlan):
         gradient = arguments.velocity_gradient
         rotation = 0.5 * (gradient - jnp.swapaxes(gradient, -1, -2))
         vorticity = jnp.sqrt(
-            2.0 * oe.contract("...ij,...ij->...", rotation, rotation, backend="jax")
+            2.0 * ein.contract("...ij,...ij->...", rotation, rotation, backend="jax")
         )
         nu_tilde = jnp.maximum(arguments.model_state[..., 0], 0.0)
         production = self.cb1 * vorticity * nu_tilde
@@ -175,7 +178,7 @@ class KOmegaSSTPlan(AbstractEddyViscosityPlan):
             + jnp.swapaxes(arguments.velocity_gradient, -1, -2)
         )
         strain_norm = jnp.sqrt(
-            2.0 * oe.contract("...ij,...ij->...", strain, strain, backend="jax")
+            2.0 * ein.contract("...ij,...ij->...", strain, strain, backend="jax")
         )
         return self.a1 * kinetic / jnp.maximum(self.a1 * omega, strain_norm)
 
@@ -368,9 +371,9 @@ class SyntheticTurbulenceInflowPlan(StrictModule, NonTrainableState):
 
     def velocity(self, coordinates: ArrayLike, time: ArrayLike, /) -> Array:
         points = jnp.asarray(coordinates)
-        phase = oe.contract("...d,md->...m", points, self.wavevectors, backend="jax")
+        phase = ein.contract("...d,md->...m", points, self.wavevectors, backend="jax")
         phase = phase + self.phases + jnp.asarray(time)
-        return oe.contract(
+        return ein.contract(
             "...m,md->...d", jnp.cos(phase), self.amplitudes, backend="jax"
         )
 

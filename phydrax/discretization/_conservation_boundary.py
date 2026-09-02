@@ -11,8 +11,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -122,11 +123,11 @@ class ALEBoundaryContext(StrictModule, NonTrainableState):
         )
         point = eqx.error_if(
             point,
-            jnp.any(oe.contract("...i,...i->...", normal, normal) <= 0.0),
+            jnp.any(ein.contract("...i,...i->...", normal, normal) <= 0.0),
             "ALE boundary normals must be nonzero.",
         )
-        grid_normal = oe.contract("...i,...i->...", grid_velocity, normal)
-        wall_normal = oe.contract("...i,...i->...", wall_velocity_, normal)
+        grid_normal = ein.contract("...i,...i->...", grid_velocity, normal)
+        wall_normal = ein.contract("...i,...i->...", wall_velocity_, normal)
         defect = jnp.abs(wall_normal - grid_normal)
         tolerance = absolute + relative * jnp.maximum(
             jnp.abs(wall_normal), jnp.abs(grid_normal)

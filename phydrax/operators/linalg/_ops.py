@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
-from opt_einsum import contract
 
 from phydrax.domain import DomainFunction
+from phydrax.ein import contract
 
 from ..._strict import StrictModule
 

@@ -12,18 +12,18 @@ import time
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 
 import phydrax as phx
+import phydrax.ein as ein
 
 
 def _weighted_moments(solution):
     mask = solution.mask[-1]
     weights = jnp.where(mask, jnp.exp(solution.log_weights[-1]), 0.0)
     points = solution.points[-1]
-    mean = oe.contract("p,pi->i", weights, points)
+    mean = ein.contract("p,pi->i", weights, points)
     centered = points - mean
-    covariance = oe.contract("p,pi,pj->ij", weights, centered, centered)
+    covariance = ein.contract("p,pi,pj->ij", weights, centered, centered)
     return mean, covariance
 
 

@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -305,7 +306,7 @@ def sample_dgsem_flux_compatibility(
             for axis in range(system.dimension)
         )
         interface_residual.append(
-            oe.contract(
+            ein.contract(
                 "...i,...i->...",
                 variables_jump,
                 result.normal_flux,
@@ -726,7 +727,7 @@ def _coordinate_values(
     coordinate_element = discretization.coordinate_elements[0]
     coordinate_routes = discretization.coordinate_dofs[0]
     values = coordinate_element.tabulate(field_element.reference_nodes)[0]
-    return oe.contract(
+    return ein.contract(
         "qi,cid->cqd",
         values,
         runtime.coordinates[coordinate_routes],
@@ -940,7 +941,7 @@ def _periodic_facet_domain(
 def _tensor_mass_weights(sbp: ElementLocalSBPData, dimension: int, /) -> Array:
     result = sbp.norm_weights
     for _axis in range(1, dimension):
-        result = oe.contract("...i,j->...ij", result, sbp.norm_weights, backend="jax")
+        result = ein.contract("...i,j->...ij", result, sbp.norm_weights, backend="jax")
     return result
 
 
@@ -1259,7 +1260,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                     raise ValueError(
                         "DGSEM source must return the collocated conserved-state shape."
                     )
-                return -oe.contract(
+                return -ein.contract(
                     "cq,cq...,qi->ci...",
                     physical_weights,
                     source_values,
@@ -1527,7 +1528,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 pair.owner_cell, pair.owner_side
             ].reshape((-1, self.metrics.dimension))
             surface_jacobian = jnp.sqrt(
-                oe.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
+                ein.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
             )
             normal = scaled_normal / surface_jacobian[:, None]
             result = self.method.interface_flux.normal_face_flux(
@@ -1541,7 +1542,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             speeds.append(result.max_speed)
             measures.append(surface_jacobian)
             integrated.append(
-                oe.contract(
+                ein.contract(
                     "q,q,qi->i",
                     face_weight,
                     surface_jacobian,
@@ -1572,7 +1573,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                         int(owner_cell), side
                     ].reshape((-1, self.metrics.dimension))
                     surface_jacobian = jnp.sqrt(
-                        oe.contract(
+                        ein.contract(
                             "qd,qd->q",
                             scaled_normal,
                             scaled_normal,
@@ -1613,7 +1614,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                     speeds.append(speed)
                     measures.append(surface_jacobian)
                     integrated.append(
-                        oe.contract(
+                        ein.contract(
                             "q,q,qi->i",
                             face_weight,
                             surface_jacobian,
@@ -1657,13 +1658,13 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         value = self._state(state)
         rate = self.mass_inverted_rate(time, value, args)
         scalar_mass = self.scalar_mass_weights
-        total_integral = oe.contract("n,ni->i", scalar_mass, value, backend="jax")
-        conservation_rate = oe.contract("n,ni->i", scalar_mass, rate, backend="jax")
+        total_integral = ein.contract("n,ni->i", scalar_mass, value, backend="jax")
+        conservation_rate = ein.contract("n,ni->i", scalar_mass, rate, backend="jax")
         user_args = (
             args.user_args if isinstance(args, FiniteElementExecutionContext) else args
         )
         source_values = self._source_values(jnp.asarray(time), value, user_args)
-        source_integral = oe.contract(
+        source_integral = ein.contract(
             "n,ni->i", scalar_mass, source_values, backend="jax"
         )
         faces = self.face_fluxes(time, value, args)
@@ -1690,11 +1691,11 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             total_entropy = jnp.sum(scalar_mass * self.entropy_pair.entropy(value))
             entropy_rate = jnp.sum(
                 scalar_mass
-                * oe.contract("ni,ni->n", entropy_variables, rate, backend="jax")
+                * ein.contract("ni,ni->n", entropy_variables, rate, backend="jax")
             )
             source_rate = jnp.sum(
                 scalar_mass
-                * oe.contract(
+                * ein.contract(
                     "ni,ni->n",
                     entropy_variables,
                     source_values,
@@ -1737,7 +1738,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                     * self.entropy_pair.entropy_potential(minus, axis, user_args)
                     for axis in range(self.metrics.dimension)
                 )
-                density = oe.contract(
+                density = ein.contract(
                     "qi,qi->q",
                     variables_jump,
                     faces.normal_flux[face_index],
@@ -1774,7 +1775,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                             for direction in range(self.metrics.dimension)
                         )
                         entropy_flux = (
-                            oe.contract(
+                            ein.contract(
                                 "qi,qi->q",
                                 self.entropy_pair.entropy_variables(plus),
                                 faces.normal_flux[face_index],
@@ -1836,7 +1837,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         for axis in range(self.metrics.dimension):
             cofactor = self.metrics.contravariant_cofactors[..., axis, :]
             scale = jnp.sqrt(
-                oe.contract("c...d,c...d->c...", cofactor, cofactor, backend="jax")
+                ein.contract("c...d,c...d->c...", cofactor, cofactor, backend="jax")
             )
             normal = cofactor / scale[..., None]
             speed = self.system.max_normal_wave_speed(local, local, normal, user_args)

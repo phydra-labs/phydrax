@@ -10,8 +10,9 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -183,9 +184,9 @@ def smallest_eigenpairs(
     for _ in range(plan.iterations):
         inverse_images = solve_spd(shifted, vectors)
         vectors, _ = jnp.linalg.qr(inverse_images, mode="reduced")
-        projected = oe.contract("ia,ij,jb->ab", jnp.conj(vectors), matrix, vectors)
+        projected = ein.contract("ia,ij,jb->ab", jnp.conj(vectors), matrix, vectors)
         values, rotation = jnp.linalg.eigh(projected)
-        vectors = oe.contract("ia,ab->ib", vectors, rotation)
+        vectors = ein.contract("ia,ab->ib", vectors, rotation)
     trains: list[TensorTrain] = []
     bounds: list[Array] = []
     for column in range(plan.block_size):
@@ -203,10 +204,10 @@ def smallest_eigenpairs(
         ),
         axis=1,
     )
-    gram = oe.contract("ia,ib->ab", jnp.conj(compressed), compressed)
+    gram = ein.contract("ia,ib->ab", jnp.conj(compressed), compressed)
     identity = jnp.eye(plan.block_size, dtype=gram.dtype)
     orthogonality_error = jnp.sqrt(jnp.sum(jnp.abs(gram - identity) ** 2))
-    applied = oe.contract("ij,jb->ib", matrix, compressed)
+    applied = ein.contract("ij,jb->ib", matrix, compressed)
     residual = applied - compressed * values[None, :]
     residual_norms = jnp.sqrt(jnp.sum(jnp.abs(residual) ** 2, axis=0))
     matrix_norm = jnp.sqrt(jnp.sum(jnp.abs(matrix) ** 2))

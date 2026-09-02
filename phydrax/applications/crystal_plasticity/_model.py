@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import jax
 import jax.numpy as jnp
 import jax.scipy.linalg as jsp_linalg
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -226,7 +227,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
         committed_pack = committed_state.pack()
 
         def state_from_increment(increment):
-            plastic_generator = oe.contract("a,aij->ij", increment, rotated_schmid)
+            plastic_generator = ein.contract("a,aij->ij", increment, rotated_schmid)
             plastic = (
                 jsp_linalg.expm(plastic_generator) @ committed_state.plastic_deformation
             )
@@ -240,7 +241,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
         def residual(increment, args):
             state = state_from_increment(increment)
             _, kirchhoff, _, _ = self._stress(deformation, state.plastic_deformation)
-            resolved = oe.contract("aij,ij->a", rotated_schmid, kirchhoff)
+            resolved = ein.contract("aij,ij->a", rotated_schmid, kirchhoff)
             ratio = jnp.abs(resolved) / state.strengths
             rate = (
                 self.parameters.reference_rate
@@ -352,7 +353,7 @@ def cpfem_equilibrium_form(
         stress = jax.vmap(point_stress)(flat_deformation, flat_state).reshape(
             deformation.shape
         )
-        return oe.contract(
+        return ein.contract(
             "cq,cqib,cqab->cia",
             weights,
             test_gradients,
@@ -365,7 +366,7 @@ def cpfem_equilibrium_form(
         dofs = discretization.dof_maps[field_index].cell_dofs[0]
         orientation = discretization.dof_maps[field_index].orientations[0]
         local = displacement[dofs] * orientation[..., None]
-        gradient = oe.contract(
+        gradient = ein.contract(
             "cqid,cia->cqad",
             geometry.physical_gradients,
             local,

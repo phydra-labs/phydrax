@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
@@ -412,7 +413,7 @@ class MatrixCalibrationModel(AbstractArrayModel):
         extra = values.ndim - len(self.case_shape) - 1
         matrix = _reshape_for_samples(self.matrix, self.case_shape, extra)
         bias = _reshape_for_samples(self.bias, self.case_shape, extra)
-        return oe.contract("...f,...cf->...c", values, matrix) + bias
+        return ein.contract("...f,...cf->...c", values, matrix) + bias
 
     def predict_log_proba(self, x: Any, /) -> Array:
         return jax.nn.log_softmax(self.decision_function(x), axis=-1)
@@ -580,7 +581,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         def loss(parameters):
             matrix, bias = parameters
             calibrated = (
-                oe.contract("...nf,...cf->...nc", logits, matrix) + bias[..., None, :]
+                ein.contract("...nf,...cf->...nc", logits, matrix) + bias[..., None, :]
             )
             objective = (
                 -jnp.sum(

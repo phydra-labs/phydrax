@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
+
+import phydrax.ein as ein
 
 from ._entropy_pair import ConvexEntropyPair
 from ._hyperbolic_systems import IdealMHDSystem, ShallowWaterSystem
@@ -57,7 +58,7 @@ def shallow_water_energy_pair(system: ShallowWaterSystem, /) -> ConvexEntropyPai
         discharge = state[..., 1:]
         kinetic = (
             0.5
-            * oe.contract("...d,...d->...", discharge, discharge, backend="jax")
+            * ein.contract("...d,...d->...", discharge, discharge, backend="jax")
             / depth
         )
         return kinetic + 0.5 * system.gravity * depth**2

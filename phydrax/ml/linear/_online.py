@@ -9,8 +9,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -130,7 +131,7 @@ def _online_score(prepared: PreparedBatch, beta: Array, indices: Array) -> Array
     if not design.sparse:
         assert design.dense is not None
         values = design.dense[row, indices]
-        return oe.contract("cf,cfo->co", values, beta)
+        return ein.contract("cf,cfo->co", values, beta)
     assert design.values is not None
     assert design.indices is not None
     assert design.entry_valid is not None

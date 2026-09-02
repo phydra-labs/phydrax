@@ -155,7 +155,7 @@ class ContinuousSystem(StrictModule):
 class DiscreteSystem(StrictModule):
     """A discrete transition law independent of rollout and analysis policy."""
 
-    transition: Callable[..., ArrayLike] = eqx.field(static=True)
+    transition: Callable[..., ArrayLike]
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)
@@ -258,7 +258,7 @@ class DiscreteSystem(StrictModule):
         checked_source = eqx.error_if(
             context.source,
             ~duration_valid,
-            "Discrete step interval is invalid for the declared system bounds.",
+            "Discrete step interval is invalid for the declared step_size or system bounds.",
         )
         context = DiscreteStepContext(
             checked_source,

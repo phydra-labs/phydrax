@@ -26,8 +26,8 @@ from phydrax.discretization.finite_volume._mhd_reconstruction import (
     MHDPrimitiveReconstructionPlan,
 )
 from phydrax.discretization.finite_volume._uct import HLLUCTElectromotivePlan
+from phydrax.equations import MultigroupM1RadiationSystem
 from phydrax.equations._glm_mhd import GLMIdealMHDSystem
-from phydrax.equations._radiation_moments import MultigroupM1RadiationSystem
 from phydrax.solver._balance_law_composition import (
     AdditiveIMEXTableau,
     BalanceLawCompositionPlan,

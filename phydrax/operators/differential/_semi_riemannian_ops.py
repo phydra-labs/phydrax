@@ -8,8 +8,8 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 
+import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, Domain, DomainFunction
 
 from ..._strict import StrictModule
@@ -95,7 +95,7 @@ class _SignedGradientCallable(StrictModule):
                 **kwargs,
             )
         )
-        return oe.contract(
+        return ein.contract(
             "...ij,...j->...i",
             self.metric.inverse(args[self.coordinate_position]),
             differential,
@@ -144,8 +144,10 @@ class _DalembertianCallable(StrictModule):
         )
         coordinates = args[self.coordinate_position]
         coefficients = LeviCivitaConnection(self.metric).coefficients(coordinates)
-        covariant = second - oe.contract("...kij,...k->...ij", coefficients, differential)
-        return oe.contract(
+        covariant = second - ein.contract(
+            "...kij,...k->...ij", coefficients, differential
+        )
+        return ein.contract(
             "...ij,...ij->...", self.metric.inverse(coordinates), covariant
         )
 

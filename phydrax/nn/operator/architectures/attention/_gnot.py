@@ -12,9 +12,9 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -272,7 +272,7 @@ class GNOT(AbstractOperatorModel):
             normalized_weights = source.weights(
                 normalized=True, case_shape=case_shape
             ).reshape((cases, source_count))
-            summary = oe.contract("bs,bsw->bw", normalized_weights, source_features)
+            summary = ein.contract("bs,bsw->bw", normalized_weights, source_features)
             summary = jnp.broadcast_to(
                 summary[:, None, :],
                 (cases, query_count, self.hidden_channels),

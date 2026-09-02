@@ -10,8 +10,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._conservation_boundary import (
@@ -29,7 +30,7 @@ WallVelocityProvider = Callable[[Array, Array, Array, Any], ArrayLike]
 
 
 def _normal_velocity(velocity: Array, normal: Array, /) -> Array:
-    return oe.contract("...i,...i->...", velocity, normal)
+    return ein.contract("...i,...i->...", velocity, normal)
 
 
 def _primitive_velocity(system: Any, primitive: Array, /) -> Array:
@@ -602,9 +603,9 @@ class CharacteristicInflowBoundary(AbstractConservationBoundary):
         left_matrix, right_matrix, speeds = system.normal_eigensystem(
             interior, target, outward_normal, args
         )
-        amplitudes = oe.contract("...ij,...j->...i", left_matrix, target - interior)
+        amplitudes = ein.contract("...ij,...j->...i", left_matrix, target - interior)
         incoming = speeds < 0.0
-        correction = oe.contract(
+        correction = ein.contract(
             "...ij,...j->...i",
             right_matrix,
             jnp.where(incoming, amplitudes, 0.0),
@@ -662,9 +663,9 @@ class CharacteristicOutflowBoundary(AbstractConservationBoundary):
         left_matrix, right_matrix, speeds = system.normal_eigensystem(
             interior, target, outward_normal, args
         )
-        amplitudes = oe.contract("...ij,...j->...i", left_matrix, target - interior)
+        amplitudes = ein.contract("...ij,...j->...i", left_matrix, target - interior)
         incoming = speeds < 0.0
-        correction = oe.contract(
+        correction = ein.contract(
             "...ij,...j->...i",
             right_matrix,
             jnp.where(incoming, amplitudes, 0.0),

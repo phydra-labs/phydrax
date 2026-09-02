@@ -114,6 +114,13 @@ Most workflows are composing a few primitives:
 - **Sampling**: reference-space designs and fixed-kernel persistent Markov chains
   preserve explicit keys, chain/draw axes, transition evidence, and correlated-measure
   semantics when lowered into integration.
+- **Differentiable signal processing**: explicit-axis windows and framing,
+  finite convolution, causal FIR state, periodic Fourier and fixed wavelet
+  transforms, and finite/streaming polyphase rate conversion preserve complex
+  dtypes, JIT-static capacities, and gradients through samples, taps, and
+  carried history. See the
+  [guide](https://phydra-labs.github.io/phydrax/guides_signal_processing/)
+  and [API](https://phydra-labs.github.io/phydrax/api/signal/).
 - **Linear algebra**: paired array/PyTree/block spaces, composable dense,
   matrix-free, sparse, and block operators, explicit system/least-squares/
   minimum-norm contracts, reusable plans and factorizations, and portable

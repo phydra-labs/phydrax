@@ -11,9 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -335,12 +335,12 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         transition, left, right = self.discretize(jnp.where(active, delta, 0.0))
         complex_dtype = transition.dtype
         input_matrix = self._input_matrix(complex_dtype)
-        left_projection = oe.contract(
+        left_projection = ein.contract(
             "...ti,mi->...tm", values[..., :-1, :], input_matrix
         )
         injection = left * left_projection
         if self.input_integration == "linear":
-            right_projection = oe.contract(
+            right_projection = ein.contract(
                 "...ti,mi->...tm", values[..., 1:, :], input_matrix
             )
             injection = injection + right * right_projection
@@ -375,8 +375,8 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
 
     def _readout(self, states: Array, values: Array, valid: Array, /) -> Array:
         output_matrix = self._output_matrix(states.dtype)
-        dynamic = 2.0 * jnp.real(oe.contract("om,...tm->...to", output_matrix, states))
-        skip = oe.contract(
+        dynamic = 2.0 * jnp.real(ein.contract("om,...tm->...to", output_matrix, states))
+        skip = ein.contract(
             "oi,...ti->...to", self.skip_matrix.astype(values.dtype), values
         )
         output = dynamic.astype(skip.dtype) + skip

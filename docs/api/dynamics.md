@@ -114,6 +114,26 @@ segment-level failure evidence.
 
 ::: phydrax.dynamics.evolve
 
+## Frozen affine exponential flow
+
+`affine_exponential_step` advances `x' = A x + b` through an existing
+`AbstractLinearOperator` and `MatrixFunctionPolicy`. The forcing contribution
+uses `h phi1(h A) b`, so zero and singular operators require no inverse or
+regularization. `AffineExponentialResult` retains the separate exponential and
+forcing action evidence, aggregated work, and success state. Batched execution
+follows the existing dense matrix-function contract; general matrix-free
+operators remain unbatched.
+
+This primitive freezes caller-supplied `A` and `b`. It does not select temporal
+quadrature nodes, claim time-ordered LTV accuracy, impose positivity or
+conservation, or choose a fallback.
+
+::: phydrax.dynamics.AffineExponentialResult
+
+---
+
+::: phydrax.dynamics.affine_exponential_step
+
 ## Trajectory data and source adapters
 
 `TrajectoryData` has shape `case_shape + (capacity,) + state_shape`. `sample_valid`
@@ -174,6 +194,15 @@ are normalized over active nodes before the window evidence
 deterministic reference-branch, and residual objectives share one authored
 recurrent step. Full, prefix, chunked, rematerialized, and resumed execution are
 required to agree; no JAXPR transformation or inferred carry is involved.
+
+`gradient_accumulation=K` evaluates `K` independently keyed window batches at
+fixed model, optimizer, target, and rollout-schedule state. Each objective emits
+an evidence-weighted numerator and support; numerator gradients and supports are
+summed and normalized once before the Optax update. This is exactly equivalent
+to the pooled evidence-weighted objective for unequal batches and final epoch
+tails. A zero-support group is consumed without advancing optimizer, target,
+validation, callback, history, or checkpoint state. `steps` counts accepted
+optimizer updates, while `TrainingProgress.microstep` counts consumed batches.
 
 The first training contract accepts real `float32` or `float64` pointwise
 models and Euclidean state layouts. Variable steps, stochastic transitions,

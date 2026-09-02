@@ -9,8 +9,9 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import AbstractAttribute, StrictModule
 from ._chart import CoordinateChart
@@ -27,9 +28,9 @@ def christoffel_from_metric_jet(jet: MetricJet, /) -> Array:
         raise ValueError(
             "Christoffel symbols require a metric jet of order at least one."
         )
-    first = oe.contract("...kl,...jli->...kij", jet.inverse, derivative)
-    second = oe.contract("...kl,...ilj->...kij", jet.inverse, derivative)
-    third = oe.contract("...kl,...ijl->...kij", jet.inverse, derivative)
+    first = ein.contract("...kl,...jli->...kij", jet.inverse, derivative)
+    second = ein.contract("...kl,...ilj->...kij", jet.inverse, derivative)
+    third = ein.contract("...kl,...ijl->...kij", jet.inverse, derivative)
     return 0.5 * (first + second - third)
 
 
@@ -133,9 +134,9 @@ class _PullbackConnectionCoefficients(StrictModule):
         second_derivative = jax.jacfwd(jax.jacfwd(self.map.map_function))(coordinates)
         target = self.connection.coefficients(target_coordinates)
         transformed = (
-            oe.contract("abc,bj,ck->ajk", target, jacobian, jacobian) + second_derivative
+            ein.contract("abc,bj,ck->ajk", target, jacobian, jacobian) + second_derivative
         )
-        return oe.contract("ia,ajk->ijk", inverse_jacobian, transformed)
+        return ein.contract("ia,ajk->ijk", inverse_jacobian, transformed)
 
 
 def pullback_affine_connection(
@@ -203,8 +204,8 @@ def nonmetricity_tensor(
         matrix = metric(point)
         derivative = jnp.moveaxis(jax.jacfwd(metric)(point), -1, 0)
         coefficients = connection.coefficients(point)
-        first = oe.contract("lij,lk->ijk", coefficients, matrix)
-        second = oe.contract("lik,jl->ijk", coefficients, matrix)
+        first = ein.contract("lij,lk->ijk", coefficients, matrix)
+        second = ein.contract("lik,jl->ijk", coefficients, matrix)
         return derivative - first - second
 
     return _pointwise_array(evaluate, coordinates, connection.chart.dimension)
@@ -223,7 +224,7 @@ def connection_geodesic_acceleration(
             f"Geodesic velocity must have trailing dimension {dimension}; "
             f"got {velocity_array.shape}."
         )
-    return -oe.contract(
+    return -ein.contract(
         "...kij,...i,...j->...k",
         connection.coefficients(coordinates),
         velocity_array,
@@ -289,7 +290,7 @@ def connection_parallel_transport_rhs(
             "Transported vector must have trailing dimension "
             f"{dimension}; got {transported_array.shape}."
         )
-    return -oe.contract(
+    return -ein.contract(
         "...kij,...i,...j->...k",
         connection.coefficients(coordinates),
         velocity_array,

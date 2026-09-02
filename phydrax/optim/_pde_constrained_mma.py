@@ -13,7 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..linalg import (
     FunctionLinearOperator,

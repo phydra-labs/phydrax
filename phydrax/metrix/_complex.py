@@ -8,8 +8,9 @@ from collections.abc import Callable, Sequence
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._chart import ChartTransition, CoordinateChart
@@ -136,13 +137,13 @@ class AlmostComplexStructure(StrictModule):
         values = jnp.asarray(vector)
         if values.shape[-1:] != (self.chart.dimension,):
             raise ValueError("Almost-complex vectors must match the chart dimension.")
-        return oe.contract("...ij,...j->...i", self(coordinates), values)
+        return ein.contract("...ij,...j->...i", self(coordinates), values)
 
     def apply_covector(self, covector: ArrayLike, coordinates: ArrayLike, /) -> Array:
         values = jnp.asarray(covector)
         if values.shape[-1:] != (self.chart.dimension,):
             raise ValueError("Almost-complex covectors must match the chart dimension.")
-        return oe.contract("...i,...ij->...j", values, self(coordinates))
+        return ein.contract("...i,...ij->...j", values, self(coordinates))
 
 
 class AlmostComplexValidationReport(StrictModule):
@@ -192,10 +193,10 @@ def nijenhuis_tensor(
     def evaluate(point: Array) -> Array:
         matrix = structure._matrix_point(point)
         derivative = jax.jacfwd(structure._matrix_point)(point)
-        first = oe.contract("li,kjl->kij", matrix, derivative)
-        second = oe.contract("lj,kil->kij", matrix, derivative)
-        third = oe.contract("kl,lji->kij", matrix, derivative)
-        fourth = oe.contract("kl,lij->kij", matrix, derivative)
+        first = ein.contract("li,kjl->kij", matrix, derivative)
+        second = ein.contract("lj,kil->kij", matrix, derivative)
+        third = ein.contract("kl,lji->kij", matrix, derivative)
+        fourth = ein.contract("kl,lij->kij", matrix, derivative)
         return first - second - third + fourth
 
     return _pointwise_array(evaluate, coordinates, structure.chart.dimension)

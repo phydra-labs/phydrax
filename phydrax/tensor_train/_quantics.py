@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -340,7 +341,7 @@ class TensorFunction(StrictModule):
     def quadrature(self, /, *, max_evaluations: int) -> Array:
         indices = self.grid.indices(max_points=max_evaluations)
         values = self.evaluate(indices, max_evaluations=max_evaluations)
-        return oe.contract("i,i->", values, self.grid.weights(indices))
+        return ein.contract("i,i->", values, self.grid.weights(indices))
 
 
 def qtt_digitize(

@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -98,7 +99,7 @@ class ModalForcingBasis(StrictModule, NonTrainableState):
         value = jnp.asarray(coefficients)
         if value.shape != (self.mode_count,):
             raise ValueError("Modal forcing coefficients have the wrong shape.")
-        return oe.contract("m,m,mcj->cj", value, self.weights, self.vectors)
+        return ein.contract("m,m,mcj->cj", value, self.weights, self.vectors)
 
 
 class ModalOUForcingDiagnostics(StrictModule):

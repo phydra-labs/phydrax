@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -348,8 +349,8 @@ def _event_differentials(
     reset_jacobian = jax.jacfwd(lambda state: plan.reset(time, state, args))(state_before)
     before = jnp.asarray(plan.vector_field_before(time, state_before, args))
     after = jnp.asarray(plan.vector_field_after(time, state_after, args))
-    denominator = guard_time + oe.contract("...i,...i->", normal, before)
-    reset_before = oe.contract("...ij,...j->...i", reset_jacobian, before)
+    denominator = guard_time + ein.contract("...i,...i->", normal, before)
+    reset_before = ein.contract("...ij,...j->...i", reset_jacobian, before)
     jump = after - reset_time - reset_before
     return state_after, normal, reset_jacobian, before, jump, denominator, guard_time
 
@@ -415,7 +416,7 @@ def localize_hybrid_event(
     ) = _event_differentials(plan, event_time, state_before, args)
     guard_residual = jnp.abs(plan.guard(event_time, state_before, args))
     grazing = jnp.abs(transversality) <= plan.grazing_tolerance
-    saltation = reset_jacobian + oe.contract(
+    saltation = reset_jacobian + ein.contract(
         "...i,...j->...ij", jump, normal
     ) / jnp.where(grazing, 1.0, transversality)
     simultaneous = jnp.asarray(False)

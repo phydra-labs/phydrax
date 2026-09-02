@@ -10,8 +10,9 @@ from math import comb
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -415,7 +416,7 @@ def raw_moments(
 ) -> Array:
     values = precision.accumulation(populations)
     return precision.compute(
-        oe.contract(
+        ein.contract(
             "...q,mq->...m", values, jnp.asarray(basis.transform, dtype=values.dtype)
         )
     )
@@ -428,7 +429,7 @@ def populations_from_raw_moments(
     /,
 ) -> Array:
     return precision.compute(
-        oe.contract(
+        ein.contract(
             "qm,...m->...q",
             precision.coefficient(basis.inverse_transform),
             precision.compute(moments),
@@ -454,7 +455,7 @@ def central_moments(
         leading + (basis.population_count, 1, basis.dimension)
     )
     monomials = jnp.prod(centered[..., None, :, :] ** exponents, axis=-1)
-    return precision.compute(oe.contract("...q,...mq->...m", values, monomials))
+    return precision.compute(ein.contract("...q,...mq->...m", values, monomials))
 
 
 def _shift_moments(
@@ -468,7 +469,7 @@ def _shift_moments(
         ** differences.reshape((1,) * (u.ndim - 1) + differences.shape),
         axis=-1,
     )
-    return oe.contract(
+    return ein.contract(
         "ab,...ab,...b->...a",
         jnp.asarray(basis.shift_coefficients, dtype=values.dtype),
         powers,

@@ -11,9 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -312,10 +313,10 @@ class _HopfCurveProblem(ContinuationCurveProblem):
         physical = jnp.asarray(self.physical_residual(physical_state, parameters, args))
         matrix, mass = self.pencil.matrices(physical_state, parameters, args)
         mass_ = jnp.eye(matrix.shape[0], dtype=matrix.dtype) if mass is None else mass
-        real_mode = oe.contract("ij,j->i", matrix, mode_real) + frequency * oe.contract(
+        real_mode = ein.contract("ij,j->i", matrix, mode_real) + frequency * ein.contract(
             "ij,j->i", mass_, mode_imag
         )
-        imag_mode = oe.contract("ij,j->i", matrix, mode_imag) - frequency * oe.contract(
+        imag_mode = ein.contract("ij,j->i", matrix, mode_imag) - frequency * ein.contract(
             "ij,j->i", mass_, mode_real
         )
         normalization = (
@@ -456,8 +457,8 @@ def hopf_point_evidence(
         jnp.mean(
             jnp.square(
                 jnp.abs(
-                    oe.contract("ij,j->i", matrix, complex_mode)
-                    - 1j * frequency * oe.contract("ij,j->i", mass_, complex_mode)
+                    ein.contract("ij,j->i", matrix, complex_mode)
+                    - 1j * frequency * ein.contract("ij,j->i", mass_, complex_mode)
                 )
             )
         )

@@ -9,8 +9,9 @@ from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...discretization.fem import (
@@ -63,7 +64,7 @@ def linear_elasticity_form(
         trace = jnp.trace(strain, axis1=-2, axis2=-1)
         identity = jnp.eye(strain.shape[-1], dtype=strain.dtype)
         stress = lambda_ * trace[..., None, None] * identity + 2.0 * mu * strain
-        return oe.contract(
+        return ein.contract(
             "cq,cqid,cqad->cia",
             weights,
             test_gradients,
@@ -119,12 +120,12 @@ def upwind_advection_form(
 
     def volume(values, gradients, points, weights, test_basis, test_gradients, context):
         value = values[0]
-        directional_test_gradient = oe.contract(
+        directional_test_gradient = ein.contract(
             "cqid,d->cqi",
             test_gradients,
             velocity_,
         )
-        return -oe.contract(
+        return -ein.contract(
             "cq,cqi,cq->ci",
             weights,
             directional_test_gradient,
@@ -200,19 +201,19 @@ def darcy_form(
     ):
         flux_value, pressure_value = values
         div_test = jnp.trace(test_gradients, axis1=-2, axis2=-1)
-        return oe.contract(
+        return ein.contract(
             "cq,cqid,cqd->ci",
             weights,
             test_basis,
             inverse * flux_value,
-        ) - oe.contract("cq,cqi,cq->ci", weights, div_test, pressure_value)
+        ) - ein.contract("cq,cqi,cq->ci", weights, div_test, pressure_value)
 
     def pressure_residual(
         values, gradients, points, weights, test_basis, test_gradients, context
     ):
         flux_gradient = gradients[0]
         div_flux = jnp.trace(flux_gradient, axis1=-2, axis2=-1)
-        return oe.contract("cq,qi,cq->ci", weights, test_basis, div_flux)
+        return ein.contract("cq,qi,cq->ci", weights, test_basis, div_flux)
 
     return FiniteElementForm(
         form_id,
@@ -253,9 +254,9 @@ def maxwell_form(
         value = values[0]
         field_curl = curl(gradients[0])
         test_curl = curl(test_gradients)
-        return mass * oe.contract(
+        return mass * ein.contract(
             "cq,cqiv,cqv->ci", weights, test_basis, value
-        ) + curl_weight * oe.contract("cq,cqi,cq->ci", weights, test_curl, field_curl)
+        ) + curl_weight * ein.contract("cq,cqi,cq->ci", weights, test_curl, field_curl)
 
     return FiniteElementForm(
         form_id,
@@ -292,14 +293,14 @@ def stokes_form(
         viscous = (
             2.0
             * viscosity_
-            * oe.contract(
+            * ein.contract(
                 "cq,cqib,cqab->cia",
                 weights,
                 test_gradients,
                 strain,
             )
         )
-        pressure_term = oe.contract(
+        pressure_term = ein.contract(
             "cq,cqia,cq->cia",
             weights,
             test_gradients,
@@ -312,7 +313,7 @@ def stokes_form(
     ):
         velocity_gradient = gradients[0]
         divergence = jnp.trace(velocity_gradient, axis1=-2, axis2=-1)
-        return oe.contract("cq,qi,cq->ci", weights, test_basis, divergence)
+        return ein.contract("cq,qi,cq->ci", weights, test_basis, divergence)
 
     return FiniteElementForm(
         form_id,
@@ -589,13 +590,13 @@ def solve_hdg_poisson(
     local_size = local_field_size + local_trace_size
     matrices = jnp.zeros((cell_count, local_size, local_size), dtype=weights.dtype)
     right_hand_side = jnp.zeros((cell_count, local_size), dtype=weights.dtype)
-    stiffness = kappa * oe.contract(
+    stiffness = kappa * ein.contract(
         "cq,cqid,cqjd->cij",
         weights,
         gradients,
         gradients,
     )
-    load = forcing * oe.contract("cq,qi->ci", weights, basis)
+    load = forcing * ein.contract("cq,qi->ci", weights, basis)
     matrices = matrices.at[:, :local_field_size, :local_field_size].set(stiffness)
     right_hand_side = right_hand_side.at[:, :local_field_size].set(load)
     interval_data = _reference_rule_data(_interval_rule())
@@ -641,20 +642,20 @@ def solve_hdg_poisson(
         tau = penalty * element.degree**2 * kappa / height
         uu = (
             -kappa
-            * oe.contract(
+            * ein.contract(
                 "cq,qi,cqj->cij",
                 side_weights,
                 side_basis,
                 normal_gradient,
             )
             - kappa
-            * oe.contract(
+            * ein.contract(
                 "cq,cqi,qj->cij",
                 side_weights,
                 normal_gradient,
                 side_basis,
             )
-            + oe.contract(
+            + ein.contract(
                 "cq,c,qi,qj->cij",
                 side_weights,
                 tau,
@@ -662,9 +663,9 @@ def solve_hdg_poisson(
                 side_basis,
             )
         )
-        coupling = kappa * oe.contract(
+        coupling = kappa * ein.contract(
             "cq,cqi->ci", side_weights, normal_gradient
-        ) - oe.contract(
+        ) - ein.contract(
             "cq,c,qi->ci",
             side_weights,
             tau,

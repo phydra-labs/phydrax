@@ -9,7 +9,8 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -176,7 +177,7 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
     def map_coordinates(self, coordinates, /):
         values = jnp.asarray(coordinates)
         return (
-            oe.contract("ij,...j->...i", self.coordinate_matrix, values, backend="jax")
+            ein.contract("ij,...j->...i", self.coordinate_matrix, values, backend="jax")
             + self.coordinate_offset
         )
 
@@ -186,7 +187,7 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
             return data
         if data.shape[-1] != self.component_matrix.shape[1]:
             raise ValueError("Periodic component transform shape is incompatible.")
-        return oe.contract("ij,...j->...i", self.component_matrix, data, backend="jax")
+        return ein.contract("ij,...j->...i", self.component_matrix, data, backend="jax")
 
 
 class FiniteElementPeriodicFacetPair(StrictModule, NonTrainableState):

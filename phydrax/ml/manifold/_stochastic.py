@@ -9,8 +9,9 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel, ModelBinding
 from .._batch import MLBatch
@@ -459,7 +460,7 @@ class FuzzyGraphEmbeddingModel(AbstractArrayModel):
                 jnp.sum(membership, axis=-1, keepdims=True),
                 jnp.finfo(membership.dtype).tiny,
             )
-            return oe.contract("qk,qkd->qd", membership, embedding_[indices])
+            return ein.contract("qk,qkd->qd", membership, embedding_[indices])
 
         result = jax.vmap(transform_one)(queries, train, embedding, active)
         return _restore_queries(

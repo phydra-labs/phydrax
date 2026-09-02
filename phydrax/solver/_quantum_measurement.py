@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
@@ -136,7 +137,7 @@ class QuantumInstrument(StrictModule):
                 "Every instrument outcome requires an active Kraus operator."
             )
         weights = mask.astype(operators.real.dtype)
-        effects = oe.contract(
+        effects = ein.contract(
             "ok,okai,okaj->oij", weights, jnp.conj(operators), operators
         )
         adjoints = jnp.swapaxes(jnp.conj(effects), -1, -2)
@@ -247,7 +248,7 @@ def apply_dense_quantum_instrument(
         raise ValueError("zero_probability_tolerance must be finite and nonnegative.")
     density = _as_density(state, instrument.dimension)
     weights = instrument.kraus_mask.astype(instrument.kraus.real.dtype)
-    branches = oe.contract(
+    branches = ein.contract(
         "ok,okai,ij,okbj->oab",
         weights,
         instrument.kraus,
@@ -323,7 +324,7 @@ def apply_mps_quantum_instrument(
     finite: list[Array] = []
     for outcome, kraus_index in enumerate(active_indices):
         tensors = list(state.tensors)
-        tensors[site_] = oe.contract(
+        tensors[site_] = ein.contract(
             "oi,lir->lor", instrument.kraus[outcome, kraus_index], tensors[site_]
         )
         branch = MatrixProductState(tuple(tensors), precision=state.precision)

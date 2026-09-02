@@ -10,8 +10,9 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -254,7 +255,7 @@ class _BlockedScalarWeakOperator3D(_AbstractCostedLinearOperator):
             else:
                 factor = jnp.exp(1j * self.kernel.parameter * radius)
             return factor / (4.0 * jnp.pi * radius)
-        normal_difference = oe.contract(
+        normal_difference = ein.contract(
             "tsqrc,sc->tsqr", differences, normals, backend="jax"
         )
         if self.kernel.family == "laplace":
@@ -307,7 +308,7 @@ class _BlockedScalarWeakOperator3D(_AbstractCostedLinearOperator):
                     jnp.ones_like(differences),
                 )
                 kernel_values = self._kernel_values(safe_differences, source_normals)
-                pair_matrix = oe.contract(
+                pair_matrix = ein.contract(
                     "tq,sr,tsqr->ts",
                     target_weights,
                     source_weights,
@@ -316,7 +317,7 @@ class _BlockedScalarWeakOperator3D(_AbstractCostedLinearOperator):
                 )
                 pair_matrix = jnp.where(active, pair_matrix, 0.0)
                 if transpose:
-                    contribution = oe.contract(
+                    contribution = ein.contract(
                         "ts,t->s",
                         pair_matrix,
                         vector[safe_targets] * target_valid,
@@ -324,7 +325,7 @@ class _BlockedScalarWeakOperator3D(_AbstractCostedLinearOperator):
                     )
                     output = output.at[safe_sources].add(contribution * source_valid)
                 else:
-                    accumulator = accumulator + oe.contract(
+                    accumulator = accumulator + ein.contract(
                         "ts,s->t",
                         pair_matrix,
                         vector[safe_sources] * source_valid,

@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._array_archive import array_payload_digest
 from .._fingerprint import canonical_fingerprint
@@ -159,7 +160,7 @@ def contract_abelian_tensors(
     if plan.scalar_result:
         for left_index, right_index, _ in plan.routes:
             contributions.append(
-                oe.contract(
+                ein.contract(
                     precision.contraction(left.blocks[left_index]),
                     left_labels,
                     precision.contraction(right.blocks[right_index]),
@@ -185,7 +186,7 @@ def contract_abelian_tensors(
     )
     blocks = [jnp.zeros(shape, dtype=dtype) for shape in plan.result_layout.block_shapes]
     for left_index, right_index, result_index in plan.routes:
-        contribution = oe.contract(
+        contribution = ein.contract(
             precision.contraction(left.blocks[left_index]),
             left_labels,
             precision.contraction(right.blocks[right_index]),

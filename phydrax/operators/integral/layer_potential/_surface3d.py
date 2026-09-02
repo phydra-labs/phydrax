@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._interpolation import barycentric_basis
@@ -95,7 +96,7 @@ def interpolate_surface_panel_density(
     start = panel_id * panelization.nodes_per_panel
     stop = start + panelization.nodes_per_panel
     density_grid = density[start:stop].reshape((order, order))
-    return oe.contract(
+    return ein.contract(
         "ni,nj,ij->n",
         first_basis,
         second_basis,

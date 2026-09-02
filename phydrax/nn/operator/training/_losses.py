@@ -11,14 +11,16 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
+
 from ...._frozendict import frozendict
+from ...._numerics import log_normalize
 from ...._training_objective import _ObjectiveContribution
 from ....graph import (
     broadcast_operator_topology,
@@ -74,6 +76,107 @@ class OperatorLossContext:
         raise ValueError("Loss space must be 'execution' or 'physical'.")
 
 
+OperatorAccumulationKind = Literal["case_mean", "single_batch"]
+
+
+@dataclass(frozen=True)
+class _OperatorCaseMeasure:
+    normalized_weights: Array
+    log_support: Array
+    valid: Array
+
+
+def _operator_case_measure(
+    context: OperatorLossContext,
+    /,
+    *,
+    dtype: Any,
+) -> _OperatorCaseMeasure:
+    case_count = math.prod(context.execution_batch.case_shape)
+    log_weights = (
+        jnp.zeros((case_count,), dtype=dtype)
+        if context.case_log_weights is None
+        else jnp.asarray(context.case_log_weights, dtype=dtype).reshape((-1,))
+    )
+    mask = (
+        jnp.ones((case_count,), dtype=bool)
+        if context.case_mask is None
+        else jnp.asarray(context.case_mask, dtype=bool).reshape((-1,))
+    )
+    probabilities = (
+        jnp.ones((case_count,), dtype=dtype)
+        if context.sampling_probabilities is None
+        else jnp.asarray(context.sampling_probabilities, dtype=dtype).reshape((-1,))
+    )
+    expected = (case_count,)
+    if (
+        log_weights.shape != expected
+        or mask.shape != expected
+        or probabilities.shape != expected
+    ):
+        raise ValueError("Operator case measure arrays must align with case shape.")
+    probabilities = eqx.error_if(
+        probabilities,
+        jnp.any(mask & (~jnp.isfinite(probabilities) | (probabilities <= 0.0))),
+        "Active operator case sampling probabilities must be finite and positive.",
+    )
+    adjusted = log_weights - jnp.log(probabilities)
+    normalized, log_support, valid = log_normalize(
+        adjusted,
+        axes=0,
+        mask=mask,
+        accumulation_dtype=dtype,
+    )
+    return _OperatorCaseMeasure(
+        normalized,
+        jnp.where(valid, log_support, jnp.zeros_like(log_support)),
+        valid,
+    )
+
+
+def _nonuniform_case_measure(
+    context: OperatorLossContext,
+    /,
+    *,
+    dtype: Any,
+) -> Array:
+    case_count = math.prod(context.execution_batch.case_shape)
+    log_weights = (
+        jnp.zeros((case_count,), dtype=dtype)
+        if context.case_log_weights is None
+        else jnp.asarray(context.case_log_weights, dtype=dtype).reshape((-1,))
+    )
+    mask = (
+        jnp.ones((case_count,), dtype=bool)
+        if context.case_mask is None
+        else jnp.asarray(context.case_mask, dtype=bool).reshape((-1,))
+    )
+    probabilities = (
+        jnp.ones((case_count,), dtype=dtype)
+        if context.sampling_probabilities is None
+        else jnp.asarray(context.sampling_probabilities, dtype=dtype).reshape((-1,))
+    )
+    return (
+        jnp.any(~mask)
+        | jnp.any(~jnp.isfinite(log_weights))
+        | jnp.any(log_weights != log_weights[0])
+        | jnp.any(~jnp.isfinite(probabilities) | (probabilities <= 0.0))
+        | jnp.any(probabilities != probabilities[0])
+    )
+
+
+def _case_mean_contribution(
+    value: Array,
+    context: OperatorLossContext,
+    /,
+) -> _ObjectiveContribution:
+    array = jnp.asarray(value)
+    measure = _operator_case_measure(context, dtype=array.real.dtype)
+    support = measure.valid.astype(array.real.dtype)
+    numerator = jnp.where(measure.valid, array, jnp.zeros_like(array))
+    return _ObjectiveContribution(numerator, support, measure.log_support)
+
+
 @dataclass(frozen=True)
 class CochainResidualInput:
     """Bind one residual-program input to a prediction or source field."""
@@ -95,6 +198,7 @@ class AbstractOperatorLossTerm(ABC):
 
     name: str
     weight: float
+    accumulation_kind: ClassVar[OperatorAccumulationKind] = "single_batch"
 
     @abstractmethod
     def __call__(
@@ -125,10 +229,7 @@ class AbstractOperatorLossTerm(ABC):
         training: bool,
         context: OperatorLossContext,
     ) -> _ObjectiveContribution:
-        """Return the additive case-supported form of this scalar term."""
-        support_count = 1
-        for size in batch.case_shape:
-            support_count *= int(size)
+        """Return the additive form used by objective and gradient aggregation."""
         value = self(
             model,
             prediction,
@@ -139,8 +240,13 @@ class AbstractOperatorLossTerm(ABC):
             training=training,
             context=context,
         )
-        support = jnp.asarray(support_count, dtype=jnp.asarray(value).real.dtype)
-        return _ObjectiveContribution(jnp.asarray(value) * support, support)
+        if self.accumulation_kind == "case_mean":
+            return _case_mean_contribution(value, context)
+        array = jnp.asarray(value)
+        return _ObjectiveContribution(
+            array,
+            jnp.ones((), dtype=array.real.dtype),
+        )
 
     @property
     @abstractmethod
@@ -158,6 +264,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
     inputs: Mapping[str, CochainResidualInput]
     output: str
     weight: float = 1.0
+    accumulation_kind: ClassVar[OperatorAccumulationKind] = "case_mean"
     reduction: CochainMetricReduction = "graph_mean"
     topology_fingerprint: str | None = None
 
@@ -336,13 +443,26 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
         ends = jnp.cumsum(jnp.asarray(graph.n_node, dtype=jnp.int32))
         graph_index = jnp.searchsorted(ends, positions, side="right").astype(jnp.int32)
         graph_index = jnp.where(positions < jnp.sum(graph.n_node), graph_index, -1)
+        case_measure = _operator_case_measure(context, dtype=squared.real.dtype)
+        graph_count = int(graph.n_node.shape[0])
+        if graph_count != int(case_measure.normalized_weights.shape[0]):
+            raise ValueError(
+                "Cochain residual accumulation requires one graph per operator case."
+            )
+        safe_case_index = jnp.where(graph_index >= 0, graph_index, 0)
+        segment_weight = jnp.where(
+            graph_index >= 0,
+            graph_count * case_measure.normalized_weights[safe_case_index],
+            0.0,
+        )
         value = cochain_metric_reduce(
             squared,
             metric,
             graph_index,
-            n_graph=int(graph.n_node.shape[0]),
+            n_graph=graph_count,
             reduction=self.reduction,
             entity_mask=active,
+            segment_weight=segment_weight,
         )
         return jnp.asarray(self.weight, dtype=value.dtype) * value
 
@@ -427,7 +547,6 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
             context=context,
         )
         array = jnp.asarray(value)
-        weighted_cases = context.case_log_weights is not None
         if self.case_reduction == "per_case":
             expected = (selected_batch.case_shape[0],)
             if array.shape != expected:
@@ -436,18 +555,24 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
                     f"{expected}; got {array.shape}."
                 )
             array = _weighted_case_reduction(array, context, "mean")
-        elif weighted_cases:
-            raise ValueError(
+        else:
+            if array.ndim != 0:
+                raise ValueError(
+                    "Custom scalar operator losses must return a scalar unless "
+                    "case_reduction='per_case'."
+                )
+            array = eqx.error_if(
+                array,
+                _nonuniform_case_measure(context, dtype=array.real.dtype),
                 "A scalar custom OperatorLossTerm cannot consume nonuniform/masked "
                 "case weights. Declare case_reduction='per_case' and return one "
-                "value per case."
-            )
-        elif array.ndim != 0:
-            raise ValueError(
-                "Custom scalar operator losses must return a scalar unless "
-                "case_reduction='per_case'."
+                "value per case.",
             )
         return jnp.asarray(self.weight, dtype=array.dtype) * array
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean" if self.case_reduction == "per_case" else "single_batch"
 
     @property
     def fingerprint(self) -> str:
@@ -558,6 +683,10 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
         return jnp.asarray(self.weight, dtype=jnp.asarray(value).dtype) * value
 
     @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean" if self.reduction == "mean" else "single_batch"
+
+    @property
     def fingerprint(self) -> str:
         payload = json.dumps(
             {
@@ -588,6 +717,7 @@ class SupervisedOperatorRolloutLoss(AbstractOperatorLossTerm):
     name: str = "supervised_rollout_l2"
     weight: float = 1.0
     reduction: Literal["mean"] = "mean"
+    accumulation_kind: ClassVar[OperatorAccumulationKind] = "case_mean"
 
     def __post_init__(self):
         fields = tuple(str(field) for field in self.target_fields)
@@ -659,6 +789,10 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
     weight: float = 1.0
     reduction: Literal["mean"] = "mean"
 
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return self.residual_term.accumulation_kind
+
     def __post_init__(self):
         weights = tuple(float(value) for value in self.time_weights)
         if not self.name:
@@ -727,43 +861,35 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
 def _weighted_case_reduction(
     values: Array,
     context: OperatorLossContext,
-    reduction: Literal["mean", "sum", "none"],
+    reduction: Literal["mean", "sum"],
     /,
 ) -> Array:
-    if context.case_log_weights is None:
-        return jnp.sum(values) if reduction == "sum" else jnp.mean(values)
-    log_weights = jnp.asarray(context.case_log_weights, dtype=values.dtype)
-    mask = (
-        jnp.ones(log_weights.shape, dtype=bool)
-        if context.case_mask is None
-        else jnp.asarray(context.case_mask, dtype=bool)
+    array = jnp.asarray(values)
+    measure = _operator_case_measure(context, dtype=array.real.dtype)
+    flat_values = array.reshape((-1,))
+    if flat_values.shape != measure.normalized_weights.shape:
+        raise ValueError(
+            "Per-case loss values must align with the operator case measure."
+        )
+    normalized_value = ein.contract(
+        "i,i->",
+        measure.normalized_weights,
+        flat_values,
     )
-    probabilities = (
-        jnp.ones(log_weights.shape, dtype=values.dtype)
-        if context.sampling_probabilities is None
-        else jnp.asarray(context.sampling_probabilities, dtype=values.dtype)
+    normalized_value = jnp.where(
+        measure.valid,
+        normalized_value,
+        jnp.zeros_like(normalized_value),
     )
-    if (
-        log_weights.shape != values.shape
-        or mask.shape != values.shape
-        or probabilities.shape != values.shape
-    ):
-        raise ValueError("Case weights, mask, and sampling probabilities must align.")
-    active = mask & jnp.isfinite(log_weights) & (probabilities > 0.0)
-    maximum = jnp.max(jnp.where(active, log_weights, -jnp.inf))
-    weights = jnp.where(
-        active,
-        jnp.exp(log_weights - maximum) / probabilities,
-        0.0,
+    if reduction == "mean":
+        return normalized_value
+    if reduction != "sum":
+        raise ValueError("Case reduction must be 'mean' or 'sum'.")
+    return jnp.where(
+        measure.valid,
+        jnp.exp(measure.log_support) * normalized_value,
+        jnp.zeros_like(normalized_value),
     )
-    mass = jnp.sum(weights)
-    weights = eqx.error_if(
-        weights,
-        ~jnp.isfinite(mass) | (mass <= 0.0),
-        "Weighted operator reduction requires positive finite case mass.",
-    )
-    normalized = weights / mass
-    return oe.contract("i,i->", normalized, values.reshape((-1,)))
 
 
 __all__ = [
@@ -771,6 +897,7 @@ __all__ = [
     "CochainResidualInput",
     "CochainResidualLoss",
     "OperatorLossContext",
+    "OperatorAccumulationKind",
     "OperatorLossTerm",
     "ResidualOperatorRolloutLoss",
     "SupervisedOperatorLoss",

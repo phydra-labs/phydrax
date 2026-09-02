@@ -8,8 +8,9 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -110,7 +111,7 @@ class KineticShockSensorPlan(StrictModule, NonTrainableState):
         momentum = conserved[..., 1:-1]
         total_energy = conserved[..., -1]
         velocity = momentum / density[..., None]
-        kinetic = 0.5 * oe.contract("...d,...d->...", momentum, velocity)
+        kinetic = 0.5 * ein.contract("...d,...d->...", momentum, velocity)
         return self.material.pressure(density, (total_energy - kinetic) / density)
 
     def evaluate(
@@ -351,7 +352,7 @@ class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
                 "FV and kinetic interface states must share their batch shape."
             )
         lifted = self.method.equilibrium(conserved)
-        normal_velocities = oe.contract(
+        normal_velocities = ein.contract(
             "qd,d->q", self.method.quadrature.velocities, self.normal
         )
         particles_upwind = jnp.where(
@@ -367,7 +368,7 @@ class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
         particle_flux = particles_upwind * normal_velocities
         energy_flux = energy_upwind * normal_velocities
         mass_flux = jnp.sum(particle_flux, axis=-1)
-        momentum_flux = oe.contract(
+        momentum_flux = ein.contract(
             "...q,qd->...d", particle_flux, self.method.quadrature.velocities
         )
         total_energy_flux = jnp.sum(energy_flux, axis=-1)

@@ -11,9 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
-from opt_einsum import contract
 
 from phydrax.domain import DomainComponent, DomainFunction, PointSampling
+from phydrax.ein import contract
 
 from .._classification import (
     binary_probabilities_from_logits,

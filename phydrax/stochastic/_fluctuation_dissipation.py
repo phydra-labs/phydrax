@@ -10,8 +10,9 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._euler_maruyama import (
@@ -151,7 +152,7 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
         hessian = jax.hessian(self.field.energy)(state_array)
         drift = self.drift(jnp.asarray(0.0), state_array)
         dissipation = self.field.dissipation_matrix(state_array)
-        return jnp.vdot(gradient, drift).real + self.temperature * oe.contract(
+        return jnp.vdot(gradient, drift).real + self.temperature * ein.contract(
             "ij,ji->", dissipation, hessian
         )
 

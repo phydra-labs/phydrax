@@ -9,8 +9,9 @@ from math import sqrt
 
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 import scipy.sparse as sp
+
+import phydrax.ein as ein
 
 from ...backends import ClarabelPlan, prepare_clarabel, PreparedClarabel
 from ._cones import (
@@ -331,7 +332,7 @@ def _audit_result(
 ):
     dtype = program.linear.dtype
     quadratic_primal = _conic_quadratic_mv(program.quadratic, primal)
-    objective = 0.5 * oe.contract("...i,...i->...", primal, quadratic_primal) + jnp.sum(
+    objective = 0.5 * ein.contract("...i,...i->...", primal, quadratic_primal) + jnp.sum(
         program.linear * primal, axis=-1
     )
     primal_residual = (

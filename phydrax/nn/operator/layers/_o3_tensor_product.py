@@ -12,12 +12,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax.typing import DTypeLike
 from jaxtyping import Array, Key
-from opt_einsum import contract
 
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+from phydrax.ein import contract
 from phydrax.nn.operator.representations import O3Representation
 from phydrax.nn.operator.representations._o3 import _tensor_basis
 

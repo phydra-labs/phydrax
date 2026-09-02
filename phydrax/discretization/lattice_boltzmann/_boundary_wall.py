@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ._link_topology import (
@@ -115,7 +116,7 @@ def _ledger(
     )
     fluid_link_impulse = jnp.where(wall_mask[..., None], fluid_link_impulse, 0.0)
     one_hot = body_index[..., None] == jnp.arange(body_count)
-    fluid_impulse = oe.contract(
+    fluid_impulse = ein.contract(
         "...qb,...qd->bd", one_hot.astype(incoming.dtype), fluid_link_impulse
     )
     body_impulse = -fluid_impulse
@@ -139,11 +140,11 @@ def _ledger(
             ),
             axis=-1,
         )
-    angular_impulse = oe.contract(
+    angular_impulse = ein.contract(
         "...qb,...qa->ba", one_hot.astype(incoming.dtype), angular_link
     )
-    link_work = oe.contract("...qd,...qd->...q", body_link_impulse, wall_velocity)
-    work = oe.contract("...qb,...q->b", one_hot.astype(incoming.dtype), link_work)
+    link_work = ein.contract("...qd,...qd->...q", body_link_impulse, wall_velocity)
+    work = ein.contract("...qb,...q->b", one_hot.astype(incoming.dtype), link_work)
     return LatticeBoltzmannWallLedger(
         fluid_impulse,
         body_impulse,
@@ -204,7 +205,7 @@ def apply_wall_boundaries(
         jnp.any(wall[..., None] & ~jnp.isfinite(wall_velocity)),
         "Wall kinematics must be finite on every owned link.",
     )
-    projection = oe.contract("...qd,...qd->...q", velocity_field, wall_velocity)
+    projection = ein.contract("...qd,...qd->...q", velocity_field, wall_velocity)
     correction = (
         2.0
         * weights.astype(current.dtype).reshape(

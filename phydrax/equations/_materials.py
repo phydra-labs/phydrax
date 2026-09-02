@@ -9,8 +9,9 @@ import abc
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -213,7 +214,7 @@ class StiffenedGasMaterial(AbstractThermodynamicMaterial):
 def _two_material_velocity_squared(velocity: Array, /) -> Array:
     """Return a contraction that remains differentiable under JAX transforms."""
 
-    return oe.contract("...d,...d->...", velocity, velocity)
+    return ein.contract("...d,...d->...", velocity, velocity)
 
 
 class TwoMaterialPrimitiveState(StrictModule, NonTrainableState):
@@ -943,12 +944,9 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
             & jnp.isfinite(pressure)
         )
         alpha_tolerance = (
-            jnp.asarray(64.0, dtype=alpha_0.dtype)
-            * jnp.finfo(alpha_0.dtype).eps
+            jnp.asarray(64.0, dtype=alpha_0.dtype) * jnp.finfo(alpha_0.dtype).eps
         )
-        alpha_bounded = (alpha_0 >= -alpha_tolerance) & (
-            alpha_0 <= 1.0 + alpha_tolerance
-        )
+        alpha_bounded = (alpha_0 >= -alpha_tolerance) & (alpha_0 <= 1.0 + alpha_tolerance)
         alpha_checked = jnp.clip(alpha_0, 0.0, 1.0)
         alpha_valid = alpha_bounded & (
             (alpha_checked == 0.0)

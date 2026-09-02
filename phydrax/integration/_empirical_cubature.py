@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._measure_weights import normalized_weights
 from .._strict import StrictModule
@@ -77,10 +78,10 @@ def empirical_cubature(
         log_weights=measure.log_weights,
         mask=measure.mask,
     )
-    source_moment = oe.contract("i,ij->j", source_weights, selector_features)
+    source_moment = ein.contract("i,ij->j", source_weights, selector_features)
     selected_weights = selection.weights
     selected_features = selector_features[selection.indices]
-    selected_moment = oe.contract("i,ij->j", selected_weights, selected_features)
+    selected_moment = ein.contract("i,ij->j", selected_weights, selected_features)
     residual = selected_moment - source_moment
     scale = jnp.maximum(
         jnp.linalg.vector_norm(source_moment),
