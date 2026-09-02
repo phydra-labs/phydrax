@@ -18,11 +18,13 @@ spectral, cutoff, and correction defects remain separate evidence.
 
 ## Hierarchical FMM
 
-`VortexFMMPlan` builds a complete quadtree or octree from reference positions.
-It performs leaf P2M, bottom-up M2M, same-level M2L, parent-to-child L2L, local
-linear evaluation, and direct regularized neighbor interactions. Expansion order
-zero or one is explicit. Source occupancy, tree bounds, reference displacement,
-interaction counts, and geometric tail bounds fail closed.
+`VortexFMMPlan` builds sparse occupied source/target prefixes through the shared
+Morton level-octree substrate. It performs leaf P2M, bottom-up M2M, same-level
+M2L, parent-to-child L2L, local linear evaluation, and direct regularized
+neighbor interactions without allocating a complete quadtree or octree.
+Expansion order zero or one is explicit. Tree bounds, reference displacement,
+interaction capacities, interaction counts, and geometric tail bounds fail
+closed.
 
 The older fixed-leaf approximation is named `FixedClusterVortexPlan2D`; it is
 not an FMM.

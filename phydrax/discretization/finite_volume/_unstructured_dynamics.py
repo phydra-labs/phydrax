@@ -36,6 +36,7 @@ from ._coupling import (
     PreparedUnstructuredFiniteVolumeCoupling,
     UnstructuredFiniteVolumeCouplingPlan,
 )
+from ._dyadic import DyadicFiniteVolumeDiscretization
 from ._embedded_dynamics import (
     lower_embedded_stage_metrics,
     UnstructuredEmbeddedBoundarySet,
@@ -191,7 +192,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     """Single-device conservative dynamics over explicit unstructured faces."""
 
     system: Any
-    discretization: UnstructuredFiniteVolumeDiscretization
+    discretization: (
+        UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
+    )
     method: UnstructuredFiniteVolumeMethodPlan
     boundaries: UnstructuredFiniteVolumeBoundarySet
     coupling: PreparedUnstructuredFiniteVolumeCoupling
@@ -213,7 +216,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     def __init__(
         self,
         system: Any,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: (
+            UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
+        ),
         method: UnstructuredFiniteVolumeMethodPlan,
         boundaries: UnstructuredFiniteVolumeBoundarySet,
         /,
@@ -223,8 +228,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         precision: FiniteVolumePrecisionPolicy | None = None,
         coupling: PreparedUnstructuredFiniteVolumeCoupling | None = None,
     ):
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("discretization must be unstructured finite-volume geometry.")
+        if not isinstance(
+            discretization,
+            (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),
+        ):
+            raise TypeError(
+                "discretization must be explicit-face finite-volume geometry."
+            )
         if not isinstance(method, UnstructuredFiniteVolumeMethodPlan):
             raise TypeError("method must be UnstructuredFiniteVolumeMethodPlan.")
         if not isinstance(boundaries, UnstructuredFiniteVolumeBoundarySet):

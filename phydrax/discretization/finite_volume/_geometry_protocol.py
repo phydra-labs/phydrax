@@ -928,10 +928,14 @@ def lower_static_unstructured_stage_metrics(
 ) -> FiniteVolumeStageMetrics:
     """Lower static unstructured FV geometry without motion-specific dependencies."""
 
+    from ._dyadic import DyadicFiniteVolumeDiscretization
     from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
-    if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-        raise TypeError("discretization must be UnstructuredFiniteVolumeDiscretization.")
+    if not isinstance(
+        discretization,
+        (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),
+    ):
+        raise TypeError("discretization must be explicit-face finite-volume geometry.")
     epoch = _canonical_identifier(
         (discretization.topology_id if topology_epoch_id is None else topology_epoch_id),
         "topology_epoch_id",

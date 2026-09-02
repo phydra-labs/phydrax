@@ -222,12 +222,15 @@ transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombi
 nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
 share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
 global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
-merger products, stochastic star populations, two-level AMR, a shared Morton octree,
-isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM. Every profile
-states unsupported species, topology, approximation, capacity, distribution, and
-communication branches; precision parity beyond qualified profiles, multilevel
-distributed AMR, adaptive/distributed trees, production feedback, and full release
-coverage remain separate qualification claims rather than hidden flags.
+merger products, stochastic star populations, two-level AMR, sparse occupied Morton
+point hierarchies, isolated Barnes--Hut, sparse occupied-level Cartesian FMM, and
+BH-short-range TreePM. Core discretization additionally provides fixed-resolution sparse
+voxel fields and covering, face-balanced dyadic cell topology with conservative
+adaptation and explicit-face finite-volume lowering. Every profile states unsupported
+species, topology, approximation, capacity, distribution, and communication branches;
+precision parity beyond qualified profiles, multilevel distributed AMR, distributed
+trees, production feedback, and full release coverage remain separate qualification
+claims rather than hidden flags.
 Prepared periodic Fourier shells now provide continuum-normalized isotropic auto/cross
 power, phase-sensitive residuals, Hermitian mode accounting, and explicit spectral
 validity. One-epoch measured power products stack into canonical tables. Inverse

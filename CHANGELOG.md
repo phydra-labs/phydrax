@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
+  traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
+  FMM, brick-backed sparse voxel fields and qualified geometry sampling,
+  atomic balanced dyadic adaptation with conservative field transfer, and
+  explicit coarse/fine finite-volume lowering.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact
