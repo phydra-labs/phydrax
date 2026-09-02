@@ -237,13 +237,14 @@ def test_unstructured_internal_mesh_measures_and_transport_are_conservative():
     batch = phx.discretization.ParticleInternalBatchPlan(
         jnp.asarray([0]), mesh, 1
     ).prepare(particles)
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A",),
         (phx.equations.ChemicalPhaseKind.SOLID,),
         jnp.asarray([1.0]),
         ("X",),
         jnp.asarray([[1]]),
         jnp.zeros_like(jnp.asarray([1.0]), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     thermo = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(

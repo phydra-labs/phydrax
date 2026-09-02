@@ -12,13 +12,14 @@ import phydrax as phx
 particles = phx.discretization.ParticleSetPlan(
     jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=2
 ).prepare()
-schema = phx.equations.ChemicalSpeciesSchema(
+schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
     ("solid",),
     (phx.equations.ChemicalPhaseKind.SOLID,),
     jnp.asarray([1.0]),
     ("X",),
     jnp.asarray([[1]]),
     jnp.zeros_like(jnp.asarray([1.0]), dtype=jnp.int32),
+    gas_standard_pressure=101325.0,
 )
 thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
     phx.equations.PolynomialSpeciesThermodynamicsPlan(

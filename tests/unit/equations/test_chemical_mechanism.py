@@ -10,7 +10,7 @@ import phydrax as phx
 
 
 def _schema():
-    return phx.equations.ChemicalSpeciesSchema(
+    return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B", "C"),
         (
             phx.equations.ChemicalPhaseKind.GAS,
@@ -21,6 +21,7 @@ def _schema():
         ("X", "Y"),
         jnp.asarray(((1, 0, 2), (0, 1, 1)), dtype=jnp.int32),
         jnp.asarray((1, 0, 2), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
 
 
@@ -72,7 +73,7 @@ def test_prepared_mechanism_preserves_elements_charge_and_zero_reactants():
 
 
 def test_thermodynamically_reversible_equal_species_is_stationary():
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
             phx.equations.ChemicalPhaseKind.GAS,
@@ -82,6 +83,7 @@ def test_thermodynamically_reversible_equal_species_is_stationary():
         ("X",),
         jnp.asarray(((1, 1),), dtype=jnp.int32),
         jnp.asarray((0, 0), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,

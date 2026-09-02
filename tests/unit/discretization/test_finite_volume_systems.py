@@ -792,16 +792,7 @@ def test_characteristic_weno_euler_step_preserves_positive_sod_state_and_mass():
     )
 
 
-def test_multispecies_and_mhd_fluxes_preserve_declared_components():
-    multispecies = phx.equations.MultispeciesEulerSystem((1.4, 1.67))
-    primitive = jnp.asarray([[0.6, 0.4, 0.2, 1.0]])
-    multispecies_state = multispecies.primitive_to_conserved(primitive)
-    assert (
-        multispecies.physical_flux(multispecies_state, 0).shape
-        == multispecies_state.shape
-    )
-    assert jnp.all(multispecies.admissible(multispecies_state))
-
+def test_mhd_flux_preserves_declared_components():
     mhd = phx.equations.IdealMHDSystem()
     mhd_primitive = jnp.asarray([[1.0, 0.1, 0.0, 0.0, 1.0, 0.75, 0.1, 0.0]])
     mhd_state = mhd.primitive_to_conserved(mhd_primitive)

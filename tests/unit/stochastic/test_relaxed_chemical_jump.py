@@ -9,7 +9,7 @@ import phydrax as phx
 
 
 def test_relaxed_chemical_jump_reports_continuous_bias_evidence():
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
             phx.equations.ChemicalPhaseKind.GAS,
@@ -19,6 +19,7 @@ def test_relaxed_chemical_jump_reports_continuous_bias_evidence():
         ("X",),
         jnp.asarray(((1, 1),), dtype=jnp.int32),
         jnp.asarray((0, 0), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,

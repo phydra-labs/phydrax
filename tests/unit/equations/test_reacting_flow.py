@@ -8,87 +8,74 @@ import numpy as np
 import phydrax as phx
 
 
-def _system():
-    mixture = phx.equations.ReactingMixture(
+def _reacting_system():
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("H2", "O2", "H2O"),
+        (phx.equations.ChemicalPhaseKind.GAS,) * 3,
         jnp.asarray((2.0e-3, 32.0e-3, 18.0e-3)),
-        jnp.asarray((14300.0, 918.0, 1860.0)),
-        jnp.asarray((0.0, 0.0, -1.34e7)),
+        ("H", "O"),
+        jnp.asarray(((2, 0, 2), (0, 2, 1)), dtype=jnp.int32),
+        jnp.zeros((3,), dtype=jnp.int32),
+        gas_standard_pressure=1.0e5,
     )
-    reaction = phx.equations.ArrheniusReaction(
-        jnp.asarray((-2.0, -1.0, 2.0)),
-        jnp.asarray((1.0, 1.0, 0.0)),
-        pre_exponential=2.0e5,
-        activation_temperature=8000.0,
+    thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
+        schema,
+        jnp.asarray(((20.0,), (22.0,), (25.0,))),
+        jnp.asarray((0.0, 0.0, -2.4e5)),
+        reference_temperature=300.0,
+        minimum_temperature=200.0,
+        maximum_temperature=4000.0,
     )
-    return phx.equations.ReactingEulerSystem(mixture, (reaction,), 1)
-
-
-def test_reacting_mixture_roundtrip_flux_source_and_entropy_are_consistent():
-    system = _system()
-    primitive = jnp.asarray((1.0, 20.0, 1400.0, 0.2, 0.2, 0.6))
-    state = system.primitive_to_conserved(primitive)
-    np.testing.assert_allclose(
-        system.conserved_to_primitive(state), primitive, rtol=2.0e-11, atol=2.0e-11
+    ideal = phx.equations.IdealGasReferenceHelmholtzTerm(schema, thermodynamics)
+    model = phx.equations.HomogeneousHelmholtzPlan(
+        ideal, phx.equations.ZeroResidualHelmholtzTerm(schema)
     )
-    assert system.admissible(state)
-    assert system.physical_flux(state, 0).shape == state.shape
-    assert system.max_wave_speed(state, state, 0) > 0.0
-    source = system.reaction_source(state)
-    assert source[0] == 0.0
-    assert source[2] == 0.0
-    independent = source[3:]
-    final = -jnp.sum(independent)
-    np.testing.assert_allclose(jnp.sum(independent) + final, 0.0, atol=2.0e-12)
-    entropy = phx.equations.reacting_mixture_entropy_pair(system)
-    assert jnp.isfinite(entropy.entropy(state))
-    assert jnp.all(jnp.isfinite(entropy.entropy_variables(state)))
-
-
-def test_reacting_system_executes_in_nodal_conservation_compiler():
-    system = _system()
-    mesh = phx.discretization.CellMesh(
-        np.asarray(((0.0,), (1.0,))),
+    mechanism = phx.equations.ChemicalMechanismIR(
+        "hydrogen-combination",
+        schema,
+        thermodynamics,
         (
-            phx.discretization.CellBlock(
-                "cells", "interval", np.asarray(((0, 1),), dtype=np.int32)
+            phx.equations.ChemicalReactionSpec(
+                "hydrogen-combination",
+                {"H2": 2.0, "O2": 1.0},
+                {"H2O": 2.0},
+                phx.equations.ArrheniusRatePlan(2.0),
             ),
         ),
-    )
-    discretization = phx.discretization.FiniteElementPlan(
-        mesh,
-        phx.discretization.FiniteElementFieldSpec(
-            "state",
-            phx.discretization.discontinuous_element("interval", 0),
-            component_shape=(system.component_count,),
-        ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
+    return phx.equations.HomogeneousMixtureEulerSystem(model), mechanism
+
+
+def test_reacting_mixture_uses_full_species_and_full_chemical_energy():
+    system, mechanism = _reacting_system()
+    primitive = jnp.asarray((0.04, 0.32, 0.0, 0.0, 1200.0))
+    state = system.primitive_to_conserved(primitive)
+    recovered = system.conserved_to_primitive(state)
+    concentration = state[: system.species_count] / mechanism.schema.molar_masses
+    rate = mechanism.evaluate(
+        concentration,
+        recovered[-1],
+        system.pressure(state),
     )
-    boundaries = phx.discretization.fem.FiniteElementBoundarySet(
-        discretization,
-        {"outflow": (exterior, phx.discretization.ExtrapolationBoundary())},
-    )
-    compiled = phx.equations.compile_conservation_problem(
-        phx.equations.ConservationProblemIR(
-            "reacting",
-            "state",
-            system,
-            boundaries,
-            source=system.reaction_source_term,
-            source_id="arrhenius-source",
-        ),
-        discretization,
-        phx.equations.fem.NodalDGConservationMethodPlan(
-            phx.discretization.RusanovFluxPlan()
-        ),
-    )
-    state = jnp.broadcast_to(
-        system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 1400.0, 0.2, 0.2, 0.6))),
-        discretization.field_spaces[0].vector_space.shape,
-    )
-    rate = compiled(0.0, state)
-    assert rate.shape == state.shape
-    assert jnp.all(jnp.isfinite(rate))
+    mass_rate = rate.species_amount_rate * mechanism.schema.molar_masses
+    candidate = state.at[: system.species_count].add(1.0e-5 * mass_rate)
+
+    np.testing.assert_allclose(recovered, primitive, rtol=2.0e-10)
+    np.testing.assert_allclose(jnp.sum(mass_rate), 0.0, atol=1.0e-12)
+    np.testing.assert_allclose(candidate[-1], state[-1], atol=0.0)
+    assert candidate[2] > state[2]
+    assert bool(system.admissible(candidate))
+    assert bool(rate.successful)
+
+
+def test_homogeneous_mixture_flux_and_bounds_are_finite():
+    system, _ = _reacting_system()
+    primitive = jnp.asarray((0.04, 0.32, 0.18, 2.0, 900.0))
+    state = system.primitive_to_conserved(primitive)
+
+    flux = system.physical_flux(state, 0)
+    lower, upper = system.signal_bounds(state, state, 0)
+
+    assert flux.shape == state.shape
+    assert bool(jnp.all(jnp.isfinite(flux)))
+    assert lower < upper

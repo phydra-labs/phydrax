@@ -7,6 +7,17 @@
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact
   heterogeneous MPO lowering without dense-Hamiltonian fallbacks.
+- Added content-identified homogeneous Helmholtz thermodynamics with canonical
+  component/phase-occurrence identity, explicit gas reference pressure,
+  ideal-mixture calorics, Peng--Robinson residual properties and exhaustive
+  roots, ideal-gas Gibbs equilibrium, tangent-plane stability, fixed two-phase
+  TP flash, and frozen-composition homogeneous-mixture Euler flow.
+- Added typed thermofluid components lowered to the acausal DAE substrate,
+  immutable compressor maps/design calibration, role-specific spectral
+  radiation coefficients and conservative matter exchange, and physical
+  molecular-velocity kinetics with positive discrete Maxwellians, BGK,
+  Shakhov, Maxwell walls, kinetic-breakdown evidence, and deterministic
+  synthetic correction.
 - Added a native real spectral-neuron layer with explicit ordered-eigenvalue
   selection, exact coordinate monotonicity constraints, fresh-initialization
   eigengap evidence, and invariant cluster-aware inspection.
@@ -1603,6 +1614,13 @@
   resource accounting.
 
 ### Changed
+- Replaced the independent multispecies and reacting-Euler thermodynamic
+  conventions with `HomogeneousMixtureEulerSystem` and full chemical-energy
+  conservation. Removed the legacy reacting-flow classes without aliases.
+- Consolidated scalar absorption-emission transfer under `RayTransferPlan`,
+  made polarized propagation valid for singular operators, and replaced the
+  overclaimed gray flux-limited API with explicit linear diffusion using
+  separate transport-extinction and absorption coefficients.
 - Replaced the legacy isotropic plane-stress MPM, mixed volumetric-constraint,
   contact workflow, sharp-fracture workflow, and compliance-only topology APIs
   with their explicit clean-cutover contracts. No deprecated aliases remain.

@@ -808,6 +808,11 @@ from ._hydrostatic_free_surface import (
     LinearImplicitFreeSurfacePlan,
 )
 from ._ias15 import IAS15Plan, IAS15Result
+from ._ideal_gas_equilibrium import (
+    IdealGasEquilibriumEvidence,
+    IdealGasEquilibriumResult,
+    IdealGasGibbsEquilibriumPlan,
+)
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -1437,6 +1442,13 @@ from ._passive_tracer import (
 )
 from ._periodic_vector_boundary import *  # noqa: F403
 from ._periodic_vector_boundary import __all__ as _periodic_vector_boundary_all
+from ._phase_equilibrium import (
+    FixedTwoPhaseTPFlashPlan,
+    FixedTwoPhaseTPFlashResult,
+    PhaseEquilibriumStatus,
+    TPDSearchPlan,
+    TPDStabilityResult,
+)
 from ._pic_current_source import (
     PICMaxwellCurrentSourcePlan,
     PreparedPICMaxwellCurrentSource,
@@ -2263,6 +2275,14 @@ __all__ = [
     "ChemicalReactorSolution",
     "ChemicalReactorThermodynamicState",
     "PreparedChemicalReactorDynamics",
+    "IdealGasEquilibriumEvidence",
+    "IdealGasEquilibriumResult",
+    "IdealGasGibbsEquilibriumPlan",
+    "FixedTwoPhaseTPFlashPlan",
+    "FixedTwoPhaseTPFlashResult",
+    "PhaseEquilibriumStatus",
+    "TPDSearchPlan",
+    "TPDStabilityResult",
     "CochainMACTransferPlan",
     "ElectrohydrodynamicCouplingEvaluation",
     "MACNematicCouplingEvaluation",

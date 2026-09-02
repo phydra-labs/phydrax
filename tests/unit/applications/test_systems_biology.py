@@ -145,13 +145,14 @@ def test_sparse_stoichiometry_conservation_and_nonnegative_propensities():
 
 
 def test_thermochemical_binding_requires_exact_reactants_orders_and_content():
-    schema = ChemicalSpeciesSchema(
+    schema = ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
         np.asarray([1.0, 1.0]),
         ("E",),
         np.asarray([[1, 1]], dtype=int),
         np.asarray([0, 0], dtype=int),
+        gas_standard_pressure=101325.0,
     )
     thermodynamics = PolynomialSpeciesThermodynamicsPlan(
         schema,

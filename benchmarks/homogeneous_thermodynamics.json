@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "component_count": 1,
+      "batch_size": 1,
+      "compile_and_first_ms": 335.64208398456685,
+      "execution_ms": 0.0941083999350667,
+      "maximum_pressure": 2494.3387854459716,
+      "successful": true
+    },
+    {
+      "component_count": 1,
+      "batch_size": 1024,
+      "compile_and_first_ms": 281.91437499481253,
+      "execution_ms": 0.1895833993330598,
+      "maximum_pressure": 623584.6963614929,
+      "successful": true
+    },
+    {
+      "component_count": 8,
+      "batch_size": 1,
+      "compile_and_first_ms": 331.024792016251,
+      "execution_ms": 0.1646874996367842,
+      "maximum_pressure": 2494.338785445972,
+      "successful": true
+    },
+    {
+      "component_count": 8,
+      "batch_size": 1024,
+      "compile_and_first_ms": 341.28295799018815,
+      "execution_ms": 0.35307499929331243,
+      "maximum_pressure": 623584.6963614929,
+      "successful": true
+    },
+    {
+      "component_count": 32,
+      "batch_size": 1,
+      "compile_and_first_ms": 376.933708001161,
+      "execution_ms": 0.15110420063138008,
+      "maximum_pressure": 2494.338785445972,
+      "successful": true
+    },
+    {
+      "component_count": 32,
+      "batch_size": 1024,
+      "compile_and_first_ms": 544.1775420040358,
+      "execution_ms": 0.6170124979689717,
+      "maximum_pressure": 623584.6963614927,
+      "successful": true
+    }
+  ],
+  "all_successful": true
+}

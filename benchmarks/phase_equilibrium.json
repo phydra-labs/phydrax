@@ -1,0 +1,11 @@
+{
+  "elapsed_ms": 148915.76612499193,
+  "status": 1,
+  "successful": true,
+  "maximum_material_residual": 5.551115123125783e-17,
+  "maximum_fugacity_residual": 6.481926106971514e-12,
+  "phase_fraction": [
+    0.6874743413624202,
+    0.31252565863757975
+  ]
+}

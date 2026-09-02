@@ -55,7 +55,7 @@ from phydrax.solver._multiphysics_inference import (
     WhitenedFieldInferencePlan,
 )
 from phydrax.solver._nonideal_mhd import AnisotropicThermalTransportPlan, NonIdealMHDPlan
-from phydrax.solver._radiation import GrayRadiationDiffusionPlan
+from phydrax.solver._radiation import GrayLinearRadiationDiffusionPlan
 from phydrax.solver._unstructured_mhd import UnstructuredConstrainedTransportPlan
 
 
@@ -131,7 +131,7 @@ def test_mhd_reconstruction_and_hll_uct_constant_state():
 
 
 def test_prepared_thermochemistry_conserves_species_invariant():
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
             phx.equations.ChemicalPhaseKind.GAS,
@@ -141,6 +141,7 @@ def test_prepared_thermochemistry_conserves_species_invariant():
         ("X",),
         jnp.asarray(((1, 1),), dtype=jnp.int32),
         jnp.asarray((0, 0), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,
@@ -447,7 +448,11 @@ def test_radiation_moments_and_gray_exchange():
         (phx.discretization.UniformCellAxisSpec(4, periodic=True),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
-    plan = GrayRadiationDiffusionPlan(grid, opacity=2.0)
+    plan = GrayLinearRadiationDiffusionPlan(
+        grid,
+        transport_extinction=2.0,
+        absorption_coefficient=2.0,
+    )
     initial = plan.initialize(jnp.ones((4,)), 2.0 * jnp.ones((4,)))
     advanced, diagnostics = plan.advance(initial, 1e-3, 1.2)
     assert bool(diagnostics.successful)

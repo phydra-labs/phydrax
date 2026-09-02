@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-schema = phx.equations.ChemicalSpeciesSchema(
+schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
     ("A", "B"),
     (
         phx.equations.ChemicalPhaseKind.GAS,
@@ -15,6 +15,7 @@ schema = phx.equations.ChemicalSpeciesSchema(
     ("X",),
     jnp.asarray(((1, 1),), dtype=jnp.int32),
     jnp.asarray((0, 0), dtype=jnp.int32),
+    gas_standard_pressure=101325.0,
 )
 thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
     schema,

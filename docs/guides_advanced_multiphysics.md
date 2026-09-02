@@ -71,10 +71,12 @@ coordinate; constant heating remains on the implicit signed-source route.
 and explicit, exact, implicit, or exact-stochastic integration identities.
 
 `PreparedChemicalMechanism` and `ThermochemistryProcessPlan` advect and react
-species through `MultispeciesEulerSystem`, certify element and charge invariants,
-and derive reaction energy from shared species thermodynamics. `GrayRadiationDiffusionPlan` provides gray diffusion plus exact local
-radiation-matter exchange. `MultigroupM1RadiationSystem` supplies realizability-preserving
-hyperbolic moment transport.
+species through `HomogeneousMixtureEulerSystem`, certify element and charge
+invariants, and preserve full chemical energy through shared homogeneous
+thermodynamics. `GrayLinearRadiationDiffusionPlan` provides linear gray diffusion
+plus frozen-equilibrium local radiation-matter exchange.
+`MultigroupM1RadiationSystem` supplies hyperbolic moment transport with explicit
+realizability checks.
 
 ## Non-ideal, AMR, mapped, and unstructured MHD
 
