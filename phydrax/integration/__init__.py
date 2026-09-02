@@ -194,7 +194,25 @@ from ._sparse_grid import (
     prepare_adaptive_sparse_grid,
     SparseGridRealization,
 )
+from ._splitting import (
+    adaptive_multilevel_splitting,
+    AdaptiveMultilevelSplittingPlan,
+    AdaptiveMultilevelSplittingResult,
+    AdaptiveSplittingBranchRequest,
+    AdaptiveSplittingDiagnostics,
+    AdaptiveSplittingEnsembleResult,
+    AdaptiveSplittingStatus,
+    InitialPathSampler,
+    PathBranchSampler,
+    replicate_adaptive_multilevel_splitting,
+)
 from ._status import IntegrationStatus, status_message
+from ._surrogate import (
+    smolyak_surrogate_expectation,
+    SmolyakInputSampler,
+    SmolyakProbabilityInputSampler,
+    SmolyakSurrogateHierarchyAdapter,
+)
 from ._targets import (
     ComponentTarget,
     density,
@@ -219,69 +237,6 @@ from ._transformations import (
     MeasureTransformationRecord,
     TransformedIntegrationDiagnostics,
 )
-
-
-_SPLITTING_EXPORTS = frozenset(
-    {
-        "adaptive_multilevel_splitting",
-        "AdaptiveMultilevelSplittingPlan",
-        "AdaptiveMultilevelSplittingResult",
-        "AdaptiveSplittingBranchRequest",
-        "AdaptiveSplittingDiagnostics",
-        "AdaptiveSplittingEnsembleResult",
-        "AdaptiveSplittingStatus",
-        "InitialPathSampler",
-        "PathBranchSampler",
-        "replicate_adaptive_multilevel_splitting",
-    }
-)
-
-
-def __getattr__(name: str):
-    if name in _SPLITTING_EXPORTS:
-        from . import _splitting as module
-
-        exports = {
-            "adaptive_multilevel_splitting": module.adaptive_multilevel_splitting,
-            "AdaptiveMultilevelSplittingPlan": module.AdaptiveMultilevelSplittingPlan,
-            "AdaptiveMultilevelSplittingResult": module.AdaptiveMultilevelSplittingResult,
-            "AdaptiveSplittingBranchRequest": module.AdaptiveSplittingBranchRequest,
-            "AdaptiveSplittingDiagnostics": module.AdaptiveSplittingDiagnostics,
-            "AdaptiveSplittingEnsembleResult": module.AdaptiveSplittingEnsembleResult,
-            "AdaptiveSplittingStatus": module.AdaptiveSplittingStatus,
-            "InitialPathSampler": module.InitialPathSampler,
-            "PathBranchSampler": module.PathBranchSampler,
-            "replicate_adaptive_multilevel_splitting": module.replicate_adaptive_multilevel_splitting,
-        }
-        return exports[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-_SURROGATE_EXPORTS = frozenset(
-    {
-        "smolyak_surrogate_expectation",
-        "SmolyakInputSampler",
-        "SmolyakProbabilityInputSampler",
-        "SmolyakSurrogateHierarchyAdapter",
-    }
-)
-
-
-_splitting_getattr = __getattr__
-
-
-def __getattr__(name: str):
-    if name in _SURROGATE_EXPORTS:
-        from . import _surrogate as module
-
-        exports = {
-            "smolyak_surrogate_expectation": module.smolyak_surrogate_expectation,
-            "SmolyakInputSampler": module.SmolyakInputSampler,
-            "SmolyakProbabilityInputSampler": module.SmolyakProbabilityInputSampler,
-            "SmolyakSurrogateHierarchyAdapter": module.SmolyakSurrogateHierarchyAdapter,
-        }
-        return exports[name]
-    return _splitting_getattr(name)
 
 
 __all__ = [

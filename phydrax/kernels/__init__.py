@@ -53,6 +53,7 @@ from ._operator_valued import (
     sphere_tangent_kernel,
     sphere_tangent_projector,
 )
+from ._quantum import ExactQuantumStateFidelityKernel
 from ._signature import SignaturePDEKernel
 from ._spectral import (
     AbstractSpectralMultiplier,
@@ -88,6 +89,7 @@ __all__ = [
     "AffineInputTransform",
     "AmplitudeKernel",
     "CARMAKernel",
+    "ExactQuantumStateFidelityKernel",
     "FiniteFeatureKernel",
     "CochainHodgeSpectralKernel",
     "kernel_feature_rank",

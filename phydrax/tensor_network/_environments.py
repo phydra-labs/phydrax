@@ -11,6 +11,8 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..operators.quantum._observables import LocalObservable
+from ..operators.quantum._register import HilbertRegisterLayout
 from ._core import LocallyPurifiedDensity, MatrixProductOperator, MatrixProductState
 
 
@@ -79,6 +81,27 @@ def mps_one_site_expectation(
     return state.precision.output(environment.reshape(()))
 
 
+def mps_local_observable_expectation(
+    state: MatrixProductState,
+    layout: HilbertRegisterLayout,
+    observable: LocalObservable,
+    /,
+) -> Array:
+    """Evaluate one one-site local observable without densifying an MPS."""
+    if not isinstance(state, MatrixProductState):
+        raise TypeError("state must be a MatrixProductState.")
+    if not isinstance(layout, HilbertRegisterLayout):
+        raise TypeError("layout must be a HilbertRegisterLayout.")
+    if not isinstance(observable, LocalObservable):
+        raise TypeError("observable must be a LocalObservable.")
+    if layout.local_dimensions != state.physical_dimensions:
+        raise ValueError("Hilbert layout and MPS physical dimensions must match.")
+    if len(observable.target_wire_ids) != 1:
+        raise ValueError("MPS local-observable execution currently supports one site.")
+    site = layout.wire_index(observable.target_wire_ids[0])
+    return mps_one_site_expectation(state, site, observable.matrix)
+
+
 def lpdo_raw_trace(state: LocallyPurifiedDensity, /) -> Array:
     tensors = tuple(state.precision.accumulation(value) for value in state.tensors)
     environment = jnp.ones((1, 1), dtype=tensors[0].dtype)
@@ -136,6 +159,27 @@ def _lpdo_one_site_expectation(
                 tensor,
             )
     return state.precision.output(environment.reshape(()))
+
+
+def lpdo_local_observable_expectation(
+    state: LocallyPurifiedDensity,
+    layout: HilbertRegisterLayout,
+    observable: LocalObservable,
+    /,
+) -> Array:
+    """Evaluate one one-site local observable without densifying an LPDO."""
+    if not isinstance(state, LocallyPurifiedDensity):
+        raise TypeError("state must be a LocallyPurifiedDensity.")
+    if not isinstance(layout, HilbertRegisterLayout):
+        raise TypeError("layout must be a HilbertRegisterLayout.")
+    if not isinstance(observable, LocalObservable):
+        raise TypeError("observable must be a LocalObservable.")
+    if layout.local_dimensions != state.physical_dimensions:
+        raise ValueError("Hilbert layout and LPDO physical dimensions must match.")
+    if len(observable.target_wire_ids) != 1:
+        raise ValueError("LPDO local-observable execution currently supports one site.")
+    site = layout.wire_index(observable.target_wire_ids[0])
+    return _lpdo_one_site_expectation(state, site, observable.matrix)
 
 
 def _validate_mps_mpo(
@@ -458,12 +502,14 @@ __all__ = [
     "PreparedChainEnvironments",
     "TwoSiteMPOEffectiveAction",
     "build_mps_mpo_environments",
+    "lpdo_local_observable_expectation",
     "lpdo_one_site_reduced",
     "lpdo_raw_trace",
     "mpo_hermiticity_residual",
     "mpo_inner",
     "mpo_norm",
     "mps_inner",
+    "mps_local_observable_expectation",
     "mps_mpo_expectation",
     "mps_mpo_inner",
     "mps_norm_squared",

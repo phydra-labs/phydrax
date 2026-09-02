@@ -13,19 +13,10 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ._register import HilbertRegisterLayout
+from ._register import _target_wire_ids, HilbertRegisterLayout
 
 
 QuantumStateKind: TypeAlias = Literal["state-vector", "density-matrix"]
-
-
-def _targets(value: Sequence[str], /) -> tuple[str, ...]:
-    targets = tuple(str(wire_id) for wire_id in value)
-    if not targets or any(not wire_id for wire_id in targets):
-        raise ValueError("Local quantum-operation targets must be non-empty.")
-    if len(set(targets)) != len(targets):
-        raise ValueError("Local quantum-operation targets must be unique.")
-    return targets
 
 
 def _complex_array(value: ArrayLike, name: str, /) -> Array:
@@ -51,7 +42,7 @@ class LocalUnitaryOperation(StrictModule):
         matrix = _complex_array(unitary, "unitary")
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
             raise ValueError("unitary must have exact square shape (dT, dT).")
-        targets = _targets(target_wire_ids)
+        targets = _target_wire_ids(target_wire_ids)
         self.unitary = matrix
         self.target_wire_ids = targets
         self.schema_id = canonical_fingerprint(
@@ -84,7 +75,7 @@ class LocalKrausChannelOperation(StrictModule):
             or operators.shape[1] != operators.shape[2]
         ):
             raise ValueError("kraus must have exact shape (K, dT, dT) with K >= 1.")
-        targets = _targets(target_wire_ids)
+        targets = _target_wire_ids(target_wire_ids)
         self.kraus = operators
         self.target_wire_ids = targets
         self.schema_id = canonical_fingerprint(

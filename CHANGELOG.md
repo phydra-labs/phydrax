@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added content-identified local quantum observables, lower-only Pauli-rotation
+  program templates, grouped dense expectations, exact parameter-shift
+  Jacobians, dense circuit feature models, fidelity kernels, variational binary
+  classification, and native IQP/data-reuploading benchmark workloads without
+  external quantum-framework dependencies or hidden normalization.
 - Added native advanced-biophysics capability families: exact fixed-capacity
   path-space sampling and rare-event analysis; differentiable cable
   electrophysiology; dynamic particle relations and active biopolymers;

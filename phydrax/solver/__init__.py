@@ -1480,6 +1480,16 @@ from ._quantum_compilation import (
     QuantumDecompositionRecord,
     RouteStrategy,
 )
+from ._quantum_expectation import (
+    DenseQuantumExpectationDiagnostics,
+    DenseQuantumExpectationResult,
+    DenseQuantumExpectationStatus,
+    DenseQuantumObservableCostEstimate,
+    DenseQuantumObservablePlan,
+    DenseQuantumObservablePolicy,
+    evaluate_dense_quantum_observables,
+    plan_dense_quantum_observables,
+)
 from ._quantum_experiment import (
     ClassicalRegisterLayout,
     estimate_quantum_experiment_gradient,
@@ -1491,6 +1501,15 @@ from ._quantum_experiment import (
     QuantumShotBatchResult,
     sample_quantum_experiment,
     StochasticGradientEstimatorEvidence,
+)
+from ._quantum_gradients import (
+    evaluate_parameter_shift_jacobian,
+    execute_dense_quantum_template,
+    ParameterShiftJacobianResult,
+    ParameterShiftPlan,
+    plan_parameter_shift,
+    prepare_dense_quantum_template,
+    PreparedDenseQuantumTemplate,
 )
 from ._quantum_jump import (
     amplitude_damping_trajectory_problem,
@@ -2108,6 +2127,21 @@ __all__ = [
     "plan_dense_quantum_program",
     "prepare_dense_quantum_program",
     "refresh_dense_quantum_program",
+    "DenseQuantumExpectationDiagnostics",
+    "DenseQuantumExpectationResult",
+    "DenseQuantumExpectationStatus",
+    "DenseQuantumObservableCostEstimate",
+    "DenseQuantumObservablePlan",
+    "DenseQuantumObservablePolicy",
+    "ParameterShiftJacobianResult",
+    "ParameterShiftPlan",
+    "PreparedDenseQuantumTemplate",
+    "evaluate_dense_quantum_observables",
+    "evaluate_parameter_shift_jacobian",
+    "execute_dense_quantum_template",
+    "plan_dense_quantum_observables",
+    "plan_parameter_shift",
+    "prepare_dense_quantum_template",
     "UnitaryGroupKind",
     "UnitaryPropagatorProblem",
     "UnitaryPropagatorSolution",

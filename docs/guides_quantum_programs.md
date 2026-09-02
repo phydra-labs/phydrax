@@ -90,6 +90,104 @@ A refresh preserves `prepared_id`, increments `numeric_version`, and remains in 
 JAX numerical path. This supports `jax.jit`, outer `jax.vmap`, and real-scalar
 objectives differentiated through refreshed local matrices.
 
+## Parameterized programs and local observables
+
+`QuantumProgramTemplate` is a host-constructed lowering specification, not a
+second executable circuit representation. Fixed entries are ordinary
+`LocalUnitaryOperation` or `LocalKrausChannelOperation` values.
+`PauliRotationInstruction` binds a one- or two-qubit Pauli rotation to one
+coordinate of an angle vector. Materialization produces an ordinary
+`QuantumProgram`, so planning, physicality checks, refresh, and execution retain
+their existing contracts.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+q = phx.operators.quantum
+layout = q.HilbertRegisterLayout(("q",), (2,))
+template = q.QuantumProgramTemplate(
+    layout,
+    (q.PauliRotationInstruction(("X",), ("q",), 0),),
+    state_kind="state-vector",
+)
+prepared = phx.solver.prepare_dense_quantum_template(template)
+observable = q.LocalObservable(
+    jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128),
+    ("q",),
+)
+observable_plan = phx.solver.plan_dense_quantum_observables(
+    prepared.prepared_program,
+    (observable,),
+)
+initial = jnp.asarray([1.0, 0.0], dtype=jnp.complex128)
+result = phx.solver.execute_dense_quantum_template(
+    prepared,
+    jnp.asarray([0.3], dtype=jnp.float64),
+    initial,
+)
+expectation = phx.solver.evaluate_dense_quantum_observables(
+    observable_plan,
+    result,
+)
+```
+
+Angle coordinates are real and have the precision paired with the template's
+complex dtype. One angle may occur in several gates. A template never accepts a
+leading angle batch; use an outer `jax.vmap`. Observable plans group matrices
+with identical ordered targets and reuse the reduced state for that target
+group. They preserve caller output order and report program validity,
+Hermiticity, finiteness, and imaginary residuals. `real_values` is available
+only when the result is a certified real expectation.
+
+## Exact circuit gradients
+
+Dense template execution remains differentiable through JAX. The separate
+`ParameterShiftPlan` provides the portable exact first derivative for
+`PauliRotationInstruction`. For each gate occurrence it evaluates the plus and
+minus π/2 shifts with coefficients plus and minus 1/2. If one angle is shared
+by several gates, occurrences are shifted separately and accumulated into the
+same angle coordinate.
+
+```python
+shift_plan = phx.solver.plan_parameter_shift(template)
+gradient = phx.solver.evaluate_parameter_shift_jacobian(
+    prepared,
+    observable_plan,
+    shift_plan,
+    jnp.asarray([0.3], dtype=jnp.float64),
+    initial,
+)
+```
+
+`DenseCircuitExpectationModel` may select `"autodiff"` or
+`"parameter-shift"`; both have the same primal output. Parameter-shift mode
+uses a custom VJP with respect to the angle vector, so JAX composes the circuit
+derivative through an arbitrary differentiable classical angle model.
+Second-order shift derivatives, arbitrary generators, shot estimates, and
+MPS/LPDO circuit gradients are not certified.
+
+## Exact quantum feature models and kernels
+
+`phydrax.ml.quantum` supplies exact dense circuit state and expectation models.
+The standard builders cover an IQP state map, projected IQP X/Y/Z features,
+and trainable affine data re-uploading. Entanglement is an explicit edge tuple;
+an empty tuple is the separable control.
+
+`ExactQuantumStateFidelityKernel` evaluates
+`|<psi(x), psi(y)>|**2`. It requires finite normalized pure states and performs
+no normalization. Its matrix path materializes each input state once before
+forming the Gram matrix. Projected-observable kernels use the existing
+`InputTransformedKernel`, or a `CircuitFeatureTransformRecipe` followed by an
+ordinary kernel method inside a leakage-safe `Pipeline`.
+
+`VariationalCircuitClassifierRecipe` trains a binary circuit expectation model
+and linear logit head with exact full-batch gradients. It requires an explicit
+key, scalar binary targets, and one `MLBatch` case. Multiclass composition uses
+the existing one-vs-rest or one-vs-one recipes. Hardware providers, shot-based
+features, sampled fidelity matrices, and hidden positive-semidefinite Gram
+repairs are deliberately absent.
+
 ## Open-chain MPS and LPDO execution
 
 `plan_mps_quantum_program` binds a state-vector program to one template MPS

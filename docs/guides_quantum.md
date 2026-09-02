@@ -10,6 +10,12 @@ Hermitian Hamiltonians may be integrated through a structure-preserving U(n)
 propagator; learned residual trajectories remain ordinary functions unless they use
 that explicit propagation contract.
 
+Finite-register programs additionally support exact dense and bounded
+tensor-network execution, local observables, angle-bound Pauli templates,
+parameter-shift gradients, quantum feature models, and exact fidelity kernels.
+These APIs retain a separate local-map lifecycle; see
+[Local quantum programs](guides_quantum_programs.md).
+
 ## Three distinct brackets
 
 Three operations in Phydrax are Lie brackets, but they act on different objects:

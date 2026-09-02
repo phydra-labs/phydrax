@@ -113,6 +113,26 @@ does not materialize global embedded operators. See
 
 ::: phydrax.operators.quantum.QuantumProgram
 
+### Parameterized programs and local observables
+
+`QuantumProgramTemplate` lowers angle-bound Pauli rotations and fixed local
+operations to the canonical numeric `QuantumProgram`; it is not independently
+executable.
+
+::: phydrax.operators.quantum.LocalObservable
+
+::: phydrax.operators.quantum.local_state_expectation
+
+::: phydrax.operators.quantum.local_density_expectation
+
+::: phydrax.operators.quantum.PauliRotationInstruction
+
+::: phydrax.operators.quantum.QuantumProgramTemplate
+
+::: phydrax.operators.quantum.materialize_quantum_program
+
+::: phydrax.operators.quantum.apply_local_operator_to_state
+
 ::: phydrax.operators.quantum.apply_local_unitary_to_state
 
 ::: phydrax.operators.quantum.conjugate_local_density

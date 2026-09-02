@@ -1,0 +1,243 @@
+{
+  "circuit_cases": [
+    {
+      "case_id": "entangling-iqp-fidelity-gram",
+      "compilation_seconds": 0.099157584,
+      "compiler": {
+        "argument_bytes": 1344,
+        "bytes_accessed": 257025,
+        "flops": 44852,
+        "generated_code_bytes": 0,
+        "output_bytes": 4632,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 43976,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 3,
+        "max_ms": 0.386917,
+        "mean_ms": 0.32616666666666666,
+        "median_ms": 0.362583,
+        "min_ms": 0.229,
+        "samples_ms": [
+          0.386917,
+          0.229,
+          0.362583
+        ],
+        "std_ms": 0.06942169076176567
+      },
+      "logical_input_bytes": 384,
+      "logical_output_bytes": 4608,
+      "lowering_seconds": 0.136927833
+    },
+    {
+      "case_id": "data-reuploading-autodiff-jacobian",
+      "compilation_seconds": 0.110263625,
+      "compiler": {
+        "argument_bytes": 16,
+        "bytes_accessed": 18758,
+        "flops": 2026,
+        "generated_code_bytes": 0,
+        "output_bytes": 56,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 2536,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 3,
+        "max_ms": 0.102291,
+        "mean_ms": 0.089097,
+        "median_ms": 0.08533400000000001,
+        "min_ms": 0.079666,
+        "samples_ms": [
+          0.102291,
+          0.08533400000000001,
+          0.079666
+        ],
+        "std_ms": 0.009612241604676127
+      },
+      "logical_input_bytes": 16,
+      "logical_output_bytes": 32,
+      "lowering_seconds": 0.154027
+    },
+    {
+      "case_id": "data-reuploading-parameter-shift-jacobian",
+      "compilation_seconds": 0.09739875,
+      "compiler": {
+        "argument_bytes": 16,
+        "bytes_accessed": 80772,
+        "flops": 10765,
+        "generated_code_bytes": 0,
+        "output_bytes": 56,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 15304,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 3,
+        "max_ms": 0.27504199999999995,
+        "mean_ms": 0.20562499999999997,
+        "median_ms": 0.17650000000000002,
+        "min_ms": 0.165333,
+        "samples_ms": [
+          0.17650000000000002,
+          0.165333,
+          0.27504199999999995
+        ],
+        "std_ms": 0.04929648661584986
+      },
+      "logical_input_bytes": 16,
+      "logical_output_bytes": 32,
+      "lowering_seconds": 0.153530167
+    }
+  ],
+  "dataset": {
+    "dataset_id": "22e1ec98afac2539f2c0e17dee2bd7128910048f86d71f88916fade5210dd30b",
+    "holdout_samples": 8,
+    "parameters": {
+      "feature_count": 2,
+      "noise": 0.03,
+      "sample_count": 32
+    },
+    "training_samples": 24
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "d5b7935cb843f83dcabe8397ee6bdc6bb79dff8c6aa8ee03b149bb548d29df54",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "e67a33f71eba046d56e53da208c0164e3209c5acffa049964b62c8e5071c44ee",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "fit_cases": [
+    {
+      "case_id": "linear-svc-baseline",
+      "fit": {
+        "count": 3,
+        "max_ms": 46.893292,
+        "mean_ms": 46.37004166666667,
+        "median_ms": 46.218375,
+        "min_ms": 45.998458,
+        "samples_ms": [
+          46.893292,
+          45.998458,
+          46.218375
+        ],
+        "std_ms": 0.3807309244268053
+      },
+      "holdout_accuracy": 1.0,
+      "logical_model_bytes": 608,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_id": "projected-iqp-rbf-svc",
+      "fit": {
+        "count": 3,
+        "max_ms": 87.99054100000001,
+        "mean_ms": 87.02727733333334,
+        "median_ms": 87.602958,
+        "min_ms": 85.488333,
+        "samples_ms": [
+          87.602958,
+          85.488333,
+          87.99054100000001
+        ],
+        "std_ms": 1.0996415753315094
+      },
+      "holdout_accuracy": 0.5,
+      "logical_model_bytes": 2094,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_id": "iqp-fidelity-svc",
+      "fit": {
+        "count": 3,
+        "max_ms": 127.63308300000001,
+        "mean_ms": 126.45123600000001,
+        "median_ms": 126.530333,
+        "min_ms": 125.19029200000001,
+        "samples_ms": [
+          127.63308300000001,
+          126.530333,
+          125.19029200000001
+        ],
+        "std_ms": 0.9988323913373383
+      },
+      "holdout_accuracy": 1.0,
+      "logical_model_bytes": 1751,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_id": "parameter-shift-data-reuploading-classifier",
+      "fit": {
+        "count": 3,
+        "max_ms": 458.280458,
+        "mean_ms": 449.8225276666667,
+        "median_ms": 446.219083,
+        "min_ms": 444.968042,
+        "samples_ms": [
+          458.280458,
+          444.968042,
+          446.219083
+        ],
+        "std_ms": 6.002428121938668
+      },
+      "holdout_accuracy": 0.75,
+      "logical_model_bytes": 1721,
+      "status": 0,
+      "valid": true
+    }
+  ],
+  "nested_selection": {
+    "execution": {
+      "count": 1,
+      "max_ms": 11874.188625,
+      "mean_ms": 11874.188625,
+      "median_ms": 11874.188625,
+      "min_ms": 11874.188625,
+      "samples_ms": [
+        11874.188625
+      ],
+      "std_ms": 0.0
+    },
+    "inner_candidate_count": 3,
+    "outer_accuracy": 0.5,
+    "outer_fold_count": 2,
+    "status": 0,
+    "valid": true
+  },
+  "profile": "standard",
+  "representation": "dense",
+  "semantic_mode": "exact"
+}

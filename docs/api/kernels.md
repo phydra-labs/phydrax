@@ -77,6 +77,15 @@ capability through supported kernel algebra. Scalar exact GP inference uses it
 automatically when the declared feature rank is smaller than the observation
 count; otherwise it retains the dense observation-space path.
 
+## Exact quantum-state fidelity
+
+`ExactQuantumStateFidelityKernel` pulls the squared pure-state overlap back
+through a pointwise state feature model. It validates finite normalized complex
+states and never normalizes them. Its matrix path evaluates each state design
+once rather than running the feature circuit once per pair.
+
+::: phydrax.kernels.ExactQuantumStateFidelityKernel
+
 ## Base interfaces
 
 ::: phydrax.kernels.AbstractPositiveDefiniteKernel

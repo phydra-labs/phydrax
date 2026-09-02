@@ -12,6 +12,18 @@ implicit, unrolled, or structurally stopped.
     options:
         filters: ["!^_"]
 
+## Exact circuit learning
+
+`phydrax.ml.quantum` provides dense circuit state and local-observable feature
+models, exact autodiff and Pauli parameter-shift modes, schema-bound feature
+transforms, a binary variational classifier recipe, and standard IQP and
+data-reuploading constructions. The models lower through the canonical quantum
+program lifecycle and do not call an external provider.
+
+::: phydrax.ml.quantum
+    options:
+        filters: ["!^_"]
+
 ## Discriminant analysis
 
 ::: phydrax.ml.discriminant

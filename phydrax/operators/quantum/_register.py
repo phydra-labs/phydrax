@@ -13,6 +13,15 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 
 
+def _target_wire_ids(value: Sequence[str], /) -> tuple[str, ...]:
+    targets = tuple(str(wire_id) for wire_id in value)
+    if not targets or any(not wire_id for wire_id in targets):
+        raise ValueError("Local quantum targets must be unique and non-empty.")
+    if len(set(targets)) != len(targets):
+        raise ValueError("Local quantum targets must be unique and non-empty.")
+    return targets
+
+
 class HilbertRegisterLayout(StrictModule):
     """Ordered finite-dimensional Hilbert-space factorization."""
 
@@ -58,11 +67,7 @@ class HilbertRegisterLayout(StrictModule):
         return self.wire_ids.index(identifier)
 
     def target_indices(self, wire_ids: Sequence[str], /) -> tuple[int, ...]:
-        identifiers = tuple(str(wire_id) for wire_id in wire_ids)
-        if not identifiers:
-            raise ValueError("A local quantum operation must target at least one wire.")
-        if len(set(identifiers)) != len(identifiers):
-            raise ValueError("Local quantum-operation targets must be unique.")
+        identifiers = _target_wire_ids(wire_ids)
         return tuple(self.wire_index(wire_id) for wire_id in identifiers)
 
     def target_dimension(self, wire_ids: Sequence[str], /) -> int:

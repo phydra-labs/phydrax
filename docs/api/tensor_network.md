@@ -13,6 +13,10 @@ precision, approximation, resource, physicality, persistence, and maturity contr
 
 ::: phydrax.tensor_network.FiniteLocalTerm
 
+::: phydrax.tensor_network.mps_local_observable_expectation
+
+::: phydrax.tensor_network.lpdo_local_observable_expectation
+
 ::: phydrax.tensor_network.FiniteThermalPolicy
 
 ::: phydrax.tensor_network.UniformMatrixProductState

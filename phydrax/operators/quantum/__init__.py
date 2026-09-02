@@ -100,6 +100,11 @@ from ._nonmarkovianity import (
     blp_information_backflow,
     DynamicalMapSeriesPhysicality,
 )
+from ._observables import (
+    local_density_expectation,
+    local_state_expectation,
+    LocalObservable,
+)
 from ._open_contracts import (
     ApproximationAxis,
     ApproximationQuantity,
@@ -121,8 +126,15 @@ from ._operations import (
     QuantumProgram,
     QuantumStateKind,
 )
+from ._parameterized import (
+    materialize_quantum_program,
+    PauliRotationInstruction,
+    QuantumProgramInstruction,
+    QuantumProgramTemplate,
+)
 from ._propagation import (
     apply_local_kraus_to_density,
+    apply_local_operator_to_state,
     apply_local_unitary_to_state,
     apply_unitary_to_state,
     conjugate_density,
@@ -185,6 +197,7 @@ __all__ = [
     "LocalOperatorEstimate",
     "LocalOperatorStatus",
     "LocalKrausChannelOperation",
+    "LocalObservable",
     "LocalUnitaryOperation",
     "LogAmplitude",
     "lindblad_residual",
@@ -194,6 +207,8 @@ __all__ = [
     "observable_variance",
     "purity",
     "partial_trace",
+    "local_density_expectation",
+    "local_state_expectation",
     "schrodinger_residual",
     "state_expectation",
     "state_fidelity",
@@ -207,10 +222,14 @@ __all__ = [
     "von_neumann_entropy",
     "QuantumGeometricTensorResult",
     "QuantumOperation",
+    "PauliRotationInstruction",
     "QuantumProgram",
+    "QuantumProgramInstruction",
+    "QuantumProgramTemplate",
     "QuantumStateKind",
     "apply_finite_cptp",
     "apply_local_kraus_to_density",
+    "apply_local_operator_to_state",
     "apply_local_unitary_to_state",
     "apply_unitary_to_state",
     "berry_link",
@@ -228,6 +247,7 @@ __all__ = [
     "finite_cptp_from_unitary",
     "finite_cptp_to_local_kraus_operation",
     "quantum_geometric_tensor",
+    "materialize_quantum_program",
     "kraus_trace_preservation_residual",
     "unitarity_residual",
     "ApproximationAxis",

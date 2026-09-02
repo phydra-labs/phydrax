@@ -75,3 +75,15 @@ def test_ml_artifact_rejects_checksum_corruption(tmp_path):
 
     with pytest.raises(ArrayArchiveCorruptionError):
         read_ml_artifact(destination)
+
+
+def test_quantum_feature_artifact_round_trip_preserves_execution(tmp_path):
+    layout = phx.operators.quantum.HilbertRegisterLayout(("q",), (2,))
+    model = phx.ml.quantum.projected_iqp_feature_map(layout, axes=("Z",))
+    destination = tmp_path / "quantum-feature.phxml"
+    point = jnp.asarray([0.37], dtype=jnp.float64)
+
+    save_ml_artifact(destination, model)
+    restored = read_ml_artifact(destination)
+
+    assert jnp.allclose(restored.model(point), model(point))
