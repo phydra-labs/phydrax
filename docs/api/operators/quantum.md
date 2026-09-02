@@ -99,6 +99,60 @@ without making an unrestricted-scaling claim.
 
 ::: phydrax.operators.embed_operator
 
+## Finite mode reduction
+
+::: phydrax.operators.quantum.NamedModeOperator
+
+::: phydrax.operators.quantum.ModeReductionProblem
+
+::: phydrax.operators.quantum.ModeReductionPolicy
+
+::: phydrax.operators.quantum.ModeReductionPlan
+
+::: phydrax.operators.quantum.PreparedModeReduction
+
+::: phydrax.operators.quantum.plan_mode_reduction
+
+::: phydrax.operators.quantum.prepare_mode_reduction
+
+::: phydrax.operators.quantum.refresh_mode_reduction
+
+::: phydrax.operators.quantum.compare_mode_resolutions
+
+## Circuit-QED modes
+
+::: phydrax.operators.quantum.ChargeBasis
+
+::: phydrax.operators.quantum.OscillatorBasis
+
+::: phydrax.operators.quantum.TransmonParameters
+
+::: phydrax.operators.quantum.FluxoniumParameters
+
+::: phydrax.operators.quantum.HarmonicModeParameters
+
+::: phydrax.operators.quantum.transmon_mode_problem
+
+::: phydrax.operators.quantum.fluxonium_mode_problem
+
+::: phydrax.operators.quantum.harmonic_mode_problem
+
+## Logical subspaces and gate quality
+
+::: phydrax.operators.quantum.BasisStateSubspace
+
+::: phydrax.operators.quantum.DenseQuantumSubspace
+
+::: phydrax.operators.quantum.basis_state_subspace
+
+::: phydrax.operators.quantum.project_quantum_operator
+
+::: phydrax.operators.quantum.unitary_gate_quality
+
+::: phydrax.operators.quantum.finite_channel_gate_quality
+
+::: phydrax.operators.quantum.coherent_pauli_expansion
+
 ## Explicit local quantum programs
 
 The local-operation namespace uses an explicit ordered Hilbert factorization and

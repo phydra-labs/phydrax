@@ -123,6 +123,7 @@ nav:
         - Mechanics and Deep Ritz: "cookbook/mechanics.md"
         - Two-level quantum dynamics: "cookbook/quantum_two_level.md"
         - Composite systems and a Bell state: "cookbook/quantum_composite.md"
+        - Circuit-QED design and control: "cookbook/circuit_qed_design_and_control.md"
         - Open-system amplitude damping: "cookbook/quantum_open_system.md"
         - Variational Monte Carlo: "cookbook/quantum_vmc.md"
     - Guides:
@@ -288,6 +289,7 @@ nav:
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
         - Local quantum programs: "guides_quantum_programs.md"
+        - Circuit-QED device modeling: "guides_circuit_qed.md"
         - Tensor platform: "guides_tensor_platform.md"
     - Examples:
         - Overview: "examples/index.md"
@@ -518,6 +520,7 @@ nav:
             - 3D Laplace capacitance: "api/solver/laplace_capacitance.md"
             - Non-Markovian and many-body quantum systems: "api/solver/nonmarkov_manybody.md"
             - Local quantum programs: "api/solver/quantum_program.md"
+            - Circuit-QED and local Hamiltonians: "api/solver/circuit_qed.md"
             - Production open quantum systems: "api/solver/production_open_quantum.md"
             - Hardened open quantum systems: "api/solver/hardened_open_quantum.md"
             - Final open-system closure: "api/solver/final_open_quantum.md"

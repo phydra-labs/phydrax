@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added qualified circuit-QED mode reduction and device assembly, one-to-one
+  dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
+  exact-state local product formulas with reversible gradients, and exact
+  heterogeneous MPO lowering without dense-Hamiltonian fallbacks.
 - Added content-identified homogeneous Helmholtz thermodynamics with canonical
   component/phase-occurrence identity, explicit gas reference pressure,
   ideal-mixture calorics, Peng--Robinson residual properties and exhaustive
