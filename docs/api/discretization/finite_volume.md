@@ -558,7 +558,7 @@ inadmissible, all blocks retain their base states.
 
 ---
 
-::: phydrax.equations.MultispeciesEulerSystem
+::: phydrax.equations.HomogeneousMixtureEulerSystem
 
 ---
 

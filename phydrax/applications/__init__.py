@@ -23,6 +23,7 @@ from . import (
     reacting_flow,
     solid_mechanics,
     systems_biology,
+    thermofluids,
     two_phase_flow,
     vortex_flow,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "phase_field",
     "reacting_flow",
     "solid_mechanics",
+    "thermofluids",
     "systems_biology",
     "two_phase_flow",
     "vortex_flow",

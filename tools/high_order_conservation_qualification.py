@@ -317,24 +317,36 @@ def _production_extension_checks(lane):
         )
         mhd_entropy = phx.equations.ideal_mhd_entropy_pair(mhd)
         checks["mhd_entropy_finite"] = bool(jnp.isfinite(mhd_entropy.entropy(mhd_state)))
-        mixture = phx.equations.ReactingMixture(
+        schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
             ("fuel", "oxidizer", "product"),
+            (phx.equations.ChemicalPhaseKind.GAS,) * 3,
             jnp.asarray((0.002, 0.032, 0.018)),
-            jnp.asarray((14300.0, 918.0, 1860.0)),
-            jnp.asarray((0.0, 0.0, -1.34e7)),
+            ("H", "O"),
+            jnp.asarray(((2, 0, 2), (0, 2, 1)), dtype=jnp.int32),
+            jnp.zeros((3,), dtype=jnp.int32),
+            gas_standard_pressure=1.0e5,
         )
-        reaction = phx.equations.ArrheniusReaction(
-            jnp.asarray((-2.0, -1.0, 2.0)),
-            jnp.asarray((1.0, 1.0, 0.0)),
-            pre_exponential=2.0e5,
-            activation_temperature=8000.0,
+        species_thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
+            schema,
+            jnp.asarray(((20.0,), (22.0,), (25.0,))),
+            jnp.asarray((0.0, 0.0, -2.4e5)),
+            reference_temperature=300.0,
+            minimum_temperature=200.0,
+            maximum_temperature=4000.0,
         )
-        reacting = phx.equations.ReactingEulerSystem(mixture, (reaction,), 1)
+        ideal = phx.equations.IdealGasReferenceHelmholtzTerm(
+            schema, species_thermodynamics
+        )
+        reacting = phx.equations.HomogeneousMixtureEulerSystem(
+            phx.equations.HomogeneousHelmholtzPlan(
+                ideal, phx.equations.ZeroResidualHelmholtzTerm(schema)
+            )
+        )
         reacting_state = reacting.primitive_to_conserved(
-            jnp.asarray((1.0, 0.0, 1400.0, 0.2, 0.2, 0.6))
+            jnp.asarray((0.04, 0.32, 0.18, 0.0, 1400.0))
         )
-        checks["reacting_source_finite"] = bool(
-            jnp.all(jnp.isfinite(reacting.reaction_source(reacting_state)))
+        checks["reacting_flux_finite"] = bool(
+            jnp.all(jnp.isfinite(reacting.physical_flux(reacting_state, 0)))
         )
         turbulence = phx.equations.WALEPlan().kinematic_viscosity(
             jnp.asarray((1.0,)),

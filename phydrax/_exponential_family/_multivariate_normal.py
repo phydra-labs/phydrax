@@ -11,6 +11,7 @@ import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+from .._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 from ..linalg import FactorizationPolicy, inverse, OperatorProperties
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
@@ -21,7 +22,6 @@ from ._contracts import (
     NaturalCoordinates,
     StatisticBatch,
 )
-from ._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 
 
 def _error_if(value: Array, predicate: Array, message: str, /) -> Array:

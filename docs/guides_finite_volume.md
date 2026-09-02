@@ -180,7 +180,7 @@ Dirichlet ghost formula is not silently reused as an advective inflow state.
 
 - `ScalarConservationSystem` in one, two, or three dimensions;
 - `EulerSystem` in one, two, or three dimensions;
-- `MultispeciesEulerSystem` in one, two, or three dimensions;
+- `HomogeneousMixtureEulerSystem` in one, two, or three dimensions;
 - `IdealMHDSystem` with three-vector momentum and magnetic field;
 - `ShallowWaterSystem` in one or two dimensions.
 

@@ -30,14 +30,15 @@ class RadiationDiffusionDiagnostics(StrictModule):
     successful: Array
 
 
-class GrayRadiationDiffusionPlan(StrictModule, NonTrainableState):
-    """Gray flux-limited diffusion with exact local matter exchange."""
+class GrayLinearRadiationDiffusionPlan(StrictModule, NonTrainableState):
+    """Gray linear diffusion with frozen-equilibrium local matter exchange."""
 
     grid: PreparedTensorGrid
     diffusion: object
-    opacity: float = eqx.field(static=True)
+    transport_extinction: float = eqx.field(static=True)
+    absorption_coefficient: float = eqx.field(static=True)
     reduced_light_speed: float = eqx.field(static=True)
-    flux_limiter: float = eqx.field(static=True)
+    eddington_factor: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -45,37 +46,43 @@ class GrayRadiationDiffusionPlan(StrictModule, NonTrainableState):
         grid: PreparedTensorGrid,
         /,
         *,
-        opacity: float,
+        transport_extinction: float,
+        absorption_coefficient: float,
         reduced_light_speed: float = 1.0,
-        flux_limiter: float = 1.0 / 3.0,
+        eddington_factor: float = 1.0 / 3.0,
     ):
-        opacity_ = float(opacity)
+        transport = float(transport_extinction)
+        absorption = float(absorption_coefficient)
         speed = float(reduced_light_speed)
-        limiter = float(flux_limiter)
+        factor = float(eddington_factor)
         if (
             not isinstance(grid, PreparedTensorGrid)
-            or not np.isfinite(opacity_)
-            or opacity_ <= 0.0
+            or not np.isfinite(transport)
+            or transport <= 0.0
+            or not np.isfinite(absorption)
+            or absorption <= 0.0
             or not np.isfinite(speed)
             or speed <= 0.0
-            or not np.isfinite(limiter)
-            or not 0.0 < limiter <= 1.0
+            or not np.isfinite(factor)
+            or not 0.0 < factor <= 1.0
         ):
-            raise ValueError("Gray radiation diffusion parameters are invalid.")
-        coefficient = speed * limiter / opacity_
+            raise ValueError("Gray linear radiation parameters are invalid.")
+        coefficient = speed * factor / transport
         diffusion = ConservativeDiffusionPlan(grid).prepare(coefficient)
         self.grid = grid
         self.diffusion = diffusion
-        self.opacity = opacity_
+        self.transport_extinction = transport
+        self.absorption_coefficient = absorption
         self.reduced_light_speed = speed
-        self.flux_limiter = limiter
+        self.eddington_factor = factor
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "gray-radiation-diffusion",
+                "kind": "gray-linear-radiation-diffusion",
                 "grid": grid.prepared_id,
-                "opacity": opacity_,
+                "transport_extinction": transport,
+                "absorption_coefficient": absorption,
                 "reduced_light_speed": speed,
-                "flux_limiter": limiter,
+                "eddington_factor": factor,
                 "diffusion": diffusion.operator_id,
             }
         )
@@ -109,18 +116,23 @@ class GrayRadiationDiffusionPlan(StrictModule, NonTrainableState):
         self,
         state: RadiationMatterState,
         end_time: ArrayLike,
-        equilibrium_radiation_energy: ArrayLike,
+        frozen_equilibrium_radiation_energy: ArrayLike,
         /,
     ) -> tuple[RadiationMatterState, RadiationDiffusionDiagnostics]:
         end = jnp.asarray(end_time, dtype=state.time.dtype).reshape(())
         step = end - state.time
         equilibrium = jnp.broadcast_to(
-            jnp.asarray(equilibrium_radiation_energy, dtype=state.radiation_energy.dtype),
+            jnp.asarray(
+                frozen_equilibrium_radiation_energy,
+                dtype=state.radiation_energy.dtype,
+            ),
             state.radiation_energy.shape,
         )
         diffusion_change = step * self.diffusion.mv(state.radiation_energy)
         diffused = state.radiation_energy + diffusion_change
-        relaxation = 1.0 - jnp.exp(-self.opacity * self.reduced_light_speed * step)
+        relaxation = 1.0 - jnp.exp(
+            -self.absorption_coefficient * self.reduced_light_speed * step
+        )
         exchange = relaxation * (equilibrium - diffused)
         radiation = diffused + exchange
         material = state.material_energy - exchange
@@ -153,7 +165,7 @@ class GrayRadiationDiffusionPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
-    "GrayRadiationDiffusionPlan",
+    "GrayLinearRadiationDiffusionPlan",
     "RadiationDiffusionDiagnostics",
     "RadiationMatterState",
 ]

@@ -36,9 +36,10 @@ linear algebra, nonlinear, control, filtering, and UQ owners.
 
 ## Observations and cosmology
 
-Astronomical TAN/SIP WCS, calibrated detector formation, surveys, opacity tables,
-scalar/polarized radiative transfer, QNM/ringdown products, detector networks, oblate
-occultation, and finite-source microlensing extend the concrete observation operators.
+Astronomical TAN/SIP WCS, calibrated detector formation, surveys,
+absorption-emission ray transfer, polarized transfer, QNM/ringdown products,
+detector networks, oblate occultation, and finite-source microlensing extend the
+concrete observation operators.
 
 Native early-universe products add relic backgrounds, fixed reaction BBN, recombination,
 halo/nonlinear products, CMB lensing, light cones, lensing planes, and baryonic

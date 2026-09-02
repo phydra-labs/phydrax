@@ -22,7 +22,7 @@ def test_butler_volmer_electrode_preserves_sites_and_current_charge_ledger():
             site_density=10.0,
         ),
     )
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("Ion+", "electron", "vacancy", "adsorbed"),
         (
             phx.equations.ChemicalPhaseKind.LIQUID,
@@ -35,6 +35,7 @@ def test_butler_volmer_electrode_preserves_sites_and_current_charge_ledger():
         jnp.asarray(((1, 0, 0, 1), (0, 0, 1, 1)), dtype=jnp.int32),
         jnp.asarray((1, -1, 0, 0), dtype=jnp.int32),
         phase_specs=phases,
+        gas_standard_pressure=101325.0,
     )
     thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,

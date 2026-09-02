@@ -1455,6 +1455,10 @@ old and new plan identities.
 
 ---
 
+::: phydrax.linalg.EmbeddedTensorProductLinearOperator
+
+---
+
 ::: phydrax.linalg.KroneckerSumLinearOperator
 
 ---
@@ -2569,6 +2573,26 @@ authoritative eigensolver.
 ---
 
 ::: phydrax.linalg.eigen.compare_general_eigen_resolutions
+
+---
+
+::: phydrax.linalg.eigen.HermitianEigenspaceTrackingPolicy
+
+---
+
+::: phydrax.linalg.eigen.HermitianEigenspaceTrackingPlan
+
+---
+
+::: phydrax.linalg.eigen.HermitianEigenspaceTrackingResult
+
+---
+
+::: phydrax.linalg.eigen.plan_hermitian_eigenspace_tracking
+
+---
+
+::: phydrax.linalg.eigen.track_hermitian_eigenspaces
 
 ---
 

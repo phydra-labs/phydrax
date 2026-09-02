@@ -29,8 +29,6 @@ from ._operators import (
     FrequencyResponseResult,
     ImageResponsePlan,
     ImageResponseResult,
-    RayTransferPlan,
-    RayTransferResult,
     SpectralField,
     StaticFieldOperatorSequence,
 )
@@ -44,10 +42,10 @@ from ._photometry import (
 )
 from ._projection import ObserverProjectionPlan, ObserverProjectionResult
 from ._radiative_transfer import (
-    OpacityTable,
     PolarizedRadiativeTransferPlan,
     RadiativeTransferResult,
-    ScalarRadiativeTransferPlan,
+    RayTransferPlan,
+    RayTransferResult,
 )
 from ._survey import SurveyCatalogPlan, SurveyCatalogResult, SurveyVisitPlan
 from ._waveform_catalogs import (
@@ -100,12 +98,10 @@ __all__ = [
     "MicrolensingResult",
     "OblateOccultationPlan",
     "OblateOccultationResult",
-    "OpacityTable",
     "PolarizedRadiativeTransferPlan",
     "QnmModeTable",
     "RadiativeTransferResult",
     "RingdownPlan",
-    "ScalarRadiativeTransferPlan",
     "SurveyCatalogPlan",
     "SurveyCatalogResult",
     "SurveyVisitPlan",

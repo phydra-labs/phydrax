@@ -212,6 +212,76 @@ def test_tensor_and_low_rank_operators_retain_structure_and_exact_solves():
     assert jnp.allclose(certified_result.value, low_rank_expected)
 
 
+def test_embedded_tensor_product_operator_contracts_only_selected_axes():
+    factors = tuple(la.ArraySpace((size,), dtype=jnp.float64) for size in (2, 3, 2))
+    ambient = la.TensorProductSpace(factors)
+    local_matrix = jnp.asarray(
+        [
+            [2.0, 0.0, 1.0, 0.0],
+            [0.0, 3.0, 0.0, 1.0],
+            [1.0, 0.0, 4.0, 0.0],
+            [0.0, 1.0, 0.0, 5.0],
+        ]
+    )
+    local = la.DenseLinearOperator(
+        local_matrix,
+        properties=_positive_definite_properties(),
+    )
+    operator = la.EmbeddedTensorProductLinearOperator(local, ambient, (2, 0))
+    value = jnp.arange(12.0).reshape((2, 3, 2))
+    moved = jnp.transpose(value, (2, 0, 1)).reshape((4, 3))
+    expected = jnp.transpose(
+        (local_matrix @ moved).reshape((2, 2, 3)),
+        (1, 2, 0),
+    )
+
+    assert jnp.allclose(operator.mv(value), expected)
+    assert jnp.allclose(
+        operator.source.flatten(operator.mv(value)),
+        la.materialize(operator, la.MaterializationPolicy())
+        @ operator.source.flatten(value),
+    )
+    assert operator.properties.self_adjoint
+    assert operator.properties.positive_definite
+    assert operator.properties.rank == ambient.size
+    assert operator.properties.evidence_for("self_adjoint") == "transformed"
+    assert (
+        operator.operator_id
+        == la.EmbeddedTensorProductLinearOperator(local, ambient, (2, 0)).operator_id
+    )
+
+    gradient = jax.grad(
+        lambda matrix: jnp.sum(
+            la.EmbeddedTensorProductLinearOperator(
+                la.DenseLinearOperator(matrix),
+                ambient,
+                (2, 0),
+            ).mv(value)
+            ** 2
+        )
+    )(local_matrix)
+    assert jnp.all(jnp.isfinite(gradient))
+
+
+def test_embedded_tensor_product_operator_validates_axes_and_local_size():
+    ambient = la.TensorProductSpace(
+        (
+            la.ArraySpace((2,), dtype=jnp.float64),
+            la.ArraySpace((3,), dtype=jnp.float64),
+        )
+    )
+    local = la.DenseLinearOperator(jnp.eye(2))
+
+    with pytest.raises(ValueError, match="nonempty"):
+        la.EmbeddedTensorProductLinearOperator(local, ambient, ())
+    with pytest.raises(ValueError, match="unique"):
+        la.EmbeddedTensorProductLinearOperator(local, ambient, (0, 0))
+    with pytest.raises(ValueError, match="index"):
+        la.EmbeddedTensorProductLinearOperator(local, ambient, (2,))
+    with pytest.raises(ValueError, match="sizes"):
+        la.EmbeddedTensorProductLinearOperator(local, ambient, (1,))
+
+
 def test_factorization_capabilities_nullspaces_and_numeric_refresh_are_truthful():
     matrix = jnp.asarray([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="rank-one-design")

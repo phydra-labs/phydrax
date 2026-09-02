@@ -48,6 +48,7 @@ from ._chemical_calibration import (
     ChemicalCalibrationPlan,
     ChemicalParameterCoordinate,
 )
+from ._chemical_components import ChemicalComponentCatalog
 from ._chemical_mechanism import (
     ChemicalMechanismEvidence,
     ChemicalMechanismIR,
@@ -85,6 +86,7 @@ from ._chemical_thermodynamics import (
     NASASpeciesThermodynamicsPlan,
     PolynomialSpeciesThermodynamicsPlan,
     SpeciesThermodynamicEvaluation,
+    UNIVERSAL_GAS_CONSTANT,
 )
 from ._compile import (
     compile_pde_expression,
@@ -205,6 +207,17 @@ from ._finite_volume_verification import (
 )
 from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
 from ._flip_inspection import flip_inspection_frames
+from ._gas_dynamics import HomogeneousMixtureEulerSystem
+from ._homogeneous_thermodynamics import (
+    AbstractMolarHelmholtzTerm,
+    DensityEnergyStateResult,
+    HomogeneousChemicalEvaluation,
+    HomogeneousHelmholtzPlan,
+    HomogeneousThermodynamicEvaluation,
+    IdealGasReferenceHelmholtzTerm,
+    ThermodynamicDomainEvidence,
+    ZeroResidualHelmholtzTerm,
+)
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
@@ -216,7 +229,6 @@ from ._hyperbolic_systems import (
     CompressibleNavierStokesSystem,
     EulerSystem,
     IdealMHDSystem,
-    MultispeciesEulerSystem,
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
@@ -246,6 +258,18 @@ from ._ir import (
     PDERegion,
     PDERegionKind,
     PDERepresentation,
+)
+from ._kinetic_gas import (
+    DiscreteMaxwellianResult,
+    KineticBreakdownEvidence,
+    KineticBreakdownPlan,
+    KineticCollisionResult,
+    MaxwellGasSurfaceBoundary,
+    MolecularVelocityQuadrature,
+    MonatomicBGKCollisionPlan,
+    PopulationUpwindFluxPlan,
+    PositiveDiscreteMaxwellianPlan,
+    ShakhovCollisionPlan,
 )
 from ._lagrangian_fluid import (
     BarotropicFluidProblemIR,
@@ -396,6 +420,12 @@ from ._particle_thermochemistry import (
     ParticleTransportEvaluation,
     ParticleTransportMaterialPlan,
 )
+from ._peng_robinson import (
+    peng_robinson_roots,
+    PengRobinsonParameters,
+    PengRobinsonResidualHelmholtzTerm,
+    PengRobinsonRootSet,
+)
 from ._phase_field import (
     AbstractBulkFreeEnergy,
     BinaryFreeEnergyEvaluation,
@@ -403,6 +433,17 @@ from ._phase_field import (
     double_well_free_energy_density,
     DoubleWellFreeEnergy,
     evaluate_binary_free_energy,
+)
+from ._radiation_material import (
+    radiation_means,
+    RadiationCoefficientEvaluation,
+    RadiationCoefficientRole,
+    RadiationCoefficientTable,
+    RadiationMatterExchangePlan,
+    RadiationMatterExchangeResult,
+    RadiationMeanEvaluation,
+    RadiationScaleContract,
+    SpectralFrequencyGrid,
 )
 from ._radiative import (
     RadiativeCoolingBoundsPolicy,
@@ -417,12 +458,6 @@ from ._randomized_compile import (
     RandomizedDifferentialMethod,
     RandomizedDifferentialPlan,
     RandomizedNodeCoupling,
-)
-from ._reacting_flow import (
-    ArrheniusReaction,
-    reacting_mixture_entropy_pair,
-    ReactingEulerSystem,
-    ReactingMixture,
 )
 from ._reactive_cfd_dem import (
     ParticleContinuumExchangeEvaluation,
@@ -754,10 +789,6 @@ __all__ = [
     "VremanPlan",
     "WALEPlan",
     "EulerSystem",
-    "ArrheniusReaction",
-    "reacting_mixture_entropy_pair",
-    "ReactingEulerSystem",
-    "ReactingMixture",
     "ideal_mhd_entropy_pair",
     "shallow_water_energy_pair",
     "IdealMHDSystem",
@@ -843,7 +874,6 @@ __all__ = [
     "compile_lattice_boltzmann_problem",
     "snapshot_lattice_boltzmann_geometry",
     "ChannelVelocityDiagnostics",
-    "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
     "ShallowWaterCoriolisSource",
@@ -1044,7 +1074,41 @@ __all__ = [
     "NASASpeciesThermodynamicsPlan",
     "PolynomialSpeciesThermodynamicsPlan",
     "SpeciesThermodynamicEvaluation",
+    "HomogeneousMixtureEulerSystem",
+    "UNIVERSAL_GAS_CONSTANT",
+    "AbstractMolarHelmholtzTerm",
+    "DensityEnergyStateResult",
+    "HomogeneousChemicalEvaluation",
+    "HomogeneousHelmholtzPlan",
+    "HomogeneousThermodynamicEvaluation",
+    "IdealGasReferenceHelmholtzTerm",
+    "ThermodynamicDomainEvidence",
+    "ZeroResidualHelmholtzTerm",
+    "ChemicalComponentCatalog",
     "ChemicalPhaseKind",
+    "peng_robinson_roots",
+    "PengRobinsonParameters",
+    "PengRobinsonResidualHelmholtzTerm",
+    "PengRobinsonRootSet",
+    "DiscreteMaxwellianResult",
+    "KineticBreakdownEvidence",
+    "KineticBreakdownPlan",
+    "KineticCollisionResult",
+    "MaxwellGasSurfaceBoundary",
+    "MolecularVelocityQuadrature",
+    "MonatomicBGKCollisionPlan",
+    "PopulationUpwindFluxPlan",
+    "PositiveDiscreteMaxwellianPlan",
+    "ShakhovCollisionPlan",
+    "radiation_means",
+    "RadiationCoefficientEvaluation",
+    "RadiationCoefficientRole",
+    "RadiationCoefficientTable",
+    "RadiationMatterExchangePlan",
+    "RadiationMatterExchangeResult",
+    "RadiationMeanEvaluation",
+    "RadiationScaleContract",
+    "SpectralFrequencyGrid",
     "ChemicalPhaseSpec",
     "ChemicalSpeciesSchema",
     "ParticleThermochemicalMaterialBundle",

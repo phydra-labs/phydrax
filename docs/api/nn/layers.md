@@ -10,6 +10,9 @@ Low-level model building blocks.
     - `ComplexLinear` and `LowRankComplexLinear` keep trainable leaves real while
       evaluating exact complex-affine maps. The low-rank layer records spectral
       initializer truncation evidence and materializes its dense weight only on request.
+    - `SpectralNeuron` evaluates one explicit zero-based ordered eigenvalue of a
+      trainable affine real-symmetric matrix pencil. Increasing and decreasing
+      coordinates use exact positive- and negative-semidefinite coefficients.
     - `Dropout(mode="feature")` shares one feature/channel mask over leading field axes.
     - Named LeCun, He/Kaiming, and Glorot/Xavier initializers follow JAX's
       post-truncation target-variance definitions; orthogonal initialization
@@ -54,6 +57,46 @@ used as a substitute for physical boundary-value enforcement.
             - materialize_weight
 
 ::: phydrax.nn.layers.LowRankComplexLinearInitializationReport
+
+---
+
+## Spectral neuron
+
+`SpectralNeuron` evaluates the ascending eigenvalue selected by `eigen_index`
+from `A(x) = A₀ + Σᵢ xᵢAᵢ`. The index is mandatory and zero-based. The layer
+preserves leading axes, returns a scalar per input case, and exposes the full
+ordered spectrum, evaluated pencil, and effective coefficient matrices without
+exposing raw factor coordinates.
+
+`monotonicity` is declared in flattened layer-input coordinates. An
+`"increasing"` feature has `Aᵢ ⪰ 0`; a `"decreasing"` feature has `Aᵢ ⪯ 0`;
+`"free"` imposes only real symmetry. The smallest selected eigenvalue is
+globally concave, the largest is globally convex, and a one-dimensional matrix
+is both. These guarantees apply to the layer coordinates, so bounds and
+monotonicity must be rescaled explicitly when an upstream preprocessor changes
+physical units.
+
+Fresh initialization records a conservative selected-eigengap certificate over
+the declared box `‖x‖∞ ≤ initialization_radius`. The report is initialization
+evidence, not a persistent invariant after parameter updates. Dense evaluation
+costs `O(nd² + d³)` per input case. At an eigenvalue crossing the forward value
+remains defined, but a unique derivative does not.
+
+All coefficient matrices are jointly invariant under a common orthogonal basis
+change. Raw entries therefore are not basis-independent explanations; use the
+cluster-projector inspection API instead. The construction follows
+[arXiv:2608.08003](https://arxiv.org/abs/2608.08003).
+
+::: phydrax.nn.layers.SpectralNeuron
+    options:
+        members:
+            - __init__
+            - __call__
+            - matrix_pencil
+            - eigenvalues
+            - materialize_coefficients
+
+::: phydrax.nn.layers.SpectralNeuronInitializationReport
 
 ---
 ::: phydrax.nn.layers.SineLayer

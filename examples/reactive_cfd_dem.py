@@ -32,13 +32,14 @@ dem = phx.equations.compile_discrete_element_problem(
     neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(0),
 )
 dem_state = dem.initialize_state(0.0, jnp.asarray([[0.0, 0.0]]), jnp.zeros((1, 2)))
-schema = phx.equations.ChemicalSpeciesSchema(
+schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
     ("solid",),
     (phx.equations.ChemicalPhaseKind.SOLID,),
     jnp.asarray([0.01]),
     ("X",),
     jnp.asarray([[1]]),
     jnp.zeros_like(jnp.asarray([0.01]), dtype=jnp.int32),
+    gas_standard_pressure=101325.0,
 )
 thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
     phx.equations.PolynomialSpeciesThermodynamicsPlan(
