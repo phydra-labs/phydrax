@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..tensor_network import LocallyPurifiedDensity, prepare_local_lindblad_channel
+from ..tensor_network._split import TensorTruncationEvidence, truncated_svd
 
 
 class LocalKrausChannel(StrictModule):
@@ -56,32 +57,25 @@ def local_kraus_channel_from_lindblad(
 
 
 class PurificationTruncationEvidence(StrictModule):
-    site: int
-    available_rank: int
-    retained_rank: int
-    discarded_weight: Array
+    site: int = eqx.field(static=True)
+    truncation: TensorTruncationEvidence
     channel_completeness_residual: Array
     valid: Array
 
     def __init__(
         self,
         site: int,
-        available_rank: int,
-        retained_rank: int,
-        discarded_weight: ArrayLike,
+        truncation: TensorTruncationEvidence,
         channel_completeness_residual: ArrayLike,
         /,
     ):
+        if not isinstance(truncation, TensorTruncationEvidence):
+            raise TypeError("truncation must be TensorTruncationEvidence.")
+        residual = jnp.asarray(channel_completeness_residual)
         self.site = int(site)
-        self.available_rank = int(available_rank)
-        self.retained_rank = int(retained_rank)
-        self.discarded_weight = jnp.asarray(discarded_weight)
-        self.channel_completeness_residual = jnp.asarray(channel_completeness_residual)
-        self.valid = (
-            jnp.isfinite(self.discarded_weight)
-            & (self.discarded_weight >= 0.0)
-            & (self.channel_completeness_residual <= 1e-8)
-        )
+        self.truncation = truncation
+        self.channel_completeness_residual = residual
+        self.valid = truncation.valid & jnp.isfinite(residual) & (residual <= 1e-8)
 
 
 def apply_local_kraus_channel(
@@ -98,31 +92,36 @@ def apply_local_kraus_channel(
     state, _ = canonicalize_lpdo(state, center=channel.site)
     if not 0 <= channel.site < state.site_count:
         raise ValueError("Kraus-channel site is outside the purification.")
-    tensor = state.tensors[channel.site]
-    if tensor.shape[1] != channel.kraus.shape[-1]:
+    precision = state.precision
+    tensor = precision.contraction(state.tensors[channel.site])
+    kraus = precision.contraction(channel.kraus)
+    if tensor.shape[1] != kraus.shape[-1]:
         raise ValueError("Kraus and physical dimensions differ.")
-    transformed = oe.contract("aoi,likr->loakr", channel.kraus, tensor)
+    transformed = oe.contract("aoi,likr->loakr", kraus, tensor)
     transformed = transformed.reshape(
         (tensor.shape[0], tensor.shape[1], -1, tensor.shape[-1])
     )
     matrix = jnp.transpose(transformed, (0, 1, 3, 2)).reshape((-1, transformed.shape[2]))
-    u, singular_values, _ = jnp.linalg.svd(matrix, full_matrices=False)
-    available = singular_values.shape[0]
-    retained = min(int(maximum_purification_dimension), available)
-    discarded = jnp.sum(singular_values[retained:] ** 2)
-    compressed = (u[:, :retained] * singular_values[:retained]).reshape(
+    compressed, _, truncation = truncated_svd(
+        matrix,
+        maximum_rank=maximum_purification_dimension,
+        absorb="left",
+        precision=precision,
+        evidence_source=state.tensors,
+        evidence_children={"input-state": state.precision_evidence},
+    )
+    retained = truncation.retained_rank
+    compressed = compressed.reshape(
         (tensor.shape[0], tensor.shape[1], tensor.shape[-1], retained)
     )
     compressed = jnp.transpose(compressed, (0, 1, 3, 2))
     tensors = list(state.tensors)
     tensors[channel.site] = compressed
-    result = LocallyPurifiedDensity(tuple(tensors), precision=state.precision)
+    result = LocallyPurifiedDensity(tuple(tensors), precision=precision)
     evidence = PurificationTruncationEvidence(
         channel.site,
-        available,
-        retained,
-        discarded,
-        channel.completeness_residual(),
+        truncation,
+        precision.decision(channel.completeness_residual()),
     )
     return result, evidence
 
@@ -196,7 +195,11 @@ def solve_purified_lindblad(
                 maximum_purification_dimension=maximum_purification_dimension,
             )
             discarded.append(
-                jnp.where(evidence.valid, evidence.discarded_weight, jnp.nan)
+                jnp.where(
+                    evidence.valid,
+                    evidence.truncation.discarded_weight,
+                    jnp.nan,
+                )
             )
         traces.append(state.raw_trace())
     return PurifiedLindbladResult(

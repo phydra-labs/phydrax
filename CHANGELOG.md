@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Added
+- Added fixed-capacity open-boundary tensor-network completion with shared
+  precision-aware SVD evidence, canonical QR sweeps, MPO construction/algebra,
+  MPS action and compression, reusable bra–MPO–ket environments, network-native
+  MPO Frobenius/Hermiticity diagnostics, capacity-bounded dense materialization,
+  prepared two-site DMRG with truncation-aware Galerkin convergence, and
+  one-site projector-splitting matrix-product TDVP.
+- Added representation-specific MPS and locally purified `QuantumProgram`
+  plan/prepare/refresh execution with template-state structure contracts,
+  explicit enclosing-interval routing for ordered nonlocal targets, fixed bond
+  and purification capacities, CP/PSD construction evidence, and observable
+  norm, trace, and truncation loss without hidden SWAPs or normalization.
+- Added immutable ordinary labelled-contraction structures with explicit output
+  ordering, host-side `opt_einsum` path/resource planning, fixed-signature
+  prepare/refresh execution, precision provenance, and concrete prepared MPS
+  and MPO inner-product consumers.
+- Added static Abelian U(1), Z_n, and product-charge tensor layouts with
+  oriented fixed-capacity legs, immutable tuple-block storage, separate MPS/MPO
+  representations, blockwise environments and canonicalization,
+  symmetry-preserving TEBD, and deterministic global cross-sector truncation
+  evidence without fermionic or non-Abelian overclaims.
 - Added certified exact/bounded sharp-geometry realization with compatible
   MAC/FLIP/VOF coupling, explicit fixed-step and host-inspection adapters, and
   bounded nonconservative MacCormack transport for periodic passive tracers.

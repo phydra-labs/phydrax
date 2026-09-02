@@ -38,6 +38,16 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/tensor_network_abelian.py
+!benchmarks/tensor_network_abelian.json
+!benchmarks/tensor_network_chain.py
+!benchmarks/tensor_network_chain.json
+!benchmarks/tensor_network_contraction.py
+!benchmarks/tensor_network_contraction.json
+!benchmarks/tensor_network_quantum_program.py
+!benchmarks/tensor_network_quantum_program.json
+!benchmarks/tensor_network_variational.py
+!benchmarks/tensor_network_variational.json
 !benchmarks/iga_h1.json
 !benchmarks/iga_h1_qualification.json
 !benchmarks/iga_closure_qualification.json

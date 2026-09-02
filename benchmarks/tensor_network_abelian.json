@@ -1,0 +1,56 @@
+{
+  "environment": {
+    "fingerprint": "d5b7935cb843f83dcabe8397ee6bdc6bb79dff8c6aa8ee03b149bb548d29df54",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.4.6",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "e67a33f71eba046d56e53da208c0164e3209c5acffa049964b62c8e5071c44ee",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "logical_input_bytes": 352,
+  "logical_output_bytes": 131,
+  "lowering_seconds": 0.082862375,
+  "compilation_seconds": 0.095976916,
+  "execution": {
+    "count": 2,
+    "samples_ms": [
+      0.35474999999999995,
+      0.348375
+    ],
+    "min_ms": 0.348375,
+    "median_ms": 0.3515625,
+    "mean_ms": 0.3515625,
+    "std_ms": 0.003187499999999982,
+    "max_ms": 0.35474999999999995
+  },
+  "discarded_weight": 0.4999999999999999,
+  "dense_residual": 0.0
+}

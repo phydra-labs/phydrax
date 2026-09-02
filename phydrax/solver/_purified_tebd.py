@@ -14,22 +14,8 @@ from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
 from ..tensor_network import LocallyPurifiedDensity, NearestNeighborHamiltonian
 from ..tensor_network._canonical import canonicalize_lpdo
+from ..tensor_network._split import TensorTruncationEvidence, truncated_svd
 from ._purified_lindblad import apply_local_kraus_channel, LocalKrausChannel
-
-
-class LPDOBondEvidence(StrictModule):
-    retained_rank: int
-    available_rank: int
-    discarded_weight: Array
-    valid: Array
-
-    def __init__(
-        self, retained_rank: int, available_rank: int, discarded_weight: ArrayLike, /
-    ):
-        self.retained_rank = int(retained_rank)
-        self.available_rank = int(available_rank)
-        self.discarded_weight = jnp.asarray(discarded_weight)
-        self.valid = jnp.isfinite(self.discarded_weight) & (self.discarded_weight >= 0.0)
 
 
 def apply_lpdo_two_site_unitary(
@@ -39,21 +25,21 @@ def apply_lpdo_two_site_unitary(
     /,
     *,
     maximum_bond_dimension: int,
-) -> tuple[LocallyPurifiedDensity, LPDOBondEvidence]:
+) -> tuple[LocallyPurifiedDensity, TensorTruncationEvidence]:
     index = int(bond)
     if index < 0 or index >= state.site_count - 1:
         raise ValueError("LPDO bond is outside the open-boundary chain.")
     if int(maximum_bond_dimension) < 1:
         raise ValueError("maximum_bond_dimension must be positive.")
-    from ..tensor_network._canonical import canonicalize_lpdo
-
     state, _ = canonicalize_lpdo(state, center=index)
-    left = state.tensors[index]
-    right = state.tensors[index + 1]
-    gate_ = jnp.asarray(gate)
+
+    precision = state.precision
+    left = precision.contraction(state.tensors[index])
+    right = precision.contraction(state.tensors[index + 1])
+    gate_ = precision.contraction(jnp.asarray(gate))
     if gate_.shape != (left.shape[1], right.shape[1], left.shape[1], right.shape[1]):
         raise ValueError("LPDO unitary gate shape is invalid.")
-    theta = jnp.tensordot(left, right, axes=(-1, 0))
+    theta = oe.contract("lpki,iqmr->lpkqmr", left, right)
     theta = oe.contract("abij,likjmr->lakbmr", gate_, theta)
     matrix = theta.reshape(
         (
@@ -61,21 +47,26 @@ def apply_lpdo_two_site_unitary(
             right.shape[1] * right.shape[2] * right.shape[-1],
         )
     )
-    u, singular_values, vh = jnp.linalg.svd(matrix, full_matrices=False)
-    available = singular_values.shape[0]
-    retained = min(int(maximum_bond_dimension), available)
-    discarded = jnp.sum(singular_values[retained:] ** 2)
-    new_left = u[:, :retained].reshape(
+    left_factor, right_factor, truncation = truncated_svd(
+        matrix,
+        maximum_rank=maximum_bond_dimension,
+        absorb="right",
+        precision=precision,
+        evidence_source=state.tensors,
+        evidence_children={"input-state": state.precision_evidence},
+    )
+    retained = truncation.retained_rank
+    new_left = left_factor.reshape(
         (left.shape[0], left.shape[1], left.shape[2], retained)
     )
-    new_right = (singular_values[:retained, None] * vh[:retained]).reshape(
+    new_right = right_factor.reshape(
         (retained, right.shape[1], right.shape[2], right.shape[-1])
     )
     tensors = list(state.tensors)
     tensors[index] = new_left
     tensors[index + 1] = new_right
-    result = LocallyPurifiedDensity(tuple(tensors), precision=state.precision)
-    return result, LPDOBondEvidence(retained, available, discarded)
+    result = LocallyPurifiedDensity(tuple(tensors), precision=precision)
+    return result, truncation
 
 
 class PurifiedStrangProblem(StrictModule):
@@ -170,7 +161,11 @@ def solve_purified_strang(
                 maximum_purification_dimension=maximum_purification_dimension,
             )
             kraus_records.append(
-                jnp.where(evidence.valid, evidence.discarded_weight, jnp.nan)
+                jnp.where(
+                    evidence.valid,
+                    evidence.truncation.discarded_weight,
+                    jnp.nan,
+                )
             )
         for bond in range(0, state.site_count - 1, 2):
             state, evidence = apply_lpdo_two_site_unitary(
@@ -203,7 +198,11 @@ def solve_purified_strang(
                 maximum_purification_dimension=maximum_purification_dimension,
             )
             kraus_records.append(
-                jnp.where(evidence.valid, evidence.discarded_weight, jnp.nan)
+                jnp.where(
+                    evidence.valid,
+                    evidence.truncation.discarded_weight,
+                    jnp.nan,
+                )
             )
         state, canonical = canonicalize_lpdo(state, center=state.site_count // 2)
         canonical_records.append(
@@ -307,7 +306,6 @@ def diagnose_purified_stationarity(
 
 
 __all__ = [
-    "LPDOBondEvidence",
     "PurifiedStationarityDiagnostic",
     "PurifiedStrangProblem",
     "PurifiedStrangResult",

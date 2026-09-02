@@ -1,8 +1,10 @@
-# Dense local quantum programs
+# Local quantum programs
 
-Phydrax executes immutable ordered local operations on an explicit finite-dimensional
-Hilbert factorization. The dense program layer is separate from classical
-`phydrax.circuit`: it composes quantum maps in time order rather than solving a
+Phydrax executes immutable ordered local operations on an explicit
+finite-dimensional Hilbert factorization. Dense, MPS, and locally purified
+executors are separate representation contracts over the same `QuantumProgram`;
+none is a fallback for another. Quantum programs remain separate from classical
+`phydrax.circuit`: they compose quantum maps in time order rather than solving a
 network conservation equation.
 
 ## Explicit register factorization
@@ -88,6 +90,31 @@ A refresh preserves `prepared_id`, increments `numeric_version`, and remains in 
 JAX numerical path. This supports `jax.jit`, outer `jax.vmap`, and real-scalar
 objectives differentiated through refreshed local matrices.
 
+## Open-chain MPS and LPDO execution
+
+`plan_mps_quantum_program` binds a state-vector program to one template MPS
+structure and tensor precision policy. `plan_lpdo_quantum_program` does the same
+for a density program and a template locally purified density. The template is
+required because the Hilbert layout determines physical dimensions but not
+virtual bonds or purification capacities.
+
+Targets are resolved once against the layout. An operation on noncontiguous or
+out-of-order sites contracts its smallest enclosing open-chain interval, applies
+the matrix factors in the exact declared target order, preserves pass-through
+sites, and splits the interval at the declared bond capacity. This is not an
+implicit SWAP network. Planning reports and bounds the enclosing-window cost.
+
+MPS execution accepts unitaries only. LPDO execution accepts unitaries and Kraus
+channels; a multi-site channel attaches its global Kraus choice to the spatially
+leftmost target before fixed-capacity purification compression. Purified
+construction preserves positive semidefiniteness, while bond or purification
+truncation can perturb trace. The executor reports raw trace drift and never
+normalizes, projects, symmetrizes, or clips the result.
+
+Both lifecycles preserve prepared identity under numeric refresh and reject any
+change to layout, representation, template structure, operation order or kind,
+ordered targets, route, shape, dtype, Kraus capacity, or resource policy.
+
 ## Failure and physicality
 
 Structural errors raise during construction, planning, or refresh. Numerical
@@ -102,8 +129,9 @@ Hermiticity; the omitted final numerical eigenvalue audit is reported as unaudit
 
 ## Deliberate limits
 
-The current layer is deterministic and dense. It does not provide measurement,
+The local-program layer is deterministic. It does not provide measurement,
 mid-circuit classical control, a string gate registry, parameter-shift rules,
-implicit SWAP networks, MPS/LPDO fallback, continuous Hamiltonian segments, or
-automatic factorization. Dense storage remains proportional to the total Hilbert
-dimension for state vectors and its square for density matrices.
+continuous Hamiltonian segments, automatic gate factorization, implicit SWAP
+networks, or a universal executor. Dense state-vector and density storage still
+scale with the full Hilbert dimension. MPS and LPDO execution is finite,
+open-boundary, fixed-capacity, and reports every approximation.

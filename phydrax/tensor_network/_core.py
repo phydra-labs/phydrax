@@ -5,14 +5,37 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import pairwise
+from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ._precision import TensorNetworkPrecisionPolicy
+
+
+def _chain_structure_id(
+    kind: str,
+    tensors: tuple[Array, ...],
+    precision: TensorNetworkPrecisionPolicy,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": f"{kind}-structure",
+            "boundary": "open",
+            "shapes": tuple(
+                tuple(int(size) for size in tensor.shape) for tensor in tensors
+            ),
+            "dtype": str(tensors[0].dtype),
+            "precision": precision.policy_id,
+        }
+    )
 
 
 class MatrixProductState(StrictModule):
@@ -22,6 +45,7 @@ class MatrixProductState(StrictModule):
     site_count: int
     physical_dimensions: tuple[int, ...]
     bond_dimensions: tuple[int, ...]
+    structure_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -39,7 +63,7 @@ class MatrixProductState(StrictModule):
             raise ValueError("MPS tensors must have shape (left, physical, right).")
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
             raise ValueError("Open-boundary MPS edge bonds must be one.")
-        for left, right in zip(values[:-1], values[1:], strict=True):
+        for left, right in pairwise(values):
             if left.shape[-1] != right.shape[0]:
                 raise ValueError("Adjacent MPS bond dimensions must match.")
         self.tensors = values
@@ -48,12 +72,15 @@ class MatrixProductState(StrictModule):
         self.site_count = len(values)
         self.physical_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
         self.bond_dimensions = tuple(int(tensor.shape[-1]) for tensor in values[:-1])
+        self.structure_id = _chain_structure_id(
+            "matrix-product-state", values, precision_
+        )
 
     def _contract(self) -> Array:
         tensors = self.precision.contraction(self.tensors)
         state = tensors[0][0]
         for tensor in tensors[1:]:
-            state = jnp.tensordot(state, tensor, axes=(-1, 0))
+            state = oe.contract("...l,lpr->...pr", state, tensor)
         return state[..., 0].reshape(-1)
 
     def to_dense(self, /, *, maximum_elements: int = 1_000_000) -> Array:
@@ -95,6 +122,8 @@ class MatrixProductOperator(StrictModule):
     site_count: int
     output_dimensions: tuple[int, ...]
     input_dimensions: tuple[int, ...]
+    bond_dimensions: tuple[int, ...]
+    structure_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -112,7 +141,7 @@ class MatrixProductOperator(StrictModule):
             raise ValueError("MPO tensors require (left, output, input, right).")
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
             raise ValueError("Open-boundary MPO edge bonds must be one.")
-        for left, right in zip(values[:-1], values[1:], strict=True):
+        for left, right in pairwise(values):
             if left.shape[-1] != right.shape[0]:
                 raise ValueError("Adjacent MPO bonds must match.")
         self.tensors = values
@@ -121,12 +150,22 @@ class MatrixProductOperator(StrictModule):
         self.site_count = len(values)
         self.output_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
         self.input_dimensions = tuple(int(tensor.shape[2]) for tensor in values)
+        self.bond_dimensions = tuple(int(tensor.shape[-1]) for tensor in values[:-1])
+        self.structure_id = _chain_structure_id(
+            "matrix-product-operator", values, precision_
+        )
 
-    def to_dense(self) -> Array:
+    def to_dense(self, /, *, maximum_elements: int = 1_000_000) -> Array:
+        count = prod(self.output_dimensions) * prod(self.input_dimensions)
+        if int(maximum_elements) <= 0 or count > int(maximum_elements):
+            raise ValueError(
+                f"Dense MPO materialization requires {count} elements; "
+                f"capacity is {int(maximum_elements)}."
+            )
         tensors = self.precision.contraction(self.tensors)
         operator = tensors[0][0]
         for tensor in tensors[1:]:
-            operator = jnp.tensordot(operator, tensor, axes=(-1, 0))
+            operator = oe.contract("...l,labr->...abr", operator, tensor)
         operator = operator[..., 0]
         output_axes = tuple(range(0, 2 * self.site_count, 2))
         input_axes = tuple(range(1, 2 * self.site_count, 2))
@@ -143,6 +182,8 @@ class LocallyPurifiedDensity(StrictModule):
     site_count: int
     physical_dimensions: tuple[int, ...]
     purification_dimensions: tuple[int, ...]
+    bond_dimensions: tuple[int, ...]
+    structure_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -162,7 +203,7 @@ class LocallyPurifiedDensity(StrictModule):
             )
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
             raise ValueError("Purification edge bonds must be one.")
-        for left, right in zip(values[:-1], values[1:], strict=True):
+        for left, right in pairwise(values):
             if left.shape[-1] != right.shape[0]:
                 raise ValueError("Adjacent purification bonds must match.")
         self.tensors = values
@@ -171,12 +212,16 @@ class LocallyPurifiedDensity(StrictModule):
         self.site_count = len(values)
         self.physical_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
         self.purification_dimensions = tuple(int(tensor.shape[2]) for tensor in values)
+        self.bond_dimensions = tuple(int(tensor.shape[-1]) for tensor in values[:-1])
+        self.structure_id = _chain_structure_id(
+            "locally-purified-density", values, precision_
+        )
 
     def _amplitude(self) -> Array:
         tensors = self.precision.contraction(self.tensors)
         amplitude = tensors[0][0]
         for tensor in tensors[1:]:
-            amplitude = jnp.tensordot(amplitude, tensor, axes=(-1, 0))
+            amplitude = oe.contract("...l,lpkr->...pkr", amplitude, tensor)
         amplitude = amplitude[..., 0]
         physical_axes = tuple(range(0, 2 * self.site_count, 2))
         kraus_axes = tuple(range(1, 2 * self.site_count, 2))
@@ -190,7 +235,21 @@ class LocallyPurifiedDensity(StrictModule):
 
         return self.precision.decision(lpdo_raw_trace(self))
 
-    def to_dense_density(self, /, *, normalize: bool = False) -> Array:
+    def to_dense_density(
+        self,
+        /,
+        *,
+        normalize: bool = False,
+        maximum_elements: int = 1_000_000,
+    ) -> Array:
+        physical = prod(self.physical_dimensions)
+        purification = prod(self.purification_dimensions)
+        required = max(physical * purification, physical * physical)
+        if int(maximum_elements) <= 0 or required > int(maximum_elements):
+            raise ValueError(
+                f"Dense LPDO materialization requires {required} workspace/output "
+                f"elements; capacity is {int(maximum_elements)}."
+            )
         amplitude = self.precision.contraction(self._amplitude())
         density = self.precision.accumulation(amplitude @ jnp.conj(amplitude.T))
         if not normalize:
@@ -212,10 +271,6 @@ class LocallyPurifiedDensity(StrictModule):
         )
         tensors = (self.tensors[0] / jnp.sqrt(trace),) + self.tensors[1:]
         return LocallyPurifiedDensity(tensors, precision=self.precision)
-
-
-# Local import avoids exposing a utility dependency in public signatures.
-from math import prod
 
 
 __all__ = ["LocallyPurifiedDensity", "MatrixProductOperator", "MatrixProductState"]

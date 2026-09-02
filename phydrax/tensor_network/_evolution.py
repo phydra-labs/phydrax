@@ -4,42 +4,13 @@
 
 from __future__ import annotations
 
-import equinox as eqx
 import jax.numpy as jnp
 import opt_einsum as oe
-from jaxtyping import Array, ArrayLike
+from jaxtyping import ArrayLike
 
-from .._precision import PrecisionEvidenceEnvelope
-from .._strict import StrictModule
 from ._core import MatrixProductState
 from ._precision import TensorNetworkPrecisionPolicy
-
-
-class TensorTruncationEvidence(StrictModule):
-    retained_rank: int
-    available_rank: int
-    discarded_weight: Array
-    valid: Array
-    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
-    precision_policy_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        retained_rank: int,
-        available_rank: int,
-        discarded_weight: ArrayLike,
-        /,
-        precision_evidence: PrecisionEvidenceEnvelope,
-        precision_policy_id: str,
-    ):
-        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
-            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
-        self.retained_rank = int(retained_rank)
-        self.available_rank = int(available_rank)
-        self.discarded_weight = jnp.asarray(discarded_weight)
-        self.valid = jnp.isfinite(self.discarded_weight) & (self.discarded_weight >= 0.0)
-        self.precision_evidence = precision_evidence
-        self.precision_policy_id = str(precision_policy_id)
+from ._split import TensorTruncationEvidence, truncated_svd
 
 
 def apply_two_site_gate(
@@ -56,6 +27,8 @@ def apply_two_site_gate(
     site = int(left_site)
     if not 0 <= site < state.site_count - 1:
         raise ValueError("Two-site gate index is out of range.")
+    if int(maximum_bond_dimension) < 1:
+        raise ValueError("maximum_bond_dimension must be positive.")
     precision = state.precision
     left = precision.contraction(state.tensors[site])
     right = precision.contraction(state.tensors[site + 1])
@@ -64,24 +37,20 @@ def apply_two_site_gate(
     gate_ = precision.contraction(gate)
     if gate_.shape != (d_left, d_right, d_left, d_right):
         raise ValueError("Gate shape must be (out_left,out_right,in_left,in_right).")
-    theta = jnp.tensordot(left, right, axes=(-1, 0))
+    theta = oe.contract("lpi,iqr->lpqr", left, right)
     theta = oe.contract("abij,lijr->labr", gate_, theta)
-    matrix = precision.factorization(
-        theta.reshape((left.shape[0] * d_left, d_right * right.shape[-1]))
+    matrix = theta.reshape((left.shape[0] * d_left, d_right * right.shape[-1]))
+    left_factor, right_factor, truncation = truncated_svd(
+        matrix,
+        maximum_rank=maximum_bond_dimension,
+        absorb="right",
+        precision=precision,
+        evidence_source=state.tensors,
+        evidence_children={"input-state": state.precision_evidence},
     )
-    u, singular_values, vh = jnp.linalg.svd(matrix, full_matrices=False)
-    available = singular_values.shape[0]
-    retained = min(int(maximum_bond_dimension), available)
-    discarded = precision.decision(
-        precision.sum(jnp.abs(singular_values[retained:]) ** 2)
-    )
-    u = u[:, :retained]
-    singular_values = singular_values[:retained]
-    vh = vh[:retained, :]
-    new_left = precision.storage(u.reshape((left.shape[0], d_left, retained)))
-    new_right = precision.storage(
-        (singular_values[:, None] * vh).reshape((retained, d_right, right.shape[-1]))
-    )
+    retained = truncation.retained_rank
+    new_left = left_factor.reshape((left.shape[0], d_left, retained))
+    new_right = right_factor.reshape((retained, d_right, right.shape[-1]))
     tensors = list(state.tensors)
     tensors[site] = new_left
     tensors[site + 1] = new_right
@@ -91,18 +60,7 @@ def apply_two_site_gate(
     )
     if normalize:
         result = result.normalized()
-    evidence = precision.evidence_for(
-        state.tensors,
-        children={"input-state": state.precision_evidence},
-        output_value=result.tensors,
-    )
-    return result, TensorTruncationEvidence(
-        retained,
-        available,
-        discarded,
-        evidence,
-        precision.policy_id,
-    )
+    return result, truncation
 
 
 def product_mps(
