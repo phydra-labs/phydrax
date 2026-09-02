@@ -8,6 +8,14 @@ import pytest
 
 from phydrax.operators.quantum._operations import LocalUnitaryOperation, QuantumProgram
 from phydrax.operators.quantum._register import HilbertRegisterLayout
+from phydrax.solver._local_hamiltonian import (
+    FixedGridLocalHamiltonian,
+    LocalHamiltonian,
+    LocalHamiltonianEvolutionPolicy,
+    LocalHamiltonianTerm,
+    prepare_local_hamiltonian_evolution,
+    solve_local_hamiltonian_evolution,
+)
 from phydrax.solver._process_learning import (
     fit_stinespring_process_model,
     ProcessExperimentPlan,
@@ -17,9 +25,6 @@ from phydrax.solver._process_learning import (
 from phydrax.solver._purified_lindblad import LocalKrausChannel
 from phydrax.solver._quantum_compilation import (
     compile_quantum_program,
-    ControlHamiltonianTerm,
-    discretize_fixed_grid_control,
-    FixedGridQuantumControl,
     HardwareTopology,
     QuantumCompilationPolicy,
 )
@@ -173,7 +178,7 @@ def test_zero_probability_evidence_and_mps_mixed_outcome_refusal():
         apply_mps_quantum_instrument(mixed, mps, 0)
 
 
-def test_explicit_route_ledger_and_fixed_grid_controls():
+def test_explicit_route_ledger_and_local_hamiltonian_schedule():
     layout = HilbertRegisterLayout(("q0", "q1", "q2"), (2, 2, 2))
     cnot = jnp.asarray(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
@@ -201,17 +206,29 @@ def test_explicit_route_ledger_and_fixed_grid_controls():
     assert len(compiled.compiled_program.operations) == 2
 
     single = HilbertRegisterLayout(("q",), (2,))
-    control = FixedGridQuantumControl(
+    hamiltonian = LocalHamiltonian(
         single,
-        (ControlHamiltonianTerm(_X, ("q",), tolerance=1e-5),),
+        (LocalHamiltonianTerm(_X, ("q",), tolerance=1e-5),),
+    )
+    schedule = FixedGridLocalHamiltonian(
+        hamiltonian,
         jnp.asarray([0.0, 0.2, 0.5]),
         jnp.asarray([[1.0], [2.0]]),
     )
-    discretized = discretize_fixed_grid_control(control)
-    assert bool(discretized.valid)
-    assert jnp.allclose(discretized.grid_intervals, jnp.asarray([0.2, 0.3]))
-    assert len(discretized.program.operations) == 2
-    assert jnp.all(discretized.step_unitarity_residuals < 1e-5)
+    prepared = prepare_local_hamiltonian_evolution(
+        schedule,
+        policy=LocalHamiltonianEvolutionPolicy(order=1),
+    )
+    evolved = solve_local_hamiltonian_evolution(
+        prepared,
+        jnp.asarray([1.0, 0.0], dtype=jnp.complex128),
+    )
+    assert bool(evolved.successful)
+    assert jnp.allclose(
+        evolved.final_state,
+        jnp.asarray([jnp.cos(0.8), -1j * jnp.sin(0.8)]),
+    )
+    assert jnp.all(evolved.local_unitarity_residuals < 1e-5)
 
 
 def test_lpdo_channel_reports_cp_tp_psd_trace_and_truncation_separately():

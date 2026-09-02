@@ -1,0 +1,308 @@
+{
+  "environment": {
+    "fingerprint": "dee1555b843e001a66559ae750b6d1f4ccdbc2174bdae8bb60b178b423512e5e",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.4.6",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "04eaf233299b60207aa03bc6f06f20aaebf65a123e625df1bcf04147202cc88d",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "mode_cases": [
+    {
+      "kind": "mode-reduction-gradient",
+      "charge_cutoff": 4,
+      "raw_dimension": 9,
+      "retained_dimension": 4,
+      "logical_input_bytes": 1823,
+      "lowering_seconds": 0.268138042,
+      "compilation_seconds": 0.3248415,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.217958,
+          0.43995900000000004,
+          0.99825
+        ],
+        "min_ms": 0.217958,
+        "median_ms": 0.43995900000000004,
+        "mean_ms": 0.5520556666666666,
+        "std_ms": 0.3282663027932589,
+        "max_ms": 0.99825
+      },
+      "transition": 5.03209707727981,
+      "gradient": 9.908743781419657,
+      "eigen_residual": 9.770317440060083e-15,
+      "boundary_gap": 4.698395466191842,
+      "valid": true
+    },
+    {
+      "kind": "mode-reduction-gradient",
+      "charge_cutoff": 8,
+      "raw_dimension": 17,
+      "retained_dimension": 4,
+      "logical_input_bytes": 2399,
+      "lowering_seconds": 0.187353,
+      "compilation_seconds": 0.1314215,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          0.306959,
+          0.237041,
+          0.1235
+        ],
+        "min_ms": 0.1235,
+        "median_ms": 0.237041,
+        "mean_ms": 0.2225,
+        "std_ms": 0.07559930194122165,
+        "max_ms": 0.306959
+      },
+      "transition": 4.999001798872324,
+      "gradient": 10.313804348481424,
+      "eigen_residual": 1.4210856440622822e-14,
+      "boundary_gap": 4.125560808274217,
+      "valid": true
+    }
+  ],
+  "evolution_cases": [
+    {
+      "kind": "local-product-formula",
+      "sites": 3,
+      "hilbert_dimension": 8,
+      "intervals": 16,
+      "terms": 5,
+      "order": 2,
+      "differentiation": "autodiff",
+      "logical_input_bytes": 2100,
+      "state_bytes": 128,
+      "workspace_bytes": 512,
+      "lowering_seconds": 0.11933375,
+      "compilation_seconds": 0.443704791,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          1.4083329999999998,
+          1.292583,
+          1.457792
+        ],
+        "min_ms": 1.292583,
+        "median_ms": 1.4083329999999998,
+        "mean_ms": 1.386236,
+        "std_ms": 0.06923251392710408,
+        "max_ms": 1.457792
+      },
+      "gradient_lowering_seconds": 0.765434084,
+      "gradient_compilation_seconds": 1.009775917,
+      "gradient_execution": {
+        "count": 3,
+        "samples_ms": [
+          3.1960420000000003,
+          2.699625,
+          2.755875
+        ],
+        "min_ms": 2.699625,
+        "median_ms": 2.755875,
+        "mean_ms": 2.8838473333333337,
+        "std_ms": 0.22194616170944606,
+        "max_ms": 3.1960420000000003
+      },
+      "population": 0.9997784661962604,
+      "population_gradient": -0.0002850157694151916,
+      "dense_state_error": 9.695325916987757e-06,
+      "mpo_dense_error": 0.0,
+      "maximum_mpo_bond_dimension": 5,
+      "norm_residual": 9.769962616701378e-15,
+      "maximum_local_unitarity_residual": 5.421010862427522e-20,
+      "valid": true
+    },
+    {
+      "kind": "local-product-formula",
+      "sites": 3,
+      "hilbert_dimension": 8,
+      "intervals": 16,
+      "terms": 5,
+      "order": 2,
+      "differentiation": "reversible-product-formula",
+      "logical_input_bytes": 2100,
+      "state_bytes": 128,
+      "workspace_bytes": 512,
+      "lowering_seconds": 0.071416916,
+      "compilation_seconds": 0.432581416,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          2.304958,
+          1.263833,
+          1.2660410000000002
+        ],
+        "min_ms": 1.263833,
+        "median_ms": 1.2660410000000002,
+        "mean_ms": 1.6116106666666667,
+        "std_ms": 0.4902714297858098,
+        "max_ms": 2.304958
+      },
+      "gradient_lowering_seconds": 0.471024167,
+      "gradient_compilation_seconds": 1.403927667,
+      "gradient_execution": {
+        "count": 3,
+        "samples_ms": [
+          3.163958,
+          3.560792,
+          3.731959
+        ],
+        "min_ms": 3.163958,
+        "median_ms": 3.560792,
+        "mean_ms": 3.4855696666666667,
+        "std_ms": 0.2379076621637525,
+        "max_ms": 3.731959
+      },
+      "population": 0.9997784661962604,
+      "population_gradient": -0.00028501576941519346,
+      "dense_state_error": 9.695325916987757e-06,
+      "mpo_dense_error": 0.0,
+      "maximum_mpo_bond_dimension": 5,
+      "norm_residual": 9.769962616701378e-15,
+      "maximum_local_unitarity_residual": 5.421010862427522e-20,
+      "valid": true
+    },
+    {
+      "kind": "local-product-formula",
+      "sites": 5,
+      "hilbert_dimension": 32,
+      "intervals": 16,
+      "terms": 9,
+      "order": 2,
+      "differentiation": "autodiff",
+      "logical_input_bytes": 3964,
+      "state_bytes": 512,
+      "workspace_bytes": 1280,
+      "lowering_seconds": 0.088963125,
+      "compilation_seconds": 0.788405458,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          2.884583,
+          2.602208,
+          2.343833
+        ],
+        "min_ms": 2.343833,
+        "median_ms": 2.602208,
+        "mean_ms": 2.610208,
+        "std_ms": 0.22083272798659173,
+        "max_ms": 2.884583
+      },
+      "gradient_lowering_seconds": 0.551672834,
+      "gradient_compilation_seconds": 1.697757958,
+      "gradient_execution": {
+        "count": 3,
+        "samples_ms": [
+          5.425707999999999,
+          5.142417,
+          5.229792
+        ],
+        "min_ms": 5.142417,
+        "median_ms": 5.229792,
+        "mean_ms": 5.265972333333333,
+        "std_ms": 0.1184488921021305,
+        "max_ms": 5.425707999999999
+      },
+      "population": 0.9995569843044962,
+      "population_gradient": -0.000569892265279612,
+      "dense_state_error": 1.3718482934579674e-05,
+      "mpo_dense_error": 0.0,
+      "maximum_mpo_bond_dimension": 9,
+      "norm_residual": 1.687538997430238e-14,
+      "maximum_local_unitarity_residual": 5.421010862427522e-20,
+      "valid": true
+    },
+    {
+      "kind": "local-product-formula",
+      "sites": 5,
+      "hilbert_dimension": 32,
+      "intervals": 16,
+      "terms": 9,
+      "order": 2,
+      "differentiation": "reversible-product-formula",
+      "logical_input_bytes": 3964,
+      "state_bytes": 512,
+      "workspace_bytes": 1280,
+      "lowering_seconds": 0.333418083,
+      "compilation_seconds": 0.863031125,
+      "execution": {
+        "count": 3,
+        "samples_ms": [
+          2.333666,
+          3.796542,
+          3.145417
+        ],
+        "min_ms": 2.333666,
+        "median_ms": 3.145417,
+        "mean_ms": 3.091875,
+        "std_ms": 0.5984154672505271,
+        "max_ms": 3.796542
+      },
+      "gradient_lowering_seconds": 0.329167,
+      "gradient_compilation_seconds": 2.938203375,
+      "gradient_execution": {
+        "count": 3,
+        "samples_ms": [
+          8.32075,
+          7.922000000000001,
+          8.475
+        ],
+        "min_ms": 7.922000000000001,
+        "median_ms": 8.32075,
+        "mean_ms": 8.23925,
+        "std_ms": 0.23300062589329348,
+        "max_ms": 8.475
+      },
+      "population": 0.9995569843044962,
+      "population_gradient": -0.0005698922652796179,
+      "dense_state_error": 1.3718482934579674e-05,
+      "mpo_dense_error": 0.0,
+      "maximum_mpo_bond_dimension": 9,
+      "norm_residual": 1.687538997430238e-14,
+      "maximum_local_unitarity_residual": 5.421010862427522e-20,
+      "valid": true
+    }
+  ],
+  "gradient_comparisons": [
+    {
+      "sites": 3,
+      "absolute_gradient_difference": 1.8431436932253575e-18,
+      "absolute_population_difference": 0.0
+    },
+    {
+      "sites": 5,
+      "absolute_gradient_difference": 5.9631119486702744e-18,
+      "absolute_population_difference": 0.0
+    }
+  ]
+}

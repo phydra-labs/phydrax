@@ -13,8 +13,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -388,156 +387,11 @@ def compile_quantum_program(
     )
 
 
-class ControlHamiltonianTerm(StrictModule):
-    generator: Array
-    target_wire_ids: tuple[str, ...] = eqx.field(static=True)
-    hermiticity_residual: Array
-    finite: Array
-    valid: Array
-    term_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        generator: ArrayLike,
-        target_wire_ids: Sequence[str],
-        /,
-        *,
-        tolerance: float = 1e-8,
-    ):
-        value = jnp.asarray(generator)
-        targets = tuple(str(target) for target in target_wire_ids)
-        tolerance_ = float(tolerance)
-        if value.ndim != 2 or value.shape[0] != value.shape[1] or not targets:
-            raise ValueError("Control generators require a square matrix and targets.")
-        if not jnp.issubdtype(value.dtype, jnp.complexfloating):
-            raise TypeError("Control generators must use complex coordinates.")
-        residual = jnp.max(jnp.abs(value - jnp.conj(value.T)))
-        finite = jnp.all(jnp.isfinite(value))
-        self.generator = value
-        self.target_wire_ids = targets
-        self.hermiticity_residual = residual
-        self.finite = finite
-        self.valid = finite & jnp.isfinite(residual) & (residual <= tolerance_)
-        self.term_id = canonical_fingerprint(
-            {
-                "kind": "control-hamiltonian-term",
-                "targets": targets,
-                "shape": value.shape,
-                "dtype": str(value.dtype),
-                "tolerance": tolerance_,
-            }
-        )
-
-
-class FixedGridQuantumControl(StrictModule):
-    layout: HilbertRegisterLayout
-    terms: tuple[ControlHamiltonianTerm, ...]
-    time_grid: Array
-    amplitudes: Array
-    positive_intervals: Array
-    finite: Array
-    valid: Array
-    interval_count: int = eqx.field(static=True)
-    control_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        layout: HilbertRegisterLayout,
-        terms: Sequence[ControlHamiltonianTerm],
-        time_grid: ArrayLike,
-        amplitudes: ArrayLike,
-        /,
-    ):
-        if not isinstance(layout, HilbertRegisterLayout):
-            raise TypeError("layout must be HilbertRegisterLayout.")
-        selected = tuple(terms)
-        times = jnp.asarray(time_grid)
-        values = jnp.asarray(amplitudes)
-        if not selected or any(
-            not isinstance(term, ControlHamiltonianTerm) for term in selected
-        ):
-            raise ValueError("At least one ControlHamiltonianTerm is required.")
-        if times.ndim != 1 or times.shape[0] < 2:
-            raise ValueError("time_grid requires fixed shape (intervals + 1,).")
-        if values.shape != (times.shape[0] - 1, len(selected)):
-            raise ValueError("amplitudes requires shape (intervals, terms).")
-        for term in selected:
-            if layout.target_dimension(term.target_wire_ids) != term.generator.shape[0]:
-                raise ValueError("Control term dimension does not match its targets.")
-        intervals = jnp.diff(times)
-        positive = jnp.all(intervals > 0.0)
-        finite = jnp.all(jnp.isfinite(times)) & jnp.all(jnp.isfinite(values))
-        valid = finite & positive & jnp.all(jnp.stack([term.valid for term in selected]))
-        self.layout = layout
-        self.terms = selected
-        self.time_grid = times
-        self.amplitudes = values
-        self.positive_intervals = positive
-        self.finite = finite
-        self.valid = valid
-        self.interval_count = int(times.shape[0] - 1)
-        self.control_id = canonical_fingerprint(
-            {
-                "kind": "fixed-grid-quantum-control",
-                "layout": layout.layout_id,
-                "terms": tuple(term.term_id for term in selected),
-                "grid_shape": times.shape,
-                "amplitude_shape": values.shape,
-                "dtype": str(values.dtype),
-            }
-        )
-
-
-class FixedGridControlResult(StrictModule):
-    program: QuantumProgram
-    step_unitarity_residuals: Array
-    grid_intervals: Array
-    finite: Array
-    valid: Array
-    control_id: str = eqx.field(static=True)
-
-
-def discretize_fixed_grid_control(
-    control: FixedGridQuantumControl, /
-) -> FixedGridControlResult:
-    """Emit the exact advertised first-order piecewise-constant product formula."""
-    if not isinstance(control, FixedGridQuantumControl):
-        raise TypeError("control must be FixedGridQuantumControl.")
-    intervals = jnp.diff(control.time_grid)
-    operations: list[LocalUnitaryOperation] = []
-    residuals: list[Array] = []
-    for interval in range(control.interval_count):
-        for term_index, term in enumerate(control.terms):
-            unitary = jsp.linalg.expm(
-                -1j
-                * intervals[interval]
-                * control.amplitudes[interval, term_index]
-                * term.generator
-            )
-            operations.append(LocalUnitaryOperation(unitary, term.target_wire_ids))
-            residuals.append(unitarity_residual(unitary))
-    residuals_ = jnp.stack(residuals)
-    program = QuantumProgram(control.layout, operations, state_kind="state-vector")
-    finite = jnp.all(jnp.isfinite(residuals_))
-    return FixedGridControlResult(
-        program,
-        residuals_,
-        intervals,
-        finite,
-        control.valid & finite,
-        control.control_id,
-    )
-
-
 __all__ = [
-    "ControlHamiltonianTerm",
-    "FixedGridControlResult",
-    "FixedGridQuantumControl",
     "HardwareTopology",
     "QuantumCompilationPolicy",
     "QuantumCompilationResult",
     "QuantumDecompositionRecord",
     "RouteStrategy",
     "compile_quantum_program",
-    "discretize_fixed_grid_control",
 ]

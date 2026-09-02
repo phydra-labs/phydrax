@@ -52,24 +52,40 @@ def _product_state(*vectors):
 def test_local_and_string_mpo_builders_have_dense_and_hermiticity_evidence():
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     result = build_local_term_mpo(
-        2,
-        2,
-        (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,), coefficient=2.0)),
+        (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,), coefficient=2.0))
     )
     expected = jnp.kron(z, jnp.eye(2)) + 2.0 * jnp.kron(jnp.eye(2), z)
     assert jnp.allclose(result.operator.to_dense(), expected)
     assert result.evidence.hermitian
     assert result.evidence.hermiticity_residual < 1e-12
-    string = build_string_mpo(2, 2, 0, (z, z))
+    string = build_string_mpo((2, 2), 0, (z, z))
     assert jnp.allclose(string.operator.to_dense(), jnp.kron(z, z))
+
+
+def test_local_mpo_builder_supports_heterogeneous_site_dimensions():
+    x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
+    number = jnp.diag(jnp.arange(3.0)).astype(jnp.complex128)
+    result = build_local_term_mpo(
+        (2, 3, 2),
+        (
+            FiniteLocalTerm(0, (x, number), coefficient=0.4),
+            FiniteLocalTerm(2, (x,), coefficient=-0.2),
+        ),
+    )
+    expected = 0.4 * jnp.kron(jnp.kron(x, number), jnp.eye(2)) - 0.2 * jnp.kron(
+        jnp.eye(6), x
+    )
+
+    assert result.operator.output_dimensions == (2, 3, 2)
+    assert result.operator.input_dimensions == (2, 3, 2)
+    assert jnp.allclose(result.operator.to_dense(), expected)
+    assert bool(result.evidence.hermitian)
 
 
 def test_finite_dmrg_reports_galerkin_global_residual_and_variance():
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = build_local_term_mpo(
-        2,
-        2,
-        (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,))),
+        (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,)))
     ).operator
     result = solve_finite_dmrg(
         FiniteDMRGProblem(_product_state([1.0, 0.0], [1.0, 0.0]), hamiltonian),
@@ -86,9 +102,7 @@ def test_finite_dmrg_reports_galerkin_global_residual_and_variance():
 def test_excited_state_projector_targeting_reports_reference_overlap():
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = build_local_term_mpo(
-        2,
-        2,
-        (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,))),
+        (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,)))
     ).operator
     result = solve_finite_excited_state(
         FiniteDMRGProblem(
@@ -132,9 +146,7 @@ def test_finite_tdvp_real_and_imaginary_time_semantics_are_normalized():
 def test_two_site_tdvp_uses_fixed_schedule_and_truncation_capacity():
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     hamiltonian = build_local_term_mpo(
-        2,
-        2,
-        (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,))),
+        (2, 2), (FiniteLocalTerm(0, (z,)), FiniteLocalTerm(1, (z,)))
     ).operator
     schedule = FixedStructureMPOCoefficients(
         (hamiltonian,),

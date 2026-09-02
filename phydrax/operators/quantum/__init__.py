@@ -48,6 +48,16 @@ from ._channels import (
     FiniteKrausFactorization,
     tensor_finite_cptp,
 )
+from ._circuit_qed import (
+    ChargeBasis,
+    fluxonium_mode_problem,
+    FluxoniumParameters,
+    harmonic_mode_problem,
+    HarmonicModeParameters,
+    OscillatorBasis,
+    transmon_mode_problem,
+    TransmonParameters,
+)
 from ._composite import embed_operator, partial_trace, tensor_product
 from ._discrete import (
     AbstractDiscreteQuantumOperator,
@@ -82,6 +92,14 @@ from ._fock import (
     jaynes_cummings_hamiltonian,
     kerr_hamiltonian,
 )
+from ._gate_metrics import (
+    coherent_pauli_expansion,
+    CoherentPauliExpansion,
+    finite_channel_gate_quality,
+    GateQualityDiagnostics,
+    GateQualityResult,
+    unitary_gate_quality,
+)
 from ._information import (
     density_fidelity,
     purity,
@@ -94,6 +112,21 @@ from ._local import (
     evaluate_local_operator,
     LocalOperatorEstimate,
     LocalOperatorStatus,
+)
+from ._mode_reduction import (
+    compare_mode_resolutions,
+    ModeReductionCostEstimate,
+    ModeReductionDiagnostics,
+    ModeReductionPlan,
+    ModeReductionPolicy,
+    ModeReductionProblem,
+    ModeResolutionPolicy,
+    ModeResolutionReport,
+    NamedModeOperator,
+    plan_mode_reduction,
+    prepare_mode_reduction,
+    PreparedModeReduction,
+    refresh_mode_reduction,
 )
 from ._nonmarkovianity import (
     analyze_dynamical_map_series,
@@ -157,6 +190,16 @@ from ._states import (
     state_expectation,
     state_norm_residual,
 )
+from ._subspaces import (
+    basis_state_subspace,
+    BasisStateSubspace,
+    DenseQuantumSubspace,
+    embed_quantum_subspace,
+    project_quantum_operator,
+    QuantumSubspace,
+    QuantumSubspaceEvidence,
+    restrict_quantum_subspace,
+)
 from ._symmetry import FiniteSignedPermutationSymmetry, SymmetryProjectedAmplitude
 
 
@@ -175,6 +218,14 @@ __all__ = [
     "density_fidelity",
     "density_from_factor",
     "ElectronicCoulombHamiltonian",
+    "ChargeBasis",
+    "FluxoniumParameters",
+    "HarmonicModeParameters",
+    "OscillatorBasis",
+    "TransmonParameters",
+    "fluxonium_mode_problem",
+    "harmonic_mode_problem",
+    "transmon_mode_problem",
     "ElectronicKineticPolicy",
     "ElectronicTraceMethod",
     "electronic_initial_walkers",
@@ -185,6 +236,12 @@ __all__ = [
     "PeriodicElectronicEvidence",
     "StochasticElectronicKineticPolicy",
     "StochasticKineticEstimate",
+    "CoherentPauliExpansion",
+    "GateQualityDiagnostics",
+    "GateQualityResult",
+    "coherent_pauli_expansion",
+    "finite_channel_gate_quality",
+    "unitary_gate_quality",
     "FiniteSignedPermutationSymmetry",
     "FiniteCPTPMap",
     "FiniteChannelFactorizationPolicy",
@@ -201,6 +258,27 @@ __all__ = [
     "LocalUnitaryOperation",
     "LogAmplitude",
     "lindblad_residual",
+    "ModeReductionCostEstimate",
+    "ModeReductionDiagnostics",
+    "ModeReductionPlan",
+    "ModeReductionPolicy",
+    "ModeReductionProblem",
+    "ModeResolutionPolicy",
+    "ModeResolutionReport",
+    "NamedModeOperator",
+    "BasisStateSubspace",
+    "DenseQuantumSubspace",
+    "QuantumSubspace",
+    "QuantumSubspaceEvidence",
+    "basis_state_subspace",
+    "embed_quantum_subspace",
+    "project_quantum_operator",
+    "restrict_quantum_subspace",
+    "PreparedModeReduction",
+    "compare_mode_resolutions",
+    "plan_mode_reduction",
+    "prepare_mode_reduction",
+    "refresh_mode_reduction",
     "amplitude_ratio",
     "harmonic_mean_electron_proposal",
     "quantum_bracket",
