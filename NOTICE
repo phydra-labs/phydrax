@@ -400,3 +400,14 @@ linear-algebra, FEM, differentiation, evidence, and provenance contracts.
 No upstream source, tests, fixtures, generated data, numerical tables, runtime
 types, API, executable, or dependency is copied, translated, bundled, linked,
 imported, or redistributed.
+
+Radial-spherical and directional wavelet design study
+The radial-spherical transform design follows Leistedt and McEwen, “Exact
+Wavelets on the Ball” (2012), and Price et al., “Differentiable and Accelerated
+Directional Wavelet Transforms on the Sphere and Ball” (2024), together with
+the associated Fourier--Laguerre and directional spin-wavelet literature.
+Phydrax independently implements the physical order-two generalized Laguerre
+basis, S2FFT-normalized product transforms, hybrid radial/angular scaling
+complement, multiresolution plan banks, resource admission, tests, examples,
+and benchmarks. No external ball-transform source, fixtures, generated
+kernels, cache format, or runtime dependency is copied or redistributed.

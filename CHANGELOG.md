@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added native order-two radial Laguerre, Fourier--Laguerre, Wigner, and
+  Wigner--Laguerre transforms with physical `r**2 dr` normalization, together
+  with resource-bounded exact directional ball wavelets and immutable ragged
+  multiresolution coefficients.
 - Added `phydrax.ein` as the package-wide optimized contraction boundary with
   native named JAX rearrangement, reduction, and repetition.
 - Added log-stable numerator/support gradient accumulation shared by operator,
