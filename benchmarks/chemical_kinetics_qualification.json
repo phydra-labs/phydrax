@@ -21,7 +21,7 @@
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "0d1cafd70d36b994d3a454270cbc2f73aa6b31b08ea506c5088f88d3fe904d12",
+    "fingerprint": "dee1555b843e001a66559ae750b6d1f4ccdbc2174bdae8bb60b178b423512e5e",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -30,14 +30,14 @@
           "platform": "cpu"
         }
       ],
-      "version": "0.9.1",
+      "version": "0.9.2",
       "x64_enabled": true
     },
-    "jaxlib_version": "0.9.1",
+    "jaxlib_version": "0.9.2",
     "logical_cpus": 10,
     "machine": "arm64",
-    "numpy_version": "2.3.5",
-    "package_fingerprint": "ad203c8b8a750a2fb63109cf76b19bbe56a607e3c9e290dbcf799c031fa94ca5",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "04eaf233299b60207aa03bc6f06f20aaebf65a123e625df1bcf04147202cc88d",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,

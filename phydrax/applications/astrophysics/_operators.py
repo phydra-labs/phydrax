@@ -281,71 +281,6 @@ class FrequencyResponsePlan(StrictModule, NonTrainableState):
         )
 
 
-class RayTransferResult(StrictModule):
-    intensity: Array
-    valid: Array
-    status: Array
-    plan_id: str = eqx.field(static=True)
-
-
-class RayTransferPlan(StrictModule, NonTrainableState):
-    segment_lengths: Array
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(self, segment_lengths: ArrayLike, /, *, ray_id: str):
-        lengths = jnp.asarray(segment_lengths)
-        if lengths.ndim != 2:
-            raise ValueError("segment_lengths must have shape (rays, samples).")
-        self.segment_lengths = lengths
-        self.plan_id = canonical_fingerprint(
-            {"kind": "ray-transfer", "ray_id": str(ray_id), "shape": list(lengths.shape)}
-        )
-
-    def evaluate(
-        self, emissivity: ArrayLike, extinction: ArrayLike, /
-    ) -> RayTransferResult:
-        source = jnp.asarray(emissivity)
-        opacity = jnp.asarray(extinction, dtype=source.dtype)
-        if source.shape != self.segment_lengths.shape or opacity.shape != source.shape:
-            raise ValueError("Ray source/extinction must match segment lengths.")
-
-        def one_ray(lengths, emission, absorption):
-            def step(intensity, sample):
-                ds, j_value, k_value = sample
-                tau = k_value * ds
-                transmission = jnp.exp(-tau)
-                source_increment = jnp.where(
-                    jnp.abs(k_value) > 0.0,
-                    j_value / k_value * (1.0 - transmission),
-                    j_value * ds,
-                )
-                next_intensity = intensity * transmission + source_increment
-                return next_intensity, None
-
-            final, _ = jax.lax.scan(
-                step,
-                jnp.asarray(0.0, dtype=emission.dtype),
-                (lengths, emission, absorption),
-            )
-            return final
-
-        intensity = jax.vmap(one_ray)(self.segment_lengths, source, opacity)
-        valid = (
-            jnp.all(jnp.isfinite(source), axis=-1)
-            & jnp.all(jnp.isfinite(opacity), axis=-1)
-            & jnp.all(self.segment_lengths >= 0.0, axis=-1)
-            & jnp.all(opacity >= 0.0, axis=-1)
-        )
-        status = jnp.where(
-            valid,
-            int(AstrophysicsObservationStatus.SUCCESS),
-            int(AstrophysicsObservationStatus.NONPHYSICAL_MODEL),
-        ).astype(jnp.int32)
-        return RayTransferResult(
-            jnp.where(valid, intensity, 0.0), valid, status, self.plan_id
-        )
-
-
 class ComplexFieldState(StrictModule):
     field: Array
     wavelength: Array
@@ -394,8 +329,6 @@ __all__ = [
     "FrequencyResponseResult",
     "ImageResponsePlan",
     "ImageResponseResult",
-    "RayTransferPlan",
-    "RayTransferResult",
     "SpectralField",
     "StaticFieldOperatorSequence",
 ]

@@ -21,6 +21,7 @@ from . import (
     phase_field,
     solid_mechanics,
     systems_biology,
+    thermofluids,
     two_phase_flow,
     vortex_flow,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "ocean",
     "phase_field",
     "solid_mechanics",
+    "thermofluids",
     "two_phase_flow",
     "systems_biology",
     "vortex_flow",

@@ -28,9 +28,6 @@ from ._chemical_thermodynamics import (
 )
 
 
-_STANDARD_PRESSURE = 101325.0
-
-
 class ChemicalReactionSpec(StrictModule):
     name: str = eqx.field(static=True)
     reactants: tuple[tuple[str, float], ...] = eqx.field(static=True)
@@ -149,7 +146,6 @@ class ChemicalRateEvaluation(StrictModule):
     reverse_progress_rates: Array
     net_progress_rates: Array
     species_amount_rate: Array
-    molar_energy_rate: Array
     element_residual: Array
     charge_residual: Array
     reactant_margin: Array
@@ -334,7 +330,6 @@ class PreparedChemicalMechanism(StrictModule):
         reverse_progress = reverse_constant * reverse_mass_action
         net_progress = forward_progress - reverse_progress
         species_rate = contract("...r,rs->...s", net_progress, self.net_stoichiometry)
-        energy_rate = -jnp.sum(species_rate * thermo.molar_enthalpy, axis=-1)
         element_residual = contract(
             "es,...s->...e", self.schema.element_composition, species_rate
         )
@@ -356,19 +351,28 @@ class PreparedChemicalMechanism(StrictModule):
             ),
             axis=-1,
         )
-        scale = jnp.maximum(jnp.max(jnp.abs(species_rate)), 1.0)
+        scale = jnp.maximum(jnp.max(jnp.abs(species_rate), axis=-1), 1.0)
         tolerance = 256.0 * jnp.finfo(concentration.dtype).eps * scale
         successful = (
             thermo.successful
-            & jnp.all(jnp.isfinite(concentration))
-            & jnp.all(concentration >= 0.0)
-            & jnp.all(jnp.isfinite(forward_constant) & (forward_constant >= 0.0))
-            & jnp.all(jnp.isfinite(reverse_constant) & (reverse_constant >= 0.0))
-            & jnp.all(forward_feasible | (forward_progress == 0.0))
-            & jnp.all(reverse_feasible | (reverse_progress == 0.0))
-            & jnp.all(jnp.abs(element_residual) <= tolerance)
-            & jnp.all(jnp.abs(charge_residual) <= tolerance)
-            & jnp.all(jnp.isfinite(species_rate))
+            & jnp.all(jnp.isfinite(concentration), axis=-1)
+            & jnp.all(concentration >= 0.0, axis=-1)
+            & jnp.all(
+                jnp.isfinite(forward_constant) & (forward_constant >= 0.0),
+                axis=-1,
+            )
+            & jnp.all(
+                jnp.isfinite(reverse_constant) & (reverse_constant >= 0.0),
+                axis=-1,
+            )
+            & jnp.all(forward_feasible | (forward_progress == 0.0), axis=-1)
+            & jnp.all(reverse_feasible | (reverse_progress == 0.0), axis=-1)
+            & jnp.all(
+                jnp.abs(element_residual) <= tolerance[..., None],
+                axis=-1,
+            )
+            & (jnp.abs(charge_residual) <= tolerance)
+            & jnp.all(jnp.isfinite(species_rate), axis=-1)
         )
         return ChemicalRateEvaluation(
             forward_constant,
@@ -377,7 +381,6 @@ class PreparedChemicalMechanism(StrictModule):
             reverse_progress,
             net_progress,
             species_rate,
-            energy_rate,
             element_residual,
             charge_residual,
             reactant_margin,
@@ -398,15 +401,18 @@ class PreparedChemicalMechanism(StrictModule):
         delta_gibbs = jnp.sum(net * thermodynamics.molar_gibbs_energy, axis=-1)
         logarithmic_equilibrium = -delta_gibbs / (UNIVERSAL_GAS_CONSTANT * temperature)
         standard_concentrations = []
-        phase_kinds = tuple(dict.fromkeys(self.schema.phases))
-        for phase in self.schema.phases:
-            if phase is ChemicalPhaseKind.GAS:
-                standard = _STANDARD_PRESSURE / (UNIVERSAL_GAS_CONSTANT * temperature)
+        phase_ids = tuple(int(value) for value in np.asarray(self.schema.phase_ids))
+        for phase_id in phase_ids:
+            phase = self.schema.phase_specs[phase_id]
+            if phase.kind is ChemicalPhaseKind.GAS:
+                assert phase.standard_pressure is not None
+                standard = phase.standard_pressure / (
+                    UNIVERSAL_GAS_CONSTANT * temperature
+                )
             else:
-                phase_id = phase_kinds.index(phase)
                 standard = jnp.full_like(
                     temperature,
-                    self.schema.phase_specs[phase_id].standard_concentration,
+                    phase.standard_concentration,
                 )
             standard_concentrations.append(standard)
         standard = jnp.stack(standard_concentrations, axis=-1)

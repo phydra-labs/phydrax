@@ -25,6 +25,7 @@ phases:
   - name: gas
     kind: gas
     measure-dimension: 3
+    standard-pressure: 1.0
 species:
   - name: A
     phase: gas

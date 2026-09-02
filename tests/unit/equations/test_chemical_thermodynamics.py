@@ -10,13 +10,14 @@ import phydrax as phx
 
 
 def _gas_schema():
-    return phx.equations.ChemicalSpeciesSchema(
+    return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A",),
         (phx.equations.ChemicalPhaseKind.GAS,),
         jnp.asarray((0.01,)),
         ("X",),
         jnp.asarray(((1,),), dtype=jnp.int32),
         jnp.asarray((0,), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
 
 
@@ -57,13 +58,14 @@ def test_nasa7_constant_heat_capacity_identities_and_derivative():
 
 
 def test_polynomial_thermodynamics_and_particle_energy_inversion():
-    schema = phx.equations.ChemicalSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("solid",),
         (phx.equations.ChemicalPhaseKind.SOLID,),
         jnp.asarray((0.1,)),
         ("X",),
         jnp.asarray(((1,),), dtype=jnp.int32),
         jnp.asarray((0,), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
     )
     species = phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,

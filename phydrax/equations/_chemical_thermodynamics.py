@@ -92,9 +92,10 @@ class PolynomialSpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
             or not 0.0 < t_min < t_ref < t_max
         ):
             raise ValueError("Polynomial thermodynamic inputs are invalid.")
-        sample = np.asarray((t_min, t_ref, t_max))
-        sampled = sample[:, None] ** np.arange(coefficients.shape[1])[None, :]
-        if np.any(sampled @ coefficients.T <= 0.0):
+        if any(
+            not _positive_polynomial_on_interval(row, t_min, t_max)
+            for row in coefficients
+        ):
             raise ValueError("Molar heat capacity must remain positive over bounds.")
         generated = canonical_fingerprint(
             {
@@ -163,11 +164,11 @@ class PolynomialSpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         entropy = entropy + UNIVERSAL_GAS_CONSTANT * logarithm[..., None] * gas_mask
         gibbs = enthalpy - safe[..., None] * entropy
         successful = (
-            jnp.all(valid)
-            & jnp.all(jnp.isfinite(cp))
-            & jnp.all(jnp.isfinite(internal_energy))
-            & jnp.all(cp > 0.0)
-            & jnp.all(cv > 0.0)
+            valid
+            & jnp.all(jnp.isfinite(cp), axis=-1)
+            & jnp.all(jnp.isfinite(internal_energy), axis=-1)
+            & jnp.all(cp > 0.0, axis=-1)
+            & jnp.all(cv > 0.0, axis=-1)
         )
         margin = jnp.minimum(
             safe - self.minimum_temperature,
@@ -299,11 +300,11 @@ class NASASpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
         internal_energy = enthalpy - (UNIVERSAL_GAS_CONSTANT * safe[..., None] * gas_mask)
         gibbs = enthalpy - safe[..., None] * entropy
         successful = (
-            jnp.all(jnp.isfinite(value))
-            & jnp.all(valid_species)
-            & jnp.all(jnp.isfinite(cp))
-            & jnp.all(cp > 0.0)
-            & jnp.all(cv > 0.0)
+            jnp.isfinite(value)
+            & jnp.all(valid_species, axis=-1)
+            & jnp.all(jnp.isfinite(cp), axis=-1)
+            & jnp.all(cp > 0.0, axis=-1)
+            & jnp.all(cv > 0.0, axis=-1)
         )
         species_lower = jnp.take_along_axis(lower, interval[..., None], axis=-1)[..., 0]
         species_upper = jnp.take_along_axis(upper, interval[..., None], axis=-1)[..., 0]
@@ -323,6 +324,23 @@ class NASASpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
             successful,
             self.thermodynamics_id,
         )
+
+
+def _positive_polynomial_on_interval(
+    coefficients: np.ndarray,
+    lower: float,
+    upper: float,
+) -> bool:
+    derivative = np.polynomial.polynomial.polyder(coefficients)
+    roots = np.polynomial.polynomial.polyroots(derivative)
+    real_roots = roots.real[
+        (np.abs(roots.imag) <= 64.0 * np.finfo(float).eps)
+        & (roots.real > lower)
+        & (roots.real < upper)
+    ]
+    candidates = np.concatenate((np.asarray((lower, upper)), real_roots))
+    values = np.polynomial.polynomial.polyval(candidates, coefficients)
+    return bool(np.all(np.isfinite(values)) and np.all(values > 0.0))
 
 
 def _nasa7(coefficients, temperature):

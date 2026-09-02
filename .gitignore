@@ -93,6 +93,14 @@ benchmarks/*
 !benchmarks/marker_flow_closure.json
 !benchmarks/linalg_inverse.py
 !benchmarks/linalg_inverse.json
+!benchmarks/homogeneous_thermodynamics.py
+!benchmarks/homogeneous_thermodynamics.json
+!benchmarks/phase_equilibrium.py
+!benchmarks/phase_equilibrium.json
+!benchmarks/gas_process.py
+!benchmarks/gas_process.json
+!benchmarks/rarefied_gas.py
+!benchmarks/rarefied_gas.json
 !benchmarks/partitioned_coupling.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json

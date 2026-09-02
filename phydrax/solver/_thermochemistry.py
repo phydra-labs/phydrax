@@ -16,8 +16,8 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._chemical_mechanism import PreparedChemicalMechanism
 from ..equations._chemical_rates import ChemicalRateRuntime
-from ..equations._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
-from ..equations._hyperbolic_systems import MultispeciesEulerSystem
+from ..equations._gas_dynamics import HomogeneousMixtureEulerSystem
+from ..equations._homogeneous_thermodynamics import ZeroResidualHelmholtzTerm
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -87,11 +87,23 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         transport: AbstractPreparedBalanceLawTransport,
         /,
     ):
-        if not isinstance(transport.dynamics.system, MultispeciesEulerSystem):
-            raise TypeError("Continuum thermochemistry requires MultispeciesEulerSystem.")
+        if not isinstance(transport.dynamics.system, HomogeneousMixtureEulerSystem):
+            raise TypeError(
+                "Continuum thermochemistry requires HomogeneousMixtureEulerSystem."
+            )
         system = transport.dynamics.system
-        if system.species_count != plan.mechanism.schema.species_count:
-            raise ValueError("Chemical mechanism species do not match transport system.")
+        if not isinstance(system.thermodynamics.residual, ZeroResidualHelmholtzTerm):
+            raise TypeError(
+                "Continuum thermochemistry currently supports ideal mixtures only."
+            )
+        if (
+            system.thermodynamics.schema.schema_id != plan.mechanism.schema.schema_id
+            or system.thermodynamics.thermodynamics.thermodynamics_id
+            != plan.mechanism.thermodynamics.thermodynamics_id
+        ):
+            raise ValueError(
+                "Chemical mechanism and transport thermodynamics must match exactly."
+            )
         self.plan = plan
         self.transport = transport
         self.species_indices = tuple(range(system.species_count))
@@ -108,7 +120,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         self.differentiability = "branchwise-explicit-subcycled"
         self.modified_components = tuple(
             system.component_names[index] for index in self.species_indices
-        ) + ("total_energy",)
+        )
 
     def initialize(
         self, source_view: BalanceLawSourceView, args: Any = None, /
@@ -149,10 +161,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
             mass_rate = (
                 evaluation.species_amount_rate * self.plan.mechanism.schema.molar_masses
             )
-            updated = candidate.at[..., self.species_indices].add(substep * mass_rate)
-            return updated.at[..., self.energy_index].add(
-                substep * evaluation.molar_energy_rate
-            )
+            return candidate.at[..., self.species_indices].add(substep * mass_rate)
 
         candidate = jax.lax.fori_loop(
             0,
@@ -188,13 +197,14 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
             axis=-1,
         )
         final_evaluation = self._evaluate(candidate, args)
-        successful = (
+        local_success = (
             final_evaluation.successful
-            & jnp.all(species_after >= 0.0)
-            & jnp.all(jnp.isfinite(candidate))
-            & jnp.all(jnp.abs(invariant_defect) <= 1.0e-10)
-            & jnp.all(self.transport.dynamics.system.admissible(candidate))
+            & jnp.all(species_after >= 0.0, axis=-1)
+            & jnp.all(jnp.isfinite(candidate), axis=-1)
+            & jnp.all(jnp.abs(invariant_defect) <= 1.0e-10, axis=-1)
+            & self.transport.dynamics.system.admissible(candidate)
         )
+        successful = jnp.all(local_success)
         accepted = jnp.where(successful, candidate, incoming)
         diagnostics = ThermochemistryDiagnostics(
             species_before=species_before,
@@ -216,10 +226,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         mass_density = state[..., self.species_indices]
         concentration = mass_density / self.plan.mechanism.schema.molar_masses
         pressure = system.pressure(state)
-        temperature = pressure / (
-            jnp.maximum(jnp.sum(concentration, axis=-1), jnp.finfo(state.dtype).tiny)
-            * UNIVERSAL_GAS_CONSTANT
-        )
+        temperature = system.temperature(state)
         runtime = args if isinstance(args, ChemicalRateRuntime) else None
         return self.plan.mechanism.evaluate(
             concentration,

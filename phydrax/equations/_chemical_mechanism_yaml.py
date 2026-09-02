@@ -14,6 +14,7 @@ import yaml
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ._chemical_components import ChemicalComponentCatalog
 from ._chemical_mechanism import ChemicalMechanismIR, ChemicalReactionSpec
 from ._chemical_rates import (
     ArrheniusRatePlan,
@@ -61,7 +62,7 @@ def load_chemical_mechanism_yaml(path: str | Path, /) -> ChemicalMechanismImport
         raise ValueError("Chemical mechanism YAML root must be a mapping.")
     units = _units(payload.get("units", {}))
     phases_payload = _sequence(payload, "phases")
-    phase_specs = tuple(_phase(value) for value in phases_payload)
+    phase_specs = tuple(_phase(value, units) for value in phases_payload)
     phase_by_name = {value.name: value for value in phase_specs}
     if len(phase_by_name) != len(phase_specs):
         raise ValueError("Chemical phase names must be unique.")
@@ -75,19 +76,25 @@ def load_chemical_mechanism_yaml(path: str | Path, /) -> ChemicalMechanismImport
         for element in composition:
             if str(element) not in elements:
                 elements.append(str(element))
-    phases = []
-    masses = []
+    phase_indices = []
     charges = []
+    component_names = []
+    component_indices = []
+    component_by_name = {}
+    component_masses = []
+    component_charges = []
+    component_compositions = []
     composition_matrix = np.zeros((len(elements), len(names)), dtype=np.int32)
     element_index = {name: index for index, name in enumerate(elements)}
+    phase_index = {value.name: index for index, value in enumerate(phase_specs)}
     for species_index, species in enumerate(species_payload):
         phase_name = _string(species, "phase")
         if phase_name not in phase_by_name:
             raise ValueError(
                 f"Species {names[species_index]!r} references unknown phase {phase_name!r}."
             )
-        phases.append(phase_by_name[phase_name].kind)
-        masses.append(float(species["molar-mass"]) * units["mass"] / units["amount"])
+        phase_indices.append(phase_index[phase_name])
+        mass = float(species["molar-mass"]) * units["mass"] / units["amount"]
         charge = species.get("charge")
         if charge is None or int(charge) != charge:
             raise ValueError(f"Species {names[species_index]!r} requires integer charge.")
@@ -96,24 +103,45 @@ def load_chemical_mechanism_yaml(path: str | Path, /) -> ChemicalMechanismImport
             if int(count) != count or int(count) < 0:
                 raise ValueError("Element composition must be nonnegative integers.")
             composition_matrix[element_index[str(element)], species_index] = int(count)
-    ordered_specs = tuple(
-        phase_by_name[
-            next(
-                _string(species, "phase")
-                for species in species_payload
-                if phase_by_name[_string(species, "phase")].kind is kind
-            )
-        ]
-        for kind in dict.fromkeys(phases)
+
+        component_name = str(species.get("component", names[species_index]))
+        if not component_name:
+            raise ValueError("Species component names must be nonempty.")
+        if component_name not in component_by_name:
+            component_by_name[component_name] = len(component_names)
+            component_names.append(component_name)
+            component_masses.append(mass)
+            component_charges.append(int(charge))
+            component_compositions.append(composition_matrix[:, species_index].copy())
+        else:
+            component_id = component_by_name[component_name]
+            if (
+                component_masses[component_id] != mass
+                or component_charges[component_id] != int(charge)
+                or not np.array_equal(
+                    component_compositions[component_id],
+                    composition_matrix[:, species_index],
+                )
+            ):
+                raise ValueError(
+                    f"Component {component_name!r} has inconsistent species identity."
+                )
+        component_indices.append(component_by_name[component_name])
+
+    catalog = ChemicalComponentCatalog(
+        tuple(component_names),
+        jnp.asarray(component_masses),
+        tuple(elements),
+        jnp.asarray(np.stack(component_compositions, axis=1)),
+        charges=jnp.asarray(component_charges),
+        provenance=str(source),
     )
     schema = ChemicalSpeciesSchema(
+        catalog,
         names,
-        tuple(phases),
-        jnp.asarray(masses),
-        tuple(elements),
-        jnp.asarray(composition_matrix),
-        jnp.asarray(charges),
-        phase_specs=ordered_specs,
+        jnp.asarray(component_indices, dtype=jnp.int32),
+        phase_specs,
+        jnp.asarray(phase_indices, dtype=jnp.int32),
     )
     thermodynamics_payload = _mapping(payload, "thermodynamics")
     thermodynamics = _thermodynamics(
@@ -189,11 +217,14 @@ def _units(payload):
     return factors
 
 
-def _phase(payload):
+def _phase(payload, units):
     if not isinstance(payload, Mapping):
         raise ValueError("Each phase must be a mapping.")
     kind = ChemicalPhaseKind(_string(payload, "kind"))
     density = payload.get("site-density")
+    pressure = payload.get("standard-pressure")
+    if kind is ChemicalPhaseKind.GAS and pressure is None:
+        raise ValueError("Gas phases require standard-pressure.")
     return ChemicalPhaseSpec(
         _string(payload, "name"),
         kind,
@@ -203,6 +234,9 @@ def _phase(payload):
             )
         ),
         standard_concentration=float(payload.get("standard-concentration", 1.0)),
+        standard_pressure=None
+        if pressure is None
+        else float(pressure) * units["pressure"],
         site_density=None if density is None else float(density),
     )
 

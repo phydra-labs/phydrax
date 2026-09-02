@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -955,172 +955,6 @@ class CompressibleNavierStokesSystem(
         return self.inviscid.entropy_variables(state)
 
 
-class MultispeciesEulerSystem(AbstractAdmissibleSystem):
-    """Calorically perfect conservative multispecies Euler system."""
-
-    species_gammas: tuple[float, ...] = eqx.field(static=True)
-    density_floor: float = eqx.field(static=True)
-    pressure_floor: float = eqx.field(static=True)
-
-    def __init__(
-        self,
-        species_gammas: Sequence[float],
-        dimension: int = 1,
-        /,
-        *,
-        density_floor: float = 1e-12,
-        pressure_floor: float = 1e-12,
-    ):
-        gammas = tuple(float(value) for value in species_gammas)
-        dimension_ = int(dimension)
-        if not gammas or any(not np.isfinite(value) or value <= 1.0 for value in gammas):
-            raise ValueError("Every species gamma must be finite and greater than one.")
-        if dimension_ not in (1, 2, 3):
-            raise ValueError("Multispecies Euler dimension must be one, two, or three.")
-        if density_floor <= 0.0 or pressure_floor <= 0.0:
-            raise ValueError("Multispecies floors must be positive.")
-        self.dimension = dimension_
-        self.species_gammas = gammas
-        self.density_floor = float(density_floor)
-        self.pressure_floor = float(pressure_floor)
-        self.component_names = (
-            *(f"species_density_{index}" for index in range(len(gammas))),
-            *(f"momentum_{axis}" for axis in range(dimension_)),
-            "total_energy",
-        )
-        self.system_id = canonical_fingerprint(
-            {
-                "kind": "multispecies-euler-system",
-                "dimension": dimension_,
-                "species_gammas": list(gammas),
-                "density_floor": float(density_floor),
-                "pressure_floor": float(pressure_floor),
-            }
-        )
-
-    @property
-    def species_count(self) -> int:
-        return len(self.species_gammas)
-
-    def density(self, state: Array, /) -> Array:
-        return jnp.sum(state[..., : self.species_count], axis=-1)
-
-    def mixture_gamma(self, state: Array, /) -> Array:
-        species = state[..., : self.species_count]
-        density = jnp.sum(species, axis=-1)
-        fractions = species / density[..., None]
-        heat_capacity = jnp.sum(
-            fractions / (jnp.asarray(self.species_gammas, dtype=state.dtype) - 1.0),
-            axis=-1,
-        )
-        return 1.0 + 1.0 / heat_capacity
-
-    def pressure(self, state: Array, /) -> Array:
-        density = self.density(state)
-        momentum = state[..., self.species_count : -1]
-        return (self.mixture_gamma(state) - 1.0) * (
-            state[..., -1] - 0.5 * jnp.sum(momentum**2, axis=-1) / density
-        )
-
-    def conserved_to_primitive(self, state: Array, /) -> Array:
-        value = jnp.asarray(state)
-        density = self.density(value)
-        velocity = value[..., self.species_count : -1] / density[..., None]
-        return jnp.concatenate(
-            (value[..., : self.species_count], velocity, self.pressure(value)[..., None]),
-            axis=-1,
-        )
-
-    def primitive_to_conserved(self, primitive: Array, /) -> Array:
-        value = jnp.asarray(primitive)
-        species = value[..., : self.species_count]
-        density = jnp.sum(species, axis=-1)
-        velocity = value[..., self.species_count : -1]
-        pressure = value[..., -1]
-        provisional = jnp.concatenate(
-            (
-                species,
-                density[..., None] * velocity,
-                jnp.ones_like(pressure)[..., None],
-            ),
-            axis=-1,
-        )
-        energy = pressure / (
-            self.mixture_gamma(provisional) - 1.0
-        ) + 0.5 * density * jnp.sum(velocity**2, axis=-1)
-        return provisional.at[..., -1].set(energy)
-
-    def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
-        del args
-        value = jnp.asarray(state)
-        density = self.density(value)
-        momentum = value[..., self.species_count : -1]
-        velocity = momentum / density[..., None]
-        normal_velocity = velocity[..., int(axis)]
-        pressure = self.pressure(value)
-        species_flux = value[..., : self.species_count] * normal_velocity[..., None]
-        momentum_flux = momentum * normal_velocity[..., None]
-        momentum_flux = momentum_flux.at[..., int(axis)].add(pressure)
-        energy_flux = (value[..., -1] + pressure) * normal_velocity
-        return jnp.concatenate(
-            (species_flux, momentum_flux, energy_flux[..., None]), axis=-1
-        )
-
-    def max_wave_speed(
-        self,
-        left: Array,
-        right: Array,
-        axis: int,
-        args: Any = None,
-        /,
-    ) -> Array:
-        del args
-        axis_ = int(axis)
-
-        def speed(state: Array) -> Array:
-            density = self.density(state)
-            velocity = state[..., self.species_count + axis_] / density
-            sound = jnp.sqrt(self.mixture_gamma(state) * self.pressure(state) / density)
-            return jnp.abs(velocity) + sound
-
-        return jnp.maximum(speed(left), speed(right))
-
-    def signal_bounds(
-        self,
-        left: Array,
-        right: Array,
-        axis: int,
-        args: Any = None,
-        /,
-    ) -> tuple[Array, Array]:
-        speed = self.max_wave_speed(left, right, axis, args)
-        return -speed, speed
-
-    def normal_signal_bounds(
-        self,
-        left: Array,
-        right: Array,
-        normal: Array,
-        args: Any = None,
-        /,
-    ) -> tuple[Array, Array]:
-        normal_ = jnp.asarray(normal)
-        speed = jnp.zeros(left.shape[:-1], dtype=left.dtype)
-        for axis in range(self.dimension):
-            speed = speed + jnp.abs(normal_[..., axis]) * self.max_wave_speed(
-                left, right, axis, args
-            )
-        return -speed, speed
-
-    def admissible(self, state: Array, /) -> Array:
-        return jnp.all(
-            state[..., : self.species_count] >= self.density_floor, axis=-1
-        ) & (self.pressure(state) >= self.pressure_floor)
-
-    def reflect_state(self, state: Array, axis: int, /) -> Array:
-        return jnp.asarray(state).at[..., self.species_count + int(axis)].multiply(-1.0)
-
-
 class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
     """Ideal MHD with three-vector momentum and magnetic field."""
 
@@ -1497,7 +1331,6 @@ __all__ = [
     "CompressibleNavierStokesSystem",
     "EulerSystem",
     "IdealMHDSystem",
-    "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
 ]
