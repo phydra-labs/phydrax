@@ -89,16 +89,16 @@ def _local_operation_inputs(
     return operator, target_indices, vector
 
 
-def apply_local_unitary_to_state(
+def apply_local_operator_to_state(
     layout: HilbertRegisterLayout,
-    unitary: ArrayLike,
+    operator: ArrayLike,
     targets: Sequence[str],
     state: ArrayLike,
     /,
 ) -> Array:
-    """Apply one local unitary without materializing its global embedding."""
+    """Apply one local linear operator without materializing its global embedding."""
     matrix, target_indices, vector = _local_operation_inputs(
-        layout, unitary, targets, state
+        layout, operator, targets, state
     )
     batch_shape = vector.shape[:-1]
     batch_ndim = len(batch_shape)
@@ -122,6 +122,17 @@ def apply_local_unitary_to_state(
     expanded = transformed.reshape(batch_shape + remaining_dimensions + target_dimensions)
     inverse = tuple(permutation.index(index) for index in range(len(permutation)))
     return jnp.transpose(expanded, inverse).reshape(vector.shape)
+
+
+def apply_local_unitary_to_state(
+    layout: HilbertRegisterLayout,
+    unitary: ArrayLike,
+    targets: Sequence[str],
+    state: ArrayLike,
+    /,
+) -> Array:
+    """Apply one local unitary without materializing its global embedding."""
+    return apply_local_operator_to_state(layout, unitary, targets, state)
 
 
 def conjugate_local_density(
@@ -194,6 +205,7 @@ def kraus_trace_preservation_residual(kraus: ArrayLike, /) -> Array:
 
 
 __all__ = [
+    "apply_local_operator_to_state",
     "apply_local_kraus_to_density",
     "apply_local_unitary_to_state",
     "apply_unitary_to_state",

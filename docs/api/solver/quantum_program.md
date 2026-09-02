@@ -21,6 +21,36 @@ state, physicality, resource, routing, and transformation contracts.
 
 ::: phydrax.solver.execute_dense_quantum_program
 
+## Local observables and parameterized gradients
+
+::: phydrax.solver.DenseQuantumObservablePolicy
+
+::: phydrax.solver.DenseQuantumObservableCostEstimate
+
+::: phydrax.solver.DenseQuantumObservablePlan
+
+::: phydrax.solver.DenseQuantumExpectationDiagnostics
+
+::: phydrax.solver.DenseQuantumExpectationResult
+
+::: phydrax.solver.plan_dense_quantum_observables
+
+::: phydrax.solver.evaluate_dense_quantum_observables
+
+::: phydrax.solver.PreparedDenseQuantumTemplate
+
+::: phydrax.solver.prepare_dense_quantum_template
+
+::: phydrax.solver.execute_dense_quantum_template
+
+::: phydrax.solver.ParameterShiftPlan
+
+::: phydrax.solver.ParameterShiftJacobianResult
+
+::: phydrax.solver.plan_parameter_shift
+
+::: phydrax.solver.evaluate_parameter_shift_jacobian
+
 ## Open-chain MPS lifecycle
 
 ::: phydrax.solver.MPSQuantumProgramPolicy

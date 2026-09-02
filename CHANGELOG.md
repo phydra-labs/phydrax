@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added content-identified local quantum observables, lower-only Pauli-rotation
+  program templates, grouped dense expectations, exact parameter-shift
+  Jacobians, dense circuit feature models, fidelity kernels, variational binary
+  classification, and native IQP/data-reuploading benchmark workloads without
+  external quantum-framework dependencies or hidden normalization.
 - Added fixed-capacity open-boundary tensor-network completion with shared
   precision-aware SVD evidence, canonical QR sweeps, MPO construction/algebra,
   MPS action and compression, reusable bra–MPO–ket environments, network-native

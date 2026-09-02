@@ -27,6 +27,7 @@ _ARTIFACT_FAMILIES = (
     "ensemble",
     "feature_selection",
     "multiclass",
+    "quantum",
     "semi_supervised",
     "calibration",
 )

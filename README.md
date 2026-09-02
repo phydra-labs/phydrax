@@ -167,11 +167,12 @@ Most workflows are composing a few primitives:
   frequency-domain scattering, respectively, with full-tensor finite layers,
   field-certificate-aware geometry rasterization, boundary cascades, current
   planes, Brillouin-zone sources, and diffraction orders.
-- **Variational quantum dynamics**: stable complex log amplitudes, connected discrete
-  operators, validated finite symmetry sectors, persistent-chain local energies,
-  damped SR, frozen R-hat/ESS diagnostics, portable exact-resume checkpoints, and
-  real/imaginary-time TDVP reuse the sampling, integration, parameter-subspace, and
-  linear-runtime contracts.
+- **Variational quantum dynamics and learning**: stable complex log amplitudes,
+  connected discrete operators, validated finite symmetry sectors, persistent-chain
+  local energies, damped SR, frozen R-hat/ESS diagnostics, portable exact-resume
+  checkpoints, real/imaginary-time TDVP, parameterized local-map programs,
+  exact Pauli-shift gradients, projected circuit features, and fidelity kernels
+  reuse the sampling, integration, parameter-subspace, kernel, and ML contracts.
 - **Dynamical systems, identification, and chaos**: typed flows/maps and
   pathwise evolution, mask-safe trajectory data, DMD/EDMD, strong/discrete/
   integral/weak and implicit SINDy, PDE-FIND, periodic orbits, continuation,
