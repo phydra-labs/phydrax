@@ -467,6 +467,9 @@ allen_cahn = phx.solver.semidiscretize_reaction_diffusion(
         coefficients,
         lambda values: values - values**3,
     ),
+    reaction_id=(
+        f"allen-cahn-cubic-modal-reaction-v1:{allen_cahn_method.prepared_id}"
+    ),
     noise_basis=noise,
 )
 ```

@@ -151,6 +151,7 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
             state,
             lambda values: values - values**3,
         ),
+        reaction_id=f"allen-cahn-cubic-modal-reaction-v1:{method.prepared_id}",
         noise_basis=basis,
     )
     realization = spde.wiener_realization(

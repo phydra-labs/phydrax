@@ -259,9 +259,7 @@ def stochastic_heat_transition_data(
         periodic=True,
     ).materialize(0.0, 1.0)
     spatial = phx.discretization.periodic_finite_difference(
-        phx.discretization.PreparedTensorGrid(
-            (axis_discretization,), axis_names=("x",)
-        )
+        phx.discretization.PreparedTensorGrid((axis_discretization,), axis_names=("x",))
     )
     noise_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         spatial,
@@ -353,9 +351,7 @@ def allen_cahn_transition_data(
         periodic=True,
     ).materialize(0.0, 1.0)
     spatial = phx.discretization.periodic_finite_difference(
-        phx.discretization.PreparedTensorGrid(
-            (axis_discretization,), axis_names=("x",)
-        )
+        phx.discretization.PreparedTensorGrid((axis_discretization,), axis_names=("x",))
     )
     noise_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         spatial,
@@ -373,6 +369,7 @@ def allen_cahn_transition_data(
             t1=duration,
             kappa=float(diffusivity),
             reaction=lambda t, state, args: state - state**3,
+            reaction_id="allen-cahn-cubic-reaction-v1",
             noise_basis=noise_basis,
         )
         realization = spde.wiener_realization(

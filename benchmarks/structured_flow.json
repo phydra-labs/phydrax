@@ -1,23 +1,263 @@
 {
-  "schema_version": 1,
-  "compact_count": 64,
-  "compact_first_error": 2.681952437910695e-09,
-  "compact_second_error": 1.0761681323856465e-08,
-  "compact_storage_bytes": 7272,
-  "compact_dense_entries": 0,
-  "sbp_count": 32,
-  "sbp_conservation_defect": 1.1657341758564144e-15,
-  "sbp_entropy_defect": 8.734332701543224e-16,
-  "sbp_pair_count": 96,
-  "mac_count": 32,
-  "mac_transform_divergence": 1.3235800202421293e-13,
-  "mac_iterative_divergence": 4.49595569885312e-13,
-  "mac_route_difference": 5.689893001203927e-15,
-  "mac_momentum_count": 16,
-  "mac_momentum_skew_defect": 2.7755575615628914e-17,
-  "mac_diffusion_symmetry_defect": 0.0,
-  "mac_projected_rate_divergence": 3.6529053619856686e-14,
-  "mac_nonlinear_energy_defect": 4.284833970109077e-17,
+  "compact": {
+    "count": 64,
+    "first_prepared_id": "d573c813de38952b189ec5556cbd002a2e7bb16ab3728d40fdff75ddc2f62fb5",
+    "grid_prepared_id": "56f0f0b81166aaed7da02184ff3c5326ad1994f8923ddb75b2625d33c0386401",
+    "raw_invariants": {
+      "dense_materialization_entries": 0,
+      "finite": true,
+      "first_derivative_maximum_error": 2.681952437910695e-09,
+      "second_derivative_maximum_error": 1.0761681323856465e-08,
+      "storage_bytes": 7272
+    },
+    "second_prepared_id": "0079661d2be4303c4de8335c3d70e50e586e37206c4fe7fbfce36996ec38ddd2"
+  },
   "finite": true,
-  "passed": true
+  "kind": "structured-flow-smoke-resource-evidence",
+  "mac": {
+    "momentum": {
+      "compilation_id": "21672ba39aae15e337c48ac129c34ba895e992f956d33be2a462aaecc9833476",
+      "count": 16,
+      "momentum_prepared_id": "381abe0bad4ab33fba59f837e84c31bca57d5d465fabbb5b1eda42965f2afc15",
+      "momentum_report_id": "6ba58d4262c854fdf7f2cfdbe02ecb18330f5b36020a43036363504ab39f9b05",
+      "raw_invariants": {
+        "diffusion_symmetry_residual": 0.0,
+        "finite": true,
+        "nonlinear_energy_rate": 4.284833970109077e-17,
+        "projected_rate_divergence": 3.6529053619856686e-14,
+        "weighted_skew_residual": 2.7755575615628914e-17
+      }
+    },
+    "routes_are_raw_smoke_evidence": true,
+    "stretched": {
+      "comparisons": {
+        "hybrid_iterative_velocity_maximum_difference": 9.520162436160717e-14
+      },
+      "dtype": "float64",
+      "finite": true,
+      "finite_volume_prepared_id": "318f6d028f36699b73a908bb184e63cd624c69f6ff64d70eee694e7c71c725fc",
+      "geometry": "stretched-wall-normal",
+      "grid_prepared_id": "6169bd185b2dce3896e8c74691e6ce861c7967e67619c55fa85b8187f428d51d",
+      "operator_invariants": {
+        "constant_laplacian_residual": 0.0,
+        "transform_eligible": false,
+        "weighted_adjoint_residual": 3.481659405224491e-13
+      },
+      "operator_prepared_id": "bea418e0a0f70508bb82f1488b2065603cbd9fba3288349c3393de81def6787f",
+      "operator_report_id": "cf221d9a62da53a137fdb988d2f10de0b09e58c53e5d32dfc12ced83f101bc28",
+      "routes": {
+        "full": {
+          "available": false,
+          "reason": "A full tensor transform is ineligible on the stretched line.",
+          "requested_route": "full"
+        },
+        "hybrid": {
+          "actions": {
+            "hybrid_action_defect": 1.363934381263607e-12,
+            "iterative": null
+          },
+          "available": true,
+          "closure_id": "aead5c89e68f8f1a4cce0331c6a998028a52845c9cb68051694e2d39033789a0",
+          "constant_route": "hybrid",
+          "converged": true,
+          "finite": true,
+          "hybrid_line_axis": 1,
+          "operator_id": "7f6aea97f947416df37b4ae8d0da1c11953e3c49ee01180137451c0b1fb296d4",
+          "plan_id": "bf851a76f33446c775319994cdbab945a436add9e1bcdab7622739cb05d29db6",
+          "pressure_problem_id": "183e2407567c0306b4837d8c9c2cc9f49f92ff4bb06c42f38ac8d1f56b8e5946",
+          "projection_id": "bf851a76f33446c775319994cdbab945a436add9e1bcdab7622739cb05d29db6",
+          "requested_route": "hybrid",
+          "residuals": {
+            "closure_mass_defect": 5.1449070114052373e-17,
+            "divergence_after_norm": 1.3675239492549258e-13,
+            "divergence_before_norm": 44.692351391343855,
+            "gauge_defect": 7.771561172376096e-16,
+            "hybrid_compatibility_defect": 1.249000902703301e-16,
+            "hybrid_factor_residual": 2.842170943040401e-14,
+            "hybrid_gauge_defect": 2.7755575615628914e-17,
+            "hybrid_minimum_pivot": 0.23429157096577313,
+            "hybrid_relative_residual": 5.498595691496664e-15,
+            "hybrid_residual_norm": 2.4574517080329815e-12,
+            "hybrid_trace_defect": 0.0,
+            "pressure_residual_norm": 1.3661268660152403e-13
+          },
+          "resources": {
+            "hybrid": {
+              "factor_bytes": 15616,
+              "factor_count": 976,
+              "line_count": 64,
+              "line_size": 8,
+              "periodic_rank": 0,
+              "total_bytes": 64768,
+              "workspace_bytes": 49152
+            },
+            "maximum_resource_bytes": 536870912,
+            "pressure_state_bytes": 4096,
+            "velocity_state_bytes": 12800
+          },
+          "solve_method": "hybrid"
+        },
+        "iterative": {
+          "actions": {
+            "hybrid_action_defect": null,
+            "iterative": {
+              "adjoint_matvec_count": 0,
+              "iterations": 9,
+              "matvec_count": 10
+            }
+          },
+          "available": true,
+          "closure_id": "aead5c89e68f8f1a4cce0331c6a998028a52845c9cb68051694e2d39033789a0",
+          "constant_route": "iterative",
+          "converged": true,
+          "finite": true,
+          "hybrid_line_axis": null,
+          "operator_id": "7f6aea97f947416df37b4ae8d0da1c11953e3c49ee01180137451c0b1fb296d4",
+          "plan_id": "60a2aab7d31c796b458b7410342b01f289443f4efcaf2e240aec55d5880cd275",
+          "pressure_problem_id": "183e2407567c0306b4837d8c9c2cc9f49f92ff4bb06c42f38ac8d1f56b8e5946",
+          "projection_id": "60a2aab7d31c796b458b7410342b01f289443f4efcaf2e240aec55d5880cd275",
+          "requested_route": "iterative",
+          "residuals": {
+            "closure_mass_defect": 1.3970926115593227e-17,
+            "divergence_after_norm": 1.0012214641729661e-11,
+            "divergence_before_norm": 44.692351391343855,
+            "gauge_defect": 7.216449660063518e-16,
+            "linear_compatibility_residual": 0.0,
+            "linear_gauge_residual": 0.0,
+            "linear_relative_residual": 1.650506337982508e-13,
+            "linear_residual_norm": 1.9261239307349265e-12,
+            "pressure_residual_norm": 1.0011417297340967e-11
+          },
+          "resources": {
+            "hybrid": null,
+            "maximum_resource_bytes": 536870912,
+            "pressure_state_bytes": 4096,
+            "velocity_state_bytes": 12800
+          },
+          "solve_method": "iterative"
+        }
+      },
+      "shape": [
+        8,
+        8,
+        8
+      ],
+      "successful": true
+    },
+    "uniform": {
+      "comparisons": {
+        "full_iterative_velocity_maximum_difference": 3.3306690738754696e-16
+      },
+      "dtype": "float64",
+      "finite": true,
+      "finite_volume_prepared_id": "95c39e9e05e5e94f713523b42c8926e354005fe9bb72efc0a292a43bb498cbb4",
+      "geometry": "uniform-periodic",
+      "grid_prepared_id": "2dbeca52210c021e282a3276b0fa480bc8d31490b7a4fd14c7b0cc8f9260e08b",
+      "operator_invariants": {
+        "constant_laplacian_residual": 0.0,
+        "transform_eligible": true,
+        "weighted_adjoint_residual": 3.979039320256561e-13
+      },
+      "operator_prepared_id": "93be8ca6f432c5a1500c79a366747ad4db7af00b98421f0c1017c90ba7341537",
+      "operator_report_id": "fbb88ddc4b4ffa80d12a8c53f73a2bfc6e003c1e37c69f4dcb01ba66f271bae2",
+      "routes": {
+        "full": {
+          "actions": {
+            "hybrid_action_defect": null,
+            "iterative": null
+          },
+          "available": true,
+          "closure_id": "bb2d5221e1e19ca948182ec555d4e67dd0297bb3194012c007f6319aa9eb803d",
+          "constant_route": "transform",
+          "converged": true,
+          "finite": true,
+          "hybrid_line_axis": null,
+          "operator_id": "12599067db3411f470cee26d493638abfc72f622fc78135bbc9b6acc9b8e9010",
+          "plan_id": "1f101cc65dd35e5fd2050b662d4b5a7b404c521eefd35167cdd64116736c044b",
+          "pressure_problem_id": "07c34f1c0e69542fa3385d162298fb6ada5a4e7de29721745f7633a0d1203f19",
+          "projection_id": "1f101cc65dd35e5fd2050b662d4b5a7b404c521eefd35167cdd64116736c044b",
+          "requested_route": "full",
+          "residuals": {
+            "closure_mass_defect": 1.0477058897466563e-31,
+            "divergence_after_norm": 3.033082518718294e-15,
+            "divergence_before_norm": 1.2868039835210301e-14,
+            "gauge_defect": 4.3137439868698766e-32,
+            "pressure_residual_norm": 2.0417254250114502e-29,
+            "transform_compatibility_residual": 0.0,
+            "transform_removed_component_norm": 0.0,
+            "transform_residual_norm": 8.83524984719325e-29
+          },
+          "resources": {
+            "hybrid": null,
+            "maximum_resource_bytes": 536870912,
+            "pressure_state_bytes": 2048,
+            "velocity_state_bytes": 4096
+          },
+          "solve_method": "transform"
+        },
+        "hybrid": {
+          "available": false,
+          "reason": "Hybrid requires one explicitly nonperiodic line axis.",
+          "requested_route": "hybrid"
+        },
+        "iterative": {
+          "actions": {
+            "hybrid_action_defect": null,
+            "iterative": {
+              "adjoint_matvec_count": 0,
+              "iterations": 1,
+              "matvec_count": 2
+            }
+          },
+          "available": true,
+          "closure_id": "bb2d5221e1e19ca948182ec555d4e67dd0297bb3194012c007f6319aa9eb803d",
+          "constant_route": "iterative",
+          "converged": true,
+          "finite": true,
+          "hybrid_line_axis": null,
+          "operator_id": "12599067db3411f470cee26d493638abfc72f622fc78135bbc9b6acc9b8e9010",
+          "plan_id": "e861023c818ebb60cba6b90925124bf9c2bc879b762275cef33ccdd3ac3d20d8",
+          "pressure_problem_id": "07c34f1c0e69542fa3385d162298fb6ada5a4e7de29721745f7633a0d1203f19",
+          "projection_id": "e861023c818ebb60cba6b90925124bf9c2bc879b762275cef33ccdd3ac3d20d8",
+          "requested_route": "iterative",
+          "residuals": {
+            "closure_mass_defect": 1.232595164407831e-31,
+            "divergence_after_norm": 7.521261682159056e-15,
+            "divergence_before_norm": 1.2868039835210301e-14,
+            "gauge_defect": 9.683743249850496e-32,
+            "linear_compatibility_residual": 0.0,
+            "linear_gauge_residual": 0.0,
+            "linear_relative_residual": 0.4933989303906247,
+            "linear_residual_norm": 2.4932767432374e-15,
+            "pressure_residual_norm": 6.349077090916711e-15
+          },
+          "resources": {
+            "hybrid": null,
+            "maximum_resource_bytes": 536870912,
+            "pressure_state_bytes": 2048,
+            "velocity_state_bytes": 4096
+          },
+          "solve_method": "iterative"
+        }
+      },
+      "shape": [
+        16,
+        16
+      ],
+      "successful": true
+    }
+  },
+  "sbp": {
+    "compilation_id": "4487af4f13d2b6b0d223cebdf5d0f444023debb786090757e864d9a17ff622a4",
+    "count": 32,
+    "grid_prepared_id": "902fc1aedbf2d645198328955b83c6a93e0dbf0f03a94455818579dfaee310cb",
+    "method_id": "6bfc9fc2ccad059d8f1393802b746e38554719763166f3b5a25bcda29c110912",
+    "raw_invariants": {
+      "conservation_defect": 1.1657341758564144e-15,
+      "entropy_defect": 8.734332701543224e-16,
+      "finite": true,
+      "pair_count": 96
+    }
+  },
+  "smoke_successful": true
 }

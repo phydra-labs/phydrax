@@ -113,6 +113,21 @@
   banded structured operator/channel evidence, explicit-norm projective-pencil
   pseudospectra, and bounded spherical scattered/HEALPix/spin/Wigner/CG/dealias/modal
   integration/compiler support. Distributed FFT and line solves remain excluded.
+- Added single-process periodic-spectral, channel, and structured-MAC production
+  assemblers with prepared full-complex ETDRK and exact-step restartable channel
+  SBDF2 methods, accepted-PyTree bounded compiled segments, absolute end-time/step
+  capacity, content-derived checkpoint IDs with optional Hermitian leaf encoding,
+  monotone durable generations, exact-time output, typed checkpoint/publish/stop
+  triggers, and windowed/block streaming moments.
+- Added periodic constant-power forcing and exact-transition solenoidal OU forcing
+  with transactional ETDRK stage coupling, conservative full-complex turbulence
+  spectra, separate-wall spectral-channel and
+  staggering-native raw MAC plane/wall statistics, fixed MAC pressure-gradient
+  forcing without feedback, pressure-eliminated fixed-band ultraspherical channel
+  solves with primitive public fields, and constant-density three-dimensional
+  all-Neumann MAC hybrid transform-line pressure solves. Distributed
+  spectral/hybrid lines, variable-density hybrid pressure, and MAC fixed-flux
+  control remain excluded.
 - Added declared-incidence acausal DAE structural reduction; bounded DAE
   reset/consistency/regularity/manifold stages; generalized-pencil/Hopf
   continuation; prepared case-axis iLQR; Radau/multiphase/complementarity/

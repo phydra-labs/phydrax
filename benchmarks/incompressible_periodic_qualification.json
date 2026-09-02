@@ -1,0 +1,190 @@
+{
+  "artifact_id": "2b80a42c177c48a95e2617b2f2c10e819cd55e39f9d8578553a7ee11563cbd21",
+  "configuration": {
+    "configuration_id": "5eeebba282d2ece7454ce6a5c4deeace0c72cf5d858b54710d1647098558f20b",
+    "invariant_tolerance": 1e-09,
+    "kind": "qualification-configuration",
+    "mode_count": 12,
+    "restart_tolerance": 1e-10,
+    "solution_tolerance": 1e-08,
+    "step_size": 0.025,
+    "steps": 8,
+    "timing_gate": false,
+    "viscosity": 0.01
+  },
+  "external_reference": null,
+  "failed_reasons": [],
+  "gates": [
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "decay-divergence",
+      "gate_outcome_id": "1a54a1cfdf796afbd028a19262d7ef47d2349f2e5352535d115a677a5ee1d09e",
+      "kind": "qualification-gate-outcome",
+      "metric": "taylor-green-decay.divergence_norm",
+      "observed": 8.397976297774456e-18,
+      "outcome": "passed",
+      "reason": "taylor-green-decay.divergence_norm satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-08
+      },
+      "gate": "decay-solution",
+      "gate_outcome_id": "544e089ab4f575198e51436da8b0f7ab68dad88883ed7412c5b184eeb38b899b",
+      "kind": "qualification-gate-outcome",
+      "metric": "taylor-green-decay.maximum_velocity_error",
+      "observed": 5.551115123125783e-16,
+      "outcome": "passed",
+      "reason": "taylor-green-decay.maximum_velocity_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "decay-solver",
+      "gate_outcome_id": "493ec0340761955f4e7ba375949c740ea886794117be539096683e22144de795",
+      "kind": "qualification-gate-outcome",
+      "metric": "taylor-green-decay.solver_successful",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "taylor-green-decay.solver_successful was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "manufactured-refinement",
+      "gate_outcome_id": "c484c2f1b4852a5c13e0fa49d54e4d1570f5556a7d7fed4b4bbdbad9d37cb9e8",
+      "kind": "qualification-gate-outcome",
+      "metric": "manufactured-forcing-refinement-restart.fine_error_not_greater",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "manufactured-forcing-refinement-restart.fine_error_not_greater was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-10
+      },
+      "gate": "manufactured-restart",
+      "gate_outcome_id": "2ecc0e1720eb463ac72e9cd8b129434ee4c93b8cd664da06bfbea270a09ece76",
+      "kind": "qualification-gate-outcome",
+      "metric": "manufactured-forcing-refinement-restart.restart_maximum_modal_error",
+      "observed": 0.0,
+      "outcome": "passed",
+      "reason": "manufactured-forcing-refinement-restart.restart_maximum_modal_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-08
+      },
+      "gate": "manufactured-solution",
+      "gate_outcome_id": "d9a28d70ffe4483f7627b1eec4bfdc138cf27a2911366b4bb22676090027f99c",
+      "kind": "qualification-gate-outcome",
+      "metric": "manufactured-forcing-refinement-restart.fine_maximum_velocity_error",
+      "observed": 1.7430501486614958e-13,
+      "outcome": "passed",
+      "reason": "manufactured-forcing-refinement-restart.fine_maximum_velocity_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "manufactured-solver",
+      "gate_outcome_id": "26db3f2abba2abfb2deda495ef3148fc8eca32d6bd959bf130da43fabcb22938",
+      "kind": "qualification-gate-outcome",
+      "metric": "manufactured-forcing-refinement-restart.solver_successful",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "manufactured-forcing-refinement-restart.solver_successful was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "native-statistics",
+      "gate_outcome_id": "fb3931bda56899065f0d45c59557e83cbec3a1c8b924e3795a743bfca84b3e78",
+      "kind": "qualification-gate-outcome",
+      "metric": "manufactured-forcing-refinement-restart.statistics_successful",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "manufactured-forcing-refinement-restart.statistics_successful was true."
+    }
+  ],
+  "inconclusive_reasons": [],
+  "input": {
+    "decay_compilation_id": "a770317552c5050af3cc00864766f88bc0e7c6bf43e4cc446937fd9f6368ad56",
+    "decay_problem_id": "f78079b12ccffb0e8da8d22e7c3144d19ea91d263dcfce7bf4612ec088e7bfbc",
+    "discretization_prepared_id": "15158ff9a923272569ee427994169c9a16ea2cfb49bd0f0f7b0844ad470f1f12",
+    "domain": [
+      [
+        0.0,
+        6.283185307179586
+      ],
+      [
+        0.0,
+        6.283185307179586
+      ]
+    ],
+    "forced_compilation_id": "b505d74a48154421642e3a56cccd8d2ab3fccc8fd1c98e38487b0575e717d5ac",
+    "forced_problem_id": "35787825141c3e038d09a397f11c579b6955218c7e4b53937c96b7de62ae3763",
+    "initial_condition": "u=sin(x)cos(y);v=-cos(x)sin(y)",
+    "input_id": "90551c6d0fc97eae5dec3083dc1e7c87c9c9d9601d3557f6f254fb09cb137447",
+    "kind": "qualification-input",
+    "manufactured_amplitude": "1+0.1*sin(t)",
+    "spatial_method_id": "78b8bd145e1f9eb65ec6af1f01c3408aa0c33ac6346086576656dbb8790c5eac",
+    "spatial_method_prepared_id": "b17759ecbd4b356d5dbeb07f5fce947c7011b10a684400c2edfc464b7b4084a2",
+    "temporal_method_id": "5d87150b84f5fc4788ccfb285380e2fda84fcadece2151995f8203ffa1efa58e"
+  },
+  "kind": "incompressible-flow-qualification-artifact",
+  "metrics": {
+    "manufactured-forcing-refinement-restart": {
+      "coarse_maximum_velocity_error": 2.717381875072533e-12,
+      "divergence_norm": 6.174302461845632e-18,
+      "fine_maximum_velocity_error": 1.7430501486614958e-13,
+      "forcing_power": 2.3836342288644397,
+      "observed_temporal_order": 3.962531340055768,
+      "restart_maximum_modal_error": 0.0,
+      "solver_successful": true,
+      "statistics_plan_id": "167ceb08e624de78c79dd312268bd25a3affbb62623b19db8b2786b917b28248",
+      "statistics_successful": true
+    },
+    "taylor-green-decay": {
+      "divergence_norm": 8.397976297774456e-18,
+      "energy_balance_defect": 1.6653345369377348e-16,
+      "maximum_velocity_error": 5.551115123125783e-16,
+      "solver_successful": true
+    }
+  },
+  "reference": {
+    "decay": "exp(-2*viscosity*t)",
+    "kind": "qualification-reference",
+    "manufactured_solution": "(1+0.1*sin(t))*taylor-green-mode",
+    "reference_id": "8302cccaddaab67ba23369a3bfbd9e1d5bfe1432dd484a0644d3252d6a532eb7",
+    "source": "native-analytic"
+  },
+  "release_ready": false,
+  "route": "periodic-spectral",
+  "status": "passed",
+  "support_tuple": {
+    "attributes": {
+      "forcing": "compiler-modal",
+      "route": "periodic-spectral",
+      "spatial_method": "periodic-incompressible-rotational-diagonal",
+      "statistics": "periodic-modal",
+      "temporal_method": "etdrk4"
+    },
+    "capability": "incompressible-flow",
+    "kind": "capability-support-tuple",
+    "support_tuple_id": "57231b8b8dcdce56c627bfa63105302cbeab2b501d1820fddd3e1fc42fe7bdec"
+  }
+}

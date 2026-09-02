@@ -832,6 +832,7 @@ spde = phx.solver.semidiscretize_reaction_diffusion(
         coefficients,
         lambda values: values - values**3,
     ),
+    reaction_id=f"allen-cahn-cubic-modal-reaction-v1:{method.prepared_id}",
     noise_basis=noise,
     interpretation="ito",
 )
@@ -854,9 +855,10 @@ ensemble = phx.solver.solve_diffrax_ensemble(
 `semidiscretize_reaction_diffusion` supplies
 \(\kappa\Delta_hU+R(t,U,a)\) and optionally scales a basis with a scalar,
 state-shaped, or full diffusion amplitude. Tensor-spectral states and callbacks are
-modal; the example projects its initial values and routes its physical cubic through
-the prepared dealiasing schedule. Initial state, drift, diffusion, basis, and noise
-shapes are checked eagerly.
+modal; the example projects its initial values, routes its physical cubic through
+the prepared dealiasing schedule, and gives that callable a stable semantic
+`reaction_id`. Initial state, drift, diffusion, basis, and noise shapes are checked
+eagerly.
 
 Both Itô and Stratonovich interpretations pass into `DifferentialProblem`.
 Phydrax validates interpretation and Lévy-area compatibility before calling Diffrax.
@@ -876,8 +878,10 @@ discretization-error uncertainty.
 
 ### Semilinear exponential integration
 
-`semidiscretize_semilinear_spde` preserves an explicit linear/nonlinear split.
-`solve_semilinear_spde` specializes to fixed-step exponential Euler with exact
+`semidiscretize_semilinear_spde` preserves an explicit linear/nonlinear split and
+requires a stable `nonlinear_id` for a callable nonlinear drift. It derives the
+canonical zero-drift identity when that drift is omitted. `solve_semilinear_spde`
+specializes to fixed-step exponential Euler with exact
 compatible modal stochastic convolution for additive finite-rank Itô noise.
 `phydrax.linalg.MatrixFunctionPolicy` selects exact spectral, Chebyshev, Lanczos,
 or Arnoldi actions without requiring a global operator matrix. Unsupported

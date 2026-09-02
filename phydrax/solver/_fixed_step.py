@@ -98,7 +98,7 @@ def _take_saved_states(states: PyTree[Array], indices: Array, /) -> PyTree[Array
 
 
 class AcceptedStepTransformResult(StrictModule):
-    transformed_state: Array
+    transformed_state: PyTree[Array]
     applied: Array
     successful: Array
     correction_norm: Array
@@ -112,8 +112,8 @@ class AbstractAcceptedStepTransform(StrictModule, NonTrainableState):
         self,
         step_index: Array,
         time: Array,
-        previous_state: Array,
-        candidate_state: Array,
+        previous_state: PyTree[Array],
+        candidate_state: PyTree[Array],
         args: Any,
         /,
     ) -> AcceptedStepTransformResult:
@@ -127,8 +127,8 @@ class IdentityAcceptedStepTransform(AbstractAcceptedStepTransform):
         self,
         step_index: Array,
         time: Array,
-        previous_state: Array,
-        candidate_state: Array,
+        previous_state: PyTree[Array],
+        candidate_state: PyTree[Array],
         args: Any,
         /,
     ) -> AcceptedStepTransformResult:
@@ -137,7 +137,7 @@ class IdentityAcceptedStepTransform(AbstractAcceptedStepTransform):
             candidate_state,
             jnp.asarray(False),
             jnp.asarray(True),
-            jnp.zeros((), dtype=candidate_state.dtype),
+            jnp.zeros((), dtype=_state_dtype(candidate_state)),
         )
 
 
@@ -161,18 +161,24 @@ class CompositeAcceptedStepTransform(AbstractAcceptedStepTransform):
         self,
         step_index: Array,
         time: Array,
-        previous_state: Array,
-        candidate_state: Array,
+        previous_state: PyTree[Array],
+        candidate_state: PyTree[Array],
         args: Any,
         /,
     ) -> AcceptedStepTransformResult:
         state = candidate_state
         applied = jnp.asarray(False)
         successful = jnp.asarray(True)
-        correction = jnp.zeros((), dtype=candidate_state.dtype)
+        correction = jnp.zeros((), dtype=_state_dtype(candidate_state))
         for transform in self.transforms:
             result = transform.apply(step_index, time, previous_state, state, args)
-            state = jnp.where(result.successful, result.transformed_state, state)
+            _validate_result_state("transformed_state", result.transformed_state, state)
+            _validate_scalar_result("transform applied", result.applied, boolean=True)
+            _validate_scalar_result(
+                "transform successful", result.successful, boolean=True
+            )
+            _validate_scalar_result("transform correction", result.correction_norm)
+            state = tree_where(result.successful, result.transformed_state, state)
             applied = applied | result.applied
             successful = successful & result.successful
             correction = correction + result.correction_norm
@@ -268,8 +274,8 @@ class RobustRetryPolicy(StrictModule, NonTrainableState):
 
 
 class RetriedFixedStepResult(StrictModule):
-    candidate_state: Array
-    accepted_state: Array
+    candidate_state: PyTree[Array]
+    accepted_state: PyTree[Array]
     successful: Array
     accepted_step_size: Array
     retry_count: Array
@@ -279,6 +285,18 @@ class RetriedFixedStepResult(StrictModule):
 
 class AbstractFixedStepMethod(StrictModule, NonTrainableState):
     method_id: AbstractAttribute[str]
+
+    @property
+    def required_step_size(self) -> float | None:
+        """Return an exact method step size, or ``None`` for an unrestricted method."""
+
+        return None
+
+    @property
+    def allows_step_reduction(self) -> bool:
+        """Whether retry and event alignment may reduce the proposed step."""
+
+        return True
 
     @abc.abstractmethod
     def step(
@@ -564,7 +582,7 @@ def retry_fixed_step(
     policy: RobustRetryPolicy,
     step_index: Array,
     time: Array,
-    state: Array,
+    state: PyTree[Array],
     step_size: Array,
     args: Any = None,
     /,
@@ -573,8 +591,12 @@ def retry_fixed_step(
         policy, RobustRetryPolicy
     ):
         raise TypeError("retry_fixed_step requires method and retry policy.")
-    initial = jnp.asarray(state)
+    if policy.maximum_retries and not method.allows_step_reduction:
+        raise ValueError("The fixed-step method does not permit retry step reduction.")
+    initial = _canonical_structured_state(state)
     current_step = jnp.asarray(step_size)
+    if current_step.shape != () or not jnp.issubdtype(current_step.dtype, jnp.inexact):
+        raise TypeError("retry_fixed_step step_size must be an inexact scalar array.")
     successful = jnp.asarray(False)
     selected_state = initial
     selected_candidate = initial
@@ -590,18 +612,23 @@ def retry_fixed_step(
             current_step,
             args,
         )
+        if not isinstance(result, FixedStepResult):
+            raise TypeError("Fixed-step methods must return FixedStepResult.")
+        _validate_result_state("candidate_state", result.candidate_state, initial)
+        _validate_result_state("accepted_state", result.accepted_state, initial)
+        _validate_scalar_result("successful", result.successful, boolean=True)
         take = (~jax.lax.stop_gradient(successful)) & jax.lax.stop_gradient(
             result.successful
         )
-        selected_candidate = jnp.where(take, result.candidate_state, selected_candidate)
-        selected_state = jnp.where(take, result.accepted_state, selected_state)
+        selected_candidate = tree_where(take, result.candidate_state, selected_candidate)
+        selected_state = tree_where(take, result.accepted_state, selected_state)
         accepted_step = jnp.where(take, current_step, accepted_step)
         retry_count = jnp.where(take, jnp.asarray(attempt, dtype=jnp.int32), retry_count)
         successful = successful | result.successful
         current_step = current_step * policy.reduction_factor
     return RetriedFixedStepResult(
         selected_candidate,
-        jnp.where(successful, selected_state, initial),
+        tree_where(successful, selected_state, initial),
         successful,
         accepted_step,
         retry_count,

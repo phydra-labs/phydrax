@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, ArraySpace, TransformDiagonalRepresentation
 
@@ -21,7 +22,9 @@ class SemilinearDrift(StrictModule):
 
     The contract preserves ``A u + F(t, u, args)`` after spatial discretization.
     Optional spectral data are exact finite-dimensional data, never a request to
-    materialize a global operator matrix.
+    materialize a global operator matrix. ``operator_id`` and ``nonlinear_id``
+    explicitly bind the two dynamics terms; ``drift_id`` is their canonical
+    transitive identity.
     """
 
     linear_operator: AbstractLinearOperator | Callable[[Array], ArrayLike]
@@ -31,6 +34,8 @@ class SemilinearDrift(StrictModule):
     compatible_noise_eigenvalues: Array | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
+    nonlinear_id: str = eqx.field(static=True)
+    drift_id: str = eqx.field(static=True)
     mass_self_adjoint: bool = eqx.field(static=True)
     spectral_bounds: tuple[float, float] | None = eqx.field(static=True)
     compatible_noise_basis_id: str | None = eqx.field(static=True)
@@ -43,6 +48,7 @@ class SemilinearDrift(StrictModule):
         *,
         state_shape: Sequence[int],
         operator_id: str,
+        nonlinear_id: str,
         mass_self_adjoint: bool = False,
         mass_weights: ArrayLike | None = None,
         spectral_bounds: tuple[float, float] | None = None,
@@ -60,8 +66,9 @@ class SemilinearDrift(StrictModule):
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("state_shape must contain positive dimensions.")
         identifier = str(operator_id)
-        if not identifier:
-            raise ValueError("operator_id must be non-empty.")
+        nonlinear_identifier = str(nonlinear_id)
+        if not identifier or not nonlinear_identifier:
+            raise ValueError("operator_id and nonlinear_id must be non-empty.")
         if isinstance(linear_operator, AbstractLinearOperator):
             if (
                 linear_operator.batch_shape
@@ -141,6 +148,15 @@ class SemilinearDrift(StrictModule):
         self.compatible_noise_eigenvalues = noise_values
         self.state_shape = shape
         self.operator_id = identifier
+        self.nonlinear_id = nonlinear_identifier
+        self.drift_id = canonical_fingerprint(
+            {
+                "kind": "semilinear-drift-v1",
+                "linear": identifier,
+                "nonlinear": nonlinear_identifier,
+                "state_shape": list(shape),
+            }
+        )
         self.mass_self_adjoint = bool(mass_self_adjoint)
         self.spectral_bounds = bounds
         self.compatible_noise_basis_id = compatible_noise_basis_id

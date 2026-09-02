@@ -292,6 +292,20 @@
 
 ---
 
+MAC pressure route eligibility belongs to the prepared solver, not to the grid alone.
+The transform-diagonal route requires a uniform constant-coefficient
+periodic/Neumann tensor. The hybrid route additionally requires rank three, an
+all-Neumann pressure closure, one explicitly nonperiodic physical line, and two
+uniform transform-compatible transverse axes. It transforms the transverse axes in
+axis order, solves the nonuniform Neumann tridiagonal lines, and synthesizes in reverse
+order. Preparation checks the represented physical action and resource budget.
+
+The hybrid all-zero transverse mode uses volume compatibility and a zero-mean volume
+gauge; pinning one physical-line row is only a factorization device. Supplying a
+runtime inverse-momentum diagonal forces iterative projection. Variable-density,
+mixed/open-closure, distributed, and sharded-line execution are not hybrid routes.
+MAC also has no fixed-bulk-flux controller.
+
 ::: phydrax.discretization.MACOperatorPlan
 
 ---
@@ -337,6 +351,39 @@
 ---
 
 ::: phydrax.discretization.MACMomentumDiagnostics
+
+---
+
+### MAC plane/wall statistics and production
+
+`MACPlaneWallStatisticsPlan` supports one nonperiodic wall axis and periodic
+homogeneous axes in two or three dimensions. It centers face components to cells for
+volume-weighted plane moments, forms face-measure-weighted normal means from native
+boundary faces, and reports separate signed shears from a one-sided
+zero-wall-velocity derivative. It does not inspect boundary plans or subtract moving
+tangential wall velocity. It is
+instantaneous; temporal windows and block uncertainty are owned by
+`StructuredMACProductionPlan`.
+`MACConstantPressureGradientForcing` is fixed compiler-bound acceleration, not
+fixed-flux feedback.
+
+::: phydrax.applications.incompressible_flow.MACPlaneWallStatisticsPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.MACPlaneWallStatistics
+
+---
+
+::: phydrax.applications.incompressible_flow.MACConstantPressureGradientForcing
+
+---
+
+::: phydrax.applications.incompressible_flow.StructuredMACProductionPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedStructuredMACProduction
 
 ---
 

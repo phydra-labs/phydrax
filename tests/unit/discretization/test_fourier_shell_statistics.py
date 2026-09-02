@@ -21,6 +21,12 @@ def test_single_cosine_has_analytic_power_and_full_mode_count():
     np.testing.assert_allclose(result.shell_values[1], 0.25, rtol=1e-12)
     np.testing.assert_allclose(result.weighted_mode_count[1], 2.0)
     assert int(jnp.sum(result.weighted_mode_count)) == count - 1
+    np.testing.assert_allclose(
+        jnp.sum(result.shell_values * result.weighted_mode_count),
+        result.total_weighted_value,
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_rfft_parseval_cross_power_and_phase_discrepancy():

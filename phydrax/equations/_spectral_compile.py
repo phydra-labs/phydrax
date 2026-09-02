@@ -1332,22 +1332,38 @@ def compile_spectral_pde(
                 operator_id=operator_id,
             )
             resolved = "spectral-semilinear-diagonal"
+        nonlinear_id = canonical_fingerprint(
+            {
+                "kind": "spectral-nonlinear-drift-v1",
+                "problem": problem.canonical_hash,
+                "discretization": discretization.prepared_id,
+                "method": prepared_method.prepared_id,
+                "splitting_request": splitting,
+                "layout": layout.layout_id,
+                "splitting": resolved,
+                "parameters": parameter_fingerprints,
+                "operator": operator_id,
+            }
+        )
         semilinear = SemilinearDrift(
             operator,
             _SpectralRemainder(evaluator, operator),
             state_shape=layout.state_shape,
             operator_id=operator_id,
+            nonlinear_id=nonlinear_id,
         )
         drift = semilinear
     compilation_id = canonical_fingerprint(
         {
-            "kind": "spectral-pde-compiler-v1",
+            "kind": "spectral-pde-compiler-v2",
             "problem": problem.canonical_hash,
             "discretization": discretization.prepared_id,
             "method": prepared_method.prepared_id,
+            "splitting_request": splitting,
             "layout": layout.layout_id,
             "splitting": resolved,
             "parameters": parameter_fingerprints,
+            "semilinear_drift": (None if semilinear is None else semilinear.drift_id),
         }
     )
     return CompiledSpectralDynamics(

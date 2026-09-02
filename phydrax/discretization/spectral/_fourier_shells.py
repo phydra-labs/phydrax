@@ -88,8 +88,139 @@ class FourierShellStatisticResult(StrictModule):
     correction_id: str = eqx.field(static=True)
 
 
+class _FourierShellBinGeometry(StrictModule, NonTrainableState):
+    """Shared prepared shell bins with explicit per-mode reduction weights."""
+
+    source_shape: tuple[int, ...] = eqx.field(static=True)
+    bin_count: int = eqx.field(static=True)
+    bin_edges: Array
+    bin_widths: Array
+    wavenumber_magnitude: Array
+    shell_indices: Array
+    mode_weights: Array
+    weighted_mode_count: Array
+    stored_mode_count: Array
+    representative_wavenumbers: Array
+    valid_shells: Array
+    valid_modes: Array
+    excluded_mode_count: int = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        wavenumber_magnitude: ArrayLike,
+        bin_edges: ArrayLike,
+        /,
+        *,
+        mode_mask: ArrayLike | None = None,
+        mode_weights: ArrayLike | None = None,
+        final_edge_policy: FinalEdgePolicy = "include",
+        source_id: str,
+    ):
+        magnitude = np.asarray(wavenumber_magnitude, dtype=float)
+        edges = np.asarray(bin_edges, dtype=float).reshape((-1,))
+        mask = (
+            np.ones(magnitude.shape, dtype=bool)
+            if mode_mask is None
+            else np.asarray(mode_mask, dtype=bool)
+        )
+        weights = (
+            np.ones(magnitude.shape, dtype=float)
+            if mode_weights is None
+            else np.asarray(mode_weights, dtype=float)
+        )
+        source = str(source_id).strip()
+        if (
+            magnitude.ndim < 1
+            or mask.shape != magnitude.shape
+            or weights.shape != magnitude.shape
+            or np.any(~np.isfinite(magnitude))
+            or np.any(magnitude < 0.0)
+            or np.any(~np.isfinite(weights))
+            or np.any(weights < 0.0)
+            or edges.size < 2
+            or np.any(~np.isfinite(edges))
+            or np.any(np.diff(edges) <= 0.0)
+            or final_edge_policy not in ("include", "exclude")
+            or not source
+        ):
+            raise ValueError("Fourier shell-bin geometry is invalid.")
+        indices = np.searchsorted(edges, magnitude, side="right") - 1
+        if final_edge_policy == "include":
+            indices[np.isclose(magnitude, edges[-1], rtol=1.0e-12, atol=1.0e-14)] = (
+                edges.size - 2
+            )
+        valid = mask & (indices >= 0) & (indices < edges.size - 1)
+        safe_indices = np.where(valid, indices, 0)
+        effective_weights = np.where(valid, weights, 0.0)
+        weighted_count = np.bincount(
+            safe_indices.reshape((-1,)),
+            weights=effective_weights.reshape((-1,)),
+            minlength=edges.size - 1,
+        )
+        stored_count = np.bincount(
+            safe_indices.reshape((-1,)),
+            weights=valid.reshape((-1,)).astype(float),
+            minlength=edges.size - 1,
+        )
+        weighted_k = np.bincount(
+            safe_indices.reshape((-1,)),
+            weights=(effective_weights * magnitude).reshape((-1,)),
+            minlength=edges.size - 1,
+        )
+        representative = np.divide(
+            weighted_k,
+            weighted_count,
+            out=0.5 * (edges[:-1] + edges[1:]),
+            where=weighted_count > 0.0,
+        )
+        self.source_shape = magnitude.shape
+        self.bin_count = edges.size - 1
+        self.bin_edges = jnp.asarray(edges)
+        self.bin_widths = jnp.asarray(np.diff(edges))
+        self.wavenumber_magnitude = jnp.asarray(magnitude)
+        self.shell_indices = jnp.asarray(safe_indices, dtype=jnp.int32)
+        self.mode_weights = jnp.asarray(effective_weights)
+        self.weighted_mode_count = jnp.asarray(weighted_count)
+        self.stored_mode_count = jnp.asarray(stored_count)
+        self.representative_wavenumbers = jnp.asarray(representative)
+        self.valid_shells = jnp.asarray(weighted_count > 0.0)
+        self.valid_modes = jnp.asarray(valid)
+        self.excluded_mode_count = int(np.size(valid) - np.count_nonzero(valid))
+        self.geometry_id = canonical_fingerprint(
+            {
+                "kind": "fourier-shell-bin-geometry",
+                "source_id": source,
+                "wavenumber_magnitude": array_tree_fingerprint(magnitude),
+                "bin_edges": edges.tolist(),
+                "mode_mask": array_tree_fingerprint(valid),
+                "mode_weights": array_tree_fingerprint(effective_weights),
+                "final_edge_policy": final_edge_policy,
+            }
+        )
+
+    def reduce_integral(self, mode_values: ArrayLike, /) -> Array:
+        values = jnp.asarray(mode_values)
+        if values.shape != self.source_shape:
+            raise ValueError("Mode statistic does not match shell-bin geometry.")
+        weighted = values * self.mode_weights.astype(values.real.dtype)
+        return (
+            jnp.zeros((self.bin_count,), dtype=values.dtype)
+            .at[self.shell_indices.reshape((-1,))]
+            .add(weighted.reshape((-1,)))
+        )
+
+    def total_integral(self, mode_values: ArrayLike, /) -> Array:
+        values = jnp.asarray(mode_values)
+        if values.shape != self.source_shape:
+            raise ValueError("Mode statistic does not match shell-bin geometry.")
+        return jnp.sum(values * self.mode_weights.astype(values.real.dtype))
+
+
 class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
     """Prepared isotropic shell reduction for real periodic cell fields."""
+
+    geometry: _FourierShellBinGeometry
 
     source_shape: tuple[int, ...] = eqx.field(static=True)
     transformed_shape: tuple[int, ...] = eqx.field(static=True)
@@ -155,14 +286,9 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
         grids = np.meshgrid(*frequencies, indexing="ij")
         magnitude = np.sqrt(sum(component**2 for component in grids))
         transformed_shape = magnitude.shape
-        indices = np.searchsorted(edges, magnitude, side="right") - 1
-        if final_edge_policy == "include":
-            indices[np.isclose(magnitude, edges[-1], rtol=1.0e-12, atol=1.0e-14)] = (
-                edges.size - 2
-            )
-        valid = (indices >= 0) & (indices < edges.size - 1)
+        mode_mask = np.ones(transformed_shape, dtype=bool)
         if dc_policy == "exclude":
-            valid &= magnitude > 0.0
+            mode_mask &= magnitude > 0.0
         last_indices = np.arange(transformed_shape[-1])
         multiplicity_last = np.full(last_indices.shape, 2.0)
         multiplicity_last[0] = 1.0
@@ -170,34 +296,19 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
             if nyquist_policy == "include":
                 multiplicity_last[-1] = 1.0
             else:
-                valid[..., -1] = False
+                mode_mask[..., -1] = False
                 multiplicity_last[-1] = 0.0
         multiplicity = np.broadcast_to(
             multiplicity_last.reshape((1,) * (len(shape) - 1) + (-1,)),
             transformed_shape,
         ).copy()
-        multiplicity[~valid] = 0.0
-        safe_indices = np.where(valid, indices, 0).reshape((-1,))
-        weighted_count = np.bincount(
-            safe_indices,
-            weights=multiplicity.reshape((-1,)),
-            minlength=edges.size - 1,
-        )
-        stored_count = np.bincount(
-            safe_indices,
-            weights=valid.reshape((-1,)).astype(float),
-            minlength=edges.size - 1,
-        )
-        weighted_k = np.bincount(
-            safe_indices,
-            weights=(multiplicity * magnitude).reshape((-1,)),
-            minlength=edges.size - 1,
-        )
-        representative = np.divide(
-            weighted_k,
-            weighted_count,
-            out=0.5 * (edges[:-1] + edges[1:]),
-            where=weighted_count > 0.0,
+        geometry = _FourierShellBinGeometry(
+            magnitude,
+            edges,
+            mode_mask=mode_mask,
+            mode_weights=multiplicity,
+            final_edge_policy=final_edge_policy,
+            source_id=f"rfft:{source}",
         )
         volume = float(np.prod(lengths))
         cell_volume = volume / int(np.prod(shape))
@@ -211,17 +322,16 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
         self.source_id = source
         self.cell_volume = cell_volume
         self.volume = volume
-        self.bin_edges = jnp.asarray(edges)
-        self.wavenumber_magnitude = jnp.asarray(magnitude)
-        self.shell_indices = jnp.asarray(
-            safe_indices.reshape(transformed_shape), dtype=jnp.int32
-        )
-        self.hermitian_multiplicity = jnp.asarray(multiplicity)
-        self.weighted_mode_count = jnp.asarray(weighted_count)
-        self.stored_mode_count = jnp.asarray(stored_count)
-        self.representative_wavenumbers = jnp.asarray(representative)
-        self.valid_shells = jnp.asarray(weighted_count > 0.0)
-        self.excluded_mode_count = int(np.size(valid) - np.count_nonzero(valid))
+        self.geometry = geometry
+        self.bin_edges = geometry.bin_edges
+        self.wavenumber_magnitude = geometry.wavenumber_magnitude
+        self.shell_indices = geometry.shell_indices
+        self.hermitian_multiplicity = geometry.mode_weights
+        self.weighted_mode_count = geometry.weighted_mode_count
+        self.stored_mode_count = geometry.stored_mode_count
+        self.representative_wavenumbers = geometry.representative_wavenumbers
+        self.valid_shells = geometry.valid_shells
+        self.excluded_mode_count = geometry.excluded_mode_count
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "periodic-fourier-shell-plan",
@@ -267,18 +377,9 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Mode-transfer correction does not match transform shape.")
         corrected = mode_values * (1.0 if correction is None else correction.multiplier)
-        weights = self.hermitian_multiplicity.astype(corrected.real.dtype)
-        flat_index = self.shell_indices.reshape((-1,))
-        real_sum = (
-            jnp.zeros((self.bin_count,), dtype=corrected.real.dtype)
-            .at[flat_index]
-            .add((weights * corrected.real).reshape((-1,)))
-        )
-        imaginary_sum = (
-            jnp.zeros((self.bin_count,), dtype=corrected.real.dtype)
-            .at[flat_index]
-            .add((weights * corrected.imag).reshape((-1,)))
-        )
+        shell_integrals = self.geometry.reduce_integral(corrected)
+        real_sum = jnp.real(shell_integrals)
+        imaginary_sum = jnp.imag(shell_integrals)
         safe_count = jnp.where(
             self.weighted_mode_count > 0.0, self.weighted_mode_count, 1.0
         )
@@ -305,7 +406,7 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
             self.stored_mode_count,
             self.valid_shells,
             jnp.max(jnp.abs(imaginary)),
-            jnp.sum(weights * corrected.real),
+            jnp.real(self.geometry.total_integral(corrected)),
             jnp.asarray(self.excluded_mode_count, dtype=jnp.int32),
             finite,
             successful,
