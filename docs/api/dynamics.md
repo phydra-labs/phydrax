@@ -175,6 +175,15 @@ deterministic reference-branch, and residual objectives share one authored
 recurrent step. Full, prefix, chunked, rematerialized, and resumed execution are
 required to agree; no JAXPR transformation or inferred carry is involved.
 
+`gradient_accumulation=K` evaluates `K` independently keyed window batches at
+fixed model, optimizer, target, and rollout-schedule state. Each objective emits
+an evidence-weighted numerator and support; numerator gradients and supports are
+summed and normalized once before the Optax update. This is exactly equivalent
+to the pooled evidence-weighted objective for unequal batches and final epoch
+tails. A zero-support group is consumed without advancing optimizer, target,
+validation, callback, history, or checkpoint state. `steps` counts accepted
+optimizer updates, while `TrainingProgress.microstep` counts consumed batches.
+
 The first training contract accepts real `float32` or `float64` pointwise
 models and Euclidean state layouts. Variable steps, stochastic transitions,
 non-Euclidean discrepancies, and low-precision parameters are rejected rather

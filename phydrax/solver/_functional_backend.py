@@ -69,6 +69,7 @@ class _GradientBackend:
             tensorboard_flush_every=config.tensorboard_flush_every,
             profile_adaptive=config.profile_adaptive,
             train_term_sample_size=config.train_term_sample_size,
+            gradient_accumulation=config.gradient_accumulation,
             precision=config.precision,
             training=config.training,
             resume=config.resume,
@@ -229,6 +230,28 @@ def solve(
         raise ValueError(
             "Functional training plans and resume are unsupported by Evosax backends."
         )
+    if config.gradient_accumulation > 1:
+        if not isinstance(backend, _GradientBackend):
+            raise ValueError(
+                "gradient_accumulation > 1 is supported only by standard Optax."
+            )
+        training = config.training
+        if training is not None and (
+            training.stateful or training.causal or training.diagnostics is not None
+        ):
+            raise ValueError(
+                "gradient_accumulation > 1 does not support stateful, causal, "
+                "term-balancing, or diagnostic functional training policies."
+            )
+        if (
+            config.keep_best
+            and config.evaluation_parameters is not None
+            and (training is None or training.selection is None)
+        ):
+            raise ValueError(
+                "Accumulated evaluation-parameter selection requires a fixed "
+                "FunctionalSelectionPolicy or keep_best=False."
+            )
     return backend.run(solver, config)
 
 

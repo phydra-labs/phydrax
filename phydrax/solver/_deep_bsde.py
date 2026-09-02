@@ -44,6 +44,7 @@ def solve_deep_bsde(
     initial_value_name: str,
     control_name: str,
     num_iter: int,
+    gradient_accumulation: int = 1,
     optim: Any = None,
     terminal_weight: ArrayLike = 1.0,
     sampling_mode: DeepBSDESamplingMode = "resample",
@@ -87,6 +88,7 @@ def solve_deep_bsde(
     )
     trained = temporary.solve(
         num_iter=steps,
+        gradient_accumulation=gradient_accumulation,
         optim=optim,
         seed=int(seed),
         jit=jit,

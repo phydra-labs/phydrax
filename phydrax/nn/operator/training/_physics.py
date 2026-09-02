@@ -26,7 +26,12 @@ from ..data import (
     OperatorFieldBatch,
     OperatorPrediction,
 )
-from ._losses import AbstractOperatorLossTerm, OperatorLossContext
+from ._losses import (
+    _weighted_case_reduction,
+    AbstractOperatorLossTerm,
+    OperatorAccumulationKind,
+    OperatorLossContext,
+)
 
 
 OperatorReduction = Literal["none", "mean", "sum"]
@@ -616,14 +621,20 @@ class WeakOperatorLoss(AbstractOperatorLossTerm):
             step=step,
             training=training,
         )
-        value = operator_weak_form_loss(
+        case_values = operator_weak_form_loss(
             residual,
             tests,
             selected_batch.query(query_name),
             case_shape=selected_batch.case_shape,
             normalize_tests=self.normalize_tests,
+            reduction="none",
         )
+        value = _weighted_case_reduction(case_values, context, "mean")
         return jnp.asarray(self.weight, dtype=jnp.asarray(value).dtype) * value
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean"
 
     @property
     def fingerprint(self) -> str:
