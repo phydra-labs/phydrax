@@ -15,7 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ._core import MatrixProductOperator
 from ._environments import mpo_hermiticity_residual, mpo_norm
-from ._mpo import add_mpo, product_mpo, scale_mpo
+from ._mpo import add_mpo, scale_mpo
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -75,45 +75,55 @@ class FiniteMPOBuildResult(StrictModule):
     evidence: FiniteMPOBuildEvidence
 
 
-def _validated_dimension(site_count: int, local_dimension: int, /) -> tuple[int, int]:
-    sites = int(site_count)
-    dimension = int(local_dimension)
-    if sites < 1 or dimension < 1:
-        raise ValueError("site_count and local_dimension must be positive.")
-    return sites, dimension
+def _validated_dimensions(local_dimensions: Sequence[int], /) -> tuple[int, ...]:
+    dimensions = tuple(int(dimension) for dimension in local_dimensions)
+    if not dimensions or any(dimension < 1 for dimension in dimensions):
+        raise ValueError("local_dimensions must contain positive entries.")
+    return dimensions
 
 
 def build_local_term_mpo(
-    site_count: int,
-    local_dimension: int,
+    local_dimensions: Sequence[int],
     terms: Sequence[FiniteLocalTerm],
     /,
     *,
     hermiticity_tolerance: float = 1e-10,
     precision: TensorNetworkPrecisionPolicy | None = None,
 ) -> FiniteMPOBuildResult:
-    """Build the exact sum of bounded contiguous terms as an open-boundary MPO."""
-    sites, dimension = _validated_dimension(site_count, local_dimension)
+    """Build the exact sum of bounded contiguous terms on a heterogeneous chain."""
+    dimensions = _validated_dimensions(local_dimensions)
+    sites = len(dimensions)
     tolerance = float(hermiticity_tolerance)
     if not isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("hermiticity_tolerance must be finite and nonnegative.")
     values = tuple(terms)
     if not values or any(not isinstance(term, FiniteLocalTerm) for term in values):
         raise ValueError("terms must contain at least one FiniteLocalTerm.")
-    identity = jnp.eye(
-        dimension, dtype=jnp.result_type(*(term.operators[0] for term in values))
+    dtype = jnp.result_type(
+        *(operator for term in values for operator in term.operators),
+        *(term.coefficient for term in values),
     )
-    summands = []
+    identities = tuple(jnp.eye(dimension, dtype=dtype) for dimension in dimensions)
+    summands: list[MatrixProductOperator] = []
     for term in values:
         if term.start + len(term.operators) > sites:
             raise ValueError("A local term extends beyond the finite chain.")
-        if any(operator.shape != (dimension, dimension) for operator in term.operators):
-            raise ValueError("Local-term dimensions must match local_dimension.")
-        local = [identity for _ in range(sites)]
         for offset, operator in enumerate(term.operators):
-            local[term.start + offset] = operator
-        local[term.start] = term.coefficient * local[term.start]
-        summands.append(product_mpo(jnp.stack(local), precision=precision))
+            dimension = dimensions[term.start + offset]
+            if operator.shape != (dimension, dimension):
+                raise ValueError(
+                    "Local-term dimensions must match their heterogeneous sites."
+                )
+        local = list(identities)
+        for offset, operator in enumerate(term.operators):
+            local[term.start + offset] = operator.astype(dtype)
+        local[term.start] = term.coefficient.astype(dtype) * local[term.start]
+        summands.append(
+            MatrixProductOperator(
+                tuple(matrix[None, :, :, None] for matrix in local),
+                precision=precision,
+            )
+        )
     operator = summands[0]
     for summand in summands[1:]:
         operator = add_mpo(operator, summand)
@@ -128,8 +138,7 @@ def build_local_term_mpo(
         canonical_fingerprint(
             {
                 "kind": "finite-local-term-mpo",
-                "sites": sites,
-                "dimension": dimension,
+                "local_dimensions": list(dimensions),
                 "terms": tuple(term.term_id for term in values),
             }
         ),
@@ -138,8 +147,7 @@ def build_local_term_mpo(
 
 
 def build_string_mpo(
-    site_count: int,
-    local_dimension: int,
+    local_dimensions: Sequence[int],
     start: int,
     operators: Sequence[ArrayLike],
     /,
@@ -148,10 +156,9 @@ def build_string_mpo(
     hermiticity_tolerance: float = 1e-10,
     precision: TensorNetworkPrecisionPolicy | None = None,
 ) -> FiniteMPOBuildResult:
-    """Build one bounded operator string, padded by identities."""
+    """Build one bounded operator string, padded by heterogeneous identities."""
     return build_local_term_mpo(
-        site_count,
-        local_dimension,
+        local_dimensions,
         (FiniteLocalTerm(start, operators, coefficient=coefficient),),
         hermiticity_tolerance=hermiticity_tolerance,
         precision=precision,

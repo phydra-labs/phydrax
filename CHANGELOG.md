@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added qualified circuit-QED mode reduction and device assembly, one-to-one
+  dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
+  exact-state local product formulas with reversible gradients, and exact
+  heterogeneous MPO lowering without dense-Hamiltonian fallbacks.
 - Added a native real spectral-neuron layer with explicit ordered-eigenvalue
   selection, exact coordinate monotonicity constraints, fresh-initialization
   eigengap evidence, and invariant cluster-aware inspection.

@@ -221,6 +221,15 @@ from ._subspaces import (
     SpectralSubspaceResourcePolicy,
     SpectralSubspaceStatus,
 )
+from ._tracking import (
+    HermitianEigenspaceTrackingDiagnostics,
+    HermitianEigenspaceTrackingPlan,
+    HermitianEigenspaceTrackingPolicy,
+    HermitianEigenspaceTrackingResult,
+    HermitianEigenspaceTrackingStatus,
+    plan_hermitian_eigenspace_tracking,
+    track_hermitian_eigenspaces,
+)
 
 
 __all__ = [
@@ -265,6 +274,13 @@ __all__ = [
     "GeneralEigenMatchStatus",
     "GeneralEigenResolutionPolicy",
     "GeneralEigenResolutionReport",
+    "HermitianEigenspaceTrackingDiagnostics",
+    "HermitianEigenspaceTrackingPlan",
+    "HermitianEigenspaceTrackingPolicy",
+    "HermitianEigenspaceTrackingResult",
+    "HermitianEigenspaceTrackingStatus",
+    "plan_hermitian_eigenspace_tracking",
+    "track_hermitian_eigenspaces",
     "plan_polynomial_eigensolve",
     "polynomial_eigensolve",
     "PolynomialEigenproblem",

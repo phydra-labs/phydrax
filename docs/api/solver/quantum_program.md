@@ -117,7 +117,7 @@ state, physicality, resource, routing, and transformation contracts.
 
 ::: phydrax.solver.estimate_quantum_experiment_gradient
 
-## Compilation and controls
+## Compilation
 
 ::: phydrax.solver.HardwareTopology
 
@@ -125,9 +125,19 @@ state, physicality, resource, routing, and transformation contracts.
 
 ::: phydrax.solver.compile_quantum_program
 
-::: phydrax.solver.FixedGridQuantumControl
+## Local Hamiltonian controls
 
-::: phydrax.solver.discretize_fixed_grid_control
+::: phydrax.solver.LocalHamiltonianTerm
+
+::: phydrax.solver.LocalHamiltonian
+
+::: phydrax.solver.FixedGridLocalHamiltonian
+
+::: phydrax.solver.LocalHamiltonianEvolutionPolicy
+
+::: phydrax.solver.prepare_local_hamiltonian_evolution
+
+::: phydrax.solver.solve_local_hamiltonian_evolution
 
 ## Tensor open systems and process learning
 
