@@ -1,0 +1,277 @@
+{
+  "artifact_id": "1f3507fd5cd60e26df1e478aaeddf1ad181ec0131a8d802334eeae9b95eaa90f",
+  "configuration": {
+    "configuration_id": "51ed836ca7598777f5b86825f7d3277b9b4970fe9a91b959f867ed8fb9958999",
+    "invariant_tolerance": 1e-08,
+    "kind": "qualification-configuration",
+    "minimum_spatial_order": 0.8,
+    "periodic_count": 8,
+    "pressure_solver_tolerance": 1e-10,
+    "route_tolerance": 1e-07,
+    "stretched_count": 6,
+    "timing_gate": false
+  },
+  "external_reference": null,
+  "failed_reasons": [],
+  "gates": [
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-08
+      },
+      "gate": "periodic-divergence",
+      "gate_outcome_id": "a0a3a698540330dd877c1ee73a5a295f360ed3a4e63d4ffca64211d9dd482fe6",
+      "kind": "qualification-gate-outcome",
+      "metric": "periodic-taylor-green.full.divergence_after_norm",
+      "observed": 2.220446049250313e-16,
+      "outcome": "passed",
+      "reason": "periodic-taylor-green.full.divergence_after_norm satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-07
+      },
+      "gate": "periodic-route-agreement",
+      "gate_outcome_id": "2605ecc29e9eade3bc75a4f0471847bb807331867fb117e07475478304171596",
+      "kind": "qualification-gate-outcome",
+      "metric": "periodic-taylor-green.route_velocity_maximum_difference",
+      "observed": 1.1102230246251565e-16,
+      "outcome": "passed",
+      "reason": "periodic-taylor-green.route_velocity_maximum_difference satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "route-convergence",
+      "gate_outcome_id": "e3dcd323c9cae5bdc077cf61fd85d4b0372da9e5921114e1215bf53d81ad8bd0",
+      "kind": "qualification-gate-outcome",
+      "metric": "full-hybrid-iterative-comparison.all_available_routes_converged",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "full-hybrid-iterative-comparison.all_available_routes_converged was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-07
+      },
+      "gate": "stretched-couette",
+      "gate_outcome_id": "20fdb87041435b9dd58151c61ebe933ab7319164802e8ff390f39fc345c3af77",
+      "kind": "qualification-gate-outcome",
+      "metric": "stretched-couette.laplacian_maximum_error",
+      "observed": 0.0,
+      "outcome": "passed",
+      "reason": "stretched-couette.laplacian_maximum_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "greater-than-or-equal",
+        "minimum": 0.8
+      },
+      "gate": "stretched-poiseuille-order",
+      "gate_outcome_id": "ebcac8774cfe138141c72193606d5898d618e24e4c6b0ae8e7e10c8c4592c4ab",
+      "kind": "qualification-gate-outcome",
+      "metric": "stretched-poiseuille.observed_weighted_l1_spatial_order",
+      "observed": 1.0696601798300416,
+      "outcome": "passed",
+      "reason": "stretched-poiseuille.observed_weighted_l1_spatial_order satisfied the configured lower bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "stretched-poiseuille-refinement",
+      "gate_outcome_id": "ceffa14b8c210e7256a9e6749f990f372dbc97fb03af2285a7777d2fa62c45a9",
+      "kind": "qualification-gate-outcome",
+      "metric": "stretched-poiseuille.fine_error_not_greater",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "stretched-poiseuille.fine_error_not_greater was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-07
+      },
+      "gate": "stretched-route-agreement",
+      "gate_outcome_id": "f745fda5469fad3c1594ec75e11ed514766edc8778cba945bbb7384228c2db44",
+      "kind": "qualification-gate-outcome",
+      "metric": "full-hybrid-iterative-comparison.hybrid_iterative_velocity_maximum_difference",
+      "observed": 2.1094237467877974e-15,
+      "outcome": "passed",
+      "reason": "full-hybrid-iterative-comparison.hybrid_iterative_velocity_maximum_difference satisfied the configured upper bound."
+    }
+  ],
+  "inconclusive_reasons": [],
+  "input": {
+    "couette_momentum_prepared_id": "6b63e30a37dbda2f0d5fe059be9c1bcba4bff184f5b043455cb4b4805f38a75c",
+    "couette_statistics_plan_id": "93e02326f60911cf83803e8494e4ce26908ddf773a7a0b2605632e454978a8a2",
+    "fine_poiseuille_momentum_prepared_id": "50d9b89cb1c73d57a92c2a8d33788531b7b8a99e06c6e0656cddb56e4c71131e",
+    "fine_stretched_grid_prepared_id": "f54f429692f320baffc6c3c7db6dc1e16440c18b223f23f20e6ae1a5b91020dd",
+    "fine_stretched_operator_prepared_id": "26560e70110149709932255541684d21478caeb1b2405e54261ceb2891731ca1",
+    "full_plan_id": "7caeeadb23f6d4b66f4e76c7fd2cb1171c9f24db80aabde951f49d6ab203c563",
+    "hybrid_plan_id": "ca9f2e0e2e87bc1a62794418b9e4216bc46b2a385ed41311b88cddf42f49f09d",
+    "input_id": "8cc6aaee23e0f589fb714ce06d3880e910a5ae891004e822fd693fdc7a83ce18",
+    "kind": "qualification-input",
+    "periodic_count": 8,
+    "periodic_grid_prepared_id": "d1047f1e924536d6623f148cff98f1b16f6131275600c14056e6c7ec6c095207",
+    "periodic_iterative_plan_id": "4c68157698f27b6796390b9e26d7dc23ef33bf28359a2a25af2d18ac901da0a6",
+    "periodic_operator_prepared_id": "564cd8a10e1dfbe22a2659d289ad0ed6997d50a704e7f37434fe42608e190d00",
+    "periodic_taylor_green": "u=sin(x)cos(y);v=-cos(x)sin(y)",
+    "poiseuille_momentum_prepared_id": "d22e9c5ae2bd832dd83a953e65e7e1c013a0d5802121846e54109097bfa18565",
+    "poiseuille_statistics_plan_id": "0c5e3385bd1881e962ff8f0e010f0e2b52b70f43af1b4ebe760cbd26062a9b6f",
+    "stretched_couette": "u=y",
+    "stretched_count": 6,
+    "stretched_grid_prepared_id": "57d63403e3ff6fce1389306139f18b3b884341e9c90983d40091938b66053179",
+    "stretched_iterative_plan_id": "4c75bbdf30beccd9238471ea23583c75e0cb6b6460c2557934c292187d4e022d",
+    "stretched_operator_prepared_id": "b0d233b1100d5633e837032bee0d952c77ec7fdbad1570c82751d551a4887811",
+    "stretched_poiseuille": "u=y*(1-y)"
+  },
+  "kind": "incompressible-flow-qualification-artifact",
+  "metrics": {
+    "full-hybrid-iterative-comparison": {
+      "full_geometry": "uniform-periodic",
+      "full_unavailable_on_stretched_reason": "stretched line is not full-transform eligible",
+      "hybrid": {
+        "constant_route": "hybrid",
+        "converged": true,
+        "divergence_after_norm": 2.403632848313464e-14,
+        "divergence_before_norm": 3.964473464263322,
+        "finite": true,
+        "gauge_defect": 1.3877787807814457e-17,
+        "hybrid_action_defect": 3.1545525928417643e-13,
+        "hybrid_resources": {
+          "factor_bytes": 6528,
+          "factor_count": 408,
+          "line_count": 36,
+          "line_size": 6,
+          "total_bytes": 27264,
+          "workspace_bytes": 20736
+        },
+        "iterations": null,
+        "matvec_count": null,
+        "maximum_resource_bytes": 536870912,
+        "operator_id": "f7d7fe4a522f8604714318543877a5156cd90e6752268cf3444fa1778592fb52",
+        "plan_id": "ca9f2e0e2e87bc1a62794418b9e4216bc46b2a385ed41311b88cddf42f49f09d",
+        "pressure_problem_id": "017de4b1a91915cbf4876b75fdef01d4970787873943262e82531afa970940ae",
+        "pressure_residual_norm": 2.398081733190338e-14,
+        "projection_id": "ca9f2e0e2e87bc1a62794418b9e4216bc46b2a385ed41311b88cddf42f49f09d",
+        "requested_solve_method": "hybrid",
+        "route_residual_norm": 5.031497810782486e-14,
+        "selected_solve_method": "hybrid"
+      },
+      "hybrid_geometry": "stretched-wall-normal",
+      "hybrid_iterative_velocity_maximum_difference": 2.1094237467877974e-15,
+      "hybrid_unavailable_on_periodic_reason": "hybrid requires a nonperiodic line axis",
+      "stretched_iterative": {
+        "constant_route": "iterative",
+        "converged": true,
+        "divergence_after_norm": 2.220446049250313e-14,
+        "divergence_before_norm": 3.964473464263322,
+        "finite": true,
+        "gauge_defect": 1.3877787807814457e-17,
+        "hybrid_action_defect": null,
+        "hybrid_resources": null,
+        "iterations": 7,
+        "matvec_count": 8,
+        "maximum_resource_bytes": 536870912,
+        "operator_id": "f7d7fe4a522f8604714318543877a5156cd90e6752268cf3444fa1778592fb52",
+        "plan_id": "4c75bbdf30beccd9238471ea23583c75e0cb6b6460c2557934c292187d4e022d",
+        "pressure_problem_id": "017de4b1a91915cbf4876b75fdef01d4970787873943262e82531afa970940ae",
+        "pressure_residual_norm": 2.220446049250313e-14,
+        "projection_id": "4c75bbdf30beccd9238471ea23583c75e0cb6b6460c2557934c292187d4e022d",
+        "requested_solve_method": "iterative",
+        "route_residual_norm": 2.239453158328666e-14,
+        "selected_solve_method": "iterative"
+      }
+    },
+    "periodic-taylor-green": {
+      "full": {
+        "constant_route": "transform",
+        "converged": true,
+        "divergence_after_norm": 2.220446049250313e-16,
+        "divergence_before_norm": 6.106226635438361e-16,
+        "finite": true,
+        "gauge_defect": 6.162975822039155e-33,
+        "hybrid_action_defect": null,
+        "hybrid_resources": null,
+        "iterations": null,
+        "matvec_count": null,
+        "maximum_resource_bytes": 536870912,
+        "operator_id": "1c46b2fd453addb4df3299edccb3d6c2ee603cb30e626878bc8303ef662779f7",
+        "plan_id": "7caeeadb23f6d4b66f4e76c7fd2cb1171c9f24db80aabde951f49d6ab203c563",
+        "pressure_problem_id": "fcc256cc745d1d551ea849170da5341d5adb2ee2f194870751065b45e714b742",
+        "pressure_residual_norm": 4.930380657631324e-31,
+        "projection_id": "7caeeadb23f6d4b66f4e76c7fd2cb1171c9f24db80aabde951f49d6ab203c563",
+        "requested_solve_method": "transform",
+        "route_residual_norm": 7.294880760489283e-31,
+        "selected_solve_method": "transform"
+      },
+      "iterative": {
+        "constant_route": "iterative",
+        "converged": true,
+        "divergence_after_norm": 5.551115123125783e-16,
+        "divergence_before_norm": 6.106226635438361e-16,
+        "finite": true,
+        "gauge_defect": 1.8488927466117464e-32,
+        "hybrid_action_defect": null,
+        "hybrid_resources": null,
+        "iterations": 1,
+        "matvec_count": 2,
+        "maximum_resource_bytes": 536870912,
+        "operator_id": "1c46b2fd453addb4df3299edccb3d6c2ee603cb30e626878bc8303ef662779f7",
+        "plan_id": "4c68157698f27b6796390b9e26d7dc23ef33bf28359a2a25af2d18ac901da0a6",
+        "pressure_problem_id": "fcc256cc745d1d551ea849170da5341d5adb2ee2f194870751065b45e714b742",
+        "pressure_residual_norm": 1.9322410771148245e-16,
+        "projection_id": "4c68157698f27b6796390b9e26d7dc23ef33bf28359a2a25af2d18ac901da0a6",
+        "requested_solve_method": "iterative",
+        "route_residual_norm": 4.423409921770166e-16,
+        "selected_solve_method": "iterative"
+      },
+      "route_velocity_maximum_difference": 1.1102230246251565e-16
+    },
+    "stretched-couette": {
+      "laplacian_maximum_error": 0.0,
+      "lower_wall_shear": 0.9999999999999998,
+      "statistics_successful": true,
+      "upper_wall_shear": 0.9999999999999953
+    },
+    "stretched-poiseuille": {
+      "bulk_velocity": 0.1697664534224942,
+      "coarse_laplacian_maximum_error": 0.5478102170441452,
+      "coarse_weighted_l1_laplacian_error": 0.153657803715623,
+      "fine_error_not_greater": true,
+      "fine_laplacian_maximum_error": 0.5222409726870612,
+      "fine_weighted_l1_laplacian_error": 0.07320737288646224,
+      "observed_weighted_l1_spatial_order": 1.0696601798300416,
+      "statistics_successful": true
+    }
+  },
+  "reference": {
+    "kind": "qualification-reference",
+    "periodic_taylor_green": "divergence-free staggered face samples",
+    "reference_id": "efaf9ae6f7b11ec21b1035e6d063b75133baeca13f967bc385076309dcbf4bb3",
+    "source": "native-analytic-and-route-comparison",
+    "stretched_couette_laplacian": "zero",
+    "stretched_poiseuille_laplacian": "-2 streamwise"
+  },
+  "release_ready": false,
+  "route": "mac",
+  "status": "passed",
+  "support_tuple": {
+    "attributes": {
+      "geometry": "uniform-periodic+stretched-wall-normal",
+      "momentum": "symmetry-preserving",
+      "pressure_routes": "full+hybrid+iterative",
+      "route": "mac",
+      "statistics": "mac-plane-wall"
+    },
+    "capability": "incompressible-flow",
+    "kind": "capability-support-tuple",
+    "support_tuple_id": "0decc3e5a3bb440b47e39c1e89a8951ea03f5acb340f986370ea6e05cc4e463e"
+  }
+}

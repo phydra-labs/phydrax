@@ -6,6 +6,7 @@ import json
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -50,11 +51,20 @@ def test_production_run_checkpoints_observes_triggers_and_resumes(tmp_path):
         method,
         phx.solver.RobustRetryPolicy(maximum_retries=2),
         step_size=0.1,
+        end_time=0.25,
         maximum_steps=3,
         checkpoint_interval=2,
-        schedule=phx.solver.ExactTimeSchedule(jnp.asarray((0.15, 0.3))),
+        output_schedule=phx.solver.ExactTimeSchedule(jnp.asarray((0.1, 0.2, 0.25))),
         moments=(moment,),
-        triggers=(trigger,),
+        trigger_bindings=(
+            phx.solver.ProductionTriggerBinding(
+                "state-threshold-checkpoint",
+                trigger,
+                (0,),
+                "checkpoint",
+                "checkpoint-on-state-threshold",
+            ),
+        ),
     )
     prepared = phx.solver.PreparedProductionRun(
         manifest, plan, store, publisher=publisher
@@ -111,6 +121,7 @@ def test_production_run_writes_terminal_failure_manifest(tmp_path):
         method,
         phx.solver.RobustRetryPolicy(maximum_retries=1),
         step_size=0.1,
+        end_time=0.2,
         maximum_steps=2,
         checkpoint_interval=1,
     )
@@ -124,3 +135,110 @@ def test_production_run_writes_terminal_failure_manifest(tmp_path):
     terminal = json.loads((store.root / "terminal.json").read_text())
     assert terminal["status"] == "failed"
     assert terminal["failure_id"] == result.failure.failure_id
+
+
+def test_vector_moment_triggers_require_explicit_components(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "vector-trigger",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(1),
+    )
+    moment = phx.solver.StreamingMomentPlan(
+        lambda time, state, args: state,
+        value_shape=(2,),
+        plan_id="vector-state",
+    )
+    graph = phx.solver.AcceptedStepTriggerGraph(
+        (phx.solver.AcceptedStepTrigger(0.05),),
+        debounce_steps=0,
+    )
+    missing_component = phx.solver.ProductionTriggerBinding(
+        "vector-trigger",
+        graph,
+        (0,),
+        "checkpoint",
+        "vector-trigger-checkpoint",
+    )
+    with pytest.raises(ValueError, match="explicit trigger components"):
+        phx.solver.ProductionRunPlan(
+            method,
+            phx.solver.RobustRetryPolicy(),
+            step_size=0.1,
+            end_time=0.1,
+            maximum_steps=1,
+            checkpoint_interval=1,
+            moments=(moment,),
+            trigger_bindings=(missing_component,),
+        )
+
+    binding = phx.solver.ProductionTriggerBinding(
+        "vector-trigger",
+        graph,
+        (0,),
+        "checkpoint",
+        "vector-trigger-checkpoint",
+        moment_components=(1,),
+    )
+    plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(),
+        step_size=0.1,
+        end_time=0.1,
+        maximum_steps=1,
+        checkpoint_interval=1,
+        moments=(moment,),
+        trigger_bindings=(binding,),
+    )
+    prepared = phx.solver.PreparedProductionRun(manifest, plan, store)
+    result = prepared.run(prepared.initial_state(jnp.zeros((2,))))
+    assert result.successful
+    assert result.state.trigger_states[0].fire_count == 1
+
+
+def test_output_failure_never_checkpoints_advanced_cursor(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    store = phx.solver.DurableCheckpointStore(
+        tmp_path / "output-failure",
+        manifest,
+        phx.solver.CheckpointGenerationPolicy(1),
+    )
+
+    def fail_writer(event_id, snapshot):
+        del event_id, snapshot
+        raise RuntimeError("writer failed")
+
+    publisher = phx.solver.ByteBoundedAsyncPublisher(
+        fail_writer,
+        maximum_pending=1,
+        maximum_pending_bytes=1024,
+    )
+    plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(),
+        step_size=0.1,
+        end_time=0.1,
+        maximum_steps=1,
+        checkpoint_interval=2,
+        output_schedule=phx.solver.ExactTimeSchedule(jnp.asarray((0.1,))),
+    )
+    prepared = phx.solver.PreparedProductionRun(
+        manifest,
+        plan,
+        store,
+        publisher=publisher,
+    )
+    result = prepared.run(prepared.initial_state(jnp.zeros((1,))))
+
+    assert not result.successful
+    assert result.failure is not None
+    assert result.failure.category == "output-failed"
+    assert not (store.root / "latest.json").exists()
+    terminal = json.loads((store.root / "terminal.json").read_text())
+    assert terminal["status"] == "failed"

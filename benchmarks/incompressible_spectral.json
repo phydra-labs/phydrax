@@ -1,24 +1,101 @@
 {
-  "schema_version": 1,
-  "periodic_mode_count": 32,
-  "channel_shape": [
-    8,
-    16,
-    8
-  ],
-  "periodic_first_jit_ms": 270.0706250016083,
-  "periodic_steady_ms": 0.15737499998067506,
-  "periodic_divergence_norm": 4.832932358935919e-15,
-  "periodic_nonlinear_energy_rate": 2.9653781076908238e-18,
-  "periodic_energy_balance_defect": -1.6653345369377348e-16,
-  "periodic_finite": true,
-  "channel_prepare_ms": 2091.9174579994433,
-  "channel_solve_ms": 1630.4775419994257,
-  "channel_factor_bytes": 8388608,
-  "couette_maximum_error": 1.1102230246251565e-15,
-  "fixed_flux_error": 1.1102230246251565e-16,
-  "channel_divergence_norm": 0.0,
-  "channel_sbdf2_error": 1.1102230246251565e-15,
+  "channel": {
+    "compilation_id": "6d654b07e44b40d03c159fc677d023ec004c1c30ae052d0ecdd0f899f53bb967",
+    "discretization_plan_id": "cca862c4c09bbc1d26665030e522736a6bd7f3f2ded4f698b0cdaca5000fb83f",
+    "discretization_prepared_id": "26b1009a84b53690f91eaf9112cea93e5e8c5bb9fbab56df54fb275c5e794428",
+    "execution": {
+      "backend": "cpu",
+      "device_kind": "cpu",
+      "device_platform": "cpu",
+      "dtype": "complex128",
+      "shape": [
+        8,
+        16,
+        8,
+        3
+      ]
+    },
+    "informational_timings_ms": {
+      "prepare": 23026.495833008084,
+      "solve": 11785.910208011046
+    },
+    "method_id": "78b8bd145e1f9eb65ec6af1f01c3408aa0c33ac6346086576656dbb8790c5eac",
+    "method_prepared_id": "27c8095289e268b683fe0323b45d15a733dd44361d1090f141d3800108dd9a25",
+    "preparation_report_id": "ed661762c5be3cd7ef0cf4c597b459972322aff8d467fabddc1c68a35f1cbcad",
+    "problem_id": "9ca87471da3c44de425cde9f206b29b7a89e0d2ab8a99b6691dde87569b3238b",
+    "raw_invariants": {
+      "couette_maximum_error": 4.440892098500626e-16,
+      "divergence_norm": 0.0,
+      "finite": true,
+      "fixed_flux_error": 0.0,
+      "momentum_constraint_residual": 2.7935189504315276e-16,
+      "pressure_gauge_residual": 0.0,
+      "sbdf2_state_error": 7.771561172376096e-16,
+      "solver_successful": true,
+      "wall_residual": 2.220446049250313e-16
+    },
+    "resources": {
+      "constraint_rank": 7,
+      "correction_rank": 4,
+      "factor_bytes": 356397,
+      "horizontal_batch_size": 64,
+      "lower_bandwidth": 0,
+      "operator_bytes": 384000,
+      "persistent_bytes": 762409,
+      "pivot_margin": 1.036720342170937e-12,
+      "preparation_bytes": 1227305,
+      "required_unsharded_axes": [
+        "y"
+      ],
+      "requires_unsharded_axis": true,
+      "shared_basis_bytes": 22012,
+      "upper_bandwidth": 8,
+      "workspace_bytes": 464896
+    },
+    "route": "ultraspherical_banded",
+    "stokes_plan_id": "d69da1429ecd4620c3ce56bc93cb8cedbb1fa9ce9cbd8fb746a5f80ee8a3acb2",
+    "stokes_prepared_id": "10a287fe7f5badac43786076664fbe6e28ea7e5035d34dea48e9217dd70a29df"
+  },
   "finite": true,
-  "passed": true
+  "kind": "incompressible-spectral-smoke-performance",
+  "periodic": {
+    "compilation_id": "a97ec246d3ccac44bf0e702784f9bf400f7a62feb876081ff1d749fade01740f",
+    "discretization_plan_id": "63a226aabd5a0e29178091f867560a3afa950a0470da49a36b5a9e64b7d18af2",
+    "discretization_prepared_id": "ef5dbe38141ef6d7df4274aeeb73ee9fe896a0475c1b9f3129bc4a6f531c1096",
+    "execution": {
+      "backend": "cpu",
+      "device_kind": "cpu",
+      "device_platform": "cpu",
+      "dtype": "complex128",
+      "shape": [
+        32,
+        32,
+        2
+      ]
+    },
+    "informational_timings_ms": {
+      "first_jit": 172.465125,
+      "repeats": 5,
+      "steady_mean": 0.1562834
+    },
+    "method_id": "78b8bd145e1f9eb65ec6af1f01c3408aa0c33ac6346086576656dbb8790c5eac",
+    "method_prepared_id": "f516fdc8f5974af1c73c2de11e5ad707d22f1b014f4de5a25631af8249b2685b",
+    "problem_id": "f78079b12ccffb0e8da8d22e7c3144d19ea91d263dcfce7bf4612ec088e7bfbc",
+    "projector_id": "740ca6a39e4727b433bfd7f711636083bd826214f6e69646e0d7ac8314b75b50",
+    "raw_invariants": {
+      "divergence_norm": 4.832932358935919e-15,
+      "energy_balance_defect": -1.6653345369377348e-16,
+      "finite": true,
+      "nonlinear_energy_rate": 2.9653781076908238e-18
+    },
+    "route": "periodic-incompressible-rotational-diagonal",
+    "storage": {
+      "conjugate_pair_count": 1020,
+      "fixed_mode_count": 8,
+      "full_complex_bytes": 32768,
+      "packed_independent_real_bytes": 16384,
+      "packed_to_full_ratio": 0.5
+    }
+  },
+  "smoke_successful": true
 }

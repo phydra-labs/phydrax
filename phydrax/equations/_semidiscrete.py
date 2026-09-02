@@ -2695,11 +2695,19 @@ def compile_semidiscrete_pde(
         resolved = (
             "semilinear-spectral" if spectral is not None else "semilinear-matrix-free"
         )
+        nonlinear_id = _stable_id(
+            "semidiscrete-nonlinear-drift-v1",
+            binding_id,
+            operator_id,
+            method,
+            resolved,
+        )
         semilinear = SemilinearDrift(
             canonical_operator,
             _SemilinearRemainder(evaluator, canonical_operator),
             state_shape=layout.state_shape,
             operator_id=operator_id,
+            nonlinear_id=nonlinear_id,
             mass_self_adjoint=mass_self_adjoint,
             mass_weights=discretization.quadrature_weights,
             spectral_representation=spectral,
@@ -2707,9 +2715,11 @@ def compile_semidiscrete_pde(
         drift = semilinear
 
     compilation_id = _stable_id(
-        "semidiscrete-pde-compiler-v1",
+        "semidiscrete-pde-compiler-v2",
         binding_id,
+        method,
         resolved,
+        "direct" if semilinear is None else semilinear.drift_id,
     )
     return CompiledDiscreteDynamics(
         drift,

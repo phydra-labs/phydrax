@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+from opt_einsum import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -74,6 +76,71 @@ class TransformLineResourceEstimate(StrictModule, NonTrainableState):
     workspace_bytes: int = eqx.field(static=True)
     total_bytes: int = eqx.field(static=True)
     periodic_rank: int = eqx.field(static=True)
+
+
+TransformLineNullspaceKind: TypeAlias = Literal["constant-volume"]
+
+
+class TransformLineNullspacePolicy(StrictModule, NonTrainableState):
+    """Explicit constant nullspace, volume compatibility, and volume gauge."""
+
+    line_weights: Array
+    right_null: Array
+    left_null: Array
+    zero_mode_index: int = eqx.field(static=True)
+    pin_row: int = eqx.field(static=True)
+    kind: TransformLineNullspaceKind = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        line_weights: ArrayLike,
+        /,
+        *,
+        zero_mode_index: int = 0,
+        pin_row: int = 0,
+        policy_id: str | None = None,
+    ):
+        weights = jnp.asarray(line_weights)
+        if (
+            weights.ndim != 1
+            or weights.size < 1
+            or not jnp.issubdtype(weights.dtype, jnp.floating)
+            or not bool(np.all(np.isfinite(np.asarray(weights))))
+            or bool(np.any(np.asarray(weights) <= 0.0))
+        ):
+            raise ValueError(
+                "Constant-nullspace line_weights must be finite positive rank-one data."
+            )
+        zero_index = int(zero_mode_index)
+        pin = int(pin_row)
+        if zero_index < 0:
+            raise ValueError("zero_mode_index must be nonnegative.")
+        if pin < 0 or pin >= int(weights.size):
+            raise ValueError("pin_row is outside the physical line.")
+        right = jnp.ones_like(weights)
+        left = weights / jnp.sum(weights)
+        identifier = (
+            canonical_fingerprint(
+                {
+                    "kind": "transform-line-constant-volume-nullspace",
+                    "line_weights": array_tree_fingerprint(weights),
+                    "zero_mode_index": zero_index,
+                    "pin_row": pin,
+                }
+            )
+            if policy_id is None
+            else str(policy_id)
+        )
+        if not identifier:
+            raise ValueError("policy_id must be non-empty.")
+        self.line_weights = weights
+        self.right_null = right
+        self.left_null = left
+        self.zero_mode_index = zero_index
+        self.pin_row = pin
+        self.kind = "constant-volume"
+        self.policy_id = identifier
 
 
 class TransformLineRepresentation(StrictModule, NonTrainableState):
@@ -322,10 +389,15 @@ class TransformLineFactors(StrictModule, NonTrainableState):
     scaled_upper: Array
     periodic_green: Array | None
     periodic_schur_inverse: Array | None
+    right_null: Array | None
+    left_null: Array | None
     minimum_pivot: Array
     factor_residual: Array
     trace_defect: Array
     finite: Array
+    zero_mode_index: int | None = eqx.field(static=True)
+    pin_row: int | None = eqx.field(static=True)
+    nullspace_policy_id: str | None = eqx.field(static=True)
     factor_id: str = eqx.field(static=True)
 
 
@@ -335,6 +407,7 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
     representation: TransformLineRepresentation
     operator_scale: Array
     diagonal_shift: Array
+    nullspace: TransformLineNullspacePolicy | None
     tolerance: float = eqx.field(static=True)
     differentiation: DifferentiationPolicy
     maximum_resource_bytes: int = eqx.field(static=True)
@@ -348,6 +421,7 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
         operator_scale: ArrayLike = 1.0,
         diagonal_shift: ArrayLike = 0.0,
         tolerance: float = 1e-10,
+        nullspace: TransformLineNullspacePolicy | None = None,
         differentiation: DifferentiationPolicy | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
         plan_id: str | None = None,
@@ -372,6 +446,24 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
         )
         if not isinstance(differentiation_, DifferentiationPolicy):
             raise TypeError("differentiation must be DifferentiationPolicy or None.")
+        if nullspace is not None:
+            if not isinstance(nullspace, TransformLineNullspacePolicy):
+                raise TypeError("nullspace must be TransformLineNullspacePolicy or None.")
+            if nullspace.line_weights.shape != representation.line_diagonal.shape:
+                raise ValueError(
+                    "Nullspace line_weights must match the represented line size."
+                )
+            line_count = int(np.prod(representation.transverse_modal_values.shape))
+            if nullspace.zero_mode_index >= line_count:
+                raise ValueError(
+                    "Nullspace zero_mode_index is outside the transverse modal batch."
+                )
+            if representation.periodic_corners is not None:
+                raise ValueError(
+                    "Constant-nullspace pinning requires a nonperiodic physical line."
+                )
+            if bool(np.asarray(shift) != 0.0):
+                raise ValueError("Constant-nullspace solves require zero diagonal_shift.")
         budget = int(maximum_resource_bytes)
         if budget <= 0:
             raise ValueError("maximum_resource_bytes must be positive.")
@@ -385,6 +477,7 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
                     "tolerance": tolerance_,
                     "differentiation": differentiation_.mode,
                     "maximum_resource_bytes": budget,
+                    "nullspace": None if nullspace is None else nullspace.policy_id,
                 }
             )
             if plan_id is None
@@ -395,6 +488,7 @@ class TransformLineSolvePlan(StrictModule, NonTrainableState):
         self.representation = representation
         self.operator_scale = scale
         self.diagonal_shift = shift
+        self.nullspace = nullspace
         self.tolerance = tolerance_
         self.differentiation = differentiation_
         self.maximum_resource_bytes = budget
@@ -410,8 +504,11 @@ class TransformLineSolveResult(StrictModule):
     value: Array
     candidate: Array
     residual: Array
+    compatible_rhs: Array
     residual_norm: Array
     relative_residual: Array
+    compatibility_defect: Array
+    gauge_defect: Array
     trace_defect: Array
     factor_residual: Array
     minimum_pivot: Array
@@ -419,6 +516,7 @@ class TransformLineSolveResult(StrictModule):
     converged: Array
     resources: TransformLineResourceEstimate
     differentiation_policy: str = eqx.field(static=True)
+    nullspace_policy_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     representation_id: str = eqx.field(static=True)
     factor_id: str = eqx.field(static=True)
@@ -440,21 +538,95 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
         if not isinstance(plan, TransformLineSolvePlan):
             raise TypeError("plan must be TransformLineSolvePlan.")
         representation = plan.representation
-        transverse = representation.transverse_modal_values.reshape((-1, 1))
-        line_count = int(transverse.shape[0])
+        line_count = int(np.prod(representation.transverse_modal_values.shape))
         line_size = int(representation.line_diagonal.size)
+        periodic_rank = 2 if representation.periodic_corners is not None else 0
+        solve_dtype = jnp.result_type(
+            representation.line_diagonal.dtype,
+            *[transform.modal_space.dtype for transform in representation.transforms],
+        )
+        factor_count = line_count * (line_size + max(line_size - 1, 0))
+        if periodic_rank:
+            factor_count += line_count * (2 * line_size + 4)
+        if plan.nullspace is not None:
+            factor_count += 2 * line_size
+        itemsize = np.dtype(solve_dtype).itemsize
+        factor_bytes = factor_count * itemsize
+        workspace_vectors = 6 if plan.nullspace is not None else 4
+        workspace_bytes = (
+            workspace_vectors * int(np.prod(representation.shape))
+            + periodic_rank * line_count
+        ) * itemsize
+        resources = TransformLineResourceEstimate(
+            line_count=line_count,
+            line_size=line_size,
+            factor_count=factor_count,
+            factor_bytes=factor_bytes,
+            workspace_bytes=workspace_bytes,
+            total_bytes=factor_bytes + workspace_bytes,
+            periodic_rank=periodic_rank,
+        )
+        if resources.total_bytes > plan.maximum_resource_bytes:
+            raise ValueError(
+                "Transform-line factors and workspace exceed maximum_resource_bytes."
+            )
+
+        transverse = representation.transverse_modal_values.reshape((-1, 1))
         diagonal = plan.diagonal_shift + plan.operator_scale * (
             representation.line_diagonal.reshape((1, line_size)) + transverse
         )
-        lower = plan.operator_scale * representation.line_lower
-        upper = plan.operator_scale * representation.line_upper
-        solve_dtype = jnp.result_type(
-            diagonal.dtype,
-            *[transform.modal_space.dtype for transform in representation.transforms],
-        )
+        lower = (plan.operator_scale * representation.line_lower).astype(solve_dtype)
+        upper = (plan.operator_scale * representation.line_upper).astype(solve_dtype)
         diagonal = diagonal.astype(solve_dtype)
-        lower = lower.astype(solve_dtype)
-        upper = upper.astype(solve_dtype)
+        right_null = None
+        left_null = None
+        zero_mode_index = None
+        pin_row = None
+        nullspace_policy_id = None
+        nullspace_finite = jnp.asarray(True)
+        if plan.nullspace is not None:
+            policy = plan.nullspace
+            zero_mode_index = policy.zero_mode_index
+            pin_row = policy.pin_row
+            nullspace_policy_id = policy.policy_id
+            right_null = policy.right_null
+            left_null = policy.left_null
+            modal_values = np.asarray(representation.transverse_modal_values).reshape(
+                (-1,)
+            )
+            zero_modes = np.flatnonzero(modal_values == 0.0)
+            if zero_modes.size != 1 or int(zero_modes[0]) != zero_mode_index:
+                raise ValueError(
+                    "Constant-nullspace solves require one declared all-zero "
+                    "transverse line."
+                )
+            null_diagonal = diagonal[zero_mode_index]
+            right_residual = jnp.max(
+                jnp.abs(_line_action(right_null, lower, null_diagonal, upper, None))
+            )
+            left_residual = jnp.max(
+                jnp.abs(_line_action(left_null, upper, null_diagonal, lower, None))
+            )
+            coefficient_scale = jnp.maximum(
+                1.0,
+                jnp.max(jnp.abs(null_diagonal))
+                + jnp.sum(jnp.abs(lower))
+                + jnp.sum(jnp.abs(upper)),
+            )
+            nullspace_finite = (
+                jnp.isfinite(right_residual)
+                & jnp.isfinite(left_residual)
+                & (right_residual <= plan.tolerance * coefficient_scale)
+                & (left_residual <= plan.tolerance * coefficient_scale)
+            )
+            if not bool(np.asarray(nullspace_finite)):
+                raise ValueError(
+                    "Declared right/left constant null data failed exact action evidence."
+                )
+            diagonal = diagonal.at[zero_mode_index, pin_row].add(
+                jnp.asarray(1.0, dtype=solve_dtype)
+            )
+
         pivots = jnp.zeros_like(diagonal)
         multipliers = jnp.zeros((line_count, max(line_size - 1, 0)), dtype=solve_dtype)
         pivots = pivots.at[:, 0].set(diagonal[:, 0])
@@ -491,10 +663,8 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
         minimum_pivot = jnp.min(jnp.abs(pivots))
         periodic_green = None
         periodic_schur_inverse = None
-        periodic_rank = 0
         schur_finite = jnp.asarray(True)
         if representation.periodic_corners is not None:
-            periodic_rank = 2
             lower_corner, upper_corner = representation.periodic_corners
             update = jnp.zeros((line_count, line_size, 2), dtype=solve_dtype)
             update = update.at[:, 0, 0].set(plan.operator_scale * lower_corner)
@@ -525,28 +695,8 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(multipliers))
             & (minimum_pivot > tiny)
             & schur_finite
+            & nullspace_finite
         )
-        factor_count = line_count * (line_size + max(line_size - 1, 0))
-        if periodic_rank:
-            factor_count += line_count * (2 * line_size + 4)
-        itemsize = np.dtype(solve_dtype).itemsize
-        factor_bytes = factor_count * itemsize
-        workspace_bytes = (
-            4 * int(np.prod(representation.shape)) + periodic_rank * line_count
-        ) * itemsize
-        resources = TransformLineResourceEstimate(
-            line_count=line_count,
-            line_size=line_size,
-            factor_count=factor_count,
-            factor_bytes=factor_bytes,
-            workspace_bytes=workspace_bytes,
-            total_bytes=factor_bytes + workspace_bytes,
-            periodic_rank=periodic_rank,
-        )
-        if resources.total_bytes > plan.maximum_resource_bytes:
-            raise ValueError(
-                "Transform-line factors and workspace exceed maximum_resource_bytes."
-            )
         factor_id = canonical_fingerprint(
             {
                 "kind": "transform-line-factors",
@@ -554,6 +704,7 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
                 "factor_count": factor_count,
                 "factor_bytes": factor_bytes,
                 "periodic_rank": periodic_rank,
+                "nullspace": nullspace_policy_id,
             }
         )
         self.plan = plan
@@ -563,10 +714,15 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
             scaled_upper=upper,
             periodic_green=periodic_green,
             periodic_schur_inverse=periodic_schur_inverse,
+            right_null=right_null,
+            left_null=left_null,
             minimum_pivot=minimum_pivot,
             factor_residual=factor_residual,
             trace_defect=trace_defect,
             finite=finite,
+            zero_mode_index=zero_mode_index,
+            pin_row=pin_row,
+            nullspace_policy_id=nullspace_policy_id,
             factor_id=factor_id,
         )
         self.resources = resources
@@ -585,7 +741,29 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
                 ),
                 factors,
             )
-        modal_rhs = representation.analyze_transverse(rhs)
+        compatible_rhs = rhs
+        compatibility_defect = jnp.asarray(0.0, dtype=jnp.real(rhs).dtype)
+        weights = None
+        transverse_count = 1
+        if factors.left_null is not None:
+            weight_shape = [1] * rhs.ndim
+            weight_shape[representation.line_axis] = int(factors.left_null.size)
+            weights = factors.left_null.reshape(tuple(weight_shape))
+            transverse_count = int(
+                np.prod(
+                    tuple(
+                        rhs.shape[axis]
+                        for axis in range(rhs.ndim)
+                        if axis != representation.line_axis
+                    )
+                )
+            )
+            mean = jnp.sum(weights * rhs) / transverse_count
+            compatible_rhs = rhs - mean
+            compatibility_defect = jnp.abs(
+                jnp.sum(weights * compatible_rhs) / transverse_count
+            )
+        modal_rhs = representation.analyze_transverse(compatible_rhs)
         moved = jnp.moveaxis(modal_rhs, representation.line_axis, -1)
         batch_rhs = moved.reshape((-1, moved.shape[-1], 1)).astype(factors.pivots.dtype)
         base = _solve_factored(
@@ -596,10 +774,10 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
         )
         if factors.periodic_green is not None:
             boundary = jnp.stack((base[:, -1, 0], base[:, 0, 0]), axis=-1)
-            correction_coefficients = jnp.einsum(
+            correction_coefficients = contract(
                 "bij,bj->bi", factors.periodic_schur_inverse, boundary
             )
-            correction = jnp.einsum(
+            correction = contract(
                 "bni,bi->bn", factors.periodic_green, correction_coefficients
             )
             base = base.at[:, :, 0].add(-correction)
@@ -609,27 +787,42 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
         candidate = representation.synthesize_transverse(modal_value)
         if not jnp.iscomplexobj(rhs):
             candidate = jnp.real(candidate).astype(rhs.dtype)
+        gauge_defect = jnp.asarray(0.0, dtype=jnp.real(rhs).dtype)
+        if weights is not None:
+            gauge_mean = jnp.sum(weights * candidate) / transverse_count
+            candidate = candidate - gauge_mean
+            gauge_defect = jnp.abs(jnp.sum(weights * candidate) / transverse_count)
         residual = (
             self.plan.diagonal_shift * candidate
             + self.plan.operator_scale * representation.apply(candidate)
-            - rhs
+            - compatible_rhs
         )
         residual_norm = jnp.linalg.norm(residual.reshape((-1,)))
-        rhs_norm = jnp.linalg.norm(rhs.reshape((-1,)))
+        rhs_norm = jnp.linalg.norm(compatible_rhs.reshape((-1,)))
         relative_residual = residual_norm / jnp.maximum(1.0, rhs_norm)
         finite = (
             factors.finite
             & jnp.all(jnp.isfinite(candidate))
             & jnp.all(jnp.isfinite(residual))
+            & jnp.isfinite(compatibility_defect)
+            & jnp.isfinite(gauge_defect)
         )
-        converged = finite & (relative_residual <= self.plan.tolerance)
+        converged = (
+            finite
+            & (relative_residual <= self.plan.tolerance)
+            & (compatibility_defect <= self.plan.tolerance)
+            & (gauge_defect <= self.plan.tolerance)
+        )
         value = jnp.where(converged, candidate, jnp.zeros_like(candidate))
         result = TransformLineSolveResult(
             value=value,
             candidate=candidate,
             residual=residual,
+            compatible_rhs=compatible_rhs,
             residual_norm=residual_norm,
             relative_residual=relative_residual,
+            compatibility_defect=compatibility_defect,
+            gauge_defect=gauge_defect,
             trace_defect=factors.trace_defect,
             factor_residual=factors.factor_residual,
             minimum_pivot=factors.minimum_pivot,
@@ -637,6 +830,7 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
             converged=converged,
             resources=self.resources,
             differentiation_policy=self.plan.differentiation.mode,
+            nullspace_policy_id=factors.nullspace_policy_id,
             plan_id=self.plan.plan_id,
             representation_id=representation.representation_id,
             factor_id=factors.factor_id,
@@ -686,6 +880,8 @@ def _solve_factored(
 
 __all__ = [
     "PreparedTransformLineSolve",
+    "TransformLineNullspaceKind",
+    "TransformLineNullspacePolicy",
     "TransformLineFactors",
     "TransformLineReport",
     "TransformLineRepresentation",

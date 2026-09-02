@@ -41,7 +41,8 @@ Unsupported problem/method/controller combinations fail before numerical executi
 | `RosenbrockWMethod` | 3 | Yes | Matrix-free RA34PW2, embedded order 2 |
 | `GeneralizedAlphaMethod` | 2 | No | Controlled high-frequency damping |
 | `MultiratePartitionedRK` | 2 or 3 | No | Fixed-ratio synchronized subcycling |
-
+| `ETDRKMethod(2)` / `ETDRKMethod(4)` | 2 or 4 | No | Prepared unbatched diagonal semilinear drift |
+| `ChannelSBDF2Method` | 2 | No | Backward-Euler startup and restartable channel history |
 | `GaussLegendreIRK(1..3)` | 2, 4, or 6 | No | A-stable, symplectic collocation |
 | Geometric Euler/RKMK/CF | 1--4 | No | Retraction-based manifold integration |
 | Störmer--Verlet | 2 | No | Separable canonical Hamiltonians |
@@ -141,6 +142,94 @@ recomputes each block. Replay does not change primal values or output retention.
 ::: phydrax.solver.FixedStepRolloutResult
 
 ::: phydrax.solver.FixedStepReplayPolicy
+
+## Prepared ETDRK and channel continuation
+
+`ETDRKMethod.prepare` binds one complete `SemilinearDrift` identity and, when
+supplied, one `HermitianSpectralCoordinates` contract. The resulting
+`PreparedETDRKMethod` is an `AbstractFixedStepMethod`: each call accepts a finite
+positive step and advances the live full-complex modal array. The coordinate contract
+validates incoming and candidate Hermitian defects and projects only a successful
+candidate back to the real-field subspace. It is not a packed live-state integrator;
+independent-real coordinates are an optional checkpoint or backend encoding.
+
+`ChannelSBDF2Method.prepare(dynamics, step_size)` binds both backward-Euler startup
+and BDF2 Stokes preparations to one exact positive step. Its
+`ChannelSBDF2State` contains previous/current velocity, previous/current nonlinear
+rate, current pressure, affine pressure gradient, and history count, so the prepared
+method can continue exactly from a checkpoint. It forbids step reduction and rejects
+any step that is not exactly the prepared value. Consequently production `end_time`
+and exact-output targets must lie on the restart state's step lattice, and a retry
+policy may not request reduced steps.
+
+## Bounded production execution
+
+`ProductionRunPlan` supplies an absolute end time and absolute accepted-step
+capacity, rather than a relative duration, and compiles fixed-length scan segments
+through `PreparedProductionRun`. Accepted PyTree state, method/controller/RNG state,
+schedule cursor, streaming moments, trigger state, and output cursor cross segment
+and checkpoint boundaries together. `ExactTimeSchedule` emits accepted-endpoint
+snapshots at declared targets; typed trigger bindings request checkpoint,
+publication, or stop actions. Output is immutable and count/byte bounded, writer
+failures fail the run, and checkpoint commit drains earlier publications.
+
+Route assemblers expose the public constructor boundary:
+
+- `PeriodicSpectralProductionPlan(method, statistics, *,
+  problem_id, start_time, end_time, step_size, checkpoint_interval, ...)`
+  requires the prepared ETDRK method to carry Hermitian coordinates.
+- `SpectralChannelProductionPlan(method, velocity_coordinates,
+  pressure_coordinates, statistics, *, problem_id, start_time, end_time,
+  checkpoint_interval, ...)` derives the exact step from `method`.
+- `StructuredMACProductionPlan(method, dynamics, statistics, *, start_time,
+  end_time, step_size, checkpoint_interval, ...)` uses native real checkpoint
+  state and may verify an already compiled constant pressure gradient.
+
+Each route uses `plan.prepare(checkpoint_root, ...)` before
+`prepared.initialize(...)`; the prepared object exposes the same
+run/resume/step/checkpoint lifecycle and an instantaneous statistics snapshot.
+
+::: phydrax.applications.incompressible_flow.PeriodicSpectralProductionPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.SpectralChannelProductionPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.StructuredMACProductionPlan
+
+---
+
+::: phydrax.solver.PreparedETDRKMethod
+
+---
+
+::: phydrax.solver.PreparedChannelSBDF2Method
+
+---
+
+::: phydrax.solver.ChannelSBDF2State
+
+---
+
+::: phydrax.solver.ProductionRunPlan
+
+---
+
+::: phydrax.solver.PreparedProductionRun
+
+---
+
+::: phydrax.solver.ProductionTriggerBinding
+
+---
+
+::: phydrax.solver.StreamingMomentPlan
+
+---
+
+::: phydrax.solver.RuntimeCheckpointEncodingPlan
 
 ## Differentiation
 

@@ -277,7 +277,8 @@ For nonlinear PDEs, `CompiledModalResidualTerm` materializes the declared state 
 uses the compiler's explicit dealiasing policy. `maximum_query_points` and
 `maximum_feature_bytes` fail before hidden tensor or feature-table growth exceeds the
 declared resource budget.
-## Entropy-stable Fourier split forms and packed DNS
+
+## Entropy-stable Fourier split forms and Hermitian periodic encoding
 
 `SpectralSplitFormPlan` is a bounded theorem: it accepts only the built-in analytic
 entropy-conservative Euler two-point flux, a real all-Fourier periodic space, no source,
@@ -287,21 +288,30 @@ scatters equal-and-opposite contributions; unsupported fluxes or resource excess
 before execution. The projected-flux route remains distinct and does not inherit this
 certificate.
 
-`HermitianSpectralCoordinates` is the sole minimal-real layout for real periodic DNS.
-Pass it as `state_coordinates` to Diffrax: callbacks and returned solutions remain full
-complex coefficients, while persistent backend state is independent real coordinates.
-The same chart can be supplied to spectral artifact I/O, which stores exact
-`RealCoordinateEvidence`, byte counts, fixed-mode counts, and conjugate-pair counts.
-Non-Hermitian states are rejected rather than clipped. Nonlinear transforms may still
-use full-complex work arrays, so this is a persistent/checkpoint storage claim, not a
-halved peak-work claim.
+`HermitianSpectralCoordinates` is the independent-real archive/backend chart for a
+real periodic spectral field; the live ETDRK, compiled-flow, callback, and public
+solution state remains full complex. A `RuntimeCheckpointLeafBinding` may apply the
+chart to one indexed PyTree leaf. The checkpoint records coordinate/evidence identity
+and reconstructs the exact full-complex shape and dtype; unbound leaves stay native.
+Non-Hermitian states are rejected rather than clipped. Nonlinear transforms still use
+full-complex work arrays, so coordinate encoding is not a halved peak-work claim.
 
-Constant-viscosity Fourier--Chebyshev--Fourier channel plans declare
-`ultraspherical_banded` or the caller-explicit `dense_reference` oracle.
-`ChannelStokesPreparationReport` exposes bandwidth, horizontal batch, factors,
-workspace, pivot margin, constraint rank, and the single-device/unsharded-axis scope.
-Variable viscosity, failed pivots/constraints, and distributed line solves remain
-outside the contract.
+Constant-viscosity Fourier--Chebyshev--Fourier channel plans default to the
+`ultraspherical_banded` route. It is internally pressure eliminated, with fixed-band
+Helmholtz/biharmonic/pressure-recovery systems and fixed-rank tau corrections, while
+the public solve still returns primitive velocity, pressure, and affine pressure
+gradient. The zero horizontal mode handles tangential Helmholtz solves, pressure
+recovery, and either prescribed pressure gradient or a two-component bulk-flux Schur
+solve; nonzero modes use wall-normal velocity/vorticity elimination before primitive
+field recovery.
+
+`dense_reference` remains a caller-explicit oracle. Banded production claims apply
+only when the preparation report names `ultraspherical_banded`.
+`ChannelStokesPreparationReport` exposes route, bandwidth, horizontal batch,
+correction/constraint rank, operator/factor/workspace/persistent/preparation bytes,
+pivot margin, and the required unsharded wall-normal axis. Variable viscosity,
+failed pivots or constraints, and distributed spectral/line execution remain outside
+the channel contract.
 
 ## Nonlinear evaluation and dealiasing
 
@@ -467,14 +477,15 @@ compiled = phx.equations.compile_periodic_incompressible_flow(
 )
 ```
 
-The public state remains full complex. `HermitianSpectralCoordinates` provides an
-independent real chart for Newton, continuation, Lyapunov, and periodic-orbit
-analysis without changing DNS storage. Paired Fourier modes use norm-preserving
-real/imaginary coordinates; zero and Nyquist fixed points remain real.
-Coordinate construction rejects nonintegral component dimensions and preflights its
-explicit real-coordinate capacity. `TensorSpectralSymmetry` applies normalized
-Fourier translations, supported reflections, and an orthogonal component action
-directly in modal space. Translation/reflection composition follows the declared
+The public and live temporal state remains full complex.
+`HermitianSpectralCoordinates` provides an independent real chart for Newton,
+continuation, Lyapunov, periodic-orbit analysis, and selected checkpoint leaves
+without changing callback arithmetic. Paired Fourier modes use norm-preserving
+real/imaginary coordinates; zero and Nyquist fixed points remain real. Coordinate
+construction rejects nonintegral component dimensions and preflights its explicit
+real-coordinate capacity. `TensorSpectralSymmetry` applies normalized Fourier
+translations, supported reflections, and an orthogonal component action directly in
+modal space. Translation/reflection composition follows the declared
 semidirect-product action, including reflected translations.
 
 Wall-bounded channel flow uses a Fourier x Chebyshev x Fourier tensor plan and a
@@ -501,38 +512,121 @@ solution = phx.solver.solve_channel_sbdf2(
 `IncompressibleFlowProblem` is shared by the spectral and MAC compilers and owns
 viscosity plus an optional compiler-space forcing with a required stable identity.
 The periodic and channel compilers interpret that forcing in modal coordinates.
-`ChannelStokesPlan` is a budgeted dense primitive velocity–pressure reference solve;
-channel compilation requires its viscosity to match the problem exactly. Persistent
-state contains velocity only; pressure, affine pressure gradient, divergence, wall
-traces, gauge, bulk velocity, kinetic energy, and status are returned as solve
-evidence. `ChannelMeanConstraint("bulk_flux", target)` augments the zero horizontal
-mode with pressure-gradient Lagrange multipliers. The fixed-step SBDF2 path uses
-backward Euler initialization, rejects nonuniform time grids, validates initial wall
-and divergence constraints, latches the first failed Stokes step, and retains the
-last accepted state through the remainder of its fixed-shape scan.
+Channel compilation requires the Stokes-plan viscosity to match the problem exactly.
+The default Stokes route is the pressure-eliminated banded preparation described
+above. Selecting `dense_reference` is an explicit comparison choice and does not
+inherit the banded route's production or qualification evidence.
+
+The public channel solve remains primitive-variable: `ChannelFlowSolution` reports
+accepted velocity, pressure, affine pressure gradient, divergence, wall, gauge, bulk,
+kinetic-energy, and status histories. Prepared continuation uses the complete
+`ChannelSBDF2State`: previous/current velocity, previous/current nonlinear rate,
+current pressure, pressure gradient, and history count. Backward Euler initializes
+the history; every later accepted step uses SBDF2. The prepared method requires its
+step size exactly, forbids retry or output-alignment step reduction, and atomically
+retains the complete old history on failure. `ChannelMeanConstraint("bulk_flux",
+target)` solves two zero-horizontal-mode pressure-gradient multipliers; it is not a
+MAC fixed-flux controller.
+
+`ConstantPowerFourierForcingPlan` selects a Hermitian-closed admissible shell, Leray
+projects the input, and uses the full-complex native inner product. `power_input` is
+volume-mean power: active forcing is scaled by
+`volume * power_input / ||u_forced||²`, and the result reports requested/actual mean
+and total power. A nonfinite or non-Hermitian input, or forced energy below
+`minimum_forced_energy`, produces zero forcing with `active=False` and
+`successful=False`; it is never silently renormalized from a low-energy state.
+
+`SolenoidalOUForcingPlan` stores independent real coordinates in an orthonormal
+solenoidal Hermitian Fourier basis. `advance` uses exact OU transitions from the
+accepted start time to the half and end times and returns all three forcing values.
+The RMS parameter is stationary expected volume RMS, with no instantaneous
+normalization. `PreparedOUForcedETDRKMethod` couples those values to ETDRK2 at the
+start/end stages or ETDRK4 at the start/half/half/end stages, and commits the
+coefficient continuation only with the fluid step. Exact OU transition and restart
+do not make the ETDRK quadrature of a time-varying acceleration exact.
+
+`PeriodicModalTurbulenceStatisticsPlan` consumes the live full-complex velocity with
+unit weight per admissible stored mode--never Hermitian multiplicities. Shell
+`integral` is the native domain integral and `density` is integral divided by bin
+width. Energy, dissipation, nonlinear transfer, and forcing injection spectra retain
+their conservative shell totals; scalar output also includes enstrophy, helicity,
+Taylor/Kolmogorov/integral scales, divergence/reality defects, and declared
+high-wavenumber energy/dissipation tail fractions with separate validity flags.
+`StreamingMomentPlan` supplies accepted-step sample- or time-weighted windows,
+second moments, extrema, histograms, and fixed-capacity completed-block uncertainty.
+
+`SpectralChannelStatisticsPlan` forms homogeneous-plane means, raw and central
+Reynolds moments, and separate lower/upper wall quantities. Wall shear is
+`rho * nu * d<streamwise velocity>/dy` in increasing wall-normal coordinate at both
+walls; friction velocity uses the magnitude of each signed shear, and each friction
+Reynolds number and wall coordinate uses the channel half-height and that wall's own
+friction velocity.
 
 Periodic diagnostics separately report nonlinear energy rate, forcing power,
 viscous energy rate, positive dissipation, total semidiscrete energy rate, and the
 energy-balance defect. Exact quadratic dealiasing supports the stated rotational
 nonlinear energy identity; it is not an entropy-stability claim.
 
-`BoundedEvolutionObservationPlan` applies to implementations of
-`AbstractEvolution`. The specialized channel SBDF2 service currently returns its
-declared saved grid and is not silently adapted into that one-step evolution
-contract. Callable observables and modal forcing always require explicit stable IDs.
-`SpectralStateArtifact` stores full-complex coefficients in the atomic
-checksum-validated array archive. Reads revalidate shape, dtype, restart kind, and the
-content-derived artifact fingerprint. Artifacts without a step size are seeds.
-Setting `restartable=True` requires a positive fixed step size and is only an exact
-checkpoint for a one-step method whose complete runtime state is represented by
-`(state, time, step, step_size)`.
+`PeriodicSpectralProductionPlan` is the public production constructor for this
+periodic route. It requires an already prepared ETDRK method carrying Hermitian
+coordinates, a matching `PeriodicModalTurbulenceStatisticsPlan`, `problem_id`,
+absolute `start_time`/`end_time`, nominal `step_size`, and
+`checkpoint_interval`. Optional output times must follow the start and stay within
+the horizon. If constant-power forcing is supplied,
+`constant_power_wiring="compiled"` verifies that the prepared drift already binds
+the same forcing identity. `"adapter"` explicitly adds the forcing to the supplied
+drift, which must therefore be unforced; the adapter does not detect or remove an
+already embedded forcing term.
+Alternatively, mutually exclusive `ou_forcing` and `ou_realization` inputs prepare
+the coupled OU/ETDRK method. Its accepted state contains full-complex velocity and
+real OU coefficients; checkpoint encoding compresses only the velocity leaf.
 
-The periodic/channel qualification campaign is:
+`SpectralChannelProductionPlan` instead accepts a prepared channel SBDF2 method,
+matching velocity and pressure Hermitian coordinates, channel statistics, and required
+`problem_id`, absolute `start_time`/`end_time`, and `checkpoint_interval`. It derives
+`step_size` from the method--there is no separate step-size constructor argument--and
+requires the end time, every output target, and both statistics-window bounds on the
+exact lattice rooted at `start_time`. It installs a zero-retry policy
+because the method forbids reduced steps. Both route plans derive a default absolute
+`maximum_steps` from the horizon, while an explicit larger capacity remains an
+absolute cap rather than a relative extension.
 
-```bash
-python tools/incompressible_spectral_benchmarks.py \
-  --output benchmarks/incompressible_spectral.json
-```
+Calling `plan.prepare(checkpoint_root, ...)` constructs the durable store and bounded
+compiled runtime; `prepared.initialize(...)` creates the accepted
+`ProductionRunState`. The underlying `ProductionRunPlan` carries the complete
+accepted PyTree, method/controller/RNG state, moment and trigger states, and output
+cursor across segments. Checkpoint IDs include stored content; generations are
+immutable and monotonically committed, with restore gated by matching
+case/runtime/encoding identities. Scheduled accepted-endpoint snapshots use
+deterministic event IDs, publication is byte bounded, checkpoint commit drains
+earlier output, and a writer failure fails the run.
+
+`SpectralStateArtifact` remains a modal seed/one-step artifact. Exact production
+continuation instead checkpoints the complete runtime state. Periodic velocity and
+the four channel velocity/history leaves plus channel pressure use
+independent-real Hermitian archive coordinates; live state remains full complex.
+
+The legacy `tools/incompressible_spectral_benchmarks.py` command and
+`benchmarks/incompressible_spectral.json` cover small periodic and channel
+smoke/performance cases only. They are not production-route qualification and do not
+establish a universal DNS claim.
+
+`tools/incompressible_flow_qualification.py` separates candidate evidence by route.
+Use `periodic-spectral` with
+`--output benchmarks/incompressible_periodic_qualification.json`, or
+`spectral-channel` with
+`--output benchmarks/incompressible_channel_qualification.json`, for the canonical
+route artifacts. A generated artifact binds
+one exact support tuple plus input, reference, and configuration identities to raw
+metrics, gates, status, failure/inconclusive reasons, and a content-derived artifact
+ID. Its `release_ready` value remains false. No result is implied merely because the
+tool or output path exists.
+
+The tool's assembly command consumes passed, existing route artifacts and emits an
+unsigned `CapabilityProfile` candidate containing their artifact IDs. The candidate
+has `signed=false` and `profile.released=false`; it is neither a release decision nor
+a global DNS badge. Runtime measurements in the legacy benchmark are not promoted
+into a qualification timing gate.
 
 
 ## Bounded Galerkin spaces
@@ -577,6 +671,13 @@ minimum-norm behavior, and diagnostics are all owned by `phydrax.linalg`.
 operator is diagonal. The method uses stable phi-function series at zero and small
 arguments. `matrix_phi3_action` extends the shared matrix-function substrate; ETDRK
 does not carry a private matrix-function convention.
+`ETDRKMethod.prepare(drift, coordinates=...)` binds the complete semilinear drift,
+the unbatched diagonal operator, and optional Hermitian acceptance contract once.
+`PreparedETDRKMethod` keeps full-complex live state and accepts any finite positive
+step, so production end/output clamping is permitted. This differs from prepared
+channel SBDF2, whose Stokes factors bind one exact step and therefore require every
+production horizon and output target to align with that step.
+
 
 ```text
 method = phx.solver.ETDRKMethod(4)

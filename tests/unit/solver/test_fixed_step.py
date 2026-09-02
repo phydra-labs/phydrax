@@ -423,3 +423,44 @@ def test_branchwise_retry_reduces_step_and_commits_first_success():
     assert jnp.allclose(result.accepted_step_size, 0.5)
     assert jnp.allclose(result.accepted_state, jnp.asarray((5.0,)))
     assert jnp.allclose(result.attempted_step_sizes, jnp.asarray((1.0, 0.5, 0.25, 0.125)))
+
+
+def test_branchwise_retry_commits_nested_state_atomically():
+    def step(step_index, time, state, step_size, args):
+        del step_index, time, args
+        candidate = {
+            "velocity": state["velocity"] + step_size,
+            "metadata": (state["metadata"][0] + 1,),
+        }
+        successful = step_size <= 0.5
+        accepted = jax.tree.map(
+            lambda proposed, previous: jnp.where(successful, proposed, previous),
+            candidate,
+            state,
+        )
+        return phx.solver.FixedStepResult(
+            candidate,
+            accepted,
+            successful,
+            jnp.asarray(0.0),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.asarray(0.0),
+        )
+
+    initial = {
+        "velocity": jnp.asarray((1.0, 2.0)),
+        "metadata": (jnp.asarray(3, dtype=jnp.int32),),
+    }
+    result = phx.solver.retry_fixed_step(
+        phx.solver.CallableFixedStepMethod(step, "nested-retry"),
+        phx.solver.RobustRetryPolicy(maximum_retries=1),
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        initial,
+        jnp.asarray(1.0),
+    )
+    assert result.successful
+    assert jnp.allclose(result.accepted_state["velocity"], jnp.asarray((1.5, 2.5)))
+    assert result.accepted_state["metadata"][0] == 4

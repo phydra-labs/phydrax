@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -81,6 +82,121 @@ def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancin
     )
     assert jnp.all(~solution.diagnostics.valid)
     np.testing.assert_allclose(solution.velocity, 0.0, atol=0.0)
+
+
+def _perturbed_channel_state(space, dynamics):
+    y = space.axes[1].nodes
+    z = space.axes[2].nodes
+    streamwise = y[None, :, None] + 0.05 * (1.0 - y[None, :, None] ** 2) * jnp.cos(
+        z[None, None, :]
+    )
+    physical = (
+        jnp.zeros(space.physical_shape + (3,))
+        .at[..., 0]
+        .set(jnp.broadcast_to(streamwise, space.physical_shape))
+    )
+    return dynamics.project_state(physical)
+
+
+def test_channel_prepared_restart_matches_uninterrupted_history():
+    space, dynamics = _compiled_channel()
+    initial = _perturbed_channel_state(space, dynamics)
+    step = 0.01
+    method = phx.solver.ChannelSBDF2Method()
+    prepared = method.prepare(dynamics, step)
+    state0 = prepared.initialize(initial, 0.0, None)
+    first = prepared.step(0, 0.0, state0, step, None).accepted_state
+    second = prepared.step(1, step, first, step, None).accepted_state
+    third = prepared.step(2, 2.0 * step, second, step, None).accepted_state
+    restarted_after_startup = (
+        method.prepare(dynamics, step)
+        .step(
+            1,
+            step,
+            first,
+            step,
+            None,
+        )
+        .accepted_state
+    )
+    restarted_later = (
+        method.prepare(dynamics, step)
+        .step(
+            2,
+            2.0 * step,
+            second,
+            step,
+            None,
+        )
+        .accepted_state
+    )
+    solution = phx.solver.solve_channel_sbdf2(
+        dynamics,
+        initial,
+        jnp.asarray([0.0, step, 2.0 * step, 3.0 * step]),
+        method=method,
+    )
+
+    assert prepared.required_step_size == step
+    assert not prepared.allows_step_reduction
+    assert int(first.history_count) == 1
+    assert int(second.history_count) == 2
+    assert int(third.history_count) == 3
+    for uninterrupted, restarted in (
+        (second, restarted_after_startup),
+        (third, restarted_later),
+    ):
+        for left, right in zip(
+            jax.tree.leaves(uninterrupted),
+            jax.tree.leaves(restarted),
+            strict=True,
+        ):
+            np.testing.assert_allclose(np.asarray(left), np.asarray(right))
+    np.testing.assert_allclose(
+        np.asarray(solution.velocity[-1]),
+        np.asarray(third.current_velocity),
+    )
+    np.testing.assert_allclose(
+        np.asarray(solution.pressure[-1]),
+        np.asarray(third.current_pressure),
+    )
+    np.testing.assert_allclose(
+        np.asarray(solution.pressure_gradient[-1]),
+        np.asarray(third.pressure_gradient),
+    )
+
+
+def test_channel_prepared_failure_preserves_history_and_rejects_changed_step():
+    space, dynamics = _compiled_channel()
+    step = 0.01
+    prepared = phx.solver.ChannelSBDF2Method().prepare(dynamics, step)
+    state = prepared.step(
+        0,
+        0.0,
+        prepared.initialize(_perturbed_channel_state(space, dynamics), 0.0, None),
+        step,
+        None,
+    ).accepted_state
+    invalid = phx.solver.ChannelSBDF2State(
+        state.previous_velocity,
+        jnp.zeros_like(state.current_velocity),
+        state.previous_nonlinear_rhs,
+        state.current_nonlinear_rhs,
+        state.current_pressure,
+        state.pressure_gradient,
+        state.history_count,
+    )
+    failed = prepared.step(1, step, invalid, step, None)
+
+    assert not bool(failed.successful)
+    for incoming, accepted in zip(
+        jax.tree.leaves(invalid),
+        jax.tree.leaves(failed.accepted_state),
+        strict=True,
+    ):
+        assert jnp.array_equal(incoming, accepted)
+    with pytest.raises(Exception, match="exactly equal"):
+        prepared.step(1, step, state, 0.5 * step, None)
 
 
 def test_bounded_observer_reports_overflow_without_growing_state():
