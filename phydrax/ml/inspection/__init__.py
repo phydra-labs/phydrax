@@ -17,6 +17,7 @@ from ._inspection import (
     RegressionInfluenceDiagnostics,
     SensitivityResult,
 )
+from ._spectral_neuron import inspect_spectral_neuron, SpectralNeuronInspection
 
 
 __all__ = [
@@ -25,9 +26,11 @@ __all__ = [
     "PermutationImportanceResult",
     "RegressionInfluenceDiagnostics",
     "SensitivityResult",
+    "SpectralNeuronInspection",
     "gradient_sensitivity",
     "hessian_sensitivity",
     "individual_conditional_expectation",
+    "inspect_spectral_neuron",
     "influence_functions",
     "jacobian_sensitivity",
     "leverage_and_cooks_distance",

@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Added a native real spectral-neuron layer with explicit ordered-eigenvalue
+  selection, exact coordinate monotonicity constraints, fresh-initialization
+  eigengap evidence, and invariant cluster-aware inspection.
 - Added content-identified local quantum observables, lower-only Pauli-rotation
   program templates, grouped dense expectations, exact parameter-shift
   Jacobians, dense circuit feature models, fidelity kernels, variational binary

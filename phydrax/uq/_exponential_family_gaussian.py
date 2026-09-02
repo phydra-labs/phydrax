@@ -14,7 +14,7 @@ from .._exponential_family import (
     ExponentialFamilyLaw,
     MultivariateNormalFamily,
 )
-from .._exponential_family._symmetric_coordinates import svec
+from .._symmetric_coordinates import svec
 from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 
 
