@@ -10,8 +10,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._array_archive import array_collection_digest
 from .._fingerprint import canonical_fingerprint
@@ -420,7 +421,7 @@ def contract_su2_reduced(
             output_labels = [axis for axis in left_labels if axis != la] + [
                 lb.ndim + axis for axis in range(rb.ndim) if axis != ra
             ]
-            contribution = (spin + 1) * oe.contract(
+            contribution = (spin + 1) * ein.contract(
                 lb, left_labels, rb, right_labels, output_labels
             )
             if not output_legs:

@@ -15,10 +15,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import opt_einsum as oe
 import optax
 
 import phydrax as phx
+import phydrax.ein as ein
 from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
@@ -2237,7 +2237,7 @@ def stochastic_gradient_regression(
         axis=1,
     )
     analytic_prediction_mean = prediction_design @ analytic_mean
-    analytic_prediction_variance = oe.contract(
+    analytic_prediction_variance = ein.contract(
         "ni,ij,nj->n",
         prediction_design,
         analytic_covariance,
@@ -2387,7 +2387,7 @@ def stochastic_gradient_regression(
             / covariance_norm
         )
         prediction_mean = prediction_design @ sample_means[name]
-        prediction_variance = oe.contract(
+        prediction_variance = ein.contract(
             "ni,ij,nj->n",
             prediction_design,
             sample_covariances[name],

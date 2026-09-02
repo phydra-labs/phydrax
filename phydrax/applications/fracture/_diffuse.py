@@ -8,8 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -408,7 +409,7 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
                 parameters.degradation(damage)[..., None, None] * stress_plus
                 + stress_minus
             )
-            return oe.contract("cq,cqib,cqab->cia", weights, test_gradients, stress)
+            return ein.contract("cq,cqib,cqab->cia", weights, test_gradients, stress)
 
         def damage_residual(
             values, gradients, points, weights, test_basis, test_gradients, context
@@ -428,10 +429,12 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
                 - 2.0 * (1.0 - damage) * history_values
             )
             return (
-                oe.contract("cq,cq,qi->ci", weights, local, test_basis)
+                ein.contract("cq,cq,qi->ci", weights, local, test_basis)
                 + parameters.critical_energy_release_rate
                 * parameters.length_scale
-                * oe.contract("cq,cqid,cqd->ci", weights, test_gradients, damage_gradient)
+                * ein.contract(
+                    "cq,cqid,cqd->ci", weights, test_gradients, damage_gradient
+                )
             )
 
         identifier = self.model_id if form_id is None else str(form_id)

@@ -7,8 +7,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 
+import phydrax.ein as ein
 from phydrax.discretization import CochainFieldSpec, SphericalHarmonicPlan
 from phydrax.graph import compute_harmonic_subspace, triangle_mesh_to_cochain_complex
 from phydrax.nn.operator import (
@@ -383,7 +383,7 @@ def _periodic_population_coefficients(key, num_cases, resolved_frequency):
 def _evaluate_periodic_population(coefficients, frequencies, phase_coordinate):
     phase = frequencies[:, None] * phase_coordinate[None, :]
     basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
-    return oe.contract("cmk,mpk->cp", coefficients, basis)
+    return ein.contract("cmk,mpk->cp", coefficients, basis)
 
 
 def _planar_population_coefficients(key, num_cases, resolved_frequency):
@@ -418,7 +418,7 @@ def _evaluate_planar_population(coefficients, mode_x, mode_y, coordinates):
         )
     )
     basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
-    values = oe.contract("cmk,mpk->cp", coefficients, basis)
+    values = ein.contract("cmk,mpk->cp", coefficients, basis)
     return values.reshape((int(coefficients.shape[0]), *coordinates.shape[:-1]))
 
 
@@ -1829,7 +1829,7 @@ def navier_stokes_scenario(
         * (mode_x[:, None, None] * x[None, :, :] + mode_y[:, None, None] * y[None, :, :])
         + phases[:, :, None, None]
     )
-    vorticity = oe.contract("cm,cmxy->cxy", coefficients, modes)
+    vorticity = ein.contract("cm,cmxy->cxy", coefficients, modes)
     target = vorticity
     maximum_residual = 0.0
     for _ in range(int(target_steps)):
@@ -1961,7 +1961,7 @@ def green_function_scenario(
         2.0 * jnp.pi * frequencies[None, :, None] * source_coordinate[:, 0][None, None, :]
         + phases[:, :, None]
     )
-    forcing = oe.contract("cm,cms->cs", coefficients, modes) / jnp.sqrt(
+    forcing = ein.contract("cm,cms->cs", coefficients, modes) / jnp.sqrt(
         resolved_frequency
     )
     weights = jnp.ones((source_points,)) / source_points
@@ -1969,7 +1969,7 @@ def green_function_scenario(
         -jnp.abs(query_coordinate[:, 0, None] - source_coordinate[:, 0][None, :])
         / float(kernel_length_scale)
     )
-    target = oe.contract("qs,cs,s->cq", kernel, forcing, weights)
+    target = ein.contract("qs,cs,s->cq", kernel, forcing, weights)
     source = FunctionSamples(
         values=forcing,
         coordinates=source_coordinate,
@@ -1986,7 +1986,7 @@ def green_function_scenario(
         -jnp.abs(changed_query_coordinate[:, 0, None] - source_coordinate[:, 0][None, :])
         / float(kernel_length_scale)
     )
-    changed_target = oe.contract(
+    changed_target = ein.contract(
         "qs,cs,s->cq",
         changed_kernel,
         forcing,
@@ -2283,7 +2283,7 @@ def causal_relaxation_scenario(
     def forcing(times):
         phase = 2.0 * jnp.pi * frequencies[:, None] * times[None, :]
         basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
-        return oe.contract("cmk,mtk->ct", coefficients, basis)
+        return ein.contract("cmk,mtk->ct", coefficients, basis)
 
     def response(times):
         omega = 2.0 * jnp.pi * frequencies[:, None]
@@ -2292,11 +2292,11 @@ def causal_relaxation_scenario(
         kernel = (jnp.exp(1j * omega * time) - transient) / (
             float(decay_rate) + 1j * omega
         )
-        forced = oe.contract(
+        forced = ein.contract(
             "cm,mt->ct",
             coefficients[..., 0],
             jnp.imag(kernel),
-        ) + oe.contract(
+        ) + ein.contract(
             "cm,mt->ct",
             coefficients[..., 1],
             jnp.real(kernel),
@@ -2444,7 +2444,7 @@ def irregular_causal_relaxation_scenario(
     def forcing(times):
         phase = 2.0 * jnp.pi * frequencies[None, :, None] * times[:, None, :]
         basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
-        return oe.contract("cmk,cmtk->ct", coefficients, basis)
+        return ein.contract("cmk,cmtk->ct", coefficients, basis)
 
     def response(times):
         omega = 2.0 * jnp.pi * frequencies[None, :, None]
@@ -2453,9 +2453,9 @@ def irregular_causal_relaxation_scenario(
         kernel = (jnp.exp(1j * omega * time) - transient) / (
             float(decay_rate) + 1j * omega
         )
-        return oe.contract(
+        return ein.contract(
             "cm,cmt->ct", coefficients[..., 0], jnp.imag(kernel)
-        ) + oe.contract("cm,cmt->ct", coefficients[..., 1], jnp.real(kernel))
+        ) + ein.contract("cm,cmt->ct", coefficients[..., 1], jnp.real(kernel))
 
     def batch(times, *, mask=None):
         valid = (
@@ -3210,7 +3210,7 @@ def conservative_ring_transport_scenario(
         shifted = angles[None, :] - displacement[:, None]
         phase = frequencies[None, :, None] * shifted[:, None, :]
         basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
-        variation = oe.contract("cmk,cmpk->cp", coefficients, basis)
+        variation = ein.contract("cmk,cmpk->cp", coefficients, basis)
         return 1.0 + density_scale[:, None] * variation
 
     def ring_geometry(current_centers, current_radii, count, offset):
@@ -3897,7 +3897,7 @@ def irregular_poisson_scenario(
         displacement = current_query[:, None, :] - current_source[None, :, :]
         distance = jnp.sqrt(jnp.sum(displacement**2, axis=-1) + 1e-3)
         kernel = -jnp.log(distance) / (2.0 * jnp.pi)
-        target = oe.contract("qs,cs,s->cq", kernel, forcing, weights)
+        target = ein.contract("qs,cs,s->cq", kernel, forcing, weights)
         batch = OperatorBatch(
             inputs={
                 "forcing": FunctionSamples(
@@ -4214,7 +4214,7 @@ def spherical_diffusion_scenario(
     coefficients = coefficients / (
         degrees_array.astype(float)[None, :] ** 1.5 * jnp.sqrt(len(basis))
     )
-    values = oe.contract("cm,mxy->cxy", coefficients, basis_array)
+    values = ein.contract("cm,mxy->cxy", coefficients, basis_array)
     attenuation = jnp.exp(
         -float(diffusivity)
         * float(dt)
@@ -4222,7 +4222,7 @@ def spherical_diffusion_scenario(
         * degrees_array
         * (degrees_array + 1)
     )
-    target = oe.contract(
+    target = ein.contract(
         "cm,m,mxy->cxy",
         coefficients,
         attenuation,

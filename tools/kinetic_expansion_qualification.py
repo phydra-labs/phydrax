@@ -9,9 +9,9 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 
 import phydrax as phx
+import phydrax.ein as ein
 from benchmarks._runtime import capture_environment
 from phydrax.discretization.finite_difference._boundary import HaloPlan
 from phydrax.discretization.finite_difference._distributed import (
@@ -302,7 +302,7 @@ def _multiphysics_case() -> dict[str, object]:
     species_residual = max(
         _maximum_absolute(recovered_species - concentration),
         _maximum_absolute(
-            species_flux - oe.contract("...s,...d->...sd", concentration, velocity)
+            species_flux - ein.contract("...s,...d->...sd", concentration, velocity)
         ),
     )
     tolerance = 2.0e-13

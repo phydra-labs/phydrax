@@ -36,6 +36,11 @@ def test_atomic_operator_case_coreset_carries_weights_and_provenance():
     )
     assert result.dataset.size == result.selection.capacity
     assert jnp.array_equal(result.dataset.case_mask, result.selection.mask)
+    source = phx.nn.operator.InMemoryOperatorCaseSource(result.dataset)
+    for index in range(result.dataset.size):
+        case = source.read_case(index)
+        assert case.case_log_weight == float(result.dataset.case_log_weights[index])
+        assert case.case_active == bool(result.selection.mask[index])
     assert (
         tuple(record.case_id for record in result.dataset.provenance)
         == result.source_case_ids

@@ -414,6 +414,7 @@ def solve_deep_picard(
     sampling_plan: FeynmanKacSamplingPlan,
     num_picard_steps: int,
     inner_num_iter: int,
+    gradient_accumulation: int = 1,
     optim: Any = None,
     control_name: str | None = None,
     query_times: ArrayLike | None = None,
@@ -578,6 +579,7 @@ def solve_deep_picard(
         )
         trained = temporary.solve(
             num_iter=inner_steps,
+            gradient_accumulation=gradient_accumulation,
             optim=optim,
             seed=int(seed) + outer + 1,
             jit=jit,

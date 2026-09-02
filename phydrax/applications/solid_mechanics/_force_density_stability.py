@@ -11,8 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...continuation import ParameterContinuationProblem
@@ -161,8 +162,8 @@ def analyze_force_density_mechanisms(
     ):
         raise ValueError("Mechanism cutoffs must be finite and nonnegative.")
     rigidity = force_density_rigidity_matrix(structure, positions)
-    mechanism_gram = oe.contract("mi,mj->ij", rigidity, rigidity)
-    stress_gram = oe.contract("mi,ni->mn", rigidity, rigidity)
+    mechanism_gram = ein.contract("mi,mj->ij", rigidity, rigidity)
+    stress_gram = ein.contract("mi,ni->mn", rigidity, rigidity)
     mechanism = _gram_eigensolve(mechanism_gram, f"{structure.structure_id}:mechanisms")
     self_stress = _gram_eigensolve(stress_gram, f"{structure.structure_id}:self-stress")
     scale = jnp.maximum(

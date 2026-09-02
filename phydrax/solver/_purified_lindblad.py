@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..tensor_network import LocallyPurifiedDensity, prepare_local_lindblad_channel
@@ -97,7 +98,7 @@ def apply_local_kraus_channel(
     kraus = precision.contraction(channel.kraus)
     if tensor.shape[1] != kraus.shape[-1]:
         raise ValueError("Kraus and physical dimensions differ.")
-    transformed = oe.contract("aoi,likr->loakr", kraus, tensor)
+    transformed = ein.contract("aoi,likr->loakr", kraus, tensor)
     transformed = transformed.reshape(
         (tensor.shape[0], tensor.shape[1], -1, tensor.shape[-1])
     )

@@ -18,8 +18,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -176,12 +177,12 @@ class VariableSurfaceTensionPolicy(StrictModule, NonTrainableState):
             raise ValueError("Surface-tension law must match the interface batch.")
         if derivative.shape != values.shape:
             raise ValueError("Surface-tension state derivative must match state.")
-        physical_gradient = oe.contract(
+        physical_gradient = ein.contract(
             "...i,...id->...d", derivative, gradient, backend="jax"
         )
         tangential = (
             physical_gradient
-            - oe.contract("...d,...d->...", physical_gradient, normal_, backend="jax")[
+            - ein.contract("...d,...d->...", physical_gradient, normal_, backend="jax")[
                 ..., None
             ]
             * normal_
@@ -668,8 +669,8 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         weights = jnp.where(
             usable, 1.0 / jnp.maximum(distance, jnp.finfo(dtype).tiny) ** 2, 0.0
         )
-        gram = oe.contract("csi,csj,cs->cij", offsets, offsets, weights)
-        rhs = oe.contract("csi,csj,cs->cij", differences, offsets, weights)
+        gram = ein.contract("csi,csj,cs->cij", offsets, offsets, weights)
+        rhs = ein.contract("csi,csj,cs->cij", differences, offsets, weights)
         scale = jnp.maximum(jnp.trace(gram, axis1=-2, axis2=-1), jnp.finfo(dtype).tiny)
         regularizer = jnp.finfo(dtype).eps * scale[:, None, None]
         fit_matrix = gram + regularizer * jnp.eye(
@@ -688,10 +689,10 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
             ),
         )
         jacobian = jnp.swapaxes(solved.value, -1, -2)
-        predicted = oe.contract("cij,csj->csi", jacobian, offsets)
+        predicted = ein.contract("cij,csj->csi", jacobian, offsets)
         error = differences - predicted
         residual = jnp.sqrt(
-            oe.contract("csi,csi,cs->c", error, error, weights)
+            ein.contract("csi,csi,cs->c", error, error, weights)
             / jnp.maximum(jnp.sum(weights, axis=1), 1.0)
         )
         determinant = gram[:, 0, 0] * gram[:, 1, 1] - gram[:, 0, 1] * gram[:, 1, 0]
@@ -817,7 +818,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         lengths = self.gradient.characteristic_lengths.astype(dtype)
         cell_gradient = coefficients / lengths[:, None]
         average = 0.5 * (cell_gradient[owner] + cell_gradient[safe_neighbour])
-        normal_gradient = oe.contract("fd,fd->f", average, orientation)
+        normal_gradient = ein.contract("fd,fd->f", average, orientation)
         normal_gradient = jnp.where(interior, normal_gradient, 0.0)
         force = normal_gradient[:, None] * normals
         face_curvature = 0.5 * (local[owner] + local[safe_neighbour])
@@ -834,7 +835,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
                 raise ValueError(f"Velocity must have shape {expected}.")
             face_speed = 0.5 * (speed[owner] + speed[safe_neighbour])
             face_speed = jnp.where(interior[:, None], face_speed, 0.0)
-            work = oe.contract("fd,fd->f", force, face_speed)
+            work = ein.contract("fd,fd->f", force, face_speed)
         has_interface = jnp.any(evidence.interface_active)
         force = jnp.where(has_interface, force, zero_force)
         work = jnp.where(has_interface, work, zero_work)

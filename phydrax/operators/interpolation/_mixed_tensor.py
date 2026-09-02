@@ -11,9 +11,9 @@ import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax.domain import DomainFunction, PointBatch, SampleLayout
 
 from ..._doc import DOC_KEY0
@@ -146,7 +146,7 @@ class MixedTensorInterpolant(StrictModule):
                 self.plan.axes, point, orders, strict=True
             ):
                 basis = self._basis(axis, coordinate, order).astype(result.dtype)
-                result = oe.contract("i,i...->...", basis, result)
+                result = ein.contract("i,i...->...", basis, result)
             return result
 
         values = jax.vmap(evaluate)(flat)

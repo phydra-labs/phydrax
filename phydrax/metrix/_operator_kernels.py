@@ -8,8 +8,9 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._connection import AbstractAffineConnection
@@ -33,7 +34,7 @@ def apply_cotangent_map(
             "A cotangent map must have trailing shape "
             f"{(dimension, dimension)}; got {matrix.shape}."
         )
-    return oe.contract("...ij,...j->...i", matrix, covector_array)
+    return ein.contract("...ij,...j->...i", matrix, covector_array)
 
 
 class _DensityDivergenceEvaluator(StrictModule):
@@ -105,7 +106,7 @@ class _CovariantSymbolEvaluator(StrictModule):
         differential = jax.grad(self.field)(coordinates)
         second_derivative = jax.hessian(self.field)(coordinates)
         coefficients = self.connection.coefficients(coordinates)
-        covariant_hessian = second_derivative - oe.contract(
+        covariant_hessian = second_derivative - ein.contract(
             "kij,k->ij", coefficients, differential
         )
         symbol = jnp.asarray(self.symbol(coordinates))
@@ -114,7 +115,7 @@ class _CovariantSymbolEvaluator(StrictModule):
                 f"Pointwise principal symbol must have shape {(dimension, dimension)}; "
                 f"got {symbol.shape}."
             )
-        result = oe.contract("ij,ij->", symbol, covariant_hessian)
+        result = ein.contract("ij,ij->", symbol, covariant_hessian)
         if self.drift is not None:
             drift = jnp.asarray(self.drift(coordinates))
             if drift.shape != (dimension,):

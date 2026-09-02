@@ -10,8 +10,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._axis_factorization import (
     _apply_gathers,
@@ -82,9 +83,7 @@ def _batch(
         return realization_or_batch.batch, realization_or_batch
     if isinstance(realization_or_batch, SeparableIntegrationBatch):
         return realization_or_batch, None
-    raise TypeError(
-        "Expected an IntegrationRealization or SeparableIntegrationBatch."
-    )
+    raise TypeError("Expected an IntegrationRealization or SeparableIntegrationBatch.")
 
 
 def _prepared_term_factors(
@@ -101,7 +100,10 @@ def _factor_shape(factors: tuple[AxisFactor, ...], /) -> tuple[int, int]:
     if not factors:
         raise ValueError("A factorized product term requires factors.")
     shape = tuple(int(size) for size in factors[0].tensor.shape[-2:])
-    if any(tuple(int(size) for size in factor.tensor.shape[-2:]) != shape for factor in factors):
+    if any(
+        tuple(int(size) for size in factor.tensor.shape[-2:]) != shape
+        for factor in factors
+    ):
         raise ValueError(
             "Every factor in one product term must share latent and output sizes."
         )
@@ -124,7 +126,9 @@ def _axis_components(
         support = set(factor.axes)
         if not support:
             continue
-        matching = [index for index, component in enumerate(components) if component & support]
+        matching = [
+            index for index, component in enumerate(components) if component & support
+        ]
         merged = set(support)
         for index in reversed(matching):
             merged.update(components.pop(index))
@@ -165,7 +169,9 @@ def _component_pairing(
     dtype: Any,
     /,
 ) -> Array:
-    axis_sizes = tuple(int(batch.weights_by_axis[axis].data.shape[0]) for axis in component)
+    axis_sizes = tuple(
+        int(batch.weights_by_axis[axis].data.shape[0]) for axis in component
+    )
     left = jnp.ones(axis_sizes + left_shape, dtype=dtype)
     right = jnp.ones(axis_sizes + right_shape, dtype=dtype)
     for factor in left_factors:
@@ -186,7 +192,7 @@ def _component_pairing(
     for axis_index, axis in enumerate(component):
         operands.extend((batch.weights_by_axis[axis].data, (axis_index,)))
     operands.append((left_latent, right_latent, left_output, right_output))
-    return oe.contract(*operands)
+    return ein.contract(*operands)
 
 
 def _term_pairing(
@@ -227,7 +233,9 @@ def _term_pairing(
         )
         maximum_points = max(
             maximum_points,
-            math.prod(int(batch.weights_by_axis[axis].data.shape[0]) for axis in component),
+            math.prod(
+                int(batch.weights_by_axis[axis].data.shape[0]) for axis in component
+            ),
         )
     constant_left = jnp.ones(left_shape, dtype=combined.dtype)
     constant_right = jnp.ones(right_shape, dtype=combined.dtype)

@@ -78,6 +78,61 @@ def test_clifford_grade_representation_round_trip_and_field_schema():
         )
 
 
+def test_grade_linear_matches_explicit_channel_mixing_with_leading_axes():
+    algebra = cl.CliffordAlgebraSpec((1, 1))
+    input_representation = phx.nn.operator.representations.CliffordGradeRepresentation(
+        algebra,
+        (2, 3, 0),
+    )
+    output_representation = phx.nn.operator.representations.CliffordGradeRepresentation(
+        algebra,
+        (3, 2, 1),
+    )
+    layer = phx.nn.operator.layers.CliffordGradeLinear(
+        input_representation,
+        output_representation,
+        key=jr.key(11),
+    )
+    values = jr.normal(jr.key(12), (2, 3, input_representation.packed_size))
+    features = input_representation.split(values)
+    leading = values.shape[:-1]
+    expected_grades = []
+    for grade, (grade_values, weight, output_count, layout) in enumerate(
+        zip(
+            features.grades,
+            layer.weights,
+            output_representation.multiplicities,
+            output_representation.grade_layouts,
+            strict=True,
+        )
+    ):
+        if weight is None:
+            mixed = jnp.zeros(
+                leading + (output_count, layout.blade_count),
+                dtype=values.dtype,
+            )
+        else:
+            expanded_weight = weight.reshape((1,) * len(leading) + weight.shape + (1,))
+            mixed = jnp.sum(
+                expanded_weight * grade_values[..., None, :, :],
+                axis=len(leading) + 1,
+            )
+        if grade == 0 and layer.scalar_bias is not None:
+            mixed = mixed + layer.scalar_bias.reshape(
+                (1,) * len(leading) + layer.scalar_bias.shape + (1,)
+            )
+        expected_grades.append(mixed)
+
+    expected = output_representation.join(
+        phx.nn.operator.representations.CliffordGradeFeatures(tuple(expected_grades))
+    )
+    result = layer(values)
+    assert result.shape == expected.shape
+    assert result.dtype == expected.dtype
+    np.testing.assert_allclose(result, expected)
+    np.testing.assert_allclose(jax.jit(layer)(values), expected)
+
+
 def test_grade_linear_and_gate_are_euclidean_equivariant():
     algebra = cl.CliffordAlgebraSpec((1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(

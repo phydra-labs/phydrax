@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -120,7 +121,7 @@ class MappedLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         )
         source_mass = jnp.max(jnp.abs(jnp.sum(source, axis=-1)))
         source_momentum = jnp.max(
-            jnp.abs(oe.contract("...q,qd->...d", source, velocities))
+            jnp.abs(ein.contract("...q,qd->...d", source, velocities))
         )
         metric = self.mapped_grid.metric_report
         minimum_jacobian = jnp.min(self.mapped_grid.jacobian)

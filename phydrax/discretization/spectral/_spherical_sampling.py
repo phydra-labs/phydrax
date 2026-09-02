@@ -12,9 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 from s2fft.recursions.risbo_jax import compute_full as _wigner_small_d
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -369,7 +370,7 @@ class PreparedSphericalSampleOperator(StrictModule, NonTrainableState):
         )
         payload_shape = coordinates.shape[1:]
         flattened = coordinates.reshape((coordinates.shape[0], -1))
-        values = oe.contract("nm,mk->nk", self.design, flattened, backend="jax")
+        values = ein.contract("nm,mk->nk", self.design, flattened, backend="jax")
         values = values.reshape((self.plan.sample_capacity,) + payload_shape)
         mask = self.plan.active_mask.reshape(
             (self.plan.sample_capacity,) + (1,) * len(payload_shape)

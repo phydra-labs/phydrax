@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -210,7 +211,7 @@ def _feedback_rollout(
         index, nominal_state, nominal_control, feedforward_, feedback_ = inputs
         index = jnp.asarray(index, dtype=jnp.int32)
         delta = state.reshape((state_size,)) - nominal_state.reshape((state_size,))
-        correction = oe.contract("ij,j->i", feedback_, delta)
+        correction = ein.contract("ij,j->i", feedback_, delta)
         control = (
             nominal_control.reshape((control_size,))
             + step_size * feedforward_
@@ -264,11 +265,11 @@ def _backward(model, regularization):
         ) = carry
         index, a, b, lx, lu, lxx, luu, lux = inputs
         index = jnp.asarray(index, dtype=jnp.int32)
-        qx = lx + oe.contract("ji,j->i", a, value_gradient)
-        qu = lu + oe.contract("ji,j->i", b, value_gradient)
-        qxx = lxx + oe.contract("ji,jk,kl->il", a, value_hessian, a)
-        quu = luu + oe.contract("ji,jk,kl->il", b, value_hessian, b)
-        qux = lux + oe.contract("ji,jk,kl->il", b, value_hessian, a)
+        qx = lx + ein.contract("ji,j->i", a, value_gradient)
+        qu = lu + ein.contract("ji,j->i", b, value_gradient)
+        qxx = lxx + ein.contract("ji,jk,kl->il", a, value_hessian, a)
+        quu = luu + ein.contract("ji,jk,kl->il", b, value_hessian, b)
+        qux = lux + ein.contract("ji,jk,kl->il", b, value_hessian, a)
         qxx = 0.5 * (qxx + jnp.swapaxes(qxx, -1, -2))
         regularized = 0.5 * (quu + jnp.swapaxes(quu, -1, -2)) + regularization * identity
         factorization = prepare_local_block_factorization(
@@ -284,15 +285,15 @@ def _backward(model, regularization):
         gain = jnp.where(usable, gain, 0)
         next_gradient = (
             qx
-            + oe.contract("ji,j->i", gain, qu)
-            + oe.contract("ji,j->i", qux, k)
-            + oe.contract("ji,jk,k->i", gain, regularized, k)
+            + ein.contract("ji,j->i", gain, qu)
+            + ein.contract("ji,j->i", qux, k)
+            + ein.contract("ji,jk,k->i", gain, regularized, k)
         )
         next_hessian = (
             qxx
-            + oe.contract("ji,jk->ik", gain, qux)
-            + oe.contract("ji,jk->ik", qux, gain)
-            + oe.contract("ji,jk,kl->il", gain, regularized, gain)
+            + ein.contract("ji,jk->ik", gain, qux)
+            + ein.contract("ji,jk->ik", qux, gain)
+            + ein.contract("ji,jk,kl->il", gain, regularized, gain)
         )
         next_hessian = 0.5 * (next_hessian + jnp.swapaxes(next_hessian, -1, -2))
         diagonal = jnp.real(jnp.diagonal(factorization.factors[0]))
@@ -301,11 +302,11 @@ def _backward(model, regularization):
             jnp.where(usable, next_gradient, value_gradient),
             jnp.where(usable, next_hessian, value_hessian),
             usable,
-            linear + jnp.where(usable, oe.contract("i,i->", qu, k), 0),
+            linear + jnp.where(usable, ein.contract("i,i->", qu, k), 0),
             quadratic
             + jnp.where(
                 usable,
-                0.5 * oe.contract("i,ij,j->", k, regularized, k),
+                0.5 * ein.contract("i,ij,j->", k, regularized, k),
                 0,
             ),
             jnp.minimum(curvature, minimum),

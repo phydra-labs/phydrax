@@ -12,9 +12,10 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -253,7 +254,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
             self.velocities ** jnp.asarray(powers, dtype=self.velocities.dtype)[None, :],
             axis=-1,
         )
-        return oe.contract("...q,q->...", values, monomial)
+        return ein.contract("...q,q->...", values, monomial)
 
     def hydrodynamic_moment_matrix(
         self, /, *, include_total_energy: bool = True
@@ -261,7 +262,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
         rows = [jnp.ones((self.population_count,), dtype=self.velocities.dtype)]
         rows.extend(self.velocities[:, axis] for axis in range(self.dimension))
         if include_total_energy:
-            rows.append(0.5 * oe.contract("qd,qd->q", self.velocities, self.velocities))
+            rows.append(0.5 * ein.contract("qd,qd->q", self.velocities, self.velocities))
         return jnp.stack(rows, axis=0)
 
 

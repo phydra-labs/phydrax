@@ -1600,6 +1600,7 @@ fit_result = phx.nn.operator.training.fit_operator(
     epochs=1,
     steps=1,
     batch_size=16,
+    gradient_accumulation=4,
     normalization=normalization,
     dtype_policy=dtype_policy,
     validation_policy=phx.nn.operator.training.OperatorValidationPolicy(every=1),
@@ -1670,12 +1671,24 @@ unconstrained execution-space models.
 fingerprint participates in checkpoint compatibility. Loss terms default to
 physical space; set `space="execution"` only for an objective intentionally
 defined on normalized execution values. `OperatorLossContext` exposes paired
-execution and physical predictions, batches, and targets. Set
-`gradient_accumulation` for exact case-weighted microbatch accumulation; use
-`OperatorDTypePolicy` for parameter/compute/reduction placement and an explicit
-`OperatorLossScalePolicy` for float16 dynamic loss scaling.
-`OperatorShardingPolicy` shards a named case dimension while keeping parameters
-and shared geometry replicated.
+execution and physical predictions, batches, and targets.
+
+`gradient_accumulation=K` holds parameters, optimizer state, target parameters,
+and the loss-schedule step fixed while evaluating `K` independently keyed
+microbatches. Case log masses and active masks are merged in the log domain, so
+the result equals the corresponding pooled weighted mean even for uneven final
+batches. The optimizer, validation, callbacks, history, and checkpoints advance
+only after a positive-support window flushes. Case-axis sums, nonlinear
+batch-risk reductions, and scalar custom losses are intentionally rejected when
+`K > 1`; write custom accumulated terms with
+`OperatorLossTerm(case_reduction="per_case")`.
+
+Use `OperatorDTypePolicy` for parameter/compute/reduction placement. Gradient
+numerators accumulate in `reduction_dtype` and are cast back to parameter dtype
+at the optimizer boundary. Float16 compute additionally requires an explicit
+`OperatorLossScalePolicy`; any nonfinite microstep discards the pending window.
+`OperatorShardingPolicy` shards a named case dimension, pads only physical tail
+capacity, and masks the padding from every reduction.
 
 ### Exact output transforms, weak forms, and operator adjoints
 

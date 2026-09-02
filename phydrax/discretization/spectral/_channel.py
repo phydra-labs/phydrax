@@ -10,8 +10,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._geometry_precision import GeometryPrecisionPolicy
@@ -530,7 +531,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 prepared_id=self.prepared_id,
             )
         interior = self.synthesis[1:-1]
-        physical_rhs = oe.contract("ij,kjc->kic", interior, modal_modes, backend="jax")
+        physical_rhs = ein.contract("ij,kjc->kic", interior, modal_modes, backend="jax")
         batch_rhs = jnp.zeros((modal_modes.shape[0], self.block_size), dtype=value.dtype)
         count = self.wall_normal_count
         interior_count = count - 2
@@ -559,7 +560,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         batch_rhs = batch_rhs.at[
             self.zero_mode_index, boundary_start : boundary_start + 6
         ].set(wall_rhs)
-        zero_vertical_upper_rhs = oe.contract(
+        zero_vertical_upper_rhs = ein.contract(
             "j,j->",
             self.synthesis[-1],
             modal_modes[self.zero_mode_index, :, 1],
@@ -582,7 +583,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             ].add(gradient[1])
             solution, failed = solve_local_blocks(self.factorization, batch_rhs)
             residual = (
-                oe.contract("kij,kj->ki", self.blocks, solution, backend="jax")
+                ein.contract("kij,kj->ki", self.blocks, solution, backend="jax")
                 - batch_rhs
             )
         else:
@@ -603,7 +604,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             )
             pressure_gradient = jnp.real(augmented_solution[0, self.block_size :])
             residual = (
-                oe.contract("kij,kj->ki", self.blocks, solution, backend="jax")
+                ein.contract("kij,kj->ki", self.blocks, solution, backend="jax")
                 - batch_rhs
             )
             augmented_residual = (
@@ -657,11 +658,11 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             + 1j * self.spanwise_wavenumbers[:, None, :] * velocity[..., 2]
         )
         lower = (
-            oe.contract("j,xjzc->xzc", self.synthesis[0], velocity, backend="jax")
+            ein.contract("j,xjzc->xzc", self.synthesis[0], velocity, backend="jax")
             / self.horizontal_constant_scale
         )
         upper = (
-            oe.contract("j,xjzc->xzc", self.synthesis[-1], velocity, backend="jax")
+            ein.contract("j,xjzc->xzc", self.synthesis[-1], velocity, backend="jax")
             / self.horizontal_constant_scale
         )
         precision = GeometryPrecisionPolicy()

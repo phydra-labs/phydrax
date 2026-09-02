@@ -15,9 +15,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
 from phydrax.domain import Interval1d, PointBatch
 from phydrax.kernels import (
     AbstractFiniteFeatureKernel,
@@ -215,11 +215,13 @@ class FiniteMeasureKernelMean(AbstractKernelMean):
     def mean(self, points: ArrayLike, /) -> Array:
         values = jnp.asarray(points)
         matrix = self.kernel.matrix(values, self.support)
-        return oe.contract("ij,j->i", matrix, self.physical_weights)
+        return ein.contract("ij,j->i", matrix, self.physical_weights)
 
     def double_mean(self, /) -> Array:
         gram = self.kernel.matrix(self.support, self.support)
-        return oe.contract("i,ij,j->", self.physical_weights, gram, self.physical_weights)
+        return ein.contract(
+            "i,ij,j->", self.physical_weights, gram, self.physical_weights
+        )
 
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         return super().matrix(left, right)
@@ -272,7 +274,7 @@ class FiniteFeatureKernelMean(AbstractKernelMean):
         return kernel_features(self.kernel, points) @ self.feature_moment
 
     def double_mean(self, /) -> Array:
-        return oe.contract("i,i->", self.feature_moment, self.feature_moment)
+        return ein.contract("i,i->", self.feature_moment, self.feature_moment)
 
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         return super().matrix(left, right)

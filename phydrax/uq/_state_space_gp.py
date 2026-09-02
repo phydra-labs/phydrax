@@ -13,9 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
 from phydrax.kernels import (
     AbstractPositiveDefiniteKernel,
     AmplitudeKernel,
@@ -865,8 +865,8 @@ def fit_state_space_gaussian_process(
     )
     query_states = smoothed.means[plan.query_schedule_indices]
     query_covariances = smoothed.covariances[plan.query_schedule_indices]
-    posterior_mean = oe.contract("qi,qi->q", query_states, plan.query_rows)
-    posterior_variance = oe.contract(
+    posterior_mean = ein.contract("qi,qi->q", query_states, plan.query_rows)
+    posterior_variance = ein.contract(
         "qi,qij,qj->q", plan.query_rows, query_covariances, plan.query_rows
     )
     query_valid = smoothed.valid[plan.query_schedule_indices]

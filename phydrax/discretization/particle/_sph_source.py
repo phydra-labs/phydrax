@@ -9,8 +9,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -360,7 +361,7 @@ def emit_sph_particles(
         state.position.dtype
     )
     wall_margin = (
-        oe.contract("ed,ed->e", repeated_offset, repeated_normal, backend="jax")
+        ein.contract("ed,ed->e", repeated_offset, repeated_normal, backend="jax")
         - plan.minimum_wall_clearance
     )
     active_delta = flat_position[:, None, :] - state.position[None, :, :]

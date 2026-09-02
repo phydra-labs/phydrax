@@ -8,8 +8,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._strict import StrictModule
 from ....ml._contracts import (
@@ -77,7 +78,7 @@ class OperatorPODFit(StrictModule):
         flat = array.reshape(leading + (-1,))
         mean = self.spatial_mean.reshape((-1,))
         weights = self.physical_weights.reshape((-1,))
-        return oe.contract(
+        return ein.contract(
             "...f,rf,f->...r",
             flat - mean,
             jnp.conj(self.components),

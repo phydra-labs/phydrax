@@ -11,9 +11,10 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 from scipy.special import eval_jacobi
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._orthogonal import legendre_rule_data
@@ -410,7 +411,7 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
         interpolation = np.asarray(tensor_trace_interpolation(source, target))
         if values.shape[-2] != source.shape[0]:
             raise ValueError("Geometry coordinate values do not match source nodes.")
-        target_values = oe.contract("qi,...id->...qd", interpolation, values)
+        target_values = ein.contract("qi,...id->...qd", interpolation, values)
         linear = _multilinear(
             values.reshape((-1, values.shape[-1]))[: 2 ** source.shape[1]], target
         )
@@ -435,7 +436,7 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
 
     def apply(self, coordinate_values: ArrayLike, /) -> Array:
         values = jnp.asarray(coordinate_values)
-        return oe.contract("qi,...id->...qd", self.interpolation, values)
+        return ein.contract("qi,...id->...qd", self.interpolation, values)
 
 
 class NIrregularMortarPlan(StrictModule, NonTrainableState):
@@ -667,7 +668,7 @@ class TensorPiolaMap(StrictModule, NonTrainableState):
                 ..., 0
             ]
         determinant = jnp.linalg.det(matrix)
-        return oe.contract("...ij,...j->...i", matrix, value) / determinant[..., None]
+        return ein.contract("...ij,...j->...i", matrix, value) / determinant[..., None]
 
 
 def _shifted_jacobi(
@@ -888,15 +889,15 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
         rule = legendre_rule_data(axial_degree + 1, "lobatto")
         z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
         z_values, z_gradients = lagrange_1d_tabulation(z_nodes, points_[..., 2])
-        values = oe.contract(
+        values = ein.contract(
             "qi,qj->qij", triangle_values, z_values, backend="jax"
         ).reshape((points_.shape[0], -1))
-        horizontal = oe.contract(
+        horizontal = ein.contract(
             "qid,qj->qijd", triangle_gradients, z_values, backend="jax"
         )
-        vertical = oe.contract("qi,qj->qij", triangle_values, z_gradients, backend="jax")[
-            ..., None
-        ]
+        vertical = ein.contract(
+            "qi,qj->qij", triangle_values, z_gradients, backend="jax"
+        )[..., None]
         gradients = jnp.concatenate((horizontal, vertical), axis=-1).reshape(
             (points_.shape[0], -1, 3)
         )

@@ -13,8 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -222,9 +223,9 @@ class AffineBernsteinPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableSt
         )
         flat_state = state.reshape(interpolant.case_shape + (degree + 1, -1))
         flat_control = control.reshape(interpolant.case_shape + (degree + 1, -1))
-        power = oe.contract(
+        power = ein.contract(
             "...di,i->...d", flat_state, self.state_weights.reshape((-1,))
-        ) + oe.contract(
+        ) + ein.contract(
             "...di,i->...d", flat_control, self.control_weights.reshape((-1,))
         )
         power = power.at[..., 0].add(self.bias)
@@ -232,7 +233,7 @@ class AffineBernsteinPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableSt
         for k in range(degree + 1):
             for j in range(k + 1):
                 transform[k, j] = comb(k, j) / comb(degree, j)
-        bernstein = oe.contract(
+        bernstein = ein.contract(
             "kj,...j->...k", jnp.asarray(transform, dtype=power.dtype), power
         )
         finite = jnp.all(jnp.isfinite(bernstein), axis=-1)

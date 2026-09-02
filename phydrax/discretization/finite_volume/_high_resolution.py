@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -318,12 +319,12 @@ class CharacteristicReconstructionPlan(StrictModule):
         if wave_speeds.shape != value.shape:
             raise ValueError("Characteristic wave speeds must match state components.")
         if self.reconstruction._high_order is not None:
-            projected = oe.contract("nij,mj->nmi", left_matrix, value)
+            projected = ein.contract("nij,mj->nmi", left_matrix, value)
             left_all, right_all = jax.vmap(self.reconstruction.reconstruct)(projected)
             face = jnp.arange(value.shape[0])
             return (
-                oe.contract("nij,nj->ni", right_matrix, left_all[face, face]),
-                oe.contract("nij,nj->ni", right_matrix, right_all[face, face]),
+                ein.contract("nij,nj->ni", right_matrix, left_all[face, face]),
+                ein.contract("nij,nj->ni", right_matrix, right_all[face, face]),
                 wave_speeds,
             )
         left_windows = _uniform_windows(
@@ -334,13 +335,13 @@ class CharacteristicReconstructionPlan(StrictModule):
             value,
             (3, 2, 1, 0, -1),
         )
-        left_characteristic = oe.contract("nij,nsj->nsi", left_matrix, left_windows)
-        right_characteristic = oe.contract("nij,nsj->nsi", left_matrix, right_windows)
+        left_characteristic = ein.contract("nij,nsj->nsi", left_matrix, left_windows)
+        right_characteristic = ein.contract("nij,nsj->nsi", left_matrix, right_windows)
         left_reconstructed = self.reconstruction._left(left_characteristic)
         right_reconstructed = self.reconstruction._left(right_characteristic)
         return (
-            oe.contract("nij,nj->ni", right_matrix, left_reconstructed),
-            oe.contract("nij,nj->ni", right_matrix, right_reconstructed),
+            ein.contract("nij,nj->ni", right_matrix, left_reconstructed),
+            ein.contract("nij,nj->ni", right_matrix, right_reconstructed),
             wave_speeds,
         )
 
@@ -417,8 +418,8 @@ class NonuniformWENOReconstructionPlan(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         windows = values[indices]
-        candidates = oe.contract("nkj,nkj...->nk...", coefficients, windows)
-        smoothness = oe.contract(
+        candidates = ein.contract("nkj,nkj...->nk...", coefficients, windows)
+        smoothness = ein.contract(
             "nkij,nki...,nkj...->nk...",
             smoothness_matrices,
             windows,

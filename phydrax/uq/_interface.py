@@ -7,8 +7,9 @@ from __future__ import annotations
 import math
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -191,7 +192,7 @@ def _normalize(values: Array, epsilon: float, /) -> Array:
 def _pairwise_distances(left: Array, right: Array, /) -> Array:
     left_square = jnp.sum(left * left, axis=-1, keepdims=True)
     right_square = jnp.sum(right * right, axis=-1)
-    cross = oe.contract("id,jd->ij", left, right)
+    cross = ein.contract("id,jd->ij", left, right)
     return jnp.sqrt(jnp.maximum(left_square + right_square[None, :] - 2.0 * cross, 0.0))
 
 

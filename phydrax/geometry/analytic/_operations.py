@@ -13,9 +13,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jax.scipy.special import logsumexp
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
@@ -165,7 +166,7 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
             return jax.jacfwd(lambda value: self.base.map(index, value))(coordinate)
 
         base_differential = jax.vmap(differential)(flat_indices, flat_reference)
-        transformed = oe.contract("ij,njk->nik", self.linear, base_differential)
+        transformed = ein.contract("ij,njk->nik", self.linear, base_differential)
         gram = jnp.swapaxes(transformed, -1, -2) @ transformed
         measure = jnp.sqrt(jnp.maximum(jnp.linalg.det(gram), 0.0))
         return measure.reshape(leading)
@@ -243,8 +244,8 @@ class _AffineCubatureMap(AbstractCubatureMap):
                     lambda value: self.base.map(index, value)
                 )(coordinate)
             )(flat_indices, flat_reference)
-            transformed = oe.contract("ij,njk->nik", self.linear, base_differential)
-            gram = oe.contract("nji,njk->nik", jnp.conj(transformed), transformed)
+            transformed = ein.contract("ij,njk->nik", self.linear, base_differential)
+            gram = ein.contract("nji,njk->nik", jnp.conj(transformed), transformed)
             sign, logdet = jnp.linalg.slogdet(gram)
             measure_scale = jnp.where(
                 sign > 0,

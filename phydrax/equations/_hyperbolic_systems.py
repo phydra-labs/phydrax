@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -192,7 +193,7 @@ def _orthonormal_normal_frame(normal: Array, dimension: int, /) -> Array:
     value = jnp.asarray(normal)
     if value.shape[-1] != dimension:
         raise ValueError("Normal frame dimension is incompatible with the system.")
-    norm = jnp.sqrt(oe.contract("...d,...d->...", value, value, backend="jax"))
+    norm = jnp.sqrt(ein.contract("...d,...d->...", value, value, backend="jax"))
     unit = value / norm[..., None]
     if dimension == 1:
         return unit[..., None, :]
@@ -204,7 +205,7 @@ def _orthonormal_normal_frame(normal: Array, dimension: int, /) -> Array:
         first = jnp.cross(seed, unit)
         first = (
             first
-            / jnp.sqrt(oe.contract("...d,...d->...", first, first, backend="jax"))[
+            / jnp.sqrt(ein.contract("...d,...d->...", first, first, backend="jax"))[
                 ..., None
             ]
         )
@@ -518,10 +519,10 @@ class EulerSystem(
     def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
         value = jnp.asarray(state)
         normal_ = jnp.asarray(normal)
-        norm = jnp.sqrt(oe.contract("...d,...d->...", normal_, normal_, backend="jax"))
+        norm = jnp.sqrt(ein.contract("...d,...d->...", normal_, normal_, backend="jax"))
         unit = normal_ / norm[..., None]
         momentum = value[..., 1 : 1 + self.dimension]
-        normal_momentum = oe.contract("...d,...d->...", momentum, unit, backend="jax")
+        normal_momentum = ein.contract("...d,...d->...", momentum, unit, backend="jax")
         reflected = momentum - 2.0 * normal_momentum[..., None] * unit
         return value.at[..., 1 : 1 + self.dimension].set(reflected)
 
@@ -626,15 +627,15 @@ class EulerSystem(
     ) -> tuple[Array, Array, Array]:
         frame = _orthonormal_normal_frame(normal, self.dimension)
         rotation = _conserved_normal_rotation(frame)
-        left_local = oe.contract("...ij,...j->...i", rotation, left, backend="jax")
-        right_local = oe.contract("...ij,...j->...i", rotation, right, backend="jax")
+        left_local = ein.contract("...ij,...j->...i", rotation, left, backend="jax")
+        right_local = ein.contract("...ij,...j->...i", rotation, right, backend="jax")
         left_matrix, right_matrix, speeds = self.eigensystem(
             left_local, right_local, 0, args
         )
-        right_global = oe.contract(
+        right_global = ein.contract(
             "...ji,...jk->...ik", rotation, right_matrix, backend="jax"
         )
-        left_global = oe.contract(
+        left_global = ein.contract(
             "...ij,...jk->...ik", left_matrix, rotation, backend="jax"
         )
         return left_global, right_global, speeds
@@ -746,9 +747,9 @@ class CompressibleNavierStokesSystem(
             momentum_gradient - velocity[..., :, None] * density_gradient[..., None, :]
         ) / density[..., None, None]
         energy_gradient = gradient[..., -1, :]
-        speed_squared = oe.contract("...i,...i->...", velocity, velocity, backend="jax")
+        speed_squared = ein.contract("...i,...i->...", velocity, velocity, backend="jax")
         kinetic_gradient = (
-            oe.contract(
+            ein.contract(
                 "...i,...ij->...j",
                 velocity,
                 momentum_gradient,
@@ -780,13 +781,13 @@ class CompressibleNavierStokesSystem(
         hessian = jax.vmap(jax.jacfwd(lambda point: self.entropy_variables(point)))(
             flat_state
         )
-        entropy_gradient = oe.contract(
+        entropy_gradient = ein.contract(
             "nij,njd->nid", hessian, flat_gradient, backend="jax"
         )
         viscous_flux = self.viscous_flux(value, gradient, args).reshape(
             entropy_gradient.shape
         )
-        production = oe.contract(
+        production = ein.contract(
             "nid,nid->n", entropy_gradient, viscous_flux, backend="jax"
         )
         return production.reshape(value.shape[:-1])
@@ -856,7 +857,7 @@ class CompressibleNavierStokesSystem(
             + bulk[..., None, None] * divergence[..., None, None] * identity
         )
         energy_flux = (
-            oe.contract("...i,...ij->...j", velocity_, stress, backend="jax")
+            ein.contract("...i,...ij->...j", velocity_, stress, backend="jax")
             + conductivity[..., None] * temperature_gradient_
         )
         mass_flux = jnp.zeros(
@@ -887,7 +888,7 @@ class CompressibleNavierStokesSystem(
         flux = self.viscous_flux(state, conserved_gradient, args)
         if normal_.shape != flux.shape[:-2] + (self.dimension,):
             raise ValueError("Viscous normal shape is incompatible with the state.")
-        return oe.contract("...ij,...j->...i", flux, normal_, backend="jax")
+        return ein.contract("...ij,...j->...i", flux, normal_, backend="jax")
 
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         return self.inviscid.physical_flux(state, axis, args)
@@ -1156,7 +1157,7 @@ class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
         normal_ = jnp.asarray(normal)
         unit = (
             normal_
-            / jnp.sqrt(oe.contract("...d,...d->...", normal_, normal_, backend="jax"))[
+            / jnp.sqrt(ein.contract("...d,...d->...", normal_, normal_, backend="jax"))[
                 ..., None
             ]
         )
@@ -1165,12 +1166,12 @@ class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
         reflected_momentum = (
             momentum
             - 2.0
-            * oe.contract("...d,...d->...", momentum, unit, backend="jax")[..., None]
+            * ein.contract("...d,...d->...", momentum, unit, backend="jax")[..., None]
             * unit
         )
         reflected_magnetic = (
             2.0
-            * oe.contract("...d,...d->...", magnetic, unit, backend="jax")[..., None]
+            * ein.contract("...d,...d->...", magnetic, unit, backend="jax")[..., None]
             * unit
             - magnetic
         )

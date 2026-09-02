@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..integration._targets import weighted
@@ -47,7 +48,7 @@ def _psd_square_root(matrix: Array, tolerance: float, /) -> tuple[Array, Array, 
     safe_values = jnp.where(
         valid, jnp.maximum(eigenvalues, 0.0), jnp.ones_like(eigenvalues)
     )
-    root = oe.contract("ik,k,jk->ij", eigenvectors, jnp.sqrt(safe_values), eigenvectors)
+    root = ein.contract("ik,k,jk->ij", eigenvectors, jnp.sqrt(safe_values), eigenvectors)
     rank = jnp.sum(eigenvalues > tolerance).astype(jnp.int32)
     return root, rank, valid
 
@@ -65,7 +66,7 @@ def _gaussian_w2_cost(
     middle = left_root @ right_covariance @ left_root
     middle_root, _, middle_valid = _psd_square_root(middle, tolerance)
     difference = left_mean - right_mean
-    value = oe.contract("i,i->", difference, difference) + jnp.trace(
+    value = ein.contract("i,i->", difference, difference) + jnp.trace(
         left_covariance + right_covariance - 2.0 * middle_root
     )
     valid = (
@@ -157,7 +158,7 @@ def solve_gaussian_mixture_transport(
     )
     component_plan = solver(represented)
     coupling = component_plan.dense_plan()
-    objective = oe.contract("ij,ij->", coupling, problem.component_costs)
+    objective = ein.contract("ij,ij->", coupling, problem.component_costs)
     single = problem.source.out_size == 1 and problem.target.out_size == 1
     valid = component_plan.converged & jnp.isfinite(objective)
     return GaussianMixtureTransportResult(

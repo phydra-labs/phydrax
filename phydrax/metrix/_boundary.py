@@ -8,8 +8,9 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._density import metric_volume_density, VolumeDensity
@@ -60,7 +61,7 @@ class RiemannianHypersurface(StrictModule):
 
     def conormal_norm_squared(self, coordinates: ArrayLike, /) -> Array:
         covector = self.conormal(coordinates)
-        return oe.contract(
+        return ein.contract(
             "...i,...ij,...j->...",
             covector,
             self.metric.inverse(coordinates),
@@ -83,7 +84,7 @@ class RiemannianHypersurface(StrictModule):
         normal = self.unit_normal(coordinates)
         conormal = self.unit_conormal(coordinates)
         identity = jnp.eye(self.chart.dimension, dtype=normal.dtype)
-        return identity - oe.contract("...i,...j->...ij", normal, conormal)
+        return identity - ein.contract("...i,...j->...ij", normal, conormal)
 
     def project_tangent(
         self,
@@ -96,7 +97,7 @@ class RiemannianHypersurface(StrictModule):
             raise ValueError(
                 "Hypersurface tangent projection requires the chart trailing dimension."
             )
-        return oe.contract(
+        return ein.contract(
             "...ij,...j->...i", self.tangent_projector(coordinates), values
         )
 

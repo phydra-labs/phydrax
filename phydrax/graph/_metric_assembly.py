@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..metrix import RiemannianMetric
@@ -80,7 +81,7 @@ def _parameterized_measures(
                 )
             if parameterization.degree == 0:
                 return jnp.asarray(1.0, dtype=point.dtype)
-            induced = oe.contract("ai,ab,bj->ij", jacobian, metric(point), jacobian)
+            induced = ein.contract("ai,ab,bj->ij", jacobian, metric(point), jacobian)
             return jnp.sqrt(jnp.linalg.det(induced))
 
         values = jax.vmap(density)(parameterization.reference_points)

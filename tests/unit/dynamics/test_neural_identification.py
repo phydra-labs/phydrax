@@ -270,6 +270,7 @@ def test_invalid_reset_nan_padding_is_sanitized_and_has_zero_support():
             max_horizon=2
         ),
         steps=1,
+        gradient_accumulation=2,
         shuffle=False,
     )
     assert result.completed_steps == 0
@@ -364,7 +365,10 @@ def test_fixed_step_data_rejection_and_batch_accumulation_invariance():
             shuffle=False,
         )
 
-    data = _trajectory([1.0, 2.0, 4.0, 8.0, 16.0])
+    data = _trajectory(
+        [1.0, 2.0, 4.0, 8.0, 16.0],
+        weights=[1.0, 4.0, 9.0, 16.0, 25.0],
+    )
     kwargs = {
         "state_layout": data.state_layout,
         "system_id": "batch-invariance",
@@ -386,7 +390,7 @@ def test_fixed_step_data_rejection_and_batch_accumulation_invariance():
     accumulated = phx.dynamics.identification.fit_discrete_model(
         _ScaledStep(1.5),
         data,
-        batch_size=2,
+        batch_size=3,
         gradient_accumulation=2,
         **kwargs,
     )
@@ -402,7 +406,8 @@ def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
         "model_id": "tests.scaled-step",
         "step_size": 1.0,
         "rollout_policy": policy,
-        "batch_size": 3,
+        "batch_size": 2,
+        "gradient_accumulation": 2,
         "shuffle": False,
     }
     uninterrupted = phx.dynamics.identification.fit_discrete_model(

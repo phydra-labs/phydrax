@@ -1,0 +1,2271 @@
+{
+  "all_finite": true,
+  "all_valid": true,
+  "cases": [
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 8.711407920494602e-19,
+        "normalized_stationarity": 6.938893903907228e-18,
+        "rollout_defect": 2.0816681711721685e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.351602333,
+      "compiler": {
+        "argument_bytes": 46480,
+        "bytes_accessed": 392457,
+        "flops": 58416,
+        "generated_code_bytes": 0,
+        "output_bytes": 28179,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 53000,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 1.155333,
+        "mean_ms": 0.8987998000000001,
+        "median_ms": 0.896958,
+        "min_ms": 0.736125,
+        "samples_ms": [
+          0.936208,
+          0.769375,
+          1.155333,
+          0.736125,
+          0.896958
+        ],
+        "std_ms": 0.1486108460152219
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "6dda4ee0d9f26bf716c61cd3b1d2489293d260d2988b8ceb4a1a2313401a89c1",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "logical_input_bytes": 46480,
+      "logical_output_bytes": 27843,
+      "lowering_seconds": 0.428398625,
+      "maximum_condition": 1.087716386173645,
+      "minimum_rank": 4,
+      "name": "baseline",
+      "player_count": 2,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 4.954789172267029e-19,
+        "normalized_stationarity": 6.938893903907228e-18,
+        "rollout_defect": 1.2576745200831851e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.343516833,
+      "compiler": {
+        "argument_bytes": 12496,
+        "bytes_accessed": 200877,
+        "flops": 40188,
+        "generated_code_bytes": 0,
+        "output_bytes": 8247,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 24392,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 0.522458,
+        "mean_ms": 0.4401418,
+        "median_ms": 0.417042,
+        "min_ms": 0.413459,
+        "samples_ms": [
+          0.41625,
+          0.413459,
+          0.522458,
+          0.43150000000000005,
+          0.417042
+        ],
+        "std_ms": 0.04163418828991384
+      },
+      "horizon": 4,
+      "input_fingerprint": {
+        "sha256": "87c0cbb07fbe4d4ce4e9e10c858e1590a23b64e70369cc2a8978751e253e27c0",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              4,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              4,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              4,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              4,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              4,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              4,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              4,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "logical_input_bytes": 12496,
+      "logical_output_bytes": 7911,
+      "lowering_seconds": 0.309636,
+      "maximum_condition": 1.0876203334448087,
+      "minimum_rank": 4,
+      "name": "horizon-4",
+      "player_count": 2,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 1.0026709181170895e-18,
+        "normalized_stationarity": 1.3877787807814457e-17,
+        "rollout_defect": 1.5178830414797062e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.440811167,
+      "compiler": {
+        "argument_bytes": 182416,
+        "bytes_accessed": 1194269,
+        "flops": 136558,
+        "generated_code_bytes": 0,
+        "output_bytes": 107907,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 206792,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 2.883709,
+        "mean_ms": 2.7742418,
+        "median_ms": 2.8372089999999996,
+        "min_ms": 2.4637079999999996,
+        "samples_ms": [
+          2.883709,
+          2.86525,
+          2.821333,
+          2.8372089999999996,
+          2.4637079999999996
+        ],
+        "std_ms": 0.15676686555442784
+      },
+      "horizon": 64,
+      "input_fingerprint": {
+        "sha256": "0d869b82870f1a087efb513d75f39b84d8f506abf6ee558f3c582a4deb2853b8",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              64,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              64,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              64,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              64,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              64,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              64,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              64,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              64,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              64
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "logical_input_bytes": 182416,
+      "logical_output_bytes": 107571,
+      "lowering_seconds": 0.493440583,
+      "maximum_condition": 1.088255731757349,
+      "minimum_rank": 4,
+      "name": "horizon-64",
+      "player_count": 2,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 7.375266307684914e-19,
+        "normalized_stationarity": 6.938893903907228e-18,
+        "rollout_defect": 2.168404344971009e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.3213935,
+      "compiler": {
+        "argument_bytes": 19536,
+        "bytes_accessed": 157633,
+        "flops": 19756,
+        "generated_code_bytes": 0,
+        "output_bytes": 11731,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 24904,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 0.788833,
+        "mean_ms": 0.7317834,
+        "median_ms": 0.728791,
+        "min_ms": 0.654334,
+        "samples_ms": [
+          0.654334,
+          0.788833,
+          0.728791,
+          0.758875,
+          0.7280840000000001
+        ],
+        "std_ms": 0.04474295749992395
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "dbf81de3015f7999ed03960759c213860236066135e49c10c7b47ebc043fa89a",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "logical_input_bytes": 19536,
+      "logical_output_bytes": 11395,
+      "lowering_seconds": 0.325856625,
+      "maximum_condition": 1.0872102203840412,
+      "minimum_rank": 4,
+      "name": "state-4",
+      "player_count": 2,
+      "state_size": 4,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 1.9891188811927618e-18,
+        "normalized_stationarity": 1.3877787807814457e-17,
+        "rollout_defect": 1.9949319973733282e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.455511,
+      "compiler": {
+        "argument_bytes": 476944,
+        "bytes_accessed": 4490049,
+        "flops": 1159334,
+        "generated_code_bytes": 0,
+        "output_bytes": 309651,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 796232,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 2.175583,
+        "mean_ms": 2.0877584,
+        "median_ms": 2.102375,
+        "min_ms": 2.007125,
+        "samples_ms": [
+          2.007125,
+          2.02075,
+          2.102375,
+          2.175583,
+          2.1329589999999996
+        ],
+        "std_ms": 0.06474839066293461
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "39523cf4316bccb06dd5f7c6e7111b1b2f71cf3bf86a35a0718f3bce99a84d8c",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              32,
+              32
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              32,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              16,
+              32,
+              32
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              32,
+              32
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              32
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              16,
+              32,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              16,
+              32
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              32
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "logical_input_bytes": 476944,
+      "logical_output_bytes": 309315,
+      "lowering_seconds": 0.333929417,
+      "maximum_condition": 1.0876779861535262,
+      "minimum_rank": 4,
+      "name": "state-32",
+      "player_count": 2,
+      "state_size": 32,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 2.4847609194012393e-19,
+        "normalized_stationarity": 6.938893903907228e-18,
+        "rollout_defect": 2.42861286636753e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.327174833,
+      "compiler": {
+        "argument_bytes": 36752,
+        "bytes_accessed": 337793,
+        "flops": 46962,
+        "generated_code_bytes": 0,
+        "output_bytes": 25875,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 50384,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 0.865875,
+        "mean_ms": 0.7098998,
+        "median_ms": 0.695542,
+        "min_ms": 0.620791,
+        "samples_ms": [
+          0.695542,
+          0.620791,
+          0.621708,
+          0.745583,
+          0.865875
+        ],
+        "std_ms": 0.09113272960117016
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "0b84fbd69d277f3e78e78e64d29dd04cbbd138178517073bfe9c7a104356b8e6",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              16,
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              16,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              16,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "logical_input_bytes": 36752,
+      "logical_output_bytes": 25539,
+      "lowering_seconds": 0.546945958,
+      "maximum_condition": 1.0738062539073567,
+      "minimum_rank": 2,
+      "name": "controls-1-1",
+      "player_count": 2,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 7.848356254476164e-19,
+        "normalized_stationarity": 2.0816681711721685e-17,
+        "rollout_defect": 1.8214596497756474e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.388806917,
+      "compiler": {
+        "argument_bytes": 147856,
+        "bytes_accessed": 1051977,
+        "flops": 196380,
+        "generated_code_bytes": 0,
+        "output_bytes": 42003,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 172936,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        8,
+        8
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 1.7152910000000001,
+        "mean_ms": 1.6375746,
+        "median_ms": 1.6470829999999999,
+        "min_ms": 1.562041,
+        "samples_ms": [
+          1.562041,
+          1.6076249999999999,
+          1.7152910000000001,
+          1.655833,
+          1.6470829999999999
+        ],
+        "std_ms": 0.05111931325673307
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "79c8809048c075347462ff243ab0d5213075228ae38e24035f42304cce80009e",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              16,
+              16,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              16,
+              8,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              16,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 16,
+      "logical_input_bytes": 147856,
+      "logical_output_bytes": 41667,
+      "lowering_seconds": 0.34031975,
+      "maximum_condition": 1.1682767096923756,
+      "minimum_rank": 16,
+      "name": "controls-8-8",
+      "player_count": 2,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 3.1237874210987625e-19,
+        "normalized_stationarity": 1.3877787807814457e-17,
+        "rollout_defect": 1.3877787807814457e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.323927875,
+      "compiler": {
+        "argument_bytes": 44744,
+        "bytes_accessed": 300141,
+        "flops": 50788,
+        "generated_code_bytes": 0,
+        "output_bytes": 22043,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 38600,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        8
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 1.092083,
+        "mean_ms": 0.8680752,
+        "median_ms": 0.814459,
+        "min_ms": 0.738209,
+        "samples_ms": [
+          0.7606660000000001,
+          0.738209,
+          0.934959,
+          1.092083,
+          0.814459
+        ],
+        "std_ms": 0.13109508016153767
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "1beac46bf956e12677db9e8024b53250c2449e9ae66f8c7b2e8015ee1980e76d",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              1,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              1,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              1,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              1,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              1,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              1,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              1,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              1,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              1
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 8,
+      "logical_input_bytes": 44744,
+      "logical_output_bytes": 21739,
+      "lowering_seconds": 0.330733416,
+      "maximum_condition": 1.047939094259051,
+      "minimum_rank": 8,
+      "name": "players-1",
+      "player_count": 1,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 7.37696053245598e-19,
+        "normalized_stationarity": 1.3877787807814457e-17,
+        "rollout_defect": 1.5612511283791264e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.351757208,
+      "compiler": {
+        "argument_bytes": 72080,
+        "bytes_accessed": 551241,
+        "flops": 91236,
+        "generated_code_bytes": 0,
+        "output_bytes": 32787,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 86536,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        4,
+        4
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 1.253333,
+        "mean_ms": 1.1440998,
+        "median_ms": 1.1098329999999998,
+        "min_ms": 1.078625,
+        "samples_ms": [
+          1.253333,
+          1.078625,
+          1.098625,
+          1.180083,
+          1.1098329999999998
+        ],
+        "std_ms": 0.06442950118819799
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "182648ced4deee5881d78810ecd062bbc9c6e1cc8de34959d90138293e8b6bd8",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              2,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              2,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 8,
+      "logical_input_bytes": 72080,
+      "logical_output_bytes": 32451,
+      "lowering_seconds": 0.290689166,
+      "maximum_condition": 1.114422270934186,
+      "minimum_rank": 8,
+      "name": "players-2",
+      "player_count": 2,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 4.055079630966981e-19,
+        "normalized_stationarity": 2.0816681711721685e-17,
+        "rollout_defect": 2.0816681711721685e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.400852333,
+      "compiler": {
+        "argument_bytes": 126752,
+        "bytes_accessed": 1059423,
+        "flops": 174600,
+        "generated_code_bytes": 0,
+        "output_bytes": 54275,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 160520,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2,
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 1.312667,
+        "mean_ms": 1.2739167999999998,
+        "median_ms": 1.303834,
+        "min_ms": 1.1680830000000002,
+        "samples_ms": [
+          1.1680830000000002,
+          1.312667,
+          1.2743749999999998,
+          1.310625,
+          1.303834
+        ],
+        "std_ms": 0.05467195254021928
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "b1ecb1067c65e9bc6a62d05cc00d5930504328c97a095d538750c229f036007f",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              4,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              4,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              4,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              4,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              4,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              4,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              4,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              4,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              4
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 8,
+      "logical_input_bytes": 126752,
+      "logical_output_bytes": 53875,
+      "lowering_seconds": 0.302798375,
+      "maximum_condition": 1.2479856594083913,
+      "minimum_rank": 8,
+      "name": "players-4",
+      "player_count": 4,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [],
+      "certificates": {
+        "normalized_bellman": 1.0238029157711493e-18,
+        "normalized_stationarity": 2.7755575615628914e-17,
+        "rollout_defect": 2.2551405187698492e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.425334916,
+      "compiler": {
+        "argument_bytes": 236096,
+        "bytes_accessed": 2198227,
+        "flops": 348953,
+        "generated_code_bytes": 0,
+        "output_bytes": 97251,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 304544,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 1.656917,
+        "mean_ms": 1.5421504,
+        "median_ms": 1.595167,
+        "min_ms": 1.418834,
+        "samples_ms": [
+          1.418834,
+          1.4409169999999998,
+          1.595167,
+          1.656917,
+          1.5989170000000001
+        ],
+        "std_ms": 0.09450895725929905
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "d4a0488caf53483b69b85b868890a479d0c357fd34644d1a5349bd88ffce1622",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              8,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              8,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              8,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              8,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              8
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 8,
+      "logical_input_bytes": 236096,
+      "logical_output_bytes": 96723,
+      "lowering_seconds": 0.548795291,
+      "maximum_condition": 1.5149042587781072,
+      "minimum_rank": 8,
+      "name": "players-8",
+      "player_count": 8,
+      "state_size": 8,
+      "status": 0,
+      "valid": true
+    },
+    {
+      "case_shape": [
+        8
+      ],
+      "certificates": {
+        "normalized_bellman": 4.592363268940062e-19,
+        "normalized_stationarity": 6.938893903907228e-18,
+        "rollout_defect": 2.0816681711721685e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.479216125,
+      "compiler": {
+        "argument_bytes": 371840,
+        "bytes_accessed": 3450851,
+        "flops": 465394,
+        "generated_code_bytes": 0,
+        "output_bytes": 220224,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 486016,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 6.157042,
+        "mean_ms": 3.081525,
+        "median_ms": 2.245,
+        "min_ms": 2.216417,
+        "samples_ms": [
+          2.233666,
+          2.216417,
+          2.245,
+          6.157042,
+          2.5555
+        ],
+        "std_ms": 1.5428906590607125
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "621211b35fc7ce1d5e507ad8e97ec40d5628218dd4f3020742ac4cb414e296c4",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              8,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              8,
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              8,
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              8,
+              2,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              8,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              8,
+              2,
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8,
+              2,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              2,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              8,
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              8,
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "logical_input_bytes": 371840,
+      "logical_output_bytes": 219888,
+      "lowering_seconds": 0.367899458,
+      "maximum_condition": 1.087716386173645,
+      "minimum_rank": 4,
+      "name": "cases-8",
+      "player_count": 2,
+      "state_size": 8,
+      "status": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "valid": true
+    },
+    {
+      "case_shape": [
+        64
+      ],
+      "certificates": {
+        "normalized_bellman": 4.592363268940062e-19,
+        "normalized_stationarity": 6.938893903907228e-18,
+        "rollout_defect": 2.0816681711721685e-17,
+        "terminal_defect": 0.0
+      },
+      "compilation_seconds": 0.508017792,
+      "compiler": {
+        "argument_bytes": 2974720,
+        "bytes_accessed": 27587972,
+        "flops": 3722522,
+        "generated_code_bytes": 0,
+        "output_bytes": 1756584,
+        "source": "jax-compiled-executable",
+        "temporary_bytes": 3873472,
+        "unavailable_reason": null
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "execution": {
+        "count": 5,
+        "max_ms": 11.583166,
+        "mean_ms": 11.2087746,
+        "median_ms": 11.139041,
+        "min_ms": 10.991624999999999,
+        "samples_ms": [
+          11.139041,
+          11.218916,
+          11.111125,
+          11.583166,
+          10.991624999999999
+        ],
+        "std_ms": 0.20090989847053362
+      },
+      "horizon": 16,
+      "input_fingerprint": {
+        "sha256": "a06b96f7f19eac8e1e135249dda5dbddad3b66e150b69ec318dbbb1a460f5bd9",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              64,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              64,
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              64,
+              2,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              64,
+              2,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              64,
+              2,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              64,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              64,
+              2,
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              64,
+              2,
+              16,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              64,
+              2,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[9]",
+            "shape": [
+              64,
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[10]",
+            "shape": [
+              64,
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[11]",
+            "shape": [
+              64,
+              2
+            ]
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "logical_input_bytes": 2974720,
+      "logical_output_bytes": 1756248,
+      "lowering_seconds": 0.382454459,
+      "maximum_condition": 1.087716386173645,
+      "minimum_rank": 4,
+      "name": "cases-64",
+      "player_count": 2,
+      "state_size": 8,
+      "status": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "valid": true
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "dee1555b843e001a66559ae750b6d1f4ccdbc2174bdae8bb60b178b423512e5e",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "04eaf233299b60207aa03bc6f06f20aaebf65a123e625df1bcf04147202cc88d",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "maximum_certificate": 2.7755575615628914e-17
+}

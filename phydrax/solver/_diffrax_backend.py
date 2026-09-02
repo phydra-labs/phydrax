@@ -12,9 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
-import opt_einsum as oe
 import optimistix as optx
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..linalg import AbstractRealCoordinateMap
 from ..stochastic._wiener import WienerRealization
@@ -246,7 +247,7 @@ def _combined_diffusion(
                     matrix = coefficient.reshape(
                         (int(public_state.size), term.noise_size)
                     )
-                    contribution = oe.contract(
+                    contribution = ein.contract(
                         "ij,j->i", matrix, local.reshape((term.noise_size,))
                     ).reshape(state_shape)
                 total = total + contribution

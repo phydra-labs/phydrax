@@ -10,8 +10,9 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -297,13 +298,13 @@ def reconstruct_wall_interface_normal(
     plic_ = plic_.astype(dtype)
     wall_ = wall_.astype(dtype)
 
-    wall_squared_norm = oe.contract("...i,...i->...", wall_, wall_)
+    wall_squared_norm = ein.contract("...i,...i->...", wall_, wall_)
     wall_squared_norm = eqx.error_if(
         wall_squared_norm,
         jnp.any(~jnp.isfinite(wall_squared_norm) | (wall_squared_norm <= 0.0)),
         "wall_normal must be finite and nonzero.",
     )
-    plic_squared_norm = oe.contract("...i,...i->...", plic_, plic_)
+    plic_squared_norm = ein.contract("...i,...i->...", plic_, plic_)
     plic_squared_norm = eqx.error_if(
         plic_squared_norm,
         jnp.any(~jnp.isfinite(plic_squared_norm) | (plic_squared_norm <= 0.0)),
@@ -312,9 +313,9 @@ def reconstruct_wall_interface_normal(
     wall_unit = wall_ / jnp.sqrt(wall_squared_norm)[..., None]
     plic_unit = plic_ / jnp.sqrt(plic_squared_norm)[..., None]
 
-    plic_wall_cosine = oe.contract("...i,...i->...", plic_unit, wall_unit)
+    plic_wall_cosine = ein.contract("...i,...i->...", plic_unit, wall_unit)
     tangent = plic_unit - plic_wall_cosine[..., None] * wall_unit
-    tangent_norm = jnp.sqrt(oe.contract("...i,...i->...", tangent, tangent))
+    tangent_norm = jnp.sqrt(ein.contract("...i,...i->...", tangent, tangent))
     degeneracy_floor = jnp.asarray(
         64.0 * np.finfo(np.dtype(dtype)).eps,
         dtype=dtype,
@@ -330,15 +331,15 @@ def reconstruct_wall_interface_normal(
     cosine = jnp.cos(angle)
     tangent_unit = tangent / tangent_norm[..., None]
     candidate = cosine * wall_unit + sine * tangent_unit
-    candidate_norm = jnp.sqrt(oe.contract("...i,...i->...", candidate, candidate))
+    candidate_norm = jnp.sqrt(ein.contract("...i,...i->...", candidate, candidate))
     candidate_norm = eqx.error_if(
         candidate_norm,
         jnp.any(~jnp.isfinite(candidate_norm) | (candidate_norm <= 0.0)),
         "Contact-angle reconstruction produced a non-finite normal.",
     )
     normal = candidate / candidate_norm[..., None]
-    realized_cosine = oe.contract("...i,...i->...", normal, wall_unit)
-    realized_sine = oe.contract("...i,...i->...", normal, tangent_unit)
+    realized_cosine = ein.contract("...i,...i->...", normal, wall_unit)
+    realized_sine = ein.contract("...i,...i->...", normal, tangent_unit)
     declared_cosine = jnp.broadcast_to(cosine, realized_cosine.shape)
     cosine_defect = jnp.abs(realized_cosine - declared_cosine)
     angle_defect = jnp.abs(jnp.arctan2(realized_sine, realized_cosine) - angle)

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -27,7 +28,7 @@ def _mps_inner_accumulation(
         (1, 1), dtype=jnp.result_type(left_tensors[0], right_tensors[0])
     )
     for left_tensor, right_tensor in zip(left_tensors, right_tensors, strict=True):
-        environment = oe.contract(
+        environment = ein.contract(
             "ab,api,bpj->ij",
             environment,
             jnp.conj(left_tensor),
@@ -67,7 +68,7 @@ def mps_one_site_expectation(
     environment = jnp.ones((1, 1), dtype=tensors[0].dtype)
     for index, tensor in enumerate(tensors):
         if index == site_:
-            environment = oe.contract(
+            environment = ein.contract(
                 "ab,api,pq,bqj->ij",
                 environment,
                 jnp.conj(tensor),
@@ -75,7 +76,7 @@ def mps_one_site_expectation(
                 tensor,
             )
         else:
-            environment = oe.contract(
+            environment = ein.contract(
                 "ab,api,bpj->ij", environment, jnp.conj(tensor), tensor
             )
     return state.precision.output(environment.reshape(()))
@@ -106,7 +107,7 @@ def lpdo_raw_trace(state: LocallyPurifiedDensity, /) -> Array:
     tensors = tuple(state.precision.accumulation(value) for value in state.tensors)
     environment = jnp.ones((1, 1), dtype=tensors[0].dtype)
     for tensor in tensors:
-        environment = oe.contract(
+        environment = ein.contract(
             "ab,apkr,bpks->rs",
             environment,
             jnp.conj(tensor),
@@ -144,7 +145,7 @@ def _lpdo_one_site_expectation(
     environment = jnp.ones((1, 1), dtype=tensors[0].dtype)
     for index, tensor in enumerate(tensors):
         if index == site:
-            environment = oe.contract(
+            environment = ein.contract(
                 "ab,apkr,pq,bqks->rs",
                 environment,
                 jnp.conj(tensor),
@@ -152,7 +153,7 @@ def _lpdo_one_site_expectation(
                 tensor,
             )
         else:
-            environment = oe.contract(
+            environment = ein.contract(
                 "ab,apkr,bpks->rs",
                 environment,
                 jnp.conj(tensor),
@@ -214,7 +215,7 @@ def _left_mps_mpo_step(
     ket_tensor: Array,
     /,
 ) -> Array:
-    return oe.contract(
+    return ein.contract(
         "abc,apd,bpqe,cqf->def",
         environment,
         jnp.conj(bra_tensor),
@@ -230,7 +231,7 @@ def _right_mps_mpo_step(
     ket_tensor: Array,
     /,
 ) -> Array:
-    return oe.contract(
+    return ein.contract(
         "apd,bpqe,cqf,def->abc",
         jnp.conj(bra_tensor),
         operator_tensor,
@@ -300,7 +301,7 @@ def _mpo_inner_accumulation(
         (1, 1), dtype=jnp.result_type(left_tensors[0], right_tensors[0])
     )
     for first, second in zip(left_tensors, right_tensors, strict=True):
-        environment = oe.contract(
+        environment = ein.contract(
             "ab,aoic,boid->cd",
             environment,
             jnp.conj(first),
@@ -371,7 +372,7 @@ class OneSiteMPOEffectiveAction(StrictModule):
     right_environment: Array
 
     def __call__(self, vector: Array, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "abc,bpqe,def,cqf->apd",
             self.left_environment,
             self.operator_tensor,
@@ -387,7 +388,7 @@ class TwoSiteMPOEffectiveAction(StrictModule):
     right_environment: Array
 
     def __call__(self, vector: Array, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "abc,bpim,mqjn,dne,cije->apqd",
             self.left_environment,
             self.left_operator,
@@ -402,7 +403,7 @@ class BondOverlapEffectiveAction(StrictModule):
     right_environment: Array
 
     def __call__(self, vector: Array, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "abc,dbf,cf->ad",
             self.left_environment,
             self.right_environment,

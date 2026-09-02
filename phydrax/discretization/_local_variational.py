@@ -11,8 +11,9 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
@@ -565,8 +566,8 @@ class LocalMetricResult(StrictModule, NonTrainableState):
                 "Local metrics require reference dimension no larger than physical "
                 "dimension."
             )
-        metric = oe.contract("cqdr,cqds->cqrs", jacobian_, jacobian_)
-        inverse_metric = oe.contract("cqrd,cqds->cqrs", inverse, inverse)
+        metric = ein.contract("cqdr,cqds->cqrs", jacobian_, jacobian_)
+        inverse_metric = ein.contract("cqrd,cqds->cqrs", inverse, inverse)
         inverse_hessian_ = (
             jnp.empty((0,), dtype=points_.dtype)
             if inverse_hessian is None
@@ -620,7 +621,7 @@ class LocalMetricResult(StrictModule, NonTrainableState):
             or gradients.shape[-1] != self.reference_dimension
         ):
             raise ValueError("Reference gradients do not match local metric points.")
-        return oe.contract("cq...r,cqrd->cq...d", gradients, self.inverse_jacobian)
+        return ein.contract("cq...r,cqrd->cq...d", gradients, self.inverse_jacobian)
 
     def reference_gradient_transpose(self, physical_gradients: ArrayLike, /) -> Array:
         gradients = jnp.asarray(physical_gradients)
@@ -629,7 +630,7 @@ class LocalMetricResult(StrictModule, NonTrainableState):
             or gradients.shape[-1] != self.physical_dimension
         ):
             raise ValueError("Physical gradients do not match local metric points.")
-        return oe.contract("cq...d,cqrd->cq...r", gradients, self.inverse_jacobian)
+        return ein.contract("cq...d,cqrd->cq...r", gradients, self.inverse_jacobian)
 
     def physical_hessian(
         self,
@@ -650,13 +651,13 @@ class LocalMetricResult(StrictModule, NonTrainableState):
             raise ValueError(
                 "Physical Hessians require prepared inverse-map second derivatives."
             )
-        transformed = oe.contract(
+        transformed = ein.contract(
             "cq...rs,cqrd,cqse->cq...de",
             hessians,
             self.inverse_jacobian,
             self.inverse_jacobian,
         )
-        correction = oe.contract(
+        correction = ein.contract(
             "cq...r,cqrde->cq...de",
             gradients,
             self.inverse_hessian,

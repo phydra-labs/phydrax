@@ -11,8 +11,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import AbstractAttribute, StrictModule
 from ..linalg import FactorizationPolicy, inverse, OperatorProperties
@@ -132,7 +133,7 @@ class AbstractSemiRiemannianMetric(StrictModule):
             raise ValueError(
                 f"Metric pairing requires vector trailing dimension {dimension}."
             )
-        return oe.contract(
+        return ein.contract(
             "...i,...ij,...j->...",
             left_array,
             self(coordinates),
@@ -153,7 +154,7 @@ class AbstractSemiRiemannianMetric(StrictModule):
             raise ValueError(
                 f"Metric flat map requires trailing dimension {self.chart.dimension}."
             )
-        return oe.contract("...ij,...j->...i", self(coordinates), values)
+        return ein.contract("...ij,...j->...i", self(coordinates), values)
 
     def sharp(self, covector: ArrayLike, coordinates: ArrayLike, /) -> Array:
         values = jnp.asarray(covector)
@@ -161,7 +162,7 @@ class AbstractSemiRiemannianMetric(StrictModule):
             raise ValueError(
                 f"Metric sharp map requires trailing dimension {self.chart.dimension}."
             )
-        return oe.contract("...ij,...j->...i", self.inverse(coordinates), values)
+        return ein.contract("...ij,...j->...i", self.inverse(coordinates), values)
 
 
 class SemiRiemannianMetric(AbstractSemiRiemannianMetric):
@@ -368,7 +369,7 @@ class _PullbackMetricMap(StrictModule):
         target_coordinates = self.transition.map_function(coordinates)
         jacobian = jax.jacfwd(self.transition.map_function)(coordinates)
         target_matrix = self.target_metric.matrix_function(target_coordinates)
-        return oe.contract("ai,ab,bj->ij", jacobian, target_matrix, jacobian)
+        return ein.contract("ai,ab,bj->ij", jacobian, target_matrix, jacobian)
 
 
 def euclidean_metric(chart: CoordinateChart, /) -> RiemannianMetric:

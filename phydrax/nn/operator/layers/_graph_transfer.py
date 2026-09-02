@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ....graph._multigraph import query_target_features
@@ -531,9 +532,9 @@ class GeometryMomentEmbedding(eqx.Module):
         mass = jnp.sum(selected, axis=-1, keepdims=True)
         normalized = jnp.where(mass > 0.0, selected / mass, jnp.zeros_like(selected))
         relative = neighborhood.relative / self.radius
-        mean = oe.contract("ctn,ctnd->ctd", normalized, relative)
+        mean = ein.contract("ctn,ctnd->ctd", normalized, relative)
         centered = relative - mean[..., None, :]
-        covariance = oe.contract(
+        covariance = ein.contract(
             "ctn,ctni,ctnj->ctij",
             normalized,
             centered,

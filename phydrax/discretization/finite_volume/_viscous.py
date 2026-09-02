@@ -8,8 +8,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -295,7 +296,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 discretization.face_area_vectors[axis]
                 / discretization.face_measures[axis][..., None]
             )
-            traction = oe.contract("...ij,...j->...i", stress_face, normal)
+            traction = ein.contract("...ij,...j->...i", stress_face, normal)
             normal_temperature_gradient = jnp.sum(
                 temperature_gradient_face * normal, axis=-1
             )

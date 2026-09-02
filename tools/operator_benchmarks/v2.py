@@ -14,10 +14,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 import polars as pl
 
 import phydrax as phx
+import phydrax.ein as ein
 from benchmarks._io import atomic_write, write_json_atomic
 
 from .external import ExternalCandidateAudit
@@ -1949,7 +1949,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         deeponet_batch.case_shape,
         key=None,
     )
-    explicit = oe.contract("cql,cl->cq", basis[..., 0, :], coefficients)
+    explicit = ein.contract("cql,cl->cq", basis[..., 0, :], coefficients)
     explicit = explicit + deeponet.bias[0]
     deeponet_error = _relative_array_error(deeponet(deeponet_batch), explicit)
     checks.append(
@@ -2146,7 +2146,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
     attention_value = self_attention.value(attention_values).reshape(
         (1, 4, self_attention.heads, self_attention.head_dim)
     )
-    attention_logits = oe.contract(
+    attention_logits = ein.contract(
         "bqhd,bkhd->bhqk",
         attention_query,
         attention_key,
@@ -2161,7 +2161,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         axis=-1,
     )
     attention_explicit = self_attention.output(
-        oe.contract(
+        ein.contract(
             "bhqk,bkhd->bqhd",
             attention_weights,
             attention_value,

@@ -8,8 +8,8 @@ from string import ascii_lowercase
 from typing import Any, Literal
 
 import jax.numpy as jnp
-import opt_einsum as oe
 
+import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction
 
 from ..._strict import StrictModule
@@ -80,7 +80,7 @@ class _RiemannianGradCallable(StrictModule):
                 **kwargs,
             )
         )
-        return oe.contract(
+        return ein.contract(
             "...ij,...j->...i",
             self.metric.inverse(args[self.coordinate_position]),
             differential,
@@ -130,7 +130,7 @@ class _CovariantHessianCallable(StrictModule):
         coefficients = LeviCivitaConnection(self.metric).coefficients(
             args[self.coordinate_position]
         )
-        return second - oe.contract(
+        return second - ein.contract(
             "...kij,...k->...ij",
             coefficients,
             differential,
@@ -188,7 +188,7 @@ class _RiemannianDivCallable(StrictModule):
         coefficients = LeviCivitaConnection(self.metric).coefficients(
             args[self.coordinate_position]
         )
-        return jnp.trace(derivative, axis1=-2, axis2=-1) + oe.contract(
+        return jnp.trace(derivative, axis1=-2, axis2=-1) + ein.contract(
             "...iik,...k->...",
             coefficients,
             values,
@@ -264,7 +264,7 @@ class _CovariantDerivativeCallable(StrictModule):
             else:
                 connection_subscript = f"yx{letters[slot]}"
                 sign = -1.0
-            correction = oe.contract(
+            correction = ein.contract(
                 f"...{connection_subscript},...{''.join(input_letters)}->...{output}",
                 coefficients,
                 values,
@@ -333,7 +333,7 @@ class _LaplaceBeltramiCallable(StrictModule):
                 **kwargs,
             )
         )
-        return oe.contract(
+        return ein.contract(
             "...ij,...ij->...",
             self.metric.inverse(args[self.coordinate_position]),
             hessian,

@@ -13,7 +13,8 @@ import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability

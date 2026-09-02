@@ -8,8 +8,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
@@ -100,7 +101,7 @@ class CTMRGResult(StrictModule):
 
 def _double_tensor(tensor: Array, /) -> Array:
     shape = tuple(int(value * value) for value in tensor.shape[:4])
-    return oe.contract(
+    return ein.contract(
         "urdlp,URDLp->uUrRdDlL",
         jnp.conj(tensor),
         tensor,

@@ -11,8 +11,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..nn.parameters import ParameterSubspace
@@ -130,14 +131,14 @@ class PreparedMCMCKinetic(StrictModule):
         if self.kind == "diagonal":
             return self.diagonal * vector
         if self.kind == "diagonal_low_rank":
-            return self.diagonal * vector + oe.contract(
+            return self.diagonal * vector + ein.contract(
                 "pr,qr,q->p", self.low_rank_factor, self.low_rank_factor, vector
             )
         output = jnp.zeros_like(vector)
         for indices, factor in zip(self.block_indices, self.block_factors, strict=True):
             block = vector[indices]
             output = output.at[indices].set(
-                oe.contract("ik,jk,j->i", factor, factor, block)
+                ein.contract("ik,jk,j->i", factor, factor, block)
             )
         return output
 
@@ -146,7 +147,7 @@ class PreparedMCMCKinetic(StrictModule):
 
     def kinetic_energy_vector(self, momentum: ArrayLike, /) -> Array:
         value = jnp.asarray(momentum)
-        return 0.5 * oe.contract("p,p->", value, self.inverse_mass_action_vector(value))
+        return 0.5 * ein.contract("p,p->", value, self.inverse_mass_action_vector(value))
 
     def sample_momentum_vector(self, key: Array, /) -> Array:
         dtype = self.diagonal.dtype
@@ -173,12 +174,12 @@ class PreparedMCMCKinetic(StrictModule):
         )
         auxiliary = jr.normal(auxiliary_key, (self.rank,), dtype=dtype)
         scaled_factor = diagonal_inverse[:, None] * self.low_rank_factor
-        correction = jnp.eye(self.rank, dtype=dtype) + oe.contract(
+        correction = jnp.eye(self.rank, dtype=dtype) + ein.contract(
             "pr,ps->rs", self.low_rank_factor, scaled_factor
         )
-        right = oe.contract("pr,p->r", self.low_rank_factor, position) + auxiliary
+        right = ein.contract("pr,p->r", self.low_rank_factor, position) + auxiliary
         solved = jnp.linalg.solve(correction, right)
-        return position - oe.contract("pr,r->p", scaled_factor, solved)
+        return position - ein.contract("pr,r->p", scaled_factor, solved)
 
     def sample_momentum(self, key: Array, /) -> PyTree[Array]:
         return self.unpack(self.sample_momentum_vector(key))
@@ -193,8 +194,8 @@ class PreparedMCMCKinetic(StrictModule):
         delta = jnp.asarray(displacement)
         left_velocity = self.inverse_mass_action_vector(left_momentum)
         right_velocity = self.inverse_mass_action_vector(right_momentum)
-        return (oe.contract("p,p->", delta, left_velocity) < 0.0) | (
-            oe.contract("p,p->", delta, right_velocity) < 0.0
+        return (ein.contract("p,p->", delta, left_velocity) < 0.0) | (
+            ein.contract("p,p->", delta, right_velocity) < 0.0
         )
 
 

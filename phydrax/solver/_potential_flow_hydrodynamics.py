@@ -10,8 +10,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -188,7 +189,7 @@ def solve_potential_flow_hydrodynamics_3d(
         ),
         axis=1,
     )
-    radiation_integrals = oe.contract(
+    radiation_integrals = ein.contract(
         "fi,f,fj->ij",
         prepared.rigid_mode_normal_velocity,
         prepared.face_areas,
@@ -223,7 +224,7 @@ def solve_potential_flow_hydrodynamics_3d(
             -1j
             * density
             * prepared.angular_frequency
-            * oe.contract(
+            * ein.contract(
                 "fi,f,f->i",
                 prepared.rigid_mode_normal_velocity,
                 prepared.face_areas,

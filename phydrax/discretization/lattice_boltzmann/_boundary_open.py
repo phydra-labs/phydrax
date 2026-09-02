@@ -9,8 +9,9 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
@@ -58,8 +59,8 @@ def _weighted_projection(
     weighted_matrix = (
         unknown[..., None] * weights.reshape((1,) * (unknown.ndim - 1) + (-1, 1))
     ) * matrix
-    gram = oe.contract("...qi,...qj->...ij", weighted_matrix, matrix)
-    base_moment = oe.contract("...qi,...q->...i", matrix, jnp.where(unknown, base, 0.0))
+    gram = ein.contract("...qi,...qj->...ij", weighted_matrix, matrix)
+    base_moment = ein.contract("...qi,...q->...i", matrix, jnp.where(unknown, base, 0.0))
     residual = right_hand_side - base_moment
     dimension = matrix.shape[-1]
     identity = jnp.eye(dimension, dtype=dtype)
@@ -78,7 +79,7 @@ def _weighted_projection(
         jnp.any(active & ~solve.successful),
         "Open-boundary moment constraints are singular for the compiled support.",
     )
-    correction = oe.contract("...qi,...i->...q", weighted_matrix, multiplier)
+    correction = ein.contract("...qi,...i->...q", weighted_matrix, multiplier)
     return jnp.where(unknown, base + correction, current)
 
 
@@ -124,7 +125,7 @@ def _velocity_reconstruction(
         target_field = jnp.broadcast_to(target, (*active.shape, target.shape[0]))
         known = ~unknown
         known_mass = jnp.sum(jnp.where(known, candidate, 0.0), axis=-1)
-        known_momentum = oe.contract(
+        known_momentum = ein.contract(
             "...q,qd->...d", jnp.where(known, candidate, 0.0), velocities
         )
         matrix = (
@@ -144,7 +145,7 @@ def _velocity_reconstruction(
             active,
         )
         density = jnp.sum(candidate, axis=-1)
-        momentum = oe.contract("...q,qd->...d", candidate, velocities)
+        momentum = ein.contract("...q,qd->...d", candidate, velocities)
         reconstructed_velocity = (momentum + half_force_density) / density[..., None]
         invalid = active & (
             ~jnp.isfinite(density)
@@ -197,7 +198,7 @@ def _pressure_reconstruction(
         )
         known = ~unknown
         known_mass = jnp.sum(jnp.where(known, candidate, 0.0), axis=-1)
-        known_momentum = oe.contract(
+        known_momentum = ein.contract(
             "...q,qd->...d", jnp.where(known, candidate, 0.0), velocities
         )
         tangent_axes = tuple(index for index in range(dimension) if index != axis)
@@ -223,7 +224,7 @@ def _pressure_reconstruction(
             active,
         )
         density = jnp.sum(candidate, axis=-1)
-        momentum = oe.contract("...q,qd->...d", candidate, velocities)
+        momentum = ein.contract("...q,qd->...d", candidate, velocities)
         physical_momentum = momentum + half_force_density
         outward_velocity = sign * physical_momentum[..., axis] / density
         tangent_error = jnp.zeros(active.shape, dtype=candidate.dtype)

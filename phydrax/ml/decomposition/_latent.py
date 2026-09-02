@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
@@ -100,7 +101,7 @@ def _apply_matrix(
     cases = _shape_product(case_shape)
     flat = value.reshape((cases, -1, value.shape[-1]))
     matrix_flat = matrix.reshape((cases, matrix.shape[-2], matrix.shape[-1]))
-    result = oe.contract("cni,cio->cno", flat, matrix_flat)
+    result = ein.contract("cni,cio->cno", flat, matrix_flat)
     return result.reshape(leading + (matrix.shape[-1],))
 
 
@@ -194,7 +195,7 @@ class FactorAnalysis(AbstractRecipe):
         if self.n_components > width:
             raise ValueError(f"n_components cannot exceed feature count {width}.")
         total = jnp.sum(weights, axis=-1)
-        covariance = oe.contract(
+        covariance = ein.contract(
             "...ni,...n,...nj->...ij", jnp.conj(centered), weights, centered
         ) / jnp.maximum(total[..., None, None], jnp.finfo(weights.dtype).tiny)
         diagonal = jnp.real(jnp.diagonal(covariance, axis1=-2, axis2=-1))
@@ -451,7 +452,7 @@ class ICA(AbstractRecipe):
             activation = jnp.tanh(projections)
             derivative = 1.0 - activation * activation
             candidate = (
-                oe.contract(
+                ein.contract(
                     "...n,...nr,...nf->...rf", normalized_weights, activation, whitened
                 )
                 - jnp.sum(normalized_weights[..., :, None] * derivative, axis=-2)[

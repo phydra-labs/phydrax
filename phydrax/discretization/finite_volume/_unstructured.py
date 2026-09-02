@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -181,8 +182,10 @@ def _cell_volume_quadrature(
         shape = jnp.asarray(shape_host, dtype=dtype)
         gradient = jnp.asarray(gradient_host, dtype=dtype)
         quadrilateral_points = points[jnp.asarray(plan.quadrilaterals, dtype=jnp.int32)]
-        quadrilateral_quadrature = oe.contract("qv,cvd->cqd", shape, quadrilateral_points)
-        jacobian = oe.contract("qva,cvd->cqad", gradient, quadrilateral_points)
+        quadrilateral_quadrature = ein.contract(
+            "qv,cvd->cqd", shape, quadrilateral_points
+        )
+        jacobian = ein.contract("qva,cvd->cqad", gradient, quadrilateral_points)
         determinant = (
             jacobian[..., 0, 0] * jacobian[..., 1, 1]
             - jacobian[..., 0, 1] * jacobian[..., 1, 0]
@@ -253,7 +256,7 @@ def _quadrilateral_jacobian_determinants(
     vertices: np.ndarray, cells: np.ndarray, reference_points: np.ndarray, /
 ) -> np.ndarray:
     _, gradient = _quadrilateral_shape_data(reference_points)
-    jacobian = oe.contract("qva,cvd->cqad", gradient, vertices[cells])
+    jacobian = ein.contract("qva,cvd->cqad", gradient, vertices[cells])
     return (
         jacobian[..., 0, 0] * jacobian[..., 1, 1]
         - jacobian[..., 0, 1] * jacobian[..., 1, 0]
@@ -400,8 +403,8 @@ def _polygon_geometry(
     shape = jnp.asarray(shape_host, dtype=points.dtype)
     gradient = jnp.asarray(gradient_host, dtype=points.dtype)
     quadrilateral_points = points[quadrilateral_cells]
-    mapped = oe.contract("qv,cvd->cqd", shape, quadrilateral_points)
-    jacobian = oe.contract("qva,cvd->cqad", gradient, quadrilateral_points)
+    mapped = ein.contract("qv,cvd->cqd", shape, quadrilateral_points)
+    jacobian = ein.contract("qva,cvd->cqad", gradient, quadrilateral_points)
     determinant = (
         jacobian[..., 0, 0] * jacobian[..., 1, 1]
         - jacobian[..., 0, 1] * jacobian[..., 1, 0]
@@ -529,7 +532,7 @@ def _tetrahedral_geometry(
     normalized_weights = jnp.asarray(
         _TETRAHEDRAL_FACE_QUADRATURE_NORMALIZED_WEIGHTS, dtype=points.dtype
     )
-    quadrature_points = oe.contract("qv,fvd->fqd", barycentric, face_points)
+    quadrature_points = ein.contract("qv,fvd->fqd", barycentric, face_points)
     quadrature_weights = face_measures[:, None] * normalized_weights[None, :]
     return (
         cell_volumes,

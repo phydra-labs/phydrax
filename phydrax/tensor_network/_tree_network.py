@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -127,7 +128,7 @@ def contract_tree_messages(
     message_norms = []
     for step in plan.schedule.steps:
         positions = tuple(value_ids.index(value_id) for value_id in step.input_value_ids)
-        result = oe.contract(
+        result = ein.contract(
             step.equation,
             *(values[position] for position in positions),
             optimize=False,
