@@ -10,7 +10,6 @@ import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Boundary, Interval1d, PointBatch, SampleLayout
 from phydrax.enforcement import (
-    enforce_dirichlet,
     EnforcementProgram,
     EnforcementSpec,
     InteriorAnchors,
@@ -43,14 +42,10 @@ def test_mixed_constraints_steady_state():
     full_boundary = geom.component({"x": Boundary()})
 
     left_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", left_component, target=1.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+        phx.conditions.Dirichlet("u", left_component, target=1.0)
     )
     right_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", right_component, target=2.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+        phx.conditions.Dirichlet("u", right_component, target=2.0)
     )
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}

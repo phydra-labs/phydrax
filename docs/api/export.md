@@ -10,10 +10,21 @@ mathematical complex arrays; `import_complex_parameters` validates and splits a
 compatible complex state back into the destination model without changing its
 optimizer geometry or PyTree layout.
 
-Complex interchange is not a training checkpoint. It excludes optimizer state, RNG
-state, schedules, normalization progress, and loop position. Constrained-potential
-exports contain derived full frame coefficients; import verifies affine-set
-membership and never silently projects invalid coefficients.
+`export_complex_parameters` remains the intentionally parameter-only surface.
+For continuation state, `prepare_complex_training_interchange` binds an exact
+parameter architecture, optimizer treedef with explicit grouped leaf routes,
+typed-key RNG tree, auxiliary-state tree, and training identity.
+`export_complex_training_state` then retains mathematical complex first
+moments, labeled Cartesian second-moment pairs, exact counters/discrete state,
+typed key data and implementation, auxiliary arrays, and the update boundary.
+No field-name heuristic, reseeding, projection, optimizer-geometry conversion,
+or implicit precision narrowing occurs.
+
+`write_complex_training_checkpoint` publishes this complete state as an atomic,
+pickle-free, checksummed array archive with no executable/JAXPR/factor token.
+`read_complex_training_checkpoint` requires the prepared destination templates
+and rejects changed layouts, identities, paths, dtypes, or payload checksums.
+Parameter-only interchange is not an alias for the full checkpoint surface.
 
 ::: phydrax.export.ComplexInterchangeEntry
 
@@ -40,6 +51,38 @@ membership and never silently projects invalid coefficients.
 ---
 
 ::: phydrax.export.complex_coefficients_to_frame
+
+## Complete complex training-state interchange
+
+::: phydrax.export.ComplexOptimizerStateGroup
+
+---
+
+::: phydrax.export.ComplexOptimizerStateLayout
+
+---
+
+::: phydrax.export.RNGInterchangeState
+
+---
+
+::: phydrax.export.prepare_complex_training_interchange
+
+---
+
+::: phydrax.export.export_complex_training_state
+
+---
+
+::: phydrax.export.import_complex_training_state
+
+---
+
+::: phydrax.export.write_complex_training_checkpoint
+
+---
+
+::: phydrax.export.read_complex_training_checkpoint
 
 ## ONNX deployment
 

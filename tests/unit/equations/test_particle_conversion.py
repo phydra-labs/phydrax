@@ -205,9 +205,33 @@ def test_continuum_exchange_deposits_exact_opposite_heat_and_species():
         jnp.asarray([1.0]),
     )
     state = phx.discretization.initialize_particle_conversion_state((batch_state,))
-    transfer = phx.discretization.ConservativeParticleGridTransferPlan(
-        jnp.asarray([[0.0, 0.0, 0.0]]), jnp.asarray([1.0]), 0.5, 1
-    ).prepare(particles)
+    mesh = phx.discretization.CellMesh(
+        jnp.asarray(
+            (
+                (-0.25, -0.25, -0.25),
+                (0.75, -0.25, -0.25),
+                (-0.25, 0.75, -0.25),
+                (-0.25, -0.25, 0.75),
+            )
+        ),
+        (
+            phx.discretization.CellBlock(
+                "cell", "tetrahedron", jnp.asarray(((0, 1, 2, 3),))
+            ),
+        ),
+    )
+    measure = phx.discretization.DiscreteMeasure(
+        "cell_volume",
+        mesh.support.support_id,
+        mesh.topology.entities(3).entity_set_id,
+        jnp.asarray((1.0,)),
+    )
+    transfer = phx.discretization.MeshCompactKernelSplatAssignment(0.5, 1).prepare(
+        phx.discretization.MeshSplatTarget(mesh, entity_dimension=3, measure=measure),
+        jnp.zeros((particles.capacity, 3)),
+        particles.active_mask,
+        particles.particle_ids,
+    )
     exchange = phx.equations.ParticleContinuumExchangePlan(
         transfer,
         jnp.asarray([2.0]),

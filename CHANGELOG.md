@@ -36,6 +36,159 @@
   covariances, Adam moments in adaptive orthogonal bases, periodic QR refresh,
   independent moment/preconditioner dtypes, decoupled weight decay, JIT-safe
   mixed precision, and exact functional-training checkpoint state.
+- Closed FVS-01–FVS-06 with mapped periodic viscous seam evidence, globally
+  conservative multiblock positivity, explicit MAC continuation/checkpoint restore,
+  canonical polyhedral finite-volume geometry, stage-refreshed moving WLSQ and
+  fixed-combinatorics remap derivatives, arbitrary-normal/content-form entropy,
+  mapped/ALE shallow-water balance, equilibrium WENO-Z/open/geostrophic routes,
+  multilayer/Exner physics, shoreline event evidence, and LPP-resolved sub-float32
+  storage.
+- Added bounded stochastic capability families: multiplicative and affine-Hausdorff
+  SING with explicit surrogate/audit semantics; finite coupled SPDE and
+  particle/sparse-grid/separated Fokker–Planck approximations; represented-positive
+  normalized densities and replayable stochastic boundaries; intrinsic Stratonovich
+  and fixed-route rough preparation; finite-degree Wiener-signature certification
+  with error/refinement evidence; finite GW/assignment/Gaussian-component/learned
+  optimal transport; prepared finite diffusion bridges; and measure-explicit
+  Riemannian/injective/conditional/eventful/hybrid/trajectory/finite-field flow laws.
+  These additions do not claim infinite-dimensional execution, generic
+  high-dimensional density solution, global GW/Monge optimality, exact mixture W2,
+  continuum bridge exactness, path-space density, or densities for
+  surjective/noninvertible routes.
+- Added static leading-batch dense and shared-pattern sparse factorization artifacts,
+  batched dense matrix-function and stochastic actions, explicit
+  cross-dtype/complex sparse derivative and dual/Riesz/cotangent Hessian contracts,
+  and threshold-certified bounded numerical inertia; Spineax zero-inertia remains
+  unqualified.
+- Added bounded public-JAX precision rewrite and finite-workload selection evidence,
+  scalar FP8 and portable OCP-style MXFP8/MXFP6/MXFP4 formats with exact payload
+  accounting, portable block-scaled contraction, deterministic local optimizer-state
+  compression only (without communication or collectives), and complete complex
+  parameter/optimizer/typed-RNG/auxiliary/checkpoint interchange.
+- APP-01 added fixed-capacity single-pair close-encounter regularization with
+  KS/Sundman evidence and rollback; clean-cutover
+  `TLEPropagationPlan`/`TLEPropagationResult` with static near/deep SDP4 resonance
+  routes; self-generated scalar Einstein–Boltzmann
+  CDM/baryon/photon-polarization/massless-relic evolution with cold+baryon/total and
+  unlensed TT/TE/EE products; and checksum-verified offline
+  leap/EOP/gravity/ephemeris/IAU assets. Removed `Sgp4Plan`/`Sgp4Result` and the
+  duplicate `EinsteinBoltzmannPlan`/`NativeBoltzmannResult` path.
+- APP-02 added polar-cap/tripolar/equiangular-cubed-sphere hydrostatic mosaics,
+  `TEOS10GSW75EOS`, explicit wet/dry epoch and saltation evidence, fixed/adaptive
+  `ExternalModeSubcyclePolicy` schedules, and passive `TrajectoryData`
+  lowering/advection. Replaced `split_substeps` and migrated continuation
+  initialization to include the prepared ocean.
+- APP-03 retains PR #235 as canonical for
+  capillarity/wave/rigid/hydroelastic/two-phase/PLIC/contact-angle/graph-rezone, and
+  adds explicit VOF wet/dry/moving-contact/surface-piercing/body-contact/breaking/
+  overturning event evidence plus conservative two-phase remesh epochs.
+- APP-04 and bio-specific APP-05 remain intentionally superseded by PR #232;
+  bioinformatics stays removed and generic learned artifacts remain SNM-owned.
+- Added held-out calibrated MC-dropout intervals; explicit frozen residual-noise
+  mappings; proper/improper complex Gaussian observation laws; SWAG/SVGP state;
+  overlap-gated Flow-NUTS evidence; structured kinetic actions; scheduled
+  SGHMC/pSGLD; audited factor/operator minibatches; bounded nested plans; dense-exact
+  causal HMC mass; and buffered particle-boundary evidence.
+- Added bounded finite-atlas preparation and regular-level-set/immersion evidence;
+  post-processing Gaussian and private Riemannian SGD; native complex optimizer
+  leaves; fixed-rank density strata and explicit rank transitions; fixed-root
+  Calabi–Yau moduli with mechanically gated non-proof certificates; exact bounded
+  point-cloud/multiparameter/zigzag/cup/sheaf/spectral-page topology;
+  coordinate-metric Clifford and nonassociative/G2/algebra-matrix families;
+  finite-chart divisors, operator-specific analytic networks, and gauge transport;
+  principal complex special-function continuation with Bessel order derivatives;
+  and certified-tail compact homogeneous kernels with non-PD geodesic radial gating.
+- K3/quintic trained checkpoints remain explicitly excluded qualification assets:
+  existing constructors/solve/freeze/evaluate APIs ship no checkpoint, downloader,
+  registry, format, or schema.
+- Added bounded MPC-01–MPC-05 particle/mechanics closures: `CellMesh`
+  barycentric/compact splats and conservative epochs; conserved wet DEM barrier
+  reservoirs with periodic-envelope/stress evidence; fixed-budget LBVH, nonmatching
+  tetrahedral hydroelastic patches, and Reynolds-film VI contact; equilibrium
+  wall-vortex injection, uncertainty-bounded load recovery, solver-owned
+  hybrid-event replay, and Helmholtz compressible augmentation; and atomic
+  runtime-capacity SPH emission with exact source ledgers.
+- Wave B SFD-01–SFD-06 added certified periodic Fourier Euler split forms, a unified
+  real-coordinate Diffrax state API and packed Hermitian DNS artifacts, batched
+  banded structured operator/channel evidence, explicit-norm projective-pencil
+  pseudospectra, and bounded spherical scattered/HEALPix/spin/Wigner/CG/dealias/modal
+  integration/compiler support. Distributed FFT and line solves remain excluded.
+- Added declared-incidence acausal DAE structural reduction; bounded DAE
+  reset/consistency/regularity/manifold stages; generalized-pencil/Hopf
+  continuation; prepared case-axis iLQR; Radau/multiphase/complementarity/
+  stochastic/manifold transcription audits; continuous-path and finite-box
+  optimality certificates; typed adaptive stochastic-delay interpolation;
+  archived-primal delay backsolve adjoints; exact exponential/certified-tail memory;
+  canonical hybrid event tape/replay/log-Jacobians; and fixed-capacity whole-solve
+  segment evidence.
+- Completed QPV-01–QPV-08 with positive-regulator finite-slice real-time paths;
+  canonical adaptive/source/geometry evidence; periodic/U(1)/exchange measures;
+  root HMC, chunks, proposal adaptation, and incremental caches; adaptive/symmetric
+  and finite-subspace Cayley TDVP; resource-admitted
+  electronic/periodic/no-pair/stochastic-trace routes; PR #236 canonical
+  `QuantumProgram` measurement, bounded control, and tensor execution; canonical
+  finite CPTP maps/integration; and finite
+  Fock/HEOM/compression/steady-state/identifiability certificates. All claims are
+  finite, truncation-aware, and fail closed.
+- Wave C added revision-checked affine CAD-to-FEM meshing and prepared FE cell maps;
+  root rank-r `PeriodicCell` and face-defined `PolyhedralConnectivity` with
+  polynomial three-dimensional VEM consumers and hp adaptation; Laplace DP0
+  three-dimensional kernel-independent FMM/H/H² with exact prepared near blocks;
+  continuous-P1/DP0 scalar Calderón, stable dual spaces, mortar traces, nonmatching
+  FEM–BEM, screen-junction, modified-Helmholtz, and displacement-discontinuity
+  products; bounded finite-image periodic Maxwell and rank-two periodic free-surface
+  products; fixed-history elasticity/Maxwell FEM–BEM CQ node-family controllers;
+  fixed-topology nonlinear/viscous-potential and second-order QTF products; bounded
+  contact/fracture operator lifecycle; and epoch-bound prepared capacitance with
+  explicit topology transitions, fixed-epoch coordinate JVPs, and a
+  rank/shape-certified stable dual Calderón preconditioner. These claims do not cross
+  epoch or pair-class changes and do not extend outside certified shape-regular dual
+  families.
+- Added optimization/search/calibration capabilities: sparse public `ConicProgram`
+  with native-device and sparse Clarabel routes; bounded CVXPY and explicit MPAX
+  representations; public finite top-k/Pareto/adaptive reducers; bounded
+  mixed-integer convex search; mixed/Pareto differential evolution with guarded
+  validity; covariant/interval/group/subset calibration contracts; weighted
+  PAV/typed ordering; relaxed Bernoulli/top-k; inverse-logit evidence; and prepared
+  CSG continuation. Added direct `SparseStorage`-to-BCOO MPAX sparse lowering for
+  zero/nonnegative cones; matrix-free conic JVP/VJP through
+  `JacobianLinearOperator` with matching verified `StabilityLowerBound` and
+  selected-projection `ConicGeneralizedDerivativePolicy` evidence; canonical
+  conic exact/interval/group relative-entropy calibration; KFAC logical
+  block-axis/kind/complex-Cartesian/sharing metadata and structured layout
+  lowering; and a clean cutover from the legacy private finite reducer, with
+  control, UQ, and tool callers migrated to the public surface.
+  KKT inertia now consumes canonical `linalg.InertiaEvidence`.
+- Closed CID-01–CID-12 with typed affine trace enforcement, signed adaptive
+  populations, lazy ragged pooling, bounded breakpoint discovery, N-D adaptive
+  cubature, adaptive Smolyak integration/interpolation, typed probability reference
+  transports, GTA-evidenced nonuniform scaled cubature, matrix-free Type-1 scattered
+  Fourier fitting, mixed Fourier/Chebyshev/Legendre reconstruction, trainable
+  B-spline banks, and certified rational/trainable KAN topology transitions.
+- Expanded bounded GP/BQ/coreset capabilities with rational/separable state-space GPs
+  (SHO, stable CARMA, sums, repeated/derivative/spatial rows, exact associative
+  covariance filtering, and certified Bernoulli/Poisson Laplace sites);
+  fixed-capacity iterative and UQI action-space computation-aware inference;
+  finite-coordinate signature-path functionals; mixed constrained q-batch Bayesian
+  optimization with native GP fitting; exact interval/finite-measure/finite-feature
+  kernel means and sequential BQ; and native operator-case/query, trajectory-block,
+  and empirical-cubature adapters.
+- EPC-01–EPC-04 added bianisotropic/patterned-port continuous-z Fourier modal
+  execution with TO-PML, finite-aperture fields, and harmonic epochs; nonperiodic
+  reduced PIC/Maxwell, curved FE location, and finite-phase/ALE FLIP; integer-ratio
+  multilevel LBM AMR, prepared replay, and forward-VJP IREE; and fixed-capacity
+  higher-order/adaptive coupling waveforms, windows, and topology epochs.
+- Fixed-capacity per-collocation Diffrax quadrature now participates in the canonical
+  `IntegrationPlan`/`materialize`/`reduce` lifecycle with solver-identity and failure
+  evidence.
+- SNM-01–SNM-17 added arbitrary-query wavelets and directional scattering, point
+  O(d) CNO, multi-source frames and coefficient flows, checksummed first-party
+  FNO/DeepONet weights, complete recurrence/rollout, boundary-aware masked CNO/UNO,
+  replayable Galerkin/characteristics, attention replacement/anchors, modal
+  discovery/recovery, generalized residual layouts, transformed complex alias-aware
+  low rank, constrained polyconvex/Onsager wrappers, CID collocation with typed
+  integral rewrite and target/causal workflows, and soft/learned-cutpoint ordinal
+  classification. Tier promotion remains excluded.
 - Added deterministic dense local quantum programs with explicit mixed-dimensional
   Hilbert layouts, ordered local unitary and Kraus contractions, CP-by-construction
   and trace-preservation evidence, resource-bounded plan/prepare/refresh execution,

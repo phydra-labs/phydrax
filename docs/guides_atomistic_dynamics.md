@@ -37,7 +37,7 @@ that a fitted model is stable for molecular dynamics.
 ## Fixed-capacity neighborhoods
 
 Dense, cell-list, metric triclinic cell-list, and certificate-based Verlet backends retain
-the existing fail-closed particle contract. A triclinic `ParticleCell` prepares a finite
+the existing fail-closed particle contract. A triclinic `PeriodicCell` prepares a finite
 minimum-image stencil from its condition number. Short-range preparation requires a
 unique-image radius. Verlet certificates include both particle displacement and cell
 deformation.

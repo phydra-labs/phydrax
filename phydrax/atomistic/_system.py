@@ -14,8 +14,12 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleDiscretization, ParticlePairKeySpace, ParticleSetPlan
-from ..discretization.particle._periodic_cell import ParticleCell
+from ..discretization import (
+    ParticleDiscretization,
+    ParticlePairKeySpace,
+    ParticleSetPlan,
+    PeriodicCell,
+)
 from ._sites import AtomisticCoordinateMapPlan, PreparedAtomisticCoordinateMap
 from ._topology import MolecularTopologyPlan, PreparedMolecularTopology
 from ._types import AtomicStructure
@@ -36,7 +40,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
     region_ids: Array
     units: AtomisticUnitSystem
     topology: MolecularTopologyPlan
-    cell: ParticleCell | None
+    cell: PeriodicCell | None
     coordinate_map: AtomisticCoordinateMapPlan
     name: str = eqx.field(static=True)
     coordinate_dtype: str = eqx.field(static=True)
@@ -57,7 +61,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         molecule_ids: ArrayLike | None = None,
         region_ids: ArrayLike | None = None,
         topology: MolecularTopologyPlan | None = None,
-        cell: ParticleCell | None = None,
+        cell: PeriodicCell | None = None,
         coordinate_map: AtomisticCoordinateMapPlan | None = None,
         name: str = "atomistic-system",
         coordinate_dtype: Any = "float64",
@@ -149,8 +153,8 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         if not isinstance(topology_, MolecularTopologyPlan):
             raise TypeError("topology must be a MolecularTopologyPlan or None.")
         if cell is not None:
-            if not isinstance(cell, ParticleCell):
-                raise TypeError("cell must be a ParticleCell or None.")
+            if not isinstance(cell, PeriodicCell):
+                raise TypeError("cell must be a PeriodicCell or None.")
             if cell.ambient_dimension != 3:
                 raise ValueError("Atomistic dynamics requires a three-dimensional cell.")
         coordinate_map_ = (
@@ -226,7 +230,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
                 if structure.periodic_axes is None
                 else tuple(bool(value) for value in np.asarray(structure.periodic_axes))
             )
-            cell = ParticleCell(np.asarray(structure.cell), periodic_axes=axes)
+            cell = PeriodicCell(np.asarray(structure.cell), periodic_axes=axes)
         return cls(
             structure.particle_ids,
             structure.atomic_numbers,
@@ -319,7 +323,7 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
         return self.particles.capacity
 
     @property
-    def cell(self) -> ParticleCell | None:
+    def cell(self) -> PeriodicCell | None:
         return self.plan.cell
 
 

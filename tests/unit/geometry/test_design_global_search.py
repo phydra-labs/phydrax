@@ -175,7 +175,7 @@ def test_initial_population_convergence_and_invalid_objectives_are_explicit():
     assert invalid.generations == 0
     assert invalid.objective_evaluations == 4
     assert invalid.invalid_evaluations == 4
-    assert invalid.termination_reason == "no_finite_candidates"
+    assert invalid.termination_reason == "no_valid_candidates"
     assert np.all(np.isinf(np.asarray(invalid.population_objectives)))
     assert bool(jnp.isnan(invalid.objective))
 

@@ -7,6 +7,18 @@
 ---
 
 ::: phydrax.discretization.TetrahedralConnectivity
+---
+
+::: phydrax.discretization.PolyhedralConnectivity
+
+---
+
+::: phydrax.discretization.PreparedPolyhedralFiniteVolumeGeometry
+
+---
+
+::: phydrax.discretization.prepare_polyhedral_finite_volume_geometry
+
 
 ---
 
@@ -111,6 +123,22 @@
 ---
 
 ::: phydrax.discretization.UnstructuredConservativeRemapPlan
+---
+
+::: phydrax.discretization.FiniteVolumeStageEpochTransition
+
+---
+
+::: phydrax.discretization.FiniteVolumeStageEpochTransfer
+---
+
+::: phydrax.solver.PreparedUnstructuredSSPRK3Runtime
+
+---
+
+::: phydrax.solver.UnstructuredSSPRK3EpochResult
+
+
 
 ---
 
@@ -127,6 +155,17 @@
 ---
 
 ::: phydrax.discretization.PLICReconstruction
+---
+
+::: phydrax.discretization.VariableSurfaceTensionPolicy
+
+---
+
+::: phydrax.equations.SmagorinskyLESClosure
+
+---
+
+::: phydrax.equations.StefanPhaseChangePlan
 
 ## AMR and interface coupling
 

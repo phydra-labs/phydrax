@@ -75,3 +75,36 @@ def test_spectral_compiler_matches_physical_reference_jit_and_gradient():
     assert jnp.allclose(physical_rate, expected, rtol=1e-10, atol=1e-10)
     assert jnp.allclose(jitted, modal_rate, rtol=1e-11, atol=1e-11)
     assert jnp.all(jnp.isfinite(gradient))
+
+
+def test_spherical_heat_compiles_to_coefficient_resident_diagonal_dynamics():
+    sphere_coordinate = phx.equations.PDECoordinate("sphere", "space", size=2)
+    time = phx.equations.PDECoordinate("t", "time")
+    field = phx.equations.PDEField("u", coordinates=("sphere", "t"))
+    u = phx.equations.PDEExpression.field("u")
+    problem = phx.equations.PDEProblemIR(
+        (sphere_coordinate, time),
+        (field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "spherical-heat",
+                u.derivative("t"),
+                0.2 * u.laplacian("sphere"),
+            ),
+        ),
+    )
+    space = phx.discretization.SphericalSpectralPlan(5).prepare(radius=1.7)
+    compiled = phx.equations.compile_semidiscrete_pde(
+        problem,
+        space,
+        phx.discretization.PseudospectralMethodPlan(),
+    )
+    coefficients = jnp.zeros(space.coefficient_shape, dtype=jnp.complex128)
+    coefficients = coefficients.at[3, 6].set(0.4 - 0.2j)
+    coefficients = space.layout.canonicalize_reality(coefficients)
+    rate = compiled(0.0, coefficients, None)
+    expected = 0.2 * space.modal_laplacian(coefficients)
+
+    assert compiled.resolved_method == "spectral-semilinear-diagonal"
+    assert jnp.allclose(rate, expected, rtol=1e-11, atol=1e-11)
+    assert jnp.allclose(space.modal_integral(rate), 0.0, atol=1e-12)

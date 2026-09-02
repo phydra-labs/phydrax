@@ -4,6 +4,11 @@
 
 """Fourier-modal frequency-domain Maxwell solvers for periodic layer stacks."""
 
+from ._adaptation import (
+    AdaptiveFourierModalCase,
+    FourierModalHarmonicAdaptationPolicy,
+    solve_adaptive_fourier_modal_case,
+)
 from ._batch import (
     FourierModalCaseBatchResult,
     prepare_brillouin_zone_maxwell,
@@ -20,14 +25,23 @@ from ._boundary_cascade import (
     prepare_layer_boundary,
 )
 from ._circuit_adapter import fourier_modal_scattering_component
+from ._continuous import (
+    ContinuousFourierModalStatus,
+    prepare_continuous_fourier_modal_layer,
+    PreparedContinuousFourierModalLayer,
+)
 from ._contracts import (
     AbstractFourierFactorizationPlan,
+    AbstractFourierModalPort,
+    ContinuousFourierModalLayer,
+    ContinuousZIntegrationPolicy,
     FourierModalLayer,
     FourierModalMaxwellProblem,
     FourierModalSourcePlane,
     FourierModalStackElement,
     FrequencyMaxwellMaterial,
     HomogeneousMaxwellPort,
+    PeriodicMaxwellPort,
 )
 from ._factorization import (
     AnalyticInterfaceFramePlan,
@@ -46,8 +60,13 @@ from ._fields import (
     diffraction_order_far_field,
     DiffractionOrderFarField,
     fields_in_layer,
+    finite_aperture_far_field,
+    FiniteApertureFarField,
+    FiniteApertureFarFieldPlan,
     FourierModalFieldResult,
     poynting_flux,
+    RectangularFiniteAperture,
+    SampledFiniteAperture,
 )
 from ._layer import (
     LayerOperatorDiagnostics,
@@ -89,7 +108,10 @@ from ._scattering import (
     HomogeneousPortModes,
     MaxwellPortScatteringOperator,
     PortScatteringDiagnostics,
+    prepare_fourier_modal_port_modes,
     prepare_homogeneous_port_modes,
+    prepare_periodic_port_modes,
+    PreparedPeriodicPortModes,
     redheffer_star_product,
     shift_scattering_reference_planes,
 )
@@ -104,11 +126,20 @@ from ._sources import (
     integrate_brillouin_power,
     plane_wave_excitation,
     point_source_coefficients,
+    port_mode_excitation,
     source_plane_affine_relation,
+)
+from ._transformation_optics import (
+    LateralTransformationOpticsPMLPlan,
+    transform_fourier_modal_material,
+    TransformationOpticsPMLEvidence,
+    TransformedFourierModalMaterial,
 )
 
 
 __all__ = [
+    "AbstractFourierModalPort",
+    "AdaptiveFourierModalCase",
     "AbstractFourierFactorizationPlan",
     "AffineBoundaryRelation",
     "AnalyticInterfaceFramePlan",
@@ -116,6 +147,9 @@ __all__ = [
     "BoundaryRelation",
     "BoundaryRelationDiagnostics",
     "DiffractionOrderFarField",
+    "ContinuousFourierModalLayer",
+    "ContinuousFourierModalStatus",
+    "ContinuousZIntegrationPolicy",
     "DirectFourierFactorizationPlan",
     "FourierFactorizationDiagnostics",
     "FourierModalCapabilities",
@@ -125,6 +159,8 @@ __all__ = [
     "FourierModalDiagnostics",
     "FourierModalExcitation",
     "FourierModalFieldResult",
+    "FiniteApertureFarField",
+    "FiniteApertureFarFieldPlan",
     "FourierModalLayer",
     "FourierModalMaxwellProblem",
     "FourierModalProvenance",
@@ -140,6 +176,7 @@ __all__ = [
     "FourierModalSolveStatus",
     "FourierModalSourcePlane",
     "FourierModalStackElement",
+    "FourierModalHarmonicAdaptationPolicy",
     "FrameDifferentiation",
     "FrequencyMaxwellMaterial",
     "HomogeneousMaxwellPort",
@@ -148,6 +185,7 @@ __all__ = [
     "JonesDirectFramePlan",
     "LayerOperatorDiagnostics",
     "LayerRefreshKind",
+    "LateralTransformationOpticsPMLPlan",
     "MaxwellPortScatteringOperator",
     "ModalLayerResult",
     "ModalPropagationPolicy",
@@ -155,14 +193,22 @@ __all__ = [
     "PreparedFourierMaterial",
     "PreparedFourierModalCaseBatch",
     "PreparedFourierModalLayer",
+    "PeriodicMaxwellPort",
+    "PreparedContinuousFourierModalLayer",
+    "PreparedPeriodicPortModes",
     "PreparedFourierModalMaxwell",
     "PreparedLayerOperator",
+    "RectangularFiniteAperture",
+    "SampledFiniteAperture",
+    "TransformationOpticsPMLEvidence",
+    "TransformedFourierModalMaterial",
     "VectorFourierFactorizationPlan",
     "boundary_to_scattering",
     "cell_integrated_poynting_flux",
     "compose_affine_boundary_relations",
     "compose_boundary_relations",
     "diffraction_order_far_field",
+    "finite_aperture_far_field",
     "emitted_port_amplitudes",
     "fields_in_layer",
     "fourier_modal_convergence_report",
@@ -174,6 +220,7 @@ __all__ = [
     "integrate_brillouin_power",
     "plan_fourier_modal_maxwell",
     "plane_wave_excitation",
+    "port_mode_excitation",
     "point_source_coefficients",
     "poynting_flux",
     "prepare_brillouin_zone_maxwell",
@@ -181,6 +228,9 @@ __all__ = [
     "prepare_fourier_modal_case_batch",
     "prepare_fourier_modal_maxwell",
     "prepare_homogeneous_port_modes",
+    "prepare_continuous_fourier_modal_layer",
+    "prepare_fourier_modal_port_modes",
+    "prepare_periodic_port_modes",
     "prepare_layer_boundary",
     "prepare_layer_operator",
     "prepare_modal_boundary",
@@ -191,6 +241,8 @@ __all__ = [
     "shift_scattering_reference_planes",
     "solve_fourier_modal_case_batch",
     "solve_fourier_modal_maxwell",
+    "solve_adaptive_fourier_modal_case",
+    "transform_fourier_modal_material",
     "source_plane_affine_relation",
     "translate_prepared_fourier_material",
 ]

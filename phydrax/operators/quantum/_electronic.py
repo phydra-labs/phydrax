@@ -23,6 +23,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
 from ._amplitude import LogAmplitude
+from ._electronic_advanced import ElectronicVMCResourcePlan
 from ._local import (
     AbstractLocalQuantumOperator,
     LocalOperatorEstimate,
@@ -31,7 +32,6 @@ from ._local import (
 
 
 ElectronicTraceMethod: TypeAlias = Literal["exact", "chunked-exact"]
-ELECTRONIC_MAX_ELECTRONS = 4
 
 _BOHR_PER_ANGSTROM = 1.8897261254578281
 _HARTREE_PER_ELECTRONVOLT = 0.03674932217565499
@@ -210,6 +210,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         /,
         *,
         kinetic: ElectronicKineticPolicy | None = None,
+        resource_plan: ElectronicVMCResourcePlan | None = None,
         operator_id: str | None = None,
     ):
         if not isinstance(nuclei, AtomicStructure):
@@ -221,11 +222,13 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
             )
         _require_atomic_reference(nuclei.scale)
         count = int(electron_count)
-        if count <= 0 or count > ELECTRONIC_MAX_ELECTRONS:
-            raise ValueError(
-                "electron_count must be between one and "
-                f"{ELECTRONIC_MAX_ELECTRONS} for exact electronic VMC."
-            )
+        resource = (
+            ElectronicVMCResourcePlan(count) if resource_plan is None else resource_plan
+        )
+        if not isinstance(resource, ElectronicVMCResourcePlan):
+            raise TypeError("resource_plan must be ElectronicVMCResourcePlan or None.")
+        if count != resource.electron_count:
+            raise ValueError("electron_count must match resource_plan.electron_count.")
         policy = ElectronicKineticPolicy() if kinetic is None else kinetic
         if not isinstance(policy, ElectronicKineticPolicy):
             raise TypeError("kinetic must be an ElectronicKineticPolicy or None.")
@@ -481,6 +484,10 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         )
         return jnp.where(jnp.all(valid), log_probability, -jnp.inf)
 
+    def payload(self, key, current, proposed, /):
+        del key, current, proposed
+        return ()
+
 
 def harmonic_mean_electron_proposal(
     nuclei: AtomicStructure,
@@ -488,6 +495,7 @@ def harmonic_mean_electron_proposal(
     /,
     *,
     step_size: float = 0.2,
+    resource_plan: ElectronicVMCResourcePlan | None = None,
 ) -> AbstractProposal:
     """Build a state-dependent Gaussian proposal with exact MH correction.
 
@@ -502,11 +510,13 @@ def harmonic_mean_electron_proposal(
     _require_atomic_reference(nuclei.scale)
     count = int(electron_count)
     step = float(step_size)
-    if count <= 0 or count > ELECTRONIC_MAX_ELECTRONS:
-        raise ValueError(
-            "electron_count must be between one and "
-            f"{ELECTRONIC_MAX_ELECTRONS} for exact electronic VMC."
-        )
+    resource = (
+        ElectronicVMCResourcePlan(count) if resource_plan is None else resource_plan
+    )
+    if not isinstance(resource, ElectronicVMCResourcePlan):
+        raise TypeError("resource_plan must be ElectronicVMCResourcePlan or None.")
+    if count != resource.electron_count:
+        raise ValueError("electron_count must match resource_plan.electron_count.")
     if not np.isfinite(step) or step <= 0.0:
         raise ValueError("step_size must be finite and positive.")
     return _HarmonicMeanElectronProposal(nuclei, count, step)
@@ -520,6 +530,7 @@ def electronic_initial_walkers(
     /,
     *,
     spread: float = 1.0,
+    resource_plan: ElectronicVMCResourcePlan | None = None,
 ) -> Array:
     """Draw finite molecular electron walkers around charge-weighted nuclei.
 
@@ -535,9 +546,16 @@ def electronic_initial_walkers(
     electrons = int(electron_count)
     walkers = int(walker_count)
     spread_value = float(spread)
-    if electrons <= 0 or electrons > ELECTRONIC_MAX_ELECTRONS or walkers <= 0:
+    resource = (
+        ElectronicVMCResourcePlan(electrons) if resource_plan is None else resource_plan
+    )
+    if (
+        not isinstance(resource, ElectronicVMCResourcePlan)
+        or electrons != resource.electron_count
+        or walkers <= 0
+    ):
         raise ValueError(
-            "electron_count must be within the exact-electronic ceiling and "
+            "electron_count must match an admitted resource_plan and "
             "walker_count must be positive."
         )
     if not np.isfinite(spread_value) or spread_value <= 0.0:
@@ -560,9 +578,9 @@ def electronic_initial_walkers(
 
 
 __all__ = [
-    "ELECTRONIC_MAX_ELECTRONS",
     "ElectronicCoulombHamiltonian",
     "ElectronicKineticPolicy",
+    "ElectronicVMCResourcePlan",
     "ElectronicTraceMethod",
     "electronic_initial_walkers",
     "harmonic_mean_electron_proposal",

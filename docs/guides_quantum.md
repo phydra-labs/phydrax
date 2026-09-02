@@ -328,22 +328,29 @@ unit factors, while angstrom/electronvolt require the encoded physical factors
 `1 Å = 1.8897261254578281 Bohr` and
 `1 eV = 0.03674932217565499 Hartree`; arbitrary reference factors are rejected.
 Electron configurations have shape `(electron_count, 3)`. Active pair masks
-exclude only exact self pairs; an exact coincident electron/electron,
-electron/nucleus, or active nucleus/nucleus pair returns
-`SINGULAR_CONFIGURATION` and a NaN value. Distances are never clipped. Cell or
-periodic metadata is rejected, and relativistic terms are not inferred.
+exclude only exact self pairs; exact coincident particles return
+`SINGULAR_CONFIGURATION`, and distances are never clipped.
+`ElectronicCoulombHamiltonian` remains the finite nonperiodic molecular route;
+periodic calculations use the separately named finite-resolution Ewald and
+`PeriodicFermiNet` contracts.
 
-The exact electronic/FermiNet capability is deliberately a small-system contract:
-`ELECTRONIC_MAX_ELECTRONS == 4`. Hamiltonians, walkers, proposals, FermiNet
-construction, and benchmark cases reject larger electron counts. This ceiling
-bounds the polynomial determinant used to preserve derivatives at singular terms;
-the API does not claim unrestricted molecular scaling.
+`ElectronicVMCResourcePlan` admits each finite electron/determinant case from
+pair-stream storage, determinant work, kinetic method, dtype, and caller
+limits. It replaces the former global four-electron ceiling but does not claim
+unrestricted scaling. The division-free polynomial determinant remains the
+zero-reactivating route; resource and conditioning failure remain explicit.
 
-`ElectronicKineticPolicy` offers `exact` and `chunked-exact` coordinate Hessian
-traces. Both evaluate all `3 * electron_count` coordinate second derivatives;
-chunking limits simultaneous derivative actions rather than changing the
-mathematics or claiming dimension-independent cost. Stochastic trace estimation is
-not supported.
+`ElectronicKineticPolicy` offers deterministic `exact` and `chunked-exact`
+coordinate Hessian traces. `StochasticElectronicKineticPolicy` offers finite
+Hutchinson or orthogonal-Hutchinson probes with semantic replay, estimator
+variance, count, and exhaustion evidence. Probe variance is within-configuration
+uncertainty and is not treated as additional independent walkers.
+
+`ElectronicIntegralHamiltonian` covers a declared finite spin-orbital basis.
+The `four-component-no-pair` label requires an explicit positive-energy
+projector identity; it is not QED or a continuum Dirac-sea claim. Periodic
+Coulomb evidence records real/reciprocal resolution and requires neutrality or
+an explicit uniform background.
 
 `phydrax.nn.quantum.FermiNet` supplies a canonical `LogAmplitude` for this
 Hamiltonian. It uses shared one- and two-electron streams, a static leading
@@ -375,8 +382,13 @@ does not materialize a sample-by-parameter Jacobian.
 The parameter modes are `real`, `holomorphic`, and `nonholomorphic` (independent
 real coordinates for complex parameters). `FiniteSignedPermutationSymmetry` and
 `SymmetryProjectedAmplitude` remain available for finite discrete sectors.
-`solve_variational_tdvp` reuses the local-operator VMC estimate and geometry for
-fixed-step real- or imaginary-time evolution.
+`solve_variational_tdvp` retains the established fixed-step VMC path.
+`solve_adaptive_tdvp` adds a fixed-attempt Euler/Heun temporal controller with
+common-random-number stage addresses and separate sampling uncertainty; its
+midpoint route is symmetric but does not claim exact generic conservation.
+Only `solve_finite_subspace_tdvp` may report norm/energy preservation, for a
+declared finite linear subspace with positive overlap and Hermitian,
+time-independent Hamiltonian.
 
 Samples are correlated. `markov_chain_measure` marks them non-IID, and the final
 frozen-model chain can record ESS and rank-normalized R-hat diagnostics. A finite
@@ -385,6 +397,40 @@ trial-domain conditions have been established separately.
 
 See the [VMC cookbook](cookbook/quantum_vmc.md) and
 [solver API](api/solver/variational_monte_carlo.md).
+
+## Canonical finite channels and circuit devices
+
+`FiniteCPTPMap` stores explicit input/output dimensions and a canonical Choi
+action. Kraus, Choi, superoperator, unitary, local-program, tensor-local, and
+memory-map adapters retain CP, TP, reconstruction, capacity, and source
+evidence. Choi-to-Kraus cleanup is a preparation-only explicit policy; runtime
+application never clips a density matrix. `FiniteLindbladChannelPlan`
+exponentiates each fixed interval and composes certified maps rather than
+falling back to Euler state repair.
+
+PR #236's `HilbertRegisterLayout`, local unitary/Kraus operations,
+`QuantumProgram`, and dense prepared executor are the canonical circuit IR and
+dense device. QPV adds finite POVM exact/fixed-shot measurement, bounded
+mid-circuit outcome branches, and a nearest-neighbor tensor-network executor.
+Nonlocal tensor gates require an explicit SWAP rewrite; no device registry or
+implicit decomposition exists.
+
+The bounded ansatz catalog contains named Jastrow, RBM, autoregressive,
+Slater-Jastrow, circuit, MPS, periodic determinant, and FermiNet amplitudes.
+Jastrow/RBM flip caches use the root `IncrementalMarkovTarget`; parameter
+updates require cache refresh and mismatch fails closed.
+
+## Finite open-system claims
+
+Open-system certificates name the represented dimension, saved nodes,
+truncation/refinement sequence, and assumptions. Fock and HEOM stabilization
+over declared epochs is an estimate unless a certified tail/contraction
+hypothesis is supplied. LPDO compression remains PSD by compressing a
+purification factor and reports trace loss and a trace-distance upper bound.
+Process-memory projection requires positive retained initial weight and
+Kraus-subspace leakage evidence. Finite steady-state uniqueness requires
+Liouvillian nullity one and a physical trace-constrained density; a generic
+finite trajectory window is not a uniqueness proof.
 
 ## Scope
 

@@ -324,11 +324,18 @@ def _advance_one_quantum(
     logdensity_fn,
     max_num_doublings,
     divergence_threshold,
+    metric_override=None,
+    integrator_override=None,
 ):
-    metric = metrics.default_metric(inverse_mass_matrix)
-    integrator = integrators.velocity_verlet(
-        logdensity_fn,
-        metric.kinetic_energy,
+    metric = (
+        metrics.default_metric(inverse_mass_matrix)
+        if metric_override is None
+        else metric_override
+    )
+    integrator = (
+        integrators.velocity_verlet(logdensity_fn, metric.kinetic_energy)
+        if integrator_override is None
+        else integrator_override
     )
     _, generate_proposal = proposal.proposal_generator(
         trajectory.hmc_energy(metric.kinetic_energy)
@@ -452,10 +459,13 @@ def _advance_one_quantum(
             left_trajectory,
             right_trajectory,
         )
+        left_momentum, _ = ravel_pytree(global_trajectory.leftmost_state.momentum)
+        right_momentum, _ = ravel_pytree(global_trajectory.rightmost_state.momentum)
+        momentum_sum, _ = ravel_pytree(global_trajectory.momentum_sum)
         is_turning_global = metric.check_turning(
-            global_trajectory.leftmost_state.momentum,
-            global_trajectory.rightmost_state.momentum,
-            global_trajectory.momentum_sum,
+            left_momentum,
+            right_momentum,
+            momentum_sum,
         )
         next_expansion_index = continuation.expansion_index + 1
         transition_done = (

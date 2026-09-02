@@ -169,10 +169,10 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
         if not isinstance(continuum_exchange, ParticleContinuumExchangePlan):
             raise TypeError("continuum_exchange must be ParticleContinuumExchangePlan.")
         drag = np.asarray(drag_coefficient, dtype=float)
-        capacity = continuum_exchange.transfer.particles.capacity
+        capacity = continuum_exchange.transfer.particle_capacity
         if drag.shape != (capacity,) or np.any(~np.isfinite(drag)) or np.any(drag < 0.0):
             raise ValueError("drag_coefficient must be nonnegative particle data.")
-        if fluid.cell_count != continuum_exchange.transfer.cell_count:
+        if fluid.cell_count != continuum_exchange.transfer.target.entity_count:
             raise ValueError("Fluid and continuum exchange cell counts differ.")
         if fluid.species_count != continuum_exchange.species_count:
             raise ValueError("Fluid and exchange species counts differ.")
@@ -271,19 +271,24 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
             batch_species_residual.append(
                 candidate.species_amount - previous.species_amount - dt * species_rate
             )
-        relation = self.continuum_exchange.transfer.relation(
-            stage.particle_position, active_mask=stage.particle_active
+        transfer = self.continuum_exchange.transfer
+        relation = transfer.routes(stage.particle_position, stage.particle_active)
+        sampled_fluid_velocity_result = transfer.gather(
+            stage.particle_position,
+            stage.particle_active,
+            unknown.fluid_velocity,
         )
-        sampled_fluid_velocity = self.continuum_exchange.transfer.gather(
-            relation, unknown.fluid_velocity
-        )
+        sampled_fluid_velocity = sampled_fluid_velocity_result.values
         particle_force = self.drag_coefficient[:, None] * (
             sampled_fluid_velocity - unknown.particle_velocity
         )
         particle_force = jnp.where(stage.particle_active[:, None], particle_force, 0.0)
-        fluid_momentum_source = self.continuum_exchange.transfer.deposit_particle_content(
-            relation, -particle_force
+        fluid_momentum_result = transfer.deposit(
+            stage.particle_position,
+            stage.particle_active,
+            -particle_force,
         )
+        fluid_momentum_source = fluid_momentum_result.content
         particle_momentum_residual = (
             stage.particle_mass[:, None]
             * (unknown.particle_velocity - stage.previous_particle_velocity)
@@ -311,8 +316,8 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
             tuple(batch_species_residual),
         )
         transfer_digest = jnp.sum(
-            relation.cell_indices.astype(jnp.int64)
-            * (jnp.arange(relation.cell_indices.shape[1], dtype=jnp.int64)[None, :] + 1)
+            relation.indices.astype(jnp.int64)
+            * (jnp.arange(relation.indices.shape[1], dtype=jnp.int64)[None, :] + 1)
             * relation.valid.astype(jnp.int64)
         )
         species_margin = jnp.min(

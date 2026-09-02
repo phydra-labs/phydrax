@@ -195,7 +195,7 @@ compiler rejects any envelope smaller than the body-plus-contact-law reach.
 
 `DEMPeriodicCellControlPlan` combines disjoint prescribed strain-rate and
 stress-controlled tensor masks. Stress feedback uses the current kinetic and
-pair virial stress. `ParticleCell(maximum_condition_number=...)` preallocates
+pair virial stress. `PeriodicCell(maximum_condition_number=...)` preallocates
 the minimum-image stencil for the complete admissible deformation envelope.
 The candidate cell, affinely mapped particle positions, velocities, and cell
 work commit atomically. Conditioning, unique-image, determinant, and maximum
@@ -203,7 +203,7 @@ strain-increment failures roll back the complete DEM step.
 
 The current deforming-cell authority is fully periodic, gravity-free, has no
 fixed particles or implicit barriers, and requires
-`DenseParticleNeighborhoodPlan`. Static `ParticleCell` neighborhoods retain
+`DenseParticleNeighborhoodPlan`. Static `PeriodicCell` neighborhoods retain
 their existing behavior.
 
 ## Additional contact physics
@@ -247,12 +247,30 @@ weights and payloads remain differentiable.
 
 ## Coupling
 
-`ConservativeParticleGridTransferPlan` uses one normalized weight relation for
-gather and extensive-content deposition. Unresolved CFD–DEM coupling returns
-paired particle and fluid momentum sources and enforces closure validity.
-Accepted multirate windows commit fluid and DEM candidates atomically.
+Canonical particle/continuum exchange uses `PreparedMeshParticleGridSplat`
+with one normalized compact-kernel route for gather and extensive deposition.
+Unresolved CFD–DEM coupling returns paired particle and fluid momentum sources
+and enforces closure validity. Accepted multirate windows commit fluid and DEM
+candidates atomically.
 
 Resolved immersed-boundary coupling uses the same marker interpolation/spreading weights and checks discrete work adjointness. `ReactiveCFDDEMCouplingPlan` composes conservative continuum heat/species exchange, contact heat, radiation, particle conversion, morphology, and DEM under one atomic macro-window acceptance decision.
+
+## Wet barriers and periodic rheology
+
+`DEMBarrierCapillaryPlan` binds one barrier ID to a planar or certified
+isotropic-curvature sphere/surface model. Conserved births withdraw their
+declared endpoint split from particle films and the barrier reservoir using
+simultaneous per-particle/per-barrier scaling. Rupture returns the same split;
+evaporation, pair bridges, wall bridges, films, and reservoirs share one
+inventory residual and commit with mechanical history, reaction, and wall work.
+Birth, rupture, feature selection, and allocation are replay events rather than
+ordinary differentiable branches.
+
+`PeriodicNeighborhoodEnvelope` declares singular-value, lattice-height, and
+deformation bounds for dynamic-cell routes. `DEMBulkStressPlan` explicitly
+selects contact, kinetic, barrier-virial, and body-force moment terms and reports
+the origin, frame, and symmetry defect. No undeclared gravity frame, lab-fixed
+wall, or out-of-envelope deformation is silently accepted.
 
 ## Current maturity and limitations
 

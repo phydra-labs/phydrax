@@ -17,8 +17,7 @@ from opt_einsum import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
-from ..discretization import ParticleNeighborhoodState
-from ..discretization.particle._periodic_cell import ParticleCell
+from ..discretization import ParticleNeighborhoodState, PeriodicCell
 from ._graph import (
     AtomisticGraph,
     AtomisticGraphExecutionPlan,
@@ -60,7 +59,7 @@ class AtomisticPotentialContext(StrictModule):
     lennard_jones_scales: Array
     electrostatic_scales: Array
     graph: AtomisticGraph | None
-    cell: ParticleCell | None
+    cell: PeriodicCell | None
     cell_vectors: Array
     alchemical_lambda: Array
     neighborhood_successful: Array
@@ -389,7 +388,7 @@ class PreparedAtomisticPotentialProgram(StrictModule):
         unwrapped_positions: ArrayLike | None = None,
         species: ArrayLike | None = None,
         alchemical_lambda: ArrayLike = 1.0,
-        cell: ParticleCell | None = None,
+        cell: PeriodicCell | None = None,
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
     ) -> AtomisticPotentialContext:

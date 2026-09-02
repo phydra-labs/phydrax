@@ -197,3 +197,37 @@ ordinary JAX leaves rather than being folded into static identities.
 ---
 
 ::: phydrax.solver.advance_reactive_cfd_dem_window
+
+## Canonical hybrid schedule and Radau tableau
+
+Hybrid callbacks are uniformly time aware:
+`guard(time, state, args)`, `reset(time, state, args)`, and pre/post vector
+fields with the same signature. `prepare_hybrid_schedule` fixes event order,
+capacity, state shape/dtype, and replay identity. Execution emits one
+`HybridEventTape` with active masks, localized roots, pre/post states,
+transversality, saltation validity, terminal/overflow status, and dense
+event-log-Jacobian evidence. `replay_hybrid_schedule` accepts only an identical
+schedule/tape identity. Grazing, unresolved ties, changed order, or overflow
+invalidates `hybrid_event_jvp` and `hybrid_event_vjp`.
+
+`RadauIIAMethod` is the reusable immutable right-Radau tableau used by advanced
+direct transcription. Stage count is static, stiff accuracy and polynomial order
+are verified at construction, and method choice is an epoch boundary.
+
+::: phydrax.solver.HybridReplayPolicy
+
+---
+
+::: phydrax.solver.PreparedHybridSchedule
+
+---
+
+::: phydrax.solver.execute_hybrid_schedule
+
+---
+
+::: phydrax.solver.replay_hybrid_schedule
+
+---
+
+::: phydrax.solver.RadauIIAMethod

@@ -59,6 +59,7 @@ SPARSE_PROVIDER_CATALOG = (
         jit=True,
         transpose_solve=False,
         complex=False,
+        batched_shared_pattern=True,
     ),
     SparseProviderCapabilities(
         name="scipy-superlu",
@@ -68,6 +69,7 @@ SPARSE_PROVIDER_CATALOG = (
         jit=False,
         transpose_solve=True,
         complex=True,
+        batched_shared_pattern=True,
     ),
     SparseProviderCapabilities(
         name="spineax-cudss",
@@ -92,6 +94,7 @@ SPARSE_PROVIDER_CATALOG = (
         jit=False,
         transpose_solve=True,
         complex=True,
+        batched_shared_pattern=True,
     ),
     SparseProviderCapabilities(
         name="cholmod",
@@ -101,6 +104,7 @@ SPARSE_PROVIDER_CATALOG = (
         jit=False,
         transpose_solve=True,
         complex=True,
+        batched_shared_pattern=True,
     ),
     SparseProviderCapabilities(
         name="spqr",
@@ -110,6 +114,7 @@ SPARSE_PROVIDER_CATALOG = (
         jit=False,
         transpose_solve=True,
         complex=True,
+        batched_shared_pattern=True,
     ),
 )
 

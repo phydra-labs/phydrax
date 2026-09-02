@@ -459,3 +459,62 @@ determine all algebraic rates.
 ---
 
 ::: phydrax.equations.compile_semidiscrete_dae
+
+## Declared structural reduction and event closure
+
+`AcausalDAESource` is a finite host declaration: components contribute shaped
+variable jets, residual blocks declare derivative incidence, and connections add
+independent potential equalities plus signed flow balances. `analyze_dae_structure`
+uses that declaration for deterministic matching, bounded Pantelides
+differentiation, block ordering, and bounded tearing. Its structural index is
+conditional on the declared graph and quasi-regularity; opaque residual callbacks
+never acquire an inferred analytic or global index.
+
+`compile_acausal_dae` lowers successful analysis into the existing
+`DifferentialAlgebraicSystem`. The compilation retains reconstruction, original
+residual audit, and explicit initialization masks. Missing declared JVP incidence,
+non-square structure, unmatched names, or differentiation/tear capacity exhaustion
+fails before DAE preparation. Selecting `initialization="structural"` is explicit;
+the input pair is never repaired in place.
+
+DAE events compose the canonical time-aware `HybridEventPlan` and
+`HybridEventTape`. `DAEResetMap` produces post-reset state/rate guesses, after which
+`DAEConsistencyCandidate` checks bounded corrections and must be explicitly
+`apply`-ed. A successful restart returns to BDF order one. Grazing, simultaneous
+roots, failed consistency, changed event order, and tape overflow invalidate jump
+derivatives.
+
+`ManifoldBDFMethod` supplies only fixed-chart local-coordinate BDF1/BDF2 stages.
+`DAERegularityCertificatePlan` proves regularity only on its finite declared cells
+using a center singular-value bound minus a certified operator variation. Uncovered
+cells remain explicit and local probes are not certificates.
+
+::: phydrax.dynamics.AcausalDAESource
+
+---
+
+::: phydrax.dynamics.DAEStructuralPolicy
+
+---
+
+::: phydrax.dynamics.analyze_dae_structure
+
+---
+
+::: phydrax.dynamics.compile_acausal_dae
+
+---
+
+::: phydrax.solver.DAEEventPlan
+
+---
+
+::: phydrax.solver.DAEConsistencyCandidate
+
+---
+
+::: phydrax.solver.DAERegularityCertificatePlan
+
+---
+
+::: phydrax.solver.ManifoldBDFMethod

@@ -18,6 +18,16 @@ from jaxtyping import Array, ArrayLike, Key, PyTree
 from .._strict import AbstractAttribute, StrictModule
 
 
+class ProposalMove(StrictModule):
+    """One normalized proposal with fixed-shape local-update payload evidence."""
+
+    position: PyTree[Array]
+    log_forward: Array
+    log_reverse: Array
+    payload: PyTree[Array]
+    valid: Array
+
+
 class AbstractProposal(StrictModule):
     """Normalized proposal density over a structure-preserving position PyTree."""
 
@@ -31,6 +41,42 @@ class AbstractProposal(StrictModule):
     def log_prob(self, proposed: PyTree[Any], current: PyTree[Any], /) -> Array:
         """Return ``log q(proposed | current)`` as one real scalar."""
         raise NotImplementedError
+
+    @abstractmethod
+    def payload(
+        self,
+        key: Key[Array, ""],
+        current: PyTree[Any],
+        proposed: PyTree[Any],
+        /,
+    ) -> PyTree[Array]:
+        """Return fixed-shape local-update evidence for the proposed position."""
+        raise NotImplementedError
+
+    def propose(self, key: Key[Array, ""], current: PyTree[Any], /) -> ProposalMove:
+        """Materialize one complete Hastings move without capability probing."""
+        proposed = self.sample(key, current)
+        forward = jnp.asarray(self.log_prob(proposed, current))
+        reverse = jnp.asarray(self.log_prob(current, proposed))
+        valid = (
+            jnp.isfinite(forward)
+            & jnp.isfinite(reverse)
+            & jnp.all(
+                jnp.stack(
+                    [
+                        jnp.all(jnp.isfinite(jnp.asarray(leaf)))
+                        for leaf in jax.tree_util.tree_leaves(proposed)
+                    ]
+                )
+            )
+        )
+        return ProposalMove(
+            position=proposed,
+            log_forward=forward,
+            log_reverse=reverse,
+            payload=self.payload(key, current, proposed),
+            valid=valid,
+        )
 
 
 class GaussianRandomWalkProposal(AbstractProposal):
@@ -84,6 +130,10 @@ class GaussianRandomWalkProposal(AbstractProposal):
         )
         return -0.5 * (squared + dimension * jnp.log(2.0 * jnp.pi * self.scale**2))
 
+    def payload(self, key, current, proposed, /):
+        del key, current, proposed
+        return ()
+
 
 class CallableProposal(AbstractProposal):
     """Normalized user-defined structure-preserving proposal."""
@@ -135,9 +185,14 @@ class CallableProposal(AbstractProposal):
             raise ValueError("Proposal log probabilities must be scalar.")
         return value.reshape(())
 
+    def payload(self, key, current, proposed, /):
+        del key, current, proposed
+        return ()
+
 
 __all__ = [
     "AbstractProposal",
     "CallableProposal",
     "GaussianRandomWalkProposal",
+    "ProposalMove",
 ]

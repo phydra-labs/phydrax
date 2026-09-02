@@ -50,6 +50,29 @@ fingerprints. Memory refit requires disjoint held-out interventions, nonzero
 pre-fit error, and measured improvement. Direct-memory evolution is promoted
 only after operator-basis map reconstruction and Choi CP/TP certification.
 
+## Canonical finite maps and bounded certificates
+
+`FiniteLindbladChannelPlan` constructs one certified finite CPTP exponential
+per declared interval. Failed CP/TP certification invalidates subsequent
+history; no density clipping, renormalization, or Euler fallback occurs.
+
+`PreparedFockRefinementPlan` and `PreparedHEOMRefinementPlan` make every
+cutoff/depth/bath/time topology an explicit host-prepared epoch. Observed
+differences remain `estimate_kind="difference"`; only a caller-supplied
+certified tail or future-contraction hypothesis produces
+`estimate_kind="bound"`.
+
+`certify_finite_lindblad_steady_state` checks explicit d² Liouvillian nullity,
+trace-left-null alignment, stationary residual, Hermiticity, positivity, and
+trace. A gap claim additionally requires a detailed-balance symmetrizer.
+`certify_process_identifiability` reports rank only modulo the declared finite
+gauge basis and intervention design.
+
+LPDO compression acts on purification factors, retaining positivity by
+construction and reporting trace loss, discarded norm, overlap, and a
+trace-distance upper bound. Process-memory projection additionally reports
+retained initial weight and every Kraus operator's invariant-subspace leakage.
+
 ## Qualification artifacts
 
 Campaign artifact creation, verification, and graduation live under

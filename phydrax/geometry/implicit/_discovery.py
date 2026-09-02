@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ...discretization import PreparedTensorGrid
+from ...discretization._tensor_support import PreparedTensorGrid
 from .._certificate import FieldRegularity, SignReliability, ZeroSetAccuracy
 from .._contracts import CompiledGeometry, GeometryKind
 from ..simplicial import TriangleTopology

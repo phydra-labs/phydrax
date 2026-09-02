@@ -17,7 +17,7 @@ import jax.random as jr
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from ..stochastic import WienerRealization
+from ..stochastic._wiener import WienerRealization
 from ._delay import (
     ConstantDelay,
     DelayDifferentialProblem,
@@ -50,12 +50,16 @@ from ._diffrax_backend import (
 from ._diffrax_delay_backend import (
     _bind_delay_history,
     _CausalFixedStepSizeController,
+    _CoordinateDelayDerivative,
+    _CoordinateDelayHistory,
+    _CoordinateDelayInterpolation,
     _delay_discontinuity_times,
     _DelayValidation,
     _DelayVectorField,
     _RetardedSolver,
     _RetardedSolverState,
 )
+from ._diffrax_state_packing import _PreparedDiffraxStateAdapter
 from ._geometric import AbstractGeometricSolver, SRKMK
 from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
@@ -85,13 +89,18 @@ class _FrozenDelayDiffusion(eqx.Module):
     path_sign: Array
     geometry: Any
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_adapter: _PreparedDiffraxStateAdapter
 
     def __call__(self, state: Array, /) -> Array:
+        public_state = self.state_adapter.unpack_state(state)
         terms = eqx.combine(self.dynamic_terms, self.static_terms.value)
-        args = eqx.combine(self.dynamic_args, self.static_args.value)
+        packed_args = eqx.combine(self.dynamic_args, self.static_args.value)
+        args = self.state_adapter.unpack_args(packed_args)
         columns = []
         for term in terms:
-            value = jnp.asarray(term.coefficient(self.time, state, self.memory, args))
+            value = jnp.asarray(
+                term.coefficient(self.time, public_state, self.memory, args)
+            )
             expected = self.state_shape + term.noise_shape
             if tuple(value.shape) != expected:
                 raise ValueError(
@@ -104,7 +113,7 @@ class _FrozenDelayDiffusion(eqx.Module):
         )
         if self.geometry is not None:
             projected = jax.vmap(
-                lambda column: self.geometry.project_tangent(state, column),
+                lambda column: self.geometry.project_tangent(public_state, column),
                 in_axes=-1,
                 out_axes=-1,
             )(coefficient)
@@ -121,7 +130,7 @@ class _FrozenDelayDiffusion(eqx.Module):
                 "Geometric delay diffusion must be tangent-compatible with "
                 "state_geometry.",
             )
-        return coefficient
+        return self.state_adapter.pack_diffusion(coefficient, (coefficient.shape[-1],))
 
 
 class _DelayDiffusionVectorField(eqx.Module):
@@ -131,6 +140,7 @@ class _DelayDiffusionVectorField(eqx.Module):
     terms: tuple[DelayWienerTerm, ...]
     path_sign: Array
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_adapter: _PreparedDiffraxStateAdapter
 
     def freeze(self, time: Array, state: Array, args: Any, /) -> _FrozenDelayDiffusion:
         memory, validation = self.context._memory(time, state, args)
@@ -145,6 +155,7 @@ class _DelayDiffusionVectorField(eqx.Module):
             dynamic_args=dynamic_args,
             static_args=eqxi.Static(static_args),
             path_sign=self.path_sign,
+            state_adapter=self.state_adapter,
             geometry=self.context.geometry,
             state_shape=self.state_shape,
         )
@@ -317,6 +328,7 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
     geometry: Any
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_adapter: _PreparedDiffraxStateAdapter
 
     def __init__(
         self,
@@ -324,6 +336,7 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
         final_times: Array,
         problem: DelayDifferentialProblem,
         sample_shape: tuple[int, ...],
+        state_adapter: _PreparedDiffraxStateAdapter,
         /,
     ):
         samples = tuple(int(size) for size in sample_shape)
@@ -342,13 +355,18 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
             self.lower_times = jnp.asarray(history.retained_interval[0]).reshape((-1,))
         else:
             self.lower_times = jnp.broadcast_to(problem.t0, (sample_count,))
-        self.initial_history = problem.history
-        self.initial_derivative = problem.history_derivative
-        self.args = problem.args
+        self.initial_history = _CoordinateDelayHistory(problem.history, state_adapter)
+        self.initial_derivative = (
+            None
+            if problem.history_derivative is None
+            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+        )
+        self.args = state_adapter.pack_args(problem.args)
         self.initial_time = problem.t0
-        self.geometry = problem.state_geometry
+        self.geometry = None
         self.sample_shape = samples
-        self.state_shape = problem.state_shape
+        self.state_shape = state_adapter.backend_shape
+        self.state_adapter = state_adapter
 
     @eqx.filter_jit
     def evaluate(
@@ -392,8 +410,9 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
             return history.values(query, left=left)
 
         values = eqx.filter_vmap(evaluate_one)(self.solver_states)
-        return values.reshape(
-            self.sample_shape + query.shape + values.shape[1 + query.ndim :]
+        public = self.state_adapter.unpack_values(values, 1 + query.ndim)
+        return public.reshape(
+            self.sample_shape + query.shape + self.state_adapter.state_shape
         )
 
 
@@ -667,6 +686,7 @@ def _native_stochastic_delay_solution(
     maximum_lag: Array | None,
     max_steps: int | None,
     throw: bool,
+    state_adapter: _PreparedDiffraxStateAdapter,
 ):
     real_dtype = jnp.asarray(problem.initial_state).real.dtype
     brownian, signed_path = _realized_wiener_path(
@@ -675,18 +695,30 @@ def _native_stochastic_delay_solution(
         path_sign,
         real_dtype,
     )
+    packed_initial = state_adapter.pack_state(
+        problem.initial_state, owner="Initial stochastic delay state"
+    )
     empty_history = EmptyDelayHistory(
-        problem.initial_state,
-        jnp.zeros_like(problem.initial_state),
+        packed_initial,
+        state_adapter.pack_state(
+            jnp.zeros_like(problem.initial_state),
+            owner="Initial stochastic delay derivative",
+        ),
     )
     delay_context = _DelayVectorField(
         function=problem.drift,
-        initial_history=problem.history,
-        initial_derivative=problem.history_derivative,
+        initial_history=_CoordinateDelayHistory(problem.history, state_adapter),
+        initial_derivative=(
+            None
+            if problem.history_derivative is None
+            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+        ),
         delay_terms=problem.delay_terms,
         initial_time=integration_start,
         state_shape=problem.state_shape,
         geometry=problem.state_geometry,
+        state_adapter=state_adapter,
+        backend_shape=state_adapter.backend_shape,
         computed_history=empty_history,
     )
     diffusion_field = _DelayDiffusionVectorField(
@@ -694,6 +726,7 @@ def _native_stochastic_delay_solution(
         terms=problem.wiener_terms,
         path_sign=signed_path,
         state_shape=problem.state_shape,
+        state_adapter=state_adapter,
     )
     terms = dfx.MultiTerm(
         dfx.ODETerm(delay_context),
@@ -727,12 +760,12 @@ def _native_stochastic_delay_solution(
         t0=integration_start,
         t1=integration_end,
         dt0=dt0,
-        y0=problem.initial_state,
-        args=problem.args,
+        y0=packed_initial,
+        args=state_adapter.pack_args(problem.args),
         saveat=saveat,
         stepsize_controller=controller,
         adjoint=adjoint,
-        event=event,
+        event=state_adapter.wrap_event(event),
         max_steps=max_steps,
         throw=bool(throw and history_mode == "full"),
     )
@@ -760,6 +793,7 @@ def _solve_diffrax_delay_stochastic(
     history_capacity: int | None,
     history_margin: int,
     throw: bool,
+    state_adapter: _PreparedDiffraxStateAdapter,
 ) -> MemoryEquationSolution:
     """Execute one certified fixed-step stochastic retarded problem."""
     del rtol, atol
@@ -872,6 +906,7 @@ def _solve_diffrax_delay_stochastic(
             history_mode=history_mode,
             history_capacity=resolved_history_capacity,
             maximum_lag=retained_maximum_lag,
+            state_adapter=state_adapter,
         )
 
     if realization.sample_shape:
@@ -909,7 +944,10 @@ def _solve_diffrax_delay_stochastic(
             history_bytes = rolling_history.allocated_bytes
     else:
         history_bytes = None
-    native_states = jnp.asarray(native.ys["requested"])
+    native_states = state_adapter.unpack_values(
+        native.ys["requested"],
+        len(realization.sample_shape) + 1,
+    )
     if rolling_history is not None and throw:
         native_states = eqx.error_if(
             native_states,
@@ -927,17 +965,24 @@ def _solve_diffrax_delay_stochastic(
                 jnp.asarray(native.ts["final"])[..., 0],
                 problem,
                 realization.sample_shape,
+                state_adapter,
             )
         else:
             final_time = jnp.asarray(native.ts["final"])[0]
             history = DelayHistoryView(
-                initial_history=problem.history,
-                initial_derivative=problem.history_derivative,
-                args=problem.args,
+                initial_history=_CoordinateDelayHistory(problem.history, state_adapter),
+                initial_derivative=(
+                    None
+                    if problem.history_derivative is None
+                    else _CoordinateDelayDerivative(
+                        problem.history_derivative, state_adapter
+                    )
+                ),
+                args=state_adapter.pack_args(problem.args),
                 initial_time=problem.t0,
                 computed_history=solver_state.history,
-                state_shape=problem.state_shape,
-                geometry=problem.state_geometry,
+                state_shape=state_adapter.backend_shape,
+                geometry=None,
             )
             interpolation = DelayDenseInterpolation(
                 history=history,
@@ -948,6 +993,10 @@ def _solve_diffrax_delay_stochastic(
                     else None
                 ),
             )
+            if state_adapter.active:
+                interpolation = _CoordinateDelayInterpolation(
+                    interpolation, state_adapter
+                )
 
     solver_name = type(selected_solver).__name__
     if isinstance(selected_solver, AbstractGeometricSolver):

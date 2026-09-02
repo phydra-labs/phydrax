@@ -39,13 +39,9 @@ def test_multifield_pipeline_uses_enforced_covars():
     v_condition = phx.conditions.Dirichlet(
         "v",
         boundary_component,
-        target=lambda x: x[0] + 2.0,
+        target=lambda x: 2.3 + 0.4 * x[0],
     )
-    v_spec = EnforcementSpec(
-        v_condition,
-        kind="custom",
-        transform=lambda value, _get_field: value + 2.0,
-    )
+    v_spec = EnforcementSpec(v_condition)
     u_condition = phx.conditions.Residual(
         ("u", "v"),
         boundary_component,
@@ -54,8 +50,18 @@ def test_multifield_pipeline_uses_enforced_covars():
     u_spec = EnforcementSpec(
         u_condition,
         field="u",
-        kind="custom",
-        transform=lambda _value, get_field: get_field("v"),
+        transform=phx.enforcement.AffineEnforcementTransform(
+            phx.enforcement.equal(
+                phx.enforcement.field_jet("u", "x") - phx.enforcement.field_jet("v", "x"),
+                0.0,
+            ),
+            phx.enforcement.TraceLifting("dirichlet", "x"),
+            phx.enforcement.EnforcementProofObligations(
+                pivot_identity="u:value",
+                support_identity="interval-boundary",
+                provider_certified=True,
+            ),
+        ),
     )
 
     pipelines = EnforcementProgram.build(
@@ -64,7 +70,7 @@ def test_multifield_pipeline_uses_enforced_covars():
     )
     enforced = pipelines.apply({"u": u, "v": v})
 
-    batch = _line_batch(geom, xs=jnp.array([0.3, 0.7]))
+    batch = _line_batch(geom, xs=jnp.array([0.0, 1.0]))
     out_u = jnp.asarray(enforced["u"](batch).data).reshape((-1,))
     out_v = jnp.asarray(enforced["v"](batch).data).reshape((-1,))
     assert jnp.allclose(out_u, out_v, atol=1e-6)
@@ -97,14 +103,34 @@ def test_multifield_pipeline_cycle_error():
     u_spec = EnforcementSpec(
         u_condition,
         field="u",
-        kind="custom",
-        transform=lambda _value, get_field: get_field("v"),
+        transform=phx.enforcement.AffineEnforcementTransform(
+            phx.enforcement.equal(
+                phx.enforcement.field_jet("u", "x") - phx.enforcement.field_jet("v", "x"),
+                0.0,
+            ),
+            phx.enforcement.TraceLifting("dirichlet", "x"),
+            phx.enforcement.EnforcementProofObligations(
+                pivot_identity="u:value",
+                support_identity="interval-boundary",
+                provider_certified=True,
+            ),
+        ),
     )
     v_spec = EnforcementSpec(
         v_condition,
         field="v",
-        kind="custom",
-        transform=lambda _value, get_field: get_field("u"),
+        transform=phx.enforcement.AffineEnforcementTransform(
+            phx.enforcement.equal(
+                phx.enforcement.field_jet("v", "x") - phx.enforcement.field_jet("u", "x"),
+                0.0,
+            ),
+            phx.enforcement.TraceLifting("dirichlet", "x"),
+            phx.enforcement.EnforcementProofObligations(
+                pivot_identity="v:value",
+                support_identity="interval-boundary",
+                provider_certified=True,
+            ),
+        ),
     )
 
     with pytest.raises(ValueError, match="dependency cycle"):

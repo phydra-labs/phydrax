@@ -7,13 +7,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal
 
-from phydrax.conditions import AbstractResidualCondition
 from phydrax.domain import DomainFunction
 from phydrax.operators.differential import (
     level_set_coarea_density,
     level_set_phase_indicator,
 )
 
+from ..conditions._base import AbstractResidualCondition
 from ..integration import IntegrationSource
 from ._integral_functional import IntegralFunctional
 from ._residual import _squared_frobenius_field

@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import equinox as eqx
+import jax
+import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._strict import StrictModule
@@ -18,24 +20,24 @@ from ._split_differential import SplitDifferentialProblem
 class DeterministicDifferentialIR(StrictModule):
     """Private explicit/implicit decomposition shared by temporal backends."""
 
-    explicit_rhs: Callable[[Array, Array, Any], Array]
-    implicit_rhs: Callable[[Array, Array, Any], Array] | None
-    implicit_residual: Callable[[Array, Array, Array, Any], Array] | None
+    explicit_rhs: Callable[[Array, Any, Any], Any]
+    implicit_rhs: Callable[[Array, Any, Any], Any] | None
+    implicit_residual: Callable[[Array, Any, Any, Any], Any] | None
     args: Any
     discretization_bundle: DiscretizationBundle | None
-    state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_structure: tuple[tuple[str, tuple[int, ...], str], ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     equation_form: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        explicit_rhs: Callable[[Array, Array, Any], Array],
-        implicit_rhs: Callable[[Array, Array, Any], Array] | None,
-        implicit_residual: Callable[[Array, Array, Array, Any], Array] | None,
+        explicit_rhs: Callable[[Array, Any, Any], Any],
+        implicit_rhs: Callable[[Array, Any, Any], Any] | None,
+        implicit_residual: Callable[[Array, Any, Any, Any], Any] | None,
         args: Any,
         discretization_bundle: DiscretizationBundle | None,
-        state_shape: tuple[int, ...],
+        state_structure: tuple[tuple[str, tuple[int, ...], str], ...],
         problem_id: str,
         equation_form: str,
     ):
@@ -52,9 +54,20 @@ class DeterministicDifferentialIR(StrictModule):
         self.implicit_residual = implicit_residual
         self.args = args
         self.discretization_bundle = discretization_bundle
-        self.state_shape = tuple(int(size) for size in state_shape)
+        self.state_structure = tuple(state_structure)
         self.problem_id = str(problem_id)
         self.equation_form = str(equation_form)
+
+
+def _state_structure(state: Any, /) -> tuple[tuple[str, tuple[int, ...], str], ...]:
+    return tuple(
+        (
+            jax.tree_util.keystr(path) or "<root>",
+            tuple(int(size) for size in jnp.asarray(leaf).shape),
+            str(jnp.asarray(leaf).dtype),
+        )
+        for path, leaf in jax.tree_util.tree_flatten_with_path(state)[0]
+    )
 
 
 def lower_deterministic_problem(
@@ -68,7 +81,7 @@ def lower_deterministic_problem(
             implicit_residual=None,
             args=problem.args,
             discretization_bundle=problem.discretization_bundle,
-            state_shape=tuple(problem.initial_state.shape),
+            state_structure=_state_structure(problem.initial_state),
             problem_id=problem.problem_id,
             equation_form="additive-ode",
         )
@@ -80,7 +93,7 @@ def lower_deterministic_problem(
         implicit_residual=None,
         args=problem.args,
         discretization_bundle=problem.discretization_bundle,
-        state_shape=tuple(problem.initial_state.shape),
+        state_structure=_state_structure(problem.initial_state),
         problem_id=problem.problem_id,
         equation_form="explicit-ode",
     )

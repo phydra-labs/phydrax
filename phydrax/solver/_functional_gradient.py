@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -18,9 +19,12 @@ import optax
 from .._frozendict import frozendict
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
+    DelayedTargetPolicy,
     EvaluationParametersFn,
+    ExponentialMovingAverageTargetPolicy,
     log_training_signal_stop as _log_training_signal_stop,
     resolve_evaluation_parameters,
+    TargetParameterState,
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger as _TensorBoardLogger,
     TrainingController,
@@ -103,6 +107,7 @@ def solve_gradient(
     parameter_paths: tuple[str, ...] | None = None,
     parameter_shapes: tuple[tuple[int, ...], ...] = (),
     parameter_dtypes: tuple[str, ...] = (),
+    parameter_alias_groups: tuple[tuple[str, ...], ...] = (),
     seed: int = 0,
     jit: bool = True,
     keep_best: bool = True,
@@ -117,6 +122,10 @@ def solve_gradient(
     precision: FunctionalPrecisionPolicy | None = None,
     training: FunctionalTrainingPlan | None = None,
     resume: bool = False,
+    accepted_update_hook: Any = None,
+    target_policy: DelayedTargetPolicy
+    | ExponentialMovingAverageTargetPolicy
+    | None = None,
 ) -> "FunctionalSolver":
     if num_iter == 0:
         return self
@@ -164,14 +173,9 @@ def solve_gradient(
             "optim must be a Phydrax least-squares, iterative, mirror, or "
             "Riemannian optimizer, or an Optax transformation."
         )
-    if (
-        parameter_paths is not None
-        and _opt_standard is None
-        and _opt_linesearch is None
-    ):
+    if parameter_paths is not None and _opt_standard is None and _opt_linesearch is None:
         raise ValueError(
-            "Explicit parameter subspaces are supported only by Optax "
-            "transformations."
+            "Explicit parameter subspaces are supported only by Optax transformations."
         )
     if precision is not None and not isinstance(precision, FunctionalPrecisionPolicy):
         raise TypeError("precision must be a FunctionalPrecisionPolicy or None.")
@@ -204,10 +208,9 @@ def solve_gradient(
     with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         resume_state = self.training_state if resume else None
         source_functions = (
-            self.functions
-            if resume_state is None
-            else resume_state.current_functions
+            self.functions if resume_state is None else resume_state.current_functions
         )
+        surrogate_filter_spec = None
         if parameter_paths is None:
             params, non_trainable = partition_trainable(source_functions)
             explicit_subspace = False
@@ -215,13 +218,26 @@ def solve_gradient(
             subspace = ParameterSubspace.from_leaf_paths(
                 source_functions,
                 parameter_paths,
+                alias_groups=parameter_alias_groups,
             )
             if subspace.leaf_shapes != parameter_shapes:
                 raise ValueError("FunctionalSolver parameter-subspace shapes changed.")
             if subspace.leaf_dtypes != parameter_dtypes:
                 raise ValueError("FunctionalSolver parameter-subspace dtypes changed.")
             validate_low_rank_subspace(source_functions, subspace)
-            params, non_trainable = subspace.initial, subspace.frozen
+            params, non_trainable = subspace.initial, subspace
+            coordinate_paths = parameter_paths + tuple(
+                alias for group in parameter_alias_groups for alias in group[1:]
+            )
+            surrogate_subspace = ParameterSubspace.from_leaf_paths(
+                source_functions,
+                coordinate_paths,
+            )
+            surrogate_filter_spec = jax.tree.map(
+                lambda leaf: leaf is not None,
+                surrogate_subspace.initial,
+                is_leaf=lambda leaf: leaf is None,
+            )
             explicit_subspace = True
         sharding_policy = None if training is None else training.sharding
         if sharding_policy is not None:
@@ -230,15 +246,26 @@ def solve_gradient(
 
         def reconstruct_functions(current, fixed):
             if explicit_subspace:
-                return eqx.combine(current, fixed)
+                if not isinstance(fixed, ParameterSubspace):
+                    raise TypeError("Explicit functional subspace state is invalid.")
+                return fixed.reconstruct(current)
             return combine_trainable(current, fixed)
+
+        def surrogate_coordinates(current, fixed):
+            if not explicit_subspace:
+                return current, fixed
+            if surrogate_filter_spec is None:
+                raise TypeError("Explicit surrogate coordinate state is invalid.")
+            functions = reconstruct_functions(current, fixed)
+            return eqx.partition(functions, surrogate_filter_spec)
+
+        line_search_state_types = (
+            optax.ScaleByBacktrackingLinesearchState,
+            optax.ScaleByZoomLinesearchState,
+        )
         preinitialized_opt_state = None
         if _opt_linesearch is not None:
             preinitialized_opt_state = _opt_linesearch.init(params)
-            line_search_state_types = (
-                optax.ScaleByBacktrackingLinesearchState,
-                optax.ScaleByZoomLinesearchState,
-            )
             state_leaves = jax.tree.leaves(
                 preinitialized_opt_state,
                 is_leaf=lambda value: isinstance(value, line_search_state_types),
@@ -301,7 +328,14 @@ def solve_gradient(
 
         def _loss_wrt_params(params_, non_trainable_, prepared_):
             if isinstance(prepared_, PreparedFunctionalUpdate):
-                values = prepared_.surrogate_values(params_, non_trainable_)
+                surrogate_params, surrogate_non_trainable = surrogate_coordinates(
+                    params_,
+                    non_trainable_,
+                )
+                values = prepared_.surrogate_values(
+                    surrogate_params,
+                    surrogate_non_trainable,
+                )
                 return values.total, values.flat_values
             functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
@@ -320,9 +354,7 @@ def solve_gradient(
         def _data_metrics_wrt_terms(params_, non_trainable_, prepared_):
             functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
-                return prepared_data_metrics(
-                    _physical_prepared(prepared_), functions
-                )
+                return prepared_data_metrics(_physical_prepared(prepared_), functions)
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
@@ -336,6 +368,22 @@ def solve_gradient(
         is_riemannian_linesearch = isinstance(
             _opt_riemannian, AbstractRiemannianLineSearchOptimizer
         )
+
+        def optax_linesearch_accepted(optimizer_state) -> bool:
+            states = tuple(
+                value
+                for value in jax.tree.leaves(
+                    optimizer_state,
+                    is_leaf=lambda value: isinstance(value, line_search_state_types),
+                )
+                if isinstance(value, line_search_state_types)
+            )
+            if not states:
+                raise RuntimeError("Optax line-search state is missing.")
+            return all(
+                bool(jnp.isfinite(state.learning_rate) & (state.learning_rate > 0.0))
+                for state in states
+            )
 
         def solve_step_terms(
             params_,
@@ -605,6 +653,24 @@ def solve_gradient(
             else preinitialized_opt_state
         )
         restored_objective = None
+        current_evaluation_params = resolve_evaluation_parameters(
+            evaluation_parameters,
+            opt_state,
+            params,
+        )
+        initial_target_params = (
+            current_evaluation_params
+            if isinstance(target_policy, ExponentialMovingAverageTargetPolicy)
+            and target_policy.source == "evaluation"
+            else params
+        )
+        target_state = (
+            resume_state.target_state
+            if resume_state is not None
+            else None
+            if target_policy is None
+            else TargetParameterState.initialize(initial_target_params, target_policy)
+        )
         if (
             resume
             and resume_state is None
@@ -618,6 +684,7 @@ def solve_gradient(
                     source_functions if training.pseudo_transient else None
                 ),
                 optimizer_state=opt_state,
+                target_state=target_state,
                 key=jr.key(seed),
                 pseudo_inverse_steps=tuple(
                     policy.initial_inverse_step for policy in training.pseudo_transient
@@ -646,7 +713,9 @@ def solve_gradient(
                 params, non_trainable = partition_trainable(source_functions)
             else:
                 resumed_subspace = ParameterSubspace.from_leaf_paths(
-                    source_functions, parameter_paths
+                    source_functions,
+                    parameter_paths,
+                    alias_groups=parameter_alias_groups,
                 )
                 if (
                     resumed_subspace.leaf_shapes != parameter_shapes
@@ -655,18 +724,19 @@ def solve_gradient(
                     raise ValueError(
                         "Checkpoint parameter subspace changed shape or dtype."
                     )
-                params = resumed_subspace.initial
-                non_trainable = resumed_subspace.frozen
+                validate_low_rank_subspace(source_functions, resumed_subspace)
+                params, non_trainable = resumed_subspace.initial, resumed_subspace
             opt_state = resume_state.optimizer_state
             if sharding_policy is not None:
                 params = sharding_policy.place_parameters(params)
                 non_trainable = sharding_policy.place_tree(non_trainable)
                 opt_state = sharding_policy.place_tree(opt_state)
-        current_evaluation_params = resolve_evaluation_parameters(
-            evaluation_parameters,
-            opt_state,
-            params,
-        )
+            target_state = resume_state.target_state
+            current_evaluation_params = resolve_evaluation_parameters(
+                evaluation_parameters,
+                opt_state,
+                params,
+            )
         selection_policy = None if training is None else training.selection
         initial_progress = (
             resume_state.progress
@@ -683,18 +753,28 @@ def solve_gradient(
         if resume_state is None:
             control.best_payload = current_evaluation_params
         elif parameter_paths is None:
-            control.best_payload = partition_trainable(
-                resume_state.best_functions
-            )[0]
+            control.best_payload = partition_trainable(resume_state.best_functions)[0]
         else:
             control.best_payload = ParameterSubspace.from_leaf_paths(
-                resume_state.best_functions, parameter_paths
+                resume_state.best_functions,
+                parameter_paths,
+                alias_groups=parameter_alias_groups,
             ).initial
         objective = self.objective if restored_objective is None else restored_objective
         if keep_best and selection_policy is not None and resume_state is None:
             initial_selection = objective.prepare_evaluation(
                 key=jr.fold_in(control.key, 1200),
                 iteration=jnp.asarray(0.0),
+                evaluation_kwargs=(
+                    None
+                    if target_state is None
+                    else {
+                        "target_functions": reconstruct_functions(
+                            target_state.target,
+                            non_trainable,
+                        )
+                    }
+                ),
             )
             initial_selection_functions = reconstruct_functions(
                 current_evaluation_params, non_trainable
@@ -752,12 +832,8 @@ def solve_gradient(
         ):
             if training is None:
                 raise RuntimeError("Functional training state requires a training plan.")
-            current_functions_ = reconstruct_functions(
-                current_params, non_trainable
-            )
-            selected_functions_ = reconstruct_functions(
-                selected_params, non_trainable
-            )
+            current_functions_ = reconstruct_functions(current_params, non_trainable)
+            selected_functions_ = reconstruct_functions(selected_params, non_trainable)
             pseudo_inverse_steps_ = pseudo_inverse_steps
             term_multipliers_ = term_multipliers
             return FunctionalTrainingState(
@@ -765,6 +841,7 @@ def solve_gradient(
                 best_functions=selected_functions_,
                 previous_functions=previous_functions,
                 optimizer_state=optimizer_state,
+                target_state=target_state,
                 key=control.key,
                 pseudo_inverse_steps=pseudo_inverse_steps_,
                 term_multipliers=term_multipliers_,
@@ -776,10 +853,14 @@ def solve_gradient(
                     + time.perf_counter()
                     - training_started
                 ),
-                resumed_from_step=start_step,
+                resumed_from_step=start_update_step,
             )
 
-        start_step = 0 if resume_state is None else resume_state.progress.update_step
+        start_update_step = (
+            0 if resume_state is None else resume_state.progress.update_step
+        )
+        start_epoch = 0 if resume_state is None else resume_state.progress.epoch
+
         def publish_checkpoint(checkpoint_solver, checkpoint_state):
             if training is None or training.checkpoint is None:
                 return
@@ -798,7 +879,8 @@ def solve_gradient(
                 sharding_policy.synchronize(
                     f"functional-checkpoint-after-{checkpoint_state.progress.update_step}"
                 )
-        if start_step >= int(num_iter):
+
+        if start_epoch >= int(num_iter):
             resumed_result = replace_solver_state(
                 self,
                 functions=resume_state.best_functions,
@@ -810,7 +892,7 @@ def solve_gradient(
                 resume_state,
                 is_leaf=lambda value: value is None,
             )
-        for epoch in range(start_step, int(num_iter)):
+        for epoch in range(start_epoch, int(num_iter)):
             if signal_guard.stop_requested:
                 _log_training_signal_stop(
                     optimizer_label,
@@ -847,18 +929,30 @@ def solve_gradient(
                     evaluation_key=subkey,
                     sampling_key=jr.fold_in(subkey, 211),
                     iteration=iter_,
+                    evaluation_kwargs=(
+                        None
+                        if target_state is None
+                        else {
+                            "target_functions": reconstruct_functions(
+                                target_state.target,
+                                non_trainable,
+                            )
+                        }
+                    ),
                 )
                 if sharding_policy is not None:
-                    physical_prepared = sharding_policy.place_prepared(
-                        physical_prepared
-                    )
-                prepared = (
-                    physical_prepared
-                    if training is None
-                    else prepare_functional_update(
-                        physical_prepared,
+                    physical_prepared = sharding_policy.place_prepared(physical_prepared)
+                if training is None:
+                    prepared = physical_prepared
+                else:
+                    surrogate_params, surrogate_non_trainable = surrogate_coordinates(
                         params,
                         non_trainable,
+                    )
+                    prepared = prepare_functional_update(
+                        physical_prepared,
+                        surrogate_params,
+                        surrogate_non_trainable,
                         self.enforcement,
                         training=training,
                         previous_functions=previous_functions,
@@ -866,7 +960,6 @@ def solve_gradient(
                         term_multipliers=term_multipliers,
                         previous_gradient=previous_gradient,
                     )
-                )
                 if isinstance(prepared, PreparedFunctionalUpdate):
                     pseudo_inverse_steps = prepared.pseudo_inverse_steps
                     term_multipliers = prepared.term_multipliers
@@ -883,7 +976,7 @@ def solve_gradient(
                         raise ValueError("NTK diagnostics require residual roots.")
                     latest_ntk_diagnostics = _functional_ntk_diagnostics(
                         prepared.residual,
-                        params,
+                        surrogate_params,
                         training.diagnostics,
                         jr.fold_in(subkey, 1701),
                     )
@@ -897,11 +990,27 @@ def solve_gradient(
                 if training is not None and training.pseudo_transient:
                     previous_functions = functions_snapshot
                 iterative_step_metrics = (
-                    _opt_least_squares.step_metrics(opt_state)
+                    _opt_composite.step_metrics(opt_state)
+                    if _opt_composite is not None
+                    else _opt_least_squares.step_metrics(opt_state)
                     if _opt_least_squares is not None
                     else _opt_iterative.step_metrics(opt_state)
                     if _opt_iterative is not None
                     else None
+                )
+                riemannian_linesearch_metrics = (
+                    _opt_riemannian.step_metrics(opt_state)
+                    if is_riemannian_linesearch and _opt_riemannian is not None
+                    else None
+                )
+                accepted_update = (
+                    bool(iterative_step_metrics.accepted)
+                    if iterative_step_metrics is not None
+                    else bool(riemannian_linesearch_metrics.line_search_accepted)
+                    if riemannian_linesearch_metrics is not None
+                    else optax_linesearch_accepted(opt_state)
+                    if is_linesearch
+                    else True
                 )
                 training_evaluation_multiplier = (
                     1
@@ -929,16 +1038,28 @@ def solve_gradient(
                     num_terms=len(term_names),
                 )
                 train_model_loss_terms = values_arr[active_term_count:]
-                step = epoch + 1
-                control.complete_update(step)
+                attempt_step = epoch + 1
+                control.progress = replace(control.progress, epoch=attempt_step)
+                accepted_step = control.progress.update_step + int(accepted_update)
+                if accepted_update:
+                    control.complete_update(accepted_step)
                 current_evaluation_params = resolve_evaluation_parameters(
                     evaluation_parameters,
                     opt_state,
                     params,
                 )
+                if target_state is not None:
+                    target_state = target_state.update(
+                        params,
+                        accepted=accepted_update,
+                        evaluation_parameters=current_evaluation_params,
+                    )
+                if accepted_update_hook is not None and accepted_update:
+                    accepted_update_hook(accepted_step, current_evaluation_params)
+                step = attempt_step
                 evaluation_loss = None
-                if keep_best and selection_policy is not None:
-                    if selection_policy.due(step):
+                if accepted_update and keep_best and selection_policy is not None:
+                    if selection_policy.due(accepted_step):
                         selection_prepared = objective.prepare_evaluation(
                             key=jr.fold_in(subkey, 1201),
                             iteration=iter_,
@@ -952,12 +1073,12 @@ def solve_gradient(
                         control.select(
                             float(evaluation_loss),
                             current_evaluation_params,
-                            step=step,
+                            step=accepted_step,
                             mode=selection_policy.mode,
                             min_delta=selection_policy.min_delta,
                             patience=selection_policy.patience,
                         )
-                elif keep_best:
+                elif accepted_update and keep_best:
                     if evaluation_parameters is None:
                         selection_parameters = (
                             params
@@ -981,12 +1102,13 @@ def solve_gradient(
                     control.select(
                         float(selection_loss),
                         selection_parameters,
-                        step=step,
+                        step=accepted_step,
                     )
                 if (
-                    training is not None
+                    accepted_update
+                    and training is not None
                     and training.checkpoint is not None
-                    and training.checkpoint.due(step)
+                    and training.checkpoint.due(accepted_step)
                 ):
                     checkpoint_selected = (
                         control.selected(current_evaluation_params)
@@ -1076,6 +1198,16 @@ def solve_gradient(
                     prepared_evaluation = objective.prepare_evaluation(
                         key=jr.fold_in(subkey, 2),
                         iteration=iter_,
+                        evaluation_kwargs=(
+                            None
+                            if target_state is None
+                            else {
+                                "target_functions": reconstruct_functions(
+                                    target_state.target,
+                                    non_trainable,
+                                )
+                            }
+                        ),
                     )
                     eval_terms = _term_values_wrt_params(
                         current_evaluation_params,
@@ -1646,10 +1778,15 @@ def solve_gradient(
                 publish_checkpoint(result, training_state)
         objective_plane_diagnostics: dict[str, Any] = {}
         if isinstance(prepared, PreparedFunctionalUpdate):
+            chosen_surrogate, chosen_surrogate_non_trainable = surrogate_coordinates(
+                chosen,
+                non_trainable,
+            )
             objective_plane_diagnostics = {
                 "objective/physical": prepared.physical_values(functions).total,
                 "objective/surrogate": prepared.surrogate_loss(
-                    chosen, non_trainable
+                    chosen_surrogate,
+                    chosen_surrogate_non_trainable,
                 ),
                 "gradient_alignment/intra": prepared.intra_gradient_alignment,
                 "gradient_alignment/inter": prepared.inter_gradient_alignment,

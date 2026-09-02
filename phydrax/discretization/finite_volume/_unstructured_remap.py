@@ -395,6 +395,72 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             "Bounded remap could not produce values in the requested interval.",
         )
 
+    def apply_fixed_combinatorics(
+        self,
+        source_cell_averages: ArrayLike,
+        intersection_measures: ArrayLike,
+        source_volumes: ArrayLike,
+        target_volumes: ArrayLike,
+        /,
+    ) -> Array:
+        """Differentiable remap for one frozen common-refinement route graph."""
+        source = self._validate_values(
+            source_cell_averages, "Fixed-combinatorics remap values"
+        )
+        measures = jnp.asarray(intersection_measures, dtype=source.dtype)
+        source_measure = jnp.asarray(source_volumes, dtype=source.dtype)
+        target_measure = jnp.asarray(target_volumes, dtype=source.dtype)
+        if measures.shape != self.intersection_measures.shape:
+            raise ValueError(
+                "Dynamic intersection measures must preserve remap capacity."
+            )
+        if source_measure.shape != self.source_volumes.shape:
+            raise ValueError("Dynamic source volumes must preserve source capacity.")
+        if target_measure.shape != self.target_volumes.shape:
+            raise ValueError("Dynamic target volumes must preserve target capacity.")
+        measures = eqx.error_if(
+            measures,
+            jnp.any(~jnp.isfinite(measures) | (measures <= 0.0)),
+            "Fixed-combinatorics intersections must remain positive and finite.",
+        )
+        source_measure = eqx.error_if(
+            source_measure,
+            jnp.any(~jnp.isfinite(source_measure) | (source_measure <= 0.0)),
+            "Fixed-combinatorics source volumes must remain positive and finite.",
+        )
+        target_measure = eqx.error_if(
+            target_measure,
+            jnp.any(~jnp.isfinite(target_measure) | (target_measure <= 0.0)),
+            "Fixed-combinatorics target volumes must remain positive and finite.",
+        )
+        target_coverage = (
+            jnp.zeros_like(target_measure).at[self.target_routes].add(measures)
+        )
+        source_coverage = (
+            jnp.zeros_like(source_measure).at[self.source_indices].add(measures)
+        )
+        tolerance = self.report.tolerance.astype(source.dtype)
+        coverage_valid = jnp.all(
+            jnp.abs(target_coverage - target_measure)
+            <= tolerance * jnp.maximum(target_measure, 1.0)
+        ) & jnp.all(
+            jnp.abs(source_coverage - source_measure)
+            <= tolerance * jnp.maximum(source_measure, 1.0)
+        )
+        source = eqx.error_if(
+            source,
+            ~coverage_valid,
+            "Fixed-combinatorics remap lost complete geometric coverage.",
+        )
+        trailing = (1,) * (source.ndim - 1)
+        weighted = source[self.source_indices] * measures.reshape((-1,) + trailing)
+        target = (
+            jnp.zeros((target_measure.size,) + source.shape[1:], dtype=source.dtype)
+            .at[self.target_routes]
+            .add(weighted)
+        )
+        return target / target_measure.reshape((-1,) + trailing)
+
     def conservation_defect(
         self, source_cell_averages: ArrayLike, target_cell_averages: ArrayLike, /
     ) -> Array:

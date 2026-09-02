@@ -57,6 +57,7 @@ class _GradientBackend:
             parameter_paths=config.parameter_paths,
             parameter_shapes=config.parameter_shapes,
             parameter_dtypes=config.parameter_dtypes,
+            parameter_alias_groups=config.parameter_alias_groups,
             seed=config.seed,
             jit=config.jit,
             keep_best=config.keep_best,
@@ -71,6 +72,8 @@ class _GradientBackend:
             precision=config.precision,
             training=config.training,
             resume=config.resume,
+            accepted_update_hook=config.accepted_update_hook,
+            target_policy=config.target_policy,
         )
 
 
@@ -117,9 +120,7 @@ class _KFACBackend:
         /,
     ) -> "FunctionalSolver":
         if config.parameter_paths is not None:
-            raise ValueError(
-                "Explicit parameter subspaces are unsupported by KFAC."
-            )
+            raise ValueError("Explicit parameter subspaces are unsupported by KFAC.")
         from ._kfac_solver import solve_kfac
 
         return solve_kfac(
@@ -212,6 +213,22 @@ def solve(
         optim,
         evaluation_parameters=config.evaluation_parameters,
     )
+    if config.accepted_update_hook is not None and not isinstance(
+        backend, _GradientBackend
+    ):
+        raise ValueError(
+            "Accepted-update hooks are supported only by functional gradient backends."
+        )
+    if config.target_policy is not None and not isinstance(backend, _GradientBackend):
+        raise ValueError(
+            "Target policies are supported only by functional gradient backends."
+        )
+    if (config.training is not None or config.resume) and isinstance(
+        backend, _EvosaxBackend
+    ):
+        raise ValueError(
+            "Functional training plans and resume are unsupported by Evosax backends."
+        )
     return backend.run(solver, config)
 
 

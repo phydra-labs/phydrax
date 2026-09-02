@@ -137,7 +137,7 @@ def test_neural_galerkin_rejects_dynamic_and_malformed_metrics():
         )
 
 
-def test_neural_galerkin_rejects_rate_field_mismatch_and_backsolve_adjoint():
+def test_neural_galerkin_rate_mismatch_and_certified_backsolve_policy():
     domain, _batch, problem = _constant_growth_problem()
     bad = phx.solver.NeuralGalerkinProblem(
         problem.functions,
@@ -156,12 +156,21 @@ def test_neural_galerkin_rejects_rate_field_mismatch_and_backsolve_adjoint():
             solver=dfx.Euler(),
             dt0=0.1,
         )
-    with pytest.raises(NotImplementedError, match="BacksolveAdjoint"):
+    with pytest.raises(ValueError, match="certified_backsolve"):
         phx.solver.solve_neural_galerkin(
             problem,
             grid,
             adjoint=dfx.BacksolveAdjoint(),
         )
+    result = phx.solver.solve_neural_galerkin(
+        problem,
+        grid,
+        solver=dfx.Euler(),
+        dt0=0.1,
+        adjoint=dfx.BacksolveAdjoint(),
+        adjoint_policy=phx.solver.NeuralGalerkinAdjointPolicy("certified_backsolve"),
+    )
+    assert bool(result.successful)
 
 
 def test_neural_field_result_rejects_invalid_indices_and_missing_dense_output():

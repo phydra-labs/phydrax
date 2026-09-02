@@ -126,3 +126,37 @@ manifolds is explicit through [`ParameterGeometry`](../optim.md#parameter-pytree
 ---
 
 ::: phydrax.metrix.validate_manifold
+
+## Ambient and complex leaves
+
+`RegularLevelSetManifold` represents a declared regular level set in a declared
+ambient Riemannian metric. `local_geometry` returns metric/inverse, constraint
+Jacobian, tangent and normal projectors, rank margin, orientation, and measure
+evidence. Its fixed-iteration metric-normal Newton retraction fails rather than
+repairing rank or convergence loss. `ImmersedRiemannianManifoldAdapter` exposes
+the same evidence for an immersion, including pullback metric and Hausdorff
+Jacobian. These adapters reuse fixed-topology implicit-surface discovery and
+realization; they do not infer topology or signed distance from an array shape.
+
+`ComplexEuclideanManifold` explicitly binds unconstrained complex leaves. For
+all complex manifolds, `egrad_to_rgrad` consumes the JAX cotangent convention
+once; callers must not conjugate gradients. First moments remain complex while
+adaptive second moments, norms, curvature, line-search scalars, and denominators
+use the leaf's real dtype.
+
+::: phydrax.metrix.RegularLevelSetManifold
+
+::: phydrax.metrix.ImmersedRiemannianManifoldAdapter
+
+::: phydrax.metrix.ComplexEuclideanManifold
+
+## Conditional private mechanisms
+
+`RiemannianOutputGaussianMechanism` is an ambient sensitivity-certified Gaussian
+mechanism followed by deterministic manifold projection; privacy follows only
+from post-processing. `PrivateRiemannianSGD` requires fixed per-example batches,
+metric clipping, an explicit certified `TangentNoiseFrame`, an explicit key, and
+a finite-alpha `RDPLedger`. Full-batch and named Poisson sampling are supported;
+the Poisson ledger deliberately uses the conservative full-batch bound rather
+than claiming unsupported amplification. Projection, frame, sensitivity, or
+finite-value failure withholds the release/update.

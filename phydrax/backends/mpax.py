@@ -15,6 +15,7 @@ from ._types import AbstractExternalBackend, BackendAvailability, BackendCapabil
 
 
 MPAXAlgorithm: TypeAlias = Literal["rapdhg", "r2hpdhg"]
+MPAXRepresentation: TypeAlias = Literal["dense", "sparse"]
 
 MPAX_CAPABILITIES = BackendCapabilities(
     backend="mpax",
@@ -58,6 +59,7 @@ class MPAXPlan(StrictModule):
     """Static first-order algorithm and termination configuration."""
 
     algorithm: MPAXAlgorithm = eqx.field(static=True)
+    representation: MPAXRepresentation = eqx.field(static=True)
     eps_abs: float = eqx.field(static=True)
     eps_rel: float = eqx.field(static=True)
     eps_primal_infeasible: float = eqx.field(static=True)
@@ -72,6 +74,7 @@ class MPAXPlan(StrictModule):
         self,
         algorithm: MPAXAlgorithm = "rapdhg",
         /,
+        representation: MPAXRepresentation = "dense",
         *,
         eps_abs: float = 1e-6,
         eps_rel: float = 1e-6,
@@ -84,6 +87,8 @@ class MPAXPlan(StrictModule):
     ):
         if algorithm not in ("rapdhg", "r2hpdhg"):
             raise ValueError("algorithm must be 'rapdhg' or 'r2hpdhg'.")
+        if representation not in ("dense", "sparse"):
+            raise ValueError("representation must be 'dense' or 'sparse'.")
         values = tuple(
             float(value)
             for value in (
@@ -101,6 +106,7 @@ class MPAXPlan(StrictModule):
         if bool(unroll) and steps >= 100_000:
             raise ValueError("Unrolled MPAX execution requires a bounded finite budget.")
         self.algorithm = algorithm
+        self.representation = representation
         (
             self.eps_abs,
             self.eps_rel,
@@ -115,6 +121,7 @@ class MPAXPlan(StrictModule):
             {
                 "kind": "mpax-plan",
                 "algorithm": algorithm,
+                "representation": representation,
                 "eps_abs": values[0],
                 "eps_rel": values[1],
                 "eps_primal_infeasible": values[2],
@@ -206,6 +213,7 @@ def solve_mpax(
 
 __all__ = [
     "MPAXAlgorithm",
+    "MPAXRepresentation",
     "MPAXBackend",
     "MPAXPlan",
     "MPAX_CAPABILITIES",

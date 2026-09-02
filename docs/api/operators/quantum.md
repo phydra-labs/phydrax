@@ -63,11 +63,21 @@ brackets.
 
 ### Continuum molecular electrons
 
-The exact small-system contract is
-`phydrax.operators.ELECTRONIC_MAX_ELECTRONS == 4`; all electronic construction
-and sampling entry points reject larger systems.
+Electronic VMC is admitted by `ElectronicVMCResourcePlan`; electron,
+determinant, pair-storage, kinetic-trace, and caller resource capacities remain
+finite and explicit. This removes the former global four-electron ceiling
+without making an unrestricted-scaling claim.
 
 ::: phydrax.operators.ElectronicKineticPolicy
+
+::: phydrax.operators.quantum.ElectronicVMCResourcePlan
+
+::: phydrax.operators.quantum.StochasticElectronicKineticPolicy
+
+::: phydrax.operators.quantum.ElectronicIntegralHamiltonian
+
+::: phydrax.operators.quantum.periodic_coulomb_energy
+
 
 ::: phydrax.operators.ElectronicCoulombHamiltonian
 
@@ -110,6 +120,40 @@ does not materialize global embedded operators. See
 ::: phydrax.operators.quantum.apply_local_kraus_to_density
 
 ::: phydrax.operators.quantum.kraus_trace_preservation_residual
+
+### Canonical finite channels
+
+`FiniteCPTPMap` is the representation-independent finite Choi action. Kraus,
+Choi, superoperator, unitary, canonical-program, and specialized local-channel
+adapters retain CP/TP/reconstruction evidence. Invalid input is not projected
+or normalized.
+
+::: phydrax.operators.quantum.FiniteCPTPMap
+
+::: phydrax.operators.quantum.finite_cptp_from_kraus
+
+::: phydrax.operators.quantum.finite_cptp_from_choi
+
+::: phydrax.operators.quantum.finite_cptp_from_superoperator
+
+::: phydrax.operators.quantum.compose_finite_cptp
+
+::: phydrax.operators.quantum.tensor_finite_cptp
+
+::: phydrax.operators.quantum.factor_finite_cptp
+
+These certificates apply only to the represented finite dimensions. Gaussian,
+process-tensor, and tensor-local channel types remain specialized public
+representations and use explicit adapters rather than aliases.
+
+### Bounded named amplitudes
+
+The public catalog under `phydrax.nn.quantum` contains
+`JastrowSpinAmplitude`, `RestrictedBoltzmannAmplitude`,
+`AutoregressiveSpinAmplitude`, `SlaterJastrowAmplitude`,
+`CircuitAmplitude`, `TensorNetworkAmplitude`, `PeriodicFermiNet`, and the
+existing `FermiNet`. There is no model registry. Local Jastrow/RBM cache
+providers use the root incremental Markov target contract.
 
 ## Structural residuals
 

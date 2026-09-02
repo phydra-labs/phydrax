@@ -12,6 +12,7 @@ from jaxtyping import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ...sparse import EdgeRelation
 from .._core import DiscretizationKey, PreparationReport
+from .._periodic_cell import PeriodicCell
 from ._cell_list import (
     CellListParticleNeighborhoodPlan,
     PreparedCellListParticleNeighborhood,
@@ -23,7 +24,6 @@ from ._neighborhood import (
     ParticleNeighborhoodState,
 )
 from ._pairwise import ParticleBox, ParticlePairRelation
-from ._periodic_cell import ParticleCell
 from ._precision import ParticleRealization
 
 
@@ -35,7 +35,7 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     maximum_particles_per_cell: int = eqx.field(static=True)
     maximum_pairs: int = eqx.field(static=True)
     maximum_candidate_slots: int = eqx.field(static=True)
-    box: ParticleCell
+    box: PeriodicCell
     fractional_base: CellListParticleNeighborhoodPlan
     backend: ParticleRealization = eqx.field(static=True)
     key: DiscretizationKey
@@ -46,7 +46,7 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         search_radius: float,
         maximum_particles_per_cell: int,
         maximum_pairs: int,
-        cell: ParticleCell,
+        cell: PeriodicCell,
         /,
         *,
         maximum_candidate_slots: int = 10_000_000,
@@ -56,8 +56,8 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         radius = float(search_radius)
         if not np.isfinite(radius) or radius <= 0.0:
             raise ValueError("search_radius must be finite and positive.")
-        if not isinstance(cell, ParticleCell):
-            raise TypeError("cell must be a ParticleCell.")
+        if not isinstance(cell, PeriodicCell):
+            raise TypeError("cell must be a PeriodicCell.")
         cell.require_unique_image(radius)
         singular_values = np.linalg.svd(np.asarray(cell.vectors), compute_uv=False)
         fractional_radius = radius / float(singular_values[-1])
@@ -105,7 +105,7 @@ class MetricCellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
 class PreparedMetricCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     plan: MetricCellListParticleNeighborhoodPlan
     base: PreparedCellListParticleNeighborhood
-    box: ParticleCell
+    box: PeriodicCell
     key: DiscretizationKey
     backend: ParticleRealization = eqx.field(static=True)
     pair_capacity: int = eqx.field(static=True)

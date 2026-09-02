@@ -135,6 +135,8 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     baseline = _dataset(provenance=provenance)
     equivalent = _dataset(provenance=provenance)
     baseline_fingerprint = phx.nn.operator.training.operator_dataset_fingerprint(baseline)
+    assert baseline.case_log_weights is not None
+    assert baseline.case_mask is not None
 
     assert (
         phx.nn.operator.training.operator_dataset_fingerprint(equivalent)
@@ -170,6 +172,33 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
         )
         != baseline_fingerprint
     )
+
+    explicit_equivalent = phx.nn.operator.training.OperatorDataset(
+        baseline.batch,
+        baseline.targets,
+        baseline.provenance,
+        case_log_weights=jnp.zeros((baseline.size,)),
+        case_mask=jnp.ones((baseline.size,), dtype=bool),
+    )
+    changed_case_metadata = (
+        replace(
+            baseline,
+            case_log_weights=baseline.case_log_weights.at[0].set(0.25),
+        ),
+        replace(
+            baseline,
+            case_mask=baseline.case_mask.at[0].set(False),
+        ),
+    )
+    assert (
+        phx.nn.operator.training.operator_dataset_fingerprint(explicit_equivalent)
+        == baseline_fingerprint
+    )
+    for changed in changed_case_metadata:
+        assert (
+            phx.nn.operator.training.operator_dataset_fingerprint(changed)
+            != baseline_fingerprint
+        )
 
     changed_case_id = (replace(provenance[0], case_id="other-case"), *provenance[1:])
     changed_identity = (
@@ -215,6 +244,99 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     assert synchronous.fingerprint == prefetched.fingerprint
     assert synchronous.fingerprint != changed_seed.fingerprint
     assert synchronous.fingerprint == synchronous.fingerprint
+    identical_metadata = phx.nn.operator.training.OperatorBatchLoader(
+        explicit_equivalent,
+        batch_size=3,
+        shuffle=True,
+        seed=5,
+        prefetch=0,
+    )
+    changed_metadata = tuple(
+        phx.nn.operator.training.OperatorBatchLoader(
+            dataset,
+            batch_size=3,
+            shuffle=True,
+            seed=5,
+            prefetch=0,
+        )
+        for dataset in changed_case_metadata
+    )
+
+    assert synchronous.fingerprint == identical_metadata.fingerprint
+    assert all(
+        synchronous.fingerprint != loader.fingerprint for loader in changed_metadata
+    )
+
+
+def test_in_memory_loader_preserves_indexed_case_weights_and_masks():
+    dataset = _dataset(cases=5)
+    log_weights = jnp.asarray([-2.0, 0.5, 1.25, -0.75, 3.0])
+    case_mask = jnp.asarray([True, False, True, True, False])
+    weighted = phx.nn.operator.training.OperatorDataset(
+        dataset.batch,
+        dataset.targets,
+        dataset.provenance,
+        case_log_weights=log_weights,
+        case_mask=case_mask,
+    )
+    loader = phx.nn.operator.training.OperatorBatchLoader(
+        weighted,
+        batch_size=3,
+        shuffle=False,
+        prefetch=0,
+    )
+
+    selected = loader.prepare_indices((3, 1, 4), epoch=2, batch_index=0)
+
+    assert jnp.array_equal(
+        selected.case_log_weights,
+        log_weights[jnp.asarray((3, 1, 4))],
+    )
+    assert jnp.array_equal(
+        selected.case_mask,
+        case_mask[jnp.asarray((3, 1, 4))],
+    )
+
+
+def test_exact_resume_rejects_changed_case_weight_or_mask(tmp_path):
+    dataset = _dataset(cases=5, resolution=8)
+    assert dataset.case_log_weights is not None
+    assert dataset.case_mask is not None
+    checkpoint = tmp_path / "case-metadata-checkpoint"
+    common: dict[str, Any] = {
+        "epochs": 2,
+        "batch_size": 2,
+        "seed": 31,
+        "checkpoint_every": 1,
+        "checkpoint_path": checkpoint,
+        "configuration": {"test_contract": "case-metadata-exact-resume"},
+    }
+    phx.nn.operator.training.fit_operator(
+        _fit_model(),
+        dataset,
+        steps=1,
+        **common,
+    )
+
+    changed_metadata = (
+        replace(
+            dataset,
+            case_log_weights=dataset.case_log_weights.at[0].set(0.5),
+        ),
+        replace(
+            dataset,
+            case_mask=dataset.case_mask.at[0].set(False),
+        ),
+    )
+    for changed in changed_metadata:
+        with pytest.raises(ValueError, match="data contract mismatch"):
+            phx.nn.operator.training.fit_operator(
+                _fit_model(),
+                changed,
+                steps=2,
+                resume=True,
+                **common,
+            )
 
 
 def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
@@ -239,7 +361,7 @@ def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
 
     assert (
         loader.fingerprint
-        == "37afe9c0c6e9a24005f4141575d30d4ad1c94da288a09811a10d8479aa86ee6f"
+        == "a4f52f4c52fc978f134d7253f984518e5bf04e2edab1c8939749143b867bc395"
     )
     assert type(positional) is phx.nn.operator.training.OperatorEpochPlan
     assert positional == keyword

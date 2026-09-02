@@ -22,20 +22,21 @@ dk = jax.vmap(jax.grad(phx.special.ellipk))(m)
 
 ## Conventions at a glance
 
-| Family | Public functions | Convention and real domain |
+| Family | Public functions | Convention and branch |
 | --- | --- | --- |
-| Carlson | `elliprc`, `elliprf`, `elliprd`, `elliprj`, `elliprg` | nonnegative principal arguments; `elliprc` and the fourth argument of `elliprj` are positive |
-| Complete Legendre | `ellipk`, `ellipkm1`, `ellipe`, `ellippi` | parameter `m = k²`; `m <= 1`; third-kind characteristic `n < 1`; `ellipkm1(p) = K(1-p)` for `p >= 0` |
-| Incomplete Legendre | `ellipkinc`, `ellipeinc`, `ellippiinc` | unwrapped amplitude `phi`; parameter `m <= 1`; third-kind characteristic `n < 1` |
-| Jacobi | `ellipj`, `ellipam` | real `u`, parameter `m <= 1`; `ellipj` returns `(sn, cn, dn, am)` |
-| Airy | `airy`, `airye` | real argument; each returns `(Ai, Ai′, Bi, Bi′)` |
-| Modified Bessel | `iv`, `ive`, `kv`, `kve` | nonnegative real order and argument |
-| Cylindrical Bessel | `jv`, `yv`, `hankel1`, `hankel2` | nonnegative real order; nonnegative real argument with singular `Y`/Hankel zero limit |
-| Faddeeva | `wofz`, `dawsn`, `voigt_profile` | complex Faddeeva argument; real Dawson/profile arguments |
+| Carlson | `elliprc`, `elliprf`, `elliprd`, `elliprj`, `elliprg` | nonnegative real domain or principal complex square-root continuation |
+| Complete Legendre | `ellipk`, `ellipkm1`, `ellipe`, `ellippi` | parameter `m = k²`; principal complex continuation |
+| Incomplete Legendre | `ellipkinc`, `ellipeinc`, `ellippiinc` | unwrapped real amplitude or principal complex Carlson continuation |
+| Jacobi | `ellipj`, `ellipam` | fixed-depth descending AGM; principal complex square roots |
+| Airy | `airy`, `airye` | entire Airy values; documented complex scaling for `airye` |
+| Modified Bessel | `iv`, `ive`, `kv`, `kve` | principal logarithm; `K` cut on the negative real axis |
+| Cylindrical Bessel | `jv`, `yv`, `hankel1`, `hankel2` | principal logarithm; `Y`/Hankel cut on the negative real axis |
+| Faddeeva | `wofz`, `dawsn`, `voigt_profile` | complex Faddeeva/Dawson; `voigt_profile` remains real and nonholomorphic |
 
-A real-only function raises `TypeError` for a complex input rather than silently
-discarding its imaginary part. Invalid real-domain lanes return `NaN`; valid
-lanes in the same batch remain isolated.
+Complex64 and complex128 inputs retain their precision. Principal logarithm
+uses `Arg z` in `(-pi, pi]`; signed zero selects the upper/lower lip of the
+negative-real cut. Poles and cut crossings are not assigned fabricated finite
+derivatives. Real invalid-domain lanes continue to return `NaN` independently.
 
 ## Carlson symmetric integrals
 
@@ -144,12 +145,11 @@ stable_i = phx.special.ive(v, x)
 stable_k = phx.special.kve(v, x)
 ```
 
-The admitted contract is `v >= 0`, `x >= 0`. At zero, `I_0(0) = 1`,
-`I_v(0) = 0` for positive `v`, and `K_v(0) = +inf`. Argument derivatives use
-three-term recurrences and work in forward, reverse, and higher-order modes.
-Differentiation with respect to order is deliberately unsupported and raises
-`TypeError`; treating a floating order as a differentiable coordinate would
-otherwise expose an unverified numerical derivative.
+The real admitted contract remains `v >= 0`, `x >= 0`. Complex arguments use
+the principal continuation. At zero, `I_0(0) = 1`, `I_v(0) = 0` for positive
+real `v`, and `K_v(0) = +inf`. Argument derivatives use analytic recurrences.
+`iv_order_derivative`, `ive_order_derivative`, `kv_order_derivative`, and
+`kve_order_derivative` include stable exact/near-integer limits.
 
 ## Cylindrical Bessel and Hankel functions
 
@@ -171,10 +171,10 @@ outgoing = phx.special.hankel1(0.0, radius)
 radial_gradient = jax.vmap(jax.grad(lambda r: phx.special.jv(0.0, r)))(radius)
 ```
 
-`J_0(0) = 1`, positive-order `J_v(0) = 0`, and `Y_v(0) = -inf` for admitted
-orders. At positive infinity, the real Bessel values approach zero. As for the
-modified family, argument differentiation is analytic and order
-differentiation raises `TypeError`.
+`J_0(0) = 1`, positive-real-order `J_v(0) = 0`, and `Y_v(0) = -inf` on the
+real domain. Complex arguments follow the principal cut convention.
+`jv_order_derivative` and `yv_order_derivative` support noninteger,
+near-integer, exact-integer, negative, and mixed order/argument tangents.
 
 ## Faddeeva and Dawson functions
 
@@ -203,16 +203,19 @@ or Cauchy scales return `NaN`.
 
 | Family | Differentiable arguments |
 | --- | --- |
-| Carlson | every numerical argument in the admitted real domain |
-| Complete/incomplete Legendre | all public arguments in the admitted real domain |
-| Jacobi | argument `u` and parameter `m` |
-| Airy | argument `x` |
-| Modified Bessel | argument `x`; order tangents raise `TypeError` |
-| Cylindrical Bessel/Hankel | argument `x`; order tangents raise `TypeError` |
-| Faddeeva/Dawson/Voigt | all admitted numerical arguments, with documented scale-boundary rules |
+| Carlson | every numerical argument away from poles/cuts |
+| Complete/incomplete Legendre | all public numerical arguments on a fixed branch |
+| Jacobi | argument `u` and parameter `m` inside one AGM branch |
+| Airy | entire argument `x`; scaling factors follow their documented convention |
+| Modified Bessel | argument and order, including integer-order limits |
+| Cylindrical Bessel/Hankel | argument and order, including integer-order limits |
+| Faddeeva/Dawson | complex argument |
+| Voigt | admitted real arguments only; intentionally nonholomorphic |
 
-At genuine poles or nonsmooth endpoints, derivatives remain infinite or `NaN`;
-Phydrax does not clip them to fabricated finite substitutes.
+At genuine poles, cut crossings, or nonsmooth scaling lips, derivatives remain
+infinite or `NaN`; Phydrax does not clip them to finite substitutes. These are
+fixed-precision principal-branch kernels, not arbitrary precision or an
+all-Riemann-sheet API.
 
 ## Dtypes and numerical limits
 

@@ -29,6 +29,7 @@ from phydrax.domain import (
     SampleLayout,
 )
 
+from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._interpolation import (
@@ -60,6 +61,49 @@ def _geometry_boundary_labels(component: DomainComponent, /) -> tuple[str, ...]:
         if isinstance(factor, AbstractGeometry):
             out.append(lbl)
     return tuple(out)
+
+
+def _unfiltered_component(component: DomainComponent, /) -> DomainComponent:
+    """Return the typed component support before per-piece indicator filtering."""
+    return DomainComponent(
+        domain=component.domain,
+        spec=component.spec,
+        density_normalized=component.density_normalized,
+    )
+
+
+def _boundary_piece_where(
+    component: DomainComponent,
+    var: str,
+    /,
+) -> Callable | None:
+    unsupported_wheres = tuple(label for label in component.where if label != var)
+    if unsupported_wheres:
+        raise ValueError(
+            "Boundary blend pieces require filters on the boundary variable; "
+            f"unsupported filters={unsupported_wheres!r}."
+        )
+    local = component.where.get(var)
+    global_filter = component.where_all
+    if global_filter is None:
+        return local
+    if global_filter.deps != (var,):
+        raise ValueError(
+            "Boundary blend where_all filters must depend only on the boundary "
+            f"variable {var!r}."
+        )
+    if local is None:
+        return global_filter.func
+    local_fn = _ensure_special_kwonly_args(local)
+    global_fn = _ensure_special_kwonly_args(global_filter.func)
+
+    def _conjunction(point, *, key=None, **kwargs):
+        return jnp.logical_and(
+            local_fn(point, key=key, **kwargs),
+            global_fn(point, key=key, **kwargs),
+        )
+
+    return _conjunction
 
 
 def _initial_label(component: DomainComponent, evolution_var: str, /) -> str | None:
@@ -830,7 +874,7 @@ class _BoundaryBlendOverlay(StrictModule):
         key_iter = iter(keys)
 
         for c in self.pieces:
-            where_fn = c.component.where.get(self.var)
+            where_fn = _boundary_piece_where(c.component, self.var)
             wheres.append(where_fn)
             w_fn = _enforcement_weight_fn(
                 geom,
@@ -872,7 +916,12 @@ class _BoundaryBlendOverlay(StrictModule):
         piece_functions: list[DomainFunction] = []
 
         for c, w in zip(self.pieces, self.weights, strict=True):
-            u_piece = c.apply(u, get_field)
+            u_piece = c.transform.apply(
+                u,
+                get_field,
+                _unfiltered_component(c.component),
+                c.field,
+            )
             piece_functions.append(u_piece)
             num = num + w * u_piece
             den = den + w

@@ -217,11 +217,12 @@ def test_low_rank_adaptation_rejects_unsupported_or_ambiguous_sites():
         _linear(),
         _linear().weight.astype(jnp.complex128),
     )
-    with pytest.raises(TypeError, match="real inexact"):
-        phx.nn.parameters.adapt_low_rank(
-            complex_layer,
-            {".weight": phx.nn.parameters.LowRankSpec(1)},
-        )
+    adapted_complex, report = phx.nn.parameters.adapt_low_rank(
+        complex_layer,
+        {".weight": phx.nn.parameters.LowRankSpec(1)},
+    )
+    assert adapted_complex.weight.dtype == jnp.complex128
+    assert report.sites[0].complex_representation == "native_complex"
     layer = _linear()
     with pytest.raises(ValueError, match="aliased"):
         phx.nn.parameters.low_rank_sites((layer, layer))

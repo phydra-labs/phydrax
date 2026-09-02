@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +16,10 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ...equations._entropy_pair import ConvexEntropyPair
 
 
 _NORMAL_ALE_CONTRACT = "physical-normal-flux-minus-grid-transport-relative-waves-v1"
@@ -1144,6 +1148,110 @@ class EntropyConservativeEulerFluxPlan(AbstractSymmetricTwoPointFluxPlan):
         return NumericalFluxResult(contracted, speed)
 
 
+class EntropyStableFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
+    """Pair-bound entropy-conservative flux with scalar entropy dissipation."""
+
+    central: AbstractSymmetricTwoPointFluxPlan
+    entropy_pair: ConvexEntropyPair
+    dissipation: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        central: AbstractSymmetricTwoPointFluxPlan,
+        entropy_pair: ConvexEntropyPair,
+        /,
+        *,
+        dissipation: float = 1.0,
+    ):
+        from ...equations._entropy_pair import ConvexEntropyPair
+
+        if not isinstance(central, AbstractSymmetricTwoPointFluxPlan):
+            raise TypeError("central must be a symmetric two-point flux plan.")
+        if not central.symmetric or not central.consistent:
+            raise ValueError(
+                "Entropy-stable central flux must be symmetric and consistent."
+            )
+        if not isinstance(entropy_pair, ConvexEntropyPair):
+            raise TypeError("entropy_pair must be ConvexEntropyPair.")
+        coefficient = float(dissipation)
+        if not np.isfinite(coefficient) or coefficient < 0.0:
+            raise ValueError("dissipation must be finite and non-negative.")
+        self.central = central
+        self.entropy_pair = entropy_pair
+        self.dissipation = coefficient
+        self.differentiability = "almost_everywhere"
+        self.flux_id = canonical_fingerprint(
+            {
+                "kind": "pair-bound-entropy-stable-flux",
+                "central": central.flux_id,
+                "entropy_pair": entropy_pair.pair_id,
+                "dissipation": coefficient,
+            }
+        )
+
+    def _validate_system(self, system: Any, /) -> None:
+        if system.system_id != self.entropy_pair.system.system_id:
+            raise ValueError("Entropy-stable flux system differs from its entropy pair.")
+
+    def face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        self._validate_system(system)
+        central = self.central.face_flux(system, left, right, axis, args)
+        flux = central.normal_flux - 0.5 * self.dissipation * central.max_speed[
+            ..., None
+        ] * (right - left)
+        return NumericalFluxResult(flux, central.max_speed)
+
+    def normal_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        self._validate_system(system)
+        normal_ = jnp.asarray(normal)
+        if normal_.shape[-1:] != (system.dimension,):
+            raise ValueError("Entropy-stable flux normal has the wrong dimension.")
+        fluxes = jnp.stack(
+            tuple(
+                self.central.two_point_flux(system, left, right, axis, args)
+                for axis in range(system.dimension)
+            ),
+            axis=-1,
+        )
+        central = oe.contract("...id,...d->...i", fluxes, normal_, backend="jax")
+        speed = system.max_normal_wave_speed(left, right, normal_, args)
+        flux = central - 0.5 * self.dissipation * speed[..., None] * (right - left)
+        return NumericalFluxResult(flux, speed)
+
+    def entropy_dissipation(
+        self,
+        left: Array,
+        right: Array,
+        speed: Array,
+        /,
+    ) -> Array:
+        jump = self.entropy_pair.entropy_variables(right) - (
+            self.entropy_pair.entropy_variables(left)
+        )
+        return (
+            -0.5
+            * self.dissipation
+            * jnp.asarray(speed)
+            * oe.contract("...i,...i->...", jump, right - left, backend="jax")
+        )
+
+
 class EntropyStableEulerFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
     """Entropy-conservative central flux with Rusanov state dissipation."""
 
@@ -1207,6 +1315,7 @@ __all__ = [
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",
     "EntropyConservativeEulerFluxPlan",
+    "EntropyStableFluxPlan",
     "EntropyStableEulerFluxPlan",
     "HLLCFluxPlan",
     "HLLFluxPlan",

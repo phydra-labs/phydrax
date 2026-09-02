@@ -24,6 +24,7 @@ from ._base import (
 )
 from .boundary import Absorbing, ConditionValue, Dirichlet, Neumann, Robin
 from .initial import Initial
+from .stochastic import StochasticBoundaryResidual
 
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "Observation",
     "Residual",
     "solids",
+    "StochasticBoundaryResidual",
     "stochastic",
     "thermal",
     "Robin",

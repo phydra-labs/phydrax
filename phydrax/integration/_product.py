@@ -187,6 +187,14 @@ def _validate_sparse_factor(
     /,
 ) -> None:
     if rule == "clenshaw-curtis":
+        if (
+            isinstance(factor, ProbabilityDomain)
+            and factor.reference_transport.reference_measure != "uniform"
+        ):
+            raise ValueError(
+                f"Clenshaw--Curtis sparse-grid axis {label!r} requires bounded "
+                "probability support with a uniform reference transport."
+            )
         return
     if rule != "gauss-hermite":
         raise ValueError(f"Unsupported sparse-grid axis rule {rule!r}.")
@@ -194,13 +202,10 @@ def _validate_sparse_factor(
         raise TypeError(
             f"Gauss--Hermite sparse-grid axis {label!r} requires a probability factor."
         )
-    if (
-        not factor.supports_reference_transform
-        or factor.reference_measure != "standard-normal"
-    ):
+    if factor.reference_transport.reference_measure != "standard-normal":
         raise ValueError(
             f"Gauss--Hermite sparse-grid axis {label!r} requires a "
-            "standard-normal reference transform."
+            "standard-normal reference transport."
         )
 
 
@@ -213,7 +218,7 @@ def _map_sparse_canonical(
 ) -> tuple[Array, Array]:
     _validate_sparse_factor(factor, rule, label)
     if rule == "gauss-hermite":
-        return factor.from_reference(node), jnp.asarray(1.0)
+        return factor.reference_transport.from_reference(node), jnp.asarray(1.0)
     return _map_canonical(factor, node)
 
 
@@ -355,16 +360,14 @@ def materialize_product(
                             raise TypeError(
                                 "Gaussian cubature product factors must be probability domains."
                             )
-                        if (
-                            not factor.supports_reference_transform
-                            or factor.reference_measure != "standard-normal"
-                        ):
+                        transport = factor.reference_transport
+                        if transport.reference_measure != "standard-normal":
                             raise ValueError(
                                 "Gaussian cubature product factors require "
-                                "standard-normal reference transforms."
+                                "standard-normal reference transports."
                             )
                         points[label] = cx.Field(
-                            factor.from_reference(rule.prepared.points[:, column]),
+                            transport.from_reference(rule.prepared.points[:, column]),
                             dims=(axis,),
                         )
                     weights_by_axis[axis] = cx.Field(rule.prepared.weights, dims=(axis,))

@@ -13,7 +13,7 @@ import jax.scipy as jsp
 import phydrax as phx
 
 
-def gaussian_benchmark(*, dimension: int, num_live: int, num_delete: int):
+def gaussian_benchmark(*, dimension: int, num_live: int):
     prior_scale = 2.0
     observation_scale = 0.5
     space = phx.uq.ParameterSpace(
@@ -30,15 +30,28 @@ def gaussian_benchmark(*, dimension: int, num_live: int, num_delete: int):
         )
 
     problem = phx.uq.PosteriorProblem(space, log_likelihood)
+    plan = phx.uq.NestedSamplingPlan(
+        phx.uq.NestedSamplingCapacity(
+            max_live=num_live,
+            max_dead_points=20_000,
+            max_likelihood_evaluations=1_000_000,
+            max_dynamic_batches=1,
+            max_clusters=4,
+            max_phantoms=num_live,
+        ),
+        phx.uq.NestedPriorPlan(continuous_paths=("<root>",)),
+        phx.uq.NestedProposalPlan(
+            "hit-and-run",
+            ellipsoid=True,
+            maximum_attempts=max(5, 2 * dimension),
+        ),
+        initial_live=num_live,
+    )
     result = phx.uq.sample_nested(
         problem,
-        key=jr.key(10_000 + dimension + num_delete),
-        num_live=num_live,
-        num_delete=num_delete,
-        num_inner_steps=max(5, 2 * dimension),
+        key=jr.key(10_000 + dimension),
+        plan=plan,
         remaining_evidence_tolerance=0.05,
-        max_dead_points=20_000,
-        num_volume_replicates=128,
     )
     evidence_truth = dimension * jsp.stats.norm.logpdf(
         0.0,
@@ -49,7 +62,6 @@ def gaussian_benchmark(*, dimension: int, num_live: int, num_delete: int):
         "case": "gaussian",
         "dimension": dimension,
         "num_live": num_live,
-        "num_delete": num_delete,
         "num_inner_steps": result.num_inner_steps,
         "status": phx.uq.nested_sampling_status_name(int(result.status)),
         "valid": bool(result.valid),
@@ -86,16 +98,29 @@ def bimodal_benchmark(*, num_live: int, method: str):
         return jsp.special.logsumexp(components) - jnp.log(2.0)
 
     problem = phx.uq.PosteriorProblem(space, log_likelihood)
+    plan = phx.uq.NestedSamplingPlan(
+        phx.uq.NestedSamplingCapacity(
+            max_live=num_live,
+            max_dead_points=20_000,
+            max_likelihood_evaluations=1_000_000,
+            max_dynamic_batches=1,
+            max_clusters=4,
+            max_phantoms=num_live,
+        ),
+        phx.uq.NestedPriorPlan(continuous_paths=("<root>",)),
+        phx.uq.NestedProposalPlan(
+            method,
+            ellipsoid=True,
+            phantom_recycling=True,
+            maximum_attempts=8,
+        ),
+        initial_live=num_live,
+    )
     result = phx.uq.sample_nested(
         problem,
         key=jr.key(20_000 + num_live),
-        num_live=num_live,
-        method=method,
-        num_inner_steps=8,
-        num_delete=max(1, num_live // 20),
+        plan=plan,
         remaining_evidence_tolerance=0.05,
-        max_dead_points=20_000,
-        num_volume_replicates=128,
     )
     weights = jnp.exp(result.posterior_log_weights)
     positive_mass = jnp.sum(jnp.where(result.samples > 0.0, weights, 0.0))
@@ -136,18 +161,13 @@ def main():
 
     records = []
     if args.case in ("all", "gaussian"):
-        configurations = (
-            ((2, 40, 2),)
-            if args.quick
-            else ((2, 100, 1), (10, 200, 1), (10, 200, 8), (30, 500, 8))
-        )
+        configurations = ((2, 40),) if args.quick else ((2, 100), (10, 200), (30, 500))
         records.extend(
             gaussian_benchmark(
                 dimension=dimension,
                 num_live=num_live,
-                num_delete=num_delete,
             )
-            for dimension, num_live, num_delete in configurations
+            for dimension, num_live in configurations
         )
     if args.case in ("all", "bimodal"):
         configurations = (

@@ -14,7 +14,7 @@ import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from phydrax._strict import StrictModule
-from phydrax.equations import (
+from phydrax.equations._tokens import (
     PDE_OPERATOR_VOCABULARY,
     PDE_TOKEN_ATTRIBUTES,
     PDE_TOKEN_KINDS,

@@ -133,18 +133,18 @@ def _expectation_configuration(
     )
 
 
-def _validate_problem(problem: StateSpaceProblem, /) -> EulerMaruyamaTransitionKernel:
+def _validate_problem(problem: StateSpaceProblem, /):
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
+    from ._sing_transition import _ProjectedEulerTransition
+
     transition = problem.model.transition
-    if not isinstance(transition, EulerMaruyamaTransitionKernel):
+    if not isinstance(
+        transition, (EulerMaruyamaTransitionKernel, _ProjectedEulerTransition)
+    ):
         raise TypeError(
-            "SING requires an EulerMaruyamaTransitionKernel; solver-backed and "
-            "non-Euler transition laws are not silently approximated."
-        )
-    if any(term.structure != "additive" for term in transition.wiener_terms):
-        raise ValueError(
-            "SING requires every WienerTerm to declare structure='additive'."
+            "SING requires an EulerMaruyamaTransitionKernel or the canonical "
+            "fixed affine-Hausdorff projected Euler transition."
         )
     prior = problem.model.prior
     if not isinstance(prior, GaussianStatePrior) or not prior.has_log_density:
@@ -784,6 +784,7 @@ def _case_expected_log_joint(
     status = jnp.where(initial_valid, SING_SUCCESS, SING_INITIALIZATION_FAILURE).astype(
         jnp.int32
     )
+    multiplicative = any(term.structure != "additive" for term in transition.wiener_terms)
 
     def transition_factor(edge_index):
         active = node_valid[edge_index + 1]
@@ -804,6 +805,57 @@ def _case_expected_log_joint(
             source_covariance = covariances[edge_index]
             target_covariance = covariances[edge_index + 1]
             cross_covariance = cross_covariances[edge_index]
+            if multiplicative:
+                joint_mean = jnp.concatenate((source_mean, target_mean))
+                joint_covariance = jnp.concatenate(
+                    (
+                        jnp.concatenate((source_covariance, cross_covariance), axis=-1),
+                        jnp.concatenate((cross_covariance.T, target_covariance), axis=-1),
+                    ),
+                    axis=-2,
+                )
+                safe_joint, _, joint_valid = _spd_data(joint_covariance)
+                joint_factor = GaussianFactor(
+                    jnp.linalg.cholesky(safe_joint),
+                    rank_tolerance=state.information.rank_tolerance,
+                    factor_id="sing-transition-joint",
+                    resolved_method="dense-cholesky",
+                )
+
+                def log_factor(value):
+                    source = value[:state_size].reshape(state_shape)
+                    target = value[state_size:].reshape(state_shape)
+                    return transition.log_prob(target, source, start, end, context)
+
+                expected_log_factor = _expectation(
+                    log_factor,
+                    joint_mean,
+                    joint_factor,
+                    factor_key,
+                    method=state.expectation_method,
+                    num_samples=state.num_samples,
+                    order=state.order,
+                    max_dimension=state.max_dimension,
+                    max_points=state.max_points,
+                    alpha=state.alpha,
+                    beta=state.beta,
+                    kappa=state.kappa,
+                )
+                value = expected_log_factor.value
+                valid = (
+                    joint_valid
+                    & joint_factor.valid
+                    & expected_log_factor.valid
+                    & context.input_valid
+                    & jnp.isfinite(value)
+                )
+                failure = jnp.where(
+                    joint_valid,
+                    SING_NONFINITE,
+                    SING_TRANSITION_COVARIANCE_FAILURE,
+                ).astype(jnp.int32)
+                return jnp.where(valid, value, 0.0), valid, failure
+
             safe_source, _, source_valid = _spd_data(source_covariance)
             source_factor = GaussianFactor(
                 jnp.linalg.cholesky(safe_source),
@@ -1500,7 +1552,7 @@ def sing_smoother(
     absolute_tolerance: float = 1e-6,
     relative_tolerance: float = 1e-6,
 ) -> SINGResult:
-    """Infer a Gaussian Markov path posterior for an additive-noise latent SDE."""
+    """Infer a Gaussian Markov path posterior for a represented Euler SDE."""
     iterations = _positive_int(max_iterations, owner="max_iterations")
     absolute = _nonnegative_float(absolute_tolerance, owner="absolute_tolerance")
     relative = _nonnegative_float(relative_tolerance, owner="relative_tolerance")

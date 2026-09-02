@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
@@ -38,8 +39,6 @@ class SparseBackendOutput(StrictModule):
 
 
 def _validated_storage(storage: SparseStorage, /) -> SparseStorage:
-    if storage.batch_shape:
-        raise ValueError("Sparse direct providers require unbatched CSR values.")
     nnz = storage.nnz
     positions = jnp.arange(nnz, dtype=storage.indptr.dtype)
     rows = jnp.searchsorted(storage.indptr[1:], positions, side="right")
@@ -89,42 +88,35 @@ def _columnwise(function: Any, rhs: np.ndarray, /) -> np.ndarray:
 
 
 def _host_solve(
-    state: HostSparseState,
+    provider: str,
+    factor: Any,
     rhs: np.ndarray,
     /,
     *,
     transpose: bool = False,
     adjoint: bool = False,
 ) -> np.ndarray:
-    if state.provider == "scipy-superlu":
+    if provider == "scipy-superlu":
         mode = "H" if adjoint else ("T" if transpose else "N")
-        return np.asarray(state.factor.solve(rhs, trans=mode))
-    if state.provider == "umfpack":
+        return np.asarray(factor.solve(rhs, trans=mode))
+    if provider == "umfpack":
         import scipy.sparse.linalg as spla
 
-        matrix = (
-            state.factor.getH()
-            if adjoint
-            else (state.factor.T if transpose else state.factor)
-        )
+        matrix = factor.getH() if adjoint else (factor.T if transpose else factor)
         return _columnwise(
             lambda column: spla.spsolve(matrix, column, use_umfpack=True),
             rhs,
         )
-    if state.provider == "cholmod":
+    if provider == "cholmod":
         solved_rhs = np.conjugate(rhs) if transpose and not adjoint else rhs
-        solution = np.asarray(state.factor.solve_A(solved_rhs))
+        solution = np.asarray(factor.solve_A(solved_rhs))
         return np.conjugate(solution) if transpose and not adjoint else solution
-    if state.provider == "spqr":
+    if provider == "spqr":
         import sparseqr
 
-        matrix = (
-            state.factor.getH()
-            if adjoint
-            else (state.factor.T if transpose else state.factor)
-        )
+        matrix = factor.getH() if adjoint else (factor.T if transpose else factor)
         return _columnwise(lambda column: sparseqr.solve(matrix, column), rhs)
-    raise ValueError(f"Unsupported host sparse provider {state.provider!r}.")
+    raise ValueError(f"Unsupported host sparse provider {provider!r}.")
 
 
 def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
@@ -157,15 +149,23 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
             raise ValueError("The JAX CUDA sparse provider is not a host provider.")
         import scipy.sparse as sp
 
-        matrix = sp.csr_matrix(
-            (
-                np.asarray(storage.values),
-                np.asarray(storage.indices),
-                np.asarray(storage.indptr),
-            ),
-            shape=storage.shape,
+        batch_count = int(np.prod(storage.batch_shape)) if storage.batch_shape else 1
+        values = np.asarray(storage.values).reshape((batch_count, storage.nnz))
+        factors = tuple(
+            _host_factor(
+                provider,
+                sp.csr_matrix(
+                    (
+                        batch_values,
+                        np.asarray(storage.indices),
+                        np.asarray(storage.indptr),
+                    ),
+                    shape=storage.shape,
+                ),
+            )
+            for batch_values in values
         )
-        return HostSparseState(storage, provider, _host_factor(provider, matrix))
+        return HostSparseState(storage, provider, factors)
     raise ValueError(f"Unsupported sparse backend {plan.backend!r}.")
 
 
@@ -175,44 +175,78 @@ def solve_sparse(
     plan: LinearSolvePlan,
     /,
 ) -> SparseBackendOutput:
-    if rhs.ndim != 2:
-        raise ValueError("Sparse canonical right-hand sides must have shape (n, k).")
+    batch_shape = state.storage.batch_shape
+    expected_rank = len(batch_shape) + 2
+    if rhs.ndim != expected_rank or rhs.shape[: len(batch_shape)] != batch_shape:
+        raise ValueError(
+            "Sparse canonical right-hand sides must have shape batch_shape + (n, k)."
+        )
+    batch_count = int(np.prod(batch_shape)) if batch_shape else 1
+    size = state.storage.shape[0]
+    count = rhs.shape[-1]
+    flattened_rhs = rhs.reshape((batch_count, size, count))
     if isinstance(state, DeviceSparseState):
         from jax.experimental.sparse.linalg import spsolve
 
         method = plan.policy.method
         reorder = method.reorder if isinstance(method, SparseQR) else 1
-        columns = tuple(
-            spsolve(
-                state.storage.values,
-                state.storage.indices,
-                state.storage.indptr,
-                rhs[:, column],
-                tol=plan.policy.tolerance.relative,
-                reorder=reorder,
+        flattened_values = state.storage.values.reshape((batch_count, state.storage.nnz))
+
+        def solve_one(inputs):
+            values, right_hand_side = inputs
+            columns = tuple(
+                spsolve(
+                    values,
+                    state.storage.indices,
+                    state.storage.indptr,
+                    right_hand_side[:, column],
+                    tol=plan.policy.tolerance.relative,
+                    reorder=reorder,
+                )
+                for column in range(count)
             )
-            for column in range(rhs.shape[1])
-        )
-        value = jnp.stack(columns, axis=1)
+            return jnp.stack(columns, axis=1)
+
+        value = jax.lax.map(solve_one, (flattened_values, flattened_rhs))
     elif isinstance(state, HostSparseState):
         if plan.policy.differentiation.mode != "none":
             raise ValueError("Host sparse execution is non-differentiable.")
-        value = jnp.asarray(_host_solve(state, np.asarray(rhs)))
+        value = jnp.asarray(
+            np.stack(
+                tuple(
+                    _host_solve(
+                        state.provider,
+                        factor,
+                        np.asarray(batch_rhs),
+                    )
+                    for factor, batch_rhs in zip(
+                        state.factor,
+                        np.asarray(flattened_rhs),
+                        strict=True,
+                    )
+                ),
+                axis=0,
+            )
+        )
     else:
         raise TypeError(f"Unsupported sparse prepared state {type(state).__name__}.")
-    finite = jnp.all(jnp.isfinite(value), axis=0)
+    value = value.reshape(batch_shape + (size, count))
+    finite = jnp.all(jnp.isfinite(value), axis=-2)
     status = jnp.where(
         finite,
         int(LinearSolveStatus.SUCCESS),
         int(LinearSolveStatus.NONFINITE_OUTPUT),
     ).astype(jnp.int32)
-    count = rhs.shape[1]
     return SparseBackendOutput(
         value=value,
         status=status,
-        iterations=jnp.zeros((count,), dtype=jnp.int32),
-        rank=jnp.asarray(-1, dtype=jnp.int32),
-        condition_estimate=jnp.full((count,), jnp.nan, dtype=rhs.real.dtype),
+        iterations=jnp.zeros(batch_shape + (count,), dtype=jnp.int32),
+        rank=jnp.full(batch_shape, -1, dtype=jnp.int32),
+        condition_estimate=jnp.full(
+            batch_shape + (count,),
+            jnp.nan,
+            dtype=rhs.real.dtype,
+        ),
         singular_values=None,
     )
 
@@ -224,27 +258,46 @@ def solve_host_sparse_transformed(
     *,
     adjoint: bool,
 ) -> SparseBackendOutput:
+    batch_shape = state.storage.batch_shape
+    batch_count = int(np.prod(batch_shape)) if batch_shape else 1
+    size = state.storage.shape[0]
+    count = rhs.shape[-1]
+    flattened_rhs = np.asarray(rhs).reshape((batch_count, size, count))
     value = jnp.asarray(
-        _host_solve(
-            state,
-            np.asarray(rhs),
-            transpose=not adjoint,
-            adjoint=adjoint,
+        np.stack(
+            tuple(
+                _host_solve(
+                    state.provider,
+                    factor,
+                    batch_rhs,
+                    transpose=not adjoint,
+                    adjoint=adjoint,
+                )
+                for factor, batch_rhs in zip(
+                    state.factor,
+                    flattened_rhs,
+                    strict=True,
+                )
+            ),
+            axis=0,
         )
-    )
-    finite = jnp.all(jnp.isfinite(value), axis=0)
+    ).reshape(batch_shape + (size, count))
+    finite = jnp.all(jnp.isfinite(value), axis=-2)
     status = jnp.where(
         finite,
         int(LinearSolveStatus.SUCCESS),
         int(LinearSolveStatus.NONFINITE_OUTPUT),
     ).astype(jnp.int32)
-    count = rhs.shape[1]
     return SparseBackendOutput(
         value=value,
         status=status,
-        iterations=jnp.zeros((count,), dtype=jnp.int32),
-        rank=jnp.asarray(-1, dtype=jnp.int32),
-        condition_estimate=jnp.full((count,), jnp.nan, dtype=rhs.real.dtype),
+        iterations=jnp.zeros(batch_shape + (count,), dtype=jnp.int32),
+        rank=jnp.full(batch_shape, -1, dtype=jnp.int32),
+        condition_estimate=jnp.full(
+            batch_shape + (count,),
+            jnp.nan,
+            dtype=rhs.real.dtype,
+        ),
         singular_values=None,
     )
 

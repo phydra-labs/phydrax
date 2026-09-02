@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
-from phydrax.conditions import AbstractResidualCondition, Observation
 from phydrax.domain import (
     BatchEvaluator,
     ComponentSum,
@@ -26,6 +25,7 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
+from ..conditions._base import AbstractResidualCondition, Observation
 from ..integration import (
     AdaptiveIntegration,
     CallerIntegration,
@@ -436,6 +436,66 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         if any(dim is None for dim in score.dims):
             raise ValueError("Pointwise residual scalarization left event dimensions.")
         return score
+
+    def quadratic_reduction_coefficients(
+        self,
+        realization: IntegrationRealization,
+        /,
+    ) -> tuple[cx.Field, ...]:
+        """Return exact frozen coefficients for the quadratic residual reduction.
+
+        Zero coefficients identify inactive/padded entries.  The returned values
+        exclude ``self.scale`` so likelihood interpretations can retain the
+        distinction between the global penalty multiplier and integration weights.
+        """
+        if not isinstance(realization, IntegrationRealization):
+            raise TypeError("realization must be an IntegrationRealization.")
+        resolved = resolve_term_realization(
+            self.source,
+            realization=prepare_term_realization(realization),
+        )
+        target = resolved.target
+        if not isinstance(target, (ComponentTarget, DensityTarget)):
+            raise TypeError(
+                "Quadratic coefficients require a component integration target."
+            )
+        batch = resolved.batch
+        if isinstance(batch, tuple):
+            if not batch or any(
+                not isinstance(term, (PointIntegrationBatch, SeparableIntegrationBatch))
+                for term in batch
+            ):
+                raise TypeError(
+                    "Quadratic coefficients require fixed point or separable batches."
+                )
+        elif not isinstance(batch, (PointIntegrationBatch, SeparableIntegrationBatch)):
+            raise TypeError(
+                "Quadratic coefficients require fixed point or separable batches."
+            )
+        evaluation_key = DOC_KEY0 if resolved.key is None else resolved.key
+        weights = _target_reduction_weights(
+            target,
+            batch,
+            key=evaluation_key,
+        )
+        base = target.base if isinstance(target, DensityTarget) else target
+        if not isinstance(base, ComponentTarget):
+            raise TypeError(
+                "Quadratic coefficients require a component integration target."
+            )
+        if isinstance(base.component, ComponentSum):
+            if not isinstance(weights, tuple):
+                raise RuntimeError(
+                    "Component-sum quadratic coefficients must be a tuple."
+                )
+            values = weights
+        else:
+            if isinstance(weights, tuple):
+                raise RuntimeError(
+                    "Single-component quadratic coefficients cannot be a tuple."
+                )
+            values = (weights,)
+        return tuple(_checked_quadratic_coefficient(value) for value in values)
 
     def term_evaluation(
         self,

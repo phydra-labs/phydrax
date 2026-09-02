@@ -13,7 +13,8 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._strict import StrictModule
-from ...discretization import CellMesh, DiscreteSupport
+from ...discretization._cell_mesh import CellMesh
+from ...discretization._support import DiscreteSupport
 from .._atlas import BoundaryAtlas, BoundaryMap
 from .._cubature import AbstractCubatureMap, CubatureAtlas
 from ._topology import TriangleTopology
@@ -256,6 +257,14 @@ class _TriangleCubatureMap(AbstractCubatureMap):
     def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
         del reference
         return jnp.ones(jnp.asarray(chart_indices).shape, dtype=bool)
+
+    def evaluate(
+        self,
+        chart_indices: Array,
+        reference: Array,
+        /,
+    ):
+        return super().evaluate(chart_indices, reference)
 
 
 def _closest_segment(point: Array, start: Array, end: Array) -> Array:

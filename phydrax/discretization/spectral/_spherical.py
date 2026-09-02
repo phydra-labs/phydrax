@@ -129,10 +129,10 @@ class SphericalSpectralPlan(AbstractDiscretizationPlan):
                 "Spherical S2FFT execution currently requires complex128 transform "
                 "and coefficient precision."
             )
-        if (
-            precision_.physical_dtype not in ("float64", "complex128")
-            or precision_.output_dtype not in ("float64", "complex128")
-        ):
+        if precision_.physical_dtype not in (
+            "float64",
+            "complex128",
+        ) or precision_.output_dtype not in ("float64", "complex128"):
             raise ValueError(
                 "Spherical S2FFT execution currently requires float64 or complex128 "
                 "physical/output precision."
@@ -230,6 +230,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
     transform: SphericalHarmonicPlan
     layout: SphericalModeLayout
     physical_space: DiscreteFieldSpace
+    modal_space: DiscreteFieldSpace
     key: DiscretizationKey
     support: DiscreteSupport
     field_spaces: tuple[DiscreteFieldSpace, ...]
@@ -333,6 +334,23 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
             projection_id=projection_id,
             reconstruction_id=reconstruction_id,
         )
+        modal_layout = TensorDofLayout(
+            ("ell", "m"),
+            transform.coefficient_shape,
+            location_id=layout.layout_id,
+        )
+        modal_space = DiscreteFieldSpace(
+            plan.field_name,
+            support.support_id,
+            modal_layout,
+            ArraySpace(
+                transform.coefficient_shape,
+                dtype=jnp.dtype(plan.precision.coefficient_dtype),
+            ),
+            representation="modal_coefficient",
+            projection_id=projection_id,
+            reconstruction_id=reconstruction_id,
+        )
         preparation = PreparationReport(
             capabilities=plan.capabilities,
             diagnostics=(
@@ -375,6 +393,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
                 "support": support.support_id,
                 "physical_space": physical_space.field_space_id,
                 "measure": measure.measure_id,
+                "modal_space": modal_space.field_space_id,
                 "numeric_version": version,
             }
         )
@@ -382,6 +401,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         self.transform = transform
         self.layout = layout
         self.physical_space = physical_space
+        self.modal_space = modal_space
         self.key = plan.key
         self.support = support
         self.field_spaces = spaces
@@ -400,6 +420,14 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
     @property
     def state_shape(self) -> tuple[int, ...]:
         return self.sample_shape
+
+    @property
+    def physical_shape(self) -> tuple[int, ...]:
+        return self.sample_shape
+
+    @property
+    def modal_shape(self) -> tuple[int, ...]:
+        return self.coefficient_shape
 
     @property
     def spatial_dimension(self) -> int:
@@ -479,8 +507,53 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         elif modal.ndim >= 3 and tuple(modal.shape[-3:-1]) == self.coefficient_shape:
             multiplier = self.laplacian_multiplier()[..., None]
         else:
-            raise ValueError("Spherical modal state has an incompatible coefficient shape.")
+            raise ValueError(
+                "Spherical modal state has an incompatible coefficient shape."
+            )
         return self.layout.mask_invalid(modal * multiplier.astype(modal.dtype))
+
+    def modal_integral(self, coefficients: ArrayLike, /) -> Array:
+        """Integrate scalar spin-zero coefficients without reconstruction."""
+        if self.layout.spin != 0:
+            raise ValueError("Spherical modal integration requires spin zero.")
+        modal = self.layout.mask_invalid(coefficients)
+        if self.layout.reality:
+            modal = self.layout.canonicalize_reality(modal)
+        degree_axis, order_axis, _ = self.layout._coefficient_axes(modal)
+        constant = jnp.take(modal, 0, axis=degree_axis)
+        adjusted_order_axis = order_axis - int(order_axis > degree_axis)
+        constant = jnp.take(
+            constant,
+            self.layout.bandlimit - 1,
+            axis=adjusted_order_axis,
+        )
+        scale = jnp.asarray(
+            math.sqrt(4.0 * math.pi) * self.radius**2,
+            dtype=jnp.real(modal).dtype,
+        )
+        return scale.astype(modal.dtype) * constant
+
+    def coordinate_derivative(
+        self,
+        coefficients: ArrayLike,
+        /,
+        *,
+        coordinate: str,
+        representation: str = "physical",
+        require_all_valid: bool = True,
+        polar_tolerance: float | None = None,
+    ):
+        """Return a chart-valued coordinate derivative with pole evidence."""
+        from ._spherical_operators import spherical_coordinate_derivative
+
+        return spherical_coordinate_derivative(
+            self,
+            coefficients,
+            coordinate=coordinate,
+            representation=representation,
+            require_all_valid=require_all_valid,
+            polar_tolerance=polar_tolerance,
+        )
 
     def laplacian(
         self,
@@ -490,11 +563,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         axes: int | Sequence[int] | None = None,
     ) -> Array:
         selected = (
-            (0, 1)
-            if axes is None
-            else (axes,)
-            if isinstance(axes, int)
-            else tuple(axes)
+            (0, 1) if axes is None else (axes,) if isinstance(axes, int) else tuple(axes)
         )
         if selected != (0, 1):
             raise ValueError("Spherical Laplace-Beltrami acts on both intrinsic axes.")
@@ -509,11 +578,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         axes: int | Sequence[int] | None = None,
     ) -> Array:
         selected = (
-            (0, 1)
-            if axes is None
-            else (axes,)
-            if isinstance(axes, int)
-            else tuple(axes)
+            (0, 1) if axes is None else (axes,) if isinstance(axes, int) else tuple(axes)
         )
         if selected != (0, 1):
             raise ValueError("Spherical integration acts on both intrinsic axes.")
@@ -589,14 +654,10 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
             for order in range(1, degree + 1):
                 cosine = np.zeros(self.coefficient_shape, dtype=np.complex128)
                 cosine[degree, offset + order] = inverse_root_two
-                cosine[degree, offset - order] = (
-                    (-1) ** order * inverse_root_two
-                )
+                cosine[degree, offset - order] = (-1) ** order * inverse_root_two
                 sine = np.zeros(self.coefficient_shape, dtype=np.complex128)
                 sine[degree, offset + order] = -1j * inverse_root_two
-                sine[degree, offset - order] = (
-                    1j * (-1) ** order * inverse_root_two
-                )
+                sine[degree, offset - order] = 1j * (-1) ** order * inverse_root_two
                 coefficients.extend((cosine, sine))
                 mode_ids.extend(
                     (
@@ -662,7 +723,9 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
             )
         identity = jnp.eye(count, dtype=jnp.dtype(self.plan.precision.physical_dtype))
         columns = jax.vmap(
-            lambda vector: self.laplacian(vector.reshape(self.sample_shape)).reshape((-1,))
+            lambda vector: self.laplacian(vector.reshape(self.sample_shape)).reshape(
+                (-1,)
+            )
         )(identity)
         return columns.T
 

@@ -16,11 +16,159 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 
 SelectionMode = Literal["min", "max"]
 EvaluationParametersFn = Callable[[Any, Any], Any]
+TargetParameterSource = Literal["raw", "evaluation"]
+
+
+@dataclass(frozen=True, slots=True)
+class DelayedTargetPolicy:
+    """Exact accepted-update lag with one static ring capacity."""
+
+    delay: int
+
+    def __post_init__(self):
+        if isinstance(self.delay, bool) or int(self.delay) < 0:
+            raise ValueError("Delayed target delay must be a nonnegative integer.")
+        object.__setattr__(self, "delay", int(self.delay))
+
+    @property
+    def capacity(self) -> int:
+        return self.delay + 1
+
+
+@dataclass(frozen=True, slots=True)
+class ExponentialMovingAverageTargetPolicy:
+    """Stopped EMA target recurrence after accepted optimizer updates."""
+
+    decay: float = 0.999
+    start_step: int = 0
+    update_every: int = 1
+    source: TargetParameterSource = "raw"
+
+    def __post_init__(self):
+        if not 0.0 <= float(self.decay) < 1.0:
+            raise ValueError("EMA decay must lie in [0, 1).")
+        if int(self.start_step) < 0 or int(self.update_every) <= 0:
+            raise ValueError("EMA start/update cadence is invalid.")
+        if self.source not in ("raw", "evaluation"):
+            raise ValueError("EMA target source must be raw or evaluation.")
+        object.__setattr__(self, "decay", float(self.decay))
+        object.__setattr__(self, "start_step", int(self.start_step))
+        object.__setattr__(self, "update_every", int(self.update_every))
+
+
+class TargetParameterState(eqx.Module):
+    """Checkpointable stopped target tree and exact update cursor."""
+
+    target: Any
+    history: Any
+    update_count: Array
+    write_index: Array
+    policy: DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy = eqx.field(
+        static=True
+    )
+
+    @classmethod
+    def initialize(
+        cls,
+        parameters: Any,
+        policy: DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy,
+        /,
+    ) -> "TargetParameterState":
+        if not isinstance(
+            policy,
+            (DelayedTargetPolicy, ExponentialMovingAverageTargetPolicy),
+        ):
+            raise TypeError("Unsupported target parameter policy.")
+        stopped = jax.tree.map(jax.lax.stop_gradient, parameters)
+        history = (
+            jax.tree.map(
+                lambda value: jnp.broadcast_to(
+                    value,
+                    (policy.capacity,) + value.shape,
+                ),
+                stopped,
+            )
+            if isinstance(policy, DelayedTargetPolicy)
+            else None
+        )
+        return cls(
+            stopped,
+            history,
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+            policy,
+        )
+
+    def update(
+        self,
+        raw_parameters: Any,
+        /,
+        *,
+        accepted: ArrayLike = True,
+        evaluation_parameters: Any | None = None,
+    ) -> "TargetParameterState":
+        accepted_value = jnp.asarray(accepted, dtype=bool)
+        if accepted_value.shape != ():
+            raise ValueError("accepted must be scalar.")
+        next_count = self.update_count + accepted_value.astype(jnp.int32)
+        policy = self.policy
+        if isinstance(policy, DelayedTargetPolicy):
+            stopped = jax.tree.map(jax.lax.stop_gradient, raw_parameters)
+            history = jax.tree.map(
+                lambda old, value: old.at[self.write_index].set(
+                    jnp.where(accepted_value, value, old[self.write_index])
+                ),
+                self.history,
+                stopped,
+            )
+            next_index = jnp.where(
+                accepted_value,
+                (self.write_index + 1) % policy.capacity,
+                self.write_index,
+            )
+            target_index = (next_index - policy.delay - 1) % policy.capacity
+            target = jax.tree.map(
+                lambda value: jax.lax.stop_gradient(value[target_index]),
+                history,
+            )
+            return TargetParameterState(
+                target,
+                history,
+                next_count,
+                next_index,
+                policy,
+            )
+        source = raw_parameters if policy.source == "raw" else evaluation_parameters
+        if source is None:
+            raise ValueError("EMA evaluation source requires evaluation_parameters.")
+        apply = (
+            accepted_value
+            & (next_count >= policy.start_step)
+            & ((next_count - policy.start_step) % policy.update_every == 0)
+        )
+        target = jax.tree.map(
+            lambda old, value: jax.lax.stop_gradient(
+                jnp.where(
+                    apply,
+                    policy.decay * old + (1.0 - policy.decay) * value,
+                    old,
+                )
+            ),
+            self.target,
+            source,
+        )
+        return TargetParameterState(
+            target,
+            None,
+            next_count,
+            self.write_index,
+            policy,
+        )
 
 
 def resolve_evaluation_parameters(
@@ -363,6 +511,8 @@ def log_training_signal_stop(
 
 
 __all__ = [
+    "DelayedTargetPolicy",
+    "ExponentialMovingAverageTargetPolicy",
     "EvaluationParametersFn",
     "SelectionMode",
     "TensorBoardLogger",
@@ -370,6 +520,8 @@ __all__ = [
     "TrainingController",
     "TrainingEvent",
     "TrainingProgress",
+    "TargetParameterSource",
+    "TargetParameterState",
     "TrainingSignalGuard",
     "resolve_evaluation_parameters",
     "log_training_signal_stop",

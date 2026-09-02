@@ -407,6 +407,7 @@ def grow_particle_execution_epoch(
         if old_state.liquid is None
         else DEMLiquidState(
             _pad(old_state.liquid.film_volume, target, 0.0),
+            old_state.liquid.barrier_reservoir_volume,
             old_state.liquid.cumulative_evaporated_volume,
             old_state.liquid.initial_total_volume,
             old_state.liquid.balance_residual,

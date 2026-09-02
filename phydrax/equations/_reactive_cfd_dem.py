@@ -16,7 +16,6 @@ from ..discretization.particle import (
     DensityPorosityMorphologyPlan,
     ParticleContactExchangePlan,
     ParticleConversionState,
-    PreparedParticleGridTransfer,
     PreparedParticleInternalBatch,
     PreparedSoftSphereDEMDynamics,
     ReciprocalPairRadiationPlan,
@@ -24,6 +23,7 @@ from ..discretization.particle import (
 from ..discretization.particle._particle_internal_unstructured import (
     PreparedUnstructuredParticleInternalMesh,
 )
+from ..discretization.splatting import PreparedMeshParticleGridSplat
 from ._cfd_dem import UnresolvedCFDEMCouplingPlan
 from ._particle_conversion import PreparedParticleConversionDynamics
 from ._particle_thermochemistry import ParticleThermodynamicMaterialPlan
@@ -44,7 +44,7 @@ class ParticleContinuumExchangeEvaluation(StrictModule):
 
 
 class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
-    transfer: PreparedParticleGridTransfer
+    transfer: PreparedMeshParticleGridSplat
     heat_transfer_coefficient: Array
     mass_transfer_coefficient: Array
     schema_id: str = eqx.field(static=True)
@@ -53,22 +53,22 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        transfer: PreparedParticleGridTransfer,
+        transfer: PreparedMeshParticleGridSplat,
         heat_transfer_coefficient: ArrayLike,
         mass_transfer_coefficient: ArrayLike,
         /,
         *,
         schema_id: str,
     ):
-        if not isinstance(transfer, PreparedParticleGridTransfer):
-            raise TypeError("transfer must be a PreparedParticleGridTransfer.")
+        if not isinstance(transfer, PreparedMeshParticleGridSplat):
+            raise TypeError("transfer must be PreparedMeshParticleGridSplat.")
         heat = np.asarray(heat_transfer_coefficient, dtype=float)
         mass = np.asarray(mass_transfer_coefficient, dtype=float)
-        if heat.shape != (transfer.particles.capacity,):
+        if heat.shape != (transfer.particle_capacity,):
             raise ValueError("heat_transfer_coefficient must have particle capacity.")
         if (
             mass.ndim != 2
-            or mass.shape[0] != transfer.particles.capacity
+            or mass.shape[0] != transfer.particle_capacity
             or mass.shape[1] == 0
         ):
             raise ValueError(
@@ -125,21 +125,30 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
             for value in materials
         ):
             raise ValueError("Continuum exchange requires one common species schema.")
-        relation = self.transfer.relation(positions, active_mask=active_mask)
+        active = (
+            self.transfer.prepared_active
+            if active_mask is None
+            else jnp.asarray(active_mask, dtype=bool)
+        )
+        relation = self.transfer.routes(positions, active)
         fluid_temperature_ = jnp.asarray(fluid_temperature)
         fluid_species = jnp.asarray(
             fluid_species_concentration, dtype=fluid_temperature_.dtype
         )
         if fluid_temperature_.shape != (
-            self.transfer.cell_count,
+            self.transfer.target.entity_count,
         ) or fluid_species.shape != (
-            self.transfer.cell_count,
+            self.transfer.target.entity_count,
             self.species_count,
         ):
             raise ValueError("Fluid temperature/species arrays have invalid shapes.")
-        sampled_temperature = self.transfer.gather(relation, fluid_temperature_)
-        sampled_species = self.transfer.gather(relation, fluid_species)
-        capacity = self.transfer.particles.capacity
+        sampled_temperature_result = self.transfer.gather(
+            positions, active, fluid_temperature_
+        )
+        sampled_species_result = self.transfer.gather(positions, active, fluid_species)
+        sampled_temperature = sampled_temperature_result.values
+        sampled_species = sampled_species_result.values
+        capacity = self.transfer.particle_capacity
         owner_temperature = jnp.zeros((capacity,), dtype=fluid_temperature_.dtype)
         owner_species = jnp.zeros(
             (capacity, self.species_count), dtype=fluid_temperature_.dtype
@@ -191,7 +200,6 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
             owner_coverage = owner_coverage.at[prepared.owner_indices].add(
                 state.active.astype(jnp.int32)
             )
-        active = relation.active
         heat_rate = (
             self.heat_transfer_coefficient
             * owner_surface_measure
@@ -204,10 +212,10 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         )
         heat_rate = jnp.where(active, heat_rate, 0.0)
         species_rate = jnp.where(active[:, None], species_rate, 0.0)
-        fluid_energy = self.transfer.deposit_particle_content(relation, -heat_rate)
-        fluid_species_source = self.transfer.deposit_particle_content(
-            relation, -species_rate
-        )
+        fluid_energy_result = self.transfer.deposit(positions, active, -heat_rate)
+        fluid_species_result = self.transfer.deposit(positions, active, -species_rate)
+        fluid_energy = fluid_energy_result.content
+        fluid_species_source = fluid_species_result.content
         batch_energy = []
         batch_species = []
         for prepared, state, route in zip(
@@ -252,7 +260,11 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         )
         tolerance = 128.0 * jnp.finfo(fluid_temperature_.dtype).eps
         successful = (
-            relation.successful
+            jnp.all(relation.evidence.complete)
+            & sampled_temperature_result.successful
+            & sampled_species_result.successful
+            & fluid_energy_result.successful
+            & fluid_species_result.successful
             & jnp.all(~active | (owner_coverage == 1))
             & jnp.all(jnp.isfinite(heat_rate))
             & jnp.all(jnp.isfinite(species_rate))
@@ -329,8 +341,13 @@ class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("radiation must be ReciprocalPairRadiationPlan or None.")
         if (
-            dem.bodies.particles.prepared_id
-            != continuum_exchange.transfer.particles.prepared_id
+            continuum_exchange.transfer.particle_capacity != dem.bodies.capacity
+            or not bool(
+                jnp.all(
+                    continuum_exchange.transfer.stable_source_ids
+                    == dem.bodies.particles.particle_ids
+                )
+            )
         ):
             raise ValueError("DEM and continuum transfer populations must match.")
         self.dem = dem

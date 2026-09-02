@@ -183,17 +183,25 @@ it does not prove that a user-declared pattern is globally valid. ASDEX-origin
 patterns retain separate provenance that their structure came from global graph
 analysis.
 
-## Mathematical restrictions
+## Mathematical restrictions and explicit extensions
 
-Sparse Jacobians currently require real floating-point source and target
-coordinates with one shared dtype. Complex or mixed-precision differentiation
-needs a more explicit linear-action contract and is rejected.
+`SparseDerivativePrecisionPolicy` separates source seed, target cotangent,
+coefficient, accumulation, and output dtypes. Source and target spaces may use
+different homogeneous inexact dtypes; action boundaries cast explicitly instead
+of requiring one coefficient dtype to validate both directions.
 
-Sparse Hessians additionally require a scalar real-valued function, a square
-symmetric structural pattern, and a Euclidean pairing. A coordinate Hessian is
-not silently treated as a primal-space endomorphism under a non-Euclidean
-pairing. Positive definiteness, semidefiniteness, and rank are never inferred by
-sampling; supply certified `OperatorProperties` when a solver may rely on them.
+Complex Jacobians require `complex_semantics="holomorphic"` with native complex
+forward mode, or `complex_semantics="real-frechet"` with explicit source and
+target `AbstractRealCoordinateMap` values. Holomorphy and a Wirtinger convention
+are never inferred from samples. `PreparedRealCoordinateTree` composes maps for
+homogeneous PyTrees without field-name inference.
+
+`SparseHessianContract("bilinear")` returns the derivative of a covector as a
+map to `DualSpace`. `"riesz"` raises it only under a declared constant diagonal
+pairing and fixed pattern. `"cotangent"` forms the real scalarization
+`Re <cotangent, F(x)>` for vector residuals. There is intentionally no claim of
+one universal complex/vector-valued Hessian matrix or hidden dense Riesz map.
+Positive definiteness, semidefiniteness, and rank remain explicit evidence.
 
 ## API reference
 
@@ -210,6 +218,12 @@ sampling; supply certified `OperatorProperties` when a solver may rely on them.
 ---
 
 ::: phydrax.sparse.SparseDerivativeVerification
+
+::: phydrax.sparse.SparseDerivativePrecisionPolicy
+
+---
+
+::: phydrax.sparse.SparseHessianContract
 
 ---
 

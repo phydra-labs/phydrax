@@ -143,6 +143,38 @@ def run_spherical_spectral_benchmark(
     )
 
 
+def spherical_completion_metrics(
+    discretization: phx.discretization.SphericalSpectralDiscretization,
+    /,
+    *,
+    nside: int,
+) -> dict[str, int | float]:
+    """Bounded scattered/HEALPix, Wigner, and CG capacity counters."""
+    from phydrax.discretization import spectral
+
+    samples = spectral.SphericalSamplePlan.healpix(
+        int(nside), ordering="nested", tikhonov=1e-12
+    ).prepare(discretization)
+    rotation = spectral.SphericalRotationPlan(discretization).prepare()
+    coupling = spectral.SphericalClebschGordanPlan(
+        discretization,
+        discretization,
+        output_bandlimit=2 * discretization.layout.bandlimit - 1,
+    ).prepare()
+    identity_blocks = rotation.wigner_d(jnp.zeros((3,)))
+    return {
+        "sample_capacity": samples.report.sample_capacity,
+        "active_sample_count": samples.report.active_count,
+        "sample_design_bytes": samples.report.design_bytes,
+        "sample_factor_bytes": samples.report.factor_bytes,
+        "sample_condition_number": samples.report.condition_number,
+        "wigner_block_bytes": int(identity_blocks.nbytes),
+        "cg_coupling_count": coupling.report.coupling_count,
+        "cg_coefficient_bytes": coupling.report.coefficient_bytes,
+        "cg_recurrence_residual": coupling.report.recurrence_residual,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark exact-sampling spherical spectral workflows."

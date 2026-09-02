@@ -56,7 +56,7 @@ def _ocean(*, case, shape):
         freshwater=freshwater,
         external_mode="split-explicit" if case == "wetdry" else "implicit",
         wetting_and_drying=case == "wetdry",
-        split_substeps=10,
+        subcycle_policy=phx.applications.ocean.ExternalModeSubcyclePolicy.fixed(10),
     ).prepare()
     eta = jnp.zeros((nx, ny))
     if case == "wave":
@@ -70,7 +70,9 @@ def _ocean(*, case, shape):
 
 def run_case(case, shape, dt):
     ocean, state = _ocean(case=case, shape=shape)
-    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(state)
+    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(
+        ocean, state
+    )
     result = phx.applications.ocean.HydrostaticIMEXMidpointMethod(ocean).step(
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0.0),

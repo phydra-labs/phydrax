@@ -152,7 +152,11 @@ def run_incompressible_spectral_benchmark(
         upper_wall_velocity=(1.0, 0.0, 0.0),
     )
     prescribed = prescribed_plan.prepare(1.0)
-    jax.block_until_ready(prescribed.factorization.factors)
+    jax.block_until_ready(
+        prescribed.factorization.factors
+        if prescribed.factorization is not None
+        else prescribed.ultraspherical.bulk_influence
+    )
     channel_prepare = 1e3 * (time.perf_counter() - started)
     started = time.perf_counter()
     prescribed_result = prescribed.solve(couette_modal)
@@ -181,7 +185,7 @@ def run_incompressible_spectral_benchmark(
         jnp.asarray([0.0, 0.01, 0.02]),
     )
     sbdf_error = jnp.max(jnp.abs(channel.reconstruct_state(sbdf.velocity[-1]) - couette))
-    factor_bytes = int(prescribed.blocks.nbytes + prescribed.factorization.factors.nbytes)
+    factor_bytes = prescribed.report.factor_bytes
     finite = bool(
         jnp.all(jnp.isfinite(periodic_rate))
         & jnp.isfinite(periodic_divergence)
@@ -211,6 +215,28 @@ def run_incompressible_spectral_benchmark(
         channel_sbdf2_error=float(sbdf_error),
         finite=finite,
     )
+
+
+def packed_dns_storage_metrics(
+    discretization: phx.discretization.TensorSpectralDiscretization,
+    /,
+    *,
+    component_count: int = 3,
+) -> dict[str, int | float]:
+    """Analytic persistent/checkpoint storage counters for the Hermitian chart."""
+    coordinates = phx.discretization.HermitianSpectralCoordinates(
+        discretization,
+        component_shape=(int(component_count),),
+    )
+    return {
+        "full_complex_bytes": coordinates.full_state_bytes,
+        "independent_real_bytes": coordinates.coordinate_state_bytes,
+        "fixed_mode_count": coordinates.fixed_mode_count,
+        "conjugate_pair_count": coordinates.conjugate_pair_count,
+        "storage_ratio": (
+            coordinates.coordinate_state_bytes / coordinates.full_state_bytes
+        ),
+    }
 
 
 def main() -> None:

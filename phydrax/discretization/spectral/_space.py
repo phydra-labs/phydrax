@@ -29,6 +29,7 @@ from .._lifecycle import (
     validate_prepared_metadata,
 )
 from .._measure import DiscreteMeasure
+from .._periodic_cell import PeriodicCell
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._tensor import (
     _axis_eigenvalues,
@@ -184,6 +185,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     plan: TensorSpectralPlan
     axes: tuple[PreparedSpectralAxis, ...]
     grid: PreparedTensorGrid
+    periodic_cell: PeriodicCell | None
     modal_space: DiscreteFieldSpace
     physical_space: DiscreteFieldSpace
     key: DiscretizationKey
@@ -221,6 +223,24 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             for axis, basis in zip(axes_, plan.bases, strict=True)
         ):
             raise ValueError("Prepared axes must originate from the tensor basis plans.")
+        periodic_indices = tuple(
+            axis_index for axis_index, axis in enumerate(axes_) if axis.periodic
+        )
+        if periodic_indices:
+            ambient_dimension = len(axes_)
+            vectors = np.zeros((len(periodic_indices), ambient_dimension), dtype=float)
+            for row, axis_index in enumerate(periodic_indices):
+                vectors[row, axis_index] = float(axes_[axis_index].length)
+            origin = np.asarray(
+                [0.0 if axis.bounds is None else float(axis.bounds[0]) for axis in axes_]
+            )
+            periodic_cell = PeriodicCell(
+                vectors,
+                origin=origin,
+                periodic_axes=(True,) * len(periodic_indices),
+            )
+        else:
+            periodic_cell = None
         grid = PreparedTensorGrid(
             tuple(axis.axis_discretization() for axis in axes_),
             axis_names=plan.axis_names,
@@ -306,11 +326,15 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
                 "axes": [axis.axis_id for axis in axes_],
                 "modal_space": modal_space.field_space_id,
                 "physical_space": physical_space.field_space_id,
+                "periodic_cell": (
+                    None if periodic_cell is None else periodic_cell.cell_id
+                ),
                 "version": version,
             }
         )
         self.plan = plan
         self.axes = axes_
+        self.periodic_cell = periodic_cell
         self.grid = grid
         self.modal_space = modal_space
         self.physical_space = physical_space

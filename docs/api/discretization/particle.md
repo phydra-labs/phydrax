@@ -381,7 +381,7 @@
 
 ### CFD--DEM
 
-::: phydrax.discretization.ConservativeParticleGridTransferPlan
+::: phydrax.discretization.PreparedMeshParticleGridSplat
 
 ---
 
@@ -402,6 +402,26 @@
 ---
 
 ::: phydrax.equations.ReactiveCFDDEMCouplingPlan
+
+### Wet barrier and periodic rheology
+
+::: phydrax.discretization.DEMBarrierCapillaryPlan
+
+---
+
+::: phydrax.discretization.PeriodicNeighborhoodEnvelope
+
+---
+
+::: phydrax.discretization.DEMBulkStressPlan
+
+### Runtime SPH sources
+
+::: phydrax.discretization.SPHParticleSourcePlan
+
+---
+
+::: phydrax.discretization.emit_sph_particles
 
 ## Adaptive particle runtime
 

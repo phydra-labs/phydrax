@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ._breakpoints import discover_breakpoints
 from ._estimates import (
     AdaptivePartition,
     AdaptiveQuadratureDiagnostics,
@@ -104,10 +105,6 @@ def adaptive_interval_callable(
     bounds_ = jnp.asarray(bounds)
     if bounds_.shape != (2,):
         raise ValueError("Adaptive callable bounds must have shape (2,).")
-    endpoints = precision_.accumulation(
-        jnp.asarray((bounds_[0], *plan.breakpoints, bounds_[1]))
-    )
-    initial_count = len(plan.breakpoints) + 1
 
     def evaluate_points(points: Array) -> Array:
         values = precision_.evaluation(jnp.asarray(integrand(points)))
@@ -117,12 +114,51 @@ def adaptive_interval_callable(
             )
         return values
 
-    prototype = evaluate_points(jnp.asarray([0.5 * (endpoints[0] + endpoints[-1])]))
+    prototype = evaluate_points(jnp.asarray([0.5 * (bounds_[0] + bounds_[1])]))
     output_shape = prototype.shape[1:]
+    discovery = None
+    discovery_cost = jnp.asarray(0, dtype=jnp.int32)
+    discovered_points = jnp.zeros((0,), dtype=bounds_.dtype)
+    if plan.discovery is not None:
+        discovery, discovery_cost = discover_breakpoints(
+            evaluate_points,
+            bounds_,
+            plan.discovery,
+            explicit=plan.breakpoints,
+        )
+        discovered_points = jnp.where(
+            discovery.active,
+            discovery.points,
+            bounds_[1],
+        )
+    endpoints = precision_.accumulation(
+        jnp.sort(
+            jnp.concatenate(
+                (
+                    bounds_[:1],
+                    jnp.asarray(plan.breakpoints, dtype=bounds_.dtype),
+                    discovered_points,
+                    bounds_[1:],
+                )
+            )
+        )
+    )
+    initial_count = (
+        len(plan.breakpoints)
+        + (0 if plan.discovery is None else plan.discovery.max_candidates)
+        + 1
+    )
+
     high, low, local_cost = _local_rule(plan)
-    initial_cost = initial_count * local_cost + 1
+    discovery_static_cost = (
+        0
+        if plan.discovery is None
+        else plan.discovery.pilot_count
+        + plan.discovery.refinement_rounds * plan.discovery.max_candidates
+    )
+    initial_cost = initial_count * local_cost + 1 + discovery_static_cost
     if plan.max_evaluations is not None and plan.max_evaluations < initial_cost:
-        bounds_valid = jnp.all(jnp.diff(endpoints) > 0.0)
+        bounds_valid = (bounds_[1] > bounds_[0]) & jnp.all(jnp.diff(endpoints) >= 0.0)
         finite = jnp.all(jnp.isfinite(prototype))
         status = jnp.where(
             bounds_valid,
@@ -144,15 +180,25 @@ def adaptive_interval_callable(
         error = precision_.decision(jnp.asarray(jnp.inf))
         diagnostics = AdaptiveQuadratureDiagnostics(
             status=status,
-            num_evaluations=jnp.asarray(1, dtype=jnp.int32),
+            num_evaluations=jnp.asarray(1 + discovery_static_cost, dtype=jnp.int32),
             estimated_error=error,
             partition=None,
             rule=type(plan.rule).__name__,
+            discovery=discovery,
+            discovery_count=(
+                0 if discovery is None else jnp.sum(discovery.active, dtype=jnp.int32)
+            ),
+            discovery_overflow=(
+                False
+                if discovery is None
+                else discovery.status
+                == int(IntegrationStatus.BREAKPOINT_CANDIDATE_OVERFLOW)
+            ),
         )
         return IntegrationEstimate(
             value_data,
             status=status,
-            num_evaluations=1,
+            num_evaluations=1 + discovery_static_cost,
             error_estimate=error,
             error_kind="embedded-rule",
             diagnostics=diagnostics,
@@ -162,48 +208,60 @@ def adaptive_interval_callable(
         )
 
     def evaluate_interval(lower: Array, upper: Array) -> tuple[Array, Array, Array]:
-        half = 0.5 * (upper - lower)
-        center = 0.5 * (upper + lower)
-        high_nodes = precision_.accumulation(high.nodes)
-        high_weights = precision_.accumulation(high.weights)
-        high_points = center + half * high_nodes
-        high_values = precision_.accumulation(evaluate_points(high_points))
-        high_estimate = precision_.accumulation(
-            half * jnp.tensordot(high_weights, high_values, axes=(0, 0))
-        )
-        if high.embedded_weights is not None:
-            low_estimate = precision_.accumulation(
-                half
-                * jnp.tensordot(
-                    precision_.accumulation(high.embedded_weights),
-                    high_values,
-                    axes=(0, 0),
-                )
+        def evaluate(_):
+            half = 0.5 * (upper - lower)
+            center = 0.5 * (upper + lower)
+            high_nodes = precision_.accumulation(high.nodes)
+            high_weights = precision_.accumulation(high.weights)
+            high_points = center + half * high_nodes
+            high_values = precision_.accumulation(evaluate_points(high_points))
+            high_estimate = precision_.accumulation(
+                half * jnp.tensordot(high_weights, high_values, axes=(0, 0))
             )
-            low_finite = jnp.asarray(True)
-        else:
-            if low is None:
-                raise RuntimeError("Nested adaptive rule is missing its low rule.")
-            low_points = center + half * precision_.accumulation(low.nodes)
-            low_values = precision_.accumulation(evaluate_points(low_points))
-            low_estimate = precision_.accumulation(
-                half
-                * jnp.tensordot(
-                    precision_.accumulation(low.weights),
-                    low_values,
-                    axes=(0, 0),
+            if high.embedded_weights is not None:
+                low_estimate = precision_.accumulation(
+                    half
+                    * jnp.tensordot(
+                        precision_.accumulation(high.embedded_weights),
+                        high_values,
+                        axes=(0, 0),
+                    )
                 )
+                low_finite = jnp.asarray(True)
+            else:
+                if low is None:
+                    raise RuntimeError("Nested adaptive rule is missing its low rule.")
+                low_points = center + half * precision_.accumulation(low.nodes)
+                low_values = precision_.accumulation(evaluate_points(low_points))
+                low_estimate = precision_.accumulation(
+                    half
+                    * jnp.tensordot(
+                        precision_.accumulation(low.weights),
+                        low_values,
+                        axes=(0, 0),
+                    )
+                )
+                low_finite = jnp.all(jnp.isfinite(low_values))
+            error = precision_.decision(_error_norm(high_estimate - low_estimate))
+            finite = (
+                jnp.all(jnp.isfinite(high_values))
+                & jnp.all(jnp.isfinite(high_estimate))
+                & low_finite
+                & jnp.all(jnp.isfinite(low_estimate))
+                & jnp.isfinite(error)
             )
-            low_finite = jnp.all(jnp.isfinite(low_values))
-        error = precision_.decision(_error_norm(high_estimate - low_estimate))
-        finite = (
-            jnp.all(jnp.isfinite(high_values))
-            & jnp.all(jnp.isfinite(high_estimate))
-            & low_finite
-            & jnp.all(jnp.isfinite(low_estimate))
-            & jnp.isfinite(error)
+            return high_estimate, error, finite
+
+        return jax.lax.cond(
+            upper > lower,
+            evaluate,
+            lambda _: (
+                jnp.zeros(output_shape, dtype=prototype.dtype),
+                precision_.decision(jnp.asarray(0.0)),
+                jnp.asarray(True),
+            ),
+            operand=None,
         )
-        return high_estimate, error, finite
 
     initial_estimates, initial_errors, initial_finite = jax.vmap(evaluate_interval)(
         endpoints[:-1], endpoints[1:]
@@ -229,15 +287,20 @@ def adaptive_interval_callable(
         .at[:initial_count]
         .set(initial_errors)
     )
-    active = jnp.arange(capacity) < initial_count
+    positive_initial = jnp.diff(endpoints) > 0.0
+    active = (
+        (jnp.arange(capacity) < initial_count).at[:initial_count].set(positive_initial)
+    )
     global_estimate = precision_.accumulation(jnp.sum(initial_estimates, axis=0))
     global_error = precision_.decision(jnp.sum(initial_errors))
-    evaluation_count = jnp.asarray(initial_count * local_cost + 1, dtype=jnp.int32)
+    evaluation_count = (
+        jnp.sum(positive_initial, dtype=jnp.int32) * local_cost + 1 + discovery_cost
+    )
 
     def converged(estimate: Array, error: Array) -> Array:
         return _meets_plan_tolerance(estimate, error, plan, precision_)
 
-    bounds_valid = jnp.all(jnp.diff(endpoints) > 0.0)
+    bounds_valid = (bounds_[1] > bounds_[0]) & jnp.all(jnp.diff(endpoints) >= 0.0)
     finite_valid = jnp.all(initial_finite)
     initial_status = jnp.where(
         bounds_valid,
@@ -251,7 +314,7 @@ def adaptive_interval_callable(
     )
     done = (~bounds_valid) | (~finite_valid) | converged(global_estimate, global_error)
     max_evaluations = (
-        capacity * 2 * local_cost + initial_count * local_cost + 1
+        capacity * 2 * local_cost + initial_count * local_cost + 1 + discovery_static_cost
         if plan.max_evaluations is None
         else plan.max_evaluations
     )
@@ -412,6 +475,12 @@ def adaptive_interval_callable(
         status,
         int(IntegrationStatus.MAXIMUM_INTERVALS_REACHED),
     )
+    if discovery is not None:
+        status = jnp.where(
+            status == int(IntegrationStatus.CONVERGED),
+            discovery.status,
+            status,
+        )
     value_data = global_estimate
     if plan.throw:
         value_data = eqx.error_if(
@@ -422,7 +491,7 @@ def adaptive_interval_callable(
     partition = None
     if plan.collect_partition:
         partition = AdaptivePartition(
-            count=count,
+            count=jnp.sum(active, dtype=jnp.int32),
             lower_bounds=lower_bounds,
             upper_bounds=upper_bounds,
             integral_estimates=estimates,
@@ -436,6 +505,15 @@ def adaptive_interval_callable(
         estimated_error=global_error,
         partition=partition,
         rule=rule_name,
+        discovery=discovery,
+        discovery_count=(
+            0 if discovery is None else jnp.sum(discovery.active, dtype=jnp.int32)
+        ),
+        discovery_overflow=(
+            False
+            if discovery is None
+            else discovery.status == int(IntegrationStatus.BREAKPOINT_CANDIDATE_OVERFLOW)
+        ),
     )
     return IntegrationEstimate(
         value_data,

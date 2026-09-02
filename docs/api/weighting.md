@@ -18,17 +18,29 @@ solution. An affine-inconsistent or boundary-only target returns a typed failure
 status; the solver never clips the target or reports a finite exponential tilt as
 an exact boundary solution.
 
-`QuadraticMoments(t, scale=s)` instead solves
+`QuadraticMoments(t, covariance=C)` instead solves the covariant soft problem
 
 ```text
-minimize  0.5 * sum_j ((F.T @ w - t)_j / s_j)^2
-          + sum_i w_i log(w_i / p_i)
-subject to w >= 0, sum(w) = 1
+dual penalty  0.5 * lambda.T @ C @ lambda
 ```
 
-Every scale must be finite and strictly positive. This problem remains regular for
-finite targets outside the source moment hull and exposes the achieved moments and
-residual rather than pretending to attain an unreachable target.
+where `C` is a dense or PhydraX linear operator with constructive or verified
+self-adjoint positive-semidefinite evidence. Diagonal uncertainty is expressed as
+`covariance=diag(scale**2)`; there is no parallel `scale` keyword. Full and singular
+PSD covariance operators retain cross-moment coupling without silently adding jitter.
+
+`IntervalMoments`, `GroupMassConstraints`, `EqualWeightSubset`, and
+`BoundaryFacePolicy` declare hard intervals, sparse group masses, fixed-cardinality
+equal subsets, and certified finite faces. Their topology is fixed at preparation.
+`MomentCalibrationExecutionPolicy` makes the efficient regular dual, canonical-conic,
+or mixed-integer route explicit; incompatible structures fail rather than switching.
+The canonical-conic route represents relative entropy with exponential-cone
+epigraphs and appends interval/group rows without changing measure semantics.
+The mixed-integer route lowers `EqualWeightSubset` to the shared bounded
+`MixedIntegerProgram`. With `BoundaryFacePolicy`, bounded maximum-mass LPs certify
+every forced-zero coordinate; `BoundaryFaceEvidence` stores those audited relaxations
+and an averaged relative-interior witness. `implicit_calibrate_fixed_face` exposes
+derivatives only after that face is fixed and certified.
 
 ```python
 import jax.numpy as jnp
@@ -81,6 +93,22 @@ execution key, and ordered transformation provenance. See
 ---
 
 ::: phydrax.weighting.QuadraticMoments
+
+---
+
+::: phydrax.weighting.IntervalMoments
+
+---
+
+::: phydrax.weighting.GroupMassConstraints
+
+---
+
+::: phydrax.weighting.EqualWeightSubset
+
+---
+
+::: phydrax.weighting.BoundaryFacePolicy
 
 ---
 

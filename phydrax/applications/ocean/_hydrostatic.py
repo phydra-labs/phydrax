@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -22,6 +21,7 @@ from ...discretization.finite_volume._hydrostatic_grid import (
 )
 from ...linalg._tridiagonal_lines import solve_tridiagonal_lines
 from ...solver._hydrostatic_free_surface import LinearImplicitFreeSurfacePlan
+from ._external_mode import ExternalModeSubcyclePolicy
 
 
 BoundaryKind = Literal[
@@ -434,6 +434,17 @@ class HydrostaticOceanState(StrictModule):
     tke_inventory: Array
 
 
+class HydrostaticBoundaryTraces(StrictModule):
+    """Oriented neighbor-cell traces supplied at one multiblock stage."""
+
+    surface: Any
+    hydrostatic_pressure: Any
+    density: Any
+    velocity: tuple[Any, Any]
+    tracers: dict[str, Any]
+    tke: Any
+
+
 class HydrostaticOceanView(StrictModule):
     eta: Array
     velocity: tuple[Array, Array]
@@ -442,6 +453,9 @@ class HydrostaticOceanView(StrictModule):
     hydrostatic_pressure: Array
     vertical_flux: Array
     wet_column: Array
+    eos_valid: Array
+    eos_finite: Array
+    eos_successful: Array
     view_id: str = eqx.field(static=True)
 
 
@@ -472,7 +486,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
     external_mode: ExternalMode = eqx.field(static=True)
     wetting_and_drying: bool = eqx.field(static=True)
     wet_depth: float = eqx.field(static=True)
-    split_substeps: int = eqx.field(static=True)
+    subcycle_policy: ExternalModeSubcyclePolicy
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -491,12 +505,17 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
         external_mode: ExternalMode = "implicit",
         wetting_and_drying: bool = False,
         wet_depth: float = 1.0e-6,
-        split_substeps: int = 20,
+        subcycle_policy: ExternalModeSubcyclePolicy | None = None,
     ):
         if not isinstance(geometry, PreparedHydrostaticGrid):
             raise TypeError("geometry must be PreparedHydrostaticGrid.")
+        from ._teos10 import TEOS10GSW75EOS
+
         eos_ = LinearHydrostaticEOS() if eos is None else eos
-        if not isinstance(eos_, (LinearHydrostaticEOS, NonlinearSeawaterPolynomialEOS)):
+        if not isinstance(
+            eos_,
+            (LinearHydrostaticEOS, NonlinearSeawaterPolynomialEOS, TEOS10GSW75EOS),
+        ):
             raise TypeError("Unsupported hydrostatic equation of state.")
         mixing_ = HydrostaticMixingPlan() if mixing is None else mixing
         freshwater_ = FreshwaterVolumeFluxPlan(0.0) if freshwater is None else freshwater
@@ -518,9 +537,15 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
             or values[1] <= 0.0
         ):
             raise ValueError("Hydrostatic physical constants are invalid.")
-        substeps = int(split_substeps)
-        if substeps <= 0:
-            raise ValueError("split_substeps must be positive.")
+        subcycle = (
+            ExternalModeSubcyclePolicy.fixed(20)
+            if subcycle_policy is None
+            else subcycle_policy
+        )
+        if not isinstance(subcycle, ExternalModeSubcyclePolicy):
+            raise TypeError(
+                "subcycle_policy must be an ExternalModeSubcyclePolicy or None."
+            )
         self.geometry = geometry
         self.eos = eos_
         self.mixing = mixing_
@@ -533,7 +558,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
         self.external_mode = external_mode
         self.wetting_and_drying = bool(wetting_and_drying)
         self.wet_depth = values[4]
-        self.split_substeps = substeps
+        self.subcycle_policy = subcycle
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "hydrostatic-primitive-equation-plan",
@@ -549,7 +574,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
                 "external_mode": external_mode,
                 "wetdry": bool(wetting_and_drying),
                 "wet_depth": values[4],
-                "split_substeps": substeps,
+                "subcycle_policy": subcycle.policy_id,
             }
         )
 
@@ -644,9 +669,17 @@ class PreparedHydrostaticOcean(StrictModule):
         }
         pressure_dbar = self._sea_pressure(epoch)
         eos = self.plan.eos.evaluate(
-            tracers["absolute_salinity"],
-            tracers["conservative_temperature"],
-            pressure_dbar,
+            jnp.where(
+                epoch.active_cell,
+                tracers["absolute_salinity"],
+                jnp.asarray(35.0, dtype=pressure_dbar.dtype),
+            ),
+            jnp.where(
+                epoch.active_cell,
+                tracers["conservative_temperature"],
+                jnp.asarray(10.0, dtype=pressure_dbar.dtype),
+            ),
+            jnp.where(epoch.active_cell, pressure_dbar, 0.0),
         )
         hydrostatic = self._hydrostatic_pressure(eos.density, epoch)
         vertical_flux = self.geometry.diagnose_vertical_flux(state.transports)
@@ -657,6 +690,9 @@ class PreparedHydrostaticOcean(StrictModule):
             density=eos.density,
             hydrostatic_pressure=hydrostatic,
             vertical_flux=vertical_flux,
+            eos_valid=eos.valid,
+            eos_finite=eos.finite,
+            eos_successful=eos.successful,
             wet_column=epoch.wet_column,
             view_id=self.prepared_id,
         )
@@ -682,25 +718,27 @@ class PreparedHydrostaticOcean(StrictModule):
         else:
             y_coordinate = self.geometry.latitude
             f_cell = self.plan.coriolis_f0 + self.plan.coriolis_beta * y_coordinate
-
-        def y_to_x(value):
-            return epoch.x_face_area * _faces_from_cell(
-                f_cell[..., None]
-                * _cell_from_faces(
-                    _safe_divide(value, epoch.y_face_area),
-                    1,
-                    self.geometry.periodic[1],
-                ),
+        normal_velocity = (
+            _cell_from_faces(
+                _safe_divide(x, epoch.x_face_area),
                 0,
                 self.geometry.periodic[0],
-            )
-
-        x_force = y_to_x(y)
-        x_weight = _safe_divide(jnp.ones_like(epoch.x_face_area), epoch.x_face_area)
-        y_weight = _safe_divide(jnp.ones_like(epoch.y_face_area), epoch.y_face_area)
-        transpose = jax.linear_transpose(y_to_x, y)(x_weight * x)[0]
-        y_force = -_safe_divide(transpose, y_weight)
-        return x_force, y_force
+            ),
+            _cell_from_faces(
+                _safe_divide(y, epoch.y_face_area),
+                1,
+                self.geometry.periodic[1],
+            ),
+        )
+        x_acceleration, y_acceleration = self.geometry.rotate_normal_velocity(
+            normal_velocity, f_cell
+        )
+        return (
+            epoch.x_face_area
+            * _faces_from_cell(x_acceleration, 0, self.geometry.periodic[0]),
+            epoch.y_face_area
+            * _faces_from_cell(y_acceleration, 1, self.geometry.periodic[1]),
+        )
 
     def _horizontal_tracer_fluxes(
         self,
@@ -708,11 +746,33 @@ class PreparedHydrostaticOcean(StrictModule):
         concentration: Array,
         transports: tuple[Array, Array],
         /,
+        *,
+        boundary_values=None,
     ) -> tuple[Array, Array]:
         face_values = [
             _face_upwind(concentration, transports[0], 0, self.geometry.periodic[0]),
             _face_upwind(concentration, transports[1], 1, self.geometry.periodic[1]),
         ]
+        boundaries = (
+            ((None, None), (None, None)) if boundary_values is None else boundary_values
+        )
+        for axis in range(2):
+            if self.geometry.periodic[axis]:
+                continue
+            for side_index, exterior in enumerate(boundaries[axis]):
+                if exterior is None:
+                    continue
+                index = 0 if side_index == 0 else -1
+                location = [slice(None)] * face_values[axis].ndim
+                location[axis] = index
+                location_ = tuple(location)
+                transport = transports[axis][location_]
+                inflow = transport > 0.0 if side_index == 0 else transport < 0.0
+                face_values[axis] = (
+                    face_values[axis]
+                    .at[location_]
+                    .set(jnp.where(inflow, exterior, face_values[axis][location_]))
+                )
         fluxes = [
             transports[0] * face_values[0],
             transports[1] * face_values[1],
@@ -741,7 +801,8 @@ class PreparedHydrostaticOcean(StrictModule):
     def _vertical_tracer_flux(
         self, concentration: Array, vertical_flux: Array, /
     ) -> Array:
-        return vertical_flux * _vertical_upwind(concentration, vertical_flux)
+        flux = vertical_flux * _vertical_upwind(concentration, vertical_flux)
+        return flux.at[..., 0].set(0.0).at[..., -1].set(0.0)
 
     def _redi_gm_fluxes(
         self,
@@ -749,8 +810,13 @@ class PreparedHydrostaticOcean(StrictModule):
         state: HydrostaticOceanState,
         epoch: HydrostaticMetricEpoch,
         /,
+        *,
+        concentration_boundary=None,
+        density_boundary=None,
     ) -> tuple[tuple[Array, Array], Array]:
-        gradient_x, gradient_y = self.geometry.layer_gradient(concentration)
+        gradient_x, gradient_y = self.geometry.layer_gradient(
+            concentration, boundary_values=concentration_boundary
+        )
         redi = self.plan.mixing.redi_coefficient
         gm = self.plan.mixing.gm_coefficient
         redi_x = -redi * epoch.x_face_area * gradient_x
@@ -764,7 +830,9 @@ class PreparedHydrostaticOcean(StrictModule):
                 ),
             )
         view = self.view(state)
-        density_x, density_y = self.geometry.layer_gradient(view.density)
+        density_x, density_y = self.geometry.layer_gradient(
+            view.density, boundary_values=density_boundary
+        )
         density_vertical = jnp.gradient(view.density, axis=-1)
         concentration_vertical = jnp.gradient(concentration, axis=-1)
         x_vertical = self.geometry.face_average(density_vertical, 0)
@@ -790,7 +858,10 @@ class PreparedHydrostaticOcean(StrictModule):
         vertical_cell_flux = (
             -gm
             * self.geometry.cell_area[..., None]
-            * (cell_slope_x * cell_gradient_x + cell_slope_y * cell_gradient_y)
+            * self.geometry.normal_velocity_inner_product(
+                (cell_slope_x, cell_slope_y),
+                (cell_gradient_x, cell_gradient_y),
+            )
         )
         vertical_flux = jnp.zeros(
             self.geometry.horizontal_shape + (self.geometry.cell_shape[-1] + 1,),
@@ -808,19 +879,33 @@ class PreparedHydrostaticOcean(StrictModule):
         vertical_flux: Array,
         freshwater: Array,
         /,
+        *,
+        boundary_traces: HydrostaticBoundaryTraces | None = None,
     ) -> dict[str, Array]:
         tendency = {}
         top = [slice(None)] * 3
         top[-1] = -1
         for name, inventory in state.tracer_inventory.items():
             concentration = _safe_divide(inventory, epoch.cell_volume)
+            concentration_boundary = (
+                None if boundary_traces is None else boundary_traces.tracers[name]
+            )
             horizontal = self._horizontal_tracer_fluxes(
-                name, concentration, state.transports
+                name,
+                concentration,
+                state.transports,
+                boundary_values=concentration_boundary,
             )
             gm_vertical = jnp.zeros_like(vertical_flux)
             if self.plan.mixing.kind == "redi-gm":
                 redi_gm_horizontal, gm_vertical = self._redi_gm_fluxes(
-                    concentration, state, epoch
+                    concentration,
+                    state,
+                    epoch,
+                    concentration_boundary=concentration_boundary,
+                    density_boundary=(
+                        None if boundary_traces is None else boundary_traces.density
+                    ),
                 )
                 horizontal = (
                     horizontal[0] + redi_gm_horizontal[0],
@@ -863,7 +948,12 @@ class PreparedHydrostaticOcean(StrictModule):
         return tendency
 
     def _mixing_coefficients(
-        self, state: HydrostaticOceanState, epoch: HydrostaticMetricEpoch, /
+        self,
+        state: HydrostaticOceanState,
+        epoch: HydrostaticMetricEpoch,
+        /,
+        *,
+        boundary_traces: HydrostaticBoundaryTraces | None = None,
     ) -> tuple[Array, Array]:
         view = self.view(state)
         nz = self.geometry.cell_shape[-1]
@@ -884,9 +974,12 @@ class PreparedHydrostaticOcean(StrictModule):
             density_gradient = _safe_divide(density[..., 1:] - density[..., :-1], dz)
             u_cell = _cell_from_faces(view.velocity[0], 0, self.geometry.periodic[0])
             v_cell = _cell_from_faces(view.velocity[1], 1, self.geometry.periodic[1])
-            shear = (
-                _safe_divide(u_cell[..., 1:] - u_cell[..., :-1], dz) ** 2
-                + _safe_divide(v_cell[..., 1:] - v_cell[..., :-1], dz) ** 2
+            vertical_shear = (
+                _safe_divide(u_cell[..., 1:] - u_cell[..., :-1], dz),
+                _safe_divide(v_cell[..., 1:] - v_cell[..., :-1], dz),
+            )
+            shear = self.geometry.normal_velocity_inner_product(
+                vertical_shear, vertical_shear
             )
             n2 = -self.plan.gravity / self.plan.reference_density * density_gradient
             ri = _safe_divide(n2, shear + 1.0e-14)
@@ -924,7 +1017,12 @@ class PreparedHydrostaticOcean(StrictModule):
             diffusivity = jnp.maximum(diffusivity, coefficient)
             viscosity = jnp.maximum(viscosity, coefficient)
         elif self.plan.mixing.kind == "redi-gm":
-            density_x, density_y = self.geometry.layer_gradient(view.density)
+            density_x, density_y = self.geometry.layer_gradient(
+                view.density,
+                boundary_values=(
+                    None if boundary_traces is None else boundary_traces.density
+                ),
+            )
             density_vertical = jnp.gradient(view.density, axis=-1)
             slope_x = -_safe_divide(
                 density_x,
@@ -1015,9 +1113,13 @@ class PreparedHydrostaticOcean(StrictModule):
         epoch: HydrostaticMetricEpoch,
         step_size: ArrayLike,
         /,
+        *,
+        boundary_traces: HydrostaticBoundaryTraces | None = None,
     ) -> tuple[HydrostaticOceanState, Array]:
         dt = jnp.asarray(step_size, dtype=epoch.cell_volume.dtype)
-        viscosity, diffusivity = self._mixing_coefficients(state, epoch)
+        viscosity, diffusivity = self._mixing_coefficients(
+            state, epoch, boundary_traces=boundary_traces
+        )
         inventory = {}
         residual = jnp.asarray(0.0, dtype=dt.dtype)
         for name, value in state.tracer_inventory.items():

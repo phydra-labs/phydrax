@@ -6,7 +6,16 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from phydrax._numerics import log_normalize, LogWeightedAccumulator, weight_ess
+from phydrax._numerics import (
+    log_normalize,
+    LogWeightedAccumulator,
+    PrecisionRewritePolicy,
+    PrecisionRewriteRule,
+    PrecisionSelectionCandidate,
+    PrecisionSelectionPolicy,
+    prepare_precision_selection,
+    weight_ess,
+)
 from phydrax._precision import (
     complex_precision_dtype,
     precision_dtype_name,
@@ -71,6 +80,89 @@ def test_precision_resource_assumptions_round_trip_without_execution_claims():
     corrupted["item_sizes"]["storage"] = 8
     with pytest.raises(ValueError, match="identity mismatch"):
         PrecisionResourceAssumptions.from_dict(corrupted)
+
+
+@pytest.mark.parametrize("tolerance", ("relative_tolerance", "absolute_tolerance"))
+@pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
+def test_precision_selection_policy_rejects_nonfinite_tolerances(tolerance, value):
+    candidate = PrecisionSelectionCandidate(
+        "finite",
+        PrecisionRewritePolicy(
+            (PrecisionRewriteRule("elementwise", "float32", "float32"),)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        PrecisionSelectionPolicy((candidate,), **{tolerance: value})
+
+
+def test_precision_selection_policy_preserves_finite_tolerances():
+    candidate = PrecisionSelectionCandidate(
+        "finite",
+        PrecisionRewritePolicy(
+            (PrecisionRewriteRule("elementwise", "float32", "float32"),)
+        ),
+    )
+
+    policy = PrecisionSelectionPolicy(
+        (candidate,),
+        relative_tolerance=0.0,
+        absolute_tolerance=2.5,
+    )
+
+    assert policy.relative_tolerance == 0.0
+    assert policy.absolute_tolerance == 2.5
+
+
+def test_precision_selection_rejects_nonfinite_candidate_outputs():
+    candidate = PrecisionSelectionCandidate(
+        "nonfinite",
+        PrecisionRewritePolicy(
+            (PrecisionRewriteRule("elementwise", "float32", "float32"),)
+        ),
+    )
+    policy = PrecisionSelectionPolicy(
+        (candidate,),
+        absolute_tolerance=0.0,
+        relative_tolerance=0.0,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="No precision selection candidate satisfied",
+    ):
+        prepare_precision_selection(
+            lambda value: value / jnp.asarray(0.0, dtype=value.dtype),
+            (jnp.asarray([0.0, 1.0], dtype=jnp.float32),),
+            policy,
+        )
+
+
+def test_precision_selection_skips_nan_candidate_for_finite_candidate():
+    candidates = tuple(
+        PrecisionSelectionCandidate(
+            dtype,
+            PrecisionRewritePolicy((PrecisionRewriteRule("dot_general", dtype, dtype),)),
+        )
+        for dtype in ("float16", "float32")
+    )
+    left = jnp.asarray([[1.0e5, -1.0e5]], dtype=jnp.float32)
+    right = jnp.ones((2, 1), dtype=jnp.float32)
+
+    selected = prepare_precision_selection(
+        lambda lhs, rhs: lhs @ rhs,
+        (left, right),
+        PrecisionSelectionPolicy(
+            candidates,
+            absolute_tolerance=0.0,
+            relative_tolerance=0.0,
+        ),
+    )
+
+    assert selected.evidence.selected == "float32"
+    assert selected.evidence.candidates[0][1] == "numerical-rejection"
+    assert jnp.isinf(selected.evidence.candidates[0][2])
+    assert jnp.isinf(selected.evidence.candidates[0][3])
 
 
 def test_stable_reductions_respect_explicit_accumulation_dtype():

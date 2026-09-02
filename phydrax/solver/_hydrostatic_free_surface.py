@@ -83,9 +83,16 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         )
 
     def _surface_flux_from_eta(
-        self, eta: Array, epoch: HydrostaticMetricEpoch, /
+        self,
+        eta: Array,
+        epoch: HydrostaticMetricEpoch,
+        /,
+        *,
+        boundary_values=None,
     ) -> tuple[Array, Array]:
-        gx, gy = self.geometry.surface_gradient(eta)
+        gx, gy = self.geometry.surface_gradient(
+            eta, boundary_values=boundary_values
+        )
         return (
             jnp.sum(epoch.x_face_area, axis=-1) * gx,
             jnp.sum(epoch.y_face_area, axis=-1) * gy,
@@ -99,6 +106,8 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         freshwater_rate: ArrayLike | None = None,
         /,
+        *,
+        boundary_values=None,
     ) -> HydrostaticFreeSurfaceResult:
         eta_old = jnp.asarray(eta, dtype=self.geometry.cell_area.dtype)
         dt = jnp.asarray(step_size, dtype=eta_old.dtype).reshape(())
@@ -117,6 +126,18 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
             raise ValueError("Freshwater free-surface source shape is invalid.")
         predictor_net = self.geometry.surface_net_transport((x, y))
         rhs = eta_old - dt * predictor_net / self.geometry.cell_area + dt * source
+        if boundary_values is not None:
+            boundary_flux = self._surface_flux_from_eta(
+                jnp.zeros_like(eta_old),
+                epoch,
+                boundary_values=boundary_values,
+            )
+            boundary_laplacian = _surface_net_flux(
+                self.geometry, boundary_flux[0], boundary_flux[1]
+            )
+            rhs = rhs + (
+                self.gravity * dt**2 / self.geometry.cell_area
+            ) * boundary_laplacian
         space = ArraySpace(self.geometry.horizontal_shape, dtype=eta_old.dtype)
 
         def action(eta_value):
@@ -164,7 +185,7 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         )
         eta_new = linear.value
         pressure_x, pressure_y = self.geometry.layer_pressure_transport_force(
-            eta_new, epoch
+            eta_new, epoch, boundary_values=boundary_values
         )
         corrected = (
             x + self.gravity * dt * pressure_x,

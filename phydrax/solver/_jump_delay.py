@@ -19,6 +19,10 @@ from ._delay import DelayDifferentialProblem, DelayHistory, DelayValues, Derivat
 from ._delay_history import DelayHistoryView
 from ._delay_segmented import DelaySegmentArchive
 from ._diffrax_delay_backend import _DelayVectorField, solve_diffrax_delay
+from ._diffrax_state_packing import (
+    _prepare_diffrax_state_adapter,
+    DiffraxComplexStatePolicy,
+)
 from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
 
@@ -183,6 +187,12 @@ def _event_memory(
     time: Array,
     state: Array,
 ) -> DelayValues:
+    state_adapter = _prepare_diffrax_state_adapter(
+        problem.initial_state,
+        DiffraxComplexStatePolicy("native"),
+        None,
+        problem.state_geometry,
+    )
     context = _DelayVectorField(
         function=problem.drift,
         initial_history=problem.history,
@@ -191,6 +201,8 @@ def _event_memory(
         initial_time=problem.t0,
         state_shape=problem.state_shape,
         geometry=problem.state_geometry,
+        state_adapter=state_adapter,
+        backend_shape=state_adapter.backend_shape,
         computed_history=archive,
     )
     memory, _ = context._memory(time, state, problem.args)

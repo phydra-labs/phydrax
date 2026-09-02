@@ -26,6 +26,11 @@ from ._boundary import (
     FiniteElementPeriodicFacetPair,
     FiniteElementPeriodicTransform,
 )
+from ._cell_map import (
+    FiniteElementCellMapEvaluation,
+    prepare_finite_element_cell_map,
+    PreparedFiniteElementCellMap,
+)
 from ._constraints import (
     affine_dof_constraint,
     compose_finite_element_constraints,
@@ -160,11 +165,26 @@ from ._immersed_marker import (
     FiniteElementImmersedMarkerMapPlan,
     PreparedFiniteElementImmersedMarkerMap,
 )
+from ._interface_mortar3d import (
+    MortarInterfaceEvidence3D,
+    prepare_maxwell_mortar_interface_trace_3d,
+    prepare_scalar_mortar_interface_trace_3d,
+    PreparedMaxwellMortarInterfaceTrace3D,
+    PreparedScalarMortarInterfaceTrace3D,
+)
 from ._io import evaluate_finite_element_field, write_finite_element_field
 from ._low_order_auxiliary import (
     low_order_auxiliary_preconditioner_builder,
     LowOrderAuxiliaryOperatorPlan,
     LowOrderAuxiliaryPreconditioner,
+)
+from ._meshing import (
+    CADFEMCellFamily,
+    CADFEMMeshEvidence,
+    CADFEMMeshingPolicy,
+    CADFEMMeshResult,
+    CADMeshAssociation,
+    mesh_brep_for_fem,
 )
 from ._mixed_constraint import (
     mixed_inf_sup_diagnostic,
@@ -433,10 +453,24 @@ __all__ = [
     "discontinuous_element",
     "dirichlet_constraint",
     "FiniteElementCoordinateSpec",
+    "CADFEMCellFamily",
+    "CADFEMMeshingPolicy",
+    "CADFEMMeshEvidence",
+    "CADFEMMeshResult",
+    "CADMeshAssociation",
+    "mesh_brep_for_fem",
+    "FiniteElementCellMapEvaluation",
+    "prepare_finite_element_cell_map",
+    "PreparedFiniteElementCellMap",
     "FiniteElementDiscretization",
     "FiniteElementDofMap",
     "FiniteElementFieldSpec",
     "FiniteElementPlan",
+    "MortarInterfaceEvidence3D",
+    "PreparedMaxwellMortarInterfaceTrace3D",
+    "PreparedScalarMortarInterfaceTrace3D",
+    "prepare_maxwell_mortar_interface_trace_3d",
+    "prepare_scalar_mortar_interface_trace_3d",
     "FiniteElementImmersedMarkerMapPlan",
     "PreparedFiniteElementImmersedMarkerMap",
     "HDGCondensationPlan",

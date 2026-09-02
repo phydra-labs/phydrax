@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._frozendict import frozendict
@@ -46,7 +47,12 @@ class OperatorLossContext:
     physical_batch: OperatorBatch
     physical_targets: OperatorTargetBatch
     normalization: Any = None
+    case_log_weights: Array | None = None
+    case_mask: Array | None = None
+    sampling_probabilities: Array | None = None
     task: Any = None
+    target_execution_prediction: OperatorPrediction | None = None
+    target_physical_prediction: OperatorPrediction | None = None
 
     def view(
         self,
@@ -369,13 +375,19 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
 
 @dataclass(frozen=True)
 class OperatorLossTerm(AbstractOperatorLossTerm):
-    """Adapt a custom scalar callable with an explicit coordinate/value space."""
+    """Adapt a custom scalar or explicit per-case callable.
+
+    Canonical dataset case weights make scalar callbacks ambiguous. Weighted
+    training therefore requires ``case_reduction="per_case"`` and a ``(case,)``
+    result; scalar callbacks fail closed rather than silently dropping weights.
+    """
 
     name: str
     fn: Callable[..., Array]
     weight: float = 1.0
     identity: str | None = None
     space: Literal["execution", "physical"] = "physical"
+    case_reduction: Literal["scalar", "per_case"] = "scalar"
 
     def __post_init__(self):
         if not self.name:
@@ -386,6 +398,8 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
             raise ValueError("Operator loss term weight must be finite.")
         if self.space not in ("execution", "physical"):
             raise ValueError("Loss space must be 'execution' or 'physical'.")
+        if self.case_reduction not in ("scalar", "per_case"):
+            raise ValueError("case_reduction must be 'scalar' or 'per_case'.")
 
     def __call__(
         self,
@@ -412,7 +426,28 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
             training=training,
             context=context,
         )
-        return jnp.asarray(self.weight, dtype=jnp.asarray(value).dtype) * value
+        array = jnp.asarray(value)
+        weighted_cases = context.case_log_weights is not None
+        if self.case_reduction == "per_case":
+            expected = (selected_batch.case_shape[0],)
+            if array.shape != expected:
+                raise ValueError(
+                    "Custom per-case operator losses must return shape "
+                    f"{expected}; got {array.shape}."
+                )
+            array = _weighted_case_reduction(array, context, "mean")
+        elif weighted_cases:
+            raise ValueError(
+                "A scalar custom OperatorLossTerm cannot consume nonuniform/masked "
+                "case weights. Declare case_reduction='per_case' and return one "
+                "value per case."
+            )
+        elif array.ndim != 0:
+            raise ValueError(
+                "Custom scalar operator losses must return a scalar unless "
+                "case_reduction='per_case'."
+            )
+        return jnp.asarray(self.weight, dtype=array.dtype) * array
 
     @property
     def fingerprint(self) -> str:
@@ -430,6 +465,7 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
                 "weight": self.weight,
                 "identity": identity,
                 "space": self.space,
+                "case_reduction": self.case_reduction,
             },
             allow_nan=False,
             sort_keys=True,
@@ -509,15 +545,16 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
         expanded_mask = mask.reshape(mask.shape + trailing)
         predicted_values = jnp.where(expanded_mask, predicted.values, 0.0)
         target_values = jnp.where(expanded_mask, truth.values, 0.0)
-        value = operator_l2_loss(
+        case_values = operator_l2_loss(
             predicted_values,
             target_values,
             query,
             relative=self.relative,
             squared=self.squared,
-            reduction=self.reduction,
+            reduction="none",
             eps=self.epsilon,
         )
+        value = _weighted_case_reduction(case_values, context, self.reduction)
         return jnp.asarray(self.weight, dtype=jnp.asarray(value).dtype) * value
 
     @property
@@ -685,6 +722,48 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
             separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _weighted_case_reduction(
+    values: Array,
+    context: OperatorLossContext,
+    reduction: Literal["mean", "sum", "none"],
+    /,
+) -> Array:
+    if context.case_log_weights is None:
+        return jnp.sum(values) if reduction == "sum" else jnp.mean(values)
+    log_weights = jnp.asarray(context.case_log_weights, dtype=values.dtype)
+    mask = (
+        jnp.ones(log_weights.shape, dtype=bool)
+        if context.case_mask is None
+        else jnp.asarray(context.case_mask, dtype=bool)
+    )
+    probabilities = (
+        jnp.ones(log_weights.shape, dtype=values.dtype)
+        if context.sampling_probabilities is None
+        else jnp.asarray(context.sampling_probabilities, dtype=values.dtype)
+    )
+    if (
+        log_weights.shape != values.shape
+        or mask.shape != values.shape
+        or probabilities.shape != values.shape
+    ):
+        raise ValueError("Case weights, mask, and sampling probabilities must align.")
+    active = mask & jnp.isfinite(log_weights) & (probabilities > 0.0)
+    maximum = jnp.max(jnp.where(active, log_weights, -jnp.inf))
+    weights = jnp.where(
+        active,
+        jnp.exp(log_weights - maximum) / probabilities,
+        0.0,
+    )
+    mass = jnp.sum(weights)
+    weights = eqx.error_if(
+        weights,
+        ~jnp.isfinite(mass) | (mass <= 0.0),
+        "Weighted operator reduction requires positive finite case mass.",
+    )
+    normalized = weights / mass
+    return oe.contract("i,i->", normalized, values.reshape((-1,)))
 
 
 __all__ = [

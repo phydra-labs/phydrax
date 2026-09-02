@@ -14,8 +14,16 @@ from opt_einsum import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._background import FLRWBackground
 from ._closure import ScientificArtifactEnvelope
+from ._cmb import CmbSpectrumTable
 from ._parity import ParityProfile
+from ._products import (
+    CosmologyProductProvenance,
+    LinearTransferDescriptor,
+    LinearTransferTable,
+    ThermodynamicsHistory,
+)
 
 
 class NativeThermodynamicsResult(StrictModule):
@@ -449,6 +457,622 @@ class RestrictedScalarTransferPlan(StrictModule, NonTrainableState):
         )
 
 
+class ScalarEinsteinBoltzmannEvidence(StrictModule):
+    einstein_constraint_residual: Array
+    tight_coupling_overlap_error: Array
+    hierarchy_tail_amplitude: Array
+    line_of_sight_quadrature_error: Array
+    transition_schedule_valid: Array
+    finite: Array
+    successful: Array
+
+
+class ScalarEinsteinBoltzmannResult(StrictModule):
+    transfer: ScalarTransferResult
+    temperature_source: Array
+    polarization_source: Array
+    temperature_transfer: Array
+    polarization_transfer: Array
+    transfer_table: LinearTransferTable
+    cmb_spectra: CmbSpectrumTable
+    evidence: ScalarEinsteinBoltzmannEvidence
+    successful: Array
+    plan_id: str = eqx.field(static=True)
+
+
+def _line_of_sight_transfers(
+    delta_time: Array,
+    temperature_source: Array,
+    polarization_source: Array,
+    radial: Array,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    trapezoid_weights = jnp.concatenate(
+        (
+            delta_time[:1] / 2.0,
+            (delta_time[:-1] + delta_time[1:]) / 2.0,
+            delta_time[-1:] / 2.0,
+        )
+    )
+    left_weights = jnp.concatenate((delta_time, jnp.zeros((1,), dtype=delta_time.dtype)))
+    temperature_transfer = contract(
+        "t,tk,lkt->lk", trapezoid_weights, temperature_source, radial
+    )
+    polarization_transfer = contract(
+        "t,tk,lkt->lk", trapezoid_weights, polarization_source, radial
+    )
+    left_temperature = contract("t,tk,lkt->lk", left_weights, temperature_source, radial)
+    left_polarization = contract(
+        "t,tk,lkt->lk", left_weights, polarization_source, radial
+    )
+    temperature_error = jnp.max(jnp.abs(temperature_transfer - left_temperature))
+    polarization_error = jnp.max(jnp.abs(polarization_transfer - left_polarization))
+    error = jnp.maximum(temperature_error, polarization_error)
+    finite = jnp.isfinite(temperature_error) & jnp.isfinite(polarization_error)
+    return temperature_transfer, polarization_transfer, error, finite
+
+
+class ScalarEinsteinBoltzmannPlan(StrictModule, NonTrainableState):
+    """Compile the bounded native flat scalar synchronous-gauge hierarchy."""
+
+    background: FLRWBackground
+    thermodynamics: ThermodynamicsHistory
+    wavenumbers: Array
+    layout: ScalarHierarchyLayout
+    transitions: ApproximationTransitionPolicy
+    multipoles: Array
+    multipole_values: tuple[int, ...] = eqx.field(static=True)
+    baryon_matter_fraction: float = eqx.field(static=True)
+    constraint_tolerance: float = eqx.field(static=True)
+    overlap_tolerance: float = eqx.field(static=True)
+    tail_tolerance: float = eqx.field(static=True)
+    line_of_sight_quadrature_tolerance: float = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        background: FLRWBackground,
+        thermodynamics: ThermodynamicsHistory,
+        wavenumbers: ArrayLike,
+        layout: ScalarHierarchyLayout,
+        transitions: ApproximationTransitionPolicy,
+        multipoles: ArrayLike,
+        /,
+        *,
+        baryon_matter_fraction: float = 0.158,
+        constraint_tolerance: float = 1.0e2,
+        overlap_tolerance: float | None = None,
+        tail_tolerance: float = 1.0,
+        line_of_sight_quadrature_tolerance: float = 1.0e-2,
+    ):
+        if not isinstance(background, FLRWBackground):
+            raise TypeError("background must be an FLRWBackground.")
+        if not isinstance(thermodynamics, ThermodynamicsHistory):
+            raise TypeError(
+                "thermodynamics must be a provenance-bearing ThermodynamicsHistory."
+            )
+        if not isinstance(layout, ScalarHierarchyLayout):
+            raise TypeError("layout must be a ScalarHierarchyLayout.")
+        if not isinstance(transitions, ApproximationTransitionPolicy):
+            raise TypeError("transitions must be an ApproximationTransitionPolicy.")
+        if background.scale.scale_id != thermodynamics.scale.scale_id:
+            raise ValueError("Background and thermodynamics scale identities disagree.")
+        if float(np.asarray(background.curvature_density)) != 0.0:
+            raise ValueError("Native scalar Einstein-Boltzmann execution is flat-FLRW.")
+        k = jnp.asarray(wavenumbers, dtype=thermodynamics.scale_factors.dtype)
+        ell_host = np.asarray(multipoles, dtype=int).reshape((-1,))
+        baryon = float(baryon_matter_fraction)
+        constraint = float(constraint_tolerance)
+        overlap = (
+            transitions.overlap_tolerance
+            if overlap_tolerance is None
+            else float(overlap_tolerance)
+        )
+        tail = float(tail_tolerance)
+        line_of_sight = float(line_of_sight_quadrature_tolerance)
+        if (
+            k.ndim != 1
+            or k.size < 2
+            or bool(jnp.any(~jnp.isfinite(k)))
+            or bool(jnp.any(k <= 0.0))
+            or bool(jnp.any(jnp.diff(k) <= 0.0))
+            or ell_host.size < 1
+            or np.any(ell_host < 2)
+            or np.any(np.diff(ell_host) <= 0)
+            or any(
+                not np.isfinite(value) or value <= 0.0
+                for value in (constraint, overlap, tail, line_of_sight)
+            )
+            or not 0.0 < baryon < 1.0
+        ):
+            raise ValueError(
+                "Scalar Einstein-Boltzmann coordinates or policy are invalid."
+            )
+        self.background = background
+        self.thermodynamics = thermodynamics
+        self.wavenumbers = k
+        self.layout = layout
+        self.transitions = transitions
+        self.multipoles = jnp.asarray(ell_host, dtype=jnp.int32)
+        self.multipole_values = tuple(int(value) for value in ell_host)
+        self.baryon_matter_fraction = baryon
+        self.constraint_tolerance = constraint
+        self.overlap_tolerance = overlap
+        self.tail_tolerance = tail
+        self.line_of_sight_quadrature_tolerance = line_of_sight
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "native-scalar-einstein-boltzmann",
+                "background": background.model_form_id,
+                "thermodynamics": thermodynamics.provenance.provenance_id,
+                "layout": layout.layout_id,
+                "transitions": transitions.policy_id,
+                "wavenumbers": np.asarray(k).tolist(),
+                "multipoles": ell_host.tolist(),
+                "baryon_matter_fraction": baryon,
+                "constraint_tolerance": constraint,
+                "overlap_tolerance": overlap,
+                "tail_tolerance": tail,
+                "line_of_sight_quadrature_tolerance": line_of_sight,
+            }
+        )
+
+    def prepare(self, /) -> "PreparedScalarEinsteinBoltzmann":
+        return PreparedScalarEinsteinBoltzmann(self)
+
+
+class PreparedScalarEinsteinBoltzmann(StrictModule):
+    __hash__ = object.__hash__
+
+    plan: ScalarEinsteinBoltzmannPlan
+    conformal_times: Array
+    transition_phases: Array
+    radial: "FlatRadialKernelPlan"
+    provenance: CosmologyProductProvenance
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: ScalarEinsteinBoltzmannPlan, /):
+        scale = plan.thermodynamics.scale_factors
+        inverse_conformal_rate = 1.0 / (scale**2 * plan.background.hubble(scale))
+        increments = (
+            0.5
+            * (inverse_conformal_rate[:-1] + inverse_conformal_rate[1:])
+            * jnp.diff(scale)
+        )
+        conformal = jnp.concatenate(
+            (jnp.zeros((1,), dtype=scale.dtype), jnp.cumsum(increments))
+        )
+        phases = plan.transitions.phases(scale)
+        maximum_ell = int(np.max(np.asarray(plan.multipoles)))
+        provenance = CosmologyProductProvenance(
+            producer="phydrax-native",
+            producer_version="scalar-einstein-boltzmann",
+            model_form_id=plan.background.model_form_id,
+            request_id=plan.plan_id,
+            numerical_policy_id=canonical_fingerprint(
+                {
+                    "kind": "fixed-scalar-hierarchy",
+                    "layout": plan.layout.layout_id,
+                    "transitions": plan.transitions.policy_id,
+                    "constraint_tolerance": plan.constraint_tolerance,
+                    "overlap_tolerance": plan.overlap_tolerance,
+                    "tail_tolerance": plan.tail_tolerance,
+                    "line_of_sight_quadrature_tolerance": (
+                        plan.line_of_sight_quadrature_tolerance
+                    ),
+                }
+            ),
+            physics_policy_id="flat-synchronous-scalar-adiabatic-photon-polarization-massless-relic",
+            scale_id=plan.background.scale.scale_id,
+            source_kind="native",
+            differentiation=plan.thermodynamics.provenance.differentiation,
+            parent_product_ids=(plan.thermodynamics.provenance.provenance_id,),
+        )
+        self.plan = plan
+        self.conformal_times = conformal
+        self.transition_phases = phases
+        self.radial = FlatRadialKernelPlan(maximum_ell)
+        self.provenance = provenance
+        self.prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-native-scalar-einstein-boltzmann",
+                "plan": plan.plan_id,
+                "provenance": provenance.provenance_id,
+            }
+        )
+
+    def _indices(self, /) -> tuple[int, int, int]:
+        photon = 5
+        polarization = photon + self.plan.layout.photon_order + 1
+        relic = polarization + self.plan.layout.polarization_order + 1
+        return photon, polarization, relic
+
+    def _initial_states(self, /) -> Array:
+        plan = self.plan
+        photon, polarization, relic = self._indices()
+        initial_scale = plan.thermodynamics.scale_factors[0]
+        radiation = jnp.maximum(plan.background.radiation_density, 1.0e-30)
+        conformal = initial_scale / (
+            plan.background.hubble_constant * jnp.sqrt(radiation)
+        )
+
+        def one_mode(k):
+            x = k * conformal
+            h = x * x
+            state = jnp.zeros((plan.layout.state_size,), dtype=k.dtype)
+            state = state.at[0].set(h)
+            state = state.at[1].set(1.0 - h / 12.0)
+            state = state.at[2].set(-0.5 * h)
+            state = state.at[3].set(-0.5 * h)
+            state = state.at[4].set(-k * x * x / 18.0)
+            state = state.at[photon].set(-2.0 * h / 3.0)
+            state = state.at[photon + 1].set(-x * h / 18.0)
+            state = state.at[photon + 2].set(h / 30.0)
+            state = state.at[polarization + 2].set(h / 120.0)
+            state = state.at[relic].set(-2.0 * h / 3.0)
+            state = state.at[relic + 1].set(-x * h / 18.0)
+            state = state.at[relic + 2].set(h / 15.0)
+            return state
+
+        return jax.vmap(one_mode)(plan.wavenumbers)
+
+    def _rate(self, scale_factor: Array, states: Array, /) -> Array:
+        plan = self.plan
+        layout = plan.layout
+        photon, polarization, relic = self._indices()
+        hubble = plan.background.hubble(scale_factor)
+        conformal_hubble = scale_factor * hubble
+        denominator = scale_factor**2 * hubble
+        matter_fraction = plan.background.matter_fraction(scale_factor)
+        radiation_fraction = plan.background.radiation_fraction(scale_factor)
+        opacity = jnp.interp(
+            scale_factor,
+            plan.thermodynamics.scale_factors,
+            plan.thermodynamics.opacity_derivative,
+        )
+
+        def one_mode(k, state):
+            rate = jnp.zeros_like(state)
+            cold_baryon = (1.0 - plan.baryon_matter_fraction) * state[
+                2
+            ] + plan.baryon_matter_fraction * state[3]
+            radiation_density = 0.5 * (state[photon] + state[relic])
+            hdot = 2.0 * k * k * state[1] / jnp.maximum(
+                conformal_hubble, 1.0e-30
+            ) - 3.0 * conformal_hubble * (
+                matter_fraction * cold_baryon + radiation_fraction * radiation_density
+            )
+            etadot = (
+                1.5
+                * conformal_hubble**2
+                * (
+                    matter_fraction * plan.baryon_matter_fraction * state[4]
+                    + radiation_fraction * k * (state[photon + 1] + state[relic + 1])
+                )
+                / jnp.maximum(k * k, 1.0e-30)
+            )
+            rate = rate.at[0].set(hdot)
+            rate = rate.at[1].set(etadot)
+            rate = rate.at[2].set(-0.5 * hdot)
+            rate = rate.at[3].set(-state[4] - 0.5 * hdot)
+            sound_speed_squared = (
+                5.0e-5
+                * jnp.interp(
+                    scale_factor,
+                    plan.thermodynamics.scale_factors,
+                    plan.thermodynamics.baryon_temperature,
+                )
+                / jnp.maximum(plan.thermodynamics.baryon_temperature[0], 1.0e-30)
+            )
+            photon_velocity = 0.75 * k * state[photon + 1]
+            rate = rate.at[4].set(
+                -conformal_hubble * state[4]
+                + sound_speed_squared * k * k * state[3]
+                + opacity * (photon_velocity - state[4])
+            )
+            rate = rate.at[photon].set(-k * state[photon + 1] - 2.0 * hdot / 3.0)
+            rate = rate.at[photon + 1].set(
+                k * (state[photon] - 2.0 * state[photon + 2]) / 3.0
+                - opacity
+                * (state[photon + 1] - 4.0 * state[4] / jnp.maximum(3.0 * k, 1.0e-30))
+            )
+            quadrupole = (
+                state[photon + 2] + state[polarization] + state[polarization + 2]
+            ) / 8.0
+            for ell in range(2, layout.photon_order + 1):
+                lower = state[photon + ell - 1]
+                upper = (
+                    state[photon + ell + 1]
+                    if ell < layout.photon_order
+                    else (
+                        (2.0 * ell + 1.0)
+                        * state[photon + ell]
+                        / jnp.maximum(k * self.conformal_times[-1], 1.0)
+                        - lower
+                    )
+                )
+                rate = rate.at[photon + ell].set(
+                    k * (ell * lower - (ell + 1.0) * upper) / (2.0 * ell + 1.0)
+                    - opacity * (state[photon + ell] - (quadrupole if ell == 2 else 0.0))
+                )
+            rate = rate.at[polarization].set(
+                -k * state[polarization + 1]
+                - opacity * (state[polarization] - 4.0 * quadrupole)
+            )
+            rate = rate.at[polarization + 1].set(
+                k * (state[polarization] - 2.0 * state[polarization + 2]) / 3.0
+                - opacity * state[polarization + 1]
+            )
+            for ell in range(2, layout.polarization_order + 1):
+                lower = state[polarization + ell - 1]
+                upper = (
+                    state[polarization + ell + 1]
+                    if ell < layout.polarization_order
+                    else (
+                        (2.0 * ell + 1.0)
+                        * state[polarization + ell]
+                        / jnp.maximum(k * self.conformal_times[-1], 1.0)
+                        - lower
+                    )
+                )
+                rate = rate.at[polarization + ell].set(
+                    k * (ell * lower - (ell + 1.0) * upper) / (2.0 * ell + 1.0)
+                    - opacity
+                    * (state[polarization + ell] - (quadrupole if ell == 2 else 0.0))
+                )
+            rate = rate.at[relic].set(-k * state[relic + 1] - 2.0 * hdot / 3.0)
+            rate = rate.at[relic + 1].set(
+                k * (state[relic] - 2.0 * state[relic + 2]) / 3.0
+            )
+            for ell in range(2, layout.relic_order + 1):
+                lower = state[relic + ell - 1]
+                upper = (
+                    state[relic + ell + 1]
+                    if ell < layout.relic_order
+                    else (
+                        (2.0 * ell + 1.0)
+                        * state[relic + ell]
+                        / jnp.maximum(k * self.conformal_times[-1], 1.0)
+                        - lower
+                    )
+                )
+                rate = rate.at[relic + ell].set(
+                    k * (ell * lower - (ell + 1.0) * upper) / (2.0 * ell + 1.0)
+                )
+            return rate / denominator
+
+        return jax.vmap(one_mode)(plan.wavenumbers, states)
+
+    def solve(self, primordial_power: ArrayLike, /) -> ScalarEinsteinBoltzmannResult:
+        plan = self.plan
+        scale = plan.thermodynamics.scale_factors
+        primordial = jnp.asarray(primordial_power, dtype=scale.dtype)
+        if primordial.shape != plan.wavenumbers.shape:
+            raise ValueError(
+                "Primordial scalar power must match the prepared wavenumber grid."
+            )
+        initial = self._initial_states()
+
+        def step(state, index):
+            start = scale[index]
+            end = scale[index + 1]
+            delta = end - start
+            first = self._rate(start, state)
+            midpoint = state + 0.5 * delta * first
+            candidate = state + delta * self._rate(0.5 * (start + end), midpoint)
+            return candidate, candidate
+
+        _, history = jax.lax.scan(step, initial, jnp.arange(scale.size - 1))
+        states = jnp.concatenate((initial[None, ...], history), axis=0)
+        finite_states = jnp.all(jnp.isfinite(states))
+        transfer = ScalarTransferResult(
+            scale,
+            plan.wavenumbers,
+            states,
+            self.transition_phases,
+            finite_states,
+            finite_states,
+        )
+        rates = jax.vmap(
+            lambda a, state: self._rate(a, state),
+            in_axes=(0, 0),
+        )(scale, states)
+        photon, polarization, relic = self._indices()
+        visibility = plan.thermodynamics.visibility[:, None]
+        opacity = plan.thermodynamics.opacity_derivative[:, None]
+        optical_increment = (
+            opacity
+            * jnp.concatenate((jnp.diff(scale), jnp.zeros((1,), dtype=scale.dtype)))[
+                :, None
+            ]
+        )
+        attenuation = jnp.exp(-jnp.cumsum(optical_increment[::-1], axis=0)[::-1])
+        temperature_source_tk = (
+            visibility
+            * (
+                0.25 * states[:, :, photon]
+                + states[:, :, 1]
+                + 0.75 * states[:, :, photon + 2]
+            )
+            + 0.5 * attenuation * rates[:, :, 0]
+        )
+        polarization_source_tk = (
+            visibility
+            * (
+                states[:, :, photon + 2]
+                + states[:, :, polarization]
+                + states[:, :, polarization + 2]
+            )
+            / 8.0
+        )
+        argument = (
+            plan.wavenumbers[:, None]
+            * (self.conformal_times[-1] - self.conformal_times)[None, :]
+        )
+        radial = self.radial.evaluate(argument)[plan.multipoles]
+        delta_time = jnp.diff(self.conformal_times)
+        (
+            temperature_transfer,
+            polarization_transfer,
+            los_error,
+            los_finite,
+        ) = _line_of_sight_transfers(
+            delta_time,
+            temperature_source_tk,
+            polarization_source_tk,
+            radial,
+        )
+        delta_log_k = jnp.diff(jnp.log(plan.wavenumbers))
+        k_weights = jnp.concatenate(
+            (
+                delta_log_k[:1] / 2.0,
+                (delta_log_k[:-1] + delta_log_k[1:]) / 2.0,
+                delta_log_k[-1:] / 2.0,
+            )
+        )
+        tt = (
+            4.0
+            * jnp.pi
+            * contract(
+                "k,k,lk,lk->l",
+                k_weights,
+                primordial,
+                temperature_transfer,
+                temperature_transfer,
+            )
+        )
+        te = (
+            4.0
+            * jnp.pi
+            * contract(
+                "k,k,lk,lk->l",
+                k_weights,
+                primordial,
+                temperature_transfer,
+                polarization_transfer,
+            )
+        )
+        ee = (
+            4.0
+            * jnp.pi
+            * contract(
+                "k,k,lk,lk->l",
+                k_weights,
+                primordial,
+                polarization_transfer,
+                polarization_transfer,
+            )
+        )
+        spectra_values = jnp.zeros((1, plan.multipoles.size, 4, 4), dtype=states.dtype)
+        spectra_values = spectra_values.at[0, :, 0, 0].set(tt)
+        spectra_values = spectra_values.at[0, :, 0, 1].set(te)
+        spectra_values = spectra_values.at[0, :, 1, 0].set(te)
+        spectra_values = spectra_values.at[0, :, 1, 1].set(ee)
+        descriptor = LinearTransferDescriptor(
+            ("cold_baryon", "total_matter"),
+            gauge="synchronous",
+            normalization="unit-primordial-curvature",
+        )
+        cold_baryon = (1.0 - plan.baryon_matter_fraction) * states[
+            :, :, 2
+        ] + plan.baryon_matter_fraction * states[:, :, 3]
+        total_matter = plan.background.matter_fraction(scale)[
+            :, None
+        ] * cold_baryon + plan.background.radiation_fraction(scale)[:, None] * 0.5 * (
+            states[:, :, photon] + states[:, :, relic]
+        )
+        transfer_table = LinearTransferTable(
+            scale,
+            plan.wavenumbers,
+            jnp.stack((cold_baryon, total_matter), axis=0),
+            descriptor,
+            plan.background.scale,
+            self.provenance,
+            plan.thermodynamics.realization,
+        )
+        cmb_spectra = CmbSpectrumTable(
+            plan.multipole_values,
+            spectra_values,
+            ("scalar",),
+            self.provenance,
+            plan.thermodynamics.realization,
+            lensing_state="unlensed",
+            nonlinear_source_id="none",
+        )
+        hubble_conformal = scale * plan.background.hubble(scale)
+        radiation = 0.5 * (states[:, :, photon] + states[:, :, relic])
+        constraint = (
+            plan.wavenumbers[None, :] ** 2 * states[:, :, 1]
+            - 0.5 * hubble_conformal[:, None] * rates[:, :, 0]
+            - 1.5
+            * hubble_conformal[:, None] ** 2
+            * (
+                plan.background.matter_fraction(scale)[:, None] * cold_baryon
+                + plan.background.radiation_fraction(scale)[:, None] * radiation
+            )
+        )
+        constraint_residual = jnp.max(jnp.abs(constraint)) / jnp.maximum(
+            jnp.max(jnp.abs(plan.wavenumbers[None, :] ** 2 * states[:, :, 1])),
+            1.0,
+        )
+        tight_relation = states[:, :, photon + 1] - 4.0 * states[:, :, 4] / (
+            3.0 * plan.wavenumbers[None, :]
+        )
+        overlap_error = jnp.max(
+            jnp.where(
+                self.transition_phases[:, None] <= 1,
+                jnp.abs(tight_relation),
+                0.0,
+            )
+        )
+        tail_amplitude = jnp.max(
+            jnp.maximum(
+                jnp.abs(states[:, :, photon + plan.layout.photon_order]),
+                jnp.maximum(
+                    jnp.abs(states[:, :, polarization + plan.layout.polarization_order]),
+                    jnp.abs(states[:, :, relic + plan.layout.relic_order]),
+                ),
+            )
+        )
+        finite = (
+            finite_states
+            & jnp.all(jnp.isfinite(temperature_transfer))
+            & jnp.all(jnp.isfinite(polarization_transfer))
+            & jnp.all(jnp.isfinite(spectra_values))
+            & los_finite
+        )
+        schedule_valid = jnp.all(self.transition_phases == plan.transitions.phases(scale))
+        successful = (
+            finite
+            & schedule_valid
+            & (constraint_residual <= plan.constraint_tolerance)
+            & (overlap_error <= plan.overlap_tolerance)
+            & (tail_amplitude <= plan.tail_tolerance)
+            & (los_error <= plan.line_of_sight_quadrature_tolerance)
+        )
+        evidence = ScalarEinsteinBoltzmannEvidence(
+            constraint_residual,
+            overlap_error,
+            tail_amplitude,
+            los_error,
+            schedule_valid,
+            finite,
+            successful,
+        )
+        return ScalarEinsteinBoltzmannResult(
+            transfer=transfer,
+            temperature_source=jnp.swapaxes(temperature_source_tk, 0, 1),
+            polarization_source=jnp.swapaxes(polarization_source_tk, 0, 1),
+            temperature_transfer=temperature_transfer,
+            polarization_transfer=polarization_transfer,
+            transfer_table=transfer_table,
+            cmb_spectra=cmb_spectra,
+            evidence=evidence,
+            successful=successful,
+            plan_id=self.prepared_id,
+        )
+
+
 class FlatRadialKernelPlan(StrictModule, NonTrainableState):
     maximum_multipole: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -561,9 +1185,13 @@ __all__ = [
     "LineOfSightSpectraResult",
     "NativeThermodynamicsPlan",
     "NativeThermodynamicsResult",
+    "PreparedScalarEinsteinBoltzmann",
     "RestrictedScalarTransferPlan",
     "ScalarEvolutionOperatorTable",
     "ScalarHierarchyLayout",
+    "ScalarEinsteinBoltzmannEvidence",
+    "ScalarEinsteinBoltzmannPlan",
+    "ScalarEinsteinBoltzmannResult",
     "ScalarTransferResult",
     "ThermodynamicsRateTable",
 ]

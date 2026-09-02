@@ -17,7 +17,7 @@ from ._bspline import (
     BSplineJetStencil,
 )
 from ._bspline_grid import BSplineGrid, TrainableBSplineGrid
-from ._bspline_grid_bank import BSplineGridBank
+from ._bspline_grid_bank import BSplineGridBank, TrainableBSplineGridBank
 from ._bspline_projection import (
     bspline_cross_gram,
     bspline_mass_matrix,
@@ -84,6 +84,7 @@ __all__ = [
     "BSplineGridBank",
     "BSplineGridTransfer",
     "TrainableBSplineGrid",
+    "TrainableBSplineGridBank",
     "RationalSplineJet",
     "TensorBSplineJetPlan",
     "ProjectionMethod",

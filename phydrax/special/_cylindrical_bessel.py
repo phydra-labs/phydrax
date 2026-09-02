@@ -572,14 +572,6 @@ def _yv_array(v: Array, x: Array) -> Array:
     return _jy_primal(v, x)[1]
 
 
-def _require_constant_order(v_tangent: Array | SymbolicZero) -> None:
-    if not isinstance(v_tangent, SymbolicZero):
-        raise TypeError(
-            "cylindrical Bessel functions are not differentiable with respect "
-            "to the order; differentiate with respect to x instead"
-        )
-
-
 def _j_zero_derivative(v: Array, x: Array) -> Array:
     x2 = x * x
     zero_order = -0.5 * x + x * x2 / 16.0
@@ -628,7 +620,6 @@ def _jv_jvp(
 ) -> tuple[Array, Array]:
     v, x = primals
     v_tangent, x_tangent = tangents
-    _require_constant_order(v_tangent)
     value = _jv_array(v, x)
     small_x = _exact_zero(x) | _positive_subnormal(x)
     recurrence_x = jnp.where(small_x, jnp.ones_like(x), x)
@@ -638,9 +629,18 @@ def _jv_jvp(
     derivative = order_term - _jv_array(v + 1.0, recurrence_x)
     derivative = jnp.where(small_x, _j_zero_derivative(v, x), derivative)
     derivative = jnp.where(jnp.isposinf(x), 0.0, derivative)
-    if isinstance(x_tangent, SymbolicZero):
-        return value, jnp.zeros_like(value)
-    return value, derivative * x_tangent
+    tangent = (
+        jnp.zeros_like(value)
+        if isinstance(x_tangent, SymbolicZero)
+        else derivative * x_tangent
+    )
+    if not isinstance(v_tangent, SymbolicZero):
+        from ._continuation import jv_order_derivative
+
+        tangent = (
+            tangent + jnp.real(jv_order_derivative(v, x)).astype(value.dtype) * v_tangent
+        )
+    return value, tangent
 
 
 def _yv_jvp(
@@ -649,7 +649,6 @@ def _yv_jvp(
 ) -> tuple[Array, Array]:
     v, x = primals
     v_tangent, x_tangent = tangents
-    _require_constant_order(v_tangent)
     value = _yv_array(v, x)
     zero = _exact_zero(x)
     subnormal = _positive_subnormal(x)
@@ -665,9 +664,18 @@ def _yv_jvp(
     derivative = order_term - _yv_array(v + 1.0, safe_x)
     derivative = jnp.where(small_x, _y_zero_derivative(v, x), derivative)
     derivative = jnp.where(jnp.isposinf(x), 0.0, derivative)
-    if isinstance(x_tangent, SymbolicZero):
-        return value, jnp.zeros_like(value)
-    return value, derivative * x_tangent
+    tangent = (
+        jnp.zeros_like(value)
+        if isinstance(x_tangent, SymbolicZero)
+        else derivative * x_tangent
+    )
+    if not isinstance(v_tangent, SymbolicZero):
+        from ._continuation import yv_order_derivative
+
+        tangent = (
+            tangent + jnp.real(yv_order_derivative(v, x)).astype(value.dtype) * v_tangent
+        )
+    return value, tangent
 
 
 _jv_array.defjvp(_jv_jvp, symbolic_zeros=True)
@@ -681,29 +689,41 @@ def _prepare(name: str, v: ArrayLike, x: ArrayLike) -> tuple[Array, Array]:
 
 
 def jv(v: ArrayLike, x: ArrayLike) -> Array:
-    """Cylindrical Bessel function of the first kind ``J_v(x)``."""
+    """Principal cylindrical Bessel function of the first kind ``J_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_jv
+
+        return complex_jv(v, x)
     return _jv_array(*_prepare("jv", v, x))
 
 
 def yv(v: ArrayLike, x: ArrayLike) -> Array:
-    """Cylindrical Bessel function of the second kind ``Y_v(x)``."""
+    """Principal cylindrical Bessel function of the second kind ``Y_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_yv
+
+        return complex_yv(v, x)
     return _yv_array(*_prepare("yv", v, x))
 
 
 def hankel1(v: ArrayLike, x: ArrayLike) -> Array:
-    """Outgoing cylindrical wave ``J_v(x) + i Y_v(x)``."""
+    """Outgoing principal cylindrical wave ``J_v(x) + i Y_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_hankel1
+
+        return complex_hankel1(v, x)
     v, x = _prepare("hankel1", v, x)
-    j_value = _jv_array(v, x)
-    y_value = _yv_array(v, x)
-    return complex_from_parts("hankel1", j_value, y_value)
+    return complex_from_parts("hankel1", _jv_array(v, x), _yv_array(v, x))
 
 
 def hankel2(v: ArrayLike, x: ArrayLike) -> Array:
-    """Incoming cylindrical wave ``J_v(x) - i Y_v(x)``."""
+    """Incoming principal cylindrical wave ``J_v(x) - i Y_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_hankel2
+
+        return complex_hankel2(v, x)
     v, x = _prepare("hankel2", v, x)
-    j_value = _jv_array(v, x)
-    y_value = _yv_array(v, x)
-    return complex_from_parts("hankel2", j_value, -y_value)
+    return complex_from_parts("hankel2", _jv_array(v, x), -_yv_array(v, x))
 
 
 __all__ = ["hankel1", "hankel2", "jv", "yv"]

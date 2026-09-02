@@ -18,7 +18,9 @@ from ._derivative import (
     prepare_sparse_linearization,
     PreparedSparseDerivative,
     SparseDerivativePlan,
+    SparseDerivativePrecisionPolicy,
     SparseDerivativeVerification,
+    SparseHessianContract,
     verify_sparse_derivative,
 )
 from ._linear import LinearAction, SparseCoordinateOperator, SparseLinearMap
@@ -50,7 +52,9 @@ __all__ = [
     "SparseDerivativeMode",
     "SparseDerivativePlan",
     "SparseDerivativeVerification",
+    "SparseDerivativePrecisionPolicy",
     "SparseHessianMode",
+    "SparseHessianContract",
     "SparseJacobianMode",
     "SparseLinearMap",
     "SparsePattern",

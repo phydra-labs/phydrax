@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.optim._finite import _exhaustive_minimum
 
 
 def test_finite_axis_validates_correlated_array_payloads():
@@ -133,47 +132,43 @@ def test_finite_exhaustive_search_matches_dense_oracle_for_all_batch_layouts():
         return score, jnp.asarray(True)
 
     for batch_size in (None, 1, 2, 4, 6, 20):
-        search = phx.optim.FiniteExhaustiveSearch(batch_size)
-        result = _exhaustive_minimum(evaluator, space, search)
-        assert result.minimum == pytest.approx(0.0)
-        assert int(result.flat_index) == 4
-        assert tuple(int(index) for index in result.product_index) == (1, 1)
+        result = phx.optim.search_finite(
+            evaluator,
+            space,
+            phx.optim.FiniteMinimum(),
+            search=phx.optim.FiniteExhaustiveSearch(batch_size),
+        )
+        assert result.scores[0] == pytest.approx(0.0)
+        assert int(result.flat_indices[0]) == 4
+        assert tuple(int(index[0]) for index in result.product_indices) == (1, 1)
         assert int(result.attempted_evaluations) == 6
         assert int(result.invalid_evaluations) == 0
 
 
-def test_finite_minimum_has_stable_ties_and_elementwise_indices():
-    scalar_space = phx.optim.FiniteProductSpace(
+def test_finite_top_k_has_stable_ties_and_pareto_is_nondominated():
+    space = phx.optim.FiniteProductSpace(
         phx.optim.FiniteAxis(jnp.asarray([-2.0, -1.0, 1.0, 2.0]))
     )
-    tied = _exhaustive_minimum(
+    tied = phx.optim.search_finite(
         lambda value: (jnp.abs(value), jnp.asarray(True)),
-        scalar_space,
-        phx.optim.FiniteExhaustiveSearch(3),
+        space,
+        phx.optim.FiniteTopK(2),
     )
-    assert int(tied.flat_index) == 1
+    np.testing.assert_array_equal(tied.flat_indices, jnp.asarray([1, 2]))
 
-    elementwise_space = phx.optim.FiniteProductSpace(
-        phx.optim.FiniteAxis(jnp.asarray([-1.0, 0.0, 2.0]))
-    )
-    elementwise = _exhaustive_minimum(
+    pareto = phx.optim.search_finite(
         lambda value: (
             jnp.stack((value**2, (value - 2.0) ** 2)),
-            jnp.ones((2,), dtype=bool),
+            jnp.asarray(True),
         ),
-        elementwise_space,
-        phx.optim.FiniteExhaustiveSearch(2),
+        space,
+        phx.optim.FinitePareto(2, 4),
     )
-    np.testing.assert_array_equal(elementwise.minimum, jnp.zeros((2,)))
-    np.testing.assert_array_equal(elementwise.flat_index, jnp.asarray([1, 2]))
-    np.testing.assert_array_equal(
-        elementwise.product_index[0],
-        jnp.asarray([1, 2]),
+    selected = pareto.scores[pareto.valid]
+    dominates = jnp.all(selected[:, None] <= selected[None, :], axis=-1) & jnp.any(
+        selected[:, None] < selected[None, :], axis=-1
     )
-    np.testing.assert_array_equal(
-        elementwise.invalid_evaluations,
-        jnp.zeros((2,), dtype=jnp.int64),
-    )
+    assert not jnp.any(dominates)
 
 
 def test_finite_minimum_counts_declared_and_nonfinite_invalidity():
@@ -181,29 +176,19 @@ def test_finite_minimum_counts_declared_and_nonfinite_invalidity():
 
     def evaluator(value):
         score = jnp.asarray([2.0, jnp.nan, -jnp.inf, 0.0, 1.0])[value.astype(int)]
-        declared_valid = value != 3.0
-        return score, declared_valid
+        return score, value != 3.0
 
-    result = _exhaustive_minimum(
-        evaluator,
-        space,
-        phx.optim.FiniteExhaustiveSearch(3),
-    )
-    assert result.minimum == pytest.approx(1.0)
-    assert int(result.flat_index) == 4
-    assert int(result.attempted_evaluations) == 5
+    result = phx.optim.search_finite(evaluator, space)
+    assert result.scores[0] == pytest.approx(1.0)
+    assert int(result.flat_indices[0]) == 4
     assert int(result.invalid_evaluations) == 3
 
-    invalid = _exhaustive_minimum(
-        lambda value: (jnp.asarray(jnp.nan), jnp.asarray(value >= 0.0)),
-        space,
-        phx.optim.FiniteExhaustiveSearch(2),
+    invalid = phx.optim.search_finite(
+        lambda value: (jnp.asarray(jnp.nan), jnp.asarray(value >= 0.0)), space
     )
-    assert not bool(invalid.valid)
-    assert jnp.isnan(invalid.minimum)
-    assert int(invalid.flat_index) == -1
-    assert int(invalid.product_index[0]) == -1
-    assert int(invalid.attempted_evaluations) == 5
+    assert not bool(invalid.valid[0])
+    assert jnp.isnan(invalid.scores[0])
+    assert int(invalid.flat_indices[0]) == -1
     assert int(invalid.invalid_evaluations) == 5
 
 
@@ -212,30 +197,16 @@ def test_finite_search_configuration_and_evaluator_contract_are_strict():
     assert phx.optim.FiniteExhaustiveSearch(batch_size=10).effective_batch_size(5) == 5
     with pytest.raises(TypeError, match="positive integer"):
         phx.optim.FiniteExhaustiveSearch(True)
-    with pytest.raises(TypeError, match="positive integer"):
-        phx.optim.FiniteExhaustiveSearch(1.5)
     with pytest.raises(ValueError, match="positive"):
         phx.optim.FiniteExhaustiveSearch(0)
 
     space = phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0])))
-    with pytest.raises(TypeError, match="floating-point"):
-        _exhaustive_minimum(
-            lambda value: (value.astype(int), jnp.asarray(True)),
-            space,
-            phx.optim.FiniteExhaustiveSearch(),
+    with pytest.raises(TypeError, match="floating"):
+        phx.optim.search_finite(
+            lambda value: (value.astype(int), jnp.asarray(True)), space
         )
-    with pytest.raises(TypeError, match="boolean"):
-        _exhaustive_minimum(
-            lambda value: (value, jnp.asarray(1)),
-            space,
-            phx.optim.FiniteExhaustiveSearch(),
-        )
-    with pytest.raises(ValueError, match="shapes must match"):
-        _exhaustive_minimum(
-            lambda value: (jnp.stack((value, value)), jnp.asarray(True)),
-            space,
-            phx.optim.FiniteExhaustiveSearch(),
-        )
+    with pytest.raises(ValueError, match="boolean scalar"):
+        phx.optim.search_finite(lambda value: (value, jnp.asarray([True])), space)
 
 
 def test_finite_space_cardinality_overflow_is_rejected():

@@ -8,7 +8,7 @@ import phydrax as phx
 
 
 def _cell():
-    return phx.discretization.ParticleCell(
+    return phx.discretization.PeriodicCell(
         [[3.0, 0.0, 0.0], [0.4, 2.8, 0.0], [0.2, 0.1, 3.1]]
     )
 
@@ -119,7 +119,7 @@ def test_cell_stress_is_finite_symmetric_energy_derivative():
 
 def test_periodic_learned_graph_execution_is_explicit_and_finite():
     units = phx.atomistic.AtomisticUnitSystem.reduced()
-    cell = phx.discretization.ParticleCell(5.0 * jnp.eye(3))
+    cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = phx.atomistic.AtomisticSystemPlan(
         [0, 1],
         [1, 1],

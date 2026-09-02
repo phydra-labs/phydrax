@@ -36,7 +36,7 @@ from ..linalg.eigen import (
     ReducedRitzResult,
     solve_reduced_ritz,
 )
-from ..operators import conjugate
+from ..operators.linalg._ops import conjugate
 
 
 FormDensity = Callable[[DomainFunction, DomainFunction], DomainFunction]

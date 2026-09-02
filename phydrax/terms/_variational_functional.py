@@ -12,13 +12,14 @@ import jax.numpy as jnp
 
 from ..domain import Boundary, DomainFunction
 from ..integration import (
+    AdaptiveIntegration,
     CallerIntegration,
     ComponentTarget,
     FixedIntegration,
     IntegrationSource,
     PerStepIntegration,
 )
-from ..operators import grad
+from ..operators.differential._domain_ops import grad
 from ..variational import (
     Functional,
     FunctionalContext,
@@ -29,12 +30,13 @@ from ._integral_functional import IntegralFunctional
 
 
 def _source_target(source: IntegrationSource, /):
-    if isinstance(source, PerStepIntegration | CallerIntegration):
+    if isinstance(source, (PerStepIntegration, CallerIntegration, AdaptiveIntegration)):
         return source.target
     if isinstance(source, FixedIntegration):
         return source.realization.target
     raise TypeError(
-        "Functional bindings support fixed, per-step, or caller integration sources."
+        "Functional bindings support fixed, per-step, caller, or typed adaptive "
+        "integration sources."
     )
 
 

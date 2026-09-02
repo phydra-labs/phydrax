@@ -25,6 +25,7 @@ from ._dem_contact import (
     PreparedDEMContactModel,
 )
 from ._dem_contact_state import DEMContactEvaluationContext
+from ._dem_liquid import DEMBarrierCapillaryPlan
 from ._pair_state import (
     IMPLICIT_BARRIER_INTERACTION,
     particle_wall_interaction_keys,
@@ -421,6 +422,36 @@ class DEMBoundaryResponse(StrictModule):
     material_id: int = eqx.field(static=True)
     barrier_id: str = eqx.field(static=True)
 
+    @property
+    def capillary_births(self) -> Array:
+        return self.contact.cohesion_births
+
+    @property
+    def capillary_ruptures(self) -> Array:
+        return self.contact.cohesion_ruptures
+
+    @property
+    def capillary_bridge_volume(self) -> Array:
+        components = self.contact.next_history.cohesion.components
+        if not components:
+            return jnp.zeros_like(
+                self.contact.cohesion_births, dtype=self.particle_force.dtype
+            )
+        return jnp.sum(
+            jnp.stack(tuple(value.bridge_volume for value in components)), axis=0
+        )
+
+    @property
+    def capillary_surface_area(self) -> Array:
+        return self.contact.bridge_surface_area
+
+    @property
+    def capillary_fit_margin(self) -> Array:
+        return jnp.minimum(
+            self.contact.cohesion_model_validity_margin,
+            self.contact.cohesion_fit_extrapolation_margin,
+        )
+
 
 def evaluate_dem_barrier(
     barrier: ImplicitDEMBarrier,
@@ -435,6 +466,7 @@ def evaluate_dem_barrier(
     args: Any = None,
     body_properties: Any = None,
     normal_tolerance: float = 1.0e-12,
+    capillary_plan: DEMBarrierCapillaryPlan | None = None,
     frame_tolerance: float = 1.0e-10,
 ) -> DEMBoundaryResponse:
     """Evaluate one exact-SDF barrier with explicit contact-point motion."""
@@ -447,6 +479,11 @@ def evaluate_dem_barrier(
         raise TypeError("kinematics must be RigidSphereKinematics.")
     if not isinstance(contact_model, PreparedDEMContactModel):
         raise TypeError("contact_model must be a PreparedDEMContactModel.")
+    if capillary_plan is not None:
+        if not isinstance(capillary_plan, DEMBarrierCapillaryPlan):
+            raise TypeError("capillary_plan must be DEMBarrierCapillaryPlan or None.")
+        if capillary_plan.barrier_id != barrier.barrier_id:
+            raise ValueError("Barrier capillary binding does not match the barrier.")
     tolerance = float(normal_tolerance)
     if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("normal_tolerance must be finite and positive.")
@@ -522,11 +559,17 @@ def evaluate_dem_barrier(
     valid = active_particles & ~degenerate
     arm = -clearance[:, None] * normal
     contact_point = position + arm
-    if isinstance(contact_model.plan.normal, HertzNormalContactPlan):
+    requires_curvature = isinstance(
+        contact_model.plan.normal, HertzNormalContactPlan
+    ) or (
+        capillary_plan is not None
+        and capillary_plan.geometry_policy == "isotropic_curvature"
+    )
+    if requires_curvature:
         capabilities = {value.value for value in geometry.capabilities}
         if "contact_curvature" not in capabilities:
             raise ValueError(
-                "Hertz barrier contact requires certified contact curvature."
+                "Hertz/isotropic-capillary barrier contact requires certified curvature."
             )
         curvature = geometry.contact_curvature(contact_point)
         principal = curvature.principal_curvatures
@@ -541,27 +584,39 @@ def evaluate_dem_barrier(
         signed_curvature = (
             -wall_curvature if barrier.side is DEMBarrierSide.INTERIOR else wall_curvature
         )
-        curvature_denominator = 1.0 / radii + signed_curvature
-        curvature_valid = (
-            curvature.valid
-            & isotropic
-            & jnp.isfinite(curvature_denominator)
-            & (curvature_denominator > tolerance)
-        )
-        effective_radius = jnp.where(curvature_valid, 1.0 / curvature_denominator, 0.0)
-        curvature_margin = jnp.min(
-            jnp.where(
-                active_particles,
-                jnp.minimum(
-                    curvature.regularity_margin,
-                    jnp.minimum(
-                        curvature_denominator,
-                        tolerance - isotropy_defect,
-                    ),
-                ),
-                jnp.inf,
+        if (
+            capillary_plan is not None
+            and capillary_plan.geometry_policy == "isotropic_curvature"
+        ):
+            effective_radius, local_margin, curvature_valid = (
+                capillary_plan.effective_radius(
+                    radii,
+                    signed_curvature,
+                    isotropy_defect,
+                    curvature.valid & isotropic,
+                    tolerance=tolerance,
+                )
             )
-        )
+            local_margin = jnp.minimum(curvature.regularity_margin, local_margin)
+        else:
+            curvature_denominator = 1.0 / radii + signed_curvature
+            curvature_valid = (
+                curvature.valid
+                & isotropic
+                & jnp.isfinite(curvature_denominator)
+                & (curvature_denominator > tolerance)
+            )
+            effective_radius = jnp.where(
+                curvature_valid, 1.0 / curvature_denominator, 0.0
+            )
+            local_margin = jnp.minimum(
+                curvature.regularity_margin,
+                jnp.minimum(
+                    curvature_denominator,
+                    tolerance - isotropy_defect,
+                ),
+            )
+        curvature_margin = jnp.min(jnp.where(active_particles, local_margin, jnp.inf))
         degenerate = degenerate | (active_particles & (overlap > 0.0) & ~curvature_valid)
         valid = active_particles & ~degenerate
     else:

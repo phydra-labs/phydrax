@@ -6,7 +6,7 @@ import phydrax as phx
 
 def test_periodic_nvt_segmented_workflow_is_replayable_end_to_end():
     units = phx.atomistic.AtomisticUnitSystem.reduced()
-    cell = phx.discretization.ParticleCell(4.0 * jnp.eye(3))
+    cell = phx.discretization.PeriodicCell(4.0 * jnp.eye(3))
     system = phx.atomistic.AtomisticSystemPlan(
         [0, 1, 2],
         [1, 1, 1],

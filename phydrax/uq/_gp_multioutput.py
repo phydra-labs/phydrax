@@ -15,7 +15,12 @@ from jaxtyping import Array, ArrayLike
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._strict import StrictModule
+from ._gp_actions import AbstractGaussianProcessActionPolicy
 from ._gp_backend import exact_gp_log_probability
+from ._gp_computation_aware import GaussianProcessComputationPolicy
+from ._gp_computation_structured import (
+    StructuredComputationAwareGaussianProcessFactor,
+)
 from ._gp_condition import _sample_gaussian_psd
 from ._predictive import PredictiveField, SampleAxis
 
@@ -621,6 +626,62 @@ class MultiOutputGaussianProcessDiscrepancy(StrictModule):
             mean=projection @ self.residual(physical_mean),
             covariance=covariance,
             variance=jnp.maximum(jnp.diag(covariance), 0.0),
+        )
+
+    def computation_factor(
+        self,
+        *,
+        state: MultiOutputGaussianProcessLikelihoodState,
+        actions: AbstractGaussianProcessActionPolicy,
+        computation: GaussianProcessComputationPolicy | None = None,
+        residual: ArrayLike | None = None,
+    ) -> StructuredComputationAwareGaussianProcessFactor:
+        """Prepare an action-projected heterotopic covariance factor."""
+        _validate_state(state, self.design)
+        policy = (
+            GaussianProcessComputationPolicy() if computation is None else computation
+        )
+        if not isinstance(policy, GaussianProcessComputationPolicy):
+            raise TypeError("computation must be a GaussianProcessComputationPolicy.")
+        return StructuredComputationAwareGaussianProcessFactor(
+            state.kernel.matrix(self.design, self.design),
+            state.observation_noise(self.design),
+            state.jitter,
+            actions,
+            residual=residual,
+            max_factorization_bytes=policy.max_factor_storage_bytes,
+        )
+
+    def computation_condition(
+        self,
+        physical_mean: ArrayLike,
+        query_design: MultiOutputDesign,
+        /,
+        *,
+        state: MultiOutputGaussianProcessLikelihoodState,
+        actions: AbstractGaussianProcessActionPolicy,
+        computation: GaussianProcessComputationPolicy | None = None,
+    ) -> MultiOutputGaussianProcessCondition:
+        """Condition heterotopic queries through action-projected observations."""
+        _validate_state(state, self.design)
+        _validate_design(query_design, output_names=self.output_names)
+        residual = self.residual(physical_mean)
+        factor = self.computation_factor(
+            state=state,
+            actions=actions,
+            computation=computation,
+            residual=residual,
+        )
+        mean, covariance, variance = factor.condition(
+            residual,
+            state.kernel.matrix(query_design, self.design),
+            state.kernel.matrix(query_design, query_design),
+        )
+        return MultiOutputGaussianProcessCondition(
+            design=query_design,
+            mean=mean,
+            covariance=covariance,
+            variance=variance,
         )
 
 

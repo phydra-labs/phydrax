@@ -20,7 +20,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..dynamics import TimeGrid
+from ..dynamics import DiscreteStepContext, TimeGrid
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
@@ -35,6 +35,7 @@ from ._trajectory import (
 
 
 DifferentialFlowStep: TypeAlias = Callable[[Array, Array, Array, Array, Any], ArrayLike]
+ILQRFlow: TypeAlias = Callable[[Array, Array, Array, Array, Array], Array]
 
 
 class ILQRStatus(IntEnum):
@@ -91,6 +92,7 @@ class ILQRPolicy(AbstractControlParameterization):
     nominal_controls: Array
     feedback: Array
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    case_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -113,14 +115,22 @@ class ILQRPolicy(AbstractControlParameterization):
         control_shape_ = tuple(int(size) for size in control_shape)
         state_size = int(np.prod(state_shape_))
         control_size = int(np.prod(control_shape_))
-        expected_states = (time_grid.num_times,) + state_shape_
-        expected_controls = (time_grid.num_steps,) + control_shape_
-        expected_feedback = (time_grid.num_steps, control_size, state_size)
-        if tuple(states.shape) != expected_states:
+        trailing_states = (time_grid.num_times,) + state_shape_
+        if (
+            states.ndim < len(trailing_states)
+            or tuple(states.shape[-len(trailing_states) :]) != trailing_states
+        ):
             raise ValueError(
-                f"ILQRPolicy nominal_states must have shape {expected_states}; "
-                f"got {states.shape}."
+                "ILQRPolicy nominal_states must end with "
+                f"{trailing_states}; got {states.shape}."
             )
+        case_shape_ = tuple(states.shape[: -len(trailing_states)])
+        expected_controls = case_shape_ + (time_grid.num_steps,) + control_shape_
+        expected_feedback = case_shape_ + (
+            time_grid.num_steps,
+            control_size,
+            state_size,
+        )
         if tuple(controls.shape) != expected_controls:
             raise ValueError(
                 f"ILQRPolicy nominal_controls must have shape {expected_controls}; "
@@ -136,6 +146,7 @@ class ILQRPolicy(AbstractControlParameterization):
         self.nominal_controls = controls
         self.feedback = gains
         self.state_shape = state_shape_
+        self.case_shape = case_shape_
         self.control_shape = control_shape_
         self.parameter_shape = (0,)
         self.parameterization_id = _identifier(policy_id, "ILQRPolicy policy_id")
@@ -146,10 +157,16 @@ class ILQRPolicy(AbstractControlParameterization):
         """Affine intercepts in the equivalent ``feedback @ state + b`` form."""
         state_size = int(np.prod(self.state_shape))
         control_size = int(np.prod(self.control_shape))
-        states = self.nominal_states[:-1].reshape((self.time_grid.num_steps, state_size))
-        controls = self.nominal_controls.reshape((self.time_grid.num_steps, control_size))
-        intercept = controls - oe.contract("tij,tj->ti", self.feedback, states)
-        return intercept.reshape((self.time_grid.num_steps,) + self.control_shape)
+        states = self.nominal_states[..., :-1, :].reshape(
+            self.case_shape + (self.time_grid.num_steps, state_size)
+        )
+        controls = self.nominal_controls.reshape(
+            self.case_shape + (self.time_grid.num_steps, control_size)
+        )
+        intercept = controls - oe.contract("...tij,...tj->...ti", self.feedback, states)
+        return intercept.reshape(
+            self.case_shape + (self.time_grid.num_steps,) + self.control_shape
+        )
 
     def evaluate(
         self,
@@ -161,12 +178,15 @@ class ILQRPolicy(AbstractControlParameterization):
         state: ArrayLike | None = None,
     ) -> Array:
         cases = tuple(int(size) for size in case_shape)
-        if cases:
-            raise ValueError("ILQRPolicy does not support batched control cases.")
-        parameters = jnp.asarray(coefficients)
-        if tuple(parameters.shape) != self.parameter_shape:
+        if cases != self.case_shape:
             raise ValueError(
-                "ILQRPolicy coefficients must be an empty array with shape (0,)."
+                f"ILQRPolicy case_shape must be {self.case_shape}; got {cases}."
+            )
+        parameters = jnp.asarray(coefficients)
+        expected_parameters = self.case_shape + self.parameter_shape
+        if tuple(parameters.shape) not in (self.parameter_shape, expected_parameters):
+            raise ValueError(
+                "ILQRPolicy coefficients must have an empty trailing parameter axis."
             )
         query = jnp.asarray(time)
         if jnp.issubdtype(query.dtype, jnp.complexfloating):
@@ -181,27 +201,32 @@ class ILQRPolicy(AbstractControlParameterization):
         )
         indices = jnp.searchsorted(self.time_grid.times, query, side="right") - 1
         indices = jnp.minimum(indices, self.time_grid.num_steps - 1)
-        nominal_controls = jnp.take(self.nominal_controls, indices, axis=0)
+        nominal_controls = jnp.take(
+            self.nominal_controls, indices, axis=len(self.case_shape)
+        )
         if state is None:
             return nominal_controls
 
         states = jnp.asarray(state)
-        expected_state_shape = tuple(query.shape) + self.state_shape
+        expected_state_shape = self.case_shape + tuple(query.shape) + self.state_shape
         if tuple(states.shape) != expected_state_shape:
             raise ValueError(
                 f"ILQRPolicy state must have shape {expected_state_shape}; "
                 f"got {states.shape}."
             )
-        nominal_states = jnp.take(self.nominal_states[:-1], indices, axis=0)
-        gains = jnp.take(self.feedback, indices, axis=0)
+        nominal_states = jnp.take(
+            self.nominal_states[..., :-1, :],
+            indices,
+            axis=len(self.case_shape),
+        )
+        gains = jnp.take(self.feedback, indices, axis=len(self.case_shape))
         state_size = int(np.prod(self.state_shape))
         control_size = int(np.prod(self.control_shape))
-        flat_delta = (states - nominal_states).reshape(tuple(query.shape) + (state_size,))
-        flat_gains = gains.reshape(tuple(query.shape) + (control_size, state_size))
+        prefix = self.case_shape + tuple(query.shape)
+        flat_delta = (states - nominal_states).reshape(prefix + (state_size,))
+        flat_gains = gains.reshape(prefix + (control_size, state_size))
         correction = oe.contract("...ij,...j->...i", flat_gains, flat_delta)
-        return nominal_controls + correction.reshape(
-            tuple(query.shape) + self.control_shape
-        )
+        return nominal_controls + correction.reshape(prefix + self.control_shape)
 
     def sample(
         self,
@@ -214,7 +239,12 @@ class ILQRPolicy(AbstractControlParameterization):
         return self.evaluate(coefficients, times, case_shape=case_shape)
 
     def __call__(self, time: ArrayLike, state: ArrayLike, /) -> Array:
-        return self.evaluate(jnp.empty((0,)), time, state=state)
+        return self.evaluate(
+            jnp.empty(self.case_shape + (0,)),
+            time,
+            case_shape=self.case_shape,
+            state=state,
+        )
 
 
 class ILQRDiagnostics(StrictModule):
@@ -346,7 +376,7 @@ def _flow_map(
     problem: ControlProblem,
     differential_flow: DifferentialControlFlow | None,
     /,
-) -> tuple[Callable[[Array, Array, Array, Array], Array], str, str]:
+) -> tuple[ILQRFlow, str, str]:
     dynamics = problem.dynamics
     if isinstance(dynamics, DiscreteControlDynamics):
         if differential_flow is not None:
@@ -354,10 +384,16 @@ def _flow_map(
                 "differential_flow must be None for DiscreteControlDynamics."
             )
 
-        def discrete_step(t0: Array, t1: Array, state: Array, control: Array) -> Array:
-            del t1
+        def discrete_step(
+            t0: Array,
+            t1: Array,
+            step_index: Array,
+            state: Array,
+            control: Array,
+        ) -> Array:
+            context = DiscreteStepContext(t0, t1, step_index)
             return dynamics.system.evaluate(
-                t0,
+                context,
                 state,
                 problem.args,
                 inputs=control,
@@ -373,7 +409,14 @@ def _flow_map(
             "DifferentialControlFlow for iLQR."
         )
 
-    def differential_step(t0: Array, t1: Array, state: Array, control: Array) -> Array:
+    def differential_step(
+        t0: Array,
+        t1: Array,
+        step_index: Array,
+        state: Array,
+        control: Array,
+    ) -> Array:
+        del step_index
         return differential_flow(t0, t1, state, control, problem.args)
 
     return (
@@ -422,7 +465,7 @@ def _trajectory_cost(
 def _open_loop_rollout(
     problem: ControlProblem,
     controls: Array,
-    flow: Callable[[Array, Array, Array, Array], Array],
+    flow: ILQRFlow,
     /,
 ) -> tuple[Array, Array, Array, Array, Array]:
     states: list[Array] = [problem.initial_state]
@@ -435,6 +478,7 @@ def _open_loop_rollout(
                 flow(
                     problem.time_grid.times[step],
                     problem.time_grid.times[step + 1],
+                    jnp.asarray(step, dtype=jnp.int32),
                     states[-1],
                     controls[step],
                 )
@@ -481,7 +525,7 @@ def _feedback_rollout(
     feedforward: Array,
     feedback: Array,
     step_size: float,
-    flow: Callable[[Array, Array, Array, Array], Array],
+    flow: ILQRFlow,
     /,
 ) -> tuple[Array, Array, Array, Array, Array]:
     state_size = int(np.prod(problem.state_shape))
@@ -505,6 +549,7 @@ def _feedback_rollout(
                 flow(
                     problem.time_grid.times[step],
                     problem.time_grid.times[step + 1],
+                    jnp.asarray(step, dtype=jnp.int32),
                     states[-1],
                     control,
                 )
@@ -553,7 +598,7 @@ def _local_model(
     problem: ControlProblem,
     states: Array,
     controls: Array,
-    flow: Callable[[Array, Array, Array, Array], Array],
+    flow: ILQRFlow,
     /,
 ) -> _LocalModel:
     state_size = int(np.prod(problem.state_shape))
@@ -580,7 +625,13 @@ def _local_model(
         def flattened_flow(joint: Array) -> Array:
             state = joint[:state_size].reshape(problem.state_shape)
             control = joint[state_size:].reshape(problem.control_shape)
-            return flow(time, next_time, state, control).reshape((state_size,))
+            return flow(
+                time,
+                next_time,
+                jnp.asarray(step, dtype=jnp.int32),
+                state,
+                control,
+            ).reshape((state_size,))
 
         basis = jnp.eye(total_size, dtype=nominal.dtype)
         columns = jax.vmap(
@@ -746,19 +797,42 @@ def solve_ilqr(
     policy_id: str | None = None,
     result_id: str | None = None,
 ) -> ILQRResult:
-    """Solve one unconstrained finite-horizon problem by iterative LQR.
+    """Solve one homogeneous finite-horizon case batch by iterative LQR.
 
-    Batched cases and constrained problems are rejected explicitly. Differential
-    dynamics require a selected :class:`DifferentialControlFlow`; the solver
-    never silently chooses, retries, or changes an integration method.
-    ``regularization`` is the exact fixed diagonal shift used by every backward
-    pass. A non-positive-definite shifted control block terminates with an
-    explicit diagnostic rather than increasing that shift automatically.
+    Nonempty case axes route through the prepared fixed-capacity JAX kernel.
+    Unbatched calls retain the established convenience implementation.
     """
     if not isinstance(problem, ControlProblem):
         raise TypeError("solve_ilqr problem must be a ControlProblem.")
     if problem.case_shape:
-        raise ValueError("solve_ilqr does not support batched control cases.")
+        from ._batched_trajectory import (
+            plan_ilqr,
+            prepare_ilqr,
+            solve_prepared_ilqr,
+        )
+
+        plan = plan_ilqr(
+            problem,
+            max_iterations=max_iterations,
+            regularization=regularization,
+            gradient_tolerance=gradient_tolerance,
+            cost_tolerance=cost_tolerance,
+            line_search_steps=line_search_steps,
+            line_search_decay=line_search_decay,
+            initial_step_size=initial_step_size,
+            armijo=armijo,
+        )
+        prepared = prepare_ilqr(
+            plan,
+            problem,
+            initial_controls,
+            differential_flow=differential_flow,
+        )
+        return solve_prepared_ilqr(
+            prepared,
+            policy_id=policy_id,
+            result_id=result_id,
+        )
     if problem.path_constraints or problem.terminal_constraints:
         raise ValueError(
             "solve_ilqr is unconstrained; constrained ControlProblems are unsupported."

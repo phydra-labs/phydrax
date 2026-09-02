@@ -1,3 +1,5 @@
+import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -178,6 +180,73 @@ def test_sparse_grid_reports_level_difference_not_statistical_error():
     assert estimate.num_evaluations == current_count + previous_count == 14
     assert estimate.diagnostics.num_evaluations == 14
     assert estimate.diagnostics.num_unique_nodes == current_count == 9
+
+
+def test_sparse_grid_requires_successful_coarser_level():
+    domain = _interval()
+    realization = phx.integration.materialize(
+        phx.integration.mean_over(domain.component()),
+        phx.integration.SparseGridPlan(1, 2),
+    )
+    assert realization.batch.previous is not None
+    previous_weights = cx.Field(
+        jnp.zeros_like(realization.batch.previous.weights.data),
+        dims=realization.batch.previous.weights.dims,
+    )
+    invalid_previous = eqx.tree_at(
+        lambda prepared: prepared.batch.previous.weights,
+        realization,
+        previous_weights,
+        is_leaf=lambda node: isinstance(node, cx.Field),
+    )
+
+    estimate = phx.integration.reduce(1.0, invalid_previous)
+
+    assert estimate.status == int(
+        phx.integration.IntegrationStatus.INVALID_NORMALIZATION_MASS
+    )
+    assert not estimate.successful
+    assert jnp.isinf(estimate.error_estimate)
+
+
+def test_sparse_grid_requires_finite_level_difference():
+    domain = _interval()
+    realization = phx.integration.materialize(
+        phx.integration.over(domain.component()),
+        phx.integration.SparseGridPlan(1, 2),
+    )
+    assert realization.batch.previous is not None
+    dtype = realization.batch.batch.weights.data.dtype
+    magnitude = jnp.asarray(0.75 * jnp.finfo(dtype).max, dtype=dtype)
+    current_data = jnp.zeros_like(realization.batch.batch.weights.data)
+    current_data = current_data.at[0].set(magnitude)
+    previous_data = jnp.zeros_like(realization.batch.previous.weights.data)
+    previous_data = previous_data.at[0].set(-magnitude)
+    current_weights = cx.Field(
+        current_data,
+        dims=realization.batch.batch.weights.dims,
+    )
+    previous_weights = cx.Field(
+        previous_data,
+        dims=realization.batch.previous.weights.dims,
+    )
+    divergent = eqx.tree_at(
+        lambda prepared: (
+            prepared.batch.batch.weights,
+            prepared.batch.previous.weights,
+        ),
+        realization,
+        (current_weights, previous_weights),
+        is_leaf=lambda node: isinstance(node, cx.Field),
+    )
+
+    estimate = phx.integration.reduce(1.0, divergent)
+
+    assert jnp.all(jnp.isfinite(estimate.value.data))
+    assert not jnp.all(jnp.isfinite(estimate.diagnostics.level_difference))
+    assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
+    assert not estimate.successful
+    assert jnp.isinf(estimate.error_estimate)
 
 
 def test_mapped_triangle_preserves_output_field_semantics():

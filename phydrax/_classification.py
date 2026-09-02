@@ -318,6 +318,92 @@ def ordinal_class_probabilities_from_location(
     return jnp.concatenate((first, jnp.exp(middle_log), last), axis=-1)
 
 
+def _ordinal_log_masses_from_cumulative_logits(
+    cumulative_logits: ArrayLike,
+    /,
+) -> Array:
+    logits = _real_array("Ordinal cumulative logits", cumulative_logits)
+    if logits.ndim < 1 or int(logits.shape[-1]) < 2:
+        raise ValueError(
+            "Ordinal cumulative logits require a terminal axis with at least two entries."
+        )
+    finite = jnp.all(jnp.isfinite(logits), axis=-1)
+    ordered = jnp.all(jnp.diff(logits, axis=-1) > 0.0, axis=-1)
+    safe = jnp.where((finite & ordered)[..., None], logits, 0.0)
+    lower = safe[..., :-1]
+    upper = safe[..., 1:]
+    gap = upper - lower
+    middle = (
+        upper
+        + jnp.log(-jnp.expm1(-gap))
+        - jax.nn.softplus(upper)
+        - jax.nn.softplus(lower)
+    )
+    log_masses = jnp.concatenate(
+        (
+            jax.nn.log_sigmoid(safe[..., :1]),
+            middle,
+            jax.nn.log_sigmoid(-safe[..., -1:]),
+        ),
+        axis=-1,
+    )
+    return jnp.where((finite & ordered)[..., None], log_masses, jnp.nan)
+
+
+def ordinal_class_probabilities_from_cumulative_logits(
+    cumulative_logits: ArrayLike,
+    /,
+) -> Array:
+    """Return class masses from strictly ordered cumulative logits."""
+    return jnp.exp(_ordinal_log_masses_from_cumulative_logits(cumulative_logits))
+
+
+def ordinal_log_prob_from_cumulative_logits(
+    cumulative_logits: ArrayLike,
+    target: ArrayLike,
+    /,
+) -> Array:
+    """Return stable ordered-logistic hard-label log probabilities."""
+    log_masses = _ordinal_log_masses_from_cumulative_logits(cumulative_logits)
+    observations = jnp.asarray(target)
+    if observations.shape != log_masses.shape[:-1]:
+        raise ValueError(
+            "Hard ordinal targets must match the cumulative-logit prefix shape."
+        )
+    levels = int(log_masses.shape[-1])
+    real_targets = observations.astype(jnp.result_type(observations, 0.0))
+    valid = (
+        jnp.isfinite(real_targets)
+        & (real_targets >= 0.0)
+        & (real_targets < levels)
+        & (real_targets == jnp.floor(real_targets))
+    )
+    safe = jnp.where(valid, real_targets, 0.0).astype(jnp.int32)
+    selected = jnp.take_along_axis(log_masses, safe[..., None], axis=-1)[..., 0]
+    return jnp.where(valid, selected, -jnp.inf)
+
+
+def soft_ordinal_cross_entropy_from_cumulative_logits(
+    cumulative_logits: ArrayLike,
+    target: ArrayLike,
+    /,
+) -> Array:
+    """Return ordinal cross entropy against canonical class-mass targets."""
+    log_masses = _ordinal_log_masses_from_cumulative_logits(cumulative_logits)
+    masses = _real_array("Soft ordinal targets", target)
+    if masses.shape != log_masses.shape:
+        raise ValueError("Soft ordinal targets must match the complete class-mass shape.")
+    valid = (
+        jnp.all(jnp.isfinite(masses), axis=-1)
+        & jnp.all(masses >= 0.0, axis=-1)
+        & jnp.isclose(jnp.sum(masses, axis=-1), 1.0)
+        & jnp.all(jnp.isfinite(log_masses), axis=-1)
+    )
+    safe = jnp.where(valid[..., None], masses, 0.0)
+    result = -contract("...k,...k->...", safe, log_masses)
+    return jnp.where(valid, result, jnp.inf)
+
+
 def ordinal_log_prob_from_location(
     location: ArrayLike,
     target: ArrayLike,
@@ -374,7 +460,7 @@ def classification_probabilities(
     if kind == "multilabel":
         return independent_bernoulli_probabilities_from_logits(logits)
     if thresholds is None:
-        raise ValueError("Ordinal probabilities require thresholds.")
+        return ordinal_class_probabilities_from_cumulative_logits(logits)
     return ordinal_class_probabilities_from_location(logits, thresholds)
 
 
@@ -396,17 +482,23 @@ def pointwise_classification_loss(
         mask = jnp.asarray(target_mask)
         values = jnp.asarray(logits)
         observations = jnp.asarray(target)
-        prefix_shape = values.shape[:-1] if kind == "multiclass" else values.shape
+        has_prediction_class_axis = kind == "multiclass" or (
+            kind == "ordinal" and thresholds is None
+        )
+        prefix_shape = values.shape[:-1] if has_prediction_class_axis else values.shape
         if mask.dtype != jnp.bool_ or mask.shape != prefix_shape:
             raise ValueError(
                 "target_mask must be Boolean and match the observation prefix."
             )
         safe_logits = jnp.where(
-            mask[..., None] if kind == "multiclass" else mask,
+            mask[..., None] if has_prediction_class_axis else mask,
             values,
             0.0,
         )
-        target_has_class_axis = kind == "multiclass" and objective == "soft_cross_entropy"
+        target_has_class_axis = objective == "soft_cross_entropy" and kind in (
+            "multiclass",
+            "ordinal",
+        )
         safe_target = jnp.where(
             mask[..., None] if target_has_class_axis else mask,
             observations,
@@ -424,11 +516,20 @@ def pointwise_classification_loss(
         )
         return jnp.where(mask, active_loss, 0.0)
     if kind == "ordinal":
-        if objective != "nll" or thresholds is None:
-            raise ValueError(
-                "Ordinal classification currently requires NLL and thresholds."
-            )
-        return -ordinal_log_prob_from_location(logits, target, thresholds)
+        if objective not in ("nll", "soft_cross_entropy"):
+            raise ValueError("Ordinal classification supports NLL or soft cross entropy.")
+        values = jnp.asarray(logits)
+        if thresholds is None:
+            if objective == "nll":
+                return -ordinal_log_prob_from_cumulative_logits(values, target)
+            return soft_ordinal_cross_entropy_from_cumulative_logits(values, target)
+        cumulative_logits = _ordinal_threshold_array(thresholds) - values[..., None]
+        if objective == "nll":
+            return -ordinal_log_prob_from_cumulative_logits(cumulative_logits, target)
+        return soft_ordinal_cross_entropy_from_cumulative_logits(
+            cumulative_logits,
+            target,
+        )
     if kind == "binary":
         if objective == "nll":
             return -binary_log_prob_from_logits(logits, target)
@@ -497,8 +598,11 @@ __all__ = [
     "independent_bernoulli_log_prob_from_logits",
     "independent_bernoulli_probabilities_from_logits",
     "ordinal_class_probabilities_from_location",
+    "ordinal_class_probabilities_from_cumulative_logits",
     "ordinal_log_prob_from_location",
+    "ordinal_log_prob_from_cumulative_logits",
     "pointwise_classification_loss",
     "soft_binary_cross_entropy_from_logits",
     "soft_categorical_cross_entropy_from_logits",
+    "soft_ordinal_cross_entropy_from_cumulative_logits",
 ]

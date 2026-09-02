@@ -209,14 +209,25 @@ def moment_recombine(
             cluster_mass,
             rcond=config.rcond,
         )
+        selected_cluster_count = jnp.sum(reduced_mass > 0.0, dtype=jnp.int32)
         selected_clusters = jnp.nonzero(
             reduced_mass > 0.0,
             size=capacity,
             fill_value=0,
         )[0]
-        selected_mass = reduced_mass[selected_clusters]
+        selected_slots = jnp.arange(capacity) < selected_cluster_count
+        selected_mass = jnp.where(
+            selected_slots,
+            reduced_mass[selected_clusters],
+            0.0,
+        )
         original_mass = cluster_mass[selected_clusters]
-        multiplier = jnp.where(original_mass > 0.0, selected_mass / original_mass, 0.0)
+        safe_original_mass = jnp.where(original_mass > 0.0, original_mass, 1.0)
+        multiplier = jnp.where(
+            selected_slots & (original_mass > 0.0),
+            selected_mass / safe_original_mass,
+            0.0,
+        )
         selected_groups = groups[selected_clusters]
         current_features = current_features[selected_groups].reshape(
             (capacity * cluster_size, capacity)
@@ -247,6 +258,35 @@ def moment_recombine(
         selected_weights / selected_total,
         selected_weights,
     )
+    selected_augmented = augmented[selected_indices]
+    moment_system = selected_augmented.T * selected_mask[None, :]
+    target_augmented_moment = weights @ augmented
+    current_augmented_moment = selected_weights @ selected_augmented
+    correction = jnp.linalg.lstsq(
+        moment_system,
+        target_augmented_moment - current_augmented_moment,
+        rcond=config.rcond,
+    )[0]
+    corrected_weights = jnp.where(
+        selected_mask,
+        selected_weights + correction,
+        0.0,
+    )
+    correction_valid = jnp.all(jnp.isfinite(corrected_weights)) & jnp.all(
+        corrected_weights >= -active_tolerance
+    )
+    corrected_weights = jnp.where(
+        selected_mask,
+        jnp.maximum(corrected_weights, 0.0),
+        0.0,
+    )
+    selected_mask = selected_mask & (corrected_weights > active_tolerance)
+    corrected_total = jnp.sum(jnp.where(selected_mask, corrected_weights, 0.0))
+    selected_weights = jnp.where(
+        selected_mask & (corrected_total > 0.0),
+        corrected_weights / jnp.where(corrected_total > 0.0, corrected_total, 1.0),
+        0.0,
+    )
     source_moments = weights @ safe_features
     selected_moments = selected_weights @ safe_features[selected_indices]
     mass_error = jnp.abs(jnp.sum(selected_weights) - jnp.sum(weights))
@@ -260,8 +300,21 @@ def moment_recombine(
         jnp.where(selected_mask, selected_weights, jnp.inf),
         initial=jnp.inf,
     )
+    moment_scale = jnp.maximum(
+        jnp.max(jnp.abs(source_moments), initial=0.0),
+        jnp.asarray(1.0, dtype=dtype),
+    )
+    moment_tolerance = (
+        jnp.asarray(jnp.finfo(dtype).eps * max(source_points, capacity) * 128.0)
+        * moment_scale
+    )
     output_valid = (
-        input_valid & (active_points > 0) & jnp.all(jnp.isfinite(selected_weights))
+        input_valid
+        & correction_valid
+        & (active_points > 0)
+        & jnp.all(jnp.isfinite(selected_weights))
+        & (mass_error <= moment_tolerance)
+        & (max_moment_error <= moment_tolerance)
     )
     selected_mask = selected_mask & output_valid
     selected_weights = jnp.where(selected_mask, selected_weights, 0.0)

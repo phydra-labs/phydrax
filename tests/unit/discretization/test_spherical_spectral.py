@@ -10,6 +10,7 @@ import pytest
 from scipy.special import sph_harm_y
 
 import phydrax as phx
+from phydrax.discretization import spectral as spectral_api
 
 
 def _harmonic(space, degree=2, order=1):
@@ -72,7 +73,9 @@ def test_spherical_discretization_roundtrips_integrates_and_applies_laplacian():
         rtol=2e-10,
         atol=2e-10,
     )
-    assert jnp.allclose(space.integral(jnp.ones(space.state_shape)), 4 * jnp.pi * radius**2)
+    assert jnp.allclose(
+        space.integral(jnp.ones(space.state_shape)), 4 * jnp.pi * radius**2
+    )
     assert float(space.conjugacy_defect(coefficients)) < 1e-12
     assert dict(space.preparation.resource_counts)["dense_transform_entries"] == 0
 
@@ -130,9 +133,9 @@ def test_spherical_laplacian_operator_is_pairing_self_adjoint():
 def test_spherical_discretization_is_jittable_and_rejects_unsupported_contracts():
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     values = _harmonic(space, degree=2, order=1)
-    actual = eqx.filter_jit(
-        lambda prepared, field: prepared.laplacian(field)
-    )(space, values)
+    actual = eqx.filter_jit(lambda prepared, field: prepared.laplacian(field))(
+        space, values
+    )
     gradient = jax.grad(lambda field: jnp.sum(space.laplacian(field) ** 2))(values)
 
     assert jnp.all(jnp.isfinite(actual))
@@ -155,3 +158,57 @@ def test_spherical_discretization_is_jittable_and_rejects_unsupported_contracts(
         spin_space.negative_laplacian_levels()
     with pytest.raises(ValueError, match="real spin-zero"):
         spin_space.eigenpairs(rank=4)
+
+
+def test_spherical_modal_integral_spin_ladders_and_rotation():
+    radius = 1.3
+    space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=radius)
+    coefficients = space.project(jnp.ones(space.sample_shape))
+    np.testing.assert_allclose(
+        space.modal_integral(coefficients),
+        4.0 * np.pi * radius**2,
+        rtol=1e-11,
+    )
+    raised = spectral_api.SphericalSpinOperatorPlan(
+        "raise", physical_units=False
+    ).prepare(space)
+    np.testing.assert_allclose(raised.apply(coefficients), 0.0, atol=1e-11)
+    rotation = spectral_api.SphericalRotationPlan(space).prepare()
+    rotated = rotation.apply(coefficients, jnp.asarray([0.3, 0.4, -0.2]))
+    np.testing.assert_allclose(rotated, coefficients, atol=1e-11)
+
+
+def test_spherical_scattered_fit_healpix_and_inactive_nan_safety():
+    space = phx.discretization.SphericalSpectralPlan(3).prepare()
+    sample_plan = spectral_api.SphericalSamplePlan.healpix(2, ordering="nested")
+    prepared = sample_plan.prepare(space)
+    coefficients = space.project(_harmonic(space, degree=1, order=1))
+    values = prepared.evaluate(coefficients)
+    fitted = prepared.fit(values)
+    np.testing.assert_allclose(fitted.coefficients, coefficients, atol=5e-9)
+    assert prepared.report.sample_capacity == 48
+    assert np.isclose(prepared.report.active_weight_sum, 4.0 * np.pi)
+    masked = spectral_api.SphericalSamplePlan(
+        sample_plan.points.at[-1].set(jnp.asarray([jnp.nan] * 3)),
+        weights=sample_plan.weights,
+        active_mask=jnp.arange(48) < 47,
+        tikhonov=1e-8,
+    ).prepare(space)
+    assert jnp.all(jnp.isfinite(masked.evaluate(coefficients)))
+
+
+def test_spherical_clebsch_gordan_constant_identity_and_modal_transfer():
+    coarse = phx.discretization.SphericalSpectralPlan(3).prepare()
+    fine = phx.discretization.SphericalSpectralPlan(5).prepare()
+    constant = coarse.project(jnp.ones(coarse.sample_shape))
+    harmonic = coarse.project(_harmonic(coarse, degree=1, order=1))
+    coupling = spectral_api.SphericalClebschGordanPlan(
+        coarse, coarse, output_bandlimit=5
+    ).prepare()
+    product = coupling.apply(constant, harmonic)
+    transferred = spectral_api.prepare_spectral_modal_transfer(coarse, fine)(harmonic)
+    assert coupling.report.recurrence_residual < 1e-10
+    np.testing.assert_allclose(product, transferred, atol=2e-10)
+    restricted = spectral_api.prepare_spectral_modal_transfer(fine, coarse)
+    evidence = restricted.apply_with_evidence(product)
+    assert evidence.removed_coefficient_energy >= 0.0

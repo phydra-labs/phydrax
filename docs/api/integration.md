@@ -669,3 +669,42 @@ implementation.
 ---
 
 ::: phydrax.integration.SparseGridRealization
+
+## Capability-closed adaptive integration
+
+`AdaptiveStratifiedEstimator` and `AdaptiveImportanceEstimator` are the only
+solver-managed estimators for signed or complex lower-level integrands.
+`AdaptiveIntegration` freezes one `AdaptiveSignedPopulation` for an optimizer
+update, so value, gradient, curvature, and line-search evaluations see the same
+realization. Refinement scores may use magnitudes or centered squares, but the
+reduced estimand is always the original signed value. Allocation, resampling,
+and epoch transitions are nondifferentiable.
+
+`BreakpointDiscoveryPlan` adds fixed-budget Chebyshev/dyadic pilot evidence to
+`AdaptiveQuadraturePlan`. `DiscoveredBreakpoints.kinds` are diagnostic jump,
+cusp, or nonfinite-bracket candidates, not analytic singularity proofs.
+Overflow and unresolved nonfinite neighborhoods return typed nonconverged
+statuses.
+
+`AdaptiveCubaturePlan` couples all declared scalar labels in one N-dimensional
+hyperrectangle budget and returns a fixed-capacity
+`AdaptiveCubaturePartition`. It supports finite declared products and uniform
+probability reference transports; it does not mesh arbitrary predicates or
+remove the curse of dimensionality. Geometry cubature consumes GTA
+`CubatureMapEvaluation` measure/admissibility evidence, including exact
+nonuniform scaling, and never guesses surface Jacobians from mapped points.
+
+`AdaptiveSparseGridPlan` and `prepare_adaptive_sparse_grid` perform eager,
+downward-closed Smolyak topology refinement. The returned realization is
+immutable and JAX-safe; frontier selection is outside differentiation and its
+indicator is not a universal error bound.
+
+## Diffrax collocation quadrature
+
+`DiffraxCollocationQuadraturePlan` binds fixed-capacity physical collocation
+nodes and weights to an explicit Diffrax `solver_id` and scalar success
+evidence. It participates in the ordinary `IntegrationPlan`,
+`materialize`/`reduce`/`integrate` lifecycle. Inactive padded slots retain a
+Boolean mask and zero weight; solver failure is a typed nonconverged
+`DiffraxCollocationDiagnostics` outcome and is never relabeled as quadrature
+convergence.

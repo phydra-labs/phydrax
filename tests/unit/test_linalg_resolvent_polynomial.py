@@ -138,3 +138,45 @@ def test_polynomial_refresh_preserves_identity_and_rejects_new_coefficients():
             prepared,
             problem(-4.0, constant_id="different-polynomial-constant"),
         )
+
+
+def test_generalized_pencil_pseudospectrum_is_projective_and_handles_infinity():
+    operator = phx.linalg.DenseLinearOperator(
+        jnp.diag(jnp.asarray([2.0, 5.0], dtype=jnp.complex128))
+    )
+    mass = phx.linalg.DenseLinearOperator(
+        jnp.diag(jnp.asarray([1.0, 2.0], dtype=jnp.complex128))
+    )
+    eigenproblem = phx.linalg.eigen.GeneralEigenproblem(operator, mass)
+    norm = phx.linalg.eigen.PencilPerturbationNorm(2.0, 3.0)
+    shifts = jnp.asarray([[2.0, 1.0], [1.0, 0.0], [6.0, 3.0]])
+    result = phx.linalg.eigen.pencil_pseudospectrum(
+        phx.linalg.eigen.PencilPseudospectrumProblem(eigenproblem, shifts, norm)
+    )
+
+    np.testing.assert_allclose(result.backward_errors[0], 0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        result.backward_errors[0], result.backward_errors[2], atol=1e-12
+    )
+    np.testing.assert_allclose(
+        result.minimum_singular_values[1] / 3.0,
+        result.backward_errors[1],
+        atol=1e-12,
+    )
+    assert bool(result.successful)
+    assert result.diagnostics.decomposition_count == 1
+
+
+def test_pencil_pseudospectrum_frozen_direction_and_invalid_norm_fail_closed():
+    operator = phx.linalg.DenseLinearOperator(jnp.asarray([[2.0 + 0.0j]]))
+    problem = phx.linalg.eigen.GeneralEigenproblem(operator)
+    frozen = phx.linalg.eigen.PencilPseudospectrumProblem(
+        problem,
+        jnp.asarray([[0.0, 1.0]]),
+        phx.linalg.eigen.PencilPerturbationNorm(0.0, 1.0),
+    )
+    result = phx.linalg.eigen.pencil_pseudospectrum(frozen)
+    assert bool(jnp.isinf(result.backward_errors[0]))
+    assert bool(result.diagnostics.frozen_direction_mask[0])
+    with pytest.raises(ValueError, match="cannot both be zero"):
+        phx.linalg.eigen.PencilPerturbationNorm(0.0, 0.0)

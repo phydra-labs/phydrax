@@ -31,6 +31,7 @@ from ..discretization.finite_volume import (
     EinfeldtHLLFluxPlan,
     EntropyConservativeEulerFluxPlan,
     EntropyStableEulerFluxPlan,
+    EntropyStableFluxPlan,
     FiniteVolumeBoundarySet,
     FiniteVolumeDiscretization,
     FiniteVolumeMethodPlan,
@@ -40,9 +41,11 @@ from ..discretization.finite_volume import (
     NoSlipAdiabaticWallBoundary,
     NoSlipIsothermalWallBoundary,
     PiecewiseConstantReconstruction,
+    PreparedCellPolynomialReconstruction,
     PreparedFiniteVolumeDynamics,
     PreparedTriangleFiniteVolumeDynamics,
     PreparedUnstructuredFiniteVolumeDynamics,
+    PreparedUnstructuredWENOZReconstruction,
     PrescribedHeatFluxWallBoundary,
     RoeFluxPlan,
     ShallowWaterHydrostaticHLLPlan,
@@ -406,6 +409,11 @@ def _validate_method(
         solver, (EntropyConservativeEulerFluxPlan, EntropyStableEulerFluxPlan)
     ) and not isinstance(system, euler_systems):
         raise ValueError("Euler entropy fluxes require an Euler-compatible system.")
+    if isinstance(solver, EntropyStableFluxPlan):
+        if entropy_pair is None or solver.entropy_pair.pair_id != entropy_pair.pair_id:
+            raise ValueError(
+                "Pair-bound entropy-stable flux requires its exact entropy_pair."
+            )
     if method.positivity is not None and not isinstance(system, AbstractAdmissibleSystem):
         raise ValueError("Positivity limiting requires an admissible system.")
     if isinstance(solver, ShallowWaterHydrostaticHLLPlan):
@@ -643,18 +651,24 @@ def compile_conservation_problem(
             )
         prepared_coupling = coupling_plan.prepare(discretization)
         coupling_plan.validate_execution_support()
-        if (
-            prepared_coupling.motion is not None
-            and type(method.reconstruction) is not PiecewiseConstantReconstruction
-        ):
-            raise ValueError(
-                "Moving unstructured finite-volume coupling requires exact "
-                "PiecewiseConstantReconstruction because prepared high-order "
-                "operators bind static geometry "
-                f"(coupling={prepared_coupling.prepared_id}, "
-                f"method={method.method_id}, "
-                f"reconstruction={type(method.reconstruction).__name__})."
-            )
+        if prepared_coupling.motion is not None:
+            moving_polynomial = isinstance(
+                method.reconstruction,
+                PreparedCellPolynomialReconstruction,
+            ) and method.reconstruction.basis.degree in (1, 2)
+            moving_weno = isinstance(
+                method.reconstruction,
+                PreparedUnstructuredWENOZReconstruction,
+            ) and method.reconstruction.optimal.basis.degree in (1, 2)
+            if (
+                type(method.reconstruction) is not PiecewiseConstantReconstruction
+                and not moving_polynomial
+                and not moving_weno
+            ):
+                raise ValueError(
+                    "Moving unstructured finite-volume reconstruction requires "
+                    "piecewise constant, moving WLSQ, or qualified moving WENO."
+                )
         if (
             isinstance(problem.system, TwoMaterialVOFSystem)
             and prepared_coupling.vof is None
@@ -703,7 +717,7 @@ def compile_conservation_problem(
                     f"method={method.method_id}, "
                     f"reconstruction={type(method.reconstruction).__name__})."
                 )
-            if getattr(method, "viscous", None) is not None or isinstance(
+            if method.viscous is not None or isinstance(
                 problem.system, CompressibleNavierStokesSystem
             ):
                 raise ValueError(
@@ -816,12 +830,6 @@ def compile_conservation_problem(
     if bathymetry is not None and not bed_aware:
         raise ValueError(
             "Bathymetry requires a bed-aware shallow-water interface method."
-        )
-    if isinstance(solver, ShallowWaterHydrostaticHLLPlan) and isinstance(
-        discretization, MappedFiniteVolumeDiscretization
-    ):
-        raise ValueError(
-            "Initial hydrostatic shallow water requires Cartesian structured geometry."
         )
     dynamics = PreparedFiniteVolumeDynamics(
         problem.system,

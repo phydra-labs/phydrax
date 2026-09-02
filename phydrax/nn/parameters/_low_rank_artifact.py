@@ -30,6 +30,7 @@ from ..._model._structure import model_structure_recipe
 from ._low_rank import (
     _low_rank_nodes,
     _strip_low_rank,
+    LowRankAdaptationPlan,
     LowRankAdaptationSite,
     LowRankUpdate,
 )
@@ -47,6 +48,15 @@ class LowRankAdapterManifest:
     base_array_sha256: str
     base_array_signature: tuple[Mapping[str, Any], ...]
     sites: tuple[LowRankAdaptationSite, ...]
+
+    @property
+    def alias_groups(self) -> tuple[tuple[str, ...], ...]:
+        groups = []
+        for site in self.sites:
+            if site.alias_group and site.alias_group not in groups:
+                groups.append(site.alias_group)
+        return tuple(groups)
+
     provenance: Mapping[str, Any]
 
 
@@ -55,6 +65,23 @@ class LowRankAdapterArtifact:
     """A restored adapted model and its verified base-binding manifest."""
 
     model: Any
+
+    def parameter_subspace(self):
+        from ._selection import ParameterSubspace
+
+        paths = []
+        groups = []
+        for site in self.manifest.sites:
+            paths.extend((f"{site.path}.left", f"{site.path}.right"))
+        for weights in self.manifest.alias_groups:
+            groups.append(tuple(f"{path}.left" for path in weights))
+            groups.append(tuple(f"{path}.right" for path in weights))
+        return ParameterSubspace.from_leaf_paths(
+            self.model,
+            tuple(paths),
+            alias_groups=tuple(groups),
+        )
+
     manifest: LowRankAdapterManifest
 
 
@@ -73,6 +100,7 @@ def save_low_rank_adapter(
     /,
     *,
     provenance: Mapping[str, Any] | None = None,
+    plan: LowRankAdaptationPlan | None = None,
 ) -> Path:
     """Write only low-rank factors, bound to the exact dense base model."""
     nodes = _low_rank_nodes(model)
@@ -81,12 +109,27 @@ def save_low_rank_adapter(
     base_model = _strip_low_rank(model)
     base_type, structure_sha256, array_fingerprint = _base_identity(base_model)
     arrays: dict[str, Any] = {}
+    if plan is not None and not isinstance(plan, LowRankAdaptationPlan):
+        raise TypeError("plan must be LowRankAdaptationPlan or None.")
+    alias_for: dict[str, tuple[str, ...]] = {}
+    canonical_for: dict[str, str] = {}
+    handlers = {} if plan is None else dict(plan.site_handlers)
+    if plan is not None:
+        for group in plan.alias_groups:
+            for path in group:
+                alias_for[path] = group
+                canonical_for[path] = group[0]
+    factor_names: dict[str, tuple[str, str]] = {}
     sites: list[dict[str, Any]] = []
     for index, (weight_path, update) in enumerate(nodes):
-        left_name = f"site/{index:06d}/left"
-        right_name = f"site/{index:06d}/right"
-        arrays[left_name] = update.left
-        arrays[right_name] = update.right
+        canonical = canonical_for.get(weight_path, weight_path)
+        if canonical not in factor_names:
+            left_name = f"site/{len(factor_names):06d}/left"
+            right_name = f"site/{len(factor_names):06d}/right"
+            arrays[left_name] = update.left
+            arrays[right_name] = update.right
+            factor_names[canonical] = (left_name, right_name)
+        left_name, right_name = factor_names[canonical]
         sites.append(
             {
                 "path": weight_path,
@@ -98,6 +141,8 @@ def save_low_rank_adapter(
                 "scale": update.scale,
                 "left": left_name,
                 "right": right_name,
+                "handler": handlers.get(weight_path, "identity"),
+                "alias_group": list(alias_for.get(weight_path, ())),
             }
         )
     manifest = {
@@ -128,6 +173,8 @@ def _validated_sites(
         "scale",
         "left",
         "right",
+        "handler",
+        "alias_group",
     }
     records: list[dict[str, Any]] = []
     seen_paths: set[str] = set()
@@ -145,8 +192,6 @@ def _validated_sites(
         if (
             not isinstance(left_name, str)
             or not isinstance(right_name, str)
-            or left_name in seen_arrays
-            or right_name in seen_arrays
             or left_name == right_name
             or left_name not in arrays
             or right_name not in arrays
@@ -160,6 +205,8 @@ def _validated_sites(
         scaling = record["scaling"]
         scale = record["scale"]
         dtype = record["dtype"]
+        handler = record["handler"]
+        alias_group = record["alias_group"]
         if (
             not isinstance(shape, list)
             or len(shape) != 2
@@ -180,6 +227,10 @@ def _validated_sites(
             or scale <= 0.0
             or float(scale)
             != float(alpha) / (rank if scaling == "rank" else np.sqrt(rank))
+            or handler not in ("identity", "symmetric", "skew")
+            or not isinstance(alias_group, list)
+            or any(not isinstance(item, str) or not item for item in alias_group)
+            or (alias_group and path not in alias_group)
         ):
             raise ArrayArchiveCorruptionError("Low-rank adapter site values are invalid.")
         seen_paths.add(path)
@@ -226,6 +277,7 @@ def read_low_rank_adapter(
     records_by_path = {record["path"]: record for record in records}
 
     from ..layers._linear import Linear
+    from ._transforms import SkewSymmetricTransform, SymmetricTransform
 
     restored_paths: list[str] = []
 
@@ -239,9 +291,21 @@ def read_low_rank_adapter(
             return value
         if isinstance(value.weight, LowRankUpdate):
             raise TypeError("Low-rank adapters require a dense supplied base model.")
-        if value.weight_transform is not None:
+        handler = record["handler"]
+        transform_valid = (
+            (handler == "identity" and value.weight_transform is None)
+            or (
+                handler == "symmetric"
+                and isinstance(value.weight_transform, SymmetricTransform)
+            )
+            or (
+                handler == "skew"
+                and isinstance(value.weight_transform, SkewSymmetricTransform)
+            )
+        )
+        if not transform_valid:
             raise ValueError(
-                f"Low-rank adapter site {weight_path!r} is no longer adaptable."
+                f"Low-rank adapter site {weight_path!r} transform handler changed."
             )
         weight = jnp.asarray(value.weight)
         shape = tuple(int(size) for size in record["shape"])
@@ -283,10 +347,21 @@ def read_low_rank_adapter(
             scaling=record["scaling"],
             scale=float(record["scale"]),
             base_parameter_count=int(np.prod(record["shape"])),
-            adapter_parameter_count=int(
-                np.prod(arrays[record["left"]].shape)
-                + np.prod(arrays[record["right"]].shape)
+            adapter_parameter_count=(
+                int(
+                    np.prod(arrays[record["left"]].shape)
+                    + np.prod(arrays[record["right"]].shape)
+                )
+                if not record["alias_group"] or record["path"] == record["alias_group"][0]
+                else 0
             ),
+            handler=record["handler"],
+            complex_representation=(
+                "native_complex"
+                if np.issubdtype(np.dtype(record["dtype"]), np.complexfloating)
+                else "real"
+            ),
+            alias_group=tuple(record["alias_group"]),
         )
         for record in records
     )

@@ -517,18 +517,16 @@ retaining method, layout, signature, and count provenance.
 
 `search_map` provides two bounded initializers in unconstrained posterior-position
 coordinates. `DifferentialEvolutionSearch` preserves final-population and generation
-evidence. `GaussianProcessMAPSearch` performs sequential expected improvement and
-preserves every evaluated position, raw negative log density, validity flag, proposal
-kind, and running best value. Neither archive is a posterior sample, convergence
-certificate, or stationarity claim. Local stationarity remains a separate `find_map`
-phase.
+evidence. `GaussianProcessBayesianOptimization` is the canonical q=1 continuous
+consumer for `search_map`; its `BayesianOptimizationMAPResult` embeds every
+evaluation, proposal kind, acquisition estimate/error, kernel-fit result, and root
+key. Neither archive is a posterior sample, convergence certificate, or stationarity
+claim. Local stationarity remains a separate `find_map` responsibility.
 
-The GP surrogate is fitted after standardizing observed negative log densities.
-`GaussianProcessLikelihoodState.noise_scale` remains in raw negative-log-density
-units and is divided by the active objective scale before covariance construction.
-`jitter` acts directly in standardized covariance units. Search positions are modeled
-in an affine unit box; physical parameter reconstruction still follows the
-`ParameterSpace` bijectors.
+The MAP adapter constructs the continuous BO domain from the declared position
+bounds and rejects q-batches larger than one. Surrogate noise remains explicit in
+the shared `GaussianProcessLikelihoodState`; no MAP-only surrogate configuration,
+fallback registry, or compatibility alias remains.
 
 ::: phydrax.uq.search_map_candidates
 
@@ -545,11 +543,11 @@ in an affine unit box; physical parameter reconstruction still follows the
 
 ::: phydrax.uq.MAPSearchResult
 
-::: phydrax.uq.GaussianProcessMAPSearch
+::: phydrax.uq.GaussianProcessBayesianOptimization
 
 ---
 
-::: phydrax.uq.GaussianProcessMAPSearchResult
+::: phydrax.uq.BayesianOptimizationMAPResult
 
 ---
 
@@ -781,12 +779,70 @@ on a tractable reference before interpreting these draws quantitatively.
 
 ## Nested sampling
 
-`sample_nested` performs static nested slice sampling over the normalized prior and
-the deterministic physical likelihood of a `PosteriorProblem`. Returned quadrature
-samples are weighted and dependent; use `posterior_measure()` to preserve those
-semantics or `resample_posterior(...)` for equal-weight draws.
+`sample_nested` executes one fixed-capacity `NestedSamplingPlan` over the normalized
+prior and deterministic physical likelihood of a `PosteriorProblem`. Its variable-live
+quadrature records the live count at every death. The composed constrained-prior
+transition includes directional or coordinate slice updates, exact union-density
+ellipsoid independence MH, a frozen affine-flow independence MH update, asymmetric
+gradient MALA, finite-support Gibbs, and wrapped periodic slice updates. Every proposed
+or recycled state is revalidated against the hard current contour.
+
+`NestedSamplingCapacity` fixes all live, dead, likelihood-evaluation, dynamic-batch,
+ellipsoid-cluster, and phantom storage. `NestedPriorPlan` must classify every
+`jax.tree_util.keystr` leaf exactly; periodic and finite coordinates must be declared
+explicitly. `rejection_fallback=True` is the only route that enables exact
+constrained-prior rejection after a prepared kernel fails or does not move.
+
+Checkpoint archives persist the structural plan identity, root key, live and dead
+arrays, birth contours, phantom ring, frozen proposal geometry, adaptation counters,
+and quadrature cursor. Resuming with a changed problem, plan, topology, capacity,
+tolerance, or key fails compatibility validation. Returned quadrature samples are
+weighted and dependent; use `posterior_measure()` to preserve those semantics or
+`resample_posterior(...)` for equal-weight draws. `diagnostic_report()` includes
+per-branch attempt/acceptance evidence. Capacity evidence does not certify mode
+discovery, ellipsoid enclosure, flow overlap, or total evidence error.
 
 ::: phydrax.uq.sample_nested
+
+---
+
+::: phydrax.uq.NestedSamplingPlan
+
+---
+
+::: phydrax.uq.NestedSamplingCapacity
+
+---
+
+::: phydrax.uq.NestedPriorPlan
+
+---
+
+::: phydrax.uq.NestedProposalPlan
+
+---
+
+::: phydrax.uq.DynamicNestedPolicy
+
+---
+
+::: phydrax.uq.PeriodicNestedCoordinate
+
+---
+
+::: phydrax.uq.PreparedNestedState
+
+---
+
+::: phydrax.uq.PreparedNestedProposalState
+
+---
+
+::: phydrax.uq.PreparedNestedAdaptationState
+
+---
+
+::: phydrax.uq.PhantomNestedState
 
 ---
 
@@ -962,9 +1018,10 @@ conditioned = model.condition(
 )
 ```
 
-Path kernels are not coordinate-functional kernels. `FunctionalDesign`,
-coordinate partial derivatives, and differential-functional GP states require
-`input_ndim == 1` and reject path kernels explicitly.
+Coordinate-functional path observations use the same `FunctionalDesign` route.
+They differentiate only the finite coordinates of a fixed-capacity array path.
+Knot count, padding validity, path topology, and time augmentation remain explicit
+epoch/preprocessing decisions; this is not a Fréchet derivative on continuous paths.
 
 ::: phydrax.uq.GaussianProcessLikelihoodState
 
@@ -1038,17 +1095,22 @@ coordinate partial derivatives, and differential-functional GP states require
             - sample
             - predictive_field
 
-### Computation-aware scalar GPs
+### Computation-aware Gaussian processes
 
-Computation-aware factors condition on a native linear action operator and retain
-unobserved prior directions in the latent covariance. The statistical
-`GaussianProcessLikelihoodState` remains independent of action selection and
-execution resources. Use `latent_moments` for a mean and diagonal variance; full
-`condition` calls obey the query-covariance byte limit in
-`GaussianProcessComputationPolicy`.
+Computation-aware factors condition on a native fixed-capacity linear action
+operator and retain unresolved prior directions. Fixed, block-sparse, and
+pseudo-input policies remain available. Lanczos, conjugate-gradient, and
+Gauss-Seidel policies execute fixed scans and report active, convergence, residual,
+breakdown, and selected-coordinate evidence. CG and Gauss-Seidel depend on the
+physical residual, so reusable `factor()` rejects them; `condition()` and `elbo()`
+resolve them for the supplied residual.
 
-`ComputationAwareGaussianProcessELBO` is a full-data variational lower bound.
-It equals exact marginal likelihood only for a complete independent action basis.
+Functional and multi-output discrepancies expose `computation_factor` and
+`computation_condition` without changing their native result layouts.
+`ComputationAwareSparseVariationalGaussianProcessELBO` subclasses the UQI sparse
+variational ELBO, consumes `SparseVariationalGaussianState` and weighted
+`LikelihoodBatch.estimator_weights`, and counts the global KL once. It is distinct
+from Gaussian computation-aware conditioning and FITC.
 
 ::: phydrax.uq.AbstractGaussianProcessActionPolicy
 
@@ -1074,6 +1136,22 @@ It equals exact marginal likelihood only for a complete independent action basis
         members:
             - __init__
 
+
+---
+
+::: phydrax.uq.LanczosGaussianProcessActionPolicy
+
+---
+
+::: phydrax.uq.ConjugateGradientGaussianProcessActionPolicy
+
+---
+
+::: phydrax.uq.GaussSeidelGaussianProcessActionPolicy
+
+---
+
+::: phydrax.uq.ComputationAwareSparseVariationalGaussianProcessELBO
 ---
 
 ::: phydrax.uq.GaussianProcessComputationPolicy
@@ -1124,6 +1202,39 @@ It equals exact marginal likelihood only for a complete independent action basis
             - __init__
             - per_case_log_prob
             - log_prob
+
+### Mixed constrained q-batch Bayesian optimization
+
+`BayesianOptimizationDomain` combines an explicitly bounded continuous PyTree
+with optional `FiniteProductSpace` categorical axes; integer-valued floats are
+never reinterpreted as categories. `GaussianProcessBayesianOptimization` scores a
+fixed pool of candidate tuples with common-random-number Monte Carlo q-expected
+improvement. Declared pending points receive sampled fantasy observations; each
+fantasy conditions the candidate joint Gaussian before qEI is sampled. Constraint
+GPs use the same pending-fantasy conditioning and gate sampled improvement; before
+a feasible observation exists the proposal is explicitly feasibility-first.
+Acquisition standard errors, fantasy keys, invalid evaluations, exact objective
+counts, and
+kernel-fit evidence are retained. Candidate selection, category choice, and epoch
+refits are discrete, and budget exhaustion is not a global-optimality certificate.
+
+::: phydrax.uq.BayesianOptimizationDomain
+
+---
+
+::: phydrax.uq.BayesianOptimizationProblem
+
+---
+
+::: phydrax.uq.GaussianProcessBayesianOptimization
+
+---
+
+::: phydrax.uq.GaussianProcessKernelFitPolicy
+
+---
+
+::: phydrax.uq.bayesian_optimize
 
 ### Correlated outputs
 
@@ -1199,7 +1310,7 @@ omitting it selects exact inference.
 ::: phydrax.uq.FunctionalDesign
     options:
         members:
-            - from_points
+            - from_inputs
             - flatten
             - split
 
@@ -1221,6 +1332,18 @@ omitting it selects exact inference.
 
 ---
 
+::: phydrax.uq.path_value_functional
+
+---
+
+::: phydrax.uq.path_partial_derivative_functional
+
+---
+
+::: phydrax.uq.path_directional_derivative_functional
+
+---
+
 ::: phydrax.uq.functional_kernel_matrix
 
 ---
@@ -1239,6 +1362,8 @@ omitting it selects exact inference.
             - residual
             - log_marginal_likelihood
             - condition
+            - computation_factor
+            - computation_condition
 
 ---
 
@@ -1448,16 +1573,24 @@ provided by the amortized family rather than an exact full-data smoother.
 `sample_hmc(..., trajectory_method="causal")` keeps BlackJAX warmup, momentum
 generation, energy evaluation, momentum flip, and Metropolis decision unchanged.
 Only the fixed-length velocity-Verlet trajectory is solved through the causal
-nonlinear recurrence. Production supports diagonal adapted inverse mass matrices,
-static leapfrog counts, dense-exact or position--momentum pair Hutchinson
-linearization, and explicit trajectory blocking.
+nonlinear recurrence. Production supports adapted diagonal inverse mass matrices
+and capped dense positive-definite inverse masses with `dense-exact`
+linearization. Pair-Hutchinson remains diagonal-only and incompatible combinations
+fail before production. Static leapfrog counts, explicit trajectory blocking, and
+direct residual gates remain mandatory.
 
-Every block must converge to the sequential trajectory before the proposal is
-treated as ordinary HMC. `failure_policy="raise"` is the default; an explicit
-sequential fallback is recorded in `CausalHMCDiagnostics`. NUTS is not supported
-because dynamic tree construction does not satisfy the fixed causal layout.
+Every causal block or dynamic-tree step must pass the direct recurrence residual
+gate before ordinary Metropolis or NUTS multinomial selection. `failure_policy="raise"`
+is the default; an explicit HMC sequential fallback remains recorded in
+`CausalHMCDiagnostics`. `sample_nuts(..., trajectory="causal")` uses
+`CausalNUTSConfig` with a fixed `2**max_num_doublings` trajectory capacity and
+ordinary generalized U-turn selection over only certified states.
 
 ::: phydrax.uq.CausalHMCConfig
+
+---
+
+::: phydrax.uq.CausalNUTSConfig
 
 ---
 
@@ -1478,9 +1611,12 @@ particle score plus the exact parameter prior and can drive `sample_sgld` or
 `sample_sgnht` through the common `AbstractStochasticGradientEstimator` interface.
 The existing autodiff minibatch estimator remains the default and replay-compatible.
 
-Buffered particle SG-MCMC is deliberately not exposed: the current buffered
-variational boundary law has not established a sufficiently accurate particle-score
-boundary correction. Complete-sequence particle gradients are supported.
+Buffered particle SG-MCMC requires a prepared
+`ExactStateSpaceBoundaryCorrection` or evidenced `ParticleBoundaryCorrection`.
+Only additive score terms in the sampled target interval receive inverse-inclusion
+weights; context terms are conditioning state and are never counted twice.
+Finite-particle/finite-buffer corrections remain approximate and fail ESS and
+paired-buffer gates unless the plan explicitly accepts that approximation label.
 
 ::: phydrax.uq.ParticleGenealogicalScoreResult
 
@@ -1499,3 +1635,138 @@ boundary correction. Complete-sequence particle gradients are supported.
 ---
 
 ::: phydrax.uq.ParticleGenealogicalGradientEstimator
+
+## Calibrated MC dropout
+
+`sample_mc_dropout_predictive` assigns one semantic key to each coherent
+whole-function draw. The result is an uncalibrated diagnostic, not a posterior
+sample. `MCDropoutCalibration.fit` consumes only a caller-declared held-out split
+and supports Gaussian scale calibration, normalized split conformal intervals, and
+whole-field max-score conformal bands. Active zero or nonfinite scales, empty
+splits, and geometry mismatches fail closed. Evidence records the split identity,
+draw and calibration counts, empirical held-out coverage, width, and the bounded
+`mc_dropout_heldout_calibrated` approximation label.
+
+::: phydrax.uq.sample_mc_dropout_predictive
+
+---
+
+::: phydrax.uq.MCDropoutCalibration
+
+## Explicit residual noise and complex observations
+
+`ResidualPenaltyNoiseModel.from_penalty` interprets only a frozen positive
+quadratic `ResidualPenalty` realization. For coefficient `a` and fixed multiplier
+`lambda`, the real variance is `1 / (2 lambda a)` and the proper-complex variance
+is `1 / (lambda a)`. Scheduled, signed, zero-active, stochastic, or arbitrary
+power-likelihood weights are not silently reinterpreted as physical noise.
+
+`CircularComplexGaussianLikelihood` and `ComplexGaussianLikelihood` are normalized
+against real/imaginary product Lebesgue measure. The dense likelihood accepts a
+Hermitian covariance and optional symmetric pseudo-covariance, prepares the
+equivalent real block covariance, and rejects singular or undeclared repaired
+factors. Existing real laws reject complex observations instead of discarding
+imaginary components.
+
+::: phydrax.uq.ResidualPenaltyNoiseModel
+
+---
+
+::: phydrax.uq.CircularComplexGaussianLikelihood
+
+---
+
+::: phydrax.uq.ComplexGaussianLikelihood
+
+## SWAG and sparse variational Gaussian processes
+
+`fit_swag` collects committed `FunctionalSolver` evaluation parameters through a
+private accepted-update hook with `keep_best=False`. `SWAGState` uses Welford
+diagonal moments and a fixed raw-snapshot ring; draws require at least two
+snapshots and cost linear memory in parameter count times retained rank.
+
+The sparse variational GP surface is scalar-latent and whitened.
+`SparseVariationalGaussianProcessELBO` consumes the normalized observation-factor
+and explicit estimator-weight contracts. The KL is evaluated exactly once per
+update, while non-Gaussian expected log likelihoods use fixed-count keyed
+reparameterized samples. `SparseGaussianProcessDiscrepancy` remains the distinct
+FITC approximation.
+
+::: phydrax.uq.SWAGCollectionPlan
+
+---
+
+::: phydrax.uq.fit_swag
+
+---
+
+::: phydrax.uq.SparseVariationalGaussianProcessELBO
+
+---
+
+::: phydrax.uq.fit_sparse_variational_gaussian_process
+
+## Flow evidence, structured kinetics, and stochastic-gradient MCMC
+
+Flow-NUTS evidence is never attached unconditionally to the sampler result.
+`estimate_flow_nuts_evidence` uses retained production draws and fresh frozen-flow
+draws, reports fixed-point residual, both overlap ESS values, blocked-jackknife
+error, and returns invalid status for low overlap or nonconvergence. Optional mode
+initialization is owned by tempered SMC and records its weighted-farthest selected
+particles without certifying missing modes.
+
+`MCMCMassAdaptationPlan` and `PreparedMCMCKinetic` provide complete real-PyTree
+diagonal, disjoint-block, and diagonal-plus-low-rank actions with explicit memory
+caps. They do not make full posterior gradients sublinear or guarantee mixing.
+
+`SGMCMCStepSchedule`, `sample_sghmc`, and `sample_psgld` use absolute update
+indices for source, schedule, and semantic random addresses. Online noise
+covariance, SGHMC diffusion PSD, and RMSProp geometry states are explicit.
+Decreasing schedules remain stochastic approximations; history-based pSGLD uses
+the stated frozen/stopped correction and is not relabeled as exact diffusion.
+
+::: phydrax.uq.estimate_flow_nuts_evidence
+
+---
+
+::: phydrax.uq.MCMCMassAdaptationPlan
+
+---
+
+::: phydrax.uq.SGMCMCStepSchedule
+
+---
+
+::: phydrax.uq.sample_sghmc
+
+---
+
+::: phydrax.uq.sample_psgld
+
+## Audited factor minibatches and buffered particle boundaries
+
+Every `LikelihoodBatch` carries fixed-capacity factor IDs, active masks, sampling
+probabilities, and estimator weights. Posterior estimates are exactly
+`sum(estimator_weights * log_factors)` and accept only
+`normalized_likelihood` observation factors. Uniform audit epochs enumerate every
+factor once with unit weight. IID nonuniform sources use `1 / (B p_i)` and allow
+duplicates; likelihood-dependent probabilities are frozen at an anchor for a
+declared epoch span and never depend on the differentiated runtime position.
+
+::: phydrax.uq.AbstractObservationFactor
+
+---
+
+::: phydrax.uq.LikelihoodBatch
+
+---
+
+::: phydrax.uq.prepare_importance_minibatch_source
+
+---
+
+::: phydrax.uq.BufferedParticleBoundaryPlan
+
+---
+
+::: phydrax.uq.BufferedParticleGradientEstimator

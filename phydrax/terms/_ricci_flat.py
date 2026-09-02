@@ -8,9 +8,9 @@ from collections.abc import Callable
 
 from jaxtyping import ArrayLike
 
-from phydrax.conditions import ConditionSupport, Residual
 from phydrax.domain import DomainFunction
 
+from ..conditions._base import ConditionSupport, Residual
 from ..integration import IntegrationSource
 from ..metrix import ComplexCoordinateConvention, RiemannianMetric
 from ..operators.differential import domain_monge_ampere_residual

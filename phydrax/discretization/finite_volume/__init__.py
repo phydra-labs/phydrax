@@ -41,7 +41,9 @@ from ._capillarity import (
     CurvatureGeometryError,
     CurvatureStatus,
     CurvatureUncertaintyError,
+    SurfaceTensionEvaluation,
     SurfaceTensionPolicy,
+    VariableSurfaceTensionPolicy,
 )
 from ._cell_polynomial import (
     CellPolynomialBasis,
@@ -97,7 +99,9 @@ from ._embedded_dynamics import (
     UnstructuredEmbeddedBoundarySet,
 )
 from ._entropy import (
+    evaluate_content_form_entropy_diagnostics,
     FiniteVolumeEntropyDiagnostics,
+    FiniteVolumeEntropyProductionDiagnostics,
     integrated_finite_volume_relative_entropy,
 )
 from ._geometry_protocol import (
@@ -246,6 +250,8 @@ from ._mapped import (
     evaluate_mapped_finite_volume_geometry,
     MappedFiniteVolumeDiscretization,
     MappedFiniteVolumePlan,
+    MappedPeriodicSeam,
+    MappedPeriodicSeamPlan,
 )
 from ._mapped_mac_marker_transfer import (
     MappedMACMarkerRelation,
@@ -258,6 +264,8 @@ from ._mhd_ct import MHDCTRateResult, UpwindConstrainedTransportPlan
 from ._multiblock import (
     ConservativeMultiblockFluxResult,
     ConservativeMultiblockInterfacePlan,
+    FiniteVolumeMultiblockRuntimePlan,
+    MultiblockPositivityResult,
 )
 from ._physical_boundaries import (
     CharacteristicInflowBoundary,
@@ -270,6 +278,10 @@ from ._physical_boundaries import (
     SlipWallBoundary,
     SupersonicInflowBoundary,
     SupersonicOutflowBoundary,
+)
+from ._polyhedral import (
+    prepare_polyhedral_finite_volume_geometry,
+    PreparedPolyhedralFiniteVolumeGeometry,
 )
 from ._positivity import (
     BalancedPositivityBlendResult,
@@ -296,6 +308,7 @@ from ._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
     EntropyConservativeEulerFluxPlan,
     EntropyStableEulerFluxPlan,
+    EntropyStableFluxPlan,
     HLLCFluxPlan,
     HLLDFluxPlan,
     HLLFluxPlan,
@@ -308,15 +321,40 @@ from ._shallow_water import (
     shallow_water_observables,
     ShallowWaterAcceptedFaceIntegrals,
     ShallowWaterBalancedFaceResult,
+    ShallowWaterBathymetryPlan,
     ShallowWaterHydrostaticHLLPlan,
     ShallowWaterObservables,
     ShallowWaterWetDryPolicy,
+)
+from ._shallow_water_advanced import (
+    GeostrophicBalancePlan,
+    PreparedGeostrophicBalance,
+    ShallowWaterBoundaryStatus,
+    ShallowWaterBoundaryTrace,
+    ShallowWaterCharacteristicOpenBoundary,
+    ShallowWaterEquilibriumWENOZPlan,
+    ShallowWaterNormalDischargeBoundary,
+    ShallowWaterReconstructionEvidence,
+    ShallowWaterShorelineEvent,
+    ShorelineDerivativeStatus,
+)
+from ._shallow_water_lowerings import (
+    BalancedShallowWaterBackend,
+    lower_dgsem_shallow_water,
+    lower_global_spectral_shallow_water,
+    lower_sbp_shallow_water,
+    lower_triangle_unstructured_shallow_water,
+    PreparedBalancedShallowWaterLowering,
 )
 from ._small_cell import (
     ConservativeSmallCellRedistributionEvidence,
     ConservativeSmallCellRedistributionPlan,
     ConservativeSmallCellRedistributionReport,
     ConservativeSmallCellRedistributionResult,
+)
+from ._stage_transition import (
+    FiniteVolumeStageEpochTransfer,
+    FiniteVolumeStageEpochTransition,
 )
 from ._structured import FiniteVolumeDiscretization, FiniteVolumePlan
 from ._triangle_archive import (
@@ -740,4 +778,34 @@ __all__ = [
     "WaveFamilyLimiterPlan",
     "WaveLimiterKind",
     "TensorZHydrostaticGridPlan",
+    "EntropyStableFluxPlan",
+    "FiniteVolumeEntropyProductionDiagnostics",
+    "FiniteVolumeMultiblockRuntimePlan",
+    "FiniteVolumeStageEpochTransfer",
+    "FiniteVolumeStageEpochTransition",
+    "BalancedShallowWaterBackend",
+    "PreparedBalancedShallowWaterLowering",
+    "lower_dgsem_shallow_water",
+    "lower_global_spectral_shallow_water",
+    "lower_sbp_shallow_water",
+    "lower_triangle_unstructured_shallow_water",
+    "GeostrophicBalancePlan",
+    "MappedPeriodicSeam",
+    "MappedPeriodicSeamPlan",
+    "MultiblockPositivityResult",
+    "PreparedGeostrophicBalance",
+    "PreparedPolyhedralFiniteVolumeGeometry",
+    "ShallowWaterBathymetryPlan",
+    "ShallowWaterBoundaryStatus",
+    "ShallowWaterBoundaryTrace",
+    "ShallowWaterCharacteristicOpenBoundary",
+    "ShallowWaterEquilibriumWENOZPlan",
+    "ShallowWaterNormalDischargeBoundary",
+    "ShallowWaterReconstructionEvidence",
+    "ShallowWaterShorelineEvent",
+    "ShorelineDerivativeStatus",
+    "SurfaceTensionEvaluation",
+    "VariableSurfaceTensionPolicy",
+    "evaluate_content_form_entropy_diagnostics",
+    "prepare_polyhedral_finite_volume_geometry",
 ]

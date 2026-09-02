@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
+from opt_einsum import contract
 
 from ...._strict import StrictModule
 from ....discretization.spectral import LatticeHarmonicDiscretization
@@ -28,6 +29,8 @@ class PreparedLayerOperator(StrictModule):
     magnetic_longitudinal_from_tangential: Array
     permittivity: Array
     permeability: Array
+    magnetoelectric_xi: Array
+    magnetoelectric_zeta: Array
     diagnostics: LayerOperatorDiagnostics
 
     @property
@@ -36,7 +39,7 @@ class PreparedLayerOperator(StrictModule):
 
 
 def _relative_residual(matrix: Array, solution: Array, right_hand_side: Array) -> Array:
-    residual = matrix @ solution - right_hand_side
+    residual = contract("ij,jk->ik", matrix, solution) - right_hand_side
     denominator = jnp.maximum(jnp.sqrt(jnp.sum(jnp.abs(right_hand_side) ** 2)), 1.0)
     return jnp.sqrt(jnp.sum(jnp.abs(residual) ** 2)) / denominator
 
@@ -63,29 +66,30 @@ def prepare_layer_operator(
     ky = jnp.diag(wavevectors[..., 1])
     epsilon = material.permittivity
     mu = material.permeability
+    xi = material.magnetoelectric_xi
+    zeta = material.magnetoelectric_zeta
+    zero = jnp.zeros((count, count), dtype=epsilon.dtype)
 
-    epsilon_zz = epsilon[2, 2]
-    mu_zz = mu[2, 2]
-    electric_rhs = jnp.concatenate(
-        (
-            -epsilon[2, 0],
-            -epsilon[2, 1],
-            ky / omega,
-            -kx / omega,
-        ),
-        axis=1,
+    longitudinal_matrix = jnp.block([[epsilon[2, 2], xi[2, 2]], [zeta[2, 2], mu[2, 2]]])
+    longitudinal_rhs = jnp.block(
+        [
+            [
+                -epsilon[2, 0],
+                -epsilon[2, 1],
+                ky / omega - xi[2, 0],
+                -kx / omega - xi[2, 1],
+            ],
+            [
+                -ky / omega - zeta[2, 0],
+                kx / omega - zeta[2, 1],
+                -mu[2, 0],
+                -mu[2, 1],
+            ],
+        ]
     )
-    magnetic_rhs = jnp.concatenate(
-        (
-            -ky / omega,
-            kx / omega,
-            -mu[2, 0],
-            -mu[2, 1],
-        ),
-        axis=1,
-    )
-    electric_longitudinal = _dense_solve(epsilon_zz, electric_rhs)
-    magnetic_longitudinal = _dense_solve(mu_zz, magnetic_rhs)
+    longitudinal = _dense_solve(longitudinal_matrix, longitudinal_rhs)
+    electric_longitudinal = longitudinal[:count]
+    magnetic_longitudinal = longitudinal[count:]
     ez = tuple(
         electric_longitudinal[:, index * count : (index + 1) * count]
         for index in range(4)
@@ -97,52 +101,59 @@ def prepare_layer_operator(
 
     rows: list[list[Array]] = [[], [], [], []]
     for column in range(4):
-        mu_y = (
-            mu[1, column - 2]
-            if column >= 2
-            else jnp.zeros((count, count), dtype=mu.dtype)
+        electric_column = column if column < 2 else None
+        magnetic_column = column - 2 if column >= 2 else None
+        b_y = (
+            (zeta[1, electric_column] if electric_column is not None else zero)
+            + (mu[1, magnetic_column] if magnetic_column is not None else zero)
+            + contract("ij,jk->ik", zeta[1, 2], ez[column])
+            + contract("ij,jk->ik", mu[1, 2], hz[column])
         )
-        mu_x = (
-            mu[0, column - 2]
-            if column >= 2
-            else jnp.zeros((count, count), dtype=mu.dtype)
+        b_x = (
+            (zeta[0, electric_column] if electric_column is not None else zero)
+            + (mu[0, magnetic_column] if magnetic_column is not None else zero)
+            + contract("ij,jk->ik", zeta[0, 2], ez[column])
+            + contract("ij,jk->ik", mu[0, 2], hz[column])
         )
-        epsilon_y = (
-            epsilon[1, column]
-            if column < 2
-            else jnp.zeros((count, count), dtype=epsilon.dtype)
+        d_y = (
+            (epsilon[1, electric_column] if electric_column is not None else zero)
+            + (xi[1, magnetic_column] if magnetic_column is not None else zero)
+            + contract("ij,jk->ik", epsilon[1, 2], ez[column])
+            + contract("ij,jk->ik", xi[1, 2], hz[column])
         )
-        epsilon_x = (
-            epsilon[0, column]
-            if column < 2
-            else jnp.zeros((count, count), dtype=epsilon.dtype)
+        d_x = (
+            (epsilon[0, electric_column] if electric_column is not None else zero)
+            + (xi[0, magnetic_column] if magnetic_column is not None else zero)
+            + contract("ij,jk->ik", epsilon[0, 2], ez[column])
+            + contract("ij,jk->ik", xi[0, 2], hz[column])
         )
-        rows[0].append(1j * kx @ ez[column] + 1j * omega * (mu_y + mu[1, 2] @ hz[column]))
-        rows[1].append(1j * ky @ ez[column] - 1j * omega * (mu_x + mu[0, 2] @ hz[column]))
-        rows[2].append(
-            1j * kx @ hz[column] - 1j * omega * (epsilon_y + epsilon[1, 2] @ ez[column])
-        )
-        rows[3].append(
-            1j * ky @ hz[column] + 1j * omega * (epsilon_x + epsilon[0, 2] @ ez[column])
-        )
+        rows[0].append(1j * contract("ij,jk->ik", kx, ez[column]) + 1j * omega * b_y)
+        rows[1].append(1j * contract("ij,jk->ik", ky, ez[column]) - 1j * omega * b_x)
+        rows[2].append(1j * contract("ij,jk->ik", kx, hz[column]) - 1j * omega * d_y)
+        rows[3].append(1j * contract("ij,jk->ik", ky, hz[column]) + 1j * omega * d_x)
     matrix = jnp.block(rows)
     matrix = eqx.error_if(
         matrix,
         jnp.any(~jnp.isfinite(matrix)),
         "The Fourier-modal layer operator contains nonfinite values.",
     )
-    constitutive_residual = jnp.maximum(
-        _relative_residual(epsilon_zz, electric_longitudinal, electric_rhs),
-        _relative_residual(mu_zz, magnetic_longitudinal, magnetic_rhs),
+    constitutive_residual = _relative_residual(
+        longitudinal_matrix, longitudinal, longitudinal_rhs
     )
     reciprocity_scale = jnp.maximum(
-        jnp.sqrt(jnp.sum(jnp.abs(epsilon) ** 2) + jnp.sum(jnp.abs(mu) ** 2)),
+        jnp.sqrt(
+            jnp.sum(jnp.abs(epsilon) ** 2)
+            + jnp.sum(jnp.abs(mu) ** 2)
+            + jnp.sum(jnp.abs(xi) ** 2)
+            + jnp.sum(jnp.abs(zeta) ** 2)
+        ),
         1.0,
     )
     reciprocity_residual = (
         jnp.sqrt(
             jnp.sum(jnp.abs(epsilon - jnp.swapaxes(epsilon, 0, 1)) ** 2)
             + jnp.sum(jnp.abs(mu - jnp.swapaxes(mu, 0, 1)) ** 2)
+            + jnp.sum(jnp.abs(xi + jnp.swapaxes(zeta, 0, 1)) ** 2)
         )
         / reciprocity_scale
     )
@@ -162,6 +173,8 @@ def prepare_layer_operator(
         magnetic_longitudinal,
         epsilon,
         mu,
+        xi,
+        zeta,
         diagnostics,
     )
 
@@ -175,8 +188,12 @@ def recover_longitudinal_fields(
     value = jnp.asarray(tangential_fields, dtype=layer.matrix.dtype)
     if value.shape[:1] != (4 * layer.harmonic_count,):
         raise ValueError("tangential_fields have an incompatible event dimension.")
-    electric = layer.electric_longitudinal_from_tangential @ value
-    magnetic = layer.magnetic_longitudinal_from_tangential @ value
+    electric = contract(
+        "ij,j...->i...", layer.electric_longitudinal_from_tangential, value
+    )
+    magnetic = contract(
+        "ij,j...->i...", layer.magnetic_longitudinal_from_tangential, value
+    )
     return electric, magnetic
 
 

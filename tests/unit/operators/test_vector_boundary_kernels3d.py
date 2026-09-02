@@ -2,10 +2,6 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
-from phydrax.operators.integral.layer_potential._displacement_discontinuity3d import (
-    displacement_discontinuity_capability_3d,
-    prepare_displacement_discontinuity_dp0_3d,
-)
 from phydrax.operators.integral.layer_potential._elasticity3d import (
     ElasticityLayerKernel3D,
     ElasticitySingleLayerDP0Policy3D,
@@ -254,7 +250,7 @@ def test_named_elasticity_and_stokes_dirichlet_solves(
     assert jnp.all(jnp.isfinite(stokes_value))
 
 
-def test_pressure_and_displacement_discontinuity_unsupported_paths(stokes_prepared):
+def test_pressure_unsupported_and_displacement_discontinuity_contract(stokes_prepared):
     double_layer = StokesLayerPotential3D(
         stokes_prepared.panelization,
         viscosity=2.0,
@@ -263,10 +259,35 @@ def test_pressure_and_displacement_discontinuity_unsupported_paths(stokes_prepar
     with pytest.raises(phx.linalg.LinearCapabilityError, match="double layer"):
         double_layer.pressure(jnp.asarray([2.0, 2.0, 2.0]))
 
-    capability = displacement_discontinuity_capability_3d()
-    assert not capability.supported
-    assert capability.ambient_dimension == 3
-    assert capability.provider.startswith("none")
-    assert "source-verified" in capability.reason
-    with pytest.raises(phx.linalg.LinearCapabilityError, match="source-verified"):
-        prepare_displacement_discontinuity_dp0_3d(_region())
+    prepared = phx.operators.prepare_displacement_discontinuity_3d(
+        _VERTICES[:3],
+        jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
+        shear_modulus=2.0,
+        poisson_ratio=0.25,
+    )
+    assert prepared.space.vertex_count == 3
+    assert prepared.space.face_count == 1
+    assert prepared.space.crack_front_edges.shape == (3, 2)
+    assert prepared.evidence.conforming_p1
+    assert not prepared.evidence.dp0_hypersingular_supported
+    assert prepared.evidence.minimum_face_area > 0.0
+    assert prepared.evidence.maximum_symmetry_defect == 0.0
+
+    rigid_jump = jnp.broadcast_to(
+        jnp.asarray([0.3, -0.2, 0.4]),
+        (prepared.space.vertex_count, 3),
+    )
+    assert jnp.allclose(prepared.traction(rigid_jump), 0.0, atol=1.0e-12)
+    jump = jnp.asarray([[0.1, 0.2, -0.3], [-0.4, 0.2, 0.5], [0.3, -0.1, 0.2]])
+    traction = prepared.traction(jump)
+    assert traction.shape == jump.shape
+    assert jnp.all(jnp.isfinite(traction))
+    assert jnp.vdot(jump, traction) >= -1.0e-12
+
+    with pytest.raises(ValueError, match="open sheet"):
+        phx.operators.prepare_displacement_discontinuity_3d(
+            _VERTICES,
+            _FACES,
+            shear_modulus=2.0,
+            poisson_ratio=0.25,
+        )

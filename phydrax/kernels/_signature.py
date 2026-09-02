@@ -188,8 +188,8 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
         return 2
 
     @property
-    def max_derivative_order(self) -> int:
-        return 0
+    def max_derivative_order(self) -> int | None:
+        return self.static_kernel.max_derivative_order
 
     @property
     def is_unit_diagonal(self) -> bool:

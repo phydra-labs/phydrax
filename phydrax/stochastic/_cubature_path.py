@@ -4,17 +4,20 @@
 
 from __future__ import annotations
 
+from math import factorial
 from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+from scipy.optimize import least_squares
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._polynomial._cubature import CubatureRuleData
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._signature import piecewise_linear_signature
 
 
 _DEFAULT_PATH_BYTES = 64 * 1024**2
@@ -35,6 +38,8 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
     source_rule_id: str = eqx.field(static=True)
     storage_bytes: int = eqx.field(static=True)
     path_id: str = eqx.field(static=True)
+    signature_residuals: Array
+    certification_precision: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -90,10 +95,6 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
         signature_degree_ = _positive_integer(signature_degree, "signature_degree")
         if signature_degree_ > gaussian_degree_:
             raise ValueError("signature_degree cannot exceed gaussian_degree.")
-        if signature_degree_ > 3:
-            raise ValueError(
-                "Built-in Wiener path certification supports degree at most three."
-            )
         storage_bytes = int(
             increments_host.nbytes + widths_host.nbytes + weights_host.nbytes
         )
@@ -109,7 +110,7 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
             raise ValueError(
                 "Wiener cubature family and source_rule_id must be nonempty."
             )
-        _validate_wiener_signatures(
+        signature_residuals = _validate_wiener_signatures(
             increments_host,
             widths_host,
             weights_host,
@@ -127,6 +128,8 @@ class WienerCubaturePathData(StrictModule, NonTrainableState):
         self.family = str(family)
         self.source_rule_id = str(source_rule_id)
         self.storage_bytes = storage_bytes
+        self.signature_residuals = jnp.asarray(signature_residuals)
+        self.certification_precision = str(increments_host.dtype)
         self.path_id = canonical_fingerprint(
             {
                 "kind": "wiener-cubature-path-v1",
@@ -162,66 +165,74 @@ def _validation_tolerance(
     )
 
 
-def _centrally_symmetric(
-    increments: np.ndarray,
-    weights: np.ndarray,
-    tolerance: float,
-    /,
-) -> bool:
-    return bool(
-        np.allclose(
-            increments,
-            -increments[::-1],
-            rtol=tolerance,
-            atol=tolerance,
-        )
-        and np.allclose(
-            weights,
-            weights[::-1],
-            rtol=tolerance,
-            atol=tolerance,
-        )
-    )
-
-
-def _third_signature_mean(
-    increments: np.ndarray,
-    weights: np.ndarray,
+def _expected_wiener_signature_level(
+    noise_dimension: int,
+    degree: int,
+    dtype: np.dtype,
     /,
 ) -> np.ndarray:
-    path_count, _, noise_dimension = increments.shape
-    first = np.zeros((path_count, noise_dimension), dtype=increments.dtype)
-    second = np.zeros(
-        (path_count, noise_dimension, noise_dimension), dtype=increments.dtype
+    driver_dimension = noise_dimension + 1
+    shape = (driver_dimension,) * degree
+    # E[S(t, B)] = exp(e_0 + 1/2 sum_i e_i e_i) at unit time.
+    inverse_factorials = tuple(
+        1.0 / float(factorial(count)) for count in range(degree + 1)
     )
-    third_mean = np.zeros(
-        (noise_dimension, noise_dimension, noise_dimension),
-        dtype=increments.dtype,
+    brownian_pair_weights = tuple(0.5**count for count in range(degree // 2 + 1))
+
+    def coefficient(word):
+        generator_factors = 0
+        brownian_pairs = 0
+        position = 0
+        while position < degree:
+            index = word[position]
+            if index == 0:
+                generator_factors += 1
+                position += 1
+            elif position + 1 < degree and word[position + 1] == index:
+                generator_factors += 1
+                brownian_pairs += 1
+                position += 2
+            else:
+                return 0.0
+        return (
+            brownian_pair_weights[brownian_pairs] * inverse_factorials[generator_factors]
+        )
+
+    return np.fromiter(
+        (coefficient(word) for word in np.ndindex(shape)),
+        dtype=dtype,
+        count=driver_dimension**degree,
+    ).reshape(shape)
+
+
+def _time_augmented_increments(
+    increments: np.ndarray,
+    segment_widths: np.ndarray,
+    /,
+) -> np.ndarray:
+    time_increments = np.broadcast_to(
+        segment_widths[None, :, None],
+        increments.shape[:2] + (1,),
     )
-    for increment in np.moveaxis(increments, 1, 0):
-        third_mean += np.einsum(
-            "p,pij,pk->ijk", weights, second, increment, optimize=True
-        )
-        third_mean += 0.5 * np.einsum(
-            "p,pi,pj,pk->ijk",
-            weights,
-            first,
-            increment,
-            increment,
-            optimize=True,
-        )
-        third_mean += np.einsum(
-            "p,pi,pj,pk->ijk",
-            weights / 6.0,
-            increment,
-            increment,
-            increment,
-            optimize=True,
-        )
-        second += np.einsum("pi,pj->pij", first, increment)
-        second += 0.5 * np.einsum("pi,pj->pij", increment, increment)
-        first += increment
-    return third_mean
+    return np.concatenate((time_increments, increments), axis=-1)
+
+
+def _signature_level_name(degree: int, /) -> str:
+    names = ("first", "second", "third", "fourth", "fifth")
+    return names[degree - 1] if degree <= len(names) else f"degree-{degree}"
+
+
+def _signature_grades(
+    driver_dimension: int,
+    tensor_level: int,
+    /,
+) -> np.ndarray:
+    shape = (driver_dimension,) * tensor_level
+    return np.fromiter(
+        (tensor_level + word.count(0) for word in np.ndindex(shape)),
+        dtype=np.int32,
+        count=driver_dimension**tensor_level,
+    ).reshape(shape)
 
 
 def _validate_wiener_signatures(
@@ -232,74 +243,68 @@ def _validate_wiener_signatures(
     /,
     *,
     maximum_workspace_bytes: int,
-) -> None:
+) -> np.ndarray:
     path_count, segment_count, noise_dimension = increments.shape
-    first = np.zeros((path_count, noise_dimension), dtype=increments.dtype)
-    second_mean = np.zeros((noise_dimension, noise_dimension), dtype=increments.dtype)
-    time_spatial_mean = np.zeros((noise_dimension,), dtype=increments.dtype)
-    spatial_time_mean = np.zeros((noise_dimension,), dtype=increments.dtype)
-    elapsed = 0.0
-    for segment, segment_width in enumerate(segment_widths):
-        increment = increments[:, segment, :]
-        second_mean += np.einsum("p,pi,pj->ij", weights, first, increment, optimize=True)
-        second_mean += 0.5 * np.einsum(
-            "p,pi,pj->ij", weights, increment, increment, optimize=True
-        )
-        time_spatial_mean += weights @ ((elapsed + 0.5 * segment_width) * increment)
-        spatial_time_mean += weights @ (
-            segment_width * first + 0.5 * segment_width * increment
-        )
-        first += increment
-        elapsed += float(segment_width)
-    first_mean = weights @ first
-    first_tolerance = _validation_tolerance(
-        increments, path_count, segment_count, noise_dimension, 1
+    driver_dimension = noise_dimension + 1
+    term_count = path_count * segment_count * driver_dimension + sum(
+        path_count * driver_dimension**degree + driver_dimension**degree
+        for degree in range(1, signature_degree + 1)
     )
-    if not np.allclose(first_mean, 0.0, rtol=first_tolerance, atol=first_tolerance):
-        raise ValueError("Wiener cubature paths do not match the first signature level.")
-    if signature_degree < 2:
-        return
-    second_tolerance = _validation_tolerance(
-        increments, path_count, segment_count, noise_dimension, 2
-    )
-    if not np.allclose(
-        second_mean,
-        0.5 * np.eye(noise_dimension),
-        rtol=second_tolerance,
-        atol=second_tolerance,
-    ):
-        raise ValueError("Wiener cubature paths do not match the second signature level.")
-    if signature_degree < 3:
-        return
-    third_tolerance = _validation_tolerance(
-        increments, path_count, segment_count, noise_dimension, 3
-    )
-    if not np.allclose(
-        time_spatial_mean,
-        0.0,
-        rtol=third_tolerance,
-        atol=third_tolerance,
-    ) or not np.allclose(
-        spatial_time_mean,
-        0.0,
-        rtol=third_tolerance,
-        atol=third_tolerance,
-    ):
-        raise ValueError(
-            "Wiener cubature paths do not match degree-three time-space signatures."
-        )
-    if _centrally_symmetric(increments, weights, third_tolerance):
-        return
-    workspace_bytes = (
-        path_count * noise_dimension**2 + noise_dimension**3
-    ) * increments.dtype.itemsize
+    workspace_bytes = term_count * increments.dtype.itemsize
     if workspace_bytes > maximum_workspace_bytes:
-        raise ValueError(
-            "Degree-three signature certification exceeds maximum_path_bytes."
+        raise ValueError("Wiener signature certification exceeds maximum_path_bytes.")
+    driver_increments = _time_augmented_increments(increments, segment_widths)
+    signature = tuple(
+        np.asarray(level)
+        for level in piecewise_linear_signature(
+            jnp.asarray(driver_increments),
+            signature_degree,
         )
-    third_mean = _third_signature_mean(increments, weights)
-    if not np.allclose(third_mean, 0.0, rtol=third_tolerance, atol=third_tolerance):
-        raise ValueError("Wiener cubature paths do not match the third signature level.")
+    )
+    residuals = np.zeros((signature_degree,), dtype=increments.dtype)
+    for tensor_level, level in enumerate(signature, start=1):
+        represented = np.tensordot(weights, level, axes=(0, 0))
+        target = _expected_wiener_signature_level(
+            noise_dimension,
+            tensor_level,
+            increments.dtype,
+        )
+        tolerance = _validation_tolerance(
+            driver_increments,
+            path_count,
+            segment_count,
+            driver_dimension,
+            tensor_level,
+        )
+        grades = _signature_grades(driver_dimension, tensor_level)
+        for homogeneous_degree in range(
+            tensor_level,
+            min(2 * tensor_level, signature_degree) + 1,
+        ):
+            selected = grades == homogeneous_degree
+            difference = np.abs(represented[selected] - target[selected])
+            residuals[homogeneous_degree - 1] = max(
+                residuals[homogeneous_degree - 1],
+                float(np.max(difference)),
+            )
+            if np.allclose(
+                represented[selected],
+                target[selected],
+                rtol=tolerance,
+                atol=tolerance,
+            ):
+                continue
+            level_name = _signature_level_name(homogeneous_degree)
+            if homogeneous_degree == tensor_level:
+                raise ValueError(
+                    "Wiener cubature paths do not match the "
+                    f"{level_name} signature level."
+                )
+            raise ValueError(
+                "Wiener cubature paths do not match time-space signatures at the "
+                f"{level_name} signature level."
+            )
+    return residuals
 
 
 def straight_wiener_cubature_path(
@@ -308,11 +313,11 @@ def straight_wiener_cubature_path(
     *,
     maximum_path_bytes: int = _DEFAULT_PATH_BYTES,
 ) -> WienerCubaturePathData:
-    """Lift a degree-three Gaussian formula to straight unit-time controls."""
+    """Lift a finite-degree Gaussian formula to certified straight controls."""
     if not isinstance(rule, CubatureRuleData):
         raise TypeError("rule must be CubatureRuleData.")
-    if rule.reference_domain != "standard-normal" or rule.exact_degree < 3:
-        raise ValueError("Straight Wiener cubature requires degree-three Gaussian data.")
+    if rule.reference_domain != "standard-normal" or rule.exact_degree < 1:
+        raise ValueError("Straight Wiener cubature requires standard-normal data.")
     points = np.asarray(rule.points, dtype=float)
     weights = np.asarray(rule.weights, dtype=float)
     return WienerCubaturePathData(
@@ -320,10 +325,125 @@ def straight_wiener_cubature_path(
         np.asarray([1.0]),
         weights,
         gaussian_degree=rule.exact_degree,
-        signature_degree=3,
+        signature_degree=rule.exact_degree,
         family="straight-gaussian",
         source_rule_id=rule.rule_id,
         maximum_path_bytes=maximum_path_bytes,
+    )
+
+
+def fit_wiener_cubature_path(
+    noise_dimension: int,
+    signature_degree: int,
+    /,
+    *,
+    path_count: int,
+    segment_count: int,
+    initial_data: WienerCubaturePathData | ArrayLike,
+    optimizer=None,
+    maximum_signature_terms: int = 1_000_000,
+    maximum_workspace_bytes: int = _DEFAULT_PATH_BYTES,
+) -> WienerCubaturePathData:
+    """Fit one bounded positive finite path formula on the host.
+
+    The solve is nonconvex and may fail.  A result is returned only after the normal
+    constructor independently certifies every requested signature level; there is no
+    degree downgrade or negative-weight fallback.  A custom optimizer receives
+    ``(residual_function, initial_vector)`` and must return the final vector.
+    """
+    dimension = _positive_integer(noise_dimension, "noise_dimension")
+    degree = _positive_integer(signature_degree, "signature_degree")
+    paths = _positive_integer(path_count, "path_count")
+    segments = _positive_integer(segment_count, "segment_count")
+    term_cap = _positive_integer(maximum_signature_terms, "maximum_signature_terms")
+    byte_cap = _positive_integer(maximum_workspace_bytes, "maximum_workspace_bytes")
+    driver_dimension = dimension + 1
+    signature_terms = sum(driver_dimension**level for level in range(1, degree + 1))
+    if signature_terms > term_cap:
+        raise ValueError("Requested signature degree exceeds maximum_signature_terms.")
+    workspace = (
+        paths * segments * driver_dimension + paths * signature_terms + signature_terms
+    ) * np.dtype(float).itemsize
+    if workspace > byte_cap:
+        raise ValueError("Wiener cubature fitting exceeds maximum_workspace_bytes.")
+    if isinstance(initial_data, WienerCubaturePathData):
+        initial_increments = np.asarray(initial_data.increments, dtype=float)
+        initial_weights = np.asarray(initial_data.weights, dtype=float)
+        widths = np.asarray(initial_data.segment_widths, dtype=float)
+    else:
+        initial_increments = np.asarray(initial_data, dtype=float)
+        initial_weights = np.full((paths,), 1.0 / paths)
+        widths = np.full((segments,), 1.0 / segments)
+    expected_shape = (paths, segments, dimension)
+    if initial_increments.shape != expected_shape:
+        raise ValueError(f"initial_data increments must have shape {expected_shape}.")
+    if initial_weights.shape != (paths,) or np.any(initial_weights <= 0.0):
+        raise ValueError("Initial path weights must be positive and path-aligned.")
+    initial_logits = np.log(initial_weights)
+    initial_vector = np.concatenate((initial_increments.reshape((-1,)), initial_logits))
+
+    def unpack(vector):
+        split = paths * segments * dimension
+        increments = np.asarray(vector[:split]).reshape(expected_shape)
+        logits = np.asarray(vector[split:])
+        shifted = logits - np.max(logits)
+        weights = np.exp(shifted)
+        return increments, weights / np.sum(weights)
+
+    def residual(vector):
+        increments, weights = unpack(vector)
+        driver_increments = _time_augmented_increments(increments, widths)
+        levels = tuple(
+            np.asarray(level)
+            for level in piecewise_linear_signature(
+                jnp.asarray(driver_increments),
+                degree,
+            )
+        )
+        parts = []
+        for tensor_level, level in enumerate(levels, start=1):
+            represented = np.tensordot(weights, level, axes=(0, 0))
+            target = _expected_wiener_signature_level(
+                dimension,
+                tensor_level,
+                increments.dtype,
+            )
+            grades = _signature_grades(driver_dimension, tensor_level)
+            certified = grades <= degree
+            parts.append((represented - target)[certified])
+        return np.concatenate(parts)
+
+    if optimizer is None:
+        vector = least_squares(
+            residual,
+            initial_vector,
+            max_nfev=max(200, 20 * initial_vector.size),
+        ).x
+    else:
+        if not callable(optimizer):
+            raise TypeError("optimizer must be callable or None.")
+        vector = np.asarray(optimizer(residual, initial_vector), dtype=float)
+        if vector.shape != initial_vector.shape:
+            raise ValueError("Custom optimizer returned an incompatible vector.")
+    increments, weights = unpack(vector)
+    source_id = canonical_fingerprint(
+        {
+            "kind": "fitted-wiener-cubature-path-v1",
+            "noise_dimension": dimension,
+            "signature_degree": degree,
+            "path_count": paths,
+            "segment_count": segments,
+        }
+    )
+    return WienerCubaturePathData(
+        increments,
+        widths,
+        weights,
+        gaussian_degree=degree,
+        signature_degree=degree,
+        family="fitted-positive-signature",
+        source_rule_id=source_id,
+        maximum_path_bytes=byte_cap,
     )
 
 
@@ -336,4 +456,8 @@ def _positive_integer(value: int, name: str, /) -> int:
     return result
 
 
-__all__ = ["WienerCubaturePathData", "straight_wiener_cubature_path"]
+__all__ = [
+    "WienerCubaturePathData",
+    "fit_wiener_cubature_path",
+    "straight_wiener_cubature_path",
+]

@@ -22,7 +22,7 @@ from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..discretization import DiscretizationBundle
 from ..metrix import AbstractStateGeometry
-from ..stochastic import WienerRealization
+from ..stochastic._wiener import WienerRealization
 from ._solution_validation import validate_solution_arrays
 from ._temporal_method import TemporalSolveEvidence
 from ._wiener_operator import WienerNoiseLayout
@@ -131,7 +131,9 @@ class WienerTerm(StrictModule):
         if not isinstance(input_structure, jax.ShapeDtypeStruct) or not isinstance(
             output_structure, jax.ShapeDtypeStruct
         ):
-            raise TypeError("Operator Wiener coefficients initially require array spaces.")
+            raise TypeError(
+                "Operator Wiener coefficients initially require array spaces."
+            )
         if tuple(input_structure.shape) != self.noise_shape:
             raise ValueError(
                 "Operator Wiener input structure must match the declared noise shape."
@@ -181,7 +183,7 @@ def _noise_identity(terms: tuple[WienerTerm, ...], /) -> str | None:
 def _problem_identifier(
     value: str | None,
     drift: DifferentialVectorField,
-    state: Array,
+    state: Any,
     terms: tuple[WienerTerm, ...],
     geometry_id: str | None,
     bundle_id: str | None,
@@ -192,11 +194,28 @@ def _problem_identifier(
             raise ValueError("DifferentialProblem problem_id must be non-empty or None.")
         return value
     drift_type = type(drift)
+    state_array = jnp.asarray(state) if eqx.is_array_like(state) else None
+    state_payload = (
+        {
+            "state_shape": list(state_array.shape),
+            "state_dtype": str(state_array.dtype),
+        }
+        if state_array is not None
+        else {
+            "state_structure": [
+                {
+                    "path": jax.tree_util.keystr(path) or "<root>",
+                    "shape": list(jnp.asarray(leaf).shape),
+                    "dtype": str(jnp.asarray(leaf).dtype),
+                }
+                for path, leaf in jax.tree_util.tree_flatten_with_path(state)[0]
+            ]
+        }
+    )
     payload = {
         "kind": "differential-problem",
         "drift": f"{drift_type.__module__}.{drift_type.__qualname__}",
-        "state_shape": list(state.shape),
-        "state_dtype": str(state.dtype),
+        **state_payload,
         "wiener_terms": [
             {
                 "name": term.name,
@@ -217,7 +236,7 @@ class DifferentialProblem(StrictModule):
     """Finite-dimensional initial-value problem with named stochastic forcing."""
 
     drift: DifferentialVectorField
-    initial_state: Array
+    initial_state: Any
     t0: Array
     t1: Array
     args: Any
@@ -236,7 +255,7 @@ class DifferentialProblem(StrictModule):
     def __init__(
         self,
         drift: DifferentialVectorField,
-        initial_state: ArrayLike,
+        initial_state: Any,
         /,
         *,
         t0: ArrayLike,
@@ -267,7 +286,19 @@ class DifferentialProblem(StrictModule):
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
 
-        state = jnp.asarray(initial_state)
+        state_is_array = eqx.is_array_like(initial_state)
+        state = (
+            jnp.asarray(initial_state)
+            if state_is_array
+            else jax.tree.map(jnp.asarray, initial_state)
+        )
+        if not state_is_array and not jax.tree.leaves(state):
+            raise ValueError("DifferentialProblem PyTree state must contain leaves.")
+        if not state_is_array and state_geometry is not None:
+            raise ValueError(
+                "PyTree differential states require explicit real-coordinate maps "
+                "rather than one array state_geometry."
+            )
         if state_geometry is not None:
             if not isinstance(state_geometry, AbstractStateGeometry):
                 raise TypeError(
@@ -289,13 +320,23 @@ class DifferentialProblem(StrictModule):
         names = tuple(term.name for term in terms)
         if len(set(names)) != len(names):
             raise ValueError("WienerTerm names must be unique within a problem.")
+        if not state_is_array and terms:
+            raise ValueError(
+                "PyTree DifferentialProblem stochastic terms require an explicit "
+                "tree-valued noise layout."
+            )
         structured = tuple(
             term for term in terms if term.representation in ("diagonal", "operator")
         )
         for term in structured:
-            if term.representation == "diagonal" and term.noise_shape != tuple(state.shape):
+            if (
+                not state_is_array
+                or term.representation == "diagonal"
+                and term.noise_shape != tuple(state.shape)
+            ):
                 raise ValueError(
-                    "A diagonal WienerTerm requires matching state and noise shapes."
+                    "Diagonal Wiener terms require one array state with matching "
+                    "state and noise shapes."
                 )
 
         offset = 0
@@ -365,7 +406,7 @@ class DifferentialSolution(StrictModule):
     """Saved trajectory values plus solver and stochastic-realization provenance."""
 
     times: Array
-    states: Array
+    states: Any
     valid: Array
     sample_shape: tuple[int, ...]
     interpolation: Any | None
@@ -390,7 +431,7 @@ class DifferentialSolution(StrictModule):
         self,
         *,
         times: ArrayLike,
-        states: ArrayLike,
+        states: Any,
         valid: ArrayLike,
         sample_shape: Sequence[int] = (),
         interpolation: Any | None = None,
@@ -412,19 +453,40 @@ class DifferentialSolution(StrictModule):
         temporal_evidence: TemporalSolveEvidence | None = None,
         problem_id: str | None = None,
     ):
-        arrays = validate_solution_arrays(
-            times,
-            states,
-            valid,
-            sample_shape=sample_shape,
-            state_shape=None,
-            time_layout="per_path",
-            owner="DifferentialSolution",
-        )
-        samples = arrays.sample_shape
-        times_array = arrays.times
-        states_array = arrays.states
-        valid_array = arrays.valid
+        if eqx.is_array_like(states):
+            arrays = validate_solution_arrays(
+                times,
+                states,
+                valid,
+                sample_shape=sample_shape,
+                state_shape=None,
+                time_layout="per_path",
+                owner="DifferentialSolution",
+            )
+            samples = arrays.sample_shape
+            times_array = arrays.times
+            states_array = arrays.states
+            valid_array = arrays.valid
+        else:
+            if tuple(sample_shape):
+                raise ValueError(
+                    "PyTree DifferentialSolution currently requires scalar sample shape."
+                )
+            times_array = jnp.asarray(times)
+            valid_array = jnp.asarray(valid, dtype=bool)
+            if times_array.ndim != 1 or valid_array.shape != times_array.shape:
+                raise ValueError(
+                    "PyTree solution times/valid must share one rank-one shape."
+                )
+            states_array = jax.tree.map(jnp.asarray, states)
+            if any(
+                leaf.ndim < 1 or leaf.shape[0] != times_array.size
+                for leaf in jax.tree.leaves(states_array)
+            ):
+                raise ValueError(
+                    "Every PyTree solution leaf must begin with the saved-time axis."
+                )
+            samples = ()
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("DifferentialSolution solver_name must be non-empty.")
         resolved_solver_id = f"solver:{solver_name}" if solver_id is None else solver_id

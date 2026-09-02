@@ -11,6 +11,20 @@ from ._action import (
     CliffordOutermorphismPlan,
 )
 from ._blades import CliffordBladeLayout
+from ._families import (
+    CliffordCochainProductPlan,
+    CliffordInverseResult,
+    CliffordMetricField,
+    CliffordProjectorEvidence,
+    ConformalCliffordModel,
+    invert_multivector,
+    MinimalLeftIdeal,
+    PinElement,
+    PreparedCauchyCliffordProjector,
+    PreparedCliffordMetricProduct,
+    ProjectiveCliffordModel,
+    SpinElement,
+)
 from ._forms import CliffordMetricBridge
 from ._involutions import (
     basis_blade,
@@ -42,6 +56,18 @@ from ._spec import CliffordAlgebraSpec
 
 
 __all__ = [
+    "CliffordCochainProductPlan",
+    "CliffordInverseResult",
+    "CliffordMetricField",
+    "CliffordProjectorEvidence",
+    "ConformalCliffordModel",
+    "MinimalLeftIdeal",
+    "PinElement",
+    "PreparedCauchyCliffordProjector",
+    "PreparedCliffordMetricProduct",
+    "ProjectiveCliffordModel",
+    "SpinElement",
+    "invert_multivector",
     "audit_clifford_action",
     "audit_clifford_actions",
     "basis_blade",

@@ -235,7 +235,10 @@ def _pointwise_term(
         alpha=alpha,
         thresholds=(
             term.classification.thresholds
-            if term.classification.kind == "ordinal"
+            if (
+                term.classification.kind == "ordinal"
+                and term.classification.cutpoint_policy == "fixed"
+            )
             else None
         ),
     )
@@ -552,7 +555,10 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
             class_count=self.classification.class_count,
             thresholds=(
                 self.classification.thresholds
-                if self.classification.kind == "ordinal"
+                if (
+                    self.classification.kind == "ordinal"
+                    and self.classification.cutpoint_policy == "fixed"
+                )
                 else None
             ),
         )

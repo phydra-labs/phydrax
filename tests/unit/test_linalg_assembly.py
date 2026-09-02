@@ -667,3 +667,39 @@ def test_block_jacobi_builder_is_resource_aware_jittable_and_refreshable():
     )
     assert not rejected.accepted
     assert "materialization" in rejected.reason
+
+
+def test_batched_banded_structured_solve_preserves_batch_and_rhs_axes():
+    bands = jnp.asarray(
+        [
+            [[0.0, -1.0, -1.0], [0.0, 4.0, 4.0], [-1.0, -1.0, 0.0]],
+            [[0.0, 0.5, 0.5], [3.0, 3.5, 4.0], [0.25, 0.25, 0.0]],
+        ],
+        dtype=jnp.float64,
+    )
+    operator = la.BandedLinearOperator(
+        bands,
+        lower_bandwidth=1,
+        upper_bandwidth=1,
+    )
+    rhs = jnp.arange(12.0, dtype=jnp.float64).reshape((2, 3, 2)) + 1.0
+    prepared = la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(la.StructuredDirect()),
+        rhs_layout=la.RHSLayout((2,)),
+    )
+    result = la.solve(
+        prepared,
+        rhs,
+        rhs_layout=la.RHSLayout((2,)),
+    )
+    dense = la.materialize(
+        operator,
+        la.MaterializationPolicy(max_entries=18, max_bytes=4096),
+    )
+    expected = jax.vmap(jnp.linalg.solve)(dense, rhs)
+
+    assert operator.batch_shape == (2,)
+    assert result.value.shape == rhs.shape
+    assert jnp.allclose(result.value, expected, rtol=2e-12, atol=2e-12)
+    assert jnp.all(result.successful)

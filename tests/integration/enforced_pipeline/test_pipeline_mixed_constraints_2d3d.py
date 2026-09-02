@@ -16,7 +16,6 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.enforcement import (
-    enforce_dirichlet,
     EnforcementProgram,
     EnforcementSpec,
     InteriorAnchors,
@@ -59,20 +58,8 @@ def test_mixed_constraints_2d_transient():
     initial = domain.component({"t": FixedStart()})
 
     specs = [
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", left, target=1.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=1.0
-            ),
-        ),
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", right, target=2.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=2.0
-            ),
-        ),
+        EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0)),
+        EnforcementSpec(phx.conditions.Dirichlet("u", right, target=2.0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=3.0, order=0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=1)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
@@ -148,20 +135,8 @@ def test_mixed_constraints_3d_transient():
     initial = domain.component({"t": FixedStart()})
 
     specs = [
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", left, target=1.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=1.0
-            ),
-        ),
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", right, target=2.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=2.0
-            ),
-        ),
+        EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0)),
+        EnforcementSpec(phx.conditions.Dirichlet("u", right, target=2.0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=3.0, order=0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=1)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),

@@ -24,6 +24,8 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
     block_names: tuple[str, ...] = eqx.field(static=True)
     cell_dofs: tuple[Array, ...]
     relations: tuple[RowRelation, ...]
+    orientations: tuple[Array, ...]
+    family: str = eqx.field(static=True)
     vertex_dof_count: int = eqx.field(static=True)
     edge_dof_count: int = eqx.field(static=True)
     cell_dof_count: int = eqx.field(static=True)
@@ -41,27 +43,34 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         if not isinstance(element, VirtualElementSpec):
             raise TypeError("element must be VirtualElementSpec.")
         connectivity = mesh.connectivity
-        vertex_count = int(mesh.coordinates.shape[0])
+        topology_vertex_count = int(mesh.coordinates.shape[0])
         edge_count = int(connectivity.edges.shape[0])
         cell_count = connectivity.cell_count
-        edge_width = element.edge_interior_dof_count
-        cell_width = element.cell_moment_count
+        vertex_width = element.vertex_dofs_per_entity
+        edge_width = element.edge_dofs_per_entity
+        cell_width = element.cell_dofs_per_entity
+        vertex_dof_count = topology_vertex_count * vertex_width
         edge_dof_count = edge_count * edge_width
         cell_dof_count = cell_count * cell_width
-        global_count = vertex_count + edge_dof_count + cell_dof_count
+        global_count = vertex_dof_count + edge_dof_count + cell_dof_count
         cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
         cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=float)
         block_dofs = []
+        block_orientations = []
         relations = []
         cell_offset = 0
         for block in mesh.blocks:
             width = element.local_dof_count(block.arity)
             local = np.empty((block.cell_count, width), dtype=np.int32)
-            vertices = np.asarray(block.vertices, dtype=np.int32)
-            local[:, : block.arity] = vertices
-            cursor = block.arity
+            orientation = np.ones((block.cell_count, width), dtype=float)
+            cursor = 0
+            if vertex_width:
+                vertices = np.asarray(block.vertices, dtype=np.int32)
+                local[:, : block.arity] = vertices
+                cursor = block.arity
             if edge_width:
                 positions = np.arange(edge_width, dtype=np.int32)
+                parity = (-1.0) ** positions
                 for local_edge in range(block.arity):
                     edges = cell_edges[
                         cell_offset : cell_offset + block.cell_count, local_edge
@@ -69,13 +78,23 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
                     signs = cell_signs[
                         cell_offset : cell_offset + block.cell_count, local_edge
                     ]
-                    oriented = np.where(
-                        signs[:, None] > 0.0,
-                        positions[None, :],
-                        positions[::-1][None, :],
-                    )
+                    if element.family == "ConformingH1":
+                        oriented = np.where(
+                            signs[:, None] > 0.0,
+                            positions[None, :],
+                            positions[::-1][None, :],
+                        )
+                    else:
+                        oriented = np.broadcast_to(
+                            positions[None, :], (block.cell_count, edge_width)
+                        )
+                        orientation[:, cursor : cursor + edge_width] = np.where(
+                            signs[:, None] > 0.0,
+                            1.0,
+                            -parity[None, :],
+                        )
                     local[:, cursor : cursor + edge_width] = (
-                        vertex_count + edges[:, None] * edge_width + oriented
+                        vertex_dof_count + edges[:, None] * edge_width + oriented
                     )
                     cursor += edge_width
             if cell_width:
@@ -85,43 +104,52 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
                     dtype=np.int32,
                 )
                 local[:, cursor : cursor + cell_width] = (
-                    vertex_count
+                    vertex_dof_count
                     + edge_dof_count
                     + cells[:, None] * cell_width
                     + np.arange(cell_width, dtype=np.int32)[None, :]
                 )
             block_dofs.append(jnp.asarray(local))
+            block_orientations.append(jnp.asarray(orientation))
             relations.append(RowRelation(local, source_size=global_count))
             cell_offset += block.cell_count
         boundary = np.zeros((global_count,), dtype=bool)
-        boundary[:vertex_count] = np.asarray(connectivity.boundary_vertices, dtype=bool)
+        if vertex_width:
+            boundary[:vertex_dof_count] = np.asarray(
+                connectivity.boundary_vertices, dtype=bool
+            )
         if edge_width:
-            boundary[vertex_count : vertex_count + edge_dof_count] = np.repeat(
+            boundary[vertex_dof_count : vertex_dof_count + edge_dof_count] = np.repeat(
                 np.asarray(connectivity.boundary_edges, dtype=bool), edge_width
             )
-        point_valid = np.ones((global_count,), dtype=bool)
-        if cell_width:
-            point_valid[vertex_count + edge_dof_count :] = False
+        point_valid = np.zeros((global_count,), dtype=bool)
+        if element.family == "ConformingH1":
+            point_valid[: vertex_dof_count + edge_dof_count] = True
         self.block_names = tuple(block.name for block in mesh.blocks)
         self.cell_dofs = tuple(block_dofs)
         self.relations = tuple(relations)
-        self.vertex_dof_count = vertex_count
+        self.orientations = tuple(block_orientations)
+        self.family = element.family
+        self.vertex_dof_count = vertex_dof_count
         self.edge_dof_count = edge_dof_count
         self.cell_dof_count = cell_dof_count
         self.global_dof_count = global_count
         self.boundary_dof_mask = jnp.asarray(boundary)
         self.point_dof_valid = jnp.asarray(point_valid)
         self.default_dof_points = self.evaluate_point_coordinates(mesh.coordinates, mesh)
-        self.dof_map_id = canonical_fingerprint(
-            {
-                "kind": "virtual-element-dof-map",
-                "mesh": mesh.topology_id,
-                "element": element.element_id,
-                "routes": [array_tree_fingerprint(value) for value in block_dofs],
-                "boundary": array_tree_fingerprint(boundary),
-                "point_valid": array_tree_fingerprint(point_valid),
-            }
-        )
+        fingerprint_payload = {
+            "kind": "virtual-element-dof-map",
+            "mesh": mesh.topology_id,
+            "element": element.element_id,
+            "routes": [array_tree_fingerprint(value) for value in block_dofs],
+            "boundary": array_tree_fingerprint(boundary),
+            "point_valid": array_tree_fingerprint(point_valid),
+        }
+        if element.family != "ConformingH1":
+            fingerprint_payload["orientations"] = [
+                array_tree_fingerprint(value) for value in block_orientations
+            ]
+        self.dof_map_id = canonical_fingerprint(fingerprint_payload)
 
     def evaluate_point_coordinates(
         self,
@@ -135,17 +163,24 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
                 "VEM coordinate refresh must preserve the mesh coordinate shape."
             )
         result = jnp.zeros((self.global_dof_count, points.shape[1]), dtype=points.dtype)
-        result = result.at[: self.vertex_dof_count].set(points)
+        if self.family == "ConformingH1":
+            result = result.at[: self.vertex_dof_count].set(points)
         edge_width = (
             self.edge_dof_count // int(mesh.connectivity.edges.shape[0])
             if self.edge_dof_count
             else 0
         )
         if edge_width:
-            from ...integration import GaussLobattoLegendreRule, interval_rule_data
+            if self.family == "ConformingH1":
+                from ...integration import (
+                    GaussLobattoLegendreRule,
+                    interval_rule_data,
+                )
 
-            data = interval_rule_data(GaussLobattoLegendreRule(edge_width + 2))
-            nodes = 0.5 * (jnp.asarray(data.nodes)[1:-1] + 1.0)
+                data = interval_rule_data(GaussLobattoLegendreRule(edge_width + 2))
+                nodes = 0.5 * (jnp.asarray(data.nodes)[1:-1] + 1.0)
+            else:
+                nodes = jnp.full((edge_width,), 0.5, dtype=points.dtype)
             edges = jnp.asarray(mesh.connectivity.edges, dtype=jnp.int32)
             start = points[edges[:, 0]]
             stop = points[edges[:, 1]]

@@ -17,7 +17,7 @@ from ..._numerics._compensated import two_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation
-from ._periodic_cell import ParticleCell
+from .._periodic_cell import PeriodicCell
 from ._precision import ParticleAccumulation
 
 
@@ -252,7 +252,7 @@ def particle_pair_geometry(
     pairs: ParticlePairRelation,
     /,
     *,
-    box: ParticleBox | ParticleCell | None = None,
+    box: ParticleBox | PeriodicCell | None = None,
     cell_vectors: ArrayLike | None = None,
 ) -> ParticlePairGeometry:
     """Evaluate finite, zero-safe geometry on canonical particle pairs."""
@@ -264,8 +264,8 @@ def particle_pair_geometry(
         raise ValueError("Particle positions do not match the pair relation size.")
     if box is not None and box.ambient_dimension != value.shape[1]:
         raise ValueError("ParticleBox dimension does not match particle positions.")
-    if cell_vectors is not None and not isinstance(box, ParticleCell):
-        raise ValueError("Dynamic cell vectors require a ParticleCell.")
+    if cell_vectors is not None and not isinstance(box, PeriodicCell):
+        raise ValueError("Dynamic cell vectors require a PeriodicCell.")
     left = value[pairs.left_indices]
     right = value[pairs.right_indices]
     displacement = left - right

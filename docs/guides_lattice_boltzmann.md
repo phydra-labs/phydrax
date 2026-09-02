@@ -227,9 +227,27 @@ checkpoints. `FusedLatticeBoltzmannExecutionPlan` JIT-compiles the full fixed sc
 as one XLA program. Qualification compares populations, failure transitions, work,
 and diagnostics; production may omit the duplicate reference realization afterward.
 
-`LatticeBoltzmannIREEForwardContract` exports stable tuple inputs and outputs for
-forward inference. Objects, callbacks, adaptive geometry rebuilds, and gradients are
-not part of the IREE ABI. Training and differentiation remain in JAX.
+`LatticeBoltzmannIREEContract` has `forward` and `forward-vjp` modes. The
+forward realization and transpose are separately callable, checksummed IREE
+artifacts with explicit differentiable population/runtime-array inputs. The VJP
+transposes the exact fixed-step realization; unsupported compiler primitives fail
+before publication and never route back through hidden JAX execution.
+Objects, callbacks, dynamic geometry, and undeclared leaves are outside the ABI.
+
+## General AMR and replay
+
+`LatticeBoltzmannAMRPlan` prepares any finite hierarchy of integer spatial ratios
+at least two. `LatticeBoltzmannAMRScalingPolicy` selects acoustic r, diffusive r²,
+or explicit declared substeps; `LatticeBoltzmannAMRTemporalTracePlan` evaluates
+declared polynomial coarse traces at each fine fraction. Recursive advance
+prolongs, subcycles, restricts, averages down, reports interface conservation and
+positivity, and commits all levels atomically.
+
+`prepare_replay_schedule` builds a static uniform or declared-cost split tree
+under explicit checkpoint-byte and schedule-operation caps. A
+`FixedStepReplayPolicy(\"scheduled\", schedule=...)` never adapts to observed
+runtime cost; full, step, block, and scheduled realizations retain identical
+fixed-step semantics.
 
 ## Qualification and acceptance
 

@@ -5,16 +5,42 @@ import jax.random as jr
 import pytest
 
 from phydrax.nn.layers import (
+    AbstractTimeAwareRecurrentCell,
     GRUCell,
     LSTMCell,
     RecurrentBatch,
     RNNCell,
     StackedRecurrentCell,
+    run_recurrent,
 )
 from phydrax.nn.models import (
     BidirectionalRecurrentSequenceModel,
     RecurrentSequenceModel,
 )
+
+
+class _PhysicalVectorAccumulator(AbstractTimeAwareRecurrentCell):
+    def initial_state(self, case_shape, /, *, dtype):
+        return jnp.zeros(case_shape + (1,), dtype=dtype)
+
+    def step(self, state, inputs, /, *, key=None):
+        del key
+        next_state = state + inputs
+        return next_state, next_state
+
+    def step_with_context(
+        self,
+        state,
+        inputs,
+        /,
+        *,
+        time,
+        interval,
+        key=None,
+    ):
+        del key
+        next_state = state + inputs * (time + interval)[..., None]
+        return next_state, next_state
 
 
 @pytest.mark.parametrize("cell_type", (GRUCell, LSTMCell))
@@ -90,6 +116,33 @@ def test_bidirectional_recurrence_reverses_each_reset_delimited_segment_independ
     first = model(RecurrentBatch(inputs[:3], jnp.ones((3,), dtype=bool)))
     second = model(RecurrentBatch(inputs[3:], jnp.ones((3,), dtype=bool)))
     assert jnp.allclose(packed, jnp.concatenate((first, second)), atol=1e-10, rtol=1e-10)
+
+
+def test_bidirectional_time_aware_recurrence_matches_explicit_reverse_time():
+    cell = _PhysicalVectorAccumulator()
+    model = BidirectionalRecurrentSequenceModel(cell, cell)
+    inputs = jnp.ones((4, 1))
+    valid = jnp.ones((4,), dtype=bool)
+    times = jnp.asarray((0.0, 1.0, 4.0, 10.0))
+    batch = RecurrentBatch(inputs, valid, time=times)
+
+    output = model(batch)
+    backward_reference = run_recurrent(
+        cell,
+        RecurrentBatch(
+            inputs[::-1],
+            valid,
+            time=times[::-1],
+            time_direction="backward",
+        ),
+    ).outputs[::-1]
+
+    assert jnp.array_equal(output[..., :1], run_recurrent(cell, batch).outputs)
+    assert jnp.array_equal(output[..., 1:], backward_reference)
+    assert jnp.array_equal(
+        backward_reference[..., 0],
+        jnp.asarray((25.0, 24.0, 20.0, 10.0)),
+    )
 
 
 def test_recurrent_models_are_vmappable_differentiable_and_support_final_readout():

@@ -41,10 +41,12 @@ def _model(shape, *, mode, partial, nonlinear, closure):
         ),
         mixing=phx.applications.ocean.HydrostaticMixingPlan(closure),
         external_mode=mode,
-        split_substeps=10,
+        subcycle_policy=phx.applications.ocean.ExternalModeSubcyclePolicy.fixed(10),
     ).prepare()
     state = ocean.initialize_state(jnp.zeros((nx, ny)))
-    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(state)
+    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(
+        ocean, state
+    )
     method = phx.applications.ocean.HydrostaticIMEXMidpointMethod(ocean)
     return ocean, method, continuation
 

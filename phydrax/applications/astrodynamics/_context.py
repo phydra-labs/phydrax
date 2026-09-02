@@ -79,21 +79,26 @@ class TimeInstant(StrictModule, NonTrainableState):
 
 
 class ReferenceEpoch(StrictModule, NonTrainableState):
-    """Exact origin from which traced numerical time is measured in seconds."""
+    """Exact origin for a continuous solver or an explicitly noncontinuous model."""
 
     instant: TimeInstant
+    continuous: bool = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
 
-    def __init__(self, instant: TimeInstant, /):
+    def __init__(self, instant: TimeInstant, /, *, continuous: bool = True):
         if not isinstance(instant, TimeInstant):
             raise TypeError("instant must be a TimeInstant.")
-        if instant.scale == "UTC":
+        if not isinstance(continuous, bool):
+            raise TypeError("continuous must be a bool.")
+        if continuous and instant.scale == "UTC":
             raise ValueError("UTC cannot be used as a continuous solver epoch.")
         self.instant = instant
+        self.continuous = continuous
         self.epoch_id = canonical_fingerprint(
             {
                 "kind": "astrodynamics-reference-epoch",
                 "instant": instant.instant_id,
+                "continuous": continuous,
             }
         )
 

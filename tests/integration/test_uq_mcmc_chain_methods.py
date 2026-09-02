@@ -11,6 +11,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+import phydrax.uq._mcmc as mcmc_module
 
 
 def _correlated_problem():
@@ -44,8 +45,19 @@ def _assert_tree_close(left, right, *, atol=1e-10):
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
+def test_vectorized_nuts_replays_and_matches_independent_sequential_chains(
+    monkeypatch,
+):
     problem = _correlated_problem()
+    unstack_calls = 0
+    original_unstack = mcmc_module._unstack_tree
+
+    def tracked_unstack(*args, **kwargs):
+        nonlocal unstack_calls
+        unstack_calls += 1
+        return original_unstack(*args, **kwargs)
+
+    monkeypatch.setattr(mcmc_module, "_unstack_tree", tracked_unstack)
     settings: dict[str, Any] = dict(
         key=jr.key(200),
         num_chains=3,
@@ -56,17 +68,24 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
         max_num_doublings=7,
     )
     sequential = phx.uq.sample_nuts(problem, **settings, chain_method="sequential")
+    sequential_unstacks = unstack_calls
+    unstack_calls = 0
     vectorized = phx.uq.sample_nuts(problem, **settings, chain_method="vectorized")
+    vectorized_unstacks = unstack_calls
+    unstack_calls = 0
     vectorized_replay = phx.uq.sample_nuts(
         problem,
         **settings,
         chain_method="vectorized",
     )
+    unstack_calls = 0
     interleaved = phx.uq.sample_nuts(
         problem,
         **settings,
         chain_method="interleaved",
     )
+    interleaved_unstacks = unstack_calls
+    unstack_calls = 0
     interleaved_replay = phx.uq.sample_nuts(
         problem,
         **settings,
@@ -112,6 +131,8 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
     assert vectorized.chain_method == "vectorized"
     assert sequential.chain_method == "sequential"
     assert interleaved.chain_method == "interleaved"
+    assert sequential_unstacks > vectorized_unstacks
+    assert vectorized_unstacks == interleaved_unstacks == 2
     assert not jnp.array_equal(vectorized.samples[0], vectorized.samples[1])
     assert vectorized.diagnostics.rhat.shape == (2,)
     assert vectorized.sample_memory_bytes == sequential.sample_memory_bytes
@@ -155,6 +176,72 @@ def test_vectorized_hmc_preserves_fixed_trajectory_and_diagnostics():
     assert jnp.isfinite(vectorized.diagnostics.max_rhat)
 
 
+@pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
+def test_chain_specific_initial_positions_are_checked_and_used(algorithm):
+    problem = _correlated_problem()
+    initial_positions = jnp.asarray([[-1.0, 0.25], [1.0, -0.25]])
+    settings: dict[str, Any] = dict(
+        key=jr.key(208),
+        num_chains=2,
+        num_warmup=8,
+        num_samples=4,
+        initial_positions=initial_positions,
+        initial_step_size=0.1,
+    )
+    result = (
+        phx.uq.sample_nuts(problem, **settings, max_num_doublings=4)
+        if algorithm == "nuts"
+        else phx.uq.sample_hmc(problem, **settings, num_integration_steps=3)
+    )
+
+    assert result.samples.shape == (2, 4, 2)
+    assert jnp.all(jnp.isfinite(result.log_density))
+    assert len(result.warmup) == 2
+
+
+@pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
+def test_chain_specific_invalid_initial_positions_fail_before_warmup(algorithm):
+    problem = _correlated_problem()
+    settings: dict[str, Any] = dict(
+        key=jr.key(209),
+        num_chains=2,
+        num_warmup=8,
+        num_samples=4,
+        initial_positions=jnp.asarray([[0.0, 0.0], [jnp.nan, 0.0]]),
+        initial_step_size=0.1,
+    )
+    with pytest.raises(FloatingPointError, match="positions must be finite"):
+        if algorithm == "nuts":
+            phx.uq.sample_nuts(problem, **settings, max_num_doublings=4)
+        else:
+            phx.uq.sample_hmc(problem, **settings, num_integration_steps=3)
+
+
+@pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
+def test_every_chain_specific_initial_log_density_is_checked(algorithm):
+    space = phx.uq.ParameterSpace(
+        jnp.zeros((1,)),
+        priors=phx.uq.Normal(0.0, 1.0),
+    )
+    problem = phx.uq.PosteriorProblem(
+        space,
+        lambda value: jnp.where(value[0] > 0.0, jnp.nan, -0.5 * value[0] ** 2),
+    )
+    settings: dict[str, Any] = dict(
+        key=jr.key(210),
+        num_chains=2,
+        num_warmup=8,
+        num_samples=4,
+        initial_positions=jnp.asarray([[-1.0], [1.0]]),
+        initial_step_size=0.1,
+    )
+    with pytest.raises(FloatingPointError, match="log density and gradient"):
+        if algorithm == "nuts":
+            phx.uq.sample_nuts(problem, **settings, max_num_doublings=4)
+        else:
+            phx.uq.sample_hmc(problem, **settings, num_integration_steps=3)
+
+
 @pytest.mark.parametrize("chain_method", ["vectorized", "interleaved"])
 def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(chain_method):
     problem = _correlated_problem()
@@ -171,12 +258,12 @@ def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(chain_metho
     diagonal = phx.uq.sample_nuts(
         problem,
         **settings,
-        is_mass_matrix_diagonal=True,
+        kinetic=phx.uq.MCMCMassAdaptationPlan.diagonal(),
     )
     dense = phx.uq.sample_nuts(
         problem,
         **settings,
-        is_mass_matrix_diagonal=False,
+        kinetic=phx.uq.MCMCMassAdaptationPlan.blocks((("",),), max_block_size=2),
     )
 
     assert diagonal.samples.shape == dense.samples.shape == (2, 50, 2)

@@ -423,3 +423,44 @@ def test_rigid_participant_and_geometric_filter_preserve_explicit_kinematics():
         ((0.0, 0.0), (1.0, 0.0)),
     )
     assert filtered.evidence.output_contacts > 0
+
+
+def test_global_reynolds_film_reports_residual_and_balanced_traction():
+    mesh = phx.discretization.CellMesh(
+        jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
+        (
+            phx.discretization.CellBlock(
+                "film",
+                "triangle",
+                jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
+            ),
+        ),
+    )
+    interface = phx.discretization.ContactInterfacePlan(
+        jnp.asarray(((0, 1, 2),)),
+        jnp.asarray(((1.0 / 3.0,) * 3,)),
+        jnp.asarray(((0, 1, 2),)),
+        jnp.asarray(((1.0 / 3.0,) * 3,)),
+        jnp.asarray(((0.0, 0.0, 1.0),)),
+        jnp.asarray((0.5,)),
+        plus_node_count=3,
+        minus_node_count=3,
+    )
+    prepared = phx.applications.contact.ReynoldsFilmPlan(
+        mesh,
+        interface,
+        viscosity=1.0,
+        boundary_conditions=phx.applications.contact.ReynoldsPressureBoundaryConditions(
+            jnp.asarray((0, 1, 2)), jnp.zeros((3,))
+        ),
+    ).prepare()
+    result = prepared.evaluate(
+        prepared.initialize(jnp.float64),
+        jnp.ones((3,)),
+        jnp.zeros((3,)),
+        jnp.zeros((3, 3)),
+    )
+
+    assert bool(result.successful)
+    assert result.evidence.pde_residual == 0.0
+    assert jnp.allclose(result.interface_residual.action_reaction_residual, 0.0)

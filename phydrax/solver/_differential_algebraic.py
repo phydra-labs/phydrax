@@ -505,22 +505,31 @@ class DifferentialAlgebraicProblem(StrictModule):
 
     def __init__(
         self,
-        system: DifferentialAlgebraicSystem,
+        system: DifferentialAlgebraicSystem | Any,
         initial_state: ArrayLike,
         /,
         *,
         initial_state_rate: ArrayLike | None = None,
         args: Any = None,
         input_policy: AbstractInputPolicy | None = None,
-        initialization: DAEInitializationSpec | None = None,
+        initialization: DAEInitializationSpec | Literal["structural"] | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
     ):
+        from ..dynamics._dae_structural import ReducedDAECompilation
+
+        structural = system if isinstance(system, ReducedDAECompilation) else None
+        if structural is not None:
+            system = structural.system
         if not isinstance(system, DifferentialAlgebraicSystem):
-            raise TypeError("system must be a DifferentialAlgebraicSystem.")
+            raise TypeError(
+                "system must be DifferentialAlgebraicSystem or ReducedDAECompilation."
+            )
         if system.input_layout is None:
             if input_policy is not None:
-                raise ValueError("An autonomous DAE problem does not accept input_policy.")
+                raise ValueError(
+                    "An autonomous DAE problem does not accept input_policy."
+                )
         else:
             if input_policy is None:
                 raise ValueError("An input-aware DAE problem requires input_policy.")
@@ -552,13 +561,25 @@ class DifferentialAlgebraicProblem(StrictModule):
             ~jnp.asarray(system.state_geometry.contains(state), dtype=bool),
             "DAE initial state is outside its state geometry.",
         )
-        initial_spec = (
-            DAEInitializationSpec.index_one()
-            if initialization is None
-            else initialization
-        )
+        if initialization == "structural":
+            if structural is None:
+                raise ValueError(
+                    "initialization='structural' requires ReducedDAECompilation."
+                )
+            initial_spec = DAEInitializationSpec.from_masks(
+                structural.fixed_state_mask,
+                structural.fixed_rate_mask,
+            )
+        else:
+            initial_spec = (
+                DAEInitializationSpec.index_one()
+                if initialization is None
+                else initialization
+            )
         if not isinstance(initial_spec, DAEInitializationSpec):
-            raise TypeError("initialization must be a DAEInitializationSpec or None.")
+            raise TypeError(
+                "initialization must be DAEInitializationSpec, 'structural', or None."
+            )
         if discretization_bundle is not None and not isinstance(
             discretization_bundle,
             DiscretizationBundle,
@@ -1229,9 +1250,7 @@ class DAEContinuation(StrictModule):
         self.last_alpha = jnp.asarray(last_alpha)
         self.nonlinear_solve = nonlinear_solve
         self.problem_id = str(problem_id)
-        self.input_policy_id = (
-            None if input_policy_id is None else str(input_policy_id)
-        )
+        self.input_policy_id = None if input_policy_id is None else str(input_policy_id)
         self.system_id = str(system_id)
         self.state_shape = tuple(states_.shape[1:])
         self.state_dtype = np.dtype(states_.dtype).str
@@ -1378,9 +1397,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.system_id = str(system_id)
         self.time_id = str(time_id)
         self.plan_id = str(plan_id)
-        self.input_policy_id = (
-            None if input_policy_id is None else str(input_policy_id)
-        )
+        self.input_policy_id = None if input_policy_id is None else str(input_policy_id)
         self.prepared_id = str(prepared_id)
         if source_discretization_bundle is not None and not isinstance(
             source_discretization_bundle,

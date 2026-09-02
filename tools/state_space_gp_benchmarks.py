@@ -246,8 +246,10 @@ def run_state_space_gp_benchmarks(
         )
         plan = phx.uq.compile_state_space_kernel(
             kernel,
-            train_times[::-1],
-            query_times[::-1],
+            phx.uq.StateSpaceGaussianProcessDesign(
+                train_times[::-1],
+                query_times[::-1],
+            ),
             max_schedule_size=size + query_times.size,
         )
         reversed_values = train_values[::-1]

@@ -18,7 +18,8 @@ from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
-from ..stochastic import WienerRealization
+from ..linalg import AbstractRealCoordinateMap
+from ..stochastic._wiener import WienerRealization
 from ._delay import (
     ConstantDelay,
     DelayDifferentialProblem,
@@ -49,6 +50,9 @@ from ._diffrax_delay_backend import (
     _bind_delay_history,
     _CausalAdaptiveStepSizeController,
     _CausalFixedStepSizeController,
+    _CoordinateDelayDerivative,
+    _CoordinateDelayHistory,
+    _CoordinateDelayInterpolation,
     _DelayVectorField,
     _deterministic_delay_terms,
     _neutral_discontinuity_times,
@@ -66,9 +70,17 @@ from ._diffrax_delay_stochastic import (
     _validated_solver as _validated_stochastic_delay_solver,
     _validation_contract,
 )
+from ._diffrax_state_packing import (
+    _prepare_diffrax_state_adapter,
+    DiffraxComplexStatePolicy,
+)
 from ._geometric import AbstractGeometricSolver, SRKMK
 from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
+from ._segmented_execution import (
+    FixedCapacitySegmentEvidence,
+    FixedCapacitySegmentPolicy,
+)
 
 
 class SegmentedDelayResult(str, Enum):
@@ -530,6 +542,7 @@ class DelaySegmentContinuation(eqx.Module):
     event_state: Any
     discontinuity_tracker: Any
     problem_id: str = eqx.field(static=True)
+    coordinate_id: str = eqx.field(static=True)
     solver_name: str = eqx.field(static=True)
     controller_mode: str = eqx.field(static=True)
     resumable: bool = eqx.field(static=True)
@@ -709,6 +722,53 @@ def _discontinuity_schedule(
     return controller_schedule, tracker_times, tracker_generations, depth
 
 
+def _bounded_delay_segment_evidence(
+    policy: FixedCapacitySegmentPolicy,
+    problem: DelayDifferentialProblem | NeutralDelayProblem,
+    accepted_steps: Array,
+    event_count: Array,
+    /,
+) -> FixedCapacitySegmentEvidence:
+    count = jnp.where(
+        accepted_steps > 0,
+        (accepted_steps + policy.maximum_steps_per_segment - 1)
+        // policy.maximum_steps_per_segment,
+        1,
+    ).astype(jnp.int32)
+    indices = jnp.arange(policy.maximum_segments, dtype=jnp.int32)
+    active = indices < jnp.minimum(count, policy.maximum_segments)
+    span = problem.t1 - problem.t0
+    denominator = jnp.maximum(count, 1).astype(span.dtype)
+    starts = problem.t0 + span * indices.astype(span.dtype) / denominator
+    ends = problem.t0 + span * (indices + 1).astype(span.dtype) / denominator
+    starts = jnp.where(active, starts, 0)
+    ends = jnp.where(active, jnp.minimum(ends, problem.t1), 0)
+    remaining = jnp.maximum(
+        accepted_steps - indices * policy.maximum_steps_per_segment, 0
+    )
+    step_counts = jnp.where(
+        active,
+        jnp.minimum(remaining, policy.maximum_steps_per_segment),
+        0,
+    ).astype(jnp.int32)
+    event_counts = jnp.zeros((policy.maximum_segments,), dtype=jnp.int32)
+    event_counts = event_counts.at[
+        jnp.maximum(jnp.minimum(count, policy.maximum_segments) - 1, 0)
+    ].set(event_count)
+    exceeded = (count > policy.maximum_segments) | (event_count > policy.maximum_events)
+    return FixedCapacitySegmentEvidence(
+        starts,
+        ends,
+        step_counts,
+        event_counts,
+        active,
+        jnp.minimum(count, policy.maximum_segments),
+        jnp.where(exceeded, policy.failure, 0).astype(jnp.int32),
+        exceeded,
+        policy.policy_id,
+    )
+
+
 def solve_diffrax_delay_segmented(
     problem: DelayDifferentialProblem | NeutralDelayProblem,
     /,
@@ -726,6 +786,7 @@ def solve_diffrax_delay_segmented(
     history_margin: int = 2,
     max_steps_per_segment: int = 256,
     max_segments: int | None = None,
+    segment_policy: FixedCapacitySegmentPolicy | None = None,
     continuation: DelaySegmentContinuation | None = None,
     realization: WienerRealization | None = None,
     initial_discontinuities: ArrayLike | Sequence[float] | None = None,
@@ -735,18 +796,29 @@ def solve_diffrax_delay_segmented(
     root_atol: float = 1e-12,
     max_root_iterations: int = 64,
     throw: bool = False,
+    complex_state_policy: DiffraxComplexStatePolicy | None = None,
+    state_coordinates: AbstractRealCoordinateMap | None = None,
 ) -> MemoryEquationSolution:
-    """Run bounded compiled windows while preserving exact accepted solver state.
+    """Run host-streamed or explicitly bounded whole-JIT delay segments.
 
-    The number of windows depends on runtime acceptance and event decisions, so this
-    host driver deliberately rejects whole-solve JIT. Each finite Diffrax window is
-    still compiled. Dense output archives windows on the host; without ``dense=True``
-    no queries outside the returned saved values are supported.
+    ``segment_policy=None`` preserves resumable host streaming. An explicit
+    :class:`FixedCapacitySegmentPolicy` binds one fixed-shape compiled solve and
+    emits canonical active/count/overflow evidence. Dense variable host archives
+    remain available only on the unbounded host route.
     """
     if not isinstance(problem, (DelayDifferentialProblem, NeutralDelayProblem)):
         raise TypeError(
             "solve_diffrax_delay_segmented requires a delay differential problem."
         )
+    if segment_policy is not None:
+        if not isinstance(segment_policy, FixedCapacitySegmentPolicy):
+            raise TypeError("segment_policy must be FixedCapacitySegmentPolicy or None.")
+        if max_segments is not None and max_segments != segment_policy.maximum_segments:
+            raise ValueError("max_segments must match segment_policy.maximum_segments.")
+        max_segments = segment_policy.maximum_segments
+        max_steps_per_segment = segment_policy.maximum_steps_per_segment
+        if adjoint is None:
+            adjoint = SegmentedDelayAdjoint(segment_policy.maximum_segments)
     if isinstance(adjoint, SegmentedDelayAdjoint):
         if max_segments is None:
             max_segments = adjoint.max_segments
@@ -758,12 +830,12 @@ def solve_diffrax_delay_segmented(
     traced = any(
         isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(host_inputs)
     )
-    if traced:
+    bounded = segment_policy is not None
+    if traced or bounded:
         if not isinstance(adjoint, SegmentedDelayAdjoint):
             raise TypeError(
-                "The segmented host driver cannot be transformed directly; "
-                "differentiating solve_diffrax_delay_segmented requires "
-                "SegmentedDelayAdjoint."
+                "Compiled segmented execution requires SegmentedDelayAdjoint "
+                "or an explicit FixedCapacitySegmentPolicy."
             )
         if continuation is not None:
             raise ValueError(
@@ -798,31 +870,64 @@ def solve_diffrax_delay_segmented(
             root_atol=root_atol,
             max_root_iterations=max_root_iterations,
             throw=throw,
+            complex_state_policy=complex_state_policy,
+            state_coordinates=state_coordinates,
+        )
+        event_count = (
+            jnp.asarray(0, dtype=jnp.int32)
+            if replay.event_mask is None
+            else jnp.sum(jnp.asarray(replay.event_mask, dtype=jnp.int32))
+        )
+        evidence = (
+            None
+            if segment_policy is None
+            else _bounded_delay_segment_evidence(
+                segment_policy,
+                problem,
+                jnp.asarray(replay.stats["num_accepted_steps"], dtype=jnp.int32),
+                event_count,
+            )
+        )
+        execution_mode = (
+            "segmented-adjoint-replay"
+            if segment_policy is None
+            else "fixed-capacity-segmented"
         )
         return MemoryEquationSolution(
             times=replay.times,
             states=replay.states,
-            valid=replay.valid,
+            valid=replay.valid
+            & (jnp.asarray(True) if evidence is None else ~evidence.capacity_exceeded),
             interpolation=None,
             backend_result=replay.backend_result,
             stats={
                 **dict(replay.stats),
-                "execution_mode": "segmented-adjoint-replay",
+                "execution_mode": execution_mode,
                 "max_steps_per_segment": max_steps_per_segment,
                 "max_segments": adjoint.max_segments,
+                "segment_evidence": evidence,
             },
             event_mask=replay.event_mask,
             realization=replay.realization,
             state_shape=replay.state_shape,
             solver_name=replay.solver_name,
-            solver_id=f"{replay.solver_id}:segmented-adjoint-replay",
-            resolved_method=(f"{replay.resolved_method}:segmented-adjoint-replay"),
+            solver_id=f"{replay.solver_id}:{execution_mode}",
+            resolved_method=f"{replay.resolved_method}:{execution_mode}",
             metadata={
                 **dict(replay.metadata),
-                "execution_mode": "segmented-adjoint-replay",
+                "execution_mode": execution_mode,
                 "adjoint": "SegmentedDelayAdjoint",
+                "segment_policy_id": (
+                    None if segment_policy is None else segment_policy.policy_id
+                ),
             },
         )
+    state_adapter = _prepare_diffrax_state_adapter(
+        problem.initial_state,
+        complex_state_policy,
+        state_coordinates,
+        problem.state_geometry,
+    )
     if not isinstance(dense, bool) or not isinstance(throw, bool):
         raise TypeError("dense and throw must be bool values.")
     if (
@@ -933,24 +1038,37 @@ def solve_diffrax_delay_segmented(
     if isinstance(selected_adjoint, dfx.BacksolveAdjoint):
         raise ValueError("BacksolveAdjoint is not supported for delay equations.")
 
-    real_dtype = jnp.asarray(problem.initial_state).real.dtype
+    packed_initial = state_adapter.pack_state(
+        problem.initial_state,
+        owner="Initial segmented delay state",
+    )
+    initial_computed_derivative = (
+        jax.tree.map(jnp.zeros_like, problem.initial_state)
+        if stochastic or not problem.neutral
+        else problem.initial_right_derivative
+    )
+    packed_derivative = state_adapter.pack_state(
+        initial_computed_derivative,
+        owner="Initial segmented delay derivative",
+    )
+    real_dtype = jax.tree.leaves(packed_initial)[0].real.dtype
     history_context = _DelayVectorField(
         function=problem.drift,
-        initial_history=problem.history,
-        initial_derivative=problem.history_derivative,
+        initial_history=_CoordinateDelayHistory(problem.history, state_adapter),
+        initial_derivative=(
+            None
+            if problem.history_derivative is None
+            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+        ),
         delay_terms=problem.delay_terms,
         initial_time=solve_start,
         state_shape=problem.state_shape,
         geometry=problem.state_geometry,
+        state_adapter=state_adapter,
+        backend_shape=state_adapter.backend_shape,
         computed_history=EmptyDelayHistory(
-            problem.initial_state,
-            (
-                jnp.zeros_like(problem.initial_state)
-                if stochastic
-                else problem.initial_right_derivative
-                if problem.neutral
-                else None
-            ),
+            packed_initial,
+            packed_derivative,
         ),
     )
     if stochastic:
@@ -966,6 +1084,7 @@ def solve_diffrax_delay_segmented(
             terms=problem.wiener_terms,
             path_sign=path_sign,
             state_shape=problem.state_shape,
+            state_adapter=state_adapter,
         )
         terms = dfx.MultiTerm(
             dfx.ODETerm(history_context),
@@ -1124,7 +1243,10 @@ def solve_diffrax_delay_segmented(
             solver=selected_solver,
             history_capacity=resolved_capacity,
             maximum_lag=jnp.asarray(maximum_lag),
-            initial_transformed_state=problem.transformed_initial_state,
+            initial_transformed_state=state_adapter.pack_state(
+                problem.transformed_initial_state,
+                owner="Initial segmented neutral transformed state",
+            ),
         )
     else:
         wrapped_solver = _RollingRetardedSolver(
@@ -1132,6 +1254,11 @@ def solve_diffrax_delay_segmented(
             history_capacity=resolved_capacity,
             maximum_lag=jnp.asarray(maximum_lag),
         )
+    execution_coordinate_id = (
+        f"native:{state_adapter.public_dtype}:{state_adapter.backend_shape}"
+        if state_adapter.evidence is None
+        else state_adapter.evidence.evidence_id
+    )
     if continuation is not None:
         if not isinstance(continuation, DelaySegmentContinuation):
             raise TypeError("continuation must be a DelaySegmentContinuation or None.")
@@ -1140,16 +1267,23 @@ def solve_diffrax_delay_segmented(
                 "This continuation is terminal and cannot be resumed; event-terminated "
                 "history is visibility-capped at its root."
             )
+        if continuation.coordinate_id != execution_coordinate_id:
+            raise ValueError(
+                "Continuation real-coordinate identity does not match this solve."
+            )
     start_time = solve_start if continuation is None else continuation.time
     times = validate_save_times(start_time, solve_end, save_times)
-    states = jnp.zeros(
-        (int(times.size),) + problem.state_shape, dtype=problem.initial_state.dtype
+    states = jax.tree.map(
+        lambda leaf: jnp.zeros((int(times.size),) + leaf.shape, dtype=leaf.dtype),
+        packed_initial,
     )
     valid = jnp.zeros((int(times.size),), dtype=bool)
+    packed_args = state_adapter.pack_args(problem.args)
+    packed_event = state_adapter.wrap_event(event)
 
     if continuation is None:
         current_time = solve_start
-        current_state = problem.initial_state
+        current_state = packed_initial
         solver_state = None
         controller_state = None
         made_jump = None
@@ -1209,7 +1343,7 @@ def solve_diffrax_delay_segmented(
             t1=solve_end,
             dt0=segment_dt0,
             y0=current_state,
-            args=problem.args,
+            args=packed_args,
             saveat=dfx.SaveAt(
                 subs={
                     "steps": dfx.SubSaveAt(t0=True, steps=True),
@@ -1225,7 +1359,7 @@ def solve_diffrax_delay_segmented(
             ),
             stepsize_controller=controller,
             adjoint=selected_adjoint,
-            event=event,
+            event=packed_event,
             max_steps=max_steps_per_segment,
             throw=False,
             solver_state=solver_state,
@@ -1237,11 +1371,14 @@ def solve_diffrax_delay_segmented(
         final_time = jnp.asarray(native.ts["final"])[0]
         if _host_bool(jnp.isfinite(final_time)):
             next_time = final_time
-            next_state = jnp.asarray(native.ys["final"])[0]
+            next_state = jax.tree.map(lambda leaf: leaf[0], native.ys["final"])
         elif finite_indices.size:
             last_index = int(finite_indices[-1])
             next_time = jnp.asarray(native.ts["steps"][last_index])
-            next_state = jnp.asarray(native.ys["steps"][last_index])
+            next_state = jax.tree.map(
+                lambda leaf: leaf[last_index],
+                native.ys["steps"],
+            )
         else:
             final_result = SegmentedDelayResult.solver_failure
             native_result = native.result
@@ -1270,10 +1407,15 @@ def solve_diffrax_delay_segmented(
         if saved_requested_offsets.size:
             requested_indices = pending_requested_indices[saved_requested_offsets]
             indices = jnp.asarray(requested_indices)
-            requested_states = jnp.asarray(native.ys["requested"])[
-                jnp.asarray(saved_requested_offsets)
-            ]
-            states = states.at[indices].set(requested_states)
+            requested_states = jax.tree.map(
+                lambda leaf: leaf[jnp.asarray(saved_requested_offsets)],
+                native.ys["requested"],
+            )
+            states = jax.tree.map(
+                lambda storage, values: storage.at[indices].set(values),
+                states,
+                requested_states,
+            )
             valid = valid.at[indices].set(True)
 
         if dense and _host_scalar(next_time) > _host_scalar(current_time):
@@ -1337,6 +1479,7 @@ def solve_diffrax_delay_segmented(
         event_state=event_state,
         discontinuity_tracker=dynamic_state,
         problem_id=problem.problem_id,
+        coordinate_id=execution_coordinate_id,
         solver_name=type(selected_solver).__name__,
         controller_mode=controller_mode,
         resumable=final_result is SegmentedDelayResult.segment_limit_reached,
@@ -1359,6 +1502,8 @@ def solve_diffrax_delay_segmented(
             ends=np.stack(tuple(archive_ends)),
             interpolations=tuple(archive_interpolations),
         )
+        if state_adapter.active:
+            interpolation = _CoordinateDelayInterpolation(interpolation, state_adapter)
     solver_name = type(selected_solver).__name__
     extension = (
         "srkmk-wiener-path"
@@ -1426,7 +1571,7 @@ def solve_diffrax_delay_segmented(
     }
     return MemoryEquationSolution(
         times=times,
-        states=states,
+        states=state_adapter.unpack_values(states, 1),
         valid=valid,
         interpolation=interpolation,
         backend_result=final_result,

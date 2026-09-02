@@ -21,10 +21,12 @@ from ..._array_archive import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...solver import AbstractFixedStepMethod, FixedStepResult
+from ._external_mode import ExternalModeSubcycleSchedule
 from ._hydrostatic import (
     _cell_from_faces,
     _faces_from_cell,
     _safe_divide,
+    HydrostaticBoundaryTraces,
     HydrostaticOceanState,
     PreparedHydrostaticOcean,
 )
@@ -71,11 +73,17 @@ class HydrostaticContinuationState(StrictModule):
     filtered_eta: Array
     filtered_barotropic_transport: tuple[Array, Array]
     subcycle_phase: Array
+    subcycle_schedule: ExternalModeSubcycleSchedule
 
     @classmethod
     def initialize(
-        cls, state: HydrostaticOceanState, /
+        cls,
+        ocean: PreparedHydrostaticOcean,
+        state: HydrostaticOceanState,
+        /,
     ) -> "HydrostaticContinuationState":
+        if not isinstance(ocean, PreparedHydrostaticOcean):
+            raise TypeError("ocean must be a PreparedHydrostaticOcean.")
         names = tuple(sorted(state.tracer_inventory))
         zero_x = jnp.zeros(state.transports[0].shape[:-1], dtype=state.eta.dtype)
         zero_y = jnp.zeros(state.transports[1].shape[:-1], dtype=state.eta.dtype)
@@ -85,11 +93,15 @@ class HydrostaticContinuationState(StrictModule):
             state.eta,
             (zero_x, zero_y),
             jnp.asarray(0, dtype=jnp.int32),
+            ocean.plan.subcycle_policy.empty(state.eta.dtype),
         )
 
 
 class HydrostaticAdvanceEvidence(StrictModule):
     successful: Array
+    eos_valid: Array
+    eos_finite: Array
+    eos_successful: Array
     volume_residual: Array
     tracer_residual: Array
     free_surface_residual: Array
@@ -98,6 +110,8 @@ class HydrostaticAdvanceEvidence(StrictModule):
     filter_correction: Array
     reconciliation_correction: Array
 
+    subcycle_schedule: ExternalModeSubcycleSchedule
+
 
 def _transport_kinetic_energy(
     ocean: PreparedHydrostaticOcean,
@@ -105,14 +119,20 @@ def _transport_kinetic_energy(
     /,
 ) -> Array:
     epoch = ocean.geometry.metric_epoch(state.eta)
-    return (
-        0.5
-        * ocean.plan.reference_density
-        * (
-            jnp.sum(_safe_divide(state.transports[0] ** 2, epoch.x_face_area))
-            + jnp.sum(_safe_divide(state.transports[1] ** 2, epoch.y_face_area))
-        )
+    velocity = (
+        _cell_from_faces(
+            _safe_divide(state.transports[0], epoch.x_face_area),
+            0,
+            ocean.geometry.periodic[0],
+        ),
+        _cell_from_faces(
+            _safe_divide(state.transports[1], epoch.y_face_area),
+            1,
+            ocean.geometry.periodic[1],
+        ),
     )
+    speed_squared = ocean.geometry.normal_velocity_inner_product(velocity, velocity)
+    return 0.5 * ocean.plan.reference_density * jnp.sum(epoch.cell_volume * speed_squared)
 
 
 def _surface_energy(ocean: PreparedHydrostaticOcean, eta: Array, /) -> Array:
@@ -170,7 +190,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
                 "kind": "hydrostatic-imex-midpoint",
                 "ocean": ocean.prepared_id,
                 "external_mode": ocean.plan.external_mode,
-                "split_substeps": ocean.plan.split_substeps,
+                "subcycle_policy": ocean.plan.subcycle_policy.policy_id,
             }
         )
 
@@ -180,23 +200,49 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
         time: Array,
         args: Any,
         /,
-    ) -> tuple[tuple[Array, Array], Array]:
+        *,
+        boundary_traces: HydrostaticBoundaryTraces | None = None,
+    ) -> tuple[tuple[Array, Array], Array, Array, Array, Array]:
         del time, args
         epoch = self.ocean.geometry.metric_epoch(state.eta)
         view = self.ocean.view(state)
         hydro_force = self.ocean.geometry.layer_potential_transport_force(
-            view.hydrostatic_pressure, epoch
+            view.hydrostatic_pressure,
+            epoch,
+            boundary_values=(
+                None if boundary_traces is None else boundary_traces.hydrostatic_pressure
+            ),
         )
         coriolis = self.ocean._coriolis_force(state, epoch)
-        u_cell = _cell_from_faces(view.velocity[0], 0, self.ocean.geometry.periodic[0])
-        v_cell = _cell_from_faces(view.velocity[1], 1, self.ocean.geometry.periodic[1])
-        dx = jnp.sqrt(self.ocean.geometry.cell_area)
-        du_dx = jnp.gradient(u_cell, axis=0) / dx[..., None]
-        du_dy = jnp.gradient(u_cell, axis=1) / dx[..., None]
-        dv_dx = jnp.gradient(v_cell, axis=0) / dx[..., None]
-        dv_dy = jnp.gradient(v_cell, axis=1) / dx[..., None]
-        adv_u_cell = -(u_cell * du_dx + v_cell * du_dy)
-        adv_v_cell = -(u_cell * dv_dx + v_cell * dv_dy)
+        velocity = (
+            _cell_from_faces(view.velocity[0], 0, self.ocean.geometry.periodic[0]),
+            _cell_from_faces(view.velocity[1], 1, self.ocean.geometry.periodic[1]),
+        )
+        velocity_boundary = (
+            (None, None) if boundary_traces is None else boundary_traces.velocity
+        )
+        u_gradient = self.ocean.geometry.layer_gradient(
+            velocity[0],
+            boundary_values=(None if boundary_traces is None else velocity_boundary[0]),
+        )
+        v_gradient = self.ocean.geometry.layer_gradient(
+            velocity[1],
+            boundary_values=(None if boundary_traces is None else velocity_boundary[1]),
+        )
+        u_gradient_cell = (
+            _cell_from_faces(u_gradient[0], 0, self.ocean.geometry.periodic[0]),
+            _cell_from_faces(u_gradient[1], 1, self.ocean.geometry.periodic[1]),
+        )
+        v_gradient_cell = (
+            _cell_from_faces(v_gradient[0], 0, self.ocean.geometry.periodic[0]),
+            _cell_from_faces(v_gradient[1], 1, self.ocean.geometry.periodic[1]),
+        )
+        adv_u_cell = -self.ocean.geometry.normal_velocity_inner_product(
+            velocity, u_gradient_cell
+        )
+        adv_v_cell = -self.ocean.geometry.normal_velocity_inner_product(
+            velocity, v_gradient_cell
+        )
         adv_u = epoch.x_face_area * _faces_from_cell(
             adv_u_cell, 0, self.ocean.geometry.periodic[0]
         )
@@ -207,10 +253,31 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             hydro_force[0] + coriolis[0] + adv_u,
             hydro_force[1] + coriolis[1] + adv_v,
         )
-        coriolis_work = jnp.sum(
-            _safe_divide(state.transports[0] * coriolis[0], epoch.x_face_area)
-        ) + jnp.sum(_safe_divide(state.transports[1] * coriolis[1], epoch.y_face_area))
-        return tendency, coriolis_work
+        coriolis_acceleration = (
+            _cell_from_faces(
+                _safe_divide(coriolis[0], epoch.x_face_area),
+                0,
+                self.ocean.geometry.periodic[0],
+            ),
+            _cell_from_faces(
+                _safe_divide(coriolis[1], epoch.y_face_area),
+                1,
+                self.ocean.geometry.periodic[1],
+            ),
+        )
+        coriolis_work = self.ocean.plan.reference_density * jnp.sum(
+            epoch.cell_volume
+            * self.ocean.geometry.normal_velocity_inner_product(
+                velocity, coriolis_acceleration
+            )
+        )
+        return (
+            tendency,
+            coriolis_work,
+            view.eos_valid,
+            view.eos_finite,
+            view.eos_successful,
+        )
 
     def _apply_boundaries(
         self,
@@ -315,44 +382,90 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
         freshwater: Array,
         time: Array,
         /,
-    ) -> tuple[Array, tuple[Array, Array], Array, Array, Array]:
-        n = self.ocean.plan.split_substeps
-        fast_dt = dt / n
+        *,
+        surface_boundary=None,
+    ) -> tuple[
+        Array,
+        tuple[Array, Array],
+        Array,
+        Array,
+        Array,
+        ExternalModeSubcycleSchedule,
+    ]:
         barotropic = self.ocean.geometry.depth_integrate(predictor)
-        eta_fast = eta
-        flux_integral = (
-            jnp.zeros_like(barotropic[0]),
-            jnp.zeros_like(barotropic[1]),
+        schedule = self.ocean.plan.subcycle_policy.schedule(
+            self.ocean.geometry,
+            eta,
+            dt,
+            self.ocean.plan.gravity,
+            barotropic_transport=barotropic,
         )
-        limiter_total = jnp.asarray(0.0, dtype=eta.dtype)
-        boundary_total = jnp.asarray(0.0, dtype=eta.dtype)
-        for substep in range(n):
+        initial = (
+            eta,
+            barotropic,
+            (jnp.zeros_like(barotropic[0]), jnp.zeros_like(barotropic[1])),
+            jnp.asarray(0.0, dtype=eta.dtype),
+            jnp.asarray(0.0, dtype=eta.dtype),
+            jnp.asarray(0.0, dtype=eta.dtype),
+        )
+
+        def subcycle(carry, index):
+            (
+                eta_fast,
+                transport_fast,
+                flux_integral,
+                limiter_total,
+                boundary_total,
+                elapsed,
+            ) = carry
+            active = schedule.active_mask[index]
+            fast_dt = schedule.substep_sizes[index]
             current_epoch = self.ocean.geometry.metric_epoch(eta_fast)
-            gx, gy = self.ocean.geometry.surface_gradient(eta_fast)
+            gx, gy = self.ocean.geometry.surface_gradient(
+                eta_fast, boundary_values=surface_boundary
+            )
             x_depth = jnp.sum(current_epoch.x_face_area, axis=-1)
             y_depth = jnp.sum(current_epoch.y_face_area, axis=-1)
-            barotropic = (
-                barotropic[0] - self.ocean.plan.gravity * fast_dt * x_depth * gx,
-                barotropic[1] - self.ocean.plan.gravity * fast_dt * y_depth * gy,
+            transport_candidate = (
+                transport_fast[0] - self.ocean.plan.gravity * fast_dt * x_depth * gx,
+                transport_fast[1] - self.ocean.plan.gravity * fast_dt * y_depth * gy,
             )
-            eta_fast, barotropic, boundary_flux = self._apply_boundaries(
-                eta_fast, barotropic, time + substep * fast_dt
+            eta_boundary, transport_boundary, boundary_flux = self._apply_boundaries(
+                eta_fast, transport_candidate, time + elapsed
             )
-            barotropic, limiter = self._limit_barotropic_outflow(
-                eta_fast, barotropic, fast_dt
+            transport_limited, limiter = self._limit_barotropic_outflow(
+                eta_boundary, transport_boundary, fast_dt
             )
-            net = self.ocean.geometry.surface_net_flux(barotropic)
-            eta_fast = (
-                eta_fast
+            net = self.ocean.geometry.surface_net_flux(transport_limited)
+            eta_candidate = (
+                eta_boundary
                 - fast_dt * net / self.ocean.geometry.cell_area
                 + fast_dt * freshwater
             )
-            flux_integral = (
-                flux_integral[0] + fast_dt * barotropic[0],
-                flux_integral[1] + fast_dt * barotropic[1],
+            candidate = (
+                eta_candidate,
+                transport_limited,
+                (
+                    flux_integral[0] + fast_dt * transport_limited[0],
+                    flux_integral[1] + fast_dt * transport_limited[1],
+                ),
+                limiter_total + limiter,
+                boundary_total + fast_dt * boundary_flux,
+                elapsed + jnp.abs(fast_dt),
             )
-            limiter_total = limiter_total + limiter
-            boundary_total = boundary_total + fast_dt * boundary_flux
+            selected = jax.tree.map(
+                lambda proposed, current: jnp.where(active, proposed, current),
+                candidate,
+                carry,
+            )
+            return selected, None
+
+        final, _ = jax.lax.scan(
+            subcycle,
+            initial,
+            jnp.arange(self.ocean.plan.subcycle_policy.maximum_substeps),
+        )
+        eta_fast, _, flux_integral, limiter_total, boundary_total, _ = final
         averaged_barotropic = (
             flux_integral[0] / dt,
             flux_integral[1] / dt,
@@ -385,7 +498,14 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
                 - averaged_barotropic[1]
             )
         )
-        return eta_fast, reconciled, limiter_total, reconciliation, boundary_total
+        return (
+            eta_fast,
+            reconciled,
+            limiter_total,
+            reconciliation,
+            boundary_total,
+            schedule,
+        )
 
     def _advance(
         self,
@@ -395,13 +515,21 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
         dt: Array,
         args: Any,
         /,
+        *,
+        boundary_traces: HydrostaticBoundaryTraces | None = None,
     ) -> tuple[HydrostaticOceanState, HydrostaticAdvanceEvidence, HydrostaticOceanLedger]:
         epoch = self.ocean.geometry.metric_epoch(evaluation.eta)
         freshwater = self.ocean.plan.freshwater.evaluate(
             time, self.ocean.geometry.horizontal_shape, args
         )
-        tendency, coriolis_work = self._explicit_transport_tendency(
-            evaluation, time, args
+        (
+            tendency,
+            coriolis_work,
+            evaluation_eos_valid,
+            evaluation_eos_finite,
+            evaluation_eos_successful,
+        ) = self._explicit_transport_tendency(
+            evaluation, time, args, boundary_traces=boundary_traces
         )
         predictor = (
             base.transports[0] + dt * tendency[0],
@@ -415,7 +543,14 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             )
             predictor = self._reconcile_layers(predictor, boundary_barotropic, epoch)
             surface = self.ocean.free_surface.solve(
-                boundary_eta, predictor, epoch, dt, freshwater
+                boundary_eta,
+                predictor,
+                epoch,
+                dt,
+                freshwater,
+                boundary_values=(
+                    None if boundary_traces is None else boundary_traces.surface
+                ),
             )
             eta_new, corrected_barotropic, boundary_after = self._apply_boundaries(
                 surface.eta,
@@ -432,6 +567,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             boundary_volume = 0.5 * dt * (boundary_before + boundary_after)
             free_surface_residual = surface.residual_norm
             surface_success = surface.successful
+            subcycle_schedule = self.ocean.plan.subcycle_policy.empty(dt.dtype)
         else:
             (
                 eta_new,
@@ -439,7 +575,18 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
                 limiter,
                 reconciliation,
                 boundary_volume,
-            ) = self._split_external(base.eta, predictor, epoch, dt, freshwater, time)
+                subcycle_schedule,
+            ) = self._split_external(
+                base.eta,
+                predictor,
+                epoch,
+                dt,
+                freshwater,
+                time,
+                surface_boundary=(
+                    None if boundary_traces is None else boundary_traces.surface
+                ),
+            )
             free_surface_residual = jnp.sqrt(
                 jnp.real(
                     jnp.vdot(
@@ -448,7 +595,9 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
                     )
                 )
             )
-            surface_success = jnp.all(jnp.isfinite(eta_new))
+            surface_success = (
+                jnp.all(jnp.isfinite(eta_new)) & subcycle_schedule.successful
+            )
         new_epoch = self.ocean.geometry.metric_epoch(eta_new)
         vertical_flux = self.ocean.geometry.diagnose_vertical_flux(transport_new)
         transport_state = HydrostaticOceanState(
@@ -458,7 +607,11 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             evaluation.tke_inventory,
         )
         tracer_rate = self.ocean._tracer_tendency(
-            transport_state, new_epoch, vertical_flux, freshwater
+            transport_state,
+            new_epoch,
+            vertical_flux,
+            freshwater,
+            boundary_traces=boundary_traces,
         )
         inventory = {
             name: base.tracer_inventory[name] + dt * tracer_rate[name]
@@ -511,8 +664,15 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             tke,
         )
         mixed, mixing_residual = self.ocean.apply_vertical_mixing(
-            candidate, new_epoch, dt
+            candidate,
+            new_epoch,
+            dt,
+            boundary_traces=boundary_traces,
         )
+        mixed_view = self.ocean.view(mixed)
+        eos_valid = evaluation_eos_valid & mixed_view.eos_valid
+        eos_finite = evaluation_eos_finite & mixed_view.eos_finite
+        eos_successful = evaluation_eos_successful & mixed_view.eos_successful
         volume_change = jnp.sum(self.ocean.geometry.cell_area * (eta_new - base.eta))
         freshwater_volume = dt * jnp.sum(self.ocean.geometry.cell_area * freshwater)
         tracer_change = {
@@ -544,6 +704,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             & jnp.all(jnp.isfinite(mixed.eta))
             & jnp.all(jnp.isfinite(mixed.transports[0]))
             & jnp.all(jnp.isfinite(mixed.transports[1]))
+            & jnp.all(jnp.isfinite(mixed.tke_inventory))
             & jnp.all(
                 jnp.stack(
                     tuple(
@@ -552,8 +713,17 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
                     )
                 )
             )
+            & jnp.isfinite(mixing_residual)
+            & eos_finite
         )
-        successful = surface_success & new_epoch.valid & finite
+        successful = (
+            surface_success
+            & epoch.valid
+            & new_epoch.valid
+            & finite
+            & eos_valid
+            & eos_successful
+        )
         ledger = HydrostaticOceanLedger(
             volume_change=volume_change,
             freshwater_volume=freshwater_volume,
@@ -571,6 +741,9 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
         )
         evidence = HydrostaticAdvanceEvidence(
             successful=successful,
+            eos_valid=eos_valid,
+            eos_finite=eos_finite,
+            eos_successful=eos_successful,
             volume_residual=volume_residual,
             tracer_residual=tracer_residual,
             free_surface_residual=free_surface_residual,
@@ -578,6 +751,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             limiter_correction=limiter,
             filter_correction=jnp.asarray(0.0, dtype=dt.dtype),
             reconciliation_correction=reconciliation,
+            subcycle_schedule=subcycle_schedule,
         )
         return mixed, evidence, ledger
 
@@ -614,12 +788,12 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod):
             0.5 * (state.filtered_eta + candidate.eta),
             self.ocean.geometry.depth_integrate(candidate.transports),
             state.subcycle_phase
-            + jnp.asarray(
-                self.ocean.plan.split_substeps
-                if self.ocean.plan.external_mode == "split-explicit"
-                else 1,
-                dtype=jnp.int32,
+            + jnp.where(
+                self.ocean.plan.external_mode == "split-explicit",
+                second_evidence.subcycle_schedule.count,
+                jnp.asarray(1, dtype=jnp.int32),
             ),
+            second_evidence.subcycle_schedule,
         )
         accepted = jax.tree.map(
             lambda proposed, current: jnp.where(successful, proposed, current),

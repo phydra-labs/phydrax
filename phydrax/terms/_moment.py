@@ -9,11 +9,11 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
-from phydrax.conditions import AbstractMomentCondition
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
 from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
+from ..conditions._base import AbstractMomentCondition
 from ..integration import (
     AdaptiveIntegration,
     CallerIntegration,

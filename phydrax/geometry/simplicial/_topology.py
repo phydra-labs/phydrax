@@ -10,7 +10,7 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._strict import StrictModule
-from ...discretization import (
+from ...discretization._topology import (
     CellComplexTopology,
     EntitySet,
     EntitySubset,

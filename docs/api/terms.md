@@ -38,10 +38,11 @@ count, or chunk shape requires a separate compilation.
 ## Supervised empirical terms
 
 `SupervisedClassificationTerm` trains hard binary, multiclass, or independent
-multilabel logits through a posterior-compatible likelihood. Ordinal targets use a
-fixed-threshold cumulative-link likelihood. Soft and focal terms are explicit
-optimization-score siblings. Dense, trajectory, and graph adapters retain their
-geometry masks, measures, and support axes.
+multilabel logits through a posterior-compatible likelihood. Ordinal targets use
+canonical hard labels or full class-mass arrays. Fixed scalar-location thresholds
+and learned globally ordered cumulative-logit heads are distinct explicit modes;
+one-hot soft ordinal risk equals hard ordinal NLL. Dense, trajectory, and graph
+adapters retain their geometry masks, measures, and support axes.
 
 ::: phydrax.terms.SupervisedClassificationTerm
 

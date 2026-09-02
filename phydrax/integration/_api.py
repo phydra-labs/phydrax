@@ -25,11 +25,17 @@ from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
 from ._adaptive import integrate_adaptive
+from ._adaptive_cubature import integrate_adaptive_cubature
 from ._adaptive_triangle import integrate_adaptive_triangle
 from ._bayesian_quadrature import (
     BayesianQuadraturePlan,
     integrate_bayesian_quadrature,
     materialize_bayesian_quadrature,
+)
+from ._diffrax_collocation import (
+    DiffraxCollocationQuadraturePlan,
+    integrate_diffrax_collocation,
+    materialize_diffrax_collocation,
 )
 from ._estimates import IntegrationEstimate
 from ._external import (
@@ -49,6 +55,7 @@ from ._monte_carlo import (
 )
 from ._multilevel import integrate_multilevel, materialize_multilevel
 from ._plans import (
+    AdaptiveCubaturePlan,
     AdaptiveQuadraturePlan,
     AdaptiveTrianglePlan,
     CellQuadraturePlan,
@@ -264,6 +271,8 @@ def _is_deterministic_plan(plan: Any, /) -> bool:
         (
             FixedQuadraturePlan,
             AdaptiveQuadraturePlan,
+            AdaptiveCubaturePlan,
+            DiffraxCollocationQuadraturePlan,
             AdaptiveTrianglePlan,
             CellQuadraturePlan,
             SparseGridPlan,
@@ -364,9 +373,17 @@ def materialize(
             raise TypeError(
                 "Fixed quadrature requires a component or probability target."
             )
+    elif isinstance(plan, DiffraxCollocationQuadraturePlan):
+        if not isinstance(base, ComponentTarget):
+            raise TypeError("Diffrax collocation requires a component target.")
+        batch = materialize_diffrax_collocation(target, plan)
     elif isinstance(plan, AdaptiveQuadraturePlan):
         if not isinstance(base, ComponentTarget):
             raise TypeError("Adaptive quadrature requires a component target.")
+        batch = None
+    elif isinstance(plan, AdaptiveCubaturePlan):
+        if not isinstance(base, ComponentTarget):
+            raise TypeError("Adaptive cubature requires a component target.")
         batch = None
     elif isinstance(plan, AdaptiveTrianglePlan):
         if not isinstance(base, ComponentTarget):
@@ -634,9 +651,32 @@ def reduce(
                 precision=realization.precision,
             )
         )
+    if isinstance(plan, DiffraxCollocationQuadraturePlan):
+        return finish(
+            integrate_diffrax_collocation(
+                integrand,
+                target,
+                realization.batch,
+                plan,
+                key=key,
+                kwargs=kwargs,
+                precision=realization.precision,
+            )
+        )
     if isinstance(plan, AdaptiveQuadraturePlan):
         return finish(
             integrate_adaptive(
+                integrand,
+                target,
+                plan,
+                key=key,
+                kwargs=kwargs,
+                precision=realization.precision,
+            )
+        )
+    if isinstance(plan, AdaptiveCubaturePlan):
+        return finish(
+            integrate_adaptive_cubature(
                 integrand,
                 target,
                 plan,

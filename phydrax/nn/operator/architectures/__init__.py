@@ -33,6 +33,7 @@ from .conditioning._equation_conditioning import (
     PDEConditionEncoder,
 )
 from .conditioning._function_frame import (
+    AbstractFunctionFrameEvaluator,
     FUNCTION_PROJECTION_INSUFFICIENT_SUPPORT,
     FUNCTION_PROJECTION_INVALID_MEASURE,
     FUNCTION_PROJECTION_NONFINITE,
@@ -41,11 +42,14 @@ from .conditioning._function_frame import (
     FUNCTION_PROJECTION_SUCCESS,
     FunctionFrameEncoding,
     FunctionFrameReconstructor,
+    FunctionFrameSource,
     FunctionProjectionPolicy,
     FunctionProjectionRankPolicy,
     FunctionProjectionReport,
     LearnedFunctionFrame,
+    PreparedManifoldFunctionFrameEvaluator,
     ProjectionBranchEncoder,
+    TopologyFunctionFrameEvaluator,
 )
 from .conditioning._holomorphic_deeponet import (
     ConditionalHarmonicOperator2D,
@@ -95,6 +99,10 @@ from .geometric._local_operator import (
     LocalIntegralOperator,
 )
 from .geometric._native_graph import NativeGraphOperator
+from .geometric._orthogonal_point_cno import (
+    OrthogonalEquivariantPointCNO,
+    OrthogonalPointTopology,
+)
 from .geometric._rigno import RIGNO
 from .probabilistic._flowjax_operator import (
     conditional_coupling_flow_operator,
@@ -102,11 +110,22 @@ from .probabilistic._flowjax_operator import (
     FlowJAXOperatorDistribution,
     OperatorBatchConditioner,
 )
+from .probabilistic._function_frame_flow import (
+    ConditionalFunctionFrameFlowOperator,
+    FunctionFrameCoefficientFlowState,
+    FunctionFrameProjectedLogProb,
+)
 from .probabilistic._probabilistic_operator import (
     gaussian_operator_nll,
     GaussianFunctionOperator,
 )
-from .spectral._cno import AntiAliasedConvND, CNO, UNO
+from .spectral._cno import (
+    AntiAliasedConvND,
+    CNO,
+    ConvolutionAxisPolicy,
+    ConvolutionSupportPlan,
+    UNO,
+)
 from .spectral._fno import (
     AxialFactorizedFNO,
     FNO,
@@ -120,7 +139,16 @@ from .spectral._hofno import HOFNO
 from .spectral._laplace import LaplaceTemporalOperator
 from .spectral._manifold_spectral import ManifoldSpectralOperator
 from .spectral._sfno import SFNO, SphericalSpectralConv
-from .spectral._wavelet import MultiwaveletOperator, WaveletNeuralOperator
+from .spectral._spherical_wavelet import (
+    DirectionalSphericalWaveletLayer,
+    DirectionalSphericalWaveletPlan,
+    SphericalWaveletScattering,
+)
+from .spectral._wavelet import (
+    MultiwaveletOperator,
+    WaveletDecodePolicy,
+    WaveletNeuralOperator,
+)
 
 
 _PORTABLE_ARCHITECTURES = (
@@ -149,6 +177,7 @@ _PORTABLE_ARCHITECTURES = (
     ("InContextOperator", InContextOperator),
     ("KoopmanTemporalOperator", KoopmanTemporalOperator),
     ("LatticeEquivariantCNO", LatticeEquivariantCNO),
+    ("OrthogonalEquivariantPointCNO", OrthogonalEquivariantPointCNO),
     ("LaplaceTemporalOperator", LaplaceTemporalOperator),
     ("LocalDifferentialOperator", LocalDifferentialOperator),
     ("LocalGlobalOperator", LocalGlobalOperator),
@@ -181,12 +210,15 @@ del _architecture_name, _architecture_type
 __all__ = [
     "AntiAliasedConvND",
     "CNO",
+    "ConvolutionAxisPolicy",
+    "ConvolutionSupportPlan",
     "UNO",
     "CochainNeuralOperator",
     "TopologicalCochainBlock",
     "TopologicalRouteConfig",
     "CoDABlock",
     "CoDANO",
+    "AbstractFunctionFrameEvaluator",
     "AbstractBasisTrunk",
     "AbstractBranchEncoder",
     "CoDAOperatorState",
@@ -202,10 +234,13 @@ __all__ = [
     "FUNCTION_PROJECTION_SUCCESS",
     "FunctionFrameEncoding",
     "FunctionFrameReconstructor",
+    "FunctionFrameSource",
     "FunctionProjectionPolicy",
     "FunctionProjectionRankPolicy",
     "FunctionProjectionReport",
     "LearnedFunctionFrame",
+    "PreparedManifoldFunctionFrameEvaluator",
+    "TopologyFunctionFrameEvaluator",
     "ConditionalHarmonicOperator2D",
     "ConditionalHolomorphicDeepONet",
     "ConditionalHolomorphicMapCertificate",
@@ -214,6 +249,8 @@ __all__ = [
     "TargetAugmentedBranchEncoder",
     "ProjectionBranchEncoder",
     "DPOT",
+    "DirectionalSphericalWaveletLayer",
+    "DirectionalSphericalWaveletPlan",
     "DiagonalStateSpaceMixer",
     "dpot_corrupt_history",
     "attach_pde_condition",
@@ -226,6 +263,9 @@ __all__ = [
     "FlowerTransitionMode",
     "conditional_coupling_flow_operator",
     "ConditionalFlowFunctionOperator",
+    "ConditionalFunctionFrameFlowOperator",
+    "FunctionFrameCoefficientFlowState",
+    "FunctionFrameProjectedLogProb",
     "FlowJAXOperatorDistribution",
     "OperatorBatchConditioner",
     "AxialFactorizedFNO",
@@ -248,6 +288,8 @@ __all__ = [
     "KoopmanTemporalOperator",
     "LaplaceTemporalOperator",
     "LatticeEquivariantCNO",
+    "OrthogonalEquivariantPointCNO",
+    "OrthogonalPointTopology",
     "LocalDifferentialOperator",
     "LocalGlobalOperator",
     "LinearRecurrentOperator",
@@ -268,11 +310,13 @@ __all__ = [
     "SFNO",
     "WeightSpaceOperator",
     "SphericalSpectralConv",
+    "SphericalWaveletScattering",
     "Transolver",
     "ABUPT",
     "LatentTokenBlock",
     "LatentTokenProcessor",
     "UPT",
     "MultiwaveletOperator",
+    "WaveletDecodePolicy",
     "WaveletNeuralOperator",
 ]

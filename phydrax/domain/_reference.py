@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from .._sampling import ReferenceTransport
+from .._sampling import UnitCubeTransport
 from ._components import Boundary, Interior, Selection
 from ._dataset import DatasetDomain
 from ._hyperrectangle import HyperRectangle
@@ -33,7 +33,7 @@ class _ExactReferenceTransport:
 def _scalar_transport(
     factor: AbstractScalarDomain,
     component: Selection,
-) -> ReferenceTransport | None:
+) -> UnitCubeTransport | None:
     if isinstance(component, Interior):
         if isinstance(factor, ProbabilityDomain):
             return _ExactReferenceTransport(
@@ -62,7 +62,7 @@ def _scalar_transport(
 def _interval_geometry_transport(
     factor: Interval1d,
     component: Selection,
-) -> ReferenceTransport | None:
+) -> UnitCubeTransport | None:
     if isinstance(component, Interior):
         return _ExactReferenceTransport(
             1,
@@ -116,7 +116,7 @@ def _box_boundary(factor: HyperRectangle, unit: Array, /) -> Array:
 def _box_transport(
     factor: HyperRectangle,
     component: Selection,
-) -> ReferenceTransport | None:
+) -> UnitCubeTransport | None:
     dimension = int(factor.spatial_dim)
     if isinstance(component, Interior):
         return _ExactReferenceTransport(
@@ -134,7 +134,7 @@ def _box_transport(
 def _dataset_transport(
     factor: DatasetDomain,
     component: Selection,
-) -> ReferenceTransport | None:
+) -> UnitCubeTransport | None:
     if not isinstance(component, Interior):
         return None
 
@@ -150,7 +150,7 @@ def reference_transport(
     factor: Any,
     component: Selection,
     /,
-) -> ReferenceTransport | None:
+) -> UnitCubeTransport | None:
     """Return an exact target-measure transport for one domain factor."""
     if isinstance(factor, ProbabilityDomain):
         return _scalar_transport(factor, component)

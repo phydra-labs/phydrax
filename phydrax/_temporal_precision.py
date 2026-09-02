@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 
 from ._precision import (
@@ -172,7 +173,22 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
         )
 
     def validate_state(self, state: Any, /) -> ScalarPrecisionDType:
-        observed = precision_dtype_name(jnp.asarray(state).dtype)
+        leaves = tuple(jnp.asarray(value) for value in jax.tree.leaves(state))
+        if not leaves:
+            raise ValueError("Temporal state must contain array leaves.")
+        observed_values = tuple(precision_dtype_name(value.dtype) for value in leaves)
+        real_values = {_real_component(value) for value in observed_values}
+        if len(real_values) != 1:
+            raise TypeError(
+                "Temporal PyTree state leaves must share one real component dtype."
+            )
+        observed = (
+            next(
+                value for value in observed_values if value in ("complex64", "complex128")
+            )
+            if any(value in ("complex64", "complex128") for value in observed_values)
+            else observed_values[0]
+        )
         if self.state_dtype is not None and observed != self.state_dtype:
             raise TypeError(
                 f"Temporal state dtype {observed} does not match {self.state_dtype}."
@@ -297,12 +313,15 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
         )
 
     def output(self, value: Any, /):
-        array = jnp.asarray(value)
-        if self.output_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
-            return array
-        return array.astype(
-            _effective_dtype(self.output_dtype, precision_dtype_name(array.dtype))
-        )
+        def cast(array_value):
+            array = jnp.asarray(array_value)
+            if self.output_dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
+                return array
+            return array.astype(
+                _effective_dtype(self.output_dtype, precision_dtype_name(array.dtype))
+            )
+
+        return jax.tree.map(cast, value)
 
     def evidence_for(
         self,

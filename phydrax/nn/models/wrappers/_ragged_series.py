@@ -17,7 +17,7 @@ from phydrax.domain import BatchEvaluator, PointBatch
 from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
-from ..._keys import EvalKey, split_eval_key
+from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
 
 
 MaskedSeriesReduction = Literal["mean", "sum"]
@@ -190,11 +190,10 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator):
 
 
 class MaskedSeriesPoolingModel(StrictModule):
-    """Encode variable-length series with a per-step model and masked reduction.
+    """Encode variable-length series with a pointwise model and masked reduction.
 
-    The step model evaluates the complete padded array before inactive latent values
-    are removed. Differentiated step models must therefore remain finite on the
-    padded input representation.
+    Inactive padded slots are represented by a typed zero branch and never invoke
+    ``step_model`` at runtime.
     """
 
     step_model: Callable
@@ -259,31 +258,73 @@ class MaskedSeriesPoolingModel(StrictModule):
             parts.append(repeated_static)
 
         step_input = jnp.concatenate(parts, axis=-1)
-        key_step, key_readout = split_eval_key(key, 2)
-        step_output = jnp.asarray(self.step_model(step_input, key=key_step), dtype=float)
-        if step_output.ndim == 2:
-            step_output = step_output[..., None]
-        if step_output.ndim < 3:
-            raise ValueError("step_model must return shape (N, L, ...) outputs.")
-        if step_output.shape[:2] != step_input.shape[:2]:
-            raise ValueError("step_model output must preserve case and time axes.")
-
-        latent = step_output.reshape(step_output.shape[:2] + (-1,))
         mask = jnp.asarray(x.mask, dtype=bool)
         if mask.shape != step_input.shape[:2]:
             raise ValueError("mask must have shape (N, Lmax).")
-        latent_mask = mask[..., None]
-        safe_latent = jnp.where(
-            latent_mask,
-            latent,
-            jnp.zeros((), dtype=latent.dtype),
+
+        key_step, key_readout = split_eval_key(key, 2)
+        feature_spec = jax.ShapeDtypeStruct(
+            (int(step_input.shape[-1]),),
+            step_input.dtype,
         )
-        pooled = jnp.sum(safe_latent, axis=1)
+        output_spec = jax.eval_shape(
+            lambda feature: jnp.asarray(self.step_model(feature, key=key_step)),
+            feature_spec,
+        )
+        if not isinstance(output_spec, jax.ShapeDtypeStruct):
+            raise TypeError("step_model must return one array latent value.")
+        latent_size = int(output_spec.size)
+        zero_latent = jnp.zeros((latent_size,), dtype=output_spec.dtype)
+        max_length = int(step_input.shape[1])
+
+        def pool_case(case_data):
+            case_index, features, case_mask = case_data
+
+            def step(carry, step_data):
+                pooled_value, valid_count = carry
+                time_index, feature, active = step_data
+                site = case_index * max_length + time_index
+                step_key = fold_in_eval_key(key_step, site)
+
+                def evaluate(_):
+                    value = jnp.asarray(self.step_model(feature, key=step_key))
+                    return value.reshape((latent_size,))
+
+                latent = jax.lax.cond(
+                    active,
+                    evaluate,
+                    lambda _: zero_latent,
+                    operand=None,
+                )
+                return (
+                    pooled_value + latent,
+                    valid_count + active.astype(jnp.int32),
+                ), None
+
+            initial = (zero_latent, jnp.asarray(0, dtype=jnp.int32))
+            (pooled_value, valid_count), _ = jax.lax.scan(
+                step,
+                initial,
+                (
+                    jnp.arange(max_length, dtype=jnp.int32),
+                    features,
+                    case_mask,
+                ),
+            )
+            return pooled_value, valid_count
+
+        pooled, valid_count = jax.lax.map(
+            pool_case,
+            (
+                jnp.arange(step_input.shape[0], dtype=jnp.int32),
+                step_input,
+                mask,
+            ),
+        )
         if self.reduction == "mean":
-            valid_count = jnp.sum(mask, axis=1, dtype=jnp.int32)
             denom = jnp.maximum(
-                valid_count.astype(pooled.dtype)[:, None],
-                jnp.asarray(1.0, dtype=pooled.dtype),
+                valid_count[:, None],
+                jnp.asarray(1, dtype=valid_count.dtype),
             )
             pooled = pooled / denom
         elif self.scale_sampled_sum and x.sample_scale is not None:

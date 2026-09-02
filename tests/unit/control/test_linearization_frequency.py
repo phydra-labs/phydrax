@@ -60,8 +60,8 @@ def test_nonlinear_input_output_linearization_has_affine_offsets():
 
 
 def test_discrete_linearization_preserves_batched_operating_points():
-    def transition(t, x, u, args):
-        return jnp.array([x[0] ** 2 + args * u[0] + t])
+    def transition(context, x, u, args):
+        return jnp.array([x[0] ** 2 + args * u[0] + context.source])
 
     dynamics = make_discrete_control_dynamics(
         transition,
@@ -72,7 +72,15 @@ def test_discrete_linearization_preserves_batched_operating_points():
     times = jnp.array([0.0, 0.5, 1.0])
     states = jnp.array([[1.0], [2.0], [3.0]])
     controls = jnp.array([[0.5], [1.0], [1.5]])
-    result = linearize_discrete_dynamics(dynamics, times, states, controls, args=2.0)
+    result = linearize_discrete_dynamics(
+        dynamics,
+        times,
+        states,
+        controls,
+        args=2.0,
+        target_time=times + 0.5,
+        step_index=jnp.arange(times.size),
+    )
 
     assert result.state_matrix.shape == (3, 1, 1)
     assert result.control_matrix.shape == (3, 1, 1)
@@ -105,7 +113,7 @@ def test_linearization_marks_nonfinite_operating_time_invalid():
 
 def test_scalar_state_and_control_linearization_preserves_case_axes():
     discrete = make_discrete_control_dynamics(
-        lambda time, state, control, args: state**2 + 3.0 * control + time,
+        lambda context, state, control, args: state**2 + 3.0 * control + context.source,
         state_shape=(),
         control_shape=(),
         dynamics_id="scalar-discrete-map",
@@ -117,6 +125,8 @@ def test_scalar_state_and_control_linearization_preserves_case_axes():
         times,
         states,
         jnp.asarray(0.25),
+        target_time=times + 0.5,
+        step_index=jnp.arange(times.size),
     )
 
     assert result.operating_state.shape == (2,)

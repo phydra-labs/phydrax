@@ -19,6 +19,15 @@ class AffineBlockSpec:
     output_size: int
     input_size: int
     has_bias: bool
+    block_kind: Literal["dense-affine", "convolution", "tensor-contraction"] = (
+        "dense-affine"
+    )
+    input_axes: tuple[int, ...] = ()
+    output_axes: tuple[int, ...] = ()
+    coordinate_mode: Literal["real", "complex-cartesian"] = "real"
+    sharing_group: str | None = None
+    reshape: tuple[int, ...] = ()
+    permutation: tuple[int, ...] = ()
 
     @property
     def parameter_count(self) -> int:

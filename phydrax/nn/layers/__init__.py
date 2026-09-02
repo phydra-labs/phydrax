@@ -47,11 +47,17 @@ from ._measure_attention import (
 from ._measure_convolution import MeasureNormalizedConvND
 from ._probabilistic_warp import ProbabilisticMultiheadWarp
 from ._recurrent import (
+    AbstractAssociativeRecurrence,
     AbstractRecurrentCell,
+    AbstractTimeAwareAssociativeRecurrence,
+    AbstractTimeAwareRecurrentCell,
     AffineRecurrence,
     RecurrentBatch,
     RecurrentResult,
+    RecurrentTimeContext,
+    RecurrentTimeDirection,
     run_affine_recurrence,
+    run_associative_recurrence,
     run_recurrent,
 )
 from ._recurrent_cells import GRUCell, LSTMCell, RNNCell, StackedRecurrentCell
@@ -80,6 +86,9 @@ from ._weight_space_recurrence import (
 
 
 __all__ = [
+    "AbstractAssociativeRecurrence",
+    "AbstractTimeAwareAssociativeRecurrence",
+    "AbstractTimeAwareRecurrentCell",
     "AdaptiveResidual",
     "AbstractRecurrentCell",
     "AffineRecurrence",
@@ -119,6 +128,8 @@ __all__ = [
     "RectilinearWarpDiagnostics",
     "RecurrentBatch",
     "RecurrentResult",
+    "RecurrentTimeContext",
+    "RecurrentTimeDirection",
     "ResetAwareCausalConv1D",
     "RNNCell",
     "StackedRecurrentCell",
@@ -137,6 +148,7 @@ __all__ = [
     "warp_jacobian",
     "WarpBoundaryMode",
     "inference_mode",
+    "run_associative_recurrence",
     "run_affine_recurrence",
     "run_causal_recurrent",
     "run_recurrent",

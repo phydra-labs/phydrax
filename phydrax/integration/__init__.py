@@ -14,6 +14,14 @@ from .._axis_factorization import (
     contract_axis_factors,
 )
 from ._adaptive_callable import adaptive_interval_callable, adaptive_triangle_callable
+from ._adaptive_cubature import adaptive_cubature_callable, integrate_adaptive_cubature
+from ._adaptive_signed import (
+    AdaptiveImportanceEstimator,
+    AdaptiveSignedDiagnostics,
+    AdaptiveSignedEstimator,
+    AdaptiveSignedPopulation,
+    AdaptiveStratifiedEstimator,
+)
 from ._api import from_samples, integrate, IntegrationRealization, materialize, reduce
 from ._atlas import (
     AtlasIntegrationResult,
@@ -29,6 +37,7 @@ from ._batches import (
     WeightedSampleBatch,
 )
 from ._bayesian_quadrature import GaussianKernelMean
+from ._breakpoints import discover_breakpoints
 from ._calabi_yau import (
     integrate_projective_samples,
     projective_measure_target,
@@ -43,14 +52,28 @@ from ._deformed_measure import (
     DeformedMeasurePlan,
     DeformedMeasureState,
 )
+from ._diffrax_collocation import (
+    DiffraxCollocationDiagnostics,
+    DiffraxCollocationQuadraturePlan,
+    integrate_diffrax_collocation,
+    materialize_diffrax_collocation,
+)
 from ._discrete_support import spatial_measure
+from ._empirical_cubature import (
+    empirical_cubature,
+    EmpiricalCubatureDiagnostics,
+    EmpiricalCubaturePlan,
+)
 from ._estimates import (
+    AdaptiveCubatureDiagnostics,
+    AdaptiveCubaturePartition,
     AdaptivePartition,
     AdaptiveQuadratureDiagnostics,
     AdaptiveTriangleDiagnostics,
     AdaptiveTrianglePartition,
     AntitheticDiagnostics,
     BayesianQuadratureDiagnostics,
+    DiscoveredBreakpoints,
     FixedQuadratureDiagnostics,
     IntegrationEstimate,
     IntegrationProvenance,
@@ -80,6 +103,19 @@ from ._factorized import (
     FactorizedBilinearEvaluation,
     FactorizedBilinearTerm,
 )
+from ._kernel_mean_bq import (
+    FixedBayesianQuadratureDesign,
+    prepare_kernel_mean_bayesian_quadrature,
+    PreparedKernelMeanBayesianQuadrature,
+    reduce_kernel_mean_bayesian_quadrature,
+    SequentialBayesianQuadratureDesign,
+)
+from ._kernel_means import (
+    AbstractKernelMean,
+    FiniteFeatureKernelMean,
+    FiniteMeasureKernelMean,
+    IntervalKernelMean,
+)
 from ._markov import markov_chain_measure
 from ._multilevel import (
     advance_multilevel,
@@ -97,10 +133,13 @@ from ._multilevel import (
     write_multilevel_result,
 )
 from ._plans import (
+    AdaptiveCubaturePlan,
     AdaptiveQuadraturePlan,
+    AdaptiveSparseGridPlan,
     AdaptiveTrianglePlan,
     AntitheticDesign,
     BayesianQuadraturePlan,
+    BreakpointDiscoveryPlan,
     CellQuadraturePlan,
     ControlVariateEstimator,
     FixedQuadraturePlan,
@@ -149,26 +188,13 @@ from ._rules import (
     ReferenceTriangleRule,
     TanhSinhRule,
 )
-from ._sparse_grid import SparseGridRealization
-from ._splitting import (
-    adaptive_multilevel_splitting,
-    AdaptiveMultilevelSplittingPlan,
-    AdaptiveMultilevelSplittingResult,
-    AdaptiveSplittingBranchRequest,
-    AdaptiveSplittingDiagnostics,
-    AdaptiveSplittingEnsembleResult,
-    AdaptiveSplittingStatus,
-    InitialPathSampler,
-    PathBranchSampler,
-    replicate_adaptive_multilevel_splitting,
+from ._sparse_grid import (
+    AdaptiveSparseGridDiagnostics,
+    AdaptiveSparseGridResult,
+    prepare_adaptive_sparse_grid,
+    SparseGridRealization,
 )
 from ._status import IntegrationStatus, status_message
-from ._surrogate import (
-    smolyak_surrogate_expectation,
-    SmolyakInputSampler,
-    SmolyakProbabilityInputSampler,
-    SmolyakSurrogateHierarchyAdapter,
-)
 from ._targets import (
     ComponentTarget,
     density,
@@ -195,6 +221,69 @@ from ._transformations import (
 )
 
 
+_SPLITTING_EXPORTS = frozenset(
+    {
+        "adaptive_multilevel_splitting",
+        "AdaptiveMultilevelSplittingPlan",
+        "AdaptiveMultilevelSplittingResult",
+        "AdaptiveSplittingBranchRequest",
+        "AdaptiveSplittingDiagnostics",
+        "AdaptiveSplittingEnsembleResult",
+        "AdaptiveSplittingStatus",
+        "InitialPathSampler",
+        "PathBranchSampler",
+        "replicate_adaptive_multilevel_splitting",
+    }
+)
+
+
+def __getattr__(name: str):
+    if name in _SPLITTING_EXPORTS:
+        from . import _splitting as module
+
+        exports = {
+            "adaptive_multilevel_splitting": module.adaptive_multilevel_splitting,
+            "AdaptiveMultilevelSplittingPlan": module.AdaptiveMultilevelSplittingPlan,
+            "AdaptiveMultilevelSplittingResult": module.AdaptiveMultilevelSplittingResult,
+            "AdaptiveSplittingBranchRequest": module.AdaptiveSplittingBranchRequest,
+            "AdaptiveSplittingDiagnostics": module.AdaptiveSplittingDiagnostics,
+            "AdaptiveSplittingEnsembleResult": module.AdaptiveSplittingEnsembleResult,
+            "AdaptiveSplittingStatus": module.AdaptiveSplittingStatus,
+            "InitialPathSampler": module.InitialPathSampler,
+            "PathBranchSampler": module.PathBranchSampler,
+            "replicate_adaptive_multilevel_splitting": module.replicate_adaptive_multilevel_splitting,
+        }
+        return exports[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+_SURROGATE_EXPORTS = frozenset(
+    {
+        "smolyak_surrogate_expectation",
+        "SmolyakInputSampler",
+        "SmolyakProbabilityInputSampler",
+        "SmolyakSurrogateHierarchyAdapter",
+    }
+)
+
+
+_splitting_getattr = __getattr__
+
+
+def __getattr__(name: str):
+    if name in _SURROGATE_EXPORTS:
+        from . import _surrogate as module
+
+        exports = {
+            "smolyak_surrogate_expectation": module.smolyak_surrogate_expectation,
+            "SmolyakInputSampler": module.SmolyakInputSampler,
+            "SmolyakProbabilityInputSampler": module.SmolyakProbabilityInputSampler,
+            "SmolyakSurrogateHierarchyAdapter": module.SmolyakSurrogateHierarchyAdapter,
+        }
+        return exports[name]
+    return _splitting_getattr(name)
+
+
 __all__ = [
     "AxisContractionPlan",
     "AxisContractionResult",
@@ -207,8 +296,20 @@ __all__ = [
     "AtlasPatchQuadrature",
     "integrate_atlas_scalar",
     "AdaptivePartition",
+    "adaptive_cubature_callable",
+    "AdaptiveCubatureDiagnostics",
+    "AdaptiveCubaturePartition",
+    "AdaptiveCubaturePlan",
+    "AdaptiveImportanceEstimator",
     "adaptive_interval_callable",
     "AdaptiveIntegration",
+    "AdaptiveSignedDiagnostics",
+    "AdaptiveSignedEstimator",
+    "AdaptiveSignedPopulation",
+    "AdaptiveSparseGridDiagnostics",
+    "AdaptiveSparseGridPlan",
+    "AdaptiveSparseGridResult",
+    "AdaptiveStratifiedEstimator",
     "AdaptiveQuadratureDiagnostics",
     "AdaptiveQuadraturePlan",
     "AdaptiveTriangleDiagnostics",
@@ -234,6 +335,7 @@ __all__ = [
     "AntitheticDiagnostics",
     "BayesianQuadratureDiagnostics",
     "BayesianQuadraturePlan",
+    "BreakpointDiscoveryPlan",
     "CellQuadraturePlan",
     "CallerIntegration",
     "ClenshawCurtisRule",
@@ -242,6 +344,9 @@ __all__ = [
     "ControlVariateEstimator",
     "DensityTarget",
     "DiscreteMeasureTarget",
+    "DiscoveredBreakpoints",
+    "DiffraxCollocationDiagnostics",
+    "DiffraxCollocationQuadraturePlan",
     "FactorizedBilinearEvaluation",
     "FactorizedBilinearTerm",
     "FixedQuadratureDiagnostics",
@@ -339,6 +444,7 @@ __all__ = [
     "discrete",
     "density",
     "fixed",
+    "discover_breakpoints",
     "from_samples",
     "expectation",
     "multilevel",
@@ -346,6 +452,8 @@ __all__ = [
     "read_multilevel_result",
     "replicate_adaptive_multilevel_splitting",
     "integrate",
+    "integrate_adaptive_cubature",
+    "integrate_diffrax_collocation",
     "interval_rule_data",
     "markov_chain_measure",
     "mapped",
@@ -353,6 +461,8 @@ __all__ = [
     "mean_over",
     "per_step",
     "resolve_integration",
+    "prepare_adaptive_sparse_grid",
+    "materialize_diffrax_collocation",
     "normalized_density",
     "over",
     "reduce",
@@ -361,4 +471,16 @@ __all__ = [
     "write_multilevel_checkpoint",
     "write_multilevel_result",
     "weighted",
+    "AbstractKernelMean",
+    "FiniteFeatureKernelMean",
+    "FiniteMeasureKernelMean",
+    "IntervalKernelMean",
+    "FixedBayesianQuadratureDesign",
+    "SequentialBayesianQuadratureDesign",
+    "PreparedKernelMeanBayesianQuadrature",
+    "prepare_kernel_mean_bayesian_quadrature",
+    "reduce_kernel_mean_bayesian_quadrature",
+    "EmpiricalCubatureDiagnostics",
+    "EmpiricalCubaturePlan",
+    "empirical_cubature",
 ]

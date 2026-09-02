@@ -16,7 +16,7 @@ def _quaternion_coordinates(base_shape=(1,)):
     return algebra, coordinates
 
 
-def test_diffrax_algebra_policy_preserves_quaternion_public_layout():
+def test_diffrax_coordinates_preserve_quaternion_public_layout():
     algebra, coordinates = _quaternion_coordinates()
     product = algebra.prepare_product()
     imaginary = jnp.asarray([0.0, 1.0, 0.0, 0.0])
@@ -29,11 +29,11 @@ def test_diffrax_algebra_policy_preserves_quaternion_public_layout():
     solution = phx.solver.solve_diffrax(
         problem,
         save_times=jnp.asarray([0.2]),
-        algebra_state_policy=phx.solver.DiffraxAlgebraStatePolicy(coordinates),
+        state_coordinates=coordinates,
         rtol=1e-9,
         atol=1e-11,
     )
-    evidence = solution.temporal_evidence.state_packing
+    evidence = solution.temporal_evidence.state_coordinates
 
     assert solution.states.shape == (1, 1, 4)
     assert jnp.allclose(
@@ -41,9 +41,9 @@ def test_diffrax_algebra_policy_preserves_quaternion_public_layout():
         jnp.asarray([jnp.cos(0.2), jnp.sin(0.2), 0.0, 0.0]),
         atol=2e-9,
     )
-    assert isinstance(evidence, phx.solver.AlgebraStatePackingEvidence)
-    assert evidence.algebra_id == algebra.algebra_id
-    assert evidence.backend_shape == (4, 1)
+    assert isinstance(evidence, phx.linalg.RealCoordinateEvidence)
+    assert evidence.map_id == coordinates.coordinate_id
+    assert evidence.coordinate_shape == (4, 1)
 
 
 def test_delay_and_segmented_delay_accept_real_algebra_coordinates():

@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
@@ -15,6 +16,7 @@ from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..multiblock import InterfaceOrientation
+from ._positivity import FiniteVolumeAdmissibilityReport, FluxPositivityPlan
 from ._riemann import AbstractNumericalFluxPlan
 from ._structured import FiniteVolumeDiscretization
 
@@ -208,7 +210,177 @@ class ConservativeMultiblockInterfacePlan(StrictModule, NonTrainableState):
         )
 
 
+class MultiblockPositivityResult(StrictModule):
+    """One atomically accepted, globally conservative multiblock stage."""
+
+    states: tuple[Array, ...]
+    interface_integrals: tuple[Array, ...]
+    block_reports: tuple[FiniteVolumeAdmissibilityReport, ...]
+    secondary_factor: Array
+    conservation_defect: Array
+    accepted: Array
+
+
+class FiniteVolumeMultiblockRuntimePlan(StrictModule, NonTrainableState):
+    """Fixed-block stage limiter sharing one factor across every mortar."""
+
+    block_dynamics: tuple[Any, ...]
+    interfaces: tuple[ConservativeMultiblockInterfacePlan, ...]
+    positivity: FluxPositivityPlan
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        block_dynamics: tuple[Any, ...],
+        interfaces: tuple[ConservativeMultiblockInterfacePlan, ...],
+        positivity: FluxPositivityPlan,
+        /,
+    ):
+        blocks = tuple(block_dynamics)
+        interfaces_ = tuple(interfaces)
+        if not blocks:
+            raise ValueError("Multiblock runtime requires at least one block.")
+        if any(
+            not isinstance(interface, ConservativeMultiblockInterfacePlan)
+            for interface in interfaces_
+        ):
+            raise TypeError("interfaces must contain conservative multiblock plans.")
+        if not isinstance(positivity, FluxPositivityPlan):
+            raise TypeError("positivity must be FluxPositivityPlan.")
+        self.block_dynamics = blocks
+        self.interfaces = interfaces_
+        self.positivity = positivity
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "finite-volume-multiblock-runtime",
+                "blocks": len(blocks),
+                "interfaces": tuple(interface.plan_id for interface in interfaces_),
+                "positivity": positivity.plan_id,
+            }
+        )
+
+    def limit_stage(
+        self,
+        system: Any,
+        base_states: tuple[Array, ...],
+        high_order_states: tuple[Array, ...],
+        fallback_states: tuple[Array, ...],
+        high_order_interfaces: tuple[ConservativeMultiblockFluxResult, ...],
+        fallback_interfaces: tuple[ConservativeMultiblockFluxResult, ...],
+        /,
+    ) -> MultiblockPositivityResult:
+        """Apply one secondary factor to all cells and shared mortar integrals."""
+        base = tuple(jnp.asarray(value) for value in base_states)
+        high = tuple(jnp.asarray(value) for value in high_order_states)
+        fallback = tuple(jnp.asarray(value) for value in fallback_states)
+        if len(base) != len(self.block_dynamics) or not (
+            len(base) == len(high) == len(fallback)
+        ):
+            raise ValueError("Multiblock state tuples must match the block capacity.")
+        if not (
+            len(high_order_interfaces) == len(fallback_interfaces) == len(self.interfaces)
+        ):
+            raise ValueError("Multiblock interface evidence must match the plan.")
+        for base_, high_, fallback_ in zip(base, high, fallback, strict=True):
+            if base_.shape != high_.shape or base_.shape != fallback_.shape:
+                raise ValueError("Each block candidate must preserve its state shape.")
+        fallback_valid = tuple(jnp.all(system.admissible(value)) for value in fallback)
+        high_valid = tuple(jnp.all(system.admissible(value)) for value in high)
+        fallback_accepted = jnp.all(jnp.stack(fallback_valid))
+        high_accepted = jnp.all(jnp.stack(high_valid))
+
+        def body(_, bounds):
+            lower, upper = bounds
+            midpoint = 0.5 * (lower + upper)
+            valid = jnp.all(
+                jnp.stack(
+                    tuple(
+                        jnp.all(system.admissible(low + midpoint * (candidate - low)))
+                        for candidate, low in zip(high, fallback, strict=True)
+                    )
+                )
+            )
+            return jnp.where(valid, midpoint, lower), jnp.where(valid, upper, midpoint)
+
+        dtype = jnp.result_type(*(value.dtype for value in high))
+        lower, _ = jax.lax.fori_loop(
+            0,
+            self.positivity.iterations,
+            body,
+            (
+                jnp.asarray(0.0, dtype=dtype),
+                jnp.asarray(1.0, dtype=dtype),
+            ),
+        )
+        factor = jnp.where(high_accepted, 1.0, lower)
+        factor = jnp.where(fallback_accepted, factor, 0.0)
+        candidates = tuple(
+            low + factor * (candidate - low)
+            for candidate, low in zip(high, fallback, strict=True)
+        )
+        accepted = fallback_accepted & jnp.all(
+            jnp.stack(tuple(jnp.all(system.admissible(value)) for value in candidates))
+        )
+        states = tuple(
+            jnp.where(accepted, candidate, original)
+            for candidate, original in zip(candidates, base, strict=True)
+        )
+        integrals = tuple(
+            jnp.where(
+                accepted,
+                low.common_integrated_flux
+                + factor
+                * (candidate.common_integrated_flux - low.common_integrated_flux),
+                jnp.zeros_like(low.common_integrated_flux),
+            )
+            for candidate, low in zip(
+                high_order_interfaces, fallback_interfaces, strict=True
+            )
+        )
+        defects = tuple(
+            jnp.where(
+                accepted,
+                low.conservation_defect
+                + factor * (candidate.conservation_defect - low.conservation_defect),
+                jnp.zeros_like(low.conservation_defect),
+            )
+            for candidate, low in zip(
+                high_order_interfaces, fallback_interfaces, strict=True
+            )
+        )
+        conservation_defect = (
+            compensated_sum_chunks(defects, output_ndim=1)
+            if defects
+            else jnp.zeros((base[0].shape[-1],), dtype=dtype)
+        )
+        reports = tuple(
+            FiniteVolumeAdmissibilityReport(
+                high_order_valid=high_valid_,
+                fallback_valid=fallback_valid_,
+                blend_factor=factor,
+                activated=factor < 1.0,
+                minimum_density=jnp.min(state[..., 0]),
+                limited_state_valid=jnp.all(system.admissible(state)),
+                secondary_reduction_applied=factor < 1.0,
+                secondary_reduction_factor=factor,
+            )
+            for state, high_valid_, fallback_valid_ in zip(
+                states, high_valid, fallback_valid, strict=True
+            )
+        )
+        return MultiblockPositivityResult(
+            states=states,
+            interface_integrals=integrals,
+            block_reports=reports,
+            secondary_factor=factor,
+            conservation_defect=conservation_defect,
+            accepted=accepted,
+        )
+
+
 __all__ = [
     "ConservativeMultiblockFluxResult",
     "ConservativeMultiblockInterfacePlan",
+    "FiniteVolumeMultiblockRuntimePlan",
+    "MultiblockPositivityResult",
 ]

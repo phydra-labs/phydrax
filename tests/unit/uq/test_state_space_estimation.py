@@ -512,14 +512,15 @@ def test_local_global_map_laplace_and_sampler_composition_preserve_diagnostics()
 
 def test_state_space_global_then_local_map_accepts_gp_initializer():
     estimation = _estimation(initial=-0.75)
-    search = phx.uq.GaussianProcessMAPSearch(
+    search = phx.uq.GaussianProcessBayesianOptimization(
         8,
-        surrogate=phx.uq.GaussianProcessLikelihoodState(
+        objective_surrogate=phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.Matern52Kernel(length_scale=0.25),
             noise_scale=0.0,
         ),
         initial_evaluations=4,
-        candidate_count=32,
+        candidate_tuple_count=32,
+        fantasy_count=8,
     )
 
     result = estimation.global_then_local_map(
@@ -533,7 +534,7 @@ def test_state_space_global_then_local_map_accepts_gp_initializer():
         raise_on_failure=False,
     )
 
-    assert isinstance(result.global_search, phx.uq.GaussianProcessMAPSearchResult)
+    assert isinstance(result.global_search, phx.uq.BayesianOptimizationMAPResult)
     assert result.global_search.valid
     assert result.local_map is not None
     assert result.local_map.objective <= result.global_search.objective + 1e-8

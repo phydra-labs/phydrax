@@ -106,6 +106,95 @@ class SurfaceTensionPolicy(StrictModule, NonTrainableState):
         return self.surface_tension
 
 
+class SurfaceTensionEvaluation(StrictModule):
+    surface_tension: Array
+    marangoni_gradient: Array
+    active: Array
+
+
+class VariableSurfaceTensionPolicy(StrictModule, NonTrainableState):
+    """Typed variable-sigma law with a projected Marangoni gradient."""
+
+    evaluator: Any
+    density_floor: float = eqx.field(static=True)
+    capillary_cfl: float = eqx.field(static=True)
+    law_id: str = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        evaluator: Any,
+        /,
+        *,
+        density_floor: float,
+        capillary_cfl: float,
+        law_id: str,
+    ):
+        if not callable(evaluator):
+            raise TypeError("Variable surface-tension evaluator must be callable.")
+        floor = float(density_floor)
+        cfl = float(capillary_cfl)
+        identifier = str(law_id)
+        if (
+            not np.isfinite(floor)
+            or floor <= 0.0
+            or not np.isfinite(cfl)
+            or cfl <= 0.0
+            or not identifier
+        ):
+            raise ValueError("Variable surface-tension policy parameters are invalid.")
+        self.evaluator = evaluator
+        self.density_floor = floor
+        self.capillary_cfl = cfl
+        self.law_id = identifier
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "variable-surface-tension-policy",
+                "law": identifier,
+                "density_floor": floor,
+                "capillary_cfl": cfl,
+            }
+        )
+
+    def evaluate(
+        self,
+        coordinates: ArrayLike,
+        state: ArrayLike,
+        normal: ArrayLike,
+        state_gradient: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> SurfaceTensionEvaluation:
+        points = jnp.asarray(coordinates)
+        values = jnp.asarray(state)
+        normal_ = jnp.asarray(normal)
+        gradient = jnp.asarray(state_gradient)
+        sigma, sigma_state_gradient = self.evaluator(points, values, args)
+        sigma_ = jnp.asarray(sigma)
+        derivative = jnp.asarray(sigma_state_gradient)
+        if sigma_.shape != values.shape[:-1]:
+            raise ValueError("Surface-tension law must match the interface batch.")
+        if derivative.shape != values.shape:
+            raise ValueError("Surface-tension state derivative must match state.")
+        physical_gradient = oe.contract(
+            "...i,...id->...d", derivative, gradient, backend="jax"
+        )
+        tangential = (
+            physical_gradient
+            - oe.contract("...d,...d->...", physical_gradient, normal_, backend="jax")[
+                ..., None
+            ]
+            * normal_
+        )
+        sigma_ = eqx.error_if(
+            sigma_,
+            jnp.any(~jnp.isfinite(sigma_) | (sigma_ < 0.0))
+            | jnp.any(~jnp.isfinite(tangential)),
+            "Variable surface tension and Marangoni gradient must be finite.",
+        )
+        return SurfaceTensionEvaluation(sigma_, tangential, sigma_ > 0.0)
+
+
 class CurvatureEvidence(StrictModule, NonTrainableState):
     """Least-squares curvature and its explicit validity evidence.
 
@@ -910,4 +999,6 @@ __all__ = [
     "CurvatureStatus",
     "CurvatureUncertaintyError",
     "SurfaceTensionPolicy",
+    "SurfaceTensionEvaluation",
+    "VariableSurfaceTensionPolicy",
 ]

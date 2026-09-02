@@ -156,7 +156,7 @@ def initialize_reactive_monolithic_state(
         raise TypeError("coupling must be ReactiveMonolithicCouplingPlan.")
     coupling.fluid.validate_state(fluid)
     velocity = jnp.asarray(particle_velocity, dtype=fluid.velocity.dtype)
-    capacity = coupling.continuum_exchange.transfer.particles.capacity
+    capacity = coupling.continuum_exchange.transfer.particle_capacity
     dimension = fluid.velocity.shape[1]
     if velocity.shape != (capacity, dimension):
         raise ValueError("particle_velocity must have particle-dimension shape.")
@@ -196,7 +196,7 @@ def make_reactive_monolithic_stage(
     position = jnp.asarray(particle_position, dtype=state.fluid.velocity.dtype)
     mass = jnp.asarray(particle_mass, dtype=state.fluid.velocity.dtype)
     active = jnp.asarray(particle_active, dtype=bool)
-    capacity = coupling.continuum_exchange.transfer.particles.capacity
+    capacity = coupling.continuum_exchange.transfer.particle_capacity
     dimension = state.fluid.velocity.shape[1]
     if position.shape != (capacity, dimension):
         raise ValueError("particle_position must have particle-dimension shape.")
@@ -291,13 +291,14 @@ def _local_preconditioner(coupling, mode, stage, state, residual, args):
         )
     )
     if mode is not ReactiveMonolithicPreconditionerMode.LOCAL_BLOCK:
-        relation = coupling.continuum_exchange.transfer.relation(
-            stage.particle_position, active_mask=stage.particle_active
-        )
-        feedback = coupling.continuum_exchange.transfer.deposit_particle_content(
-            relation,
+        transfer = coupling.continuum_exchange.transfer
+        relation = transfer.routes(stage.particle_position, stage.particle_active)
+        feedback_result = transfer.deposit(
+            stage.particle_position,
+            stage.particle_active,
             coupling.drag_coefficient[:, None] * particle_velocity,
         )
+        feedback = feedback_result.content
         fluid_velocity = (
             fluid_velocity
             + stage.step_size * feedback / coupling.fluid.cell_mass[:, None]
@@ -373,7 +374,7 @@ def prepare_reactive_monolithic_step(
     evidence = ReactiveMonolithicPreconditionerEvidence(
         solver.preconditioner_mode,
         coupling.fluid.cell_count,
-        coupling.continuum_exchange.transfer.particles.capacity,
+        coupling.continuum_exchange.transfer.particle_capacity,
         len(stage.previous_conversion.batches),
         canonical_fingerprint(
             {

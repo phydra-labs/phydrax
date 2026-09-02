@@ -1851,6 +1851,68 @@ def _degree_aware_reference_rule(
     raise ValueError("Unsupported finite-element cell kind.")
 
 
+def _evaluate_coordinate_map(
+    coordinate_element: FiniteElementSpec,
+    coordinate_routes: ArrayLike,
+    coordinates: ArrayLike,
+    reference_points: ArrayLike,
+    /,
+    *,
+    precision_policy: FiniteElementPrecisionPolicy,
+    paired: bool,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    """Evaluate the canonical FE coordinate map without changing topology."""
+
+    points = precision_policy.geometry(reference_points)
+    geometry_values, geometry_gradients = coordinate_element.tabulate(points)
+    geometry_values = precision_policy.geometry(geometry_values)
+    geometry_gradients = precision_policy.geometry(geometry_gradients)
+    coordinate_values = precision_policy.geometry(coordinates)
+    routes = jnp.asarray(coordinate_routes)
+    cell_coordinates = coordinate_values[routes]
+    if paired:
+        if cell_coordinates.shape[0] != points.shape[0]:
+            raise ValueError(
+                "Paired cell-map evaluation requires one reference point per cell index."
+            )
+        physical_points = oe.contract("qi,qid->qd", geometry_values, cell_coordinates)
+        jacobian = oe.contract("qir,qid->qdr", geometry_gradients, cell_coordinates)
+    else:
+        physical_points = oe.contract("qi,cid->cqd", geometry_values, cell_coordinates)
+        jacobian = oe.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
+    metric = oe.contract("...di,...dj->...ij", jacobian, jacobian)
+    inverse_result = inverse_small_linear(
+        SmallLinearSolvePlan(metric.shape[-1]),
+        metric,
+    )
+    inverse_metric = inverse_result.value
+    gram_determinant = jnp.where(
+        inverse_result.successful,
+        inverse_result.determinant,
+        0.0,
+    )
+    measure = jnp.sqrt(gram_determinant)
+    inverse_jacobian = oe.contract("...ij,...dj->...id", inverse_metric, jacobian)
+    if jacobian.shape[-2] == jacobian.shape[-1]:
+        determinant = jnp.where(
+            inverse_result.successful,
+            jnp.linalg.det(jacobian),
+            0.0,
+        )
+    else:
+        determinant = measure
+    return (
+        physical_points,
+        jacobian,
+        metric,
+        inverse_metric,
+        inverse_jacobian,
+        gram_determinant,
+        measure,
+        determinant,
+    )
+
+
 def _prepare_block_geometry(
     mesh: CellMesh,
     block: CellBlock,
@@ -1883,42 +1945,30 @@ def _prepare_block_geometry(
         weights_ = jnp.asarray(reference_weights)
     reference_points = precision_policy.geometry(points_)
     reference_weights = precision_policy.accumulation(weights_)
-    geometry_values, geometry_gradients = geometry_element.tabulate(reference_points)
+    (
+        physical_points,
+        jacobian,
+        _,
+        inverse_metric,
+        inverse_jacobian,
+        _,
+        measure_factor,
+        _,
+    ) = _evaluate_coordinate_map(
+        geometry_element,
+        block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs),
+        mesh.coordinates if coordinates is None else coordinates,
+        reference_points,
+        precision_policy=precision_policy,
+        paired=False,
+    )
     basis_values, reference_gradients = element.tabulate(reference_points)
-    geometry_values = precision_policy.geometry(geometry_values)
-    geometry_gradients = precision_policy.geometry(geometry_gradients)
     basis_values = precision_policy.evaluation(basis_values)
     reference_gradients = precision_policy.evaluation(reference_gradients)
-    coordinate_values = precision_policy.geometry(
-        mesh.coordinates if coordinates is None else coordinates
-    )
-    coordinate_routes = (
-        block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
-    )
-    cell_coordinates = coordinate_values[coordinate_routes]
-    physical_points = oe.contract("qi,cid->cqd", geometry_values, cell_coordinates)
-    jacobian = oe.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
-    metric = oe.contract("cqdi,cqdj->cqij", jacobian, jacobian)
-    inverse_result = inverse_small_linear(
-        SmallLinearSolvePlan(metric.shape[-1]),
-        metric,
-    )
-    inverse_metric = inverse_result.value
-    determinant = inverse_result.determinant
-    measure_factor = jnp.sqrt(determinant)
     measure_factor = eqx.error_if(
         measure_factor,
-        jnp.any(
-            ~inverse_result.successful
-            | ~jnp.isfinite(measure_factor)
-            | (measure_factor <= 0.0)
-        ),
+        jnp.any(~jnp.isfinite(measure_factor) | (measure_factor <= 0.0)),
         "Finite-element geometry requires positive finite metric determinant.",
-    )
-    inverse_jacobian = oe.contract(
-        "cqij,cqdj->cqid",
-        inverse_metric,
-        jacobian,
     )
     if element.mapping == "identity":
         physical_basis = basis_values

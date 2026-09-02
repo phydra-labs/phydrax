@@ -46,6 +46,7 @@ class CausalHMCConfig(StrictModule):
     maximum_outer_iterations: int = eqx.field(static=True)
     initial_damping: float = eqx.field(static=True)
     failure_policy: CausalHMCFailurePolicy = eqx.field(static=True)
+    maximum_dense_dimension: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -57,11 +58,13 @@ class CausalHMCConfig(StrictModule):
         relative_residual: float = 1e-6,
         maximum_outer_iterations: int = 128,
         initial_damping: float = 1e-3,
+        maximum_dense_dimension: int = 512,
         failure_policy: CausalHMCFailurePolicy = "raise",
     ):
         block_size = int(trajectory_block_size)
         probes = int(probe_count)
         iterations = int(maximum_outer_iterations)
+        dense_cap = int(maximum_dense_dimension)
         if block_size < 1:
             raise ValueError("trajectory_block_size must be positive.")
         if linearization not in ("dense-exact", "pair-hutchinson"):
@@ -77,6 +80,8 @@ class CausalHMCConfig(StrictModule):
             )
         if iterations < 1:
             raise ValueError("maximum_outer_iterations must be positive.")
+        if dense_cap < 1:
+            raise ValueError("maximum_dense_dimension must be positive.")
         if not isfinite(damping) or damping <= 0.0:
             raise ValueError("initial_damping must be positive and finite.")
         if failure_policy not in ("raise", "sequential"):
@@ -88,6 +93,7 @@ class CausalHMCConfig(StrictModule):
         self.relative_residual = relative
         self.maximum_outer_iterations = iterations
         self.initial_damping = damping
+        self.maximum_dense_dimension = dense_cap
         self.failure_policy = failure_policy
 
     def as_dict(self) -> dict[str, int | float | str]:
@@ -99,7 +105,53 @@ class CausalHMCConfig(StrictModule):
             "relative_residual": self.relative_residual,
             "maximum_outer_iterations": self.maximum_outer_iterations,
             "initial_damping": self.initial_damping,
+            "maximum_dense_dimension": self.maximum_dense_dimension,
             "failure_policy": self.failure_policy,
+        }
+
+
+class CausalNUTSConfig(StrictModule):
+    """Fixed-capacity dynamic-tree causal NUTS controls."""
+
+    recurrence: CausalHMCConfig
+    max_num_doublings: int = eqx.field(static=True)
+    max_trajectory_capacity: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        max_num_doublings: int = 10,
+        max_trajectory_capacity: int | None = None,
+        recurrence: CausalHMCConfig | None = None,
+    ):
+        doublings = int(max_num_doublings)
+        if doublings <= 0:
+            raise ValueError("max_num_doublings must be positive.")
+        capacity = (
+            2**doublings
+            if max_trajectory_capacity is None
+            else int(max_trajectory_capacity)
+        )
+        if capacity != 2**doublings:
+            raise ValueError("max_trajectory_capacity must equal 2**max_num_doublings.")
+        recurrence_ = (
+            CausalHMCConfig(linearization="dense-exact")
+            if recurrence is None
+            else recurrence
+        )
+        if not isinstance(recurrence_, CausalHMCConfig):
+            raise TypeError("recurrence must be CausalHMCConfig or None.")
+        if recurrence_.linearization != "dense-exact":
+            raise ValueError("Causal NUTS requires deterministic dense-exact gates.")
+        self.recurrence = recurrence_
+        self.max_num_doublings = doublings
+        self.max_trajectory_capacity = capacity
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "max_num_doublings": self.max_num_doublings,
+            "max_trajectory_capacity": self.max_trajectory_capacity,
+            "recurrence": self.recurrence.as_dict(),
         }
 
 
@@ -339,9 +391,29 @@ def build_causal_hmc_kernel(
         num_integration_steps,
     ):
         inverse_mass = jnp.asarray(inverse_mass_matrix)
-        if inverse_mass.ndim != 1:
+        if inverse_mass.ndim not in (1, 2):
             raise ValueError(
-                "Causal HMC initially requires a diagonal inverse mass matrix."
+                "Causal HMC inverse mass must be diagonal or a square dense matrix."
+            )
+        dimension = int(inverse_mass.shape[0])
+        if inverse_mass.ndim == 2:
+            if inverse_mass.shape != (dimension, dimension):
+                raise ValueError("Dense inverse mass must be square.")
+            if config.linearization == "pair-hutchinson":
+                raise ValueError(
+                    "pair-hutchinson remains diagonal-only; use dense-exact "
+                    "linearization for a non-diagonal inverse mass."
+                )
+            if dimension > config.maximum_dense_dimension:
+                raise MemoryError(
+                    "Dense causal HMC inverse mass exceeds maximum_dense_dimension."
+                )
+            factor = jnp.linalg.cholesky(inverse_mass)
+            inverse_mass = eqx.error_if(
+                inverse_mass,
+                jnp.any(~jnp.isfinite(factor))
+                | jnp.any(jnp.real(jnp.diag(factor)) <= 0.0),
+                "Dense causal HMC inverse mass must be positive definite.",
             )
         steps = int(num_integration_steps)
         if steps < 1:
@@ -430,6 +502,7 @@ def build_causal_hmc_kernel(
 __all__ = [
     "build_causal_hmc_kernel",
     "CausalHMCConfig",
+    "CausalNUTSConfig",
     "CausalHMCDiagnostics",
     "CausalHMCFailurePolicy",
     "CausalHMCInfo",

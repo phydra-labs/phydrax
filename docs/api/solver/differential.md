@@ -139,39 +139,37 @@ solve. Native implicit methods likewise require coefficient, stage, and residual
 precision to match storage while permitting wider accumulation and decisions.
 Dense output applies the declared output dtype instead of leaking backend storage.
 
-### Complex Diffrax state representation
+### Declared real-coordinate Diffrax execution
 
-`solve_diffrax`, `solve_diffrax_ensemble`, and `solve_diffrax_cde` keep their public
-state complex while defaulting Diffrax execution to one real array with shape
-`(2,) + state_shape`. The leading entries are the real and imaginary components.
-Drift, diffusion, events, dense interpolation, arguments, and saved trajectories are
-adapted at the backend boundary; the packed axis never appears in
-`DifferentialSolution`.
+`solve_diffrax`, `solve_diffrax_ensemble`, and `solve_diffrax_cde` preserve their
+public complex Euclidean state while the safe route presents only real floating
+coordinates to Diffrax. Pass any `AbstractRealCoordinateMap` through
+`state_coordinates`; a single complex array defaults to
+`ComplexCartesianCoordinates`. Algebra coordinates, Hermitian spectral coordinates,
+and `PreparedRealCoordinateTree` therefore share one substrate rather than separate
+solver policies.
 
-For a complex diffusion with shape `state_shape + noise_shape`, the backend diffusion
-has shape `(2,) + state_shape + noise_shape`. Both components use the same real
-Wiener controls. This realizes the complex SDE as one coupled real system and avoids
-Diffrax's native array contraction conjugating a complex diffusion column.
+Drift, split terms, diffusion columns, event callbacks, dense interpolation, and saved
+states are reconstructed at the public boundary and mapped back through the same linear
+action. Both components of a complex diffusion receive the same real Wiener increment.
+Map shape/dtype/domain defects and any complex backend leaf fail closed.
 
-Adaptive tolerances use componentwise real geometry over the doubled system.
-`TemporalSolveEvidence.state_packing` records the public/backend dtypes and shapes,
-tolerance geometry, policy, and realized adapter identity.
+`DiffraxComplexStatePolicy` provides three strategies:
 
-`DiffraxComplexStatePolicy` provides three explicit strategies:
+- `"real_coordinates"` is the default safe adapter;
+- `"native"` explicitly opts into Diffrax native complex execution;
+- `"reject"` refuses a complex initial state.
 
-- `\"real_imag\"` is the default safe adapter;
-- `\"native\"` opts into Diffrax's native complex path and its upstream limitation;
-- `\"reject\"` refuses complex initial state.
-
-Real states retain the native path and existing configuration identity. Nontrivial
-state geometry is not silently doubled: real/imaginary packing rejects it until an
-explicit product-geometry contract exists.
+Real states without a coordinate map retain native execution. Nontrivial state geometry
+requires an explicit linear map. `TemporalSolveEvidence.state_coordinates` stores the
+canonical `RealCoordinateEvidence`; the removed complex/algebra packing evidence and
+parallel algebra policy are not retained as compatibility aliases.
 
 ::: phydrax.solver.DiffraxComplexStatePolicy
 
 ---
 
-::: phydrax.solver.ComplexStatePackingEvidence
+::: phydrax.linalg.RealCoordinateEvidence
 
 ## Markov cubature weak solve
 

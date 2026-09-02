@@ -58,6 +58,7 @@ from ._dense_classification import (
     DenseSiteClassificationBatch,
     DenseSiteClassificationTerm,
 )
+from ._diffusion_bridge import DiffusionBridgeControlDataset, DiffusionBridgeDriftTerm
 from ._energy_model import (
     EnergyTarget,
     PersistentContrastiveDivergence,
@@ -152,6 +153,7 @@ from ._score_matching import (
     ScoreSampleProvider,
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
+from ._target_consistency import TargetConsistencyTerm
 from ._time_sampling import UniformTimeSamplingPolicy
 from ._topology import FrozenTopologyTerm
 from ._trajectory_classification import (
@@ -174,6 +176,12 @@ from ._transport import (
     SlicedWassersteinTerm,
     SoftQuantileFunctional,
     SpatialSinkhornDivergenceTerm,
+)
+from ._transport_learning import (
+    audit_transport_map,
+    LearnedTransportAudit,
+    MongeMapTerm,
+    NeuralDualTransportTerm,
 )
 from ._unbalanced_transport import SpatialUnbalancedSinkhornDivergenceTerm
 from ._variational_eigenspace import (
@@ -257,6 +265,7 @@ __all__ = [
     "GraphTrajectorySignal",
     "GraphTrajectorySupervisedTerm",
     "IntegralFunctional",
+    "TargetConsistencyTerm",
     "FormDensity",
     "InvariantSubspaceResidual",
     "InvariantSubspaceResidualEvaluation",
@@ -325,4 +334,10 @@ __all__ = [
     "TrajectoryCaseClassificationTerm",
     "TrajectoryClassificationMeasure",
     "operator_term_suite",
+    "DiffusionBridgeControlDataset",
+    "DiffusionBridgeDriftTerm",
+    "LearnedTransportAudit",
+    "MongeMapTerm",
+    "NeuralDualTransportTerm",
+    "audit_transport_map",
 ]

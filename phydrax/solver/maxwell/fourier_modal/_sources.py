@@ -97,6 +97,9 @@ def plane_wave_excitation(
     side: str = "left",
     amplitude: ArrayLike = 1.0,
 ) -> FourierModalExcitation:
+    modes = scattering.left_modes if side == "left" else scattering.right_modes
+    if not isinstance(modes, HomogeneousPortModes):
+        raise TypeError("plane_wave_excitation is homogeneous-port only.")
     if polarization not in ("te", "tm"):
         raise ValueError("polarization must be 'te' or 'tm'.")
     if side not in ("left", "right"):
@@ -110,6 +113,33 @@ def plane_wave_excitation(
     if identifier not in mode_ids:
         raise KeyError(f"Unknown port mode {identifier!r}.")
     index = mode_ids.index(identifier)
+    dtype = scattering.s11.matrix.dtype
+    left = jnp.zeros((scattering.block_size, 1), dtype=dtype)
+    right = jnp.zeros_like(left)
+    if side == "left":
+        left = left.at[index, 0].set(jnp.asarray(amplitude, dtype=dtype))
+    else:
+        right = right.at[index, 0].set(jnp.asarray(amplitude, dtype=dtype))
+    return FourierModalExcitation(left, right)
+
+
+def port_mode_excitation(
+    scattering: MaxwellPortScatteringOperator,
+    mode_id: str,
+    /,
+    *,
+    side: str = "left",
+    amplitude: ArrayLike = 1.0,
+) -> FourierModalExcitation:
+    """Excite one stable incoming mode of a homogeneous or periodic port."""
+
+    if side not in ("left", "right"):
+        raise ValueError("side must be 'left' or 'right'.")
+    modes = scattering.left_modes if side == "left" else scattering.right_modes
+    identifier = str(mode_id)
+    if identifier not in modes.mode_ids:
+        raise KeyError(f"Unknown port mode {identifier!r}.")
+    index = modes.mode_ids.index(identifier)
     dtype = scattering.s11.matrix.dtype
     left = jnp.zeros((scattering.block_size, 1), dtype=dtype)
     right = jnp.zeros_like(left)
@@ -310,6 +340,7 @@ __all__ = [
     "integrate_brillouin_fields",
     "integrate_brillouin_power",
     "plane_wave_excitation",
+    "port_mode_excitation",
     "point_source_coefficients",
     "source_plane_affine_relation",
 ]

@@ -18,7 +18,6 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.enforcement import (
-    enforce_dirichlet,
     enforce_neumann,
     enforce_traction,
     EnforcementProgram,
@@ -173,11 +172,7 @@ def test_identity_remainder_toggle_changes_output():
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     full_boundary = geom.component({"x": Boundary()})
-    left_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", left, target=1.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
-    )
+    left_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0))
 
     pipes_no = EnforcementProgram.build(
         functions={"u": u},
@@ -223,14 +218,22 @@ def test_enforce_traction_enforces_zero_boundary():
     )
     spec = EnforcementSpec(
         condition,
-        kind="custom",
-        transform=lambda value, _get_field: enforce_traction(
-            value,
-            component,
-            var="x",
-            lambda_=1.0,
-            mu=1.0,
-            target=jnp.array([0.0, 0.0]),
+        transform=phx.enforcement.AffineEnforcementTransform(
+            phx.enforcement.equal(
+                phx.enforcement.field_jet("u", "x", 1, normal=True),
+                jnp.array([0.0, 0.0]),
+            ),
+            phx.enforcement.TraceLifting(
+                "traction",
+                "x",
+                lame_lambda=1.0,
+                shear_modulus=1.0,
+            ),
+            phx.enforcement.EnforcementProofObligations(
+                pivot_identity="u:traction",
+                support_identity="square-boundary",
+                provider_certified=True,
+            ),
         ),
     )
 

@@ -4,6 +4,26 @@
 
 """Exact finite-complex topology and evidence-bearing persistence analysis."""
 
+from ._advanced import (
+    alpha_complex,
+    cech_complex,
+    CellDiagonalApproximation,
+    CellularSheaf,
+    compute_multiparameter_persistence,
+    compute_spectral_sequence,
+    compute_zigzag_intervals,
+    cup_product,
+    FilteredBicomplex,
+    FilteredChainComplex,
+    FinitePersistenceModule,
+    MultiFiltration,
+    MultiparameterPersistenceResult,
+    PointCloudComplexPolicy,
+    PointCloudComplexResult,
+    SpectralSequenceResult,
+    vietoris_rips_complex,
+    ZigzagIntervalResult,
+)
 from ._coefficients import CoefficientDomain, PrimeField, RationalField
 from ._complex import (
     CellComplexPair,
@@ -114,6 +134,24 @@ from ._temporal import (
 
 
 __all__ = [
+    "CellDiagonalApproximation",
+    "CellularSheaf",
+    "FilteredBicomplex",
+    "FilteredChainComplex",
+    "FinitePersistenceModule",
+    "MultiFiltration",
+    "MultiparameterPersistenceResult",
+    "PointCloudComplexPolicy",
+    "PointCloudComplexResult",
+    "SpectralSequenceResult",
+    "ZigzagIntervalResult",
+    "alpha_complex",
+    "cech_complex",
+    "compute_multiparameter_persistence",
+    "compute_spectral_sequence",
+    "compute_zigzag_intervals",
+    "cup_product",
+    "vietoris_rips_complex",
     "BettiDimensionResult",
     "CellComplexPair",
     "CellFiltration",

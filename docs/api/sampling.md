@@ -47,9 +47,39 @@ The target callback must return one real scalar per chain position. A parameter 
 may keep the current positions, but must call `MetropolisHastings.refresh` before the
 next transition so stored target values cannot become stale.
 
-The initial implementation deliberately uses fixed kernels. Proposal adaptation and
-parameter updates are separate phases rather than hidden mutations of production-chain
-stationarity.
+Proposal adaptation is explicit between completed warmup chunks. Every
+production chunk freezes its normalized proposal; final model evaluation
+disables adaptation. `ProposalMove` carries complete forward/reverse density,
+validity, and an optional fixed-shape local payload.
+
+`FullMarkovTarget` and `IncrementalMarkovTarget` are the only root target
+contracts. Incremental cache selection follows the same acceptance mask, and a
+scheduled exact refresh fails closed on mismatch.
+
+::: phydrax.sampling.ProposalMove
+
+::: phydrax.sampling.RobbinsMonroScalePolicy
+
+::: phydrax.sampling.IncrementalMarkovTarget
+
+::: phydrax.sampling.MarkovChunkPlan
+
+Chunk plans use global semantic transition addresses. The final partial chunk
+has an explicit inactive mask, and continuation advances only active draws.
+
+## Hamiltonian kernels
+
+::: phydrax.sampling.prepare_hamiltonian_kernel
+
+::: phydrax.sampling.adapt_hamiltonian_kernel
+
+::: phydrax.sampling.sample_hamiltonian
+
+The target-generic finite HMC/bounded-U-turn kernel uses a declared positive
+mass factor and retains divergence, nonfinite-gradient, depth, and
+factorization evidence per transition. Adaptation is a finite warmup epoch;
+the returned production step size is frozen. Discrete accept/tree decisions
+are not differentiable.
 
 ## Conditional update programs
 
@@ -107,16 +137,18 @@ target and remain part of the UQ chain-diagnostic layer.
 
 ## Adaptive collocation
 
-`ResidualAttentionCollocation` keeps one immutable paired-point population and
-updates only its local residual multipliers. Scores are converted to a probability
-measure with an explicit uniform floor and minimum-ESS guard, then combined through
-an exponential moving average. Returned multipliers have arithmetic mean one, so
-attention does not silently change the scalar term scale.
+`ResidualAttentionCollocation` owns a fixed-capacity population, detached raw-score
+EMA, stable point IDs/ages, and an optional fixed-size candidate/replacement route.
+Retained points carry their EMA; inserted points initialize from their candidate
+score. Stable index ties make replacement replayable. The configured initial
+low-discrepancy anchors are never replaced and each retains a strictly positive
+probability floor.
 
-This is an adaptive biased training measure, not importance-corrected quadrature.
-Use independent fixed evaluation terms for model selection. Point replacement and
-nonzero controlled-collocation coverage anchors are deliberately unsupported because
-no attention-transfer rule has been declared.
+Scores define a probability measure with an explicit uniform floor and minimum-ESS
+guard. Returned multipliers retain arithmetic mean one. This remains an adaptive
+biased training measure, not importance-corrected quadrature; independent fixed
+evaluation terms remain required for model selection. Controlled rollback includes
+the batch, EMA, IDs, ages, anchors, and candidate-evaluation accounting.
 
 ::: phydrax.sampling.collocation.ResidualAttentionCollocation
 

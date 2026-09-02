@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import DiscreteStepContext
 from ..optim import (
     AbstractStructuredNonlinearMethod,
     compile_structured_minimization,
@@ -31,7 +32,8 @@ from ..optim import (
     StructuredMinimizationCompilation,
     StructuredMinimizationResult,
 )
-from ..solver import DifferentialProblem, solve_diffrax
+from ..solver._differential import DifferentialProblem
+from ..solver._diffrax_backend import solve_diffrax
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
@@ -521,7 +523,11 @@ def _segment_state(
     time1 = problem.time_grid.times[segment + 1]
     if isinstance(dynamics, DiscreteControlDynamics):
         next_state = dynamics.system.evaluate(
-            time0,
+            DiscreteStepContext(
+                time0,
+                time1,
+                jnp.asarray(segment, dtype=jnp.int32),
+            ),
             state,
             problem.args,
             inputs=control,

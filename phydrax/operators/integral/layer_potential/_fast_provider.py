@@ -35,6 +35,9 @@ from ._laplace2d import LaplaceLayerPotential2D
 BoundaryFastProviderName: TypeAlias = Literal[
     "blocked-direct-dp0-galerkin-3d",
     "laplace-fmm-2d",
+    "laplace-fmm-3d",
+    "scalar-h-matrix-3d",
+    "scalar-h2-matrix-3d",
 ]
 BoundaryGalerkinFormulation: TypeAlias = Literal["weak", "strong"]
 
@@ -164,6 +167,39 @@ _BOUNDARY_FAST_PROVIDER_CATALOG = (
         multiple_rhs=False,
         arbitrary_targets=True,
     ),
+    BEMFastProviderCapabilities(
+        name="laplace-fmm-3d",
+        ambient_dimension=3,
+        pde="laplace",
+        formulation="dp0-galerkin-single-layer",
+        accelerated=True,
+        exact_prepared_near=True,
+        exact_transpose=True,
+        multiple_rhs=True,
+        arbitrary_targets=False,
+    ),
+    BEMFastProviderCapabilities(
+        name="scalar-h-matrix-3d",
+        ambient_dimension=3,
+        pde="laplace",
+        formulation="dp0-galerkin-single-layer",
+        accelerated=True,
+        exact_prepared_near=True,
+        exact_transpose=True,
+        multiple_rhs=True,
+        arbitrary_targets=False,
+    ),
+    BEMFastProviderCapabilities(
+        name="scalar-h2-matrix-3d",
+        ambient_dimension=3,
+        pde="laplace",
+        formulation="dp0-galerkin-single-layer",
+        accelerated=True,
+        exact_prepared_near=True,
+        exact_transpose=True,
+        multiple_rhs=True,
+        arbitrary_targets=False,
+    ),
 )
 
 
@@ -194,7 +230,7 @@ def boundary_fast_provider_capabilities(
         token in identifier.lower() for token in ("fmm", "h2", "h²")
     ):
         raise BEMFastCapabilityError(
-            "No 3D FMM, H-matrix, or H² provider is implemented for this BEM route."
+            f"No catalogued 3D fast provider matches {identifier!r}."
         )
     raise BEMFastCapabilityError(f"Unknown BEM fast provider {identifier!r}.")
 

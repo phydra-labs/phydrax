@@ -260,13 +260,28 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             resolution_transfer=True,
             requires_structured_tensors=True,
         )
+    if architecture == "OrthogonalEquivariantPointCNO":
+        return OperatorCapabilitySpec(
+            source_geometries=("point_cloud", "manifold"),
+            query_geometries=("point_cloud", "manifold"),
+            spatial_dimensions=(2, 3),
+            source_query_relations=("coincident", "independent", "shared_topology"),
+            quadrature="physical_required",
+            masks="supported",
+            topology="optional",
+            input_representations=("scalar", "vector", "tensor"),
+            output_representations=("scalar", "vector", "tensor"),
+            symmetry_groups=("O2", "O3"),
+            resolution_transfer=True,
+            requires_structured_tensors=True,
+        )
     if architecture == "CNO":
         return OperatorCapabilitySpec(
             source_geometries=("tensor_grid",),
             query_geometries=("tensor_grid",),
             spatial_dimensions=(1, 2, 3),
             source_query_relations=("coincident",),
-            axis_requirement="periodic_fourier_uniform",
+            axis_requirement="uniform",
             minimum_axis_size=2,
             quadrature="physical_required",
             masks="supported",
@@ -280,10 +295,10 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             query_geometries=("tensor_grid",),
             spatial_dimensions=(1, 2, 3),
             source_query_relations=("coincident",),
-            axis_requirement="periodic_fourier_uniform",
+            axis_requirement="uniform",
             minimum_axis_size=2,
-            quadrature="unused",
-            masks="unsupported",
+            quadrature="physical_required",
+            masks="supported",
             topology="unused",
             resolution_transfer=True,
             autoregressive_rollout=True,
@@ -310,9 +325,9 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
     if architecture == "WaveletNeuralOperator":
         return OperatorCapabilitySpec(
             source_geometries=("tensor_grid",),
-            query_geometries=("tensor_grid",),
+            query_geometries=("tensor_grid", "point_cloud"),
             spatial_dimensions=(1, 2, 3),
-            source_query_relations=("coincident",),
+            source_query_relations=("coincident", "independent"),
             axis_requirement="uniform",
             quadrature="unused",
             masks="supported",
@@ -322,14 +337,27 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
     if architecture == "MultiwaveletOperator":
         return OperatorCapabilitySpec(
             source_geometries=("tensor_grid",),
-            query_geometries=("tensor_grid",),
+            query_geometries=("tensor_grid", "point_cloud"),
             spatial_dimensions=(1,),
-            source_query_relations=("coincident",),
+            source_query_relations=("coincident", "independent"),
             axis_requirement="uniform",
             quadrature="unused",
             masks="supported",
             topology="unused",
             resolution_transfer=True,
+        )
+    if architecture == "ConditionalFunctionFrameFlowOperator":
+        return OperatorCapabilitySpec(
+            source_geometries=_ALL_GEOMETRIES,
+            query_geometries=_ALL_GEOMETRIES,
+            spatial_dimensions=(1, 2, 3),
+            source_query_relations=("coincident", "independent", "shared_topology"),
+            quadrature="physical_required",
+            masks="supported",
+            topology="optional",
+            multiple_queries=True,
+            resolution_transfer=True,
+            encode_once_decode_many=True,
         )
     if architecture == "ConditionalFlowFunctionOperator":
         return OperatorCapabilitySpec(
@@ -402,6 +430,20 @@ def _training_for(name: str, architecture: str, /) -> OperatorTrainingRequiremen
 
 
 @dataclass(frozen=True, slots=True)
+class PretrainedOperatorArtifact:
+    """Content-addressed first-party operator weights derived from catalog status."""
+
+    name: str
+    resource: str
+    sha256: str
+    license: str
+    corpus: str
+    provenance: str
+    dtype: str
+    task: str
+
+
+@dataclass(frozen=True, slots=True)
 class OperatorArchitectureStatus:
     """Immutable maturity and recommendation status for an operator architecture."""
 
@@ -413,6 +455,7 @@ class OperatorArchitectureStatus:
     evidence: str
     capabilities: OperatorCapabilitySpec
     training: OperatorTrainingRequirement
+    pretrained_artifacts: tuple[PretrainedOperatorArtifact, ...] = ()
 
 
 def _status(
@@ -423,6 +466,7 @@ def _status(
     /,
     *,
     configuration: OperatorArchitectureConfiguration = (),
+    pretrained_artifacts: tuple[PretrainedOperatorArtifact, ...] = (),
 ) -> OperatorArchitectureStatus:
     return OperatorArchitectureStatus(
         name=name,
@@ -433,6 +477,7 @@ def _status(
         evidence=evidence,
         capabilities=_capabilities_for(name, architecture),
         training=_training_for(name, architecture),
+        pretrained_artifacts=pretrained_artifacts,
     )
 
 
@@ -442,6 +487,18 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "FNO",
         "stable",
         "Native batching, resolution transfer, and spectral factorization are regression tested.",
+        pretrained_artifacts=(
+            PretrainedOperatorArtifact(
+                "fno-diffusion-1d",
+                "pretrained/fno_diffusion_1d.npz",
+                "07eda2f48ff2889b58392c04835c3c05319313dd39e747f70cdebba27cedff5c",
+                "BSD-3-Clause",
+                "first-party manufactured periodic diffusion fields",
+                "PhydraX deterministic seed 20260901 portable baseline",
+                "float32",
+                "one-dimensional periodic diffusion resolution transfer",
+            ),
+        ),
     ),
     "HOFNO": _status(
         "HOFNO",
@@ -462,6 +519,18 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "DeepONet",
         "stable",
         "Branch-trunk evaluation, multiple inputs, and chunked queries are regression tested.",
+        pretrained_artifacts=(
+            PretrainedOperatorArtifact(
+                "deeponet-antiderivative-1d",
+                "pretrained/deeponet_antiderivative_1d.npz",
+                "51ff85feaf0591115ecbca0af04a5c7d8e82fa3c37ab98cbd9c9981e9d5c6ac0",
+                "BSD-3-Clause",
+                "first-party manufactured antiderivative functions",
+                "PhydraX deterministic seed 20260901 portable baseline",
+                "float32",
+                "one-dimensional independent-query antiderivative",
+            ),
+        ),
     ),
     "MIONet": _status(
         "MIONet",
@@ -527,6 +596,13 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "research",
         "Finite-group tensor actions and Reynolds-projected lattice kernels have "
         "exact equivariance checks; broad scientific benchmarks remain pending.",
+    ),
+    "OrthogonalEquivariantPointCNO": _status(
+        "OrthogonalEquivariantPointCNO",
+        "OrthogonalEquivariantPointCNO",
+        "research",
+        "Radial block kernels are structurally O(d)-covariant on weighted points; "
+        "the bounded rank-two envelope remains research tier.",
     ),
     "CNO": _status(
         "CNO",
@@ -700,6 +776,13 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "experimental",
         "Conditional FlowJAX residual densities are supported on shared fixed query "
         "geometries; arbitrary-query and resolution-transfer claims are excluded.",
+    ),
+    "ConditionalFunctionFrameFlowOperator": _status(
+        "ConditionalFunctionFrameFlowOperator",
+        "ConditionalFunctionFrameFlowOperator",
+        "research",
+        "Normalized coefficient laws decode one latent realization on independent "
+        "queries without claiming cross-dimensional sampled-field density.",
     ),
     "Poseidon": _status(
         "Poseidon",
@@ -886,6 +969,21 @@ def operator_architecture_status(name: str, /) -> OperatorArchitectureStatus:
     return OPERATOR_ARCHITECTURE_STATUSES[canonical_name]
 
 
+def operator_pretrained_artifacts(
+    architecture: str | None = None,
+    /,
+) -> tuple[PretrainedOperatorArtifact, ...]:
+    """Enumerate pretrained descriptors solely from the canonical catalog."""
+    statuses = (
+        OPERATOR_ARCHITECTURE_STATUSES.values()
+        if architecture is None
+        else (operator_architecture_status(architecture),)
+    )
+    return tuple(
+        artifact for status in statuses for artifact in status.pretrained_artifacts
+    )
+
+
 def _configured_values(
     status: OperatorArchitectureStatus,
     configuration: Mapping[str, Any] | Sequence[tuple[str, Any]] | None,
@@ -990,11 +1088,13 @@ def validate_operator_architecture(
 
 
 __all__ = [
+    "PretrainedOperatorArtifact",
     "operator_architecture_contract",
     "operator_instance_contract",
     "OPERATOR_ARCHITECTURE_STATUSES",
     "OperatorArchitectureStatus",
     "OperatorArchitectureTier",
     "operator_architecture_status",
+    "operator_pretrained_artifacts",
     "validate_operator_architecture",
 ]

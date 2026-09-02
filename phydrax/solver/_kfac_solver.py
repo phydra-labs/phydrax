@@ -84,14 +84,14 @@ def _armijo_search(
     max_steps: int,
 ) -> tuple[Any, Any, Any, Any]:
     directional_derivative = jnp.vdot(gradient, direction).real
-    if float(jnp.linalg.norm(direction)) == 0.0:
-        return flat_parameters, initial_loss, jnp.asarray(0.0), jnp.asarray(0)
-    if (
-        not bool(jnp.isfinite(directional_derivative))
-        or float(directional_derivative) <= 0.0
-    ):
-        raise ValueError("KFAC produced a non-descent or nonfinite update direction.")
-
+    direction_norm = jnp.linalg.norm(direction)
+    zero_direction = direction_norm == 0.0
+    directional_derivative = eqx.error_if(
+        directional_derivative,
+        (~zero_direction)
+        & (~jnp.isfinite(directional_derivative) | (directional_derivative <= 0.0)),
+        "KFAC produced a non-descent or nonfinite update direction.",
+    )
     minimum_rate = float(learning_rate) * float(shrink) ** (int(max_steps) - 1)
     if minimum_rate == 0.0:
         minimum_rate = float(learning_rate)
@@ -102,28 +102,54 @@ def _armijo_search(
         maximum_steps=max_steps,
         minimum_rate=minimum_rate,
     )
-    descent = -direction
-    result = armijo_backtracking(
-        loss_function,
-        flat_parameters,
-        initial_loss,
-        descent,
-        -directional_derivative,
-        step=lambda base, tangent, rate: base + rate * tangent,
-        contains=lambda candidate: jnp.all(jnp.isfinite(candidate)),
-        policy=policy,
-    )
-    if not bool(result.finite_candidate_seen):
-        raise FloatingPointError("Every KFAC line-search candidate was nonfinite.")
-    return result.parameters, result.value, result.rate, result.evaluations
+
+    def zero_step(_):
+        return (
+            flat_parameters,
+            initial_loss,
+            jnp.asarray(
+                0.0,
+                dtype=jnp.result_type(initial_loss, directional_derivative, float),
+            ),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+
+    def search_step(_):
+        descent = -direction
+        result = armijo_backtracking(
+            loss_function,
+            flat_parameters,
+            initial_loss,
+            descent,
+            -directional_derivative,
+            step=lambda base, tangent, rate: base + rate * tangent,
+            contains=lambda candidate: jnp.all(jnp.isfinite(candidate)),
+            policy=policy,
+        )
+        parameters = eqx.error_if(
+            result.parameters,
+            ~result.finite_candidate_seen,
+            "Every KFAC line-search candidate was nonfinite.",
+        )
+        return parameters, result.value, result.rate, result.evaluations
+
+    return jax.lax.cond(zero_direction, zero_step, search_step, operand=None)
 
 
 def _fixed_step(flat_parameters, direction, loss_function, /, *, learning_rate: float):
     candidate = flat_parameters - float(learning_rate) * direction
     candidate_loss = loss_function(candidate)
-    if not bool(jnp.isfinite(candidate_loss)):
-        raise FloatingPointError("KFAC fixed-step update produced a nonfinite loss.")
-    return candidate, candidate_loss, jnp.asarray(float(learning_rate)), jnp.asarray(0)
+    candidate = eqx.error_if(
+        candidate,
+        ~jnp.isfinite(candidate_loss),
+        "KFAC fixed-step update produced a nonfinite loss.",
+    )
+    return (
+        candidate,
+        candidate_loss,
+        jnp.asarray(float(learning_rate), dtype=candidate_loss.dtype),
+        jnp.asarray(0, dtype=jnp.int32),
+    )
 
 
 def _quadratic_norm_and_clip(direction, gradient, /, *, maximum: float | None):
@@ -192,7 +218,7 @@ def solve_kfac(
     """Run Phydrax-native KFAC over frozen residual terms."""
 
     if int(num_iter) < 0:
-        raise ValueError("num_iter must be nonnegative.")
+        raise ValueError("num_iter must be non-negative.")
     if int(num_iter) == 0:
         return self
     if evaluation_parameters is not None:
@@ -216,9 +242,7 @@ def solve_kfac(
 
     resume_state = self.training_state if resume else None
     source_functions = (
-        self.functions
-        if resume_state is None
-        else resume_state.current_functions
+        self.functions if resume_state is None else resume_state.current_functions
     )
     params, non_trainable = partition_trainable(source_functions)
     sharding_policy = None if training is None else training.sharding
@@ -232,9 +256,7 @@ def solve_kfac(
         num_terms=len(self.terms),
     )
     state = (
-        plan.initialize(params)
-        if resume_state is None
-        else resume_state.optimizer_state
+        plan.initialize(params) if resume_state is None else resume_state.optimizer_state
     )
     term_sample_size = _train_term_sample_size(
         train_term_sample_size,
@@ -253,9 +275,7 @@ def solve_kfac(
         state_template = FunctionalTrainingState(
             current_functions=source_functions,
             best_functions=source_functions,
-            previous_functions=(
-                source_functions if training.pseudo_transient else None
-            ),
+            previous_functions=(source_functions if training.pseudo_transient else None),
             optimizer_state=state,
             key=root_key,
             pseudo_inverse_steps=tuple(
@@ -372,9 +392,7 @@ def solve_kfac(
         if training is None
         else resume_state.pseudo_inverse_steps
         if resume_state is not None
-        else tuple(
-            policy.initial_inverse_step for policy in training.pseudo_transient
-        )
+        else tuple(policy.initial_inverse_step for policy in training.pseudo_transient)
     )
     term_multipliers = (
         jnp.zeros((0,), dtype=float)
@@ -383,9 +401,7 @@ def solve_kfac(
         if resume_state is not None
         else jnp.ones((len(training.term_balance.blocks),), dtype=float)
     )
-    previous_gradient = (
-        None if resume_state is None else resume_state.previous_gradient
-    )
+    previous_gradient = None if resume_state is None else resume_state.previous_gradient
 
     def make_training_state(current_params, selected_params):
         if training is None:
@@ -435,6 +451,7 @@ def solve_kfac(
             sharding_policy.synchronize(
                 f"functional-kfac-checkpoint-after-{checkpoint_state.progress.update_step}"
             )
+
     tensorboard_context = (
         TensorBoardLogger(tensorboard_log_dir)
         if tensorboard_log_dir is not None
@@ -557,11 +574,7 @@ def solve_kfac(
                 gradient_wall_time += time.perf_counter() - gradient_started
             if not bool(jnp.isfinite(loss)) or not bool(jnp.all(jnp.isfinite(gradient))):
                 raise FloatingPointError("KFAC encountered a nonfinite loss or gradient.")
-            if (
-                keep_best
-                and selection_policy is None
-                and float(loss) < best_loss
-            ):
+            if keep_best and selection_policy is None and float(loss) < best_loss:
                 best_loss = float(loss)
                 best_params = params
             refresh_factors = epoch % optim.factor_update_period == 0
@@ -578,9 +591,7 @@ def solve_kfac(
                     approximation=optim.approximation,
                     chunk_size=optim.factor_chunk_size,
                     iter_=term_iteration,
-                    functional_residual=(
-                        None if update is None else update.residual
-                    ),
+                    functional_residual=(None if update is None else update.residual),
                 )
                 curvature = update_block_state_from_observations(
                     curvature,
@@ -624,9 +635,7 @@ def solve_kfac(
                 _prepared=prepared,
             ):
                 if _update is not None:
-                    return _update.surrogate_loss(
-                        _unravel(flat_candidate), non_trainable
-                    )
+                    return _update.surrogate_loss(_unravel(flat_candidate), non_trainable)
                 functions = combine_trainable(
                     _unravel(flat_candidate),
                     non_trainable,
@@ -668,9 +677,7 @@ def solve_kfac(
                 previous_functions = functions_snapshot
             objective = objective.record_training_evaluations(term_indices=active_indices)
             completed = iteration
-            selection_progress = replace(
-                selection_progress, update_step=iteration
-            )
+            selection_progress = replace(selection_progress, update_step=iteration)
             if profile_adaptive:
                 jax.block_until_ready((params, accepted_loss, state))
                 optimizer_step_wall_time = time.perf_counter() - optimizer_started
@@ -708,7 +715,9 @@ def solve_kfac(
                     best_loss = float(selection_evaluation_loss)
                     best_params = params
                 selection_stopped = selection_progress.stopped_early
-            elif keep_best and selection_policy is None and accepted_loss_float < best_loss:
+            elif (
+                keep_best and selection_policy is None and accepted_loss_float < best_loss
+            ):
                 best_loss = accepted_loss_float
                 best_params = params
             elif not keep_best:
@@ -728,9 +737,7 @@ def solve_kfac(
                 and training.checkpoint.due(iteration)
             ):
                 checkpoint_selected = best_params if keep_best else params
-                checkpoint_state = make_training_state(
-                    params, checkpoint_selected
-                )
+                checkpoint_state = make_training_state(params, checkpoint_selected)
                 checkpoint_solver = replace_solver_state(
                     self,
                     functions=checkpoint_state.best_functions,

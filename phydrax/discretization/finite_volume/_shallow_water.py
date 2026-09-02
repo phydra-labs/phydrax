@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._precision import FiniteVolumePrecisionPolicy
 from ._reconstruction import PiecewiseConstantReconstruction, reconstruct_ghosted_axis
 
 
@@ -75,6 +78,71 @@ class ShallowWaterWetDryPolicy(StrictModule, NonTrainableState):
         return jnp.concatenate((depth, momentum), axis=-1)
 
 
+class ShallowWaterBathymetryPlan(StrictModule, NonTrainableState):
+    """Geometry-bound cell values or a static physical-bed evaluator."""
+
+    cell_values: Array | None
+    evaluator: Callable[[Array], ArrayLike] | None = eqx.field(static=True)
+    field_id: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        cell_values: ArrayLike | None = None,
+        evaluator: Callable[[Array], ArrayLike] | None = None,
+        field_id: str,
+    ):
+        if (cell_values is None) == (evaluator is None):
+            raise ValueError(
+                "Bathymetry requires exactly one of cell_values or evaluator."
+            )
+        if evaluator is not None and not callable(evaluator):
+            raise TypeError("Bathymetry evaluator must be callable.")
+        identifier = str(field_id)
+        if not identifier:
+            raise ValueError("Bathymetry field_id must be non-empty.")
+        values = None if cell_values is None else jnp.asarray(cell_values)
+        self.cell_values = values
+        self.evaluator = evaluator
+        self.field_id = identifier
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "shallow-water-bathymetry-plan",
+                "field": identifier,
+                "representation": "cell-values" if values is not None else "evaluator",
+                "values": (
+                    None if values is None else array_tree_fingerprint(np.asarray(values))
+                ),
+            }
+        )
+
+    def prepare(
+        self,
+        discretization: Any,
+        /,
+        *,
+        precision: FiniteVolumePrecisionPolicy | None = None,
+    ) -> "PreparedShallowWaterBathymetry":
+        policy = FiniteVolumePrecisionPolicy() if precision is None else precision
+        if not isinstance(policy, FiniteVolumePrecisionPolicy):
+            raise TypeError("precision must be FiniteVolumePrecisionPolicy or None.")
+        values = (
+            self.cell_values
+            if self.cell_values is not None
+            else self.evaluator(discretization.cell_centers)
+        )
+        return PreparedShallowWaterBathymetry(
+            values,
+            discretization.cell_shape,
+            geometry_id=discretization.prepared_id,
+            precision_id=policy.policy_id,
+            dtype=policy.storage_dtype,
+            evaluator=self.evaluator,
+            field_id=self.field_id,
+        )
+
+
 class PreparedShallowWaterBathymetry(StrictModule, NonTrainableState):
     """Static upward-positive bathymetry bound to prepared FV geometry."""
 
@@ -82,6 +150,8 @@ class PreparedShallowWaterBathymetry(StrictModule, NonTrainableState):
     geometry_id: str = eqx.field(static=True)
     precision_id: str = eqx.field(static=True)
     bed_id: str = eqx.field(static=True)
+    evaluator: Callable[[Array], ArrayLike] | None = eqx.field(static=True)
+    field_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -92,6 +162,8 @@ class PreparedShallowWaterBathymetry(StrictModule, NonTrainableState):
         geometry_id: str,
         precision_id: str,
         dtype: Any,
+        evaluator: Callable[[Array], ArrayLike] | None = None,
+        field_id: str = "bathymetry",
     ):
         host = np.asarray(values)
         if host.shape != cell_shape:
@@ -107,17 +179,39 @@ class PreparedShallowWaterBathymetry(StrictModule, NonTrainableState):
                 "Prepared bathymetry requires geometry and precision identities."
             )
         values_ = jnp.asarray(host, dtype=dtype)
+        identifier = str(field_id)
+        if not identifier:
+            raise ValueError("Prepared bathymetry field_id must be non-empty.")
         self.values = values_
         self.geometry_id = geometry
         self.precision_id = precision
+        self.evaluator = evaluator
+        self.field_id = identifier
         self.bed_id = canonical_fingerprint(
             {
                 "kind": "prepared-shallow-water-bathymetry",
                 "geometry": geometry,
                 "precision": precision,
+                "field": identifier,
                 "values": array_tree_fingerprint(host),
                 "sign": "upward-positive",
             }
+        )
+
+    def stage_values(self, coordinates: ArrayLike, /) -> Array:
+        """Refresh a static physical bed on moving fixed-topology geometry."""
+        points = jnp.asarray(coordinates)
+        if self.evaluator is None:
+            if points.shape[:-1] != self.values.shape:
+                raise ValueError("Stage coordinates do not match bathymetry support.")
+            return self.values
+        values = jnp.asarray(self.evaluator(points), dtype=self.values.dtype)
+        if values.shape != points.shape[:-1]:
+            raise ValueError("Bathymetry evaluator must return coordinate leading shape.")
+        return eqx.error_if(
+            values,
+            jnp.any(~jnp.isfinite(values)),
+            "Stage bathymetry contains non-finite values.",
         )
 
     def ghost_axis(self, axis: int, depth: int, /, *, periodic: bool) -> Array:
@@ -299,6 +393,146 @@ class ShallowWaterHydrostaticHLLPlan(StrictModule, NonTrainableState):
             dry_face,
         )
 
+    def normal_face_contribution(
+        self,
+        system: ShallowWaterSystem,
+        left: Array,
+        right: Array,
+        bathymetry_left: Array,
+        bathymetry_right: Array,
+        normal: Array,
+        grid_normal_velocity: Array | None = None,
+        args: Any = None,
+        /,
+    ) -> ShallowWaterBalancedFaceResult:
+        """Hydrostatic HLL contribution for an arbitrary unit normal and ALE speed."""
+        del args
+        from ...equations._hyperbolic_systems import ShallowWaterSystem
+
+        if not isinstance(system, ShallowWaterSystem):
+            raise TypeError("Hydrostatic HLL requires ShallowWaterSystem.")
+        left_, right_, normal_ = (
+            jnp.asarray(left),
+            jnp.asarray(right),
+            jnp.asarray(normal),
+        )
+        if normal_.shape[-1:] != (system.dimension,):
+            raise ValueError("Shallow-water face normal has the wrong dimension.")
+        norm = jnp.sqrt(jnp.sum(normal_ * normal_, axis=-1))
+        normal_ = eqx.error_if(
+            normal_,
+            jnp.any(~jnp.isfinite(normal_))
+            | jnp.any(jnp.abs(norm - 1.0) > 64.0 * jnp.finfo(normal_.dtype).eps),
+            "Shallow-water face normals must be finite and unit length.",
+        )
+        bed_left = jnp.asarray(bathymetry_left, dtype=left_.dtype)
+        bed_right = jnp.asarray(bathymetry_right, dtype=right_.dtype)
+        depth_left, depth_right = (
+            jnp.maximum(left_[..., 0], 0),
+            jnp.maximum(right_[..., 0], 0),
+        )
+        surface_left, surface_right = depth_left + bed_left, depth_right + bed_right
+        bed_star = jnp.minimum(
+            jnp.maximum(bed_left, bed_right), jnp.minimum(surface_left, surface_right)
+        )
+        reconstructed_left = jnp.maximum(
+            jnp.minimum(surface_left - bed_star, depth_left), 0
+        )
+        reconstructed_right = jnp.maximum(
+            jnp.minimum(surface_right - bed_star, depth_right), 0
+        )
+        left_wet, right_wet = (
+            self.wet_dry.wet(reconstructed_left),
+            self.wet_dry.wet(reconstructed_right),
+        )
+        reconstructed_left = jnp.where(left_wet, reconstructed_left, 0)
+        reconstructed_right = jnp.where(right_wet, reconstructed_right, 0)
+        state_left = jnp.concatenate(
+            (
+                reconstructed_left[..., None],
+                reconstructed_left[..., None] * self.wet_dry.velocity(left_),
+            ),
+            -1,
+        )
+        state_right = jnp.concatenate(
+            (
+                reconstructed_right[..., None],
+                reconstructed_right[..., None] * self.wet_dry.velocity(right_),
+            ),
+            -1,
+        )
+        grid_speed = (
+            jnp.zeros(state_left.shape[:-1], dtype=state_left.dtype)
+            if grid_normal_velocity is None
+            else jnp.asarray(grid_normal_velocity, dtype=state_left.dtype)
+        )
+        if grid_speed.shape != state_left.shape[:-1]:
+            raise ValueError("grid_normal_velocity must match the face batch.")
+        lower, upper = system.normal_signal_bounds(state_left, state_right, normal_)
+        lower, upper = (
+            jnp.minimum(lower - grid_speed, 0),
+            jnp.maximum(upper - grid_speed, 0),
+        )
+        flux_left = jnp.stack(
+            tuple(
+                system.physical_flux(state_left, axis) for axis in range(system.dimension)
+            ),
+            -1,
+        )
+        flux_right = jnp.stack(
+            tuple(
+                system.physical_flux(state_right, axis)
+                for axis in range(system.dimension)
+            ),
+            -1,
+        )
+        flux_left = (
+            oe.contract("...id,...d->...i", flux_left, normal_, backend="jax")
+            - grid_speed[..., None] * state_left
+        )
+        flux_right = (
+            oe.contract("...id,...d->...i", flux_right, normal_, backend="jax")
+            - grid_speed[..., None] * state_right
+        )
+        denominator = upper - lower
+        middle = (
+            upper[..., None] * flux_left
+            - lower[..., None] * flux_right
+            + (lower * upper)[..., None] * (state_right - state_left)
+        ) / jnp.where(denominator == 0, 1, denominator)[..., None]
+        flux = jnp.where(
+            (lower >= 0)[..., None],
+            flux_left,
+            jnp.where((upper <= 0)[..., None], flux_right, middle),
+        )
+        dry = ~left_wet & ~right_wet
+        flux = jnp.where(dry[..., None], 0, flux)
+        left_pressure = 0.5 * system.gravity * (depth_left**2 - reconstructed_left**2)
+        right_pressure = 0.5 * system.gravity * (depth_right**2 - reconstructed_right**2)
+        left_correction = jnp.concatenate(
+            (
+                jnp.zeros_like(left_pressure)[..., None],
+                left_pressure[..., None] * normal_,
+            ),
+            -1,
+        )
+        right_correction = jnp.concatenate(
+            (
+                jnp.zeros_like(right_pressure)[..., None],
+                right_pressure[..., None] * normal_,
+            ),
+            -1,
+        )
+        return ShallowWaterBalancedFaceResult(
+            flux,
+            left_correction,
+            right_correction,
+            jnp.maximum(jnp.abs(lower), jnp.abs(upper)),
+            state_left,
+            state_right,
+            dry,
+        )
+
 
 class ShallowWaterAcceptedFaceIntegrals(StrictModule):
     """Accepted SSPRK transport and one-sided bed-correction integrals."""
@@ -463,6 +697,7 @@ def shallow_water_observables(
 
 __all__ = [
     "PreparedShallowWaterBathymetry",
+    "ShallowWaterBathymetryPlan",
     "ShallowWaterAcceptedFaceIntegrals",
     "ShallowWaterBalancedFaceResult",
     "ShallowWaterHydrostaticHLLPlan",

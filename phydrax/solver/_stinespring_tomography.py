@@ -11,7 +11,11 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..metrix import ComplexStiefelManifold, faithful_density_from_cholesky
+from ..metrix import (
+    ComplexEuclideanManifold,
+    ComplexStiefelManifold,
+    faithful_density_from_cholesky,
+)
 from ..tensor_network import CausalProcessTensor, SequentialStinespringProcess
 from ._process_tomography import (
     ProcessTomographyExperiment,
@@ -159,6 +163,7 @@ def fit_stinespring_process(
         )
     factor = problem.model.initial_factor
     isometries = problem.model.isometries
+    factor_manifold = ComplexEuclideanManifold(factor.shape)
 
     def loss(factor_value, isometry_values):
         return _nll(
@@ -170,18 +175,16 @@ def fit_stinespring_process(
     history = []
     for _ in range(iteration_count):
         value, (factor_gradient, isometry_gradients) = value_and_grad(factor, isometries)
-        factor_direction = (
-            jnp.conj(factor_gradient)
-            if jnp.iscomplexobj(factor_gradient)
-            else factor_gradient
+        factor_direction = factor_manifold.egrad_to_rgrad(factor, factor_gradient)
+        factor = factor_manifold.retract(
+            factor,
+            -learning_rate_ * factor_direction,
         )
-        factor = factor - learning_rate_ * factor_direction
         if optimize_isometries:
             updated = []
             for isometry, gradient in zip(isometries, isometry_gradients, strict=True):
                 manifold = ComplexStiefelManifold(isometry.shape[0], isometry.shape[1])
-                ambient = jnp.conj(gradient) if jnp.iscomplexobj(gradient) else gradient
-                tangent = manifold.egrad_to_rgrad(isometry, ambient)
+                tangent = manifold.egrad_to_rgrad(isometry, gradient)
                 updated.append(manifold.retract(isometry, -learning_rate_ * tangent))
             isometries = tuple(updated)
         history.append(value)

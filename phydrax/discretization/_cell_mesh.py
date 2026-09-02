@@ -22,7 +22,7 @@ from ._cell_complex import (
     polygonal_connectivity,
     PolygonalConnectivity,
     polyhedral_cell_complex,
-    polyhedral_connectivity,
+    polyhedral_connectivity as _build_polyhedral_connectivity,
     PolyhedralConnectivity,
     tetrahedral_cell_complex,
     tetrahedral_connectivity,
@@ -55,6 +55,7 @@ _CELL_DIMENSIONS = {
     "prism": 3,
     "pyramid": 3,
     "polygon": 2,
+    "polyhedron": 3,
 }
 
 
@@ -64,6 +65,7 @@ class CellBlock(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     cell_kind: str = eqx.field(static=True)
     vertices: Array
+    vertex_valid: Array
     global_ids: Array
     block_id: str = eqx.field(static=True)
 
@@ -74,37 +76,55 @@ class CellBlock(StrictModule, NonTrainableState):
         vertices: ArrayLike,
         /,
         *,
+        vertex_valid: ArrayLike | None = None,
         global_ids: ArrayLike | None = None,
     ):
         block_name = str(name)
         kind = str(cell_kind)
         if not block_name:
             raise ValueError("Cell block name must be non-empty.")
-        if kind not in (*_CELL_ARITIES, "polygon"):
+        if kind not in (*_CELL_ARITIES, "polygon", "polyhedron"):
             raise ValueError(
                 "cell_kind must be interval, triangle, quadrilateral, polygon, "
-                "tetrahedron, hexahedron, prism, or pyramid."
+                "tetrahedron, hexahedron, prism, pyramid, or polyhedron."
             )
         cells = np.asarray(vertices, dtype=np.int32)
         arity = (
             int(cells.shape[1])
-            if kind == "polygon" and cells.ndim == 2
+            if kind in ("polygon", "polyhedron") and cells.ndim == 2
             else _CELL_ARITIES.get(kind, -1)
         )
+        minimum_arity = 4 if kind == "polyhedron" else 2 if kind == "interval" else 3
         if (
             cells.ndim != 2
             or cells.shape[0] == 0
             or cells.shape[1] != arity
-            or arity < 2
-            or (kind != "interval" and arity < 3)
+            or arity < minimum_arity
             or (kind == "polygon" and arity < 5)
         ):
             raise ValueError(f"{kind} cell vertices have incompatible arity {arity}.")
-        if np.any(cells < 0):
+        valid = (
+            np.ones_like(cells, dtype=bool)
+            if vertex_valid is None
+            else np.asarray(vertex_valid, dtype=bool)
+        )
+        if valid.shape != cells.shape:
+            raise ValueError("vertex_valid must match cell vertex storage.")
+        if kind != "polyhedron" and not np.all(valid):
+            raise ValueError("Only polyhedron blocks may contain padded vertices.")
+        if np.any(np.sum(valid, axis=1) < minimum_arity):
+            raise ValueError(
+                f"Each {kind} cell requires at least {minimum_arity} vertices."
+            )
+        if np.any(cells[valid] < 0):
             raise ValueError("Cell vertex indices must be non-negative.")
-        if np.any(np.diff(np.sort(cells, axis=1), axis=1) == 0):
-            raise ValueError("Each cell must reference distinct vertices.")
-        if np.unique(np.sort(cells, axis=1), axis=0).shape[0] != cells.shape[0]:
+        canonical_cells = []
+        for row, mask in zip(cells, valid, strict=True):
+            active = row[mask]
+            if np.unique(active).size != active.size:
+                raise ValueError("Each cell must reference distinct active vertices.")
+            canonical_cells.append(tuple(sorted(int(value) for value in active)))
+        if len(set(canonical_cells)) != len(canonical_cells):
             raise ValueError("Cell blocks cannot contain duplicate cells.")
         ids = (
             np.arange(cells.shape[0], dtype=np.int64)
@@ -118,6 +138,7 @@ class CellBlock(StrictModule, NonTrainableState):
         self.name = block_name
         self.cell_kind = kind
         self.vertices = jnp.asarray(cells)
+        self.vertex_valid = jnp.asarray(valid)
         self.global_ids = jnp.asarray(ids)
         self.block_id = canonical_fingerprint(
             {
@@ -125,6 +146,7 @@ class CellBlock(StrictModule, NonTrainableState):
                 "name": block_name,
                 "cell_kind": kind,
                 "vertices": array_tree_fingerprint(cells),
+                "vertex_valid": array_tree_fingerprint(valid),
                 "global_ids": array_tree_fingerprint(ids),
             }
         )
@@ -137,7 +159,7 @@ class CellBlock(StrictModule, NonTrainableState):
     def arity(self) -> int:
         return (
             int(self.vertices.shape[1])
-            if self.cell_kind == "polygon"
+            if self.cell_kind in ("polygon", "polyhedron")
             else _CELL_ARITIES[self.cell_kind]
         )
 
@@ -176,6 +198,7 @@ class CellMesh(StrictModule, NonTrainableState):
         /,
         *,
         vertex_global_ids: ArrayLike | None = None,
+        polyhedral_connectivity: PolyhedralConnectivity | None = None,
         numeric_version: str = "0",
     ):
         points = np.asarray(coordinates, dtype=float)
@@ -201,7 +224,9 @@ class CellMesh(StrictModule, NonTrainableState):
                 "topological dimension."
             )
         for block in normalized_blocks:
-            if np.any(np.asarray(block.vertices) >= points.shape[0]):
+            vertices_ = np.asarray(block.vertices)
+            valid_ = np.asarray(block.vertex_valid, dtype=bool)
+            if np.any(vertices_[valid_] >= points.shape[0]):
                 raise ValueError(
                     f"Cell block {block.name!r} indexes undeclared vertices."
                 )
@@ -229,6 +254,12 @@ class CellMesh(StrictModule, NonTrainableState):
                 for block in normalized_blocks
             )
         )
+        if polyhedral_connectivity is not None and (
+            len(normalized_blocks) != 1 or normalized_blocks[0].cell_kind != "polyhedron"
+        ):
+            raise ValueError(
+                "polyhedral_connectivity is valid only for one polyhedron block."
+            )
         if topological_dimension == 1:
             if any(block.cell_kind != "interval" for block in normalized_blocks):
                 raise ValueError("One-dimensional meshes support interval blocks only.")
@@ -317,18 +348,55 @@ class CellMesh(StrictModule, NonTrainableState):
                     vertex_global_ids=global_ids,
                     cell_global_ids=cell_global_ids,
                 )
+            elif (
+                len(normalized_blocks) == 1
+                and normalized_blocks[0].cell_kind == "polyhedron"
+            ):
+                block = normalized_blocks[0]
+                if not isinstance(polyhedral_connectivity, PolyhedralConnectivity):
+                    raise ValueError(
+                        "A polyhedron CellBlock requires PolyhedralConnectivity."
+                    )
+                connectivity = polyhedral_connectivity
+                if (
+                    connectivity.vertex_count != points.shape[0]
+                    or connectivity.cell_count != block.cell_count
+                    or not np.array_equal(
+                        np.asarray(connectivity.cell_vertices),
+                        np.asarray(block.vertices),
+                    )
+                    or not np.array_equal(
+                        np.asarray(connectivity.cell_vertex_valid),
+                        np.asarray(block.vertex_valid),
+                    )
+                    or not np.array_equal(
+                        np.asarray(connectivity.vertex_global_ids), global_ids
+                    )
+                    or not np.array_equal(
+                        np.asarray(connectivity.cell_global_ids), cell_global_ids
+                    )
+                ):
+                    raise ValueError(
+                        "PolyhedralConnectivity does not match the CellMesh block or IDs."
+                    )
+                topology = polyhedral_cell_complex(connectivity)
+            elif any(block.cell_kind == "polyhedron" for block in normalized_blocks):
+                raise ValueError(
+                    "A face-defined polyhedron block must be homogeneous and requires "
+                    "matching PolyhedralConnectivity."
+                )
             else:
                 polyhedral_blocks = tuple(
                     (block.cell_kind, np.asarray(block.vertices, dtype=np.int32))
                     for block in normalized_blocks
                 )
-                connectivity = polyhedral_connectivity(polyhedral_blocks, points.shape[0])
-                topology = polyhedral_cell_complex(
+                connectivity = _build_polyhedral_connectivity(
                     polyhedral_blocks,
                     points.shape[0],
                     vertex_global_ids=global_ids,
                     cell_global_ids=cell_global_ids,
                 )
+                topology = polyhedral_cell_complex(connectivity)
 
         canonical_blocks = []
         for block in normalized_blocks:
@@ -341,6 +409,9 @@ class CellMesh(StrictModule, NonTrainableState):
                     "cell_kind": block.cell_kind,
                     "global_ids": array_tree_fingerprint(block_ids[order]),
                     "global_vertices": array_tree_fingerprint(global_vertices[order]),
+                    "vertex_valid": array_tree_fingerprint(
+                        np.asarray(block.vertex_valid)[order]
+                    ),
                 }
             )
 
@@ -509,6 +580,46 @@ class CellMesh(StrictModule, NonTrainableState):
             numeric_version=numeric_version,
         )
 
+    @classmethod
+    def from_polyhedra(
+        cls,
+        coordinates: ArrayLike,
+        cells: Sequence[Sequence[ArrayLike]],
+        /,
+        *,
+        block_name: str = "polyhedra",
+        vertex_global_ids: ArrayLike | None = None,
+        cell_global_ids: ArrayLike | None = None,
+        numeric_version: str = "0",
+    ) -> CellMesh:
+        """Build a canonical mesh from closed outward-oriented face loops."""
+
+        points = np.asarray(coordinates, dtype=float)
+        if points.ndim != 2 or points.shape[1] < 3:
+            raise ValueError(
+                "Polyhedral coordinates must have shape (vertex_count, d >= 3)."
+            )
+        connectivity = _build_polyhedral_connectivity(
+            cells,
+            points.shape[0],
+            vertex_global_ids=vertex_global_ids,
+            cell_global_ids=cell_global_ids,
+        )
+        block = CellBlock(
+            block_name,
+            "polyhedron",
+            connectivity.cell_vertices,
+            vertex_valid=connectivity.cell_vertex_valid,
+            global_ids=connectivity.cell_global_ids,
+        )
+        return cls(
+            points,
+            (block,),
+            vertex_global_ids=connectivity.vertex_global_ids,
+            polyhedral_connectivity=connectivity,
+            numeric_version=numeric_version,
+        )
+
     def block(self, name: str, /) -> CellBlock:
         requested = str(name)
         for block in self.blocks:
@@ -539,6 +650,11 @@ class CellMesh(StrictModule, NonTrainableState):
             points,
             self.blocks,
             vertex_global_ids=self.vertex_global_ids,
+            polyhedral_connectivity=(
+                self.connectivity
+                if len(self.blocks) == 1 and self.blocks[0].cell_kind == "polyhedron"
+                else None
+            ),
             numeric_version=numeric_version,
         )
 

@@ -288,12 +288,11 @@ def _dawsn_jvp(primals, tangents):
 
 
 def dawsn(x: ArrayLike, /) -> Array:
-    """Evaluate Dawson's integral for real scalar or array inputs.
+    """Evaluate Dawson's integral on its principal complex continuation."""
+    if jnp.issubdtype(jnp.asarray(x).dtype, jnp.complexfloating):
+        from ._continuation import complex_dawsn
 
-    Dawson's integral is ``exp(-x**2) * integral(exp(t**2), t=0..x)``.
-    Complex inputs are rejected. Float16 and bfloat16 inputs are evaluated and
-    returned as float32; float32 and float64 are preserved.
-    """
+        return complex_dawsn(x)
     (promoted_x,) = promote_real("dawsn", x)
     return _dawsn(promoted_x)
 

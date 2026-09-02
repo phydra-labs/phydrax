@@ -19,8 +19,12 @@ from ._layout import InputLayout, StateLayout
 
 AutonomousContinuousVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 InputContinuousVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
-AutonomousDiscreteTransition: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
-InputDiscreteTransition: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
+AutonomousDiscreteTransition: TypeAlias = Callable[
+    ["DiscreteStepContext", Array, Any], ArrayLike
+]
+InputDiscreteTransition: TypeAlias = Callable[
+    ["DiscreteStepContext", Array, Array, Any], ArrayLike
+]
 SystemVectorField: TypeAlias = (
     AutonomousContinuousVectorField | InputContinuousVectorField
 )
@@ -36,6 +40,38 @@ def _identifier(value: str, owner: str, /) -> str:
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+
+
+class DiscreteStepContext(StrictModule):
+    """Canonical source/target interval and traced step index for one transition."""
+
+    source: Array
+    target: Array
+    step_index: Array
+
+    def __init__(
+        self,
+        source: ArrayLike,
+        target: ArrayLike,
+        step_index: ArrayLike,
+        /,
+    ):
+        source_array = jnp.asarray(source)
+        target_array = jnp.asarray(target)
+        index_array = jnp.asarray(step_index, dtype=jnp.int32)
+        if (
+            source_array.shape != ()
+            or target_array.shape != ()
+            or index_array.shape != ()
+        ):
+            raise ValueError("Discrete step context values must be scalar.")
+        self.source = source_array
+        self.target = target_array
+        self.step_index = index_array
+
+    @property
+    def duration(self) -> Array:
+        return self.target - self.source
 
 
 class ContinuousSystem(StrictModule):
@@ -119,13 +155,15 @@ class ContinuousSystem(StrictModule):
 class DiscreteSystem(StrictModule):
     """A discrete transition law independent of rollout and analysis policy."""
 
-    transition: Callable[..., ArrayLike]
+    transition: Callable[..., ArrayLike] = eqx.field(static=True)
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)
     step_size: float | None = eqx.field(static=True)
     step_rtol: float = eqx.field(static=True)
     step_atol: float = eqx.field(static=True)
+    minimum_step_size: float | None = eqx.field(static=True)
+    maximum_step_size: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -138,6 +176,8 @@ class DiscreteSystem(StrictModule):
         step_size: float | None = None,
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
+        minimum_step_size: float | None = None,
+        maximum_step_size: float | None = None,
     ):
         if not callable(transition):
             raise TypeError("DiscreteSystem transition must be callable.")
@@ -148,6 +188,8 @@ class DiscreteSystem(StrictModule):
         resolved_step = None if step_size is None else float(step_size)
         relative_tolerance = float(step_rtol)
         absolute_tolerance = float(step_atol)
+        minimum_step = None if minimum_step_size is None else float(minimum_step_size)
+        maximum_step = None if maximum_step_size is None else float(maximum_step_size)
         if resolved_step is not None and (
             not np.isfinite(resolved_step) or resolved_step <= 0.0
         ):
@@ -159,6 +201,20 @@ class DiscreteSystem(StrictModule):
             or absolute_tolerance < 0.0
         ):
             raise ValueError("step_rtol and step_atol must be finite and nonnegative.")
+        if minimum_step is not None and (
+            not np.isfinite(minimum_step) or minimum_step <= 0.0
+        ):
+            raise ValueError("minimum_step_size must be finite and positive.")
+        if maximum_step is not None and (
+            not np.isfinite(maximum_step) or maximum_step <= 0.0
+        ):
+            raise ValueError("maximum_step_size must be finite and positive.")
+        if (
+            minimum_step is not None
+            and maximum_step is not None
+            and minimum_step > maximum_step
+        ):
+            raise ValueError("minimum_step_size must not exceed maximum_step_size.")
         self.transition = transition
         self.state_layout = state_layout
         self.input_layout = input_layout
@@ -166,10 +222,12 @@ class DiscreteSystem(StrictModule):
         self.step_size = resolved_step
         self.step_rtol = relative_tolerance
         self.step_atol = absolute_tolerance
+        self.minimum_step_size = minimum_step
+        self.maximum_step_size = maximum_step
 
     def evaluate(
         self,
-        coordinate: ArrayLike,
+        context: DiscreteStepContext,
         state: ArrayLike,
         args: Any = None,
         /,
@@ -181,15 +239,36 @@ class DiscreteSystem(StrictModule):
             raise ValueError(
                 f"state must have shape {self.state_layout.shape}; got {state_array.shape}."
             )
-        coordinate_array = jnp.asarray(coordinate)
-        if coordinate_array.shape != ():
-            raise ValueError(
-                "coordinate must be scalar for one DiscreteSystem evaluation."
+        if not isinstance(context, DiscreteStepContext):
+            raise TypeError("DiscreteSystem evaluation requires DiscreteStepContext.")
+        duration = context.duration
+        duration_valid = jnp.isfinite(context.source) & jnp.isfinite(context.target)
+        duration_valid = duration_valid & (duration > 0.0)
+        if self.step_size is not None:
+            duration_valid = duration_valid & jnp.isclose(
+                duration,
+                self.step_size,
+                rtol=self.step_rtol,
+                atol=self.step_atol,
             )
+        if self.minimum_step_size is not None:
+            duration_valid = duration_valid & (duration >= self.minimum_step_size)
+        if self.maximum_step_size is not None:
+            duration_valid = duration_valid & (duration <= self.maximum_step_size)
+        checked_source = eqx.error_if(
+            context.source,
+            ~duration_valid,
+            "Discrete step interval is invalid for the declared system bounds.",
+        )
+        context = DiscreteStepContext(
+            checked_source,
+            context.target,
+            context.step_index,
+        )
         if self.input_layout is None:
             if inputs is not None:
                 raise ValueError("An autonomous DiscreteSystem does not accept inputs.")
-            value = self.transition(coordinate_array, state_array, args)
+            value = self.transition(context, state_array, args)
         else:
             if inputs is None:
                 raise ValueError("This DiscreteSystem requires explicit inputs.")
@@ -198,7 +277,7 @@ class DiscreteSystem(StrictModule):
                 raise ValueError(
                     f"inputs must have shape {self.input_layout.shape}; got {input_array.shape}."
                 )
-            value = self.transition(coordinate_array, state_array, input_array, args)
+            value = self.transition(context, state_array, input_array, args)
         output = _inexact(value)
         if output.shape != self.state_layout.shape:
             raise ValueError(
@@ -209,14 +288,14 @@ class DiscreteSystem(StrictModule):
 
     def __call__(
         self,
-        coordinate: ArrayLike,
+        context: DiscreteStepContext,
         state: ArrayLike,
         args: Any = None,
         /,
         *,
         inputs: ArrayLike | None = None,
     ) -> Array:
-        return self.evaluate(coordinate, state, args, inputs=inputs)
+        return self.evaluate(context, state, args, inputs=inputs)
 
 
 class AbstractInputPolicy(StrictModule):
@@ -234,6 +313,18 @@ class AbstractInputPolicy(StrictModule):
         /,
     ) -> Array:
         raise NotImplementedError
+
+    @abc.abstractmethod
+    def evaluate_step(
+        self,
+        context: DiscreteStepContext,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        if not isinstance(context, DiscreteStepContext):
+            raise TypeError("evaluate_step requires DiscreteStepContext.")
+        return self.evaluate(context.source, state, args)
 
     def __call__(
         self,
@@ -276,6 +367,20 @@ class CallableInputPolicy(AbstractInputPolicy):
         /,
     ) -> Array:
         result = _inexact(self.policy(jnp.asarray(coordinate), _inexact(state), args))
+        if result.shape != self.input_layout.shape:
+            raise ValueError(
+                f"Input policy returned shape {result.shape}; expected {self.input_layout.shape}."
+            )
+        return result
+
+    def evaluate_step(
+        self,
+        context: DiscreteStepContext,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        result = _inexact(self.policy(context, _inexact(state), args))
         if result.shape != self.input_layout.shape:
             raise ValueError(
                 f"Input policy returned shape {result.shape}; expected {self.input_layout.shape}."
@@ -351,6 +456,15 @@ class HeldInputPolicy(AbstractInputPolicy):
         index = jnp.searchsorted(self.times, time, side=side) - 1
         return self.values[jnp.clip(index, 0, int(self.values.shape[0]) - 1)]
 
+    def evaluate_step(
+        self,
+        context: DiscreteStepContext,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        return self.evaluate(context.source, state, args)
+
 
 __all__ = [
     "AbstractInputPolicy",
@@ -359,6 +473,7 @@ __all__ = [
     "CallableInputPolicy",
     "HeldInputPolicy",
     "ContinuousSystem",
+    "DiscreteStepContext",
     "DiscreteSystem",
     "InputContinuousVectorField",
     "InputDiscreteTransition",

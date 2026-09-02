@@ -20,6 +20,15 @@ from ._compact import (
     SphereSpectralKernel,
     StiefelSpectralKernel,
 )
+from ._compact_homogeneous import (
+    CompactHomogeneousHeatKernel,
+    CompactHomogeneousMaternKernel,
+    GeodesicDistanceEvidence,
+    GeodesicExponentialKernel,
+    GeodesicRadialKernel,
+    KernelEvaluationEvidence,
+    PreparedCompactHomogeneousSpectrum,
+)
 from ._finite_feature import (
     AbstractFiniteFeatureKernel,
     FiniteFeatureKernel,
@@ -58,10 +67,18 @@ from ._stationary import (
     Matern52Kernel,
     SquaredExponentialKernel,
 )
+from ._temporal import CARMAKernel, SHOKernel
 from ._transforms import AffineInputTransform, InputTransformedKernel
 
 
 __all__ = [
+    "CompactHomogeneousHeatKernel",
+    "CompactHomogeneousMaternKernel",
+    "GeodesicDistanceEvidence",
+    "GeodesicExponentialKernel",
+    "GeodesicRadialKernel",
+    "KernelEvaluationEvidence",
+    "PreparedCompactHomogeneousSpectrum",
     "AbstractPositiveDefiniteKernel",
     "AbstractFiniteFeatureKernel",
     "AbstractStationaryKernel",
@@ -70,6 +87,7 @@ __all__ = [
     "AbstractOperatorValuedKernel",
     "AffineInputTransform",
     "AmplitudeKernel",
+    "CARMAKernel",
     "FiniteFeatureKernel",
     "CochainHodgeSpectralKernel",
     "kernel_feature_rank",
@@ -86,6 +104,7 @@ __all__ = [
     "NormalizedKernel",
     "InverseMultiquadricKernel",
     "Matern32Kernel",
+    "SHOKernel",
     "SignaturePDEKernel",
     "Matern52Kernel",
     "ProductKernel",

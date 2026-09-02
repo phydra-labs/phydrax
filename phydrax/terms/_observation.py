@@ -4,9 +4,9 @@
 
 from jaxtyping import ArrayLike
 
-from phydrax.conditions import Observation
 from phydrax.domain import DomainFunction
 
+from ..conditions._base import Observation
 from ..integration import IntegrationSource
 from ._residual import ResidualPenalty
 

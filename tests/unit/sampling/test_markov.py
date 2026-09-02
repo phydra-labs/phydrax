@@ -1,4 +1,5 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -12,6 +13,35 @@ def _normal_proposal(scale=0.25):
 
 def _standard_normal(value):
     return -0.5 * jnp.sum(value**2)
+
+
+class _PayloadSpinFlipProposal(phx.sampling.AbstractProposal):
+    proposal_id: str = eqx.field(static=True)
+
+    def __init__(self):
+        self.proposal_id = "payload-spin-flip"
+
+    def sample(self, _key, current, /):
+        proposed = current.at[1].multiply(-1)
+        return proposed.at[0].set(jnp.where(current[0] > 0, proposed[0], jnp.nan))
+
+    def log_prob(self, proposed, current, /):
+        del proposed, current
+        return jnp.zeros(())
+
+    def payload(self, key, current, proposed, /):
+        del key, current, proposed
+        return jnp.asarray([1]), jnp.asarray([True])
+
+
+def _select_tree(current, proposed, accepted):
+    return jax.tree_util.tree_map(
+        lambda proposed_leaf, current_leaf: jnp.where(
+            accepted, proposed_leaf, current_leaf
+        ),
+        proposed,
+        current,
+    )
 
 
 def test_metropolis_hastings_uses_asymmetric_proposal_ratio():
@@ -136,3 +166,106 @@ def test_markov_sampling_rejects_invalid_contracts():
             key=jr.key(0),
             num_draws=0,
         )
+
+
+def test_incremental_spin_targets_commit_only_accepted_cached_updates():
+    initial = jnp.asarray([[1.0, -1.0, 1.0], [-1.0, -1.0, 1.0]])
+    expected_accepted = initial.at[0, 1].multiply(-1)
+    kernel = phx.sampling.MetropolisHastings(_PayloadSpinFlipProposal())
+    models_and_targets = (
+        (
+            phx.nn.quantum.JastrowSpinAmplitude(
+                jnp.asarray([0.0, 1.0, 0.0]), jnp.zeros((3, 3))
+            ),
+            phx.nn.quantum.jastrow_incremental_target,
+        ),
+        (
+            phx.nn.quantum.RestrictedBoltzmannAmplitude(
+                jnp.asarray([0.0, 1.0, 0.0]),
+                jnp.zeros((2,)),
+                jnp.zeros((2, 3)),
+            ),
+            phx.nn.quantum.rbm_incremental_target,
+        ),
+    )
+
+    for model, make_target in models_and_targets:
+        target = make_target(model)
+        state = kernel.initialize(target, initial)
+        result = phx.sampling.sample_markov_chunked(
+            target,
+            kernel,
+            state,
+            key=jr.key(12),
+            plan=phx.sampling.MarkovChunkPlan(1, 1),
+        )
+
+        assert jnp.array_equal(result.accepted[:, 0, 0], jnp.asarray([True, False]))
+        assert jnp.array_equal(result.final_state.position, expected_accepted)
+        assert jnp.array_equal(result.final_state.cache.spins, expected_accepted)
+        exact_values = jax.vmap(lambda position: 2.0 * model(position).log_abs)(
+            expected_accepted
+        )
+        assert jnp.allclose(result.final_state.log_target, exact_values)
+        assert jnp.all(result.final_state.valid)
+        assert result.target_id == target.target_id
+
+
+def test_incremental_target_refresh_runs_on_declared_transition_cadence():
+    target = phx.sampling.IncrementalMarkovTarget(
+        initialize=lambda position: (jnp.zeros(()), position),
+        propose=lambda current, cache, proposed, payload: (
+            jnp.ones(()),
+            proposed,
+            jnp.asarray(True),
+        ),
+        select=_select_tree,
+        refresh=lambda position: (jnp.zeros(()), position),
+        target_id="cadenced-target",
+        refresh_cadence=2,
+        cache_tolerance=10.0,
+    )
+    kernel = phx.sampling.MetropolisHastings(_normal_proposal())
+    state = kernel.initialize(target, jnp.zeros((1, 1)))
+    result = phx.sampling.sample_markov_chunked(
+        target,
+        kernel,
+        state,
+        key=jr.key(23),
+        plan=phx.sampling.MarkovChunkPlan(4, 1),
+    )
+
+    assert jnp.array_equal(result.accepted, jnp.ones((1, 4, 1), dtype=bool))
+    assert jnp.allclose(result.log_target[0], jnp.asarray([1.0, 0.0, 1.0, 0.0]))
+    assert jnp.all(result.final_state.valid)
+    assert jnp.all(result.target_valid)
+
+
+def test_incremental_target_refresh_cache_mismatch_fails_closed():
+    target = phx.sampling.IncrementalMarkovTarget(
+        initialize=lambda position: (jnp.zeros(()), position),
+        propose=lambda current, cache, proposed, payload: (
+            jnp.zeros(()),
+            proposed + 1.0,
+            jnp.asarray(True),
+        ),
+        select=_select_tree,
+        refresh=lambda position: (jnp.zeros(()), position),
+        target_id="mismatched-cache-target",
+        refresh_cadence=2,
+        cache_tolerance=0.0,
+    )
+    kernel = phx.sampling.MetropolisHastings(_normal_proposal())
+    state = kernel.initialize(target, jnp.zeros((1, 1)))
+    result = phx.sampling.sample_markov(
+        target,
+        kernel,
+        state,
+        key=jr.key(31),
+        num_draws=2,
+    )
+
+    assert bool(result.target_valid[0, 0, 0])
+    assert not bool(result.target_valid[0, 1, 0])
+    assert not bool(result.final_state.valid[0])
+    assert jnp.array_equal(result.final_state.cache, result.final_state.position)

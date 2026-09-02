@@ -4,6 +4,15 @@
 
 """Fixed-population free-surface FLIP over prepared MAC grids."""
 
+from ._ale import (
+    advance_ale_flip,
+    ALEFLIPPlan,
+    ALEFLIPState,
+    ALEFLIPStepResult,
+    prepare_ale_flip,
+    PreparedALEFLIP,
+    transition_ale_flip_epoch,
+)
 from ._interface_geometry import MACFreeSurfaceGeometryState, ParticleLevelSetPlan
 from ._method import FLIPMethodPlan, FLIPResourcePolicy
 from ._multiphase import (
@@ -28,6 +37,13 @@ from ._types import (
 
 
 __all__ = [
+    "advance_ale_flip",
+    "ALEFLIPPlan",
+    "ALEFLIPState",
+    "ALEFLIPStepResult",
+    "prepare_ale_flip",
+    "PreparedALEFLIP",
+    "transition_ale_flip_epoch",
     "FLIPReseedingPlan",
     "FLIPReseedingResult",
     "FLIPSolidBoundaryPlan",

@@ -42,7 +42,7 @@ from ..optim import (
     StructuredNonlinearWarmStart,
     StructuredPoolEvidence,
 )
-from ..solver import ThetaMethod
+from ..solver._theta import ThetaMethod
 from ..sparse import (
     compile_sparse_hessian,
     compile_sparse_jacobian,

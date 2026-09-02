@@ -108,3 +108,23 @@ used as a positive norm in optimization or probabilistic code.
 ---
 
 ::: phydrax.metrix.tensor_norm_squared
+
+## Bounded automatic atlas preparation
+
+`prepare_atlas` selects from a finite `AtlasCandidate` family on an explicit
+`CompactAtlasDomain`. The prepared chart tuple, overlaps, transition paths, and
+orientation are immutable during execution. `AtlasConstructionCertificate`
+distinguishes sampled representatives from cell-enclosure-certified coverage:
+sampled coverage is useful evidence but is never a global cover proof. Uncovered
+cells, missing directed transitions, singular IFT minors, failed inverse/cocycle
+checks, orientation disagreement, and capacity overflow fail preparation.
+
+`level_set_graph_candidate` constructs one fixed-minor IFT graph chart for a
+`RegularLevelSetManifold`. Pivot/minor selection remains a host epoch decision;
+JVPs apply only inside the selected regular graph.
+
+::: phydrax.metrix.prepare_atlas
+
+::: phydrax.metrix.AtlasConstructionCertificate
+
+::: phydrax.metrix.level_set_graph_candidate

@@ -17,10 +17,18 @@ from ._api import compile, EnforcementOptions
 from ._compile import EnforcementProgram, InteriorAnchors
 from ._graph import enforce_cochain_values, enforce_graph_values
 from ._spec import (
+    AffineEnforcementTransform,
     DerivativeRequirement,
     EnforcementKind,
+    EnforcementProofObligations,
     EnforcementSpec,
     EnforcementStage,
+    equal,
+    field_jet,
+    FieldJet,
+    LinearTraceEquation,
+    LinearTraceExpression,
+    TraceLifting,
 )
 from ._trajectory import (
     enforce_ragged_time_series,
@@ -30,16 +38,24 @@ from ._trajectory import (
 
 
 __all__ = [
+    "AffineEnforcementTransform",
     "DerivativeRequirement",
     "EnforcementKind",
     "EnforcementOptions",
+    "EnforcementProofObligations",
     "EnforcementProgram",
     "EnforcementSpec",
     "EnforcementStage",
+    "FieldJet",
+    "LinearTraceEquation",
+    "LinearTraceExpression",
+    "TraceLifting",
     "InteriorAnchors",
     "RaggedTimeSeriesHardGate",
     "RaggedTimeSeriesHardInterpolation",
     "compile",
+    "equal",
+    "field_jet",
     "enforce_blend",
     "enforce_cochain_values",
     "enforce_dirichlet",

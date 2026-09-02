@@ -843,15 +843,19 @@ def _function_frame_factory(*, quick: bool):
             key=map_key,
         )
         return phx.nn.operator.architectures.FunctionFrameReconstructor(
-            source_frame=source_frame,
-            target_frame=target_frame,
-            coefficient_map=coefficient_map,
-            source_name=source_name,
-            policy=phx.nn.operator.architectures.FunctionProjectionPolicy(
-                ridge=1e-5,
-                min_samples=rank,
-                rank_policy="regularized",
+            sources=(
+                phx.nn.operator.architectures.FunctionFrameSource(
+                    source_name,
+                    source_frame,
+                    coefficient_map=coefficient_map,
+                    projection_policy=phx.nn.operator.architectures.FunctionProjectionPolicy(
+                        ridge=1e-5,
+                        min_samples=rank,
+                        rank_policy="regularized",
+                    ),
+                ),
             ),
+            target_frame=target_frame,
         )
 
     return build

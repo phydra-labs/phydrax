@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
+import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array
 
@@ -29,6 +30,7 @@ from ._geometry import (
 )
 from ._problem import (
     ExactMoments,
+    MomentCalibrationExecutionPolicy,
     MomentCalibrationPolicy,
     MomentCalibrationProblem,
     QuadraticMoments,
@@ -48,10 +50,21 @@ def calibrate_moments(
     method: AbstractScalarIterativeMethod | None = None,
     termination: OptimizationTermination | None = None,
     policy: MomentCalibrationPolicy | None = None,
+    execution: MomentCalibrationExecutionPolicy | None = None,
     initial_dual: Array | None = None,
 ) -> MomentCalibrationResult:
     """Return an audited relative-entropy calibration of one finite prior."""
 
+    execution_ = MomentCalibrationExecutionPolicy() if execution is None else execution
+    if execution_.route == "canonical-conic":
+        from ._canonical import calibrate_moments_conic
+
+        return calibrate_moments_conic(problem, execution_.solver)
+    if execution_.route == "mixed-integer":
+        from ._subset import calibrate_moments_subset
+
+        return calibrate_moments_subset(problem, execution_.solver)
+    _require_dual_compatible(problem, execution_)
     method_, termination_, policy_ = _resolve_configuration(
         method,
         termination,
@@ -88,10 +101,13 @@ def implicit_calibrate_moments(
     method: AbstractScalarIterativeMethod | None = None,
     termination: OptimizationTermination | None = None,
     policy: MomentCalibrationPolicy | None = None,
+    execution: MomentCalibrationExecutionPolicy | None = None,
     initial_dual: Array | None = None,
 ) -> Array:
     """Return calibrated weights with regular-stationarity implicit derivatives."""
 
+    execution_ = MomentCalibrationExecutionPolicy() if execution is None else execution
+    _require_dual_compatible(problem, execution_)
     method_, termination_, policy_ = _resolve_configuration(
         method,
         termination,
@@ -169,7 +185,8 @@ def _dual_objective(problem, geometry, coordinates):
         inactive = ~geometry.retained_directions
         return value + 0.5 * jnp.sum(jnp.where(inactive, coordinates**2, 0.0))
     assert isinstance(problem.target, QuadraticMoments)
-    return value + 0.5 * jnp.sum((problem.target.scale * dual) ** 2)
+    covariance_dual = problem.target.covariance.mv(dual)
+    return value + 0.5 * oe.contract("i,i->", dual, covariance_dual)
 
 
 def _result(
@@ -333,15 +350,14 @@ def _dual_gradient(problem, geometry, coordinates, residual):
         )
     assert isinstance(problem.target, QuadraticMoments)
     dual = physical_dual(geometry, coordinates)
-    return gradient + jnp.swapaxes(geometry.transform, -1, -2) @ (
-        problem.target.scale**2 * dual
-    )
+    covariance_dual = problem.target.covariance.mv(dual)
+    return gradient + oe.contract("ji,j->i", geometry.transform, covariance_dual)
 
 
 def _coordinate_hessian(problem, geometry, covariance):
     physical_hessian = covariance
     if isinstance(problem.target, QuadraticMoments):
-        physical_hessian = physical_hessian + jnp.diag(problem.target.scale**2)
+        physical_hessian = physical_hessian + problem.target.covariance._materialize()
     transformed = (
         jnp.swapaxes(geometry.transform, -1, -2) @ physical_hessian @ geometry.transform
     )
@@ -360,6 +376,26 @@ def _affine_tolerance(problem, geometry, policy):
         1.0,
     )
     return policy.affine_absolute_tolerance + policy.affine_relative_tolerance * scale
+
+
+def _require_dual_compatible(problem, execution):
+    if not isinstance(execution, MomentCalibrationExecutionPolicy):
+        raise TypeError("execution must be a MomentCalibrationExecutionPolicy or None.")
+    if execution.route != "dual-relative-entropy":
+        raise ValueError(
+            "This entry point executes only the declared dual-relative-entropy "
+            "route; canonical conic and mixed-integer routes require their "
+            "corresponding prepared program."
+        )
+    if (
+        problem.group_constraints is not None
+        or problem.subset is not None
+        or problem.boundary is not None
+    ):
+        raise ValueError(
+            "Group, subset, and boundary structures are incompatible with the "
+            "regular dual-relative-entropy route."
+        )
 
 
 def _resolve_configuration(method, termination, policy):

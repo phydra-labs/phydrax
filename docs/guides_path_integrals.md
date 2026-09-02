@@ -1,15 +1,16 @@
 # Euclidean path integrals and Feynman–Kac expectations
 
-Phydrax provides finite-dimensional, time-sliced stochastic path operators for two
-numerically controlled settings:
+Phydrax provides finite-dimensional, time-sliced path operators for:
 
-- **Euclidean quantum propagation** with fixed-endpoint Brownian bridges;
-- **Feynman–Kac expectations** and discrete first-passage observables for Itô
-  diffusions.
+- Euclidean quantum propagation with fixed-endpoint Brownian bridges;
+- Feynman–Kac expectations and discrete first-passage observables;
+- positive-regulator, finite-slice real-time oscillatory estimates;
+- finite periodic rings, compact U(1) lattice measures, and admitted exchange
+  sectors.
 
-This API is not a generic real-time Feynman path-integral solver. It does not claim
-support for oscillatory real-time amplitudes, field-theory path measures, lattice gauge
-theory, or molecular path-integral dynamics.
+Real-time results are values of the declared regulated finite integral. They do
+not establish that a regulator-zero limit exists, extrapolate such a limit, or
+claim field-theory/continuum universality.
 
 ## Uniform time slicing
 
@@ -96,10 +97,13 @@ u(x,t_0)=
 \right].
 $$
 
-The diffusion sampler uses Euler–Maruyama. `diffusion` may be a scalar, diagonal
-vector, dense matrix, callable, or compatible `DomainFunction`. The initial release
-supports unconstrained finite-dimensional paths; it does not silently reflect or
-absorb paths at geometry boundaries.
+The explicit-noise diffusion sampler uses Euler–Maruyama as a reproducible
+reference. Adaptive SDE paths use the canonical prepared stochastic path
+ensemble and retain accepted/rejected-step, Wiener realization, replay, and
+temporal evidence. General compiled geometry supports killed paths; specular
+reflection requires an explicit velocity state and a regular certified normal.
+Exact reflecting overdamped density kernels are restricted to prepared affine
+interval image geometry.
 
 ```python
 kappa = 0.35
@@ -123,6 +127,33 @@ assert jnp.abs(heat.value - analytic) < 6.0 * heat.standard_error
 Use `feynman_kac_from_paths` when trajectories were generated separately or come from
 an empirical ensemble.
 
+### Source terms
+
+`source_feynman_kac_from_paths` adds the Duhamel source integral on the same
+paths as the terminal term. Left, trapezoid, and midpoint source quadrature are
+explicit policy choices. `source_feynman_kac_from_stochastic_paths` consumes
+the canonical adaptive ensemble without introducing another SDE integrator.
+Sampling error, source-quadrature difference, temporal-solver evidence, and
+boundary-event error remain separate.
+
+### Regulated real-time estimates
+
+`RealTimePathIntegralPlan` declares mass, Planck constant, positive regulator,
+slice mesh, and finite population. The result contains the complex mean, real/
+imaginary covariance, standard error, mean phase, and phase ESS. A phase below
+policy threshold reports `unresolved_sign_problem`; it is never converted into
+a positive-weight ESS. `RealTimeRegulatorContinuation` reports only paired
+finite-regulator differences.
+
+### Periodic, gauge, and exchange measures
+
+`PeriodicPathPlan` requires a confining potential, finite periodic cell, or
+fixed centroid to remove the improper free centroid mode. Absolute log
+partition values require a named known reference and finite thermodynamic
+integration schedule. `CompactU1GaugeMeasure` is finite Wilson U(1), not
+non-Abelian or a continuum theory. `ExchangePathPlan` identifies complete
+enumeration versus a restricted sector and reports fermionic average sign.
+
 ## First passage and reliability
 
 `first_exit_index`, `first_exit_time`, and `survival_probability` accept an explicit
@@ -144,11 +175,12 @@ remaining positive slice bias separately from the Bernoulli standard error.
 - `log_mean_weight` for stable inspection of weight scale;
 - `num_paths`.
 
-Two errors must be refined independently:
+Four error axes must be reported independently:
 
-1. **path-count error**: increase `num_paths` and monitor standard error and ESS;
-2. **time-slicing error**: increase `num_steps` and compare the estimated value at
-   fixed or sufficiently large path count.
+1. path-population sampling error;
+2. path time-slicing or adaptive temporal-solver error;
+3. source/image/schedule quadrature or truncation error;
+4. localized boundary-event error.
 
 A small standard error does not diagnose time-slicing bias. A collapsing ESS means a
 few paths dominate the weighted estimate even if the reported value looks smooth.

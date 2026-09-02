@@ -64,8 +64,6 @@ class ClassificationObjective(StrictModule, NonTrainableState):
                 raise ValueError("Ordinal thresholds must be strictly increasing.")
         if kind != "focal" and alpha_value is not None:
             raise ValueError("alpha is only defined for focal objectives.")
-        if kind == "soft_cross_entropy" and threshold_value is not None:
-            raise ValueError("Soft ordinal targets are not supported.")
         self.kind = kind
         self.gamma = gamma_value
         self.alpha = alpha_value
@@ -80,8 +78,12 @@ class ClassificationObjective(StrictModule, NonTrainableState):
         return cls("nll", thresholds=thresholds)
 
     @classmethod
-    def soft_cross_entropy(cls) -> ClassificationObjective:
-        return cls("soft_cross_entropy")
+    def soft_cross_entropy(
+        cls,
+        *,
+        thresholds: Sequence[float] | None = None,
+    ) -> ClassificationObjective:
+        return cls("soft_cross_entropy", thresholds=thresholds)
 
     @classmethod
     def focal(

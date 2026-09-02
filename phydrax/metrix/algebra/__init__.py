@@ -24,6 +24,21 @@ from ._geometry import (
     UnitQuaternionStateGeometry,
 )
 from ._layout import AlgebraElementLayout
+from ._nonassociative import (
+    algebra_left_solve,
+    algebra_right_solve,
+    AlgebraMatrixLayout,
+    AlgebraMatrixProductPlan,
+    AlgebraOperatorInverse,
+    AlgebraRegularSpectrum,
+    BracketingPlan,
+    G2GroupOperations,
+    G2LocalLogResult,
+    G2MatrixElement,
+    MoufangLoopOperations,
+    PreparedUnitOctonionEvolution,
+    UnitOctonionStateGeometry,
+)
 from ._product import AlgebraProductBackend, AlgebraProductEvidence, AlgebraProductPlan
 from ._properties import (
     AlgebraClaimEvidence,
@@ -42,6 +57,19 @@ from ._structure import (
 
 
 __all__ = [
+    "AlgebraMatrixLayout",
+    "AlgebraMatrixProductPlan",
+    "AlgebraOperatorInverse",
+    "AlgebraRegularSpectrum",
+    "BracketingPlan",
+    "G2GroupOperations",
+    "G2LocalLogResult",
+    "G2MatrixElement",
+    "MoufangLoopOperations",
+    "PreparedUnitOctonionEvolution",
+    "UnitOctonionStateGeometry",
+    "algebra_left_solve",
+    "algebra_right_solve",
     "AbstractFiniteRealAlgebraSpec",
     "AlgebraClaimEvidence",
     "FiniteRealAlgebraProvider",

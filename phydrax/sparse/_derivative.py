@@ -14,15 +14,23 @@ import jax.random as jr
 from jaxtyping import Array, Key, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import precision_dtype_name, PrecisionRequest
 from .._strict import StrictModule
 from ..linalg import (
+    AbstractRealCoordinateMap,
     AbstractVectorSpace,
+    DualSpace,
     LinearizationPolicy,
     OperatorProperties,
     PreparedLinearization,
 )
 from ..linalg._operators import _validate_properties
-from ..linalg._spaces import _has_euclidean_pairing
+from ..linalg._spaces import (
+    _coordinate_dtype,
+    _coordinate_pairing_weights,
+    _has_diagonal_pairing,
+    _has_euclidean_pairing,
+)
 from ._coloring import (
     native_coloring,
     SparseColoring,
@@ -40,6 +48,100 @@ from ._relation import EdgeRelation
 _USE_COMPILED_ARGUMENTS = object()
 
 
+class SparseDerivativePrecisionPolicy(StrictModule):
+    """Explicit seed, cotangent, coefficient, accumulation, and output dtypes."""
+
+    source_seed: str | None = eqx.field(static=True)
+    target_cotangent: str | None = eqx.field(static=True)
+    coefficient: str | None = eqx.field(static=True)
+    accumulation: str | None = eqx.field(static=True)
+    output: str | None = eqx.field(static=True)
+    request: PrecisionRequest = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        source_seed: Any | None = None,
+        target_cotangent: Any | None = None,
+        coefficient: Any | None = None,
+        accumulation: Any | None = None,
+        output: Any | None = None,
+    ):
+        values = {
+            "source_seed": None
+            if source_seed is None
+            else precision_dtype_name(source_seed),
+            "target_cotangent": None
+            if target_cotangent is None
+            else precision_dtype_name(target_cotangent),
+            "coefficient": None
+            if coefficient is None
+            else precision_dtype_name(coefficient),
+            "accumulation": None
+            if accumulation is None
+            else precision_dtype_name(accumulation),
+            "output": None if output is None else precision_dtype_name(output),
+        }
+        self.source_seed = values["source_seed"]
+        self.target_cotangent = values["target_cotangent"]
+        self.coefficient = values["coefficient"]
+        self.accumulation = values["accumulation"]
+        self.output = values["output"]
+        self.request = PrecisionRequest(
+            "sparse-derivative",
+            {
+                "coefficient": values["coefficient"],
+                "accumulation": values["accumulation"],
+                "output": values["output"],
+            },
+        )
+
+
+class SparseHessianContract(StrictModule):
+    """Finite-dimensional Hessian meaning: dual, Riesz-raised, or scalarized."""
+
+    kind: str = eqx.field(static=True)
+    target: AbstractVectorSpace | None
+    cotangent: Any
+    contract_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        kind: str = "bilinear",
+        /,
+        *,
+        target: AbstractVectorSpace | None = None,
+        cotangent: Any = None,
+    ):
+        if kind not in ("bilinear", "riesz", "cotangent"):
+            raise ValueError("Unknown sparse Hessian contract.")
+        if kind == "cotangent":
+            if not isinstance(target, AbstractVectorSpace):
+                raise TypeError("Cotangent Hessians require an explicit target space.")
+            cotangent_ = target.validate(cotangent)
+        else:
+            if target is not None or cotangent is not None:
+                raise ValueError(
+                    "Only cotangent Hessians accept target/cotangent values."
+                )
+            cotangent_ = None
+        self.kind = kind
+        self.target = target
+        self.cotangent = cotangent_
+        self.contract_id = canonical_fingerprint(
+            {
+                "kind": "sparse-hessian-contract",
+                "semantics": kind,
+                "target": None if target is None else target.space_id,
+                "cotangent_shape": None
+                if cotangent_ is None
+                else [
+                    list(jnp.asarray(leaf).shape) for leaf in jax.tree.leaves(cotangent_)
+                ],
+            }
+        )
+
+
 class SparseDerivativePlan(StrictModule):
     """Reusable sparse derivative structure with native compressed JAX execution."""
 
@@ -49,6 +151,8 @@ class SparseDerivativePlan(StrictModule):
     target: AbstractVectorSpace
     coloring: SparseColoring
     properties: OperatorProperties
+    precision: SparseDerivativePrecisionPolicy = eqx.field(static=True)
+    coefficient_scale: Array
     argument_structure: Any = eqx.field(static=True)
     argument_specs: tuple[tuple[tuple[int, ...], str], ...] = eqx.field(static=True)
     derivative_kind: SparseDerivativeKind = eqx.field(static=True)
@@ -67,6 +171,8 @@ class SparseDerivativePlan(StrictModule):
         *,
         derivative_kind: SparseDerivativeKind,
         chunk_size: int | None,
+        precision: SparseDerivativePrecisionPolicy,
+        coefficient_scale: Array | None,
         plan_id: str,
     ):
         if not callable(function):
@@ -79,6 +185,8 @@ class SparseDerivativePlan(StrictModule):
             raise TypeError("coloring must be a SparseColoring.")
         if not isinstance(properties, OperatorProperties):
             raise TypeError("properties must be OperatorProperties.")
+        if not isinstance(precision, SparseDerivativePrecisionPolicy):
+            raise TypeError("precision must be a SparseDerivativePrecisionPolicy.")
         if derivative_kind not in ("jacobian", "hessian"):
             raise ValueError(f"Unknown sparse derivative kind {derivative_kind!r}.")
         chunk = None if chunk_size is None else int(chunk_size)
@@ -89,6 +197,15 @@ class SparseDerivativePlan(StrictModule):
             raise ValueError("plan_id must be non-empty.")
         arguments_ = _canonicalize_arguments(arguments)
         argument_structure, argument_specs = _argument_signature(arguments_)
+        scale = (
+            jnp.ones(
+                coloring.pattern.relation.route_shape, dtype=_coordinate_dtype(target)
+            )
+            if coefficient_scale is None
+            else jnp.asarray(coefficient_scale)
+        )
+        if scale.shape != coloring.pattern.relation.route_shape:
+            raise ValueError("coefficient_scale must match the sparse route shape.")
         self.function = function
         self.arguments = arguments_
         self.source = source
@@ -97,6 +214,8 @@ class SparseDerivativePlan(StrictModule):
         self.properties = properties
         self.argument_structure = argument_structure
         self.argument_specs = argument_specs
+        self.precision = precision
+        self.coefficient_scale = scale
         self.derivative_kind = derivative_kind
         self.chunk_size = chunk
         self.plan_id = identifier
@@ -136,14 +255,16 @@ class SparseDerivativePlan(StrictModule):
             self.argument_structure,
             self.argument_specs,
         )
-        return _evaluate_compressed(
+        coefficients = _evaluate_compressed(
             self.function,
             coordinates,
             arguments,
             self.coloring,
             derivative_kind=self.derivative_kind,
             chunk_size=self.chunk_size,
+            coefficient_dtype=self.precision.coefficient,
         )
+        return coefficients * self.coefficient_scale.astype(coefficients.dtype)
 
     def operator(
         self,
@@ -160,6 +281,7 @@ class SparseDerivativePlan(StrictModule):
             target=self.target,
             properties=self.properties,
             operator_id=f"{self.plan_id}:operator",
+            accumulation_dtype=self.precision.accumulation,
         )
 
 
@@ -277,25 +399,71 @@ def compile_sparse_jacobian(
     symmetric: bool = False,
     chunk_size: int | None = None,
     properties: OperatorProperties | None = None,
+    precision: SparseDerivativePrecisionPolicy | None = None,
+    source_coordinates: AbstractRealCoordinateMap | None = None,
+    target_coordinates: AbstractRealCoordinateMap | None = None,
+    complex_semantics: str | None = None,
     plan_id: str | None = None,
 ) -> SparseDerivativePlan:
-    """Compile a sparse Jacobian into a provider-neutral native execution plan."""
-
+    """Compile cross-dtype, holomorphic, or explicitly realified Jacobians."""
     if not callable(function):
         raise TypeError("function must be callable.")
     _validate_spaces(source, target)
     point_ = source.validate(point)
+    if complex_semantics not in (None, "holomorphic", "real-frechet"):
+        raise ValueError("complex_semantics must be holomorphic or real-frechet.")
+    source_complex = jnp.issubdtype(_coordinate_dtype(source), jnp.complexfloating)
+    target_complex = jnp.issubdtype(_coordinate_dtype(target), jnp.complexfloating)
+    if source_coordinates is not None:
+        if source_coordinates.source_space.space_id != source.space_id:
+            raise ValueError("Source coordinate map does not match source space.")
+        execution_source = source_coordinates.coordinate_space
+        execution_point = source_coordinates.to_real_coordinates(point_)
+    else:
+        execution_source = source
+        execution_point = point_
+    if target_coordinates is not None:
+        if target_coordinates.source_space.space_id != target.space_id:
+            raise ValueError("Target coordinate map does not match target space.")
+        execution_target = target_coordinates.coordinate_space
+    else:
+        execution_target = target
+    if complex_semantics == "real-frechet" and (
+        source_coordinates is None or target_coordinates is None
+    ):
+        raise ValueError("Real-Frechet complex Jacobians require both coordinate maps.")
+    if (source_complex or target_complex) and complex_semantics is None:
+        raise ValueError("Complex Jacobians require explicit complex_semantics.")
+    if complex_semantics == "holomorphic":
+        if source_coordinates is not None or target_coordinates is not None:
+            raise ValueError("Holomorphic Jacobians use native complex coordinates.")
+        if mode not in (None, "fwd"):
+            raise ValueError(
+                "Holomorphic sparse Jacobians currently require forward mode."
+            )
 
     def coordinate_function(coordinates: Array, arguments: Any) -> Array:
-        value = function(source.unflatten(coordinates), arguments)
-        return target.flatten(value)
+        source_state = (
+            execution_source.unflatten(coordinates)
+            if source_coordinates is None
+            else source_coordinates.from_real_coordinates(
+                execution_source.unflatten(coordinates)
+            )
+        )
+        value = target.validate(function(source_state, arguments))
+        execution_value = (
+            value
+            if target_coordinates is None
+            else target_coordinates.to_real_coordinates(value)
+        )
+        return execution_target.flatten(execution_value)
 
     return _compile_sparse_derivative(
         coordinate_function,
-        source.flatten(point_),
+        execution_source.flatten(execution_point),
         sample_args,
-        source=source,
-        target=target,
+        source=execution_source,
+        target=execution_target,
         structure=structure,
         compiler=compiler,
         derivative_kind="jacobian",
@@ -303,12 +471,19 @@ def compile_sparse_jacobian(
         symmetric=bool(symmetric),
         chunk_size=chunk_size,
         properties=properties,
+        precision=precision,
+        coefficient_scale=None,
+        coordinate_identity=(
+            None if source_coordinates is None else source_coordinates.coordinate_id,
+            None if target_coordinates is None else target_coordinates.coordinate_id,
+            complex_semantics,
+        ),
         plan_id=plan_id,
     )
 
 
 def compile_sparse_hessian(
-    function: Callable[[PyTree[Array], Any], Array],
+    function: Callable[[PyTree[Array], Any], Any],
     point: PyTree[Any],
     /,
     *,
@@ -319,32 +494,73 @@ def compile_sparse_hessian(
     mode: SparseHessianMode | None = None,
     chunk_size: int | None = None,
     properties: OperatorProperties | None = None,
+    contract: SparseHessianContract | None = None,
+    precision: SparseDerivativePrecisionPolicy | None = None,
+    source_coordinates: AbstractRealCoordinateMap | None = None,
     plan_id: str | None = None,
 ) -> SparseDerivativePlan:
-    """Compile a real Euclidean Hessian into a native sparse execution plan."""
-
+    """Compile a dual, Riesz-raised, or fixed-cotangent sparse Hessian."""
     if not callable(function):
         raise TypeError("function must be callable.")
+    contract_ = SparseHessianContract() if contract is None else contract
+    if not isinstance(contract_, SparseHessianContract):
+        raise TypeError("contract must be a SparseHessianContract or None.")
     _validate_spaces(space, space)
-    if not _has_euclidean_pairing(space):
-        raise ValueError(
-            "Sparse Hessians currently require a Euclidean pairing; "
-            "non-Euclidean Hessians require an explicit primal-to-dual contract."
-        )
     point_ = space.validate(point)
+    if source_coordinates is not None:
+        if source_coordinates.source_space.space_id != space.space_id:
+            raise ValueError("Hessian coordinate map does not match its source space.")
+        execution_space = source_coordinates.coordinate_space
+        execution_point = source_coordinates.to_real_coordinates(point_)
+    else:
+        execution_space = space
+        execution_point = point_
+    if jnp.issubdtype(_coordinate_dtype(execution_space), jnp.complexfloating):
+        raise ValueError("Complex Hessians require an explicit real-coordinate map.")
+    if contract_.kind == "riesz":
+        if not _has_diagonal_pairing(execution_space):
+            raise ValueError(
+                "Riesz-raised sparse Hessians require a constant diagonal pairing."
+            )
+        relation = _structure_relation(structure)
+        weights = _coordinate_pairing_weights(execution_space)
+        safe_target = jnp.where(relation.valid, relation.target_indices, 0)
+        coefficient_scale = jnp.where(
+            relation.valid,
+            1.0 / weights[safe_target],
+            1.0,
+        )
+        execution_target: AbstractVectorSpace = execution_space
+    else:
+        coefficient_scale = None
+        execution_target = DualSpace(execution_space)
 
     def coordinate_function(coordinates: Array, arguments: Any) -> Array:
-        value = jnp.asarray(function(space.unflatten(coordinates), arguments))
-        if value.shape != ():
-            raise ValueError("Sparse Hessian functions must return a scalar array.")
-        return value
+        source_state = (
+            execution_space.unflatten(coordinates)
+            if source_coordinates is None
+            else source_coordinates.from_real_coordinates(
+                execution_space.unflatten(coordinates)
+            )
+        )
+        value = function(source_state, arguments)
+        if contract_.kind == "cotangent":
+            if contract_.target is None:
+                raise ValueError("Cotangent Hessian contract is incomplete.")
+            output = contract_.target.flatten(contract_.target.validate(value))
+            cotangent = contract_.target.flatten(contract_.cotangent)
+            return jnp.real(jnp.vdot(cotangent, output))
+        scalar = jnp.asarray(value)
+        if scalar.shape != () or not jnp.issubdtype(scalar.dtype, jnp.floating):
+            raise ValueError("Scalar Hessian functions must return one real scalar.")
+        return scalar
 
     return _compile_sparse_derivative(
         coordinate_function,
-        space.flatten(point_),
+        execution_space.flatten(execution_point),
         sample_args,
-        source=space,
-        target=space,
+        source=execution_space,
+        target=execution_target,
         structure=structure,
         compiler=compiler,
         derivative_kind="hessian",
@@ -352,6 +568,12 @@ def compile_sparse_hessian(
         symmetric=True,
         chunk_size=chunk_size,
         properties=properties,
+        precision=precision,
+        coefficient_scale=coefficient_scale,
+        coordinate_identity=(
+            None if source_coordinates is None else source_coordinates.coordinate_id,
+            contract_.contract_id,
+        ),
         plan_id=plan_id,
     )
 
@@ -441,6 +663,64 @@ def verify_sparse_derivative(
     )
 
 
+def _structure_relation(
+    structure: EdgeRelation | SparsePattern | SparseColoring | None,
+    /,
+) -> EdgeRelation:
+    if isinstance(structure, EdgeRelation):
+        return structure
+    if isinstance(structure, SparsePattern):
+        return structure.relation
+    if isinstance(structure, SparseColoring):
+        return structure.pattern.relation
+    raise ValueError(
+        "Riesz-raised sparse Hessians require an explicit fixed sparse structure."
+    )
+
+
+def _resolved_precision(
+    policy: SparseDerivativePrecisionPolicy | None,
+    source: AbstractVectorSpace,
+    target: AbstractVectorSpace,
+    /,
+) -> SparseDerivativePrecisionPolicy:
+    selected = SparseDerivativePrecisionPolicy() if policy is None else policy
+    if not isinstance(selected, SparseDerivativePrecisionPolicy):
+        raise TypeError("precision must be a SparseDerivativePrecisionPolicy or None.")
+    source_dtype = precision_dtype_name(_coordinate_dtype(source))
+    target_dtype = precision_dtype_name(_coordinate_dtype(target))
+    source_seed = source_dtype if selected.source_seed is None else selected.source_seed
+    target_cotangent = (
+        target_dtype if selected.target_cotangent is None else selected.target_cotangent
+    )
+    coefficient = target_dtype if selected.coefficient is None else selected.coefficient
+    accumulation = (
+        precision_dtype_name(
+            jnp.result_type(
+                jnp.dtype(source_dtype),
+                jnp.dtype(target_dtype),
+                jnp.dtype(coefficient),
+            )
+        )
+        if selected.accumulation is None
+        else selected.accumulation
+    )
+    output = target_dtype if selected.output is None else selected.output
+    if source_seed != source_dtype:
+        raise TypeError("source_seed dtype must match source tangent coordinates.")
+    if target_cotangent != target_dtype:
+        raise TypeError("target_cotangent dtype must match target cotangent coordinates.")
+    if output != target_dtype:
+        raise TypeError("output dtype must match the declared target space.")
+    return SparseDerivativePrecisionPolicy(
+        source_seed=source_seed,
+        target_cotangent=target_cotangent,
+        coefficient=coefficient,
+        accumulation=accumulation,
+        output=output,
+    )
+
+
 def _compile_sparse_derivative(
     function: Callable[[Array, Any], Array],
     coordinates: Array,
@@ -456,6 +736,9 @@ def _compile_sparse_derivative(
     symmetric: bool,
     chunk_size: int | None,
     properties: OperatorProperties | None,
+    precision: SparseDerivativePrecisionPolicy | None,
+    coefficient_scale: Array | None,
+    coordinate_identity: Any,
     plan_id: str | None,
 ) -> SparseDerivativePlan:
     if compiler not in ("auto", "native", "asdex"):
@@ -465,10 +748,10 @@ def _compile_sparse_derivative(
         raise ValueError("chunk_size must be positive or None.")
     sample_args = _canonicalize_arguments(sample_args)
     _, argument_specs = _argument_signature(sample_args)
-    if not jnp.issubdtype(coordinates.dtype, jnp.floating):
+    if not jnp.issubdtype(coordinates.dtype, jnp.inexact):
         raise TypeError(
-            "Sparse derivative compilation currently requires real floating-point "
-            f"coordinates; got {coordinates.dtype}."
+            "Sparse derivative coordinates must use a real or complex inexact dtype; "
+            f"got {coordinates.dtype}."
         )
     converted = eqx.filter_closure_convert(function, coordinates, sample_args)
     output = jax.eval_shape(converted, coordinates, sample_args)
@@ -478,20 +761,18 @@ def _compile_sparse_derivative(
                 f"Sparse Jacobian output must have shape {(target.size,)}; "
                 f"got {output.shape}."
             )
-    elif output.shape != ():
-        raise ValueError("Sparse Hessian output must be scalar.")
-    if not jnp.issubdtype(output.dtype, jnp.floating):
-        raise TypeError(
-            "Sparse derivative compilation currently requires real floating-point "
-            f"outputs; got {output.dtype}."
-        )
-    if derivative_kind == "jacobian" and jnp.dtype(output.dtype) != jnp.dtype(
-        coordinates.dtype
-    ):
-        raise TypeError(
-            "Sparse derivative source and target coordinates must use the same "
-            f"dtype; got {coordinates.dtype} and {output.dtype}."
-        )
+        if not jnp.issubdtype(output.dtype, jnp.inexact):
+            raise TypeError("Sparse Jacobian outputs must use an inexact dtype.")
+        if output.dtype != _coordinate_dtype(target):
+            raise TypeError(
+                "Sparse Jacobian output dtype must match the declared target space."
+            )
+    else:
+        if output.shape != ():
+            raise ValueError("Sparse Hessian output must be scalar.")
+        if not jnp.issubdtype(output.dtype, jnp.floating):
+            raise TypeError("Sparse Hessian scalarizations must be real floating-point.")
+    precision_ = _resolved_precision(precision, source, target)
 
     coloring = _resolve_coloring(
         converted,
@@ -518,6 +799,8 @@ def _compile_sparse_derivative(
         "source": source.space_id,
         "target": target.space_id,
         "coloring": coloring.coloring_id,
+        "precision": precision_.request.request_id,
+        "coordinate_identity": coordinate_identity,
         "chunk_size": chunk,
         "argument_specs": [
             {"shape": list(shape), "dtype": dtype} for shape, dtype in argument_specs
@@ -545,6 +828,8 @@ def _compile_sparse_derivative(
         properties_,
         derivative_kind=derivative_kind,
         chunk_size=chunk,
+        precision=precision_,
+        coefficient_scale=coefficient_scale,
         plan_id=identifier,
     )
 
@@ -621,9 +906,15 @@ def _evaluate_compressed(
     *,
     derivative_kind: SparseDerivativeKind,
     chunk_size: int | None,
+    coefficient_dtype: str | None,
 ) -> Array:
     if coloring.num_colors == 0:
-        return jnp.empty((0,), dtype=coordinates.dtype)
+        dtype = (
+            coordinates.dtype
+            if coefficient_dtype is None
+            else jnp.dtype(coefficient_dtype)
+        )
+        return jnp.empty((0,), dtype=dtype)
 
     mode = coloring.mode
     if derivative_kind == "jacobian":
@@ -654,14 +945,27 @@ def _evaluate_compressed(
         else:
             raise ValueError(f"Invalid Hessian mode {mode!r}.")
 
+    seed_dtype = (
+        coordinates.dtype
+        if derivative_kind == "hessian" or mode == "fwd"
+        else jax.eval_shape(lambda value: function(value, arguments), coordinates).dtype
+    )
     compressed = _apply_color_chunks(
         action,
         coloring.colors,
         coloring.num_colors,
-        coordinates.dtype,
+        seed_dtype,
         chunk_size,
     )
-    return compressed[coloring.gather_colors, coloring.gather_elements]
+    coefficients = compressed[
+        coloring.gather_colors,
+        coloring.gather_elements,
+    ]
+    return (
+        coefficients
+        if coefficient_dtype is None
+        else coefficients.astype(jnp.dtype(coefficient_dtype))
+    )
 
 
 def _apply_color_chunks(
@@ -804,7 +1108,9 @@ def _validate_spaces(
 __all__ = [
     "PreparedSparseDerivative",
     "SparseDerivativePlan",
+    "SparseDerivativePrecisionPolicy",
     "SparseDerivativeVerification",
+    "SparseHessianContract",
     "compile_sparse_hessian",
     "compile_sparse_jacobian",
     "prepare_sparse_linearization",

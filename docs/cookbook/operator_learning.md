@@ -209,11 +209,15 @@ projection_policy = phx.nn.operator.architectures.FunctionProjectionPolicy(
     require_physical_quadrature=True,
 )
 frame_operator = phx.nn.operator.architectures.FunctionFrameReconstructor(
-    source_frame=source_frame,
+    sources=(
+        phx.nn.operator.architectures.FunctionFrameSource(
+            "forcing",
+            source_frame,
+            projection_policy=projection_policy,
+            coefficient_map=coefficient_map,
+        ),
+    ),
     target_frame=target_frame,
-    coefficient_map=coefficient_map,
-    policy=projection_policy,
-    source_name="forcing",
 )
 
 report = source_frame.project(source, policy=projection_policy)

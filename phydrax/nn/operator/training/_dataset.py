@@ -54,6 +54,8 @@ class OperatorDataset:
     targets: OperatorTargetBatch
 
     provenance: tuple[OperatorCaseProvenance, ...] | None = None
+    case_log_weights: Array | None = None
+    case_mask: Array | None = None
 
     def __post_init__(self):
         if len(self.batch.case_shape) != 1:
@@ -78,6 +80,26 @@ class OperatorDataset:
         if len(set(case_ids)) != len(case_ids):
             raise ValueError("Dataset provenance case IDs must be unique.")
         object.__setattr__(self, "provenance", provenance)
+        size = self.batch.case_shape[0]
+        log_weights = (
+            jnp.zeros((size,), dtype=float)
+            if self.case_log_weights is None
+            else jnp.asarray(self.case_log_weights, dtype=float)
+        )
+        mask = (
+            jnp.ones((size,), dtype=bool)
+            if self.case_mask is None
+            else jnp.asarray(self.case_mask, dtype=bool)
+        )
+        if log_weights.shape != (size,) or mask.shape != (size,):
+            raise ValueError("Dataset case weights and mask must align with cases.")
+        admissible = jnp.isfinite(log_weights) | jnp.isneginf(log_weights)
+        if not bool(jnp.all(~mask | admissible)):
+            raise ValueError("Active dataset case log weights must be finite or -inf.")
+        if not bool(jnp.any(mask & jnp.isfinite(log_weights))):
+            raise ValueError("OperatorDataset requires positive active case mass.")
+        object.__setattr__(self, "case_log_weights", log_weights)
+        object.__setattr__(self, "case_mask", mask)
 
     @property
     def size(self) -> int:
@@ -92,6 +114,8 @@ class OperatorDataset:
             slice_operator_batch(self.batch, index, axis=0),
             self.targets.take(index, axis=0),
             tuple(self.provenance[int(position)] for position in np.asarray(index)),
+            case_log_weights=jnp.take(self.case_log_weights, index),
+            case_mask=jnp.take(self.case_mask, index),
         )
 
 

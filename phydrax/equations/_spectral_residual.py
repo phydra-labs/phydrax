@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from math import isfinite
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -29,6 +31,59 @@ from ._validate import infer_expression_type, validate_pde_ir
 
 SpectralResidualScope: TypeAlias = Literal["full", "retained"]
 SpectralConditionHandling: TypeAlias = Literal["reject", "external"]
+
+
+class SpectralResidualDataLayout(StrictModule, NonTrainableState):
+    """Coordinate subsets, mask meaning, and fixed per-case spectral identities."""
+
+    field_coordinates: tuple[tuple[str, tuple[str, ...]], ...] = eqx.field(static=True)
+    parameter_coordinates: tuple[tuple[str, tuple[str, ...]], ...] = eqx.field(
+        static=True
+    )
+    mask_semantics: Literal["measure_only", "supported_subdomain"] = eqx.field(
+        static=True
+    )
+    measure_mask: Array | None
+    case_plan_ids: tuple[str, ...] = eqx.field(static=True)
+    maximum_trial_shape: tuple[int, ...] = eqx.field(static=True)
+    maximum_evaluation_shape: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        field_coordinates: Mapping[str, Sequence[str]],
+        parameter_coordinates: Mapping[str, Sequence[str]] | None = None,
+        mask_semantics: Literal["measure_only", "supported_subdomain"] = "measure_only",
+        measure_mask: ArrayLike | None = None,
+        case_plan_ids: Sequence[str] = (),
+        maximum_trial_shape: Sequence[int] = (),
+        maximum_evaluation_shape: Sequence[int] = (),
+    ):
+        if mask_semantics not in ("measure_only", "supported_subdomain"):
+            raise ValueError("Unknown spectral residual mask semantics.")
+        plans = tuple(str(value) for value in case_plan_ids)
+        if mask_semantics == "supported_subdomain" and not plans:
+            raise ValueError(
+                "Supported-subdomain masks require explicit prepared case-plan identities."
+            )
+        mask = None if measure_mask is None else jnp.asarray(measure_mask, dtype=bool)
+        self.field_coordinates = tuple(
+            (str(name), tuple(str(axis) for axis in axes))
+            for name, axes in field_coordinates.items()
+        )
+        self.parameter_coordinates = tuple(
+            (str(name), tuple(str(axis) for axis in axes))
+            for name, axes in (
+                {} if parameter_coordinates is None else parameter_coordinates
+            ).items()
+        )
+        self.mask_semantics = mask_semantics
+        self.measure_mask = mask
+        self.case_plan_ids = plans
+        self.maximum_trial_shape = tuple(int(value) for value in maximum_trial_shape)
+        self.maximum_evaluation_shape = tuple(
+            int(value) for value in maximum_evaluation_shape
+        )
 
 
 class SpectralResidualCompilationReport(StrictModule, NonTrainableState):
@@ -100,11 +155,11 @@ class CompiledSpectralResidual(StrictModule):
     evaluator: _SpectralEvaluator
     equation_scales: Array
     report: SpectralResidualCompilationReport
+    data_layout: SpectralResidualDataLayout | None
     equation_names: tuple[str, ...] = eqx.field(static=True)
     equation_components: tuple[int, ...] = eqx.field(static=True)
     scope: SpectralResidualScope = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
-    source_hash: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -114,6 +169,7 @@ class CompiledSpectralResidual(StrictModule):
         evaluator: _SpectralEvaluator,
         equation_scales: ArrayLike,
         report: SpectralResidualCompilationReport,
+        data_layout: SpectralResidualDataLayout | None,
         /,
         *,
         equation_names: Sequence[str],
@@ -135,11 +191,51 @@ class CompiledSpectralResidual(StrictModule):
         self.evaluator = evaluator
         self.equation_scales = scales
         self.report = report
+        if data_layout is not None and not isinstance(
+            data_layout,
+            SpectralResidualDataLayout,
+        ):
+            raise TypeError("data_layout must be SpectralResidualDataLayout or None.")
+        self.data_layout = data_layout
         self.equation_names = names
         self.equation_components = components
         self.scope = scope
         self.compilation_id = str(compilation_id)
         self.source_hash = str(source_hash)
+
+    def project_state(self, values: ArrayLike | Mapping[str, ArrayLike], /) -> Array:
+        physical = (
+            values
+            if isinstance(values, Mapping)
+            else self.layout.unpack(values, physical=True)
+        )
+        expanded: dict[str, Array] = {}
+        field_axes = dict(self.evaluator.field_coordinate_axes)
+        for index, name in enumerate(self.layout.field_names):
+            array = jnp.asarray(physical[name])
+            axes = field_axes.get(
+                name,
+                tuple(range(len(self.discretization.physical_shape))),
+            )
+            components = self.layout.component_counts[index]
+            component_shape = (
+                ()
+                if components == 1 and self.layout.scalar_fields[index]
+                else (components,)
+            )
+            full_shape = self.discretization.physical_shape + component_shape
+            if array.shape != full_shape:
+                array = self.evaluator._broadcast_subset(
+                    array,
+                    axes,
+                    components,
+                )
+            expanded[name] = array
+        coefficients = {
+            name: self.discretization.project(expanded[name])
+            for name in self.layout.field_names
+        }
+        return self.layout.pack(coefficients)
 
     @property
     def state_shape(self) -> tuple[int, ...]:
@@ -148,18 +244,6 @@ class CompiledSpectralResidual(StrictModule):
     @property
     def evaluation(self) -> TensorSpectralDiscretization:
         return self.method.dealiasing.evaluation
-
-    def project_state(self, values: ArrayLike | Mapping[str, ArrayLike], /) -> Array:
-        physical = (
-            values
-            if isinstance(values, Mapping)
-            else self.layout.unpack(values, physical=True)
-        )
-        coefficients = {
-            name: self.discretization.project(physical[name])
-            for name in self.layout.field_names
-        }
-        return self.layout.pack(coefficients)
 
     def reconstruct_state(self, state: ArrayLike, /) -> Array:
         coefficients = self.layout.unpack(state)
@@ -204,6 +288,13 @@ class CompiledSpectralResidual(StrictModule):
         outputs = self.physical_residuals(state, args)
         space = self.evaluation if self.scope == "full" else self.discretization
         weights = space.quadrature_weights.astype(space.plan.precision.reduction_dtype)
+        if self.data_layout is not None and self.data_layout.measure_mask is not None:
+            mask = self.data_layout.measure_mask
+            if mask.shape != weights.shape:
+                raise ValueError(
+                    "Spectral residual measure mask must match evaluation shape."
+                )
+            weights = jnp.where(mask, weights, 0.0)
         total = jnp.asarray(0.0, dtype=weights.dtype)
         for output, scale in zip(outputs, self.equation_scales, strict=True):
             value = output.astype(space.plan.precision.reduction_dtype) / scale
@@ -305,11 +396,12 @@ def _all_coordinate_axes(
                     f"spectral basis {prepared.family!r}."
                 )
             if coordinate.bounds is not None and not jnp.allclose(
-                jnp.asarray(coordinate.bounds), prepared.bounds
+                jnp.asarray(coordinate.bounds),
+                jnp.asarray((prepared.domain.lower, prepared.domain.upper)),
             ):
                 raise ValueError(
                     f"PDE coordinate {coordinate.name!r} bounds do not match "
-                    "the spectral basis."
+                    "the prepared spectral domain."
                 )
         output.append((coordinate.name, axes))
         offset += coordinate.size
@@ -318,7 +410,7 @@ def _all_coordinate_axes(
 
 def _interior_region_axes(
     problem: PDEProblemIR,
-    coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...],
+    coordinate_axes: Sequence[tuple[str, tuple[int, ...]]],
     /,
 ) -> tuple[tuple[str, tuple[int, ...]], ...]:
     lookup = dict(coordinate_axes)
@@ -337,10 +429,53 @@ def _interior_region_axes(
     return tuple(output)
 
 
+class CaseGroupedSpectralResidual(StrictModule):
+    """Fixed-capacity per-case compiled residuals executed through static branches."""
+
+    compiled: tuple[CompiledSpectralResidual, ...]
+    case_plan_ids: tuple[str, ...] = eqx.field(static=True)
+    maximum_state_size: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        compiled: Sequence[CompiledSpectralResidual],
+        case_plan_ids: Sequence[str],
+        /,
+    ):
+        values = tuple(compiled)
+        identities = tuple(str(value) for value in case_plan_ids)
+        if not values or len(values) != len(identities):
+            raise ValueError("Per-case residuals and plan identities must align.")
+        self.compiled = values
+        self.case_plan_ids = identities
+        self.maximum_state_size = max(math.prod(value.state_shape) for value in values)
+
+    def __call__(self, states: ArrayLike, args: Any = None, /) -> Array:
+        values = jnp.asarray(states)
+        if values.shape != (len(self.compiled), self.maximum_state_size):
+            raise ValueError(
+                "Grouped residual states must have shape "
+                f"({len(self.compiled)}, {self.maximum_state_size})."
+            )
+        branches = tuple(
+            (
+                lambda row, residual=residual: residual.residual_energy(
+                    row[: math.prod(residual.state_shape)].reshape(residual.state_shape),
+                    args,
+                )
+            )
+            for residual in self.compiled
+        )
+        indices = jnp.arange(len(branches), dtype=jnp.int32)
+        return jax.vmap(lambda index, row: jax.lax.switch(index, branches, row))(
+            indices, values
+        )
+
+
 def compile_spectral_residual(
     problem: PDEProblemIR,
-    discretization: TensorSpectralDiscretization,
-    method: PseudospectralMethodPlan,
+    discretization: TensorSpectralDiscretization | Sequence[TensorSpectralDiscretization],
+    method: PseudospectralMethodPlan | Sequence[PseudospectralMethodPlan],
     /,
     *,
     equations: Sequence[str] | None = None,
@@ -349,8 +484,55 @@ def compile_spectral_residual(
     scope: SpectralResidualScope = "full",
     require_exact: bool = True,
     condition_handling: SpectralConditionHandling = "reject",
-) -> CompiledSpectralResidual:
-    """Compile selected PDE equalities into an all-coordinate residual objective."""
+    data_layout: SpectralResidualDataLayout | None = None,
+) -> CompiledSpectralResidual | CaseGroupedSpectralResidual:
+    """Compile one or fixed-capacity per-case measured spectral residual."""
+    if isinstance(discretization, Sequence):
+        spaces = tuple(discretization)
+        methods = (
+            tuple(method) if isinstance(method, Sequence) else (method,) * len(spaces)
+        )
+        if (
+            data_layout is None
+            or len(methods) != len(spaces)
+            or len(data_layout.case_plan_ids) != len(spaces)
+        ):
+            raise ValueError(
+                "Per-case compilation requires aligned methods and case_plan_ids."
+            )
+        compiled_cases = []
+        for index, (space, case_method) in enumerate(zip(spaces, methods, strict=True)):
+            if data_layout.case_plan_ids[index] != space.prepared_id:
+                raise ValueError("Per-case discretization fingerprint mismatch.")
+            mask = data_layout.measure_mask
+            case_layout = (
+                data_layout
+                if mask is None or mask.ndim == len(space.physical_shape)
+                else eqx.tree_at(
+                    lambda value: value.measure_mask,
+                    data_layout,
+                    mask[index],
+                )
+            )
+            compiled_case = compile_spectral_residual(
+                problem,
+                space,
+                case_method,
+                equations=equations,
+                parameter_values=parameter_values,
+                equation_scales=equation_scales,
+                scope=scope,
+                require_exact=require_exact,
+                condition_handling=condition_handling,
+                data_layout=case_layout,
+            )
+            if not isinstance(compiled_case, CompiledSpectralResidual):
+                raise RuntimeError("Nested per-case spectral compilation is invalid.")
+            compiled_cases.append(compiled_case)
+        return CaseGroupedSpectralResidual(
+            tuple(compiled_cases),
+            data_layout.case_plan_ids,
+        )
     if not isinstance(problem, PDEProblemIR):
         raise TypeError("problem must be a PDEProblemIR.")
     if not isinstance(discretization, TensorSpectralDiscretization):
@@ -366,15 +548,39 @@ def compile_spectral_residual(
         raise ValueError(
             "PDE conditions require explicit external hard-condition handling."
         )
-    if any(
-        field.coordinates
-        and tuple(field.coordinates)
-        != tuple(coordinate.name for coordinate in problem.coordinates)
-        for field in problem.fields
-    ):
-        raise ValueError(
-            "Spectral residual fields must share the complete compiled coordinates."
-        )
+    all_coordinates = tuple(coordinate.name for coordinate in problem.coordinates)
+    if data_layout is None:
+        if any(
+            field.coordinates and tuple(field.coordinates) != all_coordinates
+            for field in problem.fields
+        ):
+            raise ValueError(
+                "Coordinate-subset fields require SpectralResidualDataLayout."
+            )
+    else:
+        declared = dict(data_layout.field_coordinates)
+        if set(declared) != {field.name for field in problem.fields}:
+            raise ValueError("data_layout must exactly cover spectral residual fields.")
+        if any(
+            any(axis not in all_coordinates for axis in axes)
+            for axes in declared.values()
+        ):
+            raise ValueError("data_layout references an unknown coordinate label.")
+        functional_parameters = {
+            parameter.name for parameter in problem.parameters if parameter.functional
+        }
+        parameter_axes = dict(data_layout.parameter_coordinates)
+        if set(parameter_axes) != functional_parameters:
+            raise ValueError(
+                "data_layout parameter subsets must exactly cover functional parameters."
+            )
+        if any(
+            any(axis not in all_coordinates for axis in axes)
+            for axes in parameter_axes.values()
+        ):
+            raise ValueError(
+                "data_layout functional parameter references an unknown coordinate."
+            )
     requested = (
         tuple(equation.name for equation in problem.equations)
         if equations is None
@@ -449,6 +655,29 @@ def compile_spectral_residual(
     scales = tuple(float(scales_by_name[name]) for name in requested)
     if any(not isfinite(scale) or scale <= 0.0 for scale in scales):
         raise ValueError("equation_scales must be finite and positive.")
+    axis_lookup = dict(coordinate_axes)
+    if data_layout is None:
+        field_coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...] = ()
+        parameter_coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...] = ()
+    else:
+        field_coordinate_axes = tuple(
+            (
+                name,
+                tuple(
+                    axis for coordinate in coordinates for axis in axis_lookup[coordinate]
+                ),
+            )
+            for name, coordinates in data_layout.field_coordinates
+        )
+        parameter_coordinate_axes = tuple(
+            (
+                name,
+                tuple(
+                    axis for coordinate in coordinates for axis in axis_lookup[coordinate]
+                ),
+            )
+            for name, coordinates in data_layout.parameter_coordinates
+        )
     layout = SpectralStateLayout(problem.fields, discretization)
     evaluator = _SpectralEvaluator(
         problem,
@@ -462,6 +691,8 @@ def compile_spectral_residual(
         coordinate_axes,
         None,
         _interior_region_axes(problem, coordinate_axes),
+        field_coordinate_axes=field_coordinate_axes,
+        parameter_coordinate_axes=parameter_coordinate_axes,
     )
     report = SpectralResidualCompilationReport(
         trial_shape=discretization.modal_shape,
@@ -487,6 +718,16 @@ def compile_spectral_residual(
             "require_exact": bool(require_exact),
             "condition_handling": condition_handling,
             "parameters": parameter_fingerprints,
+            "data_layout": (
+                None
+                if data_layout is None
+                else {
+                    "fields": data_layout.field_coordinates,
+                    "parameters": data_layout.parameter_coordinates,
+                    "mask_semantics": data_layout.mask_semantics,
+                    "case_plans": data_layout.case_plan_ids,
+                }
+            ),
             "report": report.report_id,
         }
     )
@@ -497,6 +738,7 @@ def compile_spectral_residual(
         evaluator,
         jnp.asarray(scales),
         report,
+        data_layout,
         equation_names=requested,
         equation_components=tuple(value.components for value in types),
         compilation_id=compilation_id,
@@ -506,9 +748,11 @@ def compile_spectral_residual(
 
 
 __all__ = [
+    "CaseGroupedSpectralResidual",
     "CompiledSpectralResidual",
     "SpectralConditionHandling",
     "SpectralResidualCompilationReport",
+    "SpectralResidualDataLayout",
     "SpectralResidualScope",
     "compile_spectral_residual",
 ]

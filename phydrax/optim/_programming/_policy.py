@@ -88,6 +88,64 @@ class AbstractConvexProgramMethod(StrictModule):
         return ()
 
 
+class NativeHomogeneousConic(AbstractConvexProgramMethod):
+    """JAX-native fixed-capacity primal-dual execution on built-in cones."""
+
+    primal_step: float = eqx.field(static=True)
+    dual_step: float = eqx.field(static=True)
+    extrapolation: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        primal_step: float = 1e-2,
+        dual_step: float = 1e-2,
+        extrapolation: float = 1.0,
+    ):
+        primal = float(primal_step)
+        dual = float(dual_step)
+        extrapolation_ = float(extrapolation)
+        if not isfinite(primal) or not isfinite(dual) or primal <= 0.0 or dual <= 0.0:
+            raise ValueError("Native conic steps must be finite and positive.")
+        if not isfinite(extrapolation_) or not 0.0 <= extrapolation_ <= 1.0:
+            raise ValueError("extrapolation must lie in [0, 1].")
+        self.primal_step = primal
+        self.dual_step = dual
+        self.extrapolation = extrapolation_
+
+    @property
+    def method_id(self) -> str:
+        return "native-homogeneous-conic"
+
+    @property
+    def backend(self) -> str:
+        return "phydrax"
+
+    @property
+    def capabilities(self) -> ConvexProgramCapabilities:
+        return ConvexProgramCapabilities(
+            linear_program=True,
+            quadratic_program=True,
+            conic_program=True,
+            dense=True,
+            sparse=True,
+            matrix_free=True,
+            warm_start=True,
+            prepared_refresh=True,
+            infeasibility_certificates=True,
+            implicit_differentiation=False,
+            algorithmic_differentiation=False,
+        )
+
+    @property
+    def configuration(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("primal_step", str(self.primal_step)),
+            ("dual_step", str(self.dual_step)),
+            ("extrapolation", str(self.extrapolation)),
+        )
+
+
 class DensePrimalDualQP(AbstractConvexProgramMethod):
     """Native dense predictor-corrector QP method."""
 
@@ -189,6 +247,7 @@ class MPAXraPDHG(AbstractConvexProgramMethod):
     def __init__(
         self,
         *,
+        representation: str = "dense",
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,
@@ -196,6 +255,7 @@ class MPAXraPDHG(AbstractConvexProgramMethod):
     ):
         self.plan = MPAXPlan(
             "rapdhg",
+            representation=representation,
             warm_start=warm_start,
             feasibility_polishing=feasibility_polishing,
             unroll=unroll,
@@ -215,9 +275,9 @@ class MPAXraPDHG(AbstractConvexProgramMethod):
         return ConvexProgramCapabilities(
             linear_program=True,
             quadratic_program=True,
-            conic_program=False,
-            dense=True,
-            sparse=False,
+            conic_program=self.plan.representation == "sparse",
+            dense=self.plan.representation == "dense",
+            sparse=self.plan.representation == "sparse",
             matrix_free=False,
             warm_start=self.plan.warm_start,
             prepared_refresh=True,
@@ -239,6 +299,7 @@ class MPAXr2HPDHG(AbstractConvexProgramMethod):
     def __init__(
         self,
         *,
+        representation: str = "dense",
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,
@@ -246,6 +307,7 @@ class MPAXr2HPDHG(AbstractConvexProgramMethod):
     ):
         self.plan = MPAXPlan(
             "r2hpdhg",
+            representation=representation,
             warm_start=warm_start,
             feasibility_polishing=feasibility_polishing,
             unroll=unroll,
@@ -265,9 +327,9 @@ class MPAXr2HPDHG(AbstractConvexProgramMethod):
         return ConvexProgramCapabilities(
             linear_program=True,
             quadratic_program=False,
-            conic_program=False,
-            dense=True,
-            sparse=False,
+            conic_program=self.plan.representation == "sparse",
+            dense=self.plan.representation == "dense",
+            sparse=self.plan.representation == "sparse",
             matrix_free=False,
             warm_start=self.plan.warm_start,
             prepared_refresh=True,
@@ -304,7 +366,7 @@ class ClarabelInteriorPoint(AbstractConvexProgramMethod):
             quadratic_program=True,
             conic_program=True,
             dense=True,
-            sparse=False,
+            sparse=True,
             matrix_free=False,
             warm_start=False,
             prepared_refresh=True,
@@ -395,6 +457,34 @@ class ConvexSolvePolicy(StrictModule):
         )
 
 
+class ConicGeneralizedDerivativePolicy(StrictModule):
+    """One fixed selected cone-projection derivative at classified strata."""
+
+    orthant_zero_value: float = eqx.field(static=True)
+    approach_direction: tuple[float, ...] = eqx.field(static=True)
+    approach_scale: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        orthant_zero_value: float = 0.5,
+        approach_direction: tuple[float, ...] = (),
+        approach_scale: float = 1e-6,
+    ):
+        zero = float(orthant_zero_value)
+        scale = float(approach_scale)
+        direction = tuple(float(value) for value in approach_direction)
+        if not 0.0 <= zero <= 1.0:
+            raise ValueError("orthant_zero_value must lie in [0, 1].")
+        if not isfinite(scale) or scale <= 0.0:
+            raise ValueError("approach_scale must be finite and positive.")
+        if any(not isfinite(value) for value in direction):
+            raise ValueError("approach_direction must be finite.")
+        self.orthant_zero_value = zero
+        self.approach_direction = direction
+        self.approach_scale = scale
+
+
 class ConvexDifferentiationPolicy(StrictModule):
     """Explicit derivative of a regular mathematical or executed solution map."""
 
@@ -423,6 +513,8 @@ __all__ = [
     "ConvexDifferentiationPolicy",
     "ConvexSolvePolicy",
     "ConvexTermination",
+    "ConicGeneralizedDerivativePolicy",
+    "NativeHomogeneousConic",
     "DensePrimalDualQP",
     "QPaxInteriorPoint",
     "ClarabelInteriorPoint",

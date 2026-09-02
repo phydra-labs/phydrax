@@ -22,8 +22,8 @@ from ..discretization import (
     ParticleDiscretization,
     ParticleNeighborhoodState,
     ParticleSetPlan,
+    PeriodicCell,
 )
-from ..discretization.particle._periodic_cell import ParticleCell
 
 
 class AtomisticSiteDomain(StrEnum):
@@ -370,7 +370,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         dof_positions: ArrayLike,
         /,
         *,
-        cell: ParticleCell | None = None,
+        cell: PeriodicCell | None = None,
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
     ) -> AtomisticInteractionSiteState:
@@ -489,7 +489,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         site_forces: ArrayLike,
         /,
         *,
-        cell: ParticleCell | None = None,
+        cell: PeriodicCell | None = None,
         fractional_positions: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
     ) -> Array:
@@ -515,7 +515,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
         site_state: AtomisticInteractionSiteState,
         /,
         *,
-        cell: ParticleCell | None = None,
+        cell: PeriodicCell | None = None,
     ) -> ParticleNeighborhoodState:
         pair_capacity = self.plan.sites.capacity * (self.plan.sites.capacity - 1) // 2
         plan = DenseParticleNeighborhoodPlan(pair_capacity, box=cell)

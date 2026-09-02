@@ -145,3 +145,107 @@ def test_continuous_flow_density_rejects_unsupported_contracts():
     )
     with pytest.raises(ValueError, match="Lebesgue"):
         phx.transport.ContinuousFlowLaw(transport)
+
+
+def test_piecewise_density_reduces_validity_over_active_tape_slots():
+    event = phx.solver.HybridEventPlan(
+        lambda time, state, args: state[0] - 0.5,
+        lambda time, state, args: state,
+        lambda time, state, args: jnp.ones_like(state),
+        lambda time, state, args: 2.0 * jnp.ones_like(state),
+        event_kind="velocity-change",
+        plan_id="piecewise-density-velocity-change",
+    )
+    schedule = phx.solver.HybridSchedulePlan(
+        (phx.solver.ScheduledHybridEvent(event),),
+        maximum_events=2,
+    )
+    prepared = phx.solver.prepare_hybrid_schedule(schedule, jnp.asarray([0.0]))
+    schedule_result = phx.solver.execute_hybrid_schedule(
+        prepared,
+        lambda time, args: jnp.asarray([time]),
+        jnp.asarray([[0.0, 1.0]]),
+    )
+    flow = _flow(jnp.zeros((1, 1)))
+    law = phx.transport.PiecewiseContinuousFlowLaw(
+        flow.transport,
+        prepared,
+        forward_event_map=lambda state, prepared: state,
+        inverse_event_map=lambda state, prepared: state,
+        tape_provider=lambda data, pre_event, prepared: schedule_result.tape,
+    )
+
+    result = law.log_prob_with_diagnostics(jnp.asarray([0.2]))
+
+    assert result.valid.shape == ()
+    assert result.valid
+    assert jnp.isclose(result.event_log_abs_determinant, jnp.log(2.0))
+
+
+def test_piecewise_density_binds_preparation_and_replay_policy_identity():
+    event = phx.solver.HybridEventPlan(
+        lambda time, state, args: state[0] - 0.5,
+        lambda time, state, args: state,
+        lambda time, state, args: jnp.ones_like(state),
+        lambda time, state, args: 2.0 * jnp.ones_like(state),
+        event_kind="velocity-change",
+        plan_id="piecewise-density-policy-identity",
+    )
+    schedule = phx.solver.HybridSchedulePlan(
+        (phx.solver.ScheduledHybridEvent(event),),
+        maximum_events=2,
+    )
+    prepared = phx.solver.prepare_hybrid_schedule(schedule, jnp.asarray([0.0]))
+    schedule_result = phx.solver.execute_hybrid_schedule(
+        prepared,
+        lambda time, args: jnp.asarray([time]),
+        jnp.asarray([[0.0, 1.0]]),
+    )
+    flow = _flow(jnp.zeros((1, 1)))
+
+    def density_law(current_prepared):
+        return phx.transport.PiecewiseContinuousFlowLaw(
+            flow.transport,
+            current_prepared,
+            forward_event_map=lambda state, prepared: state,
+            inverse_event_map=lambda state, prepared: state,
+            tape_provider=lambda data, pre_event, prepared: schedule_result.tape,
+            law_id="shared-requested-density-law",
+        )
+
+    law = density_law(prepared)
+    matching = law.log_prob_with_diagnostics(jnp.asarray([0.2]))
+    assert matching.valid.shape == ()
+    assert matching.valid
+    assert jnp.isfinite(matching.log_prob)
+
+    policy = prepared.replay_policy
+    alternate_policies = (
+        phx.solver.HybridReplayPolicy(
+            policy.maximum_events,
+            grazing_tolerance=2.0 * policy.grazing_tolerance,
+            simultaneous_tolerance=policy.simultaneous_tolerance,
+            event_tolerance=policy.event_tolerance,
+            failure=policy.failure,
+        ),
+        phx.solver.HybridReplayPolicy(
+            policy.maximum_events,
+            grazing_tolerance=policy.grazing_tolerance,
+            simultaneous_tolerance=policy.simultaneous_tolerance,
+            event_tolerance=policy.event_tolerance,
+            failure=policy.failure - 1,
+        ),
+    )
+    for alternate_policy in alternate_policies:
+        alternate_prepared = phx.solver.prepare_hybrid_schedule(
+            schedule,
+            jnp.asarray([0.0]),
+            replay_policy=alternate_policy,
+        )
+        alternate_law = density_law(alternate_prepared)
+
+        assert alternate_prepared.schedule_id == prepared.schedule_id
+        assert alternate_prepared.preparation_id != prepared.preparation_id
+        assert alternate_law.law_id != law.law_id
+        with pytest.raises(ValueError, match="replay-policy identity"):
+            alternate_law.log_prob_with_diagnostics(jnp.asarray([0.2]))

@@ -84,8 +84,8 @@ def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr():
     initial_state = jnp.array([0.8, -0.2])
     args = (a, b, bias, q, r, cross, q_linear, r_linear, q_terminal, terminal_linear)
 
-    def transition(time, state, control, data):
-        index = jnp.asarray(time, dtype=jnp.int32)
+    def transition(context, state, control, data):
+        index = context.step_index
         return data[0][index] @ state + data[1][index] @ control + data[2][index]
 
     def running_cost(time, state, control, data):

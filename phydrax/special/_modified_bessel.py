@@ -447,14 +447,6 @@ def _kv_array(v: Array, x: Array) -> Array:
     return _kv_primal(v, x)
 
 
-def _require_constant_order(v_tangent: Array | SymbolicZero) -> None:
-    if not isinstance(v_tangent, SymbolicZero):
-        raise TypeError(
-            "modified Bessel functions are not differentiable with respect "
-            "to the order; differentiate with respect to x instead"
-        )
-
-
 def _apply_tangent(derivative: Array, tangent: Array | SymbolicZero) -> Array:
     if isinstance(tangent, SymbolicZero):
         return jnp.zeros_like(derivative)
@@ -531,14 +523,20 @@ def _ive_jvp(
 ) -> tuple[Array, Array]:
     v, x = primals
     v_tangent, x_tangent = tangents
-    _require_constant_order(v_tangent)
     value = _ive_array(v, x)
     small_x = _exact_zero(x) | _positive_subnormal(x)
     derivative_x = jnp.where(small_x, jnp.ones_like(x), x)
     derivative = value * _scaled_log_derivative(_ive_log, v, derivative_x)
     derivative = jnp.where(small_x, _i_zero_derivative(v, x, scaled=True), derivative)
     derivative = jnp.where(jnp.isposinf(x), jnp.zeros_like(x), derivative)
-    return value, _apply_tangent(derivative, x_tangent)
+    tangent = _apply_tangent(derivative, x_tangent)
+    if not isinstance(v_tangent, SymbolicZero):
+        from ._continuation import ive_order_derivative
+
+        tangent = (
+            tangent + jnp.real(ive_order_derivative(v, x)).astype(value.dtype) * v_tangent
+        )
+    return value, tangent
 
 
 def _iv_jvp(
@@ -547,7 +545,6 @@ def _iv_jvp(
 ) -> tuple[Array, Array]:
     v, x = primals
     v_tangent, x_tangent = tangents
-    _require_constant_order(v_tangent)
     value = _iv_array(v, x)
     small_x = _exact_zero(x) | _positive_subnormal(x)
     recurrence_x = jnp.where(small_x, jnp.ones_like(x), x)
@@ -557,7 +554,14 @@ def _iv_jvp(
     derivative = _iv_array(v + 1.0, recurrence_x) + order_term
     derivative = jnp.where(small_x, _i_zero_derivative(v, x, scaled=False), derivative)
     derivative = jnp.where(jnp.isposinf(x), jnp.full_like(x, jnp.inf), derivative)
-    return value, _apply_tangent(derivative, x_tangent)
+    tangent = _apply_tangent(derivative, x_tangent)
+    if not isinstance(v_tangent, SymbolicZero):
+        from ._continuation import iv_order_derivative
+
+        tangent = (
+            tangent + jnp.real(iv_order_derivative(v, x)).astype(value.dtype) * v_tangent
+        )
+    return value, tangent
 
 
 def _kve_jvp(
@@ -566,7 +570,6 @@ def _kve_jvp(
 ) -> tuple[Array, Array]:
     v, x = primals
     v_tangent, x_tangent = tangents
-    _require_constant_order(v_tangent)
     value = _kve_array(v, x)
     zero = _exact_zero(x)
     subnormal = _positive_subnormal(x)
@@ -577,7 +580,14 @@ def _kve_jvp(
     derivative = safe_value * _scaled_log_derivative(_kve_log, v, safe_x)
     derivative = jnp.where(small_x, _k_zero_derivative(v, x), derivative)
     derivative = jnp.where(jnp.isposinf(x), jnp.zeros_like(x), derivative)
-    return value, _apply_tangent(derivative, x_tangent)
+    tangent = _apply_tangent(derivative, x_tangent)
+    if not isinstance(v_tangent, SymbolicZero):
+        from ._continuation import kve_order_derivative
+
+        tangent = (
+            tangent + jnp.real(kve_order_derivative(v, x)).astype(value.dtype) * v_tangent
+        )
+    return value, tangent
 
 
 def _kv_jvp(
@@ -586,7 +596,6 @@ def _kv_jvp(
 ) -> tuple[Array, Array]:
     v, x = primals
     v_tangent, x_tangent = tangents
-    _require_constant_order(v_tangent)
     value = _kv_array(v, x)
     zero = _exact_zero(x)
     subnormal = _positive_subnormal(x)
@@ -602,7 +611,14 @@ def _kv_jvp(
     derivative = order_term - _kv_array(v + 1.0, safe_x)
     derivative = jnp.where(small_x, _k_zero_derivative(v, x), derivative)
     derivative = jnp.where(jnp.isposinf(x), jnp.zeros_like(x), derivative)
-    return value, _apply_tangent(derivative, x_tangent)
+    tangent = _apply_tangent(derivative, x_tangent)
+    if not isinstance(v_tangent, SymbolicZero):
+        from ._continuation import kv_order_derivative
+
+        tangent = (
+            tangent + jnp.real(kv_order_derivative(v, x)).astype(value.dtype) * v_tangent
+        )
+    return value, tangent
 
 
 _ive_array.defjvp(_ive_jvp, symbolic_zeros=True)
@@ -618,22 +634,40 @@ def _prepare(name: str, v: ArrayLike, x: ArrayLike) -> tuple[Array, Array]:
 
 
 def ive(v: ArrayLike, x: ArrayLike) -> Array:
-    """Exponentially scaled modified Bessel function ``exp(-x) I_v(x)``."""
+    """Exponentially scaled principal modified Bessel function ``I_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_iv, promote_principal
+
+        (_, z) = promote_principal(v, x)
+        return jnp.exp(-jnp.abs(jnp.real(z))) * complex_iv(v, z)
     return _ive_array(*_prepare("ive", v, x))
 
 
 def iv(v: ArrayLike, x: ArrayLike) -> Array:
-    """Modified Bessel function of the first kind ``I_v(x)``."""
+    """Principal modified Bessel function of the first kind ``I_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_iv
+
+        return complex_iv(v, x)
     return _iv_array(*_prepare("iv", v, x))
 
 
 def kve(v: ArrayLike, x: ArrayLike) -> Array:
-    """Exponentially scaled modified Bessel function ``exp(x) K_v(x)``."""
+    """Exponentially scaled principal modified Bessel function ``K_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_kv, promote_principal
+
+        (_, z) = promote_principal(v, x)
+        return jnp.exp(z) * complex_kv(v, z)
     return _kve_array(*_prepare("kve", v, x))
 
 
 def kv(v: ArrayLike, x: ArrayLike) -> Array:
-    """Modified Bessel function of the second kind ``K_v(x)``."""
+    """Principal modified Bessel function of the second kind ``K_v(x)``."""
+    if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
+        from ._continuation import complex_kv
+
+        return complex_kv(v, x)
     return _kv_array(*_prepare("kv", v, x))
 
 

@@ -18,6 +18,9 @@ import phydrax as phx
 SEEDS = (17, 29, 43)
 CHEMICAL_ACCURACY_HARTREE = 1.593601e-3
 STATISTICAL_SIGMA_GATE = 3.0
+DETERMINANT_COUNT = 16
+MAXIMUM_PAIR_ELEMENTS = 12
+MAXIMUM_DETERMINANT_WORK = 128
 
 
 @dataclass(frozen=True)
@@ -56,11 +59,12 @@ def _structure(case: MolecularCase):
 
 
 def _problem(case: MolecularCase, seed: int):
-    if not 1 <= case.electron_count <= phx.operators.ELECTRONIC_MAX_ELECTRONS:
-        raise ValueError(
-            "Electronic benchmark cases must stay within the exact small-system "
-            "electron ceiling."
-        )
+    resource_plan = phx.operators.ElectronicVMCResourcePlan(
+        case.electron_count,
+        determinant_count=DETERMINANT_COUNT,
+        maximum_pair_elements=MAXIMUM_PAIR_ELEMENTS,
+        maximum_determinant_work=MAXIMUM_DETERMINANT_WORK,
+    )
     nuclei = _structure(case)
     model = phx.nn.quantum.FermiNet(
         nuclei,
@@ -69,8 +73,9 @@ def _problem(case: MolecularCase, seed: int):
         hidden_features=64,
         pair_features=32,
         layer_count=4,
-        determinant_count=16,
+        determinant_count=resource_plan.determinant_count,
         compute_dtype="float64",
+        resource_plan=resource_plan,
         key=jr.key(seed),
     )
     operator = phx.operators.ElectronicCoulombHamiltonian(
@@ -81,6 +86,7 @@ def _problem(case: MolecularCase, seed: int):
             coordinate_chunk_size=3,
             compute_dtype="float64",
         ),
+        resource_plan=resource_plan,
     )
     walkers = phx.operators.electronic_initial_walkers(
         jr.fold_in(jr.key(seed), 1), nuclei, case.electron_count, 64
@@ -183,6 +189,20 @@ def _run(case: MolecularCase, seed: int, *, compilation_expected: bool):
                 "exact coordinate second derivatives; linear in coordinate count "
                 "times derivative-action cost"
             ),
+            "resource_admission": {
+                "claim": problem.model.resource_plan.claim,
+                "valid": bool(problem.model.resource_plan.valid),
+                "electron_count": problem.model.resource_plan.electron_count,
+                "determinant_count": problem.model.resource_plan.determinant_count,
+                "pair_stream_elements": problem.model.resource_plan.pair_stream_elements,
+                "determinant_work": problem.model.resource_plan.determinant_work,
+                "maximum_pair_elements": (
+                    problem.model.resource_plan.admitted_pair_elements
+                ),
+                "maximum_determinant_work": (
+                    problem.model.resource_plan.admitted_determinant_work
+                ),
+            },
         },
     }
 
@@ -220,7 +240,11 @@ def main():
             "python": platform.python_version(),
             "platform": platform.platform(),
             "finite_nonperiodic": True,
-            "maximum_electrons": phx.operators.ELECTRONIC_MAX_ELECTRONS,
+            "resource_limits": {
+                "determinant_count": DETERMINANT_COUNT,
+                "maximum_pair_elements": MAXIMUM_PAIR_ELEMENTS,
+                "maximum_determinant_work": MAXIMUM_DETERMINANT_WORK,
+            },
             "born_oppenheimer": True,
             "relativistic": False,
             "stochastic_trace": False,

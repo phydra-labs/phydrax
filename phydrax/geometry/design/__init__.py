@@ -26,6 +26,15 @@ _CONSTRAINT_EXPORTS = frozenset(
         "ParameterTarget",
     }
 )
+_CONTINUATION_EXPORTS = frozenset(
+    {
+        "CSGContinuationPolicy",
+        "CSGContinuationResult",
+        "PreparedCSGContinuation",
+        "prepare_csg_continuation",
+        "solve_csg_continuation",
+    }
+)
 _SEARCH_EXPORTS = frozenset(
     {
         "DesignSearchResult",
@@ -74,6 +83,8 @@ def __getattr__(name: str):
 
     if name in _CONSTRAINT_EXPORTS:
         from . import _constraints as module
+    elif name in _CONTINUATION_EXPORTS:
+        from . import _continuation as module
     elif name in _SEARCH_EXPORTS:
         from . import _search as module
     elif name in _QUALIFICATION_EXPORTS:
@@ -97,6 +108,8 @@ __all__ = [
     "BoundaryPoints",
     "Coincident",
     "ConstraintSolveResult",
+    "CSGContinuationPolicy",
+    "CSGContinuationResult",
     "DesignConstraintSystem",
     "DerivativeTier",
     "DesignBindingGraph",
@@ -116,6 +129,9 @@ __all__ = [
     "Parallel",
     "ParameterEquality",
     "ParameterTarget",
+    "PreparedCSGContinuation",
+    "prepare_csg_continuation",
+    "solve_csg_continuation",
     "Perpendicular",
     "PointDistance",
     "PointOnLine",

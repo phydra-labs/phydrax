@@ -83,8 +83,20 @@ false.
 evidence succeeds. For discrete maps this is the homology index; a full Conley index
 map additionally requires an induced index endomorphism.
 
-## Deliberate gates
+## Bounded advanced families
 
-The public API does not expose multiparameter barcodes, generic cup products, cellular
-sheaves, or spectral-sequence pages. Those require multigraded presentations, explicit
-cell diagonals, stalk/restriction data, or a concrete filtered bicomplex respectively.
+Point-cloud preparation now constructs canonical face-closed Vietoris--Rips,
+Cech, and alpha complexes under explicit dimension/simplex/predicate capacities;
+ambiguous distance, enclosing-ball, or empty-circumsphere predicates fail.
+`FinitePersistenceModule` provides finite-poset Hilbert dimensions, declared rank
+queries, presentations, and fibered one-parameter diagrams. It deliberately has
+no multiparameter barcode field. `compute_zigzag_intervals` performs exact
+finite-field type-A interval decomposition for mixed forward/backward maps and
+checks reconstruction of every node dimension and adjacent-map rank.
+
+Cup products require an explicit `CellDiagonalApproximation`; only the
+simplicial Alexander--Whitney convenience may infer one. `CellularSheaf` requires
+every stalk and restriction map. `FilteredChainComplex`/`FilteredBicomplex`
+validate boundary-square/anticommutation before finite
+`SpectralSequenceResult` pages are formed. Convergence and unresolved extension
+evidence remain explicit.

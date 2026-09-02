@@ -62,8 +62,12 @@ def _port_payload(port: CouplingPort, /) -> dict[str, Any]:
             None if port.field_space is None else port.field_space.field_space_id
         ),
         "reference_scale": port.reference_scale,
-        "sample_grid": None if port.sample_grid is None else port.sample_grid.time_id,
-        "temporal_interpolation": port.temporal_interpolation,
+        "waveform_plan": (
+            None if port.waveform_plan is None else port.waveform_plan.plan_id
+        ),
+        "temporal_transfer": (
+            None if port.temporal_transfer is None else port.temporal_transfer.transfer_id
+        ),
     }
 
 
@@ -504,7 +508,7 @@ def _shape_validate_subsystems(
             )
         for port, output in zip(subsystem.output_ports, result.outputs, strict=True):
             shaped_output = output
-            if port.sample_grid is not None:
+            if port.waveform_plan is not None:
                 if not isinstance(output, CouplingWaveform):
                     raise TypeError(
                         f"Coupling subsystem {subsystem.subsystem_id!r} output "
@@ -587,14 +591,14 @@ def prepare_coupling(
         raise ValueError("Native coupling requires fixed-topology participants.")
     for subsystem in subsystems:
         ports_ = (*subsystem.input_ports, *subsystem.output_ports)
-        if any(port.sample_grid is None for port in ports_) and not (
+        if any(port.waveform_plan is None for port in ports_) and not (
             subsystem.capabilities.supports_endpoint
         ):
             raise ValueError(
                 f"Coupling subsystem {subsystem.subsystem_id!r} does not support "
                 "its endpoint ports."
             )
-        if any(port.sample_grid is not None for port in ports_) and not (
+        if any(port.waveform_plan is not None for port in ports_) and not (
             subsystem.capabilities.supports_waveform
         ):
             raise ValueError(

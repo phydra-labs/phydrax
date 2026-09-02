@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 units = phx.atomistic.AtomisticUnitSystem.reduced()
-cell = phx.discretization.ParticleCell(4.0 * jnp.eye(3))
+cell = phx.discretization.PeriodicCell(4.0 * jnp.eye(3))
 system = phx.atomistic.AtomisticSystemPlan(
     [100, 101, 102, 103],
     [1, 1, 1, 1],

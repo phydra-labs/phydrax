@@ -15,7 +15,8 @@ import optimistix as optx
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from ..stochastic import WienerRealization
+from ..linalg import AbstractRealCoordinateMap
+from ..stochastic._wiener import WienerRealization
 from ._delay import (
     _distributed_delay_value,
     _invalid_geometry_tangent,
@@ -52,6 +53,11 @@ from ._delay_plan import (
     stage_time_extent,
 )
 from ._diffrax_backend import _valid_values
+from ._diffrax_state_packing import (
+    _prepare_diffrax_state_adapter,
+    _PreparedDiffraxStateAdapter,
+    DiffraxComplexStatePolicy,
+)
 from ._geometric import AbstractGeometricSolver, SRKMK
 from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
@@ -70,6 +76,68 @@ class _DelayValidation(eqx.Module):
         return checked
 
 
+class _CoordinateDelayHistory(eqx.Module):
+    function: Any
+    adapter: _PreparedDiffraxStateAdapter
+
+    def __call__(self, time, args):
+        public_args = self.adapter.unpack_args(args)
+        value = self.function(time, public_args)
+        return self.adapter.pack_state(value, owner="Delay history")
+
+
+class _CoordinateDelayDerivative(eqx.Module):
+    function: Any
+    adapter: _PreparedDiffraxStateAdapter
+
+    def __call__(self, time, args):
+        public_args = self.adapter.unpack_args(args)
+        value = self.function(time, public_args)
+        return self.adapter.pack_state(value, owner="Delay history derivative")
+
+
+class _PublicDelayWindow(eqx.Module):
+    window: DelayHistoryWindow
+    adapter: _PreparedDiffraxStateAdapter
+
+    def value(self, time, /, *, left=False):
+        return self.adapter.unpack_state(self.window.value(time, left=left))
+
+    def values(self, times, /, *, left=False):
+        return self.adapter.unpack_values(
+            self.window.values(times, left=left),
+            jnp.asarray(times).ndim,
+        )
+
+    def derivative(self, time, /, *, left=False):
+        return self.adapter.unpack_state(self.window.derivative(time, left=left))
+
+    def derivatives(self, times, /, *, left=False):
+        return self.adapter.unpack_values(
+            self.window.derivatives(times, left=left),
+            jnp.asarray(times).ndim,
+        )
+
+
+class _CoordinateDelayInterpolation(eqx.Module):
+    interpolation: DelayDenseInterpolation
+    adapter: _PreparedDiffraxStateAdapter
+
+    def evaluate(self, query_times, /, *, left=True):
+        query = jnp.asarray(query_times)
+        return self.adapter.unpack_values(
+            self.interpolation.evaluate(query, left=left),
+            query.ndim,
+        )
+
+    def derivative(self, query_times, /, *, left=True):
+        query = jnp.asarray(query_times)
+        return self.adapter.unpack_values(
+            self.interpolation.derivative(query, left=left),
+            query.ndim,
+        )
+
+
 class _DelayVectorField(eqx.Module):
     function: Any
     initial_history: Any
@@ -78,19 +146,23 @@ class _DelayVectorField(eqx.Module):
     initial_time: Array
     state_shape: tuple[int, ...] = eqx.field(static=True)
     geometry: Any
+    state_adapter: _PreparedDiffraxStateAdapter
+    backend_shape: tuple[int, ...] = eqx.field(static=True)
     computed_history: _ComputedDelayHistory
 
     def _memory(
         self, time: Array, state: Array, args: Any, /
     ) -> tuple[DelayValues, _DelayValidation]:
+        public_state = self.state_adapter.unpack_state(state)
+        public_args = self.state_adapter.unpack_args(args)
         history = DelayHistoryView(
             initial_history=self.initial_history,
             initial_derivative=self.initial_derivative,
             args=args,
             initial_time=self.initial_time,
             computed_history=self.computed_history,
-            state_shape=self.state_shape,
-            geometry=self.geometry,
+            state_shape=self.backend_shape,
+            geometry=None,
         )
         values = []
         predicates = []
@@ -98,21 +170,29 @@ class _DelayVectorField(eqx.Module):
         for term in self.delay_terms:
             delayed_states = None
             if isinstance(term, FunctionalDelay):
-                window = DelayHistoryWindow(
-                    history,
-                    time,
-                    term.minimum_delay,
-                    term.maximum_delay,
+                window = _PublicDelayWindow(
+                    DelayHistoryWindow(
+                        history,
+                        time,
+                        term.minimum_delay,
+                        term.maximum_delay,
+                    ),
+                    self.state_adapter,
                 )
-                value = jnp.asarray(term.functional(time, state, window, args))
+                value = jnp.asarray(
+                    term.functional(time, public_state, window, public_args)
+                )
             elif isinstance(term, DistributedDelay):
-                delayed_states = history.values(time - term.nodes, left=False)
+                delayed_states = self.state_adapter.unpack_values(
+                    history.values(time - term.nodes, left=False),
+                    1,
+                )
                 value = _distributed_delay_value(
                     term,
                     time,
-                    state,
+                    public_state,
                     delayed_states,
-                    args,
+                    public_args,
                     self.state_shape,
                 )
             elif isinstance(term, DerivativeDelay):
@@ -120,11 +200,15 @@ class _DelayVectorField(eqx.Module):
                 lag = (
                     point.delay
                     if isinstance(point, ConstantDelay)
-                    else point.value(time, state, args)
+                    else point.value(time, public_state, public_args)
                 )
-                delayed_state = history.value(time - lag, left=False)
+                delayed_state = self.state_adapter.unpack_state(
+                    history.value(time - lag, left=False)
+                )
                 delayed_states = delayed_state[None, ...]
-                value = history.derivative(time - lag, left=False)
+                value = self.state_adapter.unpack_state(
+                    history.derivative(time - lag, left=False)
+                )
                 if self.geometry is not None and not self.geometry.trivial:
                     predicates.append(
                         _invalid_geometry_tangent(
@@ -139,14 +223,23 @@ class _DelayVectorField(eqx.Module):
                         "that is not tangent at the delayed state."
                     )
                 if term.transport is not None:
-                    value = jnp.asarray(term.transport(delayed_state, state, value, args))
+                    value = jnp.asarray(
+                        term.transport(
+                            delayed_state,
+                            public_state,
+                            value,
+                            public_args,
+                        )
+                    )
             else:
                 lag = (
                     term.delay
                     if isinstance(term, ConstantDelay)
-                    else term.value(time, state, args)
+                    else term.value(time, public_state, public_args)
                 )
-                value = history.value(time - lag, left=False)
+                value = self.state_adapter.unpack_state(
+                    history.value(time - lag, left=False)
+                )
                 delayed_states = value[None, ...]
             if value.shape != self.state_shape:
                 raise ValueError(
@@ -172,7 +265,7 @@ class _DelayVectorField(eqx.Module):
                 predicates.append(
                     _invalid_geometry_tangent(
                         self.geometry,
-                        state,
+                        public_state,
                         value,
                         self.state_shape,
                     )
@@ -216,7 +309,7 @@ class _DelayVectorField(eqx.Module):
                 predicates.append(
                     _invalid_geometry_tangent(
                         self.geometry,
-                        state,
+                        public_state,
                         value,
                         self.state_shape,
                     )
@@ -242,9 +335,10 @@ class _DelayVectorField(eqx.Module):
 
     def __call__(self, time: ArrayLike, state: Array, args: Any) -> Array:
         query = jnp.asarray(time)
-        current = jnp.asarray(state)
-        if current.shape != self.state_shape:
-            raise ValueError("Delay solver state changed its declared shape.")
+        backend = jnp.asarray(state)
+        if backend.shape != self.backend_shape:
+            raise ValueError("Delay solver state changed its backend coordinate shape.")
+        current = self.state_adapter.unpack_state(backend)
         if self.geometry is not None:
             membership = jnp.asarray(self.geometry.contains(current), dtype=bool)
             if membership.shape != ():
@@ -256,13 +350,14 @@ class _DelayVectorField(eqx.Module):
                 ~membership,
                 "A geometric delay solver stage lies outside state_geometry.",
             )
-        memory, validation = self._memory(query, current, args)
+        memory, validation = self._memory(query, backend, args)
+        public_args = self.state_adapter.unpack_args(args)
         value = jnp.asarray(
             self.function(
                 query,
                 current,
                 memory,
-                args,
+                public_args,
             )
         )
         if value.shape != self.state_shape:
@@ -289,7 +384,7 @@ class _DelayVectorField(eqx.Module):
                 | jnp.any(jnp.abs(value - projected) > tolerance),
                 "Geometric delay drift must be tangent-compatible with state_geometry.",
             )
-        return value
+        return self.state_adapter.pack_state(value, owner="Delay drift")
 
 
 class _ZeroVectorField(eqx.Module):
@@ -438,39 +533,56 @@ class _NeutralRecovery(eqx.Module):
     root_finder: optx.AbstractRootFinder
     max_steps: int = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_adapter: _PreparedDiffraxStateAdapter
 
     def _retarded(self, time: Array, memory: DelayValues, args: Any, /) -> Array:
-        value = jnp.asarray(self.neutral_functional(time, memory, args))
+        public_args = self.state_adapter.unpack_args(args)
+        value = jnp.asarray(self.neutral_functional(time, memory, public_args))
         if value.shape != self.state_shape:
             raise ValueError("neutral_functional changed its declared state shape.")
         return value
 
     def transform(self, time: Array, state: Array, args: Any, /) -> Array:
+        public_state = self.state_adapter.unpack_state(state)
         memory, validation = self.context._memory(time, state, args)
         neutral = self._retarded(time, memory, args)
         if self.endpoint_neutral is not None:
-            endpoint = jnp.asarray(self.endpoint_neutral(time, state, memory, args))
+            endpoint = jnp.asarray(
+                self.endpoint_neutral(
+                    time,
+                    public_state,
+                    memory,
+                    self.state_adapter.unpack_args(args),
+                )
+            )
             if endpoint.shape != self.state_shape:
                 raise ValueError("endpoint_neutral changed its declared state shape.")
             neutral = neutral + endpoint
-        return validation.apply(state - neutral)
+        transformed = validation.apply(public_state - neutral)
+        return self.state_adapter.pack_state(
+            transformed, owner="Neutral transformed state"
+        )
 
     def recover(self, time: Array, transformed: Array, args: Any, /) -> Array:
+        public_transformed = self.state_adapter.unpack_state(transformed)
         memory, validation = self.context._memory(time, transformed, args)
         retarded = self._retarded(time, memory, args)
-        explicit = transformed + retarded
+        explicit = public_transformed + retarded
         if self.endpoint_neutral is None:
-            return validation.apply(explicit)
+            return self.state_adapter.pack_state(
+                validation.apply(explicit), owner="Recovered neutral state"
+            )
         endpoint_neutral = self.endpoint_neutral
 
         def residual(candidate, packed):
             query_time, delayed_memory, packed_args, target, retarded_value = packed
+            public_args = self.state_adapter.unpack_args(packed_args)
             endpoint = jnp.asarray(
                 endpoint_neutral(
                     query_time,
                     candidate,
                     delayed_memory,
-                    packed_args,
+                    public_args,
                 )
             )
             if endpoint.shape != self.state_shape:
@@ -480,7 +592,14 @@ class _NeutralRecovery(eqx.Module):
         initial = (
             explicit
             if self.initial_guess is None
-            else jnp.asarray(self.initial_guess(time, transformed, memory, args))
+            else jnp.asarray(
+                self.initial_guess(
+                    time,
+                    public_transformed,
+                    memory,
+                    self.state_adapter.unpack_args(args),
+                )
+            )
         )
         if initial.shape != self.state_shape:
             raise ValueError("recovery_initial_guess must preserve the state shape.")
@@ -488,11 +607,13 @@ class _NeutralRecovery(eqx.Module):
             residual,
             self.root_finder,
             initial,
-            args=(time, memory, args, transformed, retarded),
+            args=(time, memory, args, public_transformed, retarded),
             max_steps=self.max_steps,
             throw=True,
         ).value
-        return validation.apply(recovered)
+        return self.state_adapter.pack_state(
+            validation.apply(recovered), owner="Recovered neutral state"
+        )
 
 
 class _NeutralVectorField(eqx.Module):
@@ -501,15 +622,19 @@ class _NeutralVectorField(eqx.Module):
     differential: Any
     recovery: _NeutralRecovery
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_adapter: _PreparedDiffraxStateAdapter
 
     def __call__(self, time: ArrayLike, transformed: Array, args: Any) -> Array:
         query = jnp.asarray(time)
-        physical = self.recovery.recover(query, transformed, args)
-        memory, validation = self.recovery.context._memory(query, physical, args)
-        value = jnp.asarray(self.differential(query, physical, memory, args))
+        physical_backend = self.recovery.recover(query, transformed, args)
+        physical = self.state_adapter.unpack_state(physical_backend)
+        memory, validation = self.recovery.context._memory(query, physical_backend, args)
+        public_args = self.state_adapter.unpack_args(args)
+        value = jnp.asarray(self.differential(query, physical, memory, public_args))
         if value.shape != self.state_shape:
             raise ValueError("Neutral differential changed its declared state shape.")
-        return validation.apply(value)
+        value = validation.apply(value)
+        return self.state_adapter.pack_state(value, owner="Neutral differential")
 
 
 def _neutral_vector_field(
@@ -525,11 +650,13 @@ def _neutral_vector_field(
         root_finder=problem.recovery_solver,
         max_steps=problem.recovery_max_steps,
         state_shape=problem.state_shape,
+        state_adapter=context.state_adapter,
     )
     return _NeutralVectorField(
         differential=problem.differential,
         recovery=recovery,
         state_shape=problem.state_shape,
+        state_adapter=context.state_adapter,
     )
 
 
@@ -898,6 +1025,7 @@ def _native_delay_solution(
     maximum_lag: Array | None,
     max_steps: int | None,
     throw: bool,
+    state_adapter: _PreparedDiffraxStateAdapter,
 ):
     if isinstance(problem, NeutralDelayProblem):
         wrapped_solver = _NeutralRetardedSolver(
@@ -905,7 +1033,10 @@ def _native_delay_solution(
             history_capacity=history_capacity,
             history_mode=history_mode,
             maximum_lag=maximum_lag,
-            initial_transformed_state=problem.transformed_initial_state,
+            initial_transformed_state=state_adapter.pack_state(
+                problem.transformed_initial_state,
+                owner="Initial neutral transformed state",
+            ),
         )
     else:
         wrapped_solver = _RetardedSolver(
@@ -928,12 +1059,12 @@ def _native_delay_solution(
         t0=problem.t0,
         t1=problem.t1,
         dt0=dt0,
-        y0=problem.initial_state,
-        args=problem.args,
+        y0=state_adapter.pack_state(problem.initial_state, owner="Initial delay state"),
+        args=state_adapter.pack_args(problem.args),
         saveat=saveat,
         stepsize_controller=stepsize_controller,
         adjoint=adjoint,
-        event=event,
+        event=state_adapter.wrap_event(event),
         max_steps=max_steps,
         throw=bool(throw and history_mode == "full"),
     )
@@ -1012,6 +1143,8 @@ def solve_diffrax_delay(
     root_atol: float = 1e-12,
     max_root_iterations: int = 64,
     throw: bool = False,
+    complex_state_policy: DiffraxComplexStatePolicy | None = None,
+    state_coordinates: AbstractRealCoordinateMap | None = None,
 ) -> MemoryEquationSolution:
     """Solve a declared delay differential equation through Diffrax."""
     if not isinstance(problem, (DelayDifferentialProblem, NeutralDelayProblem)):
@@ -1019,6 +1152,12 @@ def solve_diffrax_delay(
             "solve_diffrax_delay requires a DelayDifferentialProblem or "
             "NeutralDelayProblem."
         )
+    state_adapter = _prepare_diffrax_state_adapter(
+        problem.initial_state,
+        complex_state_policy,
+        state_coordinates,
+        problem.state_geometry,
+    )
     if not isinstance(dense, bool):
         raise TypeError("dense must be a bool.")
     if history_mode not in ("full", "rolling"):
@@ -1081,6 +1220,7 @@ def solve_diffrax_delay(
             history_capacity=history_capacity,
             history_margin=history_margin,
             throw=throw,
+            state_adapter=state_adapter,
         )
     if realization is not None:
         raise ValueError(
@@ -1115,18 +1255,31 @@ def solve_diffrax_delay(
         if problem.neutral
         else jnp.zeros_like(problem.initial_state)
     )
-    empty_history = EmptyDelayHistory(
-        problem.initial_state,
+    packed_initial = state_adapter.pack_state(
+        problem.initial_state, owner="Initial delay state"
+    )
+    packed_derivative = state_adapter.pack_state(
         initial_computed_derivative,
+        owner="Initial delay derivative",
+    )
+    empty_history = EmptyDelayHistory(
+        packed_initial,
+        packed_derivative,
     )
     history_context = _DelayVectorField(
         function=problem.drift,
-        initial_history=problem.history,
-        initial_derivative=problem.history_derivative,
+        initial_history=_CoordinateDelayHistory(problem.history, state_adapter),
+        initial_derivative=(
+            None
+            if problem.history_derivative is None
+            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+        ),
         delay_terms=problem.delay_terms,
         initial_time=problem.t0,
         state_shape=problem.state_shape,
         geometry=problem.state_geometry,
+        state_adapter=state_adapter,
+        backend_shape=state_adapter.backend_shape,
         computed_history=empty_history,
     )
     if isinstance(problem, NeutralDelayProblem):
@@ -1339,6 +1492,7 @@ def solve_diffrax_delay(
         maximum_lag=retained_maximum_lag,
         max_steps=max_steps,
         throw=throw,
+        state_adapter=state_adapter,
     )
     if isinstance(native.controller_state, DynamicControllerState):
         dynamic_state = native.controller_state.discontinuities
@@ -1354,7 +1508,7 @@ def solve_diffrax_delay(
         tracked_discontinuity_times = discontinuities
         dynamic_root_times = jnp.empty((0,), dtype=problem.t0.dtype)
     native_times = jnp.asarray(native.ts["requested"])
-    native_states = jnp.asarray(native.ys["requested"])
+    native_states = state_adapter.unpack_values(native.ys["requested"], 1)
     final_time = jnp.asarray(native.ts["final"])[0]
     solver_state = native.solver_state
     rolling_history = None
@@ -1376,13 +1530,17 @@ def solve_diffrax_delay(
         if not isinstance(solver_state, _RetardedSolverState):
             raise RuntimeError("Diffrax did not return retarded solver state.")
         history = DelayHistoryView(
-            initial_history=problem.history,
-            initial_derivative=problem.history_derivative,
-            args=problem.args,
+            initial_history=_CoordinateDelayHistory(problem.history, state_adapter),
+            initial_derivative=(
+                None
+                if problem.history_derivative is None
+                else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+            ),
+            args=state_adapter.pack_args(problem.args),
             initial_time=problem.t0,
             computed_history=solver_state.history,
-            state_shape=problem.state_shape,
-            geometry=problem.state_geometry,
+            state_shape=state_adapter.backend_shape,
+            geometry=None,
         )
         interpolation = DelayDenseInterpolation(
             history=history,
@@ -1393,6 +1551,8 @@ def solve_diffrax_delay(
                 else None
             ),
         )
+        if state_adapter.active:
+            interpolation = _CoordinateDelayInterpolation(interpolation, state_adapter)
     solver_name = type(selected_solver).__name__
     solver_id, resolved_method = _delay_solver_provenance(
         selected_solver,
@@ -1502,6 +1662,11 @@ def solve_diffrax_delay(
         metadata={
             "problem_id": problem.problem_id,
             "backend": "diffrax",
+            "state_coordinate_evidence_id": (
+                None
+                if state_adapter.evidence is None
+                else state_adapter.evidence.evidence_id
+            ),
             "delay_mode": (
                 "transformed-neutral"
                 if isinstance(problem, NeutralDelayProblem)

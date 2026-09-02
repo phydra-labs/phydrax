@@ -80,3 +80,20 @@ separate contracts.
 ::: phydrax.nn.operator.layers.CliffordEquivarianceAuditReport
 
 ::: phydrax.nn.operator.layers.audit_clifford_equivariance
+
+## Coordinate metrics, groups, ideals, and boundary projectors
+
+`CliffordMetricField` fixes dimension and signature for an epoch.
+`PreparedCliffordMetricProduct` applies the Chevalley action directly on the
+existing exterior-blade convention, including nondiagonal coordinate metrics;
+it never diagonalizes into a moving eigenframe. `invert_multivector` solves both
+regular actions and accepts an inverse only when left and right residuals pass.
+`PinElement`, `SpinElement`, and `MinimalLeftIdeal` retain their non-null,
+parity/idempotent, and supported-dimension evidence.
+
+`CliffordCochainProductPlan` combines an explicit cellular diagonal with the
+prepared Clifford product and fixed signs/brackets.
+`PreparedCauchyCliffordProjector` requires declared boundary nodes, orientation
+normals, quadrature, and singular kernel. `ConformalCliffordModel` reports null
+residuals; `ProjectiveCliffordModel` explicitly rejects inversion involving its
+degenerate radical.

@@ -137,3 +137,61 @@ def test_surface_area_evaporation_is_conservative_and_replay_safe():
     )
     assert replay.successful
     assert jnp.abs(replay.final_state.liquid.balance_residual) < 1.0e-12
+
+
+def test_barrier_reservoir_allocation_is_permutation_independent_and_balanced():
+    barrier = phx.discretization.DEMBarrierCapillaryPlan(
+        "wall",
+        geometry_policy="planar",
+        particle_liquid_fraction=0.5,
+        initial_barrier_film_volume=1.0,
+    )
+    process = phx.discretization.ConservedLiquidBridgeProcessPlan(
+        jnp.asarray((0.5, 0.5)),
+        barrier_capillaries=(barrier,),
+    )
+    state = process.initialize(2, jnp.float64, jnp.asarray((True, True)))
+    particle = jnp.asarray((0, 1), dtype=jnp.int32)
+    barriers = jnp.asarray((0, 0), dtype=jnp.int32)
+    request = jnp.asarray((1.0, 1.0))
+    minimum = jnp.zeros((2,))
+    births = jnp.ones((2,), dtype=bool)
+    allocation = process.allocate_barriers(
+        state,
+        particle,
+        barriers,
+        request,
+        minimum,
+        births,
+        2,
+    )
+    permuted = process.allocate_barriers(
+        state,
+        particle[::-1],
+        barriers[::-1],
+        request[::-1],
+        minimum[::-1],
+        births[::-1],
+        2,
+    )
+
+    assert bool(allocation.successful)
+    assert bool(permuted.successful)
+    assert jnp.allclose(
+        jnp.sort(allocation.bridge_volume),
+        jnp.sort(permuted.bridge_volume),
+    )
+    evaluation = process.advance_barriers(
+        state,
+        allocation,
+        particle,
+        barriers,
+        allocation.bridge_volume,
+        jnp.zeros((2,)),
+        jnp.zeros((2,)),
+        minimum,
+        jnp.asarray(1.0),
+        2,
+    )
+    assert bool(evaluation.successful)
+    assert jnp.abs(evaluation.next_state.balance_residual) < 1.0e-12

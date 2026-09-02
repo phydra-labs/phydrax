@@ -245,3 +245,26 @@ reconstructed = subspace.reconstruct(selected)
             - from_leaf_paths
             - from_subtree_paths
             - last_layer
+
+## Prepared low-rank surgery and ordinal cutpoints
+
+`prepare_low_rank_adaptation` freezes exact sites, supported identity/symmetric/
+skew handlers, native real or complex dtype, and caller-declared semantic alias
+groups before any factors are initialized. Aliased sites share one canonical
+factor pair and accounting entry. Unsupported constraint-sensitive transforms
+fail before surgery; symmetric and skew updates remain factorized, while dense
+materialization is reserved for merge/export.
+
+`OrderedOrdinalCutpoints` maps unconstrained gaps through softplus plus a strict
+minimum gap, then applies either a mean or fixed-first location anchor.
+`OrdinalCumulativeLinkHead` combines those globally ordered cutpoints with a
+scalar location model. Learned mode emits `K - 1` ordered cumulative logits;
+fixed mode remains an explicit scalar-location likelihood.
+
+---
+
+::: phydrax.nn.parameters.prepare_low_rank_adaptation
+
+---
+
+::: phydrax.nn.parameters.OrderedOrdinalCutpoints

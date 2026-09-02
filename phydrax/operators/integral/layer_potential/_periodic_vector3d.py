@@ -15,7 +15,7 @@ from scipy import special
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....discretization import ParticleCell
+from ....discretization import PeriodicCell
 from ....discretization.bem._rwg import RWGSurfaceCurrentSpace3D
 from ....linalg import DenseLinearOperator
 from ._maxwell3d import _point_triangle_distance
@@ -103,7 +103,7 @@ class PeriodicMaxwellElectricFieldAction3D(StrictModule, NonTrainableState):
     """Dense off-surface periodic Maxwell dyadic action from RWG coefficients."""
 
     current_space: RWGSurfaceCurrentSpace3D
-    cell: ParticleCell
+    cell: PeriodicCell
     targets: Array
     operator: DenseLinearOperator
     wavenumber: Array
@@ -158,7 +158,7 @@ class _DyadicEwaldBlock:
 
 def _canonical_displacements(
     displacements: np.ndarray,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     bloch_wavevector: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -174,7 +174,7 @@ def _canonical_displacements(
 
 def _helmholtz_dyadic_ewald_block(
     displacements: np.ndarray,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     bloch_wavevector: np.ndarray,
     policy: PeriodicEwaldPolicy3D,
     wavenumber: float,
@@ -293,7 +293,7 @@ def _helmholtz_dyadic_ewald_block(
 
 
 def _surface_fractional_clearance(
-    current_space: RWGSurfaceCurrentSpace3D, cell: ParticleCell, /
+    current_space: RWGSurfaceCurrentSpace3D, cell: PeriodicCell, /
 ) -> float:
     vertices = np.asarray(current_space.surface.vertices, dtype=float)
     origin = np.asarray(cell.origin, dtype=float)
@@ -305,7 +305,7 @@ def _surface_fractional_clearance(
 def _periodic_target_clearance(
     targets: np.ndarray,
     current_space: RWGSurfaceCurrentSpace3D,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
 ) -> float:
     lattice = np.asarray(cell.vectors, dtype=float)
@@ -348,7 +348,7 @@ def _charge_neutrality_defect(
 def prepare_periodic_maxwell_electric_field_action_3d(
     current_space: RWGSurfaceCurrentSpace3D,
     targets: ArrayLike,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     wavenumber: float,

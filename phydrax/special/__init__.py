@@ -6,6 +6,16 @@
 
 from ._airy import airy, airye
 from ._carlson import elliprc, elliprd, elliprf, elliprg, elliprj
+from ._continuation import (
+    iv_order_derivative,
+    ive_order_derivative,
+    jv_order_derivative,
+    kv_order_derivative,
+    kve_order_derivative,
+    principal_log,
+    principal_sqrt,
+    yv_order_derivative,
+)
 from ._cylindrical_bessel import hankel1, hankel2, jv, yv
 from ._faddeeva import dawsn, voigt_profile, wofz
 from ._jacobi import ellipam, ellipj
@@ -14,6 +24,14 @@ from ._modified_bessel import iv, ive, kv, kve
 
 
 __all__ = [
+    "ive_order_derivative",
+    "iv_order_derivative",
+    "jv_order_derivative",
+    "kv_order_derivative",
+    "kve_order_derivative",
+    "principal_log",
+    "principal_sqrt",
+    "yv_order_derivative",
     "airy",
     "airye",
     "dawsn",

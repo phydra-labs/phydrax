@@ -23,9 +23,14 @@ from ._policy import (
     DensePrimalDualQP,
     MPAXr2HPDHG,
     MPAXraPDHG,
+    NativeHomogeneousConic,
     QPaxInteriorPoint,
 )
-from ._problem import ConicProgram, LinearProgram
+from ._problem import (
+    _conic_operator_arrays,
+    ConicProgram,
+    LinearProgram,
+)
 from ._quadratic import (
     _apply_failure_policy,
     _validate_quadratic_resources,
@@ -81,12 +86,16 @@ def _program_arrays(program: CanonicalProgram, /) -> tuple[Array, ...]:
         )
     arrays = (
         program.linear,
-        program.constraint_matrix,
+        *_conic_operator_arrays(program.constraint_matrix),
         program.constraint_rhs,
         program.lower_bounds,
         program.upper_bounds,
     )
-    return arrays if program.quadratic is None else (program.quadratic, *arrays)
+    return (
+        arrays
+        if program.quadratic is None
+        else (*_conic_operator_arrays(program.quadratic), *arrays)
+    )
 
 
 def _program_numeric_fingerprint(program: CanonicalProgram, /) -> str:
@@ -107,13 +116,13 @@ def _validate_program_resources(
     materialization = policy.materialization
     if input_entries > materialization.max_entries:
         raise ValueError(
-            f"Canonical program requires {input_entries} dense entries, exceeding "
-            f"the materialization limit {materialization.max_entries}."
+            f"Canonical program stores {input_entries} entries, exceeding "
+            f"the resource limit {materialization.max_entries}."
         )
     if input_bytes > materialization.max_bytes:
         raise ValueError(
-            f"Canonical program requires {input_bytes} dense bytes, exceeding "
-            f"the materialization limit {materialization.max_bytes}."
+            f"Canonical program stores {input_bytes} bytes, exceeding "
+            f"the resource limit {materialization.max_bytes}."
         )
     method = policy.method
     if isinstance(method, (DensePrimalDualQP, QPaxInteriorPoint)):
@@ -149,6 +158,37 @@ class ConvexProgramPlan(StrictModule):
             raise ValueError(
                 f"Method {policy.method.method_id!r} does not support general conic programs."
             )
+        if isinstance(program, ConicProgram):
+            sparse = program.constraint_is_sparse or program.quadratic_is_sparse
+            if sparse and not capabilities.sparse:
+                raise ValueError(
+                    f"Method {policy.method.method_id!r} does not support sparse "
+                    "canonical program data."
+                )
+            if not sparse and not capabilities.dense:
+                raise ValueError(
+                    f"Method {policy.method.method_id!r} does not support dense "
+                    "canonical program data."
+                )
+            if isinstance(policy.method, (MPAXraPDHG, MPAXr2HPDHG)):
+                blocks = (
+                    program.cone.cones
+                    if isinstance(program.cone, ProductCone)
+                    else (program.cone,)
+                )
+                if any(
+                    not isinstance(block, (ZeroCone, NonnegativeCone)) for block in blocks
+                ):
+                    raise ValueError(
+                        "MPAX supports only assembled zero/nonnegative cone rows."
+                    )
+                if (
+                    isinstance(policy.method, MPAXr2HPDHG)
+                    and program.quadratic is not None
+                ):
+                    raise ValueError(
+                        "MPAXr2HPDHG does not support quadratic conic programs."
+                    )
         _validate_program_resources(program, policy)
         signature = _program_signature(program)
         self.policy = policy
@@ -334,6 +374,10 @@ def prepare_convex_template(
         from ._mpax import prepare_mpax_policy
 
         symbolic_state = prepare_mpax_policy(plan.policy)
+    elif isinstance(plan.policy.method, NativeHomogeneousConic):
+        from ._barrier import cone_barrier_oracle
+
+        symbolic_state = cone_barrier_oracle(_conic_program(program).cone)
     elif isinstance(plan.policy.method, ClarabelInteriorPoint):
         from ._clarabel import prepare_clarabel_policy
 
@@ -529,6 +573,44 @@ def solve_prepared_convex_program(
             policy=policy,
             warm_start=lowered_warm,
         )
+    elif isinstance(method, NativeHomogeneousConic):
+        from ._native_conic import solve_native_conic_program
+
+        conic = _conic_program(program)
+        lowered_warm = warm_start
+        if (
+            warm_start is not None
+            and isinstance(program, (LinearProgram, QuadraticProgram))
+            and warm_start.structure_id == program.structure_id
+        ):
+            lowered_warm = ConvexWarmStart(
+                primal=warm_start.primal,
+                equality_dual=jnp.empty(
+                    program.batch_shape + (0,), dtype=program.linear.dtype
+                ),
+                inequality_dual=jnp.concatenate(
+                    (warm_start.equality_dual, warm_start.inequality_dual),
+                    axis=-1,
+                ),
+                inequality_slack=jnp.concatenate(
+                    (
+                        jnp.zeros_like(warm_start.equality_dual),
+                        warm_start.inequality_slack,
+                    ),
+                    axis=-1,
+                ),
+                lower_bound_dual=warm_start.lower_bound_dual,
+                upper_bound_dual=warm_start.upper_bound_dual,
+                structure_id=conic.structure_id,
+            )
+        result = solve_native_conic_program(
+            conic,
+            policy,
+            barrier=prepared.template.symbolic_state,
+            warm_start=lowered_warm,
+        )
+        if isinstance(program, (LinearProgram, QuadraticProgram)):
+            result = _restore_linear_constraint_fields(result, program)
     elif isinstance(method, QPaxInteriorPoint):
         if warm_start is not None:
             raise ValueError("QPaxInteriorPoint does not accept warm starts.")
@@ -549,16 +631,27 @@ def solve_prepared_convex_program(
         if isinstance(program, (LinearProgram, QuadraticProgram)):
             result = _restore_linear_constraint_fields(result, program)
     elif isinstance(method, (MPAXraPDHG, MPAXr2HPDHG)):
-        from ._mpax import solve_mpax_program
+        from ._mpax import solve_mpax_conic_program, solve_mpax_program
 
-        if not isinstance(program, (LinearProgram, QuadraticProgram)):
-            raise TypeError("MPAX methods require a LinearProgram or QuadraticProgram.")
-        result = solve_mpax_program(
-            program,
-            policy,
-            warm_start=warm_start,
-            prepared_backend=prepared.template.symbolic_state,
-        )
+        if isinstance(program, ConicProgram):
+            if warm_start is not None:
+                raise ValueError(
+                    "Sparse MPAX ConicProgram warm starts are not yet supported."
+                )
+            result = solve_mpax_conic_program(
+                program,
+                policy,
+                prepared_backend=prepared.template.symbolic_state,
+            )
+        elif isinstance(program, (LinearProgram, QuadraticProgram)):
+            result = solve_mpax_program(
+                program,
+                policy,
+                warm_start=warm_start,
+                prepared_backend=prepared.template.symbolic_state,
+            )
+        else:
+            raise TypeError("MPAX received an unsupported canonical program.")
     else:
         raise TypeError(f"Unsupported convex-program method {type(method).__name__!r}.")
     result = _apply_failure_policy(result, policy)

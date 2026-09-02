@@ -20,6 +20,7 @@ from ..linalg.eigen import (
 )
 from ._problem import (
     ExactMoments,
+    IntervalMoments,
     MomentCalibrationPolicy,
     MomentCalibrationProblem,
     QuadraticMoments,
@@ -61,6 +62,10 @@ def prepare_moment_geometry(
         raise TypeError("problem must be a MomentCalibrationProblem.")
     if not isinstance(policy, MomentCalibrationPolicy):
         raise TypeError("policy must be a MomentCalibrationPolicy.")
+    if isinstance(problem.target, IntervalMoments):
+        raise ValueError(
+            "IntervalMoments requires the canonical-conic calibration execution route."
+        )
     if problem.moment_count > policy.maximum_moments:
         raise ValueError(
             f"Moment count {problem.moment_count} exceeds the configured maximum "
@@ -130,7 +135,15 @@ def prepare_moment_geometry(
         preconditioner_finite = covariance_spectrum.diagnostics.finite
     else:
         assert isinstance(problem.target, QuadraticMoments)
-        base_hessian = covariance + jnp.diag(problem.target.scale**2)
+        if not problem.target.covariance.capabilities.materialize:
+            raise ValueError(
+                "Dual calibration preconditioning requires materializable covariance."
+            )
+        target_covariance = problem.target.covariance._materialize()
+        target_covariance = 0.5 * (
+            target_covariance + jnp.swapaxes(target_covariance, -1, -2)
+        )
+        base_hessian = covariance + target_covariance
         base_diagonal = jnp.maximum(jnp.diag(base_hessian), 0.0)
         base_scales = jnp.where(
             base_diagonal > variance_floor,
@@ -156,16 +169,16 @@ def prepare_moment_geometry(
     )
     materially_negative = jnp.min(covariance_eigenvalues) < -rank_cutoff
     target_finite = jnp.all(jnp.isfinite(problem.target.values))
-    scale_valid = (
+    covariance_valid = (
         jnp.asarray(True)
         if isinstance(problem.target, ExactMoments)
-        else jnp.all(jnp.isfinite(problem.target.scale) & (problem.target.scale > 0.0))
+        else jnp.all(jnp.isfinite(problem.target.covariance._materialize()))
     )
     finite = (
         prior_valid
         & feature_finite
         & target_finite
-        & scale_valid
+        & covariance_valid
         & jnp.all(jnp.isfinite(prior_moments))
         & jnp.all(jnp.isfinite(covariance))
         & covariance_success

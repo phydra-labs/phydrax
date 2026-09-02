@@ -15,6 +15,14 @@
 ---
 
 ::: phydrax.discretization.MappedFiniteVolumeDiscretization
+---
+
+::: phydrax.discretization.MappedPeriodicSeamPlan
+
+---
+
+::: phydrax.discretization.MappedPeriodicSeam
+
 
 ---
 
@@ -35,6 +43,14 @@
 ---
 
 ::: phydrax.discretization.integrated_finite_volume_relative_entropy
+---
+
+::: phydrax.discretization.FiniteVolumeEntropyProductionDiagnostics
+
+---
+
+::: phydrax.discretization.evaluate_content_form_entropy_diagnostics
+
 
 ## Reconstruction and limiting
 
@@ -103,6 +119,10 @@
 ---
 
 ::: phydrax.discretization.EntropyStableEulerFluxPlan
+---
+
+::: phydrax.discretization.EntropyStableFluxPlan
+
 
 ---
 
@@ -119,6 +139,42 @@
 ---
 
 ::: phydrax.discretization.PreparedShallowWaterBathymetry
+---
+
+::: phydrax.discretization.ShallowWaterBathymetryPlan
+
+---
+
+::: phydrax.discretization.ShallowWaterEquilibriumWENOZPlan
+
+---
+
+::: phydrax.discretization.GeostrophicBalancePlan
+
+---
+
+::: phydrax.discretization.ShallowWaterShorelineEvent
+---
+
+::: phydrax.discretization.PreparedBalancedShallowWaterLowering
+
+---
+
+::: phydrax.discretization.lower_triangle_unstructured_shallow_water
+
+---
+
+::: phydrax.discretization.lower_sbp_shallow_water
+
+---
+
+::: phydrax.discretization.lower_global_spectral_shallow_water
+
+---
+
+::: phydrax.discretization.lower_dgsem_shallow_water
+
+
 
 ---
 
@@ -155,6 +211,13 @@
 ---
 
 ::: phydrax.discretization.PrescribedNormalFluxBoundary
+---
+
+::: phydrax.discretization.ShallowWaterNormalDischargeBoundary
+
+---
+
+::: phydrax.discretization.ShallowWaterCharacteristicOpenBoundary
 
 ---
 

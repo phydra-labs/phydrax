@@ -11,13 +11,16 @@ from ._aa import (
 )
 from ._amr import (
     LatticeBoltzmannAMRAdvanceResult,
+    LatticeBoltzmannAMRDiagnostics,
     LatticeBoltzmannAMRInterfaceEvidence,
     LatticeBoltzmannAMRPlan,
+    LatticeBoltzmannAMRScalingKind,
+    LatticeBoltzmannAMRScalingPolicy,
     LatticeBoltzmannAMRState,
-    LatticeBoltzmannAMRTemporalInterfacePlan,
+    LatticeBoltzmannAMRTemporalTracePlan,
     LatticeBoltzmannAMRTransferEvidence,
     LatticeBoltzmannAMRTransferPlan,
-    LatticeBoltzmannCollisionAwareAMRAdvanceResult,
+    PreparedLatticeBoltzmannAMR,
     PreparedLatticeBoltzmannAMRTransfer,
 )
 from ._boundary import (

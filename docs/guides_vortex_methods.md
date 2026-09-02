@@ -165,11 +165,24 @@ wrapper. Random vortices advance complete ensembles with boundary and variance
 policies. Learned vorticity uses native optimization, incompressible
 reconstruction, assimilation, and constrained closure evidence.
 
-Fixed-program gradients, event pullbacks, and transversal saltation maps are
-available. Event selection, arbitrary reconnection choices, and capacity-policy
-branching are not represented as ordinary smooth derivatives. A universal
-turbulence closure, exact under-resolved loads, and a purely solenoidal
-compressible-flow model remain intentionally unclaimed.
+Vortex events use the solver-owned `HybridReplayPolicy`, `HybridEventTape`,
+schedule replay, and matrix-free `hybrid_event_jvp`/`hybrid_event_vjp`.
+Selection, grazing/tied order, slot choice, connectivity, and capacity changes
+remain nondifferentiable.
+
+`EquilibriumWallVortexClosurePlan` implements the named attached Reichardt
+equilibrium law, returning root/envelope/dissipation evidence and conservative
+2-D or 3-D wall-strength injection. It is not a universal separated/shocked
+wall closure. `VortexLoadRecoveryPlan` combines nested pressure and Kelvin
+impulse loads with Richardson/GCI uncertainty; failed asymptotics remain
+diagnostic and never become an exact coarse-sheet load.
+
+`CompressibleVortexAugmentationPlan` couples complementary fixed-grid Helmholtz
+projections: finite-volume state retains density, internal energy, and the
+dilatational/acoustic component while vortex carriers replace only the
+solenoidal component. Momentum, energy, divergence, vorticity, transfer, and
+Mach evidence gate acceptance. It does not turn vortices into a shock or
+general acoustics solver.
 
 ## Primary method references
 

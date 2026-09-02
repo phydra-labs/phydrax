@@ -104,8 +104,8 @@ def test_basis_is_orthonormal_for_nonstandard_uniform_and_normal_laws():
     basis = _basis(3)
     legendre = phx.integration.GaussLegendreRule(8).data()
     hermite = phx.integration.GaussHermiteRule(8).data()
-    uniform = basis.factors[0].from_reference(legendre.nodes)
-    normal = basis.factors[1].from_reference(hermite.nodes)
+    uniform = basis.factors[0].reference_transport.from_reference(legendre.nodes)
+    normal = basis.factors[1].reference_transport.from_reference(hermite.nodes)
     first, second = jnp.meshgrid(uniform, normal, indexing="ij")
     weights = (0.5 * legendre.weights[:, None] * hermite.weights[None, :]).reshape((-1,))
     vandermonde = basis.evaluate(

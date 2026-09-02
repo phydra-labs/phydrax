@@ -15,8 +15,8 @@ from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..stochastic import StochasticTrajectory, WienerRealization
-from ..stochastic._trajectory import _TrajectoryRecord
+from ..stochastic._trajectory import _TrajectoryRecord, StochasticTrajectory
+from ..stochastic._wiener import WienerRealization
 from ._solution_validation import validate_solution_arrays
 
 

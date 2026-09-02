@@ -56,13 +56,10 @@ def _rules(
         raise ValueError("axis_rules must contain one rule per uncertain input.")
     resolved: list[Literal["clenshaw-curtis", "gauss-hermite"]] = []
     for factor, rule in zip(factors, values, strict=True):
-        if not factor.supports_reference_transform:
-            raise ValueError(
-                f"Probability factor {factor.label!r} has no canonical reference transform."
-            )
+        transport = factor.reference_transport
         selected = (
             "gauss-hermite"
-            if rule == "auto" and factor.reference_measure == "standard-normal"
+            if rule == "auto" and transport.reference_measure == "standard-normal"
             else "clenshaw-curtis"
             if rule == "auto"
             else rule
@@ -73,7 +70,7 @@ def _rules(
                 "'gauss-hermite'."
             )
         expected = "standard-normal" if selected == "gauss-hermite" else "uniform"
-        if factor.reference_measure != expected:
+        if transport.reference_measure != expected:
             raise ValueError(
                 f"Rule {selected!r} for {factor.label!r} requires reference measure "
                 f"{expected!r}."
@@ -266,7 +263,9 @@ def _physical_coordinates(
 ) -> Array:
     return jnp.stack(
         tuple(
-            factor.from_reference(jnp.asarray(reference[axis], dtype=float)).reshape(())
+            factor.reference_transport.from_reference(
+                jnp.asarray(reference[axis], dtype=float)
+            ).reshape(())
             for axis, factor in enumerate(plan.factors)
         )
     )
@@ -287,7 +286,7 @@ def _quadrature(
     scale = 1.0
     for factor, rule in zip(plan.factors, plan.axis_rules, strict=True):
         if rule == "clenshaw-curtis":
-            if factor.reference_measure != "uniform":
+            if factor.reference_transport.reference_measure != "uniform":
                 raise ValueError(
                     "Clenshaw--Curtis collocation requires uniform reference axes."
                 )

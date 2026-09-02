@@ -15,6 +15,19 @@
       show_root_heading: false
       members_order: source
 
+## Curved cell location
+
+::: phydrax.discretization.SimplicialLocationPolicy
+
+---
+
+::: phydrax.discretization.PreparedSimplicialCellLocator
+
+---
+
+::: phydrax.discretization.CellLocationResult
+
+
 ## Compatible electrostatic and PIC runtimes
 
 ::: phydrax.solver.CochainElectrostaticPlan

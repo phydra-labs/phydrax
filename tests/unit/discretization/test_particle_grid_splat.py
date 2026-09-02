@@ -8,6 +8,7 @@ import sys
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -257,6 +258,86 @@ def test_splatting_public_api_is_provider_neutral():
     }
 
     assert expected <= public.keys()
+    assert "ConservativeParticleGridTransferPlan" not in public
+    assert "ParticleGridRelation" not in public
+    assert "PreparedParticleGridTransfer" not in public
     assert "deposit_routes" not in public
     assert "splax" not in sys.modules
     assert "warp" not in sys.modules
+
+
+def test_mesh_splat_barycentric_and_compact_routes_are_conservative():
+    triangle = phx.discretization.CellMesh(
+        jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        (
+            phx.discretization.CellBlock(
+                "triangles",
+                "triangle",
+                jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
+            ),
+        ),
+    )
+    vertex_measure = phx.discretization.DiscreteMeasure(
+        "vertex_measure",
+        triangle.support.support_id,
+        triangle.topology.entities(0).entity_set_id,
+        jnp.ones((3,)),
+    )
+    vertex_target = phx.discretization.MeshSplatTarget(
+        triangle, entity_dimension=0, measure=vertex_measure
+    )
+    assert vertex_target.entity_count == triangle.topology.entities(0).count
+    np.testing.assert_array_equal(
+        vertex_target.stable_entity_ids,
+        triangle.topology.entities(0).entity_ids,
+    )
+    prepared = phx.discretization.SimplicialBarycentricSplatAssignment().prepare(
+        vertex_target,
+        jnp.asarray(((0.25, 0.25),)),
+        jnp.asarray((True,)),
+        jnp.asarray((7,), dtype=jnp.int64),
+    )
+    routes = prepared.routes(
+        jnp.asarray(((0.25, 0.25),)),
+        jnp.asarray((True,)),
+    )
+    deposited = prepared.deposit(
+        jnp.asarray(((0.25, 0.25),)),
+        jnp.asarray((True,)),
+        jnp.asarray((2.0,)),
+    )
+    gathered = prepared.gather(
+        jnp.asarray(((0.25, 0.25),)),
+        jnp.asarray((True,)),
+        triangle.coordinates[:, 0],
+    )
+
+    assert routes.valid.shape == routes.weights.shape == (1, 3)
+    assert bool(deposited.successful)
+    np.testing.assert_allclose(jnp.sum(deposited.content), 2.0)
+    np.testing.assert_allclose(gathered.values, (0.25,))
+
+    cell_measure = phx.discretization.DiscreteMeasure(
+        "cell_measure",
+        triangle.support.support_id,
+        triangle.topology.entities(2).entity_set_id,
+        jnp.ones((1,)),
+    )
+    cell_target = phx.discretization.MeshSplatTarget(
+        triangle, entity_dimension=2, measure=cell_measure
+    )
+    compact = phx.discretization.MeshCompactKernelSplatAssignment(
+        2.0, 1, partition_policy="normalize"
+    ).prepare(
+        cell_target,
+        jnp.asarray(((0.25, 0.25),)),
+        jnp.asarray((True,)),
+        jnp.asarray((7,), dtype=jnp.int64),
+    )
+    compact_deposit = compact.deposit(
+        jnp.asarray(((0.25, 0.25),)),
+        jnp.asarray((True,)),
+        jnp.asarray((3.0,)),
+    )
+    assert bool(compact_deposit.successful)
+    np.testing.assert_allclose(compact_deposit.content, (3.0,))

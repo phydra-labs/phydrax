@@ -67,6 +67,7 @@ from ._cubature import (
     CubatureAtlas,
     CubatureAtlasProvider,
     CubatureComponent,
+    CubatureMapEvaluation,
 )
 from ._immersed_markers import (
     ImmersedMarkerMaterialization,
@@ -161,6 +162,13 @@ from .brep import (
     surface_normal,
     SurfacePatch,
     TorusPatch,
+)
+from .design import (
+    CSGContinuationPolicy,
+    CSGContinuationResult,
+    prepare_csg_continuation,
+    PreparedCSGContinuation,
+    solve_csg_continuation,
 )
 from .design._constraints import (
     BoundaryMeasureTarget,
@@ -305,6 +313,7 @@ __all__ = [
     "AtlasSamplingPlan",
     "BoundaryAtlasProvider",
     "CubatureAtlas",
+    "CubatureMapEvaluation",
     "CubatureAtlasProvider",
     "CubatureComponent",
     "BoundaryMap",
@@ -451,6 +460,11 @@ __all__ = [
     "ZeroSetAccuracy",
     "bounded_rejection_sample",
     "sample_boundary_atlas",
+    "CSGContinuationPolicy",
+    "CSGContinuationResult",
+    "PreparedCSGContinuation",
+    "prepare_csg_continuation",
+    "solve_csg_continuation",
 ]
 
 __all__ += [name for name in _surface_all if name not in __all__]

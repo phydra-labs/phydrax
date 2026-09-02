@@ -101,6 +101,7 @@ class SelectiveSequenceModel(StrictModule):
                     batch.valid,
                     reset=batch.reset,
                     time=batch.time,
+                    time_direction=batch.time_direction,
                 ),
                 initial_state=state0,
                 execution=self.execution,

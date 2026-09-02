@@ -421,35 +421,51 @@ _elliprj_array.defjvp(_elliprj_jvp, symbolic_zeros=True)
 
 
 def elliprf(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> Array:
-    """Evaluate Carlson's symmetric integral ``R_F(x, y, z)``."""
+    """Evaluate principal Carlson ``R_F(x, y, z)``."""
+    if jnp.issubdtype(jnp.result_type(x, y, z), jnp.complexfloating):
+        from ._continuation import complex_elliprf
+
+        return complex_elliprf(x, y, z)
     x, y, z = promote_real("elliprf", x, y, z)
-    x, y, z = jnp.broadcast_arrays(x, y, z)
-    return _elliprf_array(x, y, z)
+    return _elliprf_array(*jnp.broadcast_arrays(x, y, z))
 
 
 def elliprc(x: ArrayLike, y: ArrayLike) -> Array:
-    """Evaluate Carlson's degenerate symmetric integral ``R_C(x, y)``."""
+    """Evaluate principal Carlson ``R_C(x, y)``."""
+    if jnp.issubdtype(jnp.result_type(x, y), jnp.complexfloating):
+        from ._continuation import complex_elliprc
+
+        return complex_elliprc(x, y)
     x, y = promote_real("elliprc", x, y)
-    x, y = jnp.broadcast_arrays(x, y)
-    return _elliprc_array(x, y)
+    return _elliprc_array(*jnp.broadcast_arrays(x, y))
 
 
 def elliprd(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> Array:
-    """Evaluate Carlson's symmetric integral ``R_D(x, y, z)``."""
+    """Evaluate principal Carlson ``R_D(x, y, z)``."""
+    if jnp.issubdtype(jnp.result_type(x, y, z), jnp.complexfloating):
+        from ._continuation import complex_elliprd
+
+        return complex_elliprd(x, y, z)
     x, y, z = promote_real("elliprd", x, y, z)
-    x, y, z = jnp.broadcast_arrays(x, y, z)
-    return _elliprd_array(x, y, z)
+    return _elliprd_array(*jnp.broadcast_arrays(x, y, z))
 
 
 def elliprj(x: ArrayLike, y: ArrayLike, z: ArrayLike, p: ArrayLike) -> Array:
-    """Evaluate Carlson's symmetric integral ``R_J(x, y, z, p)``."""
+    """Evaluate principal Carlson ``R_J(x, y, z, p)``."""
+    if jnp.issubdtype(jnp.result_type(x, y, z, p), jnp.complexfloating):
+        from ._continuation import complex_elliprj
+
+        return complex_elliprj(x, y, z, p)
     x, y, z, p = promote_real("elliprj", x, y, z, p)
-    x, y, z, p = jnp.broadcast_arrays(x, y, z, p)
-    return _elliprj_array(x, y, z, p)
+    return _elliprj_array(*jnp.broadcast_arrays(x, y, z, p))
 
 
 def elliprg(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> Array:
     """Evaluate Carlson's completely symmetric integral ``R_G(x, y, z)``."""
+    if jnp.issubdtype(jnp.result_type(x, y, z), jnp.complexfloating):
+        from ._continuation import complex_elliprg
+
+        return complex_elliprg(x, y, z)
     x, y, z = promote_real("elliprg", x, y, z)
     x, y, z = jnp.broadcast_arrays(x, y, z)
     invalid = (x < 0.0) | (y < 0.0) | (z < 0.0)

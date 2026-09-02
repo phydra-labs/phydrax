@@ -4,7 +4,11 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.nn.layers import LinearRecurrentUnit, RecurrentBatch
+from phydrax.nn.layers import (
+    LinearRecurrentUnit,
+    RecurrentBatch,
+    WeightSpaceRecurrence,
+)
 from phydrax.nn.models import LinearRecurrentModel, SelectiveSequenceModel
 
 
@@ -179,6 +183,47 @@ def test_selective_sequence_resets_isolate_segments_and_has_no_future_leakage():
         RecurrentBatch(changed, jnp.ones((8,), dtype=bool), reset=reset, time=times)
     )
     assert jnp.array_equal(changed_output[:5], packed[:5])
+
+
+def test_recurrent_consumers_preserve_backward_time_direction_in_internal_batches():
+    values = jr.normal(jr.key(20), (4, 3), dtype=jnp.float64)
+    valid = jnp.ones((4,), dtype=bool)
+    decreasing_times = jnp.asarray((6.0, 3.0, 1.0, 0.0))
+    backward = RecurrentBatch(
+        values,
+        valid,
+        time=decreasing_times,
+        time_direction="backward",
+    )
+    directed_reference = RecurrentBatch(values, valid, time=-decreasing_times)
+
+    unit = LinearRecurrentUnit(3, 4, dtype=jnp.float64, key=jr.key(21))
+    assert jnp.array_equal(
+        unit.evaluate_with_state(backward).outputs,
+        unit.evaluate_with_state(directed_reference).outputs,
+    )
+
+    selective = SelectiveSequenceModel(
+        3,
+        3,
+        inner_size=4,
+        depth=2,
+        dtype=jnp.float64,
+        key=jr.key(22),
+    )
+    assert jnp.array_equal(selective(backward), selective(directed_reference))
+
+    weight_space = WeightSpaceRecurrence(
+        3,
+        5,
+        dtype=jnp.float64,
+        key=jr.key(23),
+    )
+    center = jnp.zeros((5,), dtype=jnp.float64)
+    assert jnp.array_equal(
+        weight_space.evaluate_with_state(backward, center).outputs,
+        weight_space.evaluate_with_state(directed_reference, center).outputs,
+    )
 
 
 def test_advanced_sequence_models_are_jittable_with_finite_input_gradients():

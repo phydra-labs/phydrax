@@ -528,10 +528,10 @@ class AbstractTransitionKernel(StrictModule):
 class CallableTransitionKernel(AbstractTransitionKernel):
     sample_fn: Callable[
         [Array, Array, Array, Array, StateSpaceStepContext], Array | TransitionSample
-    ]
+    ] = eqx.field(static=True)
     log_prob_fn: (
         Callable[[Array, Array, Array, Array, StateSpaceStepContext], Array] | None
-    )
+    ) = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)

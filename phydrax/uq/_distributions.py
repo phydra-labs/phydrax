@@ -119,17 +119,27 @@ class Uniform(AbstractDistribution):
         value_array = jnp.asarray(value)
         return (value_array >= self.low) & (value_array <= self.high)
 
-    @property
-    def reference_measure(self) -> Literal["uniform"]:
-        return "uniform"
-
-    def to_reference(self, value: ArrayLike, /) -> Array:
+    def cdf(self, value: ArrayLike, /) -> Array:
         value_array = jnp.asarray(value, dtype=float)
-        return 2.0 * (value_array - self.low) / (self.high - self.low) - 1.0
+        return jnp.clip((value_array - self.low) / (self.high - self.low), 0.0, 1.0)
 
-    def from_reference(self, value: ArrayLike, /) -> Array:
-        reference = jnp.asarray(value, dtype=float)
-        return self.low + 0.5 * (reference + 1.0) * (self.high - self.low)
+    def reference_transport(self):
+        from ..domain import ReferenceTransport, ReferenceTransportEvidence
+
+        return ReferenceTransport(
+            reference_measure="uniform",
+            forward=lambda reference: (
+                self.low + 0.5 * (jnp.asarray(reference) + 1.0) * (self.high - self.low)
+            ),
+            inverse=lambda value: (
+                2.0 * (jnp.asarray(value) - self.low) / (self.high - self.low) - 1.0
+            ),
+            evidence=ReferenceTransportEvidence(
+                provider="phydrax.uq.Uniform",
+                reference_measure="uniform",
+                event_shape=(),
+            ),
+        )
 
 
 class Normal(AbstractDistribution):
@@ -137,11 +147,13 @@ class Normal(AbstractDistribution):
     scale: Array
 
     def __init__(self, location: ArrayLike, scale: ArrayLike):
-        location_array = jnp.asarray(location, dtype=float).reshape(())
-        scale_array = jnp.asarray(scale, dtype=float).reshape(())
-        if not bool(jnp.isfinite(location_array)):
+        location_array, scale_array = jnp.broadcast_arrays(
+            jnp.asarray(location, dtype=float),
+            jnp.asarray(scale, dtype=float),
+        )
+        if not bool(jnp.all(jnp.isfinite(location_array))):
             raise ValueError("Normal location must be finite.")
-        if not bool(jnp.isfinite(scale_array)) or not bool(scale_array > 0.0):
+        if not bool(jnp.all(jnp.isfinite(scale_array)) & jnp.all(scale_array > 0.0)):
             raise ValueError("Normal scale must be finite and positive.")
         self.location = location_array
         self.scale = scale_array
@@ -150,9 +162,14 @@ class Normal(AbstractDistribution):
     def density_measure_kind(self) -> Literal["lebesgue"]:
         return "lebesgue"
 
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return tuple(int(size) for size in self.location.shape)
+
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+        shape = tuple(sample_shape) + self.batch_shape
         return self.location + self.scale * jr.normal(
-            key, shape=tuple(sample_shape), dtype=self.location.dtype
+            key, shape=shape, dtype=self.location.dtype
         )
 
     def icdf(self, value: ArrayLike, /) -> Array:
@@ -180,15 +197,27 @@ class Normal(AbstractDistribution):
     def contains(self, value: ArrayLike, /) -> Array:
         return jnp.isfinite(jnp.asarray(value))
 
-    @property
-    def reference_measure(self) -> Literal["standard-normal"]:
-        return "standard-normal"
+    def cdf(self, value: ArrayLike, /) -> Array:
+        standardized = (jnp.asarray(value, dtype=float) - self.location) / self.scale
+        return jsp.special.ndtr(standardized)
 
-    def to_reference(self, value: ArrayLike, /) -> Array:
-        return (jnp.asarray(value, dtype=float) - self.location) / self.scale
+    def reference_transport(self):
+        from ..domain import ReferenceTransport, ReferenceTransportEvidence
 
-    def from_reference(self, value: ArrayLike, /) -> Array:
-        return self.location + self.scale * jnp.asarray(value, dtype=float)
+        return ReferenceTransport(
+            reference_measure="standard-normal",
+            forward=lambda reference: (
+                self.location + self.scale * jnp.asarray(reference, dtype=float)
+            ),
+            inverse=lambda value: (
+                (jnp.asarray(value, dtype=float) - self.location) / self.scale
+            ),
+            evidence=ReferenceTransportEvidence(
+                provider="phydrax.uq.Normal",
+                reference_measure="standard-normal",
+                event_shape=(),
+            ),
+        )
 
 
 class LogNormal(AbstractDistribution):
@@ -254,17 +283,28 @@ class LogNormal(AbstractDistribution):
         value_array = jnp.asarray(value)
         return jnp.isfinite(value_array) & (value_array > 0.0)
 
-    @property
-    def reference_measure(self) -> Literal["standard-normal"]:
-        return "standard-normal"
-
-    def to_reference(self, value: ArrayLike, /) -> Array:
+    def cdf(self, value: ArrayLike, /) -> Array:
         value_array = jnp.asarray(value, dtype=float)
-        return (jnp.log(value_array) - self.location) / self.scale
+        standardized = (jnp.log(value_array) - self.location) / self.scale
+        return jnp.where(value_array > 0.0, jsp.special.ndtr(standardized), 0.0)
 
-    def from_reference(self, value: ArrayLike, /) -> Array:
-        reference = jnp.asarray(value, dtype=float)
-        return jnp.exp(self.location + self.scale * reference)
+    def reference_transport(self):
+        from ..domain import ReferenceTransport, ReferenceTransportEvidence
+
+        return ReferenceTransport(
+            reference_measure="standard-normal",
+            forward=lambda reference: jnp.exp(
+                self.location + self.scale * jnp.asarray(reference, dtype=float)
+            ),
+            inverse=lambda value: (
+                (jnp.log(jnp.asarray(value, dtype=float)) - self.location) / self.scale
+            ),
+            evidence=ReferenceTransportEvidence(
+                provider="phydrax.uq.LogNormal",
+                reference_measure="standard-normal",
+                event_shape=(),
+            ),
+        )
 
 
 class EmpiricalDistribution(AbstractDistribution):

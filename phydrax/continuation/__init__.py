@@ -151,6 +151,13 @@ from ._normal_forms import (
     transcritical_normal_form,
     TranscriticalNormalFormResult,
 )
+from ._stability_pencil import (
+    ContinuationStabilityPencil,
+    GeneralizedPencilStabilityAnalyzer,
+    hopf_point_evidence,
+    HopfContinuationAdapter,
+    HopfPointEvidence,
+)
 from ._state_machine import (
     AbstractContinuationAdapter,
     audit_continuation_adapter,
@@ -308,4 +315,9 @@ __all__ = [
     "certify_transcritical",
     "correct_branch_seed",
     "transcritical_normal_form",
+    "ContinuationStabilityPencil",
+    "GeneralizedPencilStabilityAnalyzer",
+    "HopfContinuationAdapter",
+    "HopfPointEvidence",
+    "hopf_point_evidence",
 ]

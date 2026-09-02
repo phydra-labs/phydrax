@@ -89,18 +89,41 @@ impulse and moving-wall work.
 `MACVariationalViscosityPlan` differentiates the symmetric strain dissipation form to obtain a
 coupled, self-adjoint positive viscous action and solves it with native block linalg.
 
-`MultiphaseFLIPPlan` is intentionally two-phase and one-velocity: it deposits per-phase volume,
-mass, and momentum, reconstructs mixture density/viscosity and face inverse density, and composes
-`MACVariableDensityProjectionPlan` through `MACMultiphaseProjectionPlan`.
+`MultiphaseFLIPPlan` accepts a finite declared phase count. P2G remains independent
+per phase; results expose per-phase face mass, momentum, and velocity. Symmetric
+zero-diagonal drag produces equal/opposite impulses, reports pair work, conserves
+global momentum, and fails closed on invalid phase IDs or pair matrices.
+
+## Nonperiodic PIC, curved location, and ALE epochs
+
+Reduced PIC no longer modulo-wraps nonperiodic axes. Its current result separates
+volume continuity, boundary flux, and global charge defect, and rejects a trajectory
+whose bounded path capacity is exhausted. Reduced Maxwell uses the existing
+PEC/PMC/impedance boundary plans on nonperiodic prepared tensor axes. A supplied
+`MaxwellCPMLPlan` is prepared into fixed boundary-packed directional terms; its
+memory is part of the reduced Maxwell state, advances only on an accepted step, and
+therefore follows ordinary checkpoint rollback. `reset_pml` clears only that memory
+while preserving electric, magnetic, and charge fields.
+
+`PreparedSimplicialCellLocator` consumes a canonical
+`PreparedFiniteElementCellMap` plus runtime geometry coordinates. Bounded
+multi-seed damped Newton reports reference coordinates, geometry residual,
+iterations, Jacobian condition, candidate exhaustion, and inverse-map exhaustion.
+Cell ownership and ties are discrete stopped decisions. Quadratic triangle and
+tetrahedron coordinate maps use the same path as affine maps.
+
+`ALEFLIPPlan` consumes the canonical mesh splat and FE cell-map epochs. Fixed
+topology steps report physical and relative particle velocities, conservative
+mass/momentum deposition, and a geometric-conservation defect. Remeshing occurs
+only at an accepted boundary through `prepare_particle_grid_splat_transition`;
+missing conservative target transfer, particle coverage, or transferred
+pressure/history for changed topology retains the old epoch. A prepared ALE object
+records the accepted epoch number, so execution with a stale prepared epoch also
+rolls back atomically.
 
 ## Differentiability and limits
 
-Smooth derivatives are local to a fixed discrete program. Allocation/deactivation, charge changes,
-random pairing, ionization events, boundary hits, window shifts, simplex ownership, current path
-subdivision, reseeding, liquid masks, interface topology, solid collision, and solver acceptance are
-stopped branch decisions. Each result reports its status rather than applying straight-through
-estimators.
-
-The current advanced methods retain explicit initial limits: periodic reduced Maxwell, affine
-simplex location, bounded path subdivision, two-phase one-velocity FLIP, fixed interface bands,
-and no in-JIT capacity growth or dynamic mesh topology.
+Smooth derivatives are local to fixed ownership, phase IDs, trajectory segments,
+active support, and topology. Allocation, boundary hits, remesh selection,
+connectivity changes, and solver acceptance are stopped events. Phase, particle,
+candidate, Newton, splat, and remap capacities remain static inside a trace.

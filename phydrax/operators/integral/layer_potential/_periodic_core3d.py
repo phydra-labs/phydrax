@@ -16,7 +16,7 @@ from scipy import special
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....discretization import ParticleCell
+from ....discretization import PeriodicCell
 from ....geometry import MeshRegion
 from ....integration import IntegrationPrecisionPolicy
 from ._galerkin3d import (
@@ -39,22 +39,23 @@ class PeriodicScalarCompatibilityError(ValueError):
     """A density is outside the compatibility subspace of a periodic PDE."""
 
 
-def _require_periodic_cell_3d(cell: ParticleCell, /) -> ParticleCell:
-    if not isinstance(cell, ParticleCell):
-        raise TypeError("cell must be a ParticleCell.")
-    if cell.ambient_dimension != 3 or not cell.fully_periodic:
-        raise ValueError("Periodic scalar 3D requires a fully periodic 3D ParticleCell.")
+def _require_periodic_cell_3d(cell: PeriodicCell, /) -> PeriodicCell:
+    if not isinstance(cell, PeriodicCell):
+        raise TypeError("cell must be a PeriodicCell.")
+    if cell.rank != 3 or cell.ambient_dimension != 3 or not cell.fully_periodic:
+        raise ValueError(
+            "Periodic scalar 3D requires a fully periodic rank-3 PeriodicCell."
+        )
     return cell
 
 
-def periodic_reciprocal_vectors_3d(cell: ParticleCell, /) -> Array:
-    """Return row reciprocal vectors for one fully periodic 3D ParticleCell."""
+def periodic_reciprocal_vectors_3d(cell: PeriodicCell, /) -> Array:
+    """Return row reciprocal vectors for one fully periodic rank-3 cell."""
 
-    cell_ = _require_periodic_cell_3d(cell)
-    return _TWO_PI * cell_.inverse_vectors.T
+    return _require_periodic_cell_3d(cell).reciprocal_vectors
 
 
-def periodic_lattice_translation_3d(cell: ParticleCell, index: ArrayLike, /) -> Array:
+def periodic_lattice_translation_3d(cell: PeriodicCell, index: ArrayLike, /) -> Array:
     """Map one integer lattice row index to a 3D physical translation."""
 
     cell_ = _require_periodic_cell_3d(cell)
@@ -67,7 +68,7 @@ def periodic_lattice_translation_3d(cell: ParticleCell, index: ArrayLike, /) -> 
 
 
 def periodic_bloch_phase_3d(
-    cell: ParticleCell,
+    cell: PeriodicCell,
     index: ArrayLike,
     bloch_wavevector: ArrayLike,
     /,
@@ -251,7 +252,7 @@ class PeriodicScalarDP0Operator3D(StrictModule, NonTrainableState):
     """
 
     central_galerkin: LaplaceSingleLayerDP0Galerkin3D
-    cell: ParticleCell
+    cell: PeriodicCell
     policy: PeriodicEwaldPolicy3D
     smooth_weak_matrix: Array
     inverse_face_areas: Array
@@ -359,7 +360,7 @@ def _validated_bloch_wavevector(bloch_wavevector: ArrayLike | None) -> np.ndarra
 
 
 def _reduced_bloch_wavevector(
-    cell: ParticleCell, bloch_wavevector: ArrayLike | None, /
+    cell: PeriodicCell, bloch_wavevector: ArrayLike | None, /
 ) -> np.ndarray:
     cell_ = _require_periodic_cell_3d(cell)
     value = _validated_bloch_wavevector(bloch_wavevector)
@@ -388,7 +389,7 @@ def _screened_smooth_at_zero(screening: complex, eta: float) -> complex:
 
 def _ewald_green_host(
     displacements: np.ndarray,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     bloch_wavevector: np.ndarray,
     policy: PeriodicEwaldPolicy3D,
     screening: complex,
@@ -526,7 +527,7 @@ def _ewald_green_host(
 
 def _direct_screened_image_sum_host(
     displacement: np.ndarray,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     screening: float,
     bloch_wavevector: np.ndarray,
     image_cutoff: int,
@@ -556,7 +557,7 @@ def _direct_screened_image_sum_host(
     return complex(np.sum(phases * np.exp(-screening * radii) / (_FOUR_PI * radii)))
 
 
-def _laplace_zero_bloch(cell: ParticleCell, bloch_wavevector: np.ndarray) -> bool:
+def _laplace_zero_bloch(cell: PeriodicCell, bloch_wavevector: np.ndarray) -> bool:
     reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell), dtype=float)
     coordinates = np.linalg.solve(reciprocal.T, bloch_wavevector)
     return bool(
@@ -565,7 +566,7 @@ def _laplace_zero_bloch(cell: ParticleCell, bloch_wavevector: np.ndarray) -> boo
     )
 
 
-def _strict_fractional_clearance(region: MeshRegion, cell: ParticleCell) -> float:
+def _strict_fractional_clearance(region: MeshRegion, cell: PeriodicCell) -> float:
     vertices = np.asarray(region.triangle_mesh.vertices, dtype=float)
     origin = np.asarray(cell.origin, dtype=float)
     inverse = np.asarray(cell.inverse_vectors, dtype=float)
@@ -575,7 +576,7 @@ def _strict_fractional_clearance(region: MeshRegion, cell: ParticleCell) -> floa
 
 def _build_smooth_weak_matrix(
     panelization,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     bloch_wavevector: np.ndarray,
     policy: PeriodicEwaldPolicy3D,
     screening: complex,
@@ -630,7 +631,7 @@ def _build_smooth_weak_matrix(
 
 def _prepare_periodic_scalar_dp0_3d(
     region: MeshRegion,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     family: _Family,
@@ -757,7 +758,7 @@ def _prepare_periodic_scalar_dp0_3d(
         pde=pde,
         geometry=(
             "outward-oriented watertight polyhedral MeshRegion components, strictly "
-            "inside one affine fully periodic 3D ParticleCell; scalar facewise "
+            "inside one affine fully periodic rank-3 PeriodicCell; scalar facewise "
             "DP0 trial/test space"
         ),
         formulation=formulation,

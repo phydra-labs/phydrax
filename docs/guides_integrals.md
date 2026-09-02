@@ -892,3 +892,22 @@ nonnegative.
 The local, nonlocal, spatial, and time-convolution operators under
 `phx.operators` remain field-transform operators. They are separate from the global
 measure-aware integration API described here.
+
+## Adaptive epochs and declared transports
+
+Use `AdaptiveStratifiedEstimator` or `AdaptiveImportanceEstimator` when an
+`IntegralFunctional` has a signed integrand. The solver freezes the population
+for a complete optimizer update; absolute values are refinement scores only.
+Use `BreakpointDiscoveryPlan` for bounded numerical candidates, and inspect its
+overflow/nonfinite evidence rather than treating candidate kinds as singularity
+proofs. Use `AdaptiveCubaturePlan` for coupled finite products and
+`prepare_adaptive_sparse_grid` for eager dimension-adaptive Smolyak topology.
+
+Probability axes expose one validated `reference_transport`. Uniform and
+standard-normal reference rules must match that object exactly; empirical,
+discrete, mixed, or undeclared dependent laws require weighted/discrete targets
+or an explicit certified transport.
+
+Per-collocation temporal solves use `DiffraxCollocationQuadraturePlan`, which
+keeps static capacity, active masks, solver identity, and failure evidence in
+the ordinary integration lifecycle.

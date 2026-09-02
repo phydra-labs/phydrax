@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Any, Callable, Literal
 
 import equinox as eqx
 import jax
@@ -15,17 +15,21 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._strict import StrictModule
 from ...linalg import (
+    AbstractSparseLinearOperator,
     adjoint,
     DenseLinearOperator,
     DenseSVD,
     DifferentiationPolicy,
     FailurePolicy,
+    GeneralizedLSMR,
     LeastSquaresProblem,
     LinearSolveDiagnostics,
     LinearSolvePolicy,
+    LSMR,
     RankPolicy,
     solve as solve_linear,
 )
+from ...sparse import SparseCoordinateOperator, SparseLinearMap
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 from ._lifecycle import ConvexProgramExecution, PreparedConvexProgram
 from ._problem import _conic_bound_indices, ConicProgram
@@ -34,26 +38,36 @@ from ._problem import _conic_bound_indices, ConicProgram
 class ConicProgramData(StrictModule):
     """Differentiable numerical coordinates of one fixed-topology conic program."""
 
-    quadratic: Array | None
+    quadratic: Array | AbstractSparseLinearOperator | None
     linear: Array
-    constraint_matrix: Array
+    constraint_matrix: Array | AbstractSparseLinearOperator
     constraint_rhs: Array
     lower_bounds: Array
     upper_bounds: Array
 
     def __init__(
         self,
-        quadratic: ArrayLike | None,
+        quadratic: ArrayLike | AbstractSparseLinearOperator | None,
         linear: ArrayLike,
-        constraint_matrix: ArrayLike,
+        constraint_matrix: ArrayLike | AbstractSparseLinearOperator,
         constraint_rhs: ArrayLike,
         lower_bounds: ArrayLike,
         upper_bounds: ArrayLike,
         /,
     ):
-        self.quadratic = None if quadratic is None else jnp.asarray(quadratic)
+        self.quadratic = (
+            quadratic
+            if isinstance(quadratic, AbstractSparseLinearOperator)
+            else None
+            if quadratic is None
+            else jnp.asarray(quadratic)
+        )
         self.linear = jnp.asarray(linear)
-        self.constraint_matrix = jnp.asarray(constraint_matrix)
+        self.constraint_matrix = (
+            constraint_matrix
+            if isinstance(constraint_matrix, AbstractSparseLinearOperator)
+            else jnp.asarray(constraint_matrix)
+        )
         self.constraint_rhs = jnp.asarray(constraint_rhs)
         self.lower_bounds = jnp.asarray(lower_bounds)
         self.upper_bounds = jnp.asarray(upper_bounds)
@@ -64,13 +78,26 @@ class ConicProgramData(StrictModule):
 
         if not isinstance(program, ConicProgram):
             raise TypeError("program must be a ConicProgram.")
-        quadratic = (
-            None if program.quadratic is None else jnp.zeros_like(program.quadratic)
-        )
+
+        def zero_numeric(value):
+            if isinstance(value, (SparseLinearMap, SparseCoordinateOperator)):
+                return eqx.tree_at(
+                    lambda operator: operator.coefficients,
+                    value,
+                    jnp.zeros_like(value.coefficients),
+                )
+            if isinstance(value, AbstractSparseLinearOperator):
+                raise TypeError(
+                    "Sparse conic tangents require an operator with explicit "
+                    "coefficient coordinates."
+                )
+            return jnp.zeros_like(value)
+
+        quadratic = None if program.quadratic is None else zero_numeric(program.quadratic)
         return cls(
             quadratic,
             jnp.zeros_like(program.linear),
-            jnp.zeros_like(program.constraint_matrix),
+            zero_numeric(program.constraint_matrix),
             jnp.zeros_like(program.constraint_rhs),
             jnp.zeros_like(program.lower_bounds),
             jnp.zeros_like(program.upper_bounds),
@@ -126,6 +153,8 @@ class ConicSensitivityResult(StrictModule):
     convex_plan_id: str = eqx.field(static=True)
     linear_plan_id: str = eqx.field(static=True)
     numeric_binding_id: str = eqx.field(static=True)
+    representation: str = eqx.field(static=True, default="dense")
+    generalized_selection: str = eqx.field(static=True, default="smooth")
 
 
 def _max_abs(value: Array, /) -> Array:
@@ -165,6 +194,37 @@ def _linear_policy(linear: LinearSolvePolicy | None, /) -> tuple[LinearSolvePoli
             resources=selected.resources,
             precision=selected.precision,
             require_device_binding=selected.require_device_binding,
+        ),
+        failure_mode,
+    )
+
+
+def _matrix_free_linear_policy(
+    linear: LinearSolvePolicy, /
+) -> tuple[LinearSolvePolicy, str]:
+    if not isinstance(linear, LinearSolvePolicy):
+        raise TypeError("linear must be a LinearSolvePolicy.")
+    if not isinstance(linear.method, (LSMR, GeneralizedLSMR)):
+        raise TypeError("Matrix-free conic sensitivity requires LSMR or GeneralizedLSMR.")
+    if linear.method.damping != 0.0:
+        raise ValueError(
+            "Conic sensitivity requires zero derivative-solver damping; "
+            "use ConvexSolvePolicy.regularization for the forward program."
+        )
+    failure_mode = linear.failure.mode
+    return (
+        LinearSolvePolicy(
+            linear.method,
+            tolerance=linear.tolerance,
+            rank=linear.rank,
+            materialization=linear.materialization,
+            preconditioning=linear.preconditioning,
+            recycling=linear.recycling,
+            differentiation=DifferentiationPolicy("none"),
+            failure=FailurePolicy("status"),
+            resources=linear.resources,
+            precision=linear.precision,
+            require_device_binding=linear.require_device_binding,
         ),
         failure_mode,
     )
@@ -480,6 +540,9 @@ def prepare_conic_sensitivity(
     /,
     *,
     linear: LinearSolvePolicy | None = None,
+    representation: Literal["dense", "matrix-free"] = "dense",
+    stability: Callable[[Any], Any] | None = None,
+    generalized: Any = None,
     regularity_tolerance: float = 1e-7,
 ) -> PreparedConicSensitivity:
     """Bind an audited conic execution to a reusable projection-KKT derivative."""
@@ -512,7 +575,36 @@ def prepare_conic_sensitivity(
     tolerance = float(regularity_tolerance)
     if not math.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("regularity_tolerance must be finite and positive.")
+    if representation not in ("dense", "matrix-free"):
+        raise ValueError("representation must be 'dense' or 'matrix-free'.")
+    if representation == "matrix-free":
+        if linear is None:
+            raise ValueError(
+                "Matrix-free conic sensitivity requires an explicit iterative linear policy."
+            )
+        linear_policy, failure_mode = _matrix_free_linear_policy(linear)
+        from ._matrix_free_conic_sensitivity import (
+            prepare_matrix_free_conic_sensitivity,
+        )
+
+        return prepare_matrix_free_conic_sensitivity(
+            prepared,
+            execution,
+            linear=linear_policy,
+            stability=stability,
+            regularity_tolerance=tolerance,
+            generalized=generalized,
+            failure_mode=failure_mode,
+        )
     linear_policy, failure_mode = _linear_policy(linear)
+    if program.constraint_is_sparse or program.quadratic_is_sparse:
+        raise ValueError(
+            "Sparse conic sensitivity requires representation='matrix-free'."
+        )
+    if generalized is not None:
+        raise ValueError(
+            "Selected generalized derivatives require representation='matrix-free'."
+        )
     fixed_array, lower_array, upper_array = _conic_bound_indices(
         program.bounds,
         program.batch_shape,
@@ -702,6 +794,13 @@ def conic_primal_jvp(
 ) -> ConicSensitivityResult:
     """Apply the regular conic primal solution derivative to one data tangent."""
 
+    from ._matrix_free_conic_sensitivity import (
+        matrix_free_conic_primal_jvp,
+        PreparedMatrixFreeConicSensitivity,
+    )
+
+    if isinstance(prepared, PreparedMatrixFreeConicSensitivity):
+        return matrix_free_conic_primal_jvp(prepared, tangent)
     if not isinstance(prepared, PreparedConicSensitivity):
         raise TypeError("prepared must be a PreparedConicSensitivity.")
     tangent_quadratic, tangent_linear, tangent_matrix, tangent_rhs = _lower_tangent(
@@ -773,6 +872,13 @@ def conic_primal_vjp(
 ) -> ConicSensitivityResult:
     """Apply the adjoint regular conic primal derivative to one primal cotangent."""
 
+    from ._matrix_free_conic_sensitivity import (
+        matrix_free_conic_primal_vjp,
+        PreparedMatrixFreeConicSensitivity,
+    )
+
+    if isinstance(prepared, PreparedMatrixFreeConicSensitivity):
+        return matrix_free_conic_primal_vjp(prepared, cotangent)
     if not isinstance(prepared, PreparedConicSensitivity):
         raise TypeError("prepared must be a PreparedConicSensitivity.")
     cotangent_ = jnp.asarray(cotangent)

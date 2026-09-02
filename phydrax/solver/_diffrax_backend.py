@@ -16,14 +16,14 @@ import opt_einsum as oe
 import optimistix as optx
 from jaxtyping import Array, ArrayLike
 
-from ..stochastic import WienerRealization
+from ..linalg import AbstractRealCoordinateMap
+from ..stochastic._wiener import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._differential_ir import lower_deterministic_problem
 from ._diffrax_state_packing import (
     _prepare_diffrax_state_adapter,
     _PreparedDiffraxStateAdapter,
     _validate_real_backend_tree,
-    DiffraxAlgebraStatePolicy,
     DiffraxComplexStatePolicy,
 )
 from ._geometric import (
@@ -107,7 +107,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
         /,
         *,
         left: bool = True,
-    ) -> Array:
+    ) -> Any:
         """Evaluate every realization on one shared scalar or array of times."""
         if not isinstance(left, bool):
             raise TypeError("left must be a bool.")
@@ -139,6 +139,16 @@ class _VectorizedDenseInterpolation(eqx.Module):
             )(flat_times)
         )(self.interpolation)
         values = self.state_adapter.unpack_values(values, 2)
+        if self.state_adapter.tree_mode:
+            source_specs = self.state_adapter.coordinates.source_space.structure()
+            reshaped = jax.tree.map(
+                lambda value, spec: value.reshape(
+                    self.sample_shape + query.shape + tuple(spec.shape)
+                ),
+                values,
+                source_specs,
+            )
+            return self.precision.output(reshaped)
         return self.precision.output(
             values.reshape(self.sample_shape + query.shape + values.shape[2:])
         )
@@ -189,9 +199,7 @@ def _combined_diffusion(
     state_adapter: _PreparedDiffraxStateAdapter,
     /,
 ):
-    structured = any(
-        term.representation != "dense" for term in problem.wiener_terms
-    )
+    structured = any(term.representation != "dense" for term in problem.wiener_terms)
 
     def evaluate(time, state, args):
         public_state = state_adapter.unpack_state(state)
@@ -258,18 +266,17 @@ def _validate_wiener_representation(
     state_adapter: _PreparedDiffraxStateAdapter,
     /,
 ) -> None:
-    structured = any(
-        term.representation != "dense" for term in problem.wiener_terms
-    )
+    structured = any(term.representation != "dense" for term in problem.wiener_terms)
     if not structured:
         return
-    if state_adapter.active:
+    if (
+        problem.state_geometry is not None
+        and not problem.state_geometry.trivial
+        and not state_adapter.active
+    ):
         raise ValueError(
-            "Structured Wiener coefficients initially require native real state packing."
-        )
-    if problem.state_geometry is not None and not problem.state_geometry.trivial:
-        raise ValueError(
-            "Structured Wiener coefficients initially require trivial state geometry."
+            "Structured Wiener coefficients on nontrivial geometry require "
+            "explicit real coordinates."
         )
 
 
@@ -659,7 +666,7 @@ def _solve_evidence(
             problem.initial_state,
             problem.t0,
         ),
-        state_packing=state_adapter.evidence,
+        state_coordinates=state_adapter.evidence,
     )
 
 
@@ -667,7 +674,7 @@ def _native_solution(
     problem: DifferentialProblem | SplitDifferentialProblem,
     save_times: Array,
     *,
-    initial_state: ArrayLike | None = None,
+    initial_state: Any | None = None,
     realization: WienerRealization | None,
     path_key: Array | None,
     path_sign: Array | None,
@@ -682,13 +689,16 @@ def _native_solution(
     max_steps: int | None,
     throw: bool,
 ):
-    resolved_initial_state = (
-        problem.initial_state if initial_state is None else jnp.asarray(initial_state)
-    )
-    if tuple(resolved_initial_state.shape) != tuple(problem.initial_state.shape):
-        raise ValueError(
-            "Initial-state override must match the DifferentialProblem state shape."
-        )
+    if initial_state is None:
+        resolved_initial_state = problem.initial_state
+    else:
+        resolved_initial_state = jnp.asarray(initial_state)
+        if not eqx.is_array_like(problem.initial_state) or tuple(
+            resolved_initial_state.shape
+        ) != tuple(problem.initial_state.shape):
+            raise ValueError(
+                "Initial-state override must match the array problem state shape."
+            )
     if isinstance(problem, SplitDifferentialProblem):
         if realization is not None or path_key is not None or path_sign is not None:
             raise ValueError("Split differential problems do not accept Wiener paths.")
@@ -748,7 +758,7 @@ def _native_solution(
         else:
             lowered = lower_deterministic_problem(problem)
             terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter))
-    time_dtype = jnp.asarray(resolved_initial_state).real.dtype
+    time_dtype = jnp.asarray(jax.tree.leaves(resolved_initial_state)[0]).real.dtype
     start = precision.coefficient(jnp.asarray(start, dtype=time_dtype))
     end = precision.coefficient(jnp.asarray(end, dtype=time_dtype))
     save_times = precision.coefficient(jnp.asarray(save_times, dtype=time_dtype))
@@ -843,7 +853,7 @@ def solve_diffrax(
     solver_configuration_id: str | None = None,
     precision: TemporalPrecisionPolicy | None = None,
     complex_state_policy: DiffraxComplexStatePolicy | None = None,
-    algebra_state_policy: DiffraxAlgebraStatePolicy | None = None,
+    state_coordinates: AbstractRealCoordinateMap | None = None,
 ) -> DifferentialSolution:
     """Solve one explicit, additive-split, or stochastic differential problem."""
     if not isinstance(problem, (DifferentialProblem, SplitDifferentialProblem)):
@@ -876,14 +886,14 @@ def solve_diffrax(
     state_adapter = _prepare_diffrax_state_adapter(
         problem.initial_state,
         complex_state_policy,
-        algebra_state_policy,
+        state_coordinates,
         problem.state_geometry,
     )
     if isinstance(problem, DifferentialProblem):
         _validate_wiener_representation(problem, state_adapter)
     if state_adapter.active and isinstance(selected_solver, AbstractGeometricSolver):
         raise ValueError(
-            "Real/imaginary packing does not support geometric Diffrax solvers."
+            "Real-coordinate execution does not support geometric Diffrax solvers."
         )
     if isinstance(selected_solver, AbstractGeometricSolver) and dt0 is None:
         raise ValueError("Geometric solvers require an explicit fixed dt0.")
@@ -933,11 +943,27 @@ def solve_diffrax(
     )
     native_times = jnp.asarray(native.ts)
     native_states = precision.output(state_adapter.unpack_values(native.ys, 1))
+    valid_states = (
+        _valid_values(native_times, native_states, sample_ndim=0)
+        if eqx.is_array_like(native_states)
+        else jnp.all(
+            jnp.stack(
+                tuple(
+                    jnp.all(
+                        jnp.isfinite(leaf),
+                        axis=tuple(range(1, leaf.ndim)),
+                    )
+                    for leaf in jax.tree.leaves(native_states)
+                )
+            ),
+            axis=0,
+        )
+    )
     solver_id, resolved_method = _solver_provenance(selected_solver)
     return DifferentialSolution(
         times=native_times,
         states=native_states,
-        valid=_valid_values(native_times, native_states, sample_ndim=0),
+        valid=valid_states,
         interpolation=(
             _dense_interpolation(native, (), precision, state_adapter) if dense else None
         ),
@@ -979,7 +1005,7 @@ def solve_diffrax_ensemble(
     solver_configuration_id: str | None = None,
     precision: TemporalPrecisionPolicy | None = None,
     complex_state_policy: DiffraxComplexStatePolicy | None = None,
-    algebra_state_policy: DiffraxAlgebraStatePolicy | None = None,
+    state_coordinates: AbstractRealCoordinateMap | None = None,
 ) -> DifferentialSolution:
     """Solve the coupled SDE batch encoded by one Wiener realization."""
     if not isinstance(problem, DifferentialProblem):
@@ -996,7 +1022,9 @@ def solve_diffrax_ensemble(
         raise TypeError("dense must be a bool.")
     expected_initial_shape = realization.sample_shape + tuple(problem.initial_state.shape)
     if initial_states is None:
-        ensemble_initials = jnp.broadcast_to(problem.initial_state, expected_initial_shape)
+        ensemble_initials = jnp.broadcast_to(
+            problem.initial_state, expected_initial_shape
+        )
     else:
         ensemble_initials = jnp.asarray(initial_states)
         if tuple(ensemble_initials.shape) != expected_initial_shape:
@@ -1029,13 +1057,13 @@ def solve_diffrax_ensemble(
     state_adapter = _prepare_diffrax_state_adapter(
         problem.initial_state,
         complex_state_policy,
-        algebra_state_policy,
+        state_coordinates,
         problem.state_geometry,
     )
     _validate_wiener_representation(problem, state_adapter)
     if state_adapter.active and isinstance(selected_solver, AbstractGeometricSolver):
         raise ValueError(
-            "Real/imaginary packing does not support geometric Diffrax solvers."
+            "Real-coordinate execution does not support geometric Diffrax solvers."
         )
     _validated_stochastic_solver(problem, selected_solver, realization)
     _validated_method_form(problem, selected_solver)

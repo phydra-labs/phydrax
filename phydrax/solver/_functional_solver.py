@@ -24,7 +24,11 @@ from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
-from .._training import EvaluationParametersFn
+from .._training import (
+    DelayedTargetPolicy,
+    EvaluationParametersFn,
+    ExponentialMovingAverageTargetPolicy,
+)
 from ..discretization import (
     DiscretizationBundle,
     DiscretizationKey,
@@ -62,6 +66,7 @@ def _has_signed_randomized_objective(
         and term.loss_mode != "plug_in"
         for term in terms
     )
+
 
 def _validate_fixed_selection_terms(
     terms: Sequence[AbstractScalarTerm],
@@ -400,6 +405,9 @@ class FunctionalSolver(StrictModule):
         | AbstractRiemannianOptimizer
         | None = None,
         evaluation_parameters: EvaluationParametersFn | None = None,
+        target_policy: DelayedTargetPolicy
+        | ExponentialMovingAverageTargetPolicy
+        | None = None,
         parameter_subspace: ParameterSubspace | None = None,
         seed: int = 0,
         jit: bool = True,
@@ -415,6 +423,7 @@ class FunctionalSolver(StrictModule):
         precision: FunctionalPrecisionPolicy | None = None,
         training: FunctionalTrainingPlan | None = None,
         resume: bool = False,
+        _accepted_update_hook: Any = None,
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
@@ -464,6 +473,16 @@ class FunctionalSolver(StrictModule):
           stochastic training terms per optimizer step and rescales their values
           to preserve an unbiased estimate of the complete term sum.
         """
+        from ..terms._target_consistency import TargetConsistencyTerm
+
+        if (
+            any(
+                isinstance(term, TargetConsistencyTerm)
+                for term in self.terms + self.evaluation_terms
+            )
+            and target_policy is None
+        ):
+            raise ValueError("TargetConsistencyTerm requires target_policy.")
         num_iter = int(num_iter)
         if num_iter < 0:
             raise ValueError("num_iter must be non-negative.")
@@ -472,6 +491,7 @@ class FunctionalSolver(StrictModule):
         if parameter_subspace is None:
             parameter_paths: tuple[str, ...] | None = None
             parameter_shapes: tuple[tuple[int, ...], ...] = ()
+            parameter_alias_groups: tuple[tuple[str, ...], ...] = ()
             parameter_dtypes: tuple[str, ...] = ()
             if contains_low_rank_updates(self.functions):
                 raise ValueError(
@@ -480,10 +500,9 @@ class FunctionalSolver(StrictModule):
                 )
         else:
             if not isinstance(parameter_subspace, ParameterSubspace):
-                raise TypeError(
-                    "parameter_subspace must be a ParameterSubspace or None."
-                )
+                raise TypeError("parameter_subspace must be a ParameterSubspace or None.")
             parameter_subspace.validate_root(self.functions)
+            parameter_alias_groups = parameter_subspace.alias_groups
             validate_low_rank_subspace(self.functions, parameter_subspace)
             parameter_paths = parameter_subspace.leaf_paths
             parameter_shapes = parameter_subspace.leaf_shapes
@@ -504,15 +523,25 @@ class FunctionalSolver(StrictModule):
             and self.training_state.run_id != training.plan_id
         ):
             raise ValueError("In-memory functional training-plan identity mismatch.")
+        if bool(resume) and self.training_state is not None:
+            stored_target_policy = (
+                None
+                if self.training_state.target_state is None
+                else self.training_state.target_state.policy
+            )
+            if stored_target_policy != target_policy:
+                raise ValueError("In-memory functional target-policy identity mismatch.")
         if (
-            training is not None
-            and keep_best
-            and training.selection is None
-            and (training.stateful or training.causal)
+            keep_best
+            and (training is None or training.selection is None)
+            and (
+                target_policy is not None
+                or (training is not None and (training.stateful or training.causal))
+            )
         ):
             raise ValueError(
-                "Stateful or causal training with keep_best=True requires a fixed "
-                "FunctionalSelectionPolicy."
+                "Stateful, causal, or target-policy training with keep_best=True "
+                "requires a fixed FunctionalSelectionPolicy."
             )
         if (
             training is not None
@@ -524,8 +553,10 @@ class FunctionalSolver(StrictModule):
             )
         if training is not None and training.selection is not None:
             _validate_fixed_selection_terms(self.evaluation_terms)
-        if bool(resume) and self.training_state is None and (
-            training is None or training.checkpoint is None
+        if (
+            bool(resume)
+            and self.training_state is None
+            and (training is None or training.checkpoint is None)
         ):
             raise ValueError(
                 "resume=True requires in-memory training state or a checkpoint policy."
@@ -540,6 +571,7 @@ class FunctionalSolver(StrictModule):
             evaluation_parameters=evaluation_parameters,
             parameter_paths=parameter_paths,
             parameter_shapes=parameter_shapes,
+            parameter_alias_groups=parameter_alias_groups,
             parameter_dtypes=parameter_dtypes,
             seed=seed,
             jit=jit,
@@ -555,5 +587,7 @@ class FunctionalSolver(StrictModule):
             precision=precision,
             training=training,
             resume=bool(resume),
+            accepted_update_hook=_accepted_update_hook,
+            target_policy=target_policy,
         )
         return _solve(self, optim=optimizer, config=config)

@@ -88,7 +88,7 @@ class ComplexProjectiveManifold(AbstractGeodesicManifold):
         ambient_cotangent: ArrayLike,
         /,
     ) -> Array:
-        return self.project_tangent(point, ambient_cotangent)
+        return self.project_tangent(point, jnp.conj(ambient_cotangent))
 
     def inner(
         self,

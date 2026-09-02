@@ -37,12 +37,17 @@ class _DesignObjective(StrictModule):
     def __call__(self, vector: Array, /) -> Array:
         state = self.system.unpack(vector, base_state=self.base_state)
         residual = self.system.residual(state)
-        objective = jnp.sum(residual * residual)
-        return jnp.where(
-            self.system.geometry.validity(state).accepted,
-            objective,
-            jnp.asarray(jnp.nan, dtype=objective.dtype),
-        )
+        return jnp.sum(residual * residual)
+
+
+class _DesignValidity(StrictModule):
+    system: DesignConstraintSystem
+    base_state: DesignState
+
+    def __call__(self, vector: Array, /) -> Array:
+        state = self.system.unpack(vector, base_state=self.base_state)
+        evidence = self.system.geometry.validity(state)
+        return evidence.resolved & evidence.accepted
 
 
 class DesignSearchResult(StrictModule):
@@ -244,10 +249,16 @@ def search_design_constraints(
         upper,
         search,
         key=key,
+        validity=_DesignValidity(system, state),
     )
     best_state = system.unpack(result.best_vector, base_state=state)
     residual = system.residual(best_state)
-    best_valid = bool(np.asarray(system.geometry.validity(best_state).accepted))
+    no_valid_candidates = result.termination_reason == "no_valid_candidates"
+    best_valid = (
+        False
+        if no_valid_candidates
+        else bool(np.asarray(system.geometry.validity(best_state).accepted))
+    )
     objective = jnp.where(
         best_valid,
         jnp.sum(residual * residual),
@@ -255,7 +266,9 @@ def search_design_constraints(
     )
     converged = result.converged and best_valid
     termination_reason = (
-        result.termination_reason if best_valid else "best candidate has invalid geometry"
+        result.termination_reason
+        if no_valid_candidates or best_valid
+        else "best candidate has invalid geometry"
     )
 
     return DesignSearchResult(

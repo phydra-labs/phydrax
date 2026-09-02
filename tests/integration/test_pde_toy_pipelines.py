@@ -13,7 +13,7 @@ from phydrax.domain import (
     Interval1d,
     TimeInterval,
 )
-from phydrax.enforcement import enforce_dirichlet, EnforcementSpec, InteriorAnchors
+from phydrax.enforcement import EnforcementSpec, InteriorAnchors
 from phydrax.operators.differential import bilaplacian, dt, laplacian
 from phydrax.solver import FunctionalSolver
 
@@ -29,16 +29,8 @@ def test_pde_toy_steady_pipeline_zero_loss():
     right = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5})
     full_boundary = geom.component({"x": Boundary()})
 
-    left_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", left, target=1.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
-    )
-    right_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", right, target=1.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
-    )
+    left_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0))
+    right_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", right, target=1.0))
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
     values = jnp.array([1.0, 1.0], dtype=float)
@@ -113,16 +105,8 @@ def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
     right = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5})
     full_boundary = geom.component({"x": Boundary()})
 
-    left_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", left, target=1.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
-    )
-    right_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", right, target=1.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
-    )
+    left_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0))
+    right_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", right, target=1.0))
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
     values = jnp.array([1.0, 1.0], dtype=float)
@@ -209,20 +193,8 @@ def test_pde_toy_transient_pipeline_zero_loss():
     full_boundary = domain.component({"x": Boundary()})
 
     specs = [
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", left, target=1.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=1.0
-            ),
-        ),
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", right, target=1.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=1.0
-            ),
-        ),
+        EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0)),
+        EnforcementSpec(phx.conditions.Dirichlet("u", right, target=1.0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=1)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),

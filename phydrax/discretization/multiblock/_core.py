@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._tensor_support import PreparedTensorGrid
@@ -267,8 +267,21 @@ class MultiblockGridPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, /) -> "PreparedMultiblockGrid":
-        return PreparedMultiblockGrid(self)
+    def prepare(
+        self,
+        /,
+        *,
+        interface_coordinates: Sequence[tuple[Array, Array]] | None = None,
+    ) -> "PreparedMultiblockGrid":
+        """Validate interfaces against block or caller-supplied physical traces.
+
+        ``interface_coordinates`` supplies one ``(left, right)`` pair per
+        interface.  It is intended for embedded manifolds whose physical
+        dimension differs from their logical block dimension.
+        """
+        return PreparedMultiblockGrid(
+            self, interface_coordinates=interface_coordinates
+        )
 
 
 def _reference_grid(block: PreparedBlock, /) -> PreparedTensorGrid:
@@ -312,11 +325,29 @@ class PreparedMultiblockGrid(StrictModule, NonTrainableState):
     interface_reports: tuple[MultiblockInterfaceReport, ...]
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: MultiblockGridPlan, /):
+    def __init__(
+        self,
+        plan: MultiblockGridPlan,
+        /,
+        *,
+        interface_coordinates: Sequence[tuple[Array, Array]] | None = None,
+    ):
         if not isinstance(plan, MultiblockGridPlan):
             raise TypeError("plan must be MultiblockGridPlan.")
+        supplied = (
+            None
+            if interface_coordinates is None
+            else tuple(
+                (jnp.asarray(left), jnp.asarray(right))
+                for left, right in interface_coordinates
+            )
+        )
+        if supplied is not None and len(supplied) != len(plan.interfaces):
+            raise ValueError(
+                "Interface coordinates must provide one trace pair per interface."
+            )
         reports = []
-        for interface in plan.interfaces:
+        for index, interface in enumerate(plan.interfaces):
             left = self._block_from(plan, interface.left_block)
             right = self._block_from(plan, interface.right_block)
             left_grid = _reference_grid(left)
@@ -334,20 +365,31 @@ class PreparedMultiblockGrid(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Interface orientation rank must match both block traces."
                 )
-            left_trace = _trace(
-                left,
-                interface.left_axis,
-                interface.left_side,
-                _physical_coordinates(left),
-            )
-            right_trace = interface.orientation.apply(
-                _trace(
+            if supplied is None:
+                left_trace = _trace(
+                    left,
+                    interface.left_axis,
+                    interface.left_side,
+                    _physical_coordinates(left),
+                )
+                right_trace = _trace(
                     right,
                     interface.right_axis,
                     interface.right_side,
                     _physical_coordinates(right),
-                ),
-                trailing_axes=1,
+                )
+            else:
+                left_trace, right_trace = supplied[index]
+                if (
+                    left_trace.ndim != trace_rank + 1
+                    or right_trace.ndim != trace_rank + 1
+                    or left_trace.shape[-1] != right_trace.shape[-1]
+                ):
+                    raise ValueError(
+                        "Supplied physical interface traces have invalid dimensions."
+                    )
+            right_trace = interface.orientation.apply(
+                right_trace, trailing_axes=1
             )
             left_shape = left_trace.shape[:-1]
             right_shape = right_trace.shape[:-1]
@@ -388,6 +430,9 @@ class PreparedMultiblockGrid(StrictModule, NonTrainableState):
                 "kind": "prepared-multiblock-grid",
                 "plan": plan.plan_id,
                 "reports": [value.report_id for value in reports],
+                "interface_coordinates": (
+                    None if supplied is None else array_tree_fingerprint(supplied)
+                ),
             }
         )
 

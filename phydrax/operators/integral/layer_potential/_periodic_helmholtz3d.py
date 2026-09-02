@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ....discretization import ParticleCell
+from ....discretization import PeriodicCell
 from ....geometry import MeshRegion
 from ._periodic_core3d import (
     _ewald_green_host,
@@ -53,7 +53,7 @@ def _validated_wavenumber(wavenumber: float) -> float:
 
 
 def _guard_nonwood_modes(
-    cell: ParticleCell,
+    cell: PeriodicCell,
     wavenumber: float,
     bloch_wavevector: np.ndarray,
     policy: PeriodicEwaldPolicy3D,
@@ -109,7 +109,7 @@ def _guard_nonwood_modes(
 
 def periodic_helmholtz_green_3d(
     displacement: ArrayLike,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     wavenumber: float,
@@ -147,7 +147,7 @@ def periodic_helmholtz_green_3d(
 
 def prepare_periodic_helmholtz_single_layer_dp0_3d(
     region: MeshRegion,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     wavenumber: float,

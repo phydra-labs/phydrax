@@ -43,18 +43,54 @@ from ._projection import (
 from ._spec import VirtualElementFieldSpec
 
 
-_CAPABILITIES = (
+_BASE_CAPABILITIES = (
     DiscretizationCapability.PROJECTION,
     DiscretizationCapability.RECONSTRUCTION,
-    DiscretizationCapability.TRACE,
     DiscretizationCapability.VARIATIONAL_ASSEMBLY,
-    DiscretizationCapability.BOUNDARY_INTEGRAL,
     DiscretizationCapability.ENTITY_INCIDENCE,
     DiscretizationCapability.GEOMETRY_REFRESH,
     DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
     DiscretizationCapability.MATRIX_FREE,
     DiscretizationCapability.SPARSE_ASSEMBLY,
 )
+
+
+def _capabilities(field: VirtualElementFieldSpec, /):
+    if field.element.trace_kind == "none":
+        return _BASE_CAPABILITIES
+    return (
+        _BASE_CAPABILITIES[:2]
+        + (DiscretizationCapability.TRACE,)
+        + _BASE_CAPABILITIES[2:3]
+        + (DiscretizationCapability.BOUNDARY_INTEGRAL,)
+        + _BASE_CAPABILITIES[3:]
+    )
+
+
+def _projector_storage_bytes(
+    mesh: CellMesh,
+    field: VirtualElementFieldSpec,
+    precision: VirtualElementPrecisionPolicy,
+    /,
+) -> int:
+    element = field.element
+    polynomial_count = (element.degree + 1) * (element.degree + 2) // 2
+    differential_count = element.degree * (element.degree + 1) // 2
+    scalar_count = 0
+    for block in mesh.blocks:
+        local = element.local_dof_count(block.arity)
+        if element.family == "ConformingH1":
+            per_cell = 3 * local * polynomial_count
+        elif element.family in ("ConformingHdiv", "ConformingHcurl"):
+            per_cell = local * (4 * polynomial_count + differential_count)
+        else:
+            per_cell = 2 * polynomial_count * polynomial_count
+        scalar_count += block.cell_count * per_cell
+    itemsize = max(
+        np.dtype(precision.geometry_dtype).itemsize,
+        np.dtype(precision.projection_dtype).itemsize,
+    )
+    return scalar_count * itemsize
 
 
 class VirtualElementRuntimeData(StrictModule):
@@ -123,13 +159,16 @@ class VirtualElementPlan(AbstractDiscretizationPlan):
             raise ValueError("Virtual-element cell budget exceeded.")
         if maximum_local > budget.maximum_local_dofs:
             raise ValueError("Virtual-element local-DOF budget exceeded.")
+        projector_bytes = _projector_storage_bytes(mesh, field, precision)
+        if projector_bytes > budget.maximum_projector_bytes:
+            raise ValueError("Virtual-element projector storage budget exceeded.")
         self.mesh = mesh
         self.field = field
         self.precision_policy = precision
         self.admissibility_policy = admissibility
         self.resource_budget = budget
         self.key = DiscretizationKey("virtual_element", DiscretizationRole.PHYSICAL)
-        self.capabilities = _CAPABILITIES
+        self.capabilities = _capabilities(field)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "virtual-element-plan",
@@ -197,16 +236,22 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         self.numeric_version = version
         self.default_runtime = self._runtime(mesh.coordinates, version)
 
-        layouts = [
-            EntityDofLayout(
-                mesh.topology.entity_sets[0].entity_set_id,
-                int(mesh.coordinates.shape[0]),
-                dof_map.vertex_dof_count,
+        element = plan.field.element
+        layouts = []
+        names = []
+        vertex_width = element.vertex_dofs_per_entity
+        if vertex_width:
+            layouts.append(
+                EntityDofLayout(
+                    mesh.topology.entity_sets[0].entity_set_id,
+                    int(mesh.coordinates.shape[0]),
+                    dof_map.vertex_dof_count,
+                    dofs_per_entity=vertex_width,
+                )
             )
-        ]
-        names = ["vertices"]
+            names.append("vertices")
         edge_count = int(mesh.connectivity.edges.shape[0])
-        edge_width = plan.field.element.edge_interior_dof_count
+        edge_width = element.edge_dofs_per_entity
         if edge_width:
             layouts.append(
                 EntityDofLayout(
@@ -218,7 +263,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             )
             names.append("edges")
         cell_count = mesh.connectivity.cell_count
-        cell_width = plan.field.element.cell_moment_count
+        cell_width = element.cell_dofs_per_entity
         if cell_width:
             layouts.append(
                 EntityDofLayout(
@@ -231,14 +276,32 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             names.append("cells")
         layout = BlockDofLayout(tuple(names), tuple(layouts))
         vector_space = ArraySpace((dof_map.global_dof_count,))
+        representations = {
+            "ConformingH1": "functional",
+            "ConformingHdiv": "flux_moment",
+            "ConformingHcurl": "circulation_moment",
+            "DiscontinuousL2": "polynomial_moment",
+        }
+        trace_space_id = (
+            None
+            if element.trace_kind == "none"
+            else canonical_fingerprint(
+                {
+                    "kind": "virtual-element-trace-space",
+                    "topology": mesh.topology_id,
+                    "trace": element.trace_kind,
+                    "degree": element.degree,
+                }
+            )
+        )
         self.field_spaces = (
             DiscreteFieldSpace(
                 plan.field.name,
                 mesh.support.support_id,
                 layout,
                 vector_space,
-                representation="functional",
-                conformity="H1",
+                representation=representations[element.family],
+                conformity=element.conformity,
                 projection_id=canonical_fingerprint(
                     {
                         "kind": "virtual-element-field-projection",
@@ -251,6 +314,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
                         "field": plan.field.field_spec_id,
                     }
                 ),
+                trace_space_id=trace_space_id,
             ),
         )
         cell_measures = jnp.concatenate(
@@ -272,19 +336,33 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
                 value.dof_matrix.size
                 + value.h1_coefficients.size
                 + value.l2_coefficients.size
+                + value.differential_coefficients.size
             )
             * np.dtype(value.dof_matrix.dtype).itemsize
             for value in self.default_runtime.projections
         )
-        if projector_bytes > plan.resource_budget.maximum_projector_bytes:
-            raise ValueError("Virtual-element projector storage budget exceeded.")
-        self.preparation = PreparationReport(
-            capabilities=plan.capabilities,
-            diagnostics=(
+        if element.family == "ConformingH1":
+            diagnostics = (
                 "polygon cells are simple and star-shaped under the declared policy",
                 "H1 and enhanced L2 projectors are rank-certified",
                 "local-to-global functional DOF routes are fixed",
-            ),
+            )
+        elif element.trace_kind != "none":
+            diagnostics = (
+                "polygon cells are simple and star-shaped under the declared policy",
+                f"{element.family} polynomial projectors are rank-certified",
+                f"{element.trace_kind} trace topology and local orientations are fixed",
+                "local-to-global functional DOF routes are fixed",
+            )
+        else:
+            diagnostics = (
+                "polygon cells are simple and star-shaped under the declared policy",
+                "cell-local L2 polynomial projectors are rank-certified",
+                "local-to-global cell-moment DOF routes are fixed",
+            )
+        self.preparation = PreparationReport(
+            capabilities=plan.capabilities,
+            diagnostics=diagnostics,
             resource_counts={
                 "cells": cell_count,
                 "edges": edge_count,
@@ -349,6 +427,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
                     "topology": self.mesh.topology_id,
                     "geometry_layout": layout_id,
                     "numeric_version": str(numeric_version),
+                    "field": self.field.field_spec_id,
                 }
             ),
         )

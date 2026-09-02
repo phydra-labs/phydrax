@@ -176,7 +176,7 @@ class PolynomialChaosBasis(StrictModule, NonTrainableState):
         point_array = _ordered_points(points, coordinates, self.labels)
         canonical = jnp.stack(
             tuple(
-                factor.to_reference(point_array[..., index])
+                factor.reference_transport.to_reference(point_array[..., index])
                 for index, factor in enumerate(self.factors)
             ),
             axis=-1,

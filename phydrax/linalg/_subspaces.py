@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 import equinox as eqx
@@ -27,17 +28,24 @@ def _basis_gram(
     dimension: Array,
     /,
 ) -> tuple[Array, Array]:
-    mask = jnp.arange(basis.shape[1]) < dimension
-    active_basis = jnp.where(mask[None, :], basis, 0)
+    batch_shape = basis.shape[:-2]
+    capacity = basis.shape[-1]
+    mask = jnp.arange(capacity) < dimension[..., None]
+    active_basis = jnp.where(mask[..., None, :], basis, 0)
+    batch_count = math.prod(batch_shape) if batch_shape else 1
+    flattened = active_basis.reshape((batch_count, space.size, capacity))
 
-    def inner(left, right):
-        return space.inner(space.unflatten(left), space.unflatten(right))
+    def gram_one(columns):
+        def inner(left, right):
+            return space.inner(space.unflatten(left), space.unflatten(right))
 
-    gram = jax.vmap(
-        lambda left: jax.vmap(lambda right: inner(left, right), in_axes=1)(active_basis),
-        in_axes=1,
-    )(active_basis)
-    gram = gram + jnp.diag((~mask).astype(gram.dtype))
+        return jax.vmap(
+            lambda left: jax.vmap(lambda right: inner(left, right), in_axes=1)(columns),
+            in_axes=1,
+        )(columns)
+
+    gram = jax.vmap(gram_one)(flattened).reshape(batch_shape + (capacity, capacity))
+    gram = gram + jnp.eye(capacity, dtype=gram.dtype) * (~mask)[..., None, :]
     return gram, active_basis
 
 
@@ -63,22 +71,27 @@ class LinearSubspace(StrictModule):
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         basis_ = jnp.asarray(basis)
-        if basis_.ndim != 2 or basis_.shape[0] != space.size:
-            raise ValueError("Subspace basis must have shape (space.size, capacity).")
+        if basis_.ndim < 2 or basis_.shape[-2] != space.size:
+            raise ValueError(
+                "Subspace basis must have shape batch_shape + (space.size, capacity)."
+            )
         if not jnp.issubdtype(basis_.dtype, jnp.inexact):
             raise TypeError("Subspace basis must use an inexact dtype.")
         if basis_.dtype != _coordinate_dtype(space):
             raise TypeError("Subspace basis dtype must match its coordinate space.")
-        capacity = int(basis_.shape[1])
+        batch_shape = tuple(int(size) for size in basis_.shape[:-2])
+        capacity = int(basis_.shape[-1])
         dimension_ = jnp.asarray(
-            capacity if dimension is None else dimension,
+            jnp.full(batch_shape, capacity, dtype=jnp.int32)
+            if dimension is None
+            else dimension,
             dtype=jnp.int32,
         )
-        if dimension_.shape != ():
-            raise ValueError("Subspace dimension must be scalar.")
+        if dimension_.shape != batch_shape:
+            raise ValueError("Subspace dimension must have shape batch_shape.")
         dimension_ = eqx.error_if(
             dimension_,
-            (dimension_ < 0) | (dimension_ > capacity),
+            jnp.any((dimension_ < 0) | (dimension_ > capacity)),
             "Subspace dimension must lie between zero and basis capacity.",
         )
         basis_ = eqx.error_if(
@@ -88,12 +101,14 @@ class LinearSubspace(StrictModule):
         )
         if capacity:
             gram, active_basis = _basis_gram(space, basis_, dimension_)
-            norms = jnp.sqrt(jnp.maximum(jnp.real(jnp.diag(gram)), 0.0))
-            mask = jnp.arange(capacity) < dimension_
+            norms = jnp.sqrt(
+                jnp.maximum(jnp.real(jnp.diagonal(gram, axis1=-2, axis2=-1)), 0.0)
+            )
+            mask = jnp.arange(capacity) < dimension_[..., None]
             scales = jnp.where(mask & (norms > 0.0), norms, 1.0)
             normalized_gram, _ = _basis_gram(
                 space,
-                active_basis / scales[None, :],
+                active_basis / scales[..., None, :],
                 dimension_,
             )
             singular_values = jnp.linalg.svd(
@@ -103,12 +118,12 @@ class LinearSubspace(StrictModule):
             cutoff = (
                 jnp.finfo(basis_.real.dtype).eps
                 * max(capacity, 1)
-                * jnp.max(singular_values)
+                * jnp.max(singular_values, axis=-1)
             )
             basis_ = eqx.error_if(
                 basis_,
                 jnp.any(~jnp.isfinite(singular_values))
-                | (jnp.min(singular_values) <= cutoff),
+                | jnp.any(jnp.min(singular_values, axis=-1) <= cutoff),
                 "Active subspace basis columns must be linearly independent.",
             )
         identifier = (
@@ -116,6 +131,7 @@ class LinearSubspace(StrictModule):
                 {
                     "kind": "linear-subspace",
                     "space": space.space_id,
+                    "batch_shape": list(batch_shape),
                     "capacity": capacity,
                     "orthonormal": bool(orthonormal),
                 }
@@ -132,41 +148,134 @@ class LinearSubspace(StrictModule):
         self.subspace_id = identifier
 
     @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return tuple(int(size) for size in self.basis.shape[:-2])
+
+    @property
     def capacity(self) -> int:
-        return int(self.basis.shape[1])
+        return int(self.basis.shape[-1])
 
     def project_coordinates(self, coordinates: ArrayLike, /) -> Array:
         value = jnp.asarray(coordinates)
-        if value.shape != (self.space.size,):
-            raise ValueError("Projection coordinates must match the subspace space.")
+        shared_shape = (self.space.size,)
+        batched_shape = self.batch_shape + shared_shape
+        if value.shape == shared_shape:
+            value = jnp.broadcast_to(value, batched_shape)
+        elif value.shape != batched_shape:
+            raise ValueError(
+                "Projection coordinates must be shared or match batch_shape + "
+                "(space.size,)."
+            )
         if value.dtype != _coordinate_dtype(self.space):
             raise TypeError("Projection coordinate dtype must match the subspace space.")
         if self.capacity == 0:
             return jnp.zeros_like(value)
         gram, basis = _basis_gram(self.space, self.basis, self.dimension)
+        batch_count = math.prod(self.batch_shape) if self.batch_shape else 1
+        basis_flat = basis.reshape((batch_count, self.space.size, self.capacity))
+        gram_flat = gram.reshape((batch_count, self.capacity, self.capacity))
+        value_flat = value.reshape((batch_count, self.space.size))
 
-        def inner(column):
-            return self.space.inner(
-                self.space.unflatten(column),
-                self.space.unflatten(value),
-            )
+        def project_one(columns, matrix, vector):
+            def inner(column):
+                return self.space.inner(
+                    self.space.unflatten(column),
+                    self.space.unflatten(vector),
+                )
 
-        right_hand_side = jax.vmap(inner, in_axes=1)(basis)
-        coefficients = jnp.linalg.solve(gram, right_hand_side)
-        return basis @ coefficients
+            right_hand_side = jax.vmap(inner, in_axes=1)(columns)
+            coefficients = jnp.linalg.solve(matrix, right_hand_side)
+            return columns @ coefficients
+
+        projected = jax.vmap(project_one)(basis_flat, gram_flat, value_flat)
+        return projected.reshape(batched_shape)
 
     def project(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        coordinates = self.space.flatten(self.space.validate(vector))
-        return self.space.unflatten(self.project_coordinates(coordinates))
+        coordinates = _flatten_batched(self.space, vector, self.batch_shape)
+        return _unflatten_batched(
+            self.space,
+            self.project_coordinates(coordinates),
+            self.batch_shape,
+        )
 
     def orthogonal_component(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        value = self.space.validate(vector)
+        value = _broadcast_batched(self.space, vector, self.batch_shape)
         projected = self.project(value)
         return jax.tree.map(lambda left, right: left - right, value, projected)
 
     def projection_norm(self, vector: PyTree[Any], /) -> Array:
-        projected = self.project(vector)
-        return jnp.sqrt(jnp.real(self.space.inner(projected, projected)))
+        coordinates = self.project_coordinates(
+            _flatten_batched(self.space, vector, self.batch_shape)
+        )
+        batch_count = math.prod(self.batch_shape) if self.batch_shape else 1
+        flattened = coordinates.reshape((batch_count, self.space.size))
+        norms = jax.vmap(
+            lambda value: jnp.sqrt(
+                jnp.real(
+                    self.space.inner(
+                        self.space.unflatten(value),
+                        self.space.unflatten(value),
+                    )
+                )
+            )
+        )(flattened)
+        return norms.reshape(self.batch_shape)
+
+
+def _broadcast_batched(
+    space: AbstractVectorSpace,
+    vector: PyTree[Any],
+    batch_shape: tuple[int, ...],
+    /,
+) -> PyTree[Array]:
+    leaves, treedef = jax.tree.flatten(vector)
+    specs, expected_treedef = jax.tree.flatten(space.structure())
+    if treedef != expected_treedef:
+        raise ValueError("Vector PyTree structure does not match the vector space.")
+    arrays = []
+    for leaf, spec in zip(leaves, specs, strict=True):
+        value = jnp.asarray(leaf)
+        if value.shape == spec.shape:
+            value = jnp.broadcast_to(value, batch_shape + spec.shape)
+        elif value.shape != batch_shape + spec.shape:
+            raise ValueError("Vector leaves must be shared or carry subspace batch axes.")
+        if value.dtype != spec.dtype:
+            raise TypeError("Vector leaf dtype must match the subspace space.")
+        arrays.append(value)
+    return jax.tree.unflatten(treedef, arrays)
+
+
+def _flatten_batched(
+    space: AbstractVectorSpace,
+    vector: PyTree[Any],
+    batch_shape: tuple[int, ...],
+    /,
+) -> Array:
+    batched = _broadcast_batched(space, vector, batch_shape)
+    leaves = jax.tree.leaves(batched)
+    flattened = tuple(leaf.reshape(batch_shape + (-1,)) for leaf in leaves)
+    return flattened[0] if len(flattened) == 1 else jnp.concatenate(flattened, axis=-1)
+
+
+def _unflatten_batched(
+    space: AbstractVectorSpace,
+    coordinates: Array,
+    batch_shape: tuple[int, ...],
+    /,
+) -> PyTree[Array]:
+    value = jnp.asarray(coordinates)
+    if value.shape != batch_shape + (space.size,):
+        raise ValueError("Batched coordinates do not match the vector space.")
+    specs, treedef = jax.tree.flatten(space.structure())
+    leaves = []
+    offset = 0
+    for spec in specs:
+        count = math.prod(spec.shape)
+        leaves.append(
+            value[..., offset : offset + count].reshape(batch_shape + spec.shape)
+        )
+        offset += count
+    return jax.tree.unflatten(treedef, leaves)
 
 
 class NullspacePolicy(StrictModule):

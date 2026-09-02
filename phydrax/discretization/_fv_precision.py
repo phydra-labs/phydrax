@@ -24,14 +24,11 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
-PrecisionDType: TypeAlias = Literal["float32", "float64"]
+PrecisionDType: TypeAlias = Literal["float16", "bfloat16", "float32", "float64"]
 
 
 def _finite_precision_dtype(value: Any, /) -> PrecisionDType:
-    name = real_precision_dtype_name(value)
-    if name not in ("float32", "float64"):
-        raise ValueError("Finite-volume precision dtypes must be float32 or float64.")
-    return name
+    return real_precision_dtype_name(value)
 
 
 class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
@@ -43,6 +40,8 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
     reduction_dtype: PrecisionDType = eqx.field(static=True)
     output_dtype: PrecisionDType = eqx.field(static=True)
     checkpoint_dtype: PrecisionDType = eqx.field(static=True)
+    provider: str = eqx.field(static=True)
+    resolution_id: str | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -55,14 +54,20 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
         reduction_dtype: PrecisionDType | None = None,
         output_dtype: PrecisionDType | None = None,
         checkpoint_dtype: PrecisionDType | None = None,
+        resolution: PrecisionResolution | None = None,
     ):
         storage = _finite_precision_dtype(storage_dtype)
         reconstruction = _finite_precision_dtype(
             storage if reconstruction_dtype is None else reconstruction_dtype
         )
-        flux = _finite_precision_dtype(storage if flux_dtype is None else flux_dtype)
+        default_compute: PrecisionDType = (
+            "float32" if precision_itemsize(storage) < 4 else storage
+        )
+        flux = _finite_precision_dtype(
+            default_compute if flux_dtype is None else flux_dtype
+        )
         reduction = _finite_precision_dtype(
-            storage if reduction_dtype is None else reduction_dtype
+            default_compute if reduction_dtype is None else reduction_dtype
         )
         output = _finite_precision_dtype(
             storage if output_dtype is None else output_dtype
@@ -77,6 +82,11 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
             raise ValueError(
                 "Finite-volume reduction precision cannot be narrower than "
                 "reconstruction or flux precision."
+            )
+        if precision_itemsize(storage) < 4 and resolution is None:
+            raise ValueError(
+                "Sub-float32 finite-volume storage requires provider precision "
+                "resolution evidence."
             )
         request = PrecisionRequest(
             "finite-volume",
@@ -93,17 +103,37 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
             "finite-volume-reconstruction",
             {"compute": reconstruction},
         )
+        if resolution is not None:
+            if not isinstance(resolution, PrecisionResolution):
+                raise TypeError("resolution must be PrecisionResolution or None.")
+            effective = dict(resolution.effective)
+            expected = dict(request.requested)
+            if (
+                resolution.request_id != request.request_id
+                or resolution.domain != request.domain
+                or effective != expected
+            ):
+                raise ValueError(
+                    "Finite-volume precision resolution does not exactly match "
+                    "the requested roles."
+                )
         self.storage_dtype = storage
         self.reconstruction_dtype = reconstruction
         self.flux_dtype = flux
         self.reduction_dtype = reduction
         self.output_dtype = output
         self.checkpoint_dtype = checkpoint
+        self.provider = (
+            "phydrax-finite-volume" if resolution is None else resolution.provider
+        )
+        self.resolution_id = None if resolution is None else resolution.resolution_id
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-precision",
                 "request": request.request_id,
                 "reconstruction_request": reconstruction_request.request_id,
+                "provider": self.provider,
+                "resolution": self.resolution_id,
             }
         )
 
@@ -160,6 +190,42 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
     def checkpoint(self, value: Any, /):
         return jnp.asarray(value, dtype=self.checkpoint_dtype)
 
+    @property
+    def subfloat_storage(self) -> bool:
+        return precision_itemsize(self.storage_dtype) < 4
+
+    def quantize_and_validate(
+        self,
+        value: Any,
+        admissible: Any,
+        /,
+        *,
+        wet_mask: Any | None = None,
+    ):
+        """Round-trip through storage and reject changed admissibility/topology."""
+        if not callable(admissible):
+            raise TypeError("admissible must be callable.")
+        candidate = self.storage(value)
+        decision = self.decision(candidate)
+        valid = jnp.asarray(admissible(decision))
+        if valid.dtype != jnp.bool_:
+            raise TypeError("admissible must return a Boolean array.")
+        failed = jnp.any(~jnp.isfinite(decision)) | jnp.any(~valid)
+        if wet_mask is not None:
+            expected_wet = jnp.asarray(wet_mask)
+            observed_wet = jnp.asarray(admissible(decision))
+            if (
+                expected_wet.dtype != jnp.bool_
+                or expected_wet.shape != observed_wet.shape
+            ):
+                raise ValueError("wet_mask must match the admissibility mask.")
+            failed = failed | jnp.any(observed_wet != expected_wet)
+        return eqx.error_if(
+            candidate,
+            failed,
+            "Quantized finite-volume state is inadmissible or changes its wet mask.",
+        )
+
     def numpy_dtype(self, role: str, /):
         values = {
             "storage": self.storage_dtype,
@@ -176,7 +242,7 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
     def evidence(self) -> PrecisionEvidenceEnvelope:
         reconstruction_resolution = PrecisionResolution(
             self.reconstruction_request,
-            "phydrax-finite-volume-reconstruction",
+            self.provider,
             {"compute": self.reconstruction_dtype},
         )
         reconstruction_evidence = PrecisionEvidenceEnvelope(
@@ -185,7 +251,7 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
         )
         resolution = PrecisionResolution(
             self.request,
-            "phydrax-finite-volume",
+            self.provider,
             {
                 "storage": self.storage_dtype,
                 "compute": self.flux_dtype,

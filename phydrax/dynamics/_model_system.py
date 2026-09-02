@@ -13,7 +13,7 @@ from jaxtyping import Array, ArrayLike
 from .._model import AbstractArrayModel
 from .._strict import StrictModule
 from ._layout import InputLayout, StateLayout
-from ._system import ContinuousSystem, DiscreteSystem
+from ._system import ContinuousSystem, DiscreteStepContext, DiscreteSystem
 
 
 def _value_shape(size: int | tuple[int, ...] | Literal["scalar"], /) -> tuple[int, ...]:
@@ -102,6 +102,7 @@ class DiscreteModelTransition(StrictModule):
     step_size: float = eqx.field(static=True)
     step_rtol: float = eqx.field(static=True)
     step_atol: float = eqx.field(static=True)
+    input_mode: Literal["fixed", "duration", "interval"] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -110,9 +111,10 @@ class DiscreteModelTransition(StrictModule):
         *,
         state_layout: StateLayout,
         input_layout: InputLayout | None = None,
-        step_size: float,
+        step_size: float | None = None,
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
+        input_mode: Literal["fixed", "duration", "interval"] = "fixed",
     ):
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
@@ -125,25 +127,40 @@ class DiscreteModelTransition(StrictModule):
             raise ValueError("Discrete model systems require a pointwise model binding.")
         if _value_shape(model.out_size) != state_layout.shape:
             raise ValueError("model output shape must equal the state layout shape.")
-        if input_layout is None:
+        if input_mode not in ("fixed", "duration", "interval"):
+            raise ValueError("input_mode must be 'fixed', 'duration', or 'interval'.")
+        time_shapes: tuple[tuple[int, ...], ...]
+        if input_mode == "fixed":
+            time_shapes = ()
+        elif input_mode == "duration":
+            time_shapes = ((),)
+        else:
+            time_shapes = ((), ())
+        expected = (state_layout.shape,) + time_shapes
+        if input_layout is not None:
+            expected = expected + (input_layout.shape,)
+        if len(expected) == 1:
             if _value_shape(model.in_size) != state_layout.shape:
                 raise ValueError("model input shape must equal the state layout shape.")
         else:
             if binding.input_mode != "structured":
                 raise ValueError(
-                    "Controlled model systems require structured model input."
+                    "Variable-step or controlled model systems require structured input."
                 )
             declared = _structured_shapes(model.in_size)
-            expected = (state_layout.shape, input_layout.shape)
             if declared != expected:
                 raise ValueError(
-                    "model structured input shapes must equal state and input layouts."
+                    f"model structured input shapes must equal {expected}; got {declared}."
                 )
-        resolved_step = float(step_size)
+        resolved_step = None if step_size is None else float(step_size)
         relative_tolerance = float(step_rtol)
         absolute_tolerance = float(step_atol)
-        if not np.isfinite(resolved_step) or resolved_step <= 0.0:
-            raise ValueError("step_size must be finite and positive.")
+        if input_mode == "fixed" and resolved_step is None:
+            raise ValueError("Fixed model transitions require step_size.")
+        if resolved_step is not None and (
+            not np.isfinite(resolved_step) or resolved_step <= 0.0
+        ):
+            raise ValueError("step_size must be finite and positive or None.")
         if (
             not np.isfinite(relative_tolerance)
             or relative_tolerance < 0.0
@@ -156,26 +173,35 @@ class DiscreteModelTransition(StrictModule):
         self.step_size = resolved_step
         self.step_rtol = relative_tolerance
         self.step_atol = absolute_tolerance
+        self.input_mode = input_mode
 
     def __call__(
         self,
-        coordinate: ArrayLike,
+        context: DiscreteStepContext,
         state: Array,
         *arguments: Any,
     ) -> Array:
-        del coordinate
+        if not isinstance(context, DiscreteStepContext):
+            raise TypeError("DiscreteModelTransition requires DiscreteStepContext.")
         binding = self.model.input_binding()
         if self.has_input:
             if len(arguments) != 2:
                 raise TypeError("Controlled discrete transitions require input and args.")
             inputs, args = arguments
             del args
-            point = binding.pack_point((state, inputs))
         else:
             if len(arguments) != 1:
                 raise TypeError("Autonomous discrete transitions require args.")
             del arguments
-            point = binding.pack_point((state,))
+            inputs = None
+        packed: tuple[Array, ...] = (state,)
+        if self.input_mode == "duration":
+            packed = packed + (context.duration,)
+        elif self.input_mode == "interval":
+            packed = packed + (context.source, context.target)
+        if inputs is not None:
+            packed = packed + (inputs,)
+        point = binding.pack_point(packed)
         return binding.call(
             self.model,
             point,
@@ -214,9 +240,10 @@ def discrete_model_system(
     state_layout: StateLayout,
     input_layout: InputLayout | None = None,
     system_id: str,
-    step_size: float,
+    step_size: float | None = None,
     step_rtol: float = 1e-7,
     step_atol: float = 1e-12,
+    input_mode: Literal["fixed", "duration", "interval"] = "fixed",
 ) -> DiscreteSystem:
     """Bind a deterministic pointwise model as one complete next-state map."""
 
@@ -227,6 +254,7 @@ def discrete_model_system(
         step_size=step_size,
         step_rtol=step_rtol,
         step_atol=step_atol,
+        input_mode=input_mode,
     )
     return DiscreteSystem(
         transition,

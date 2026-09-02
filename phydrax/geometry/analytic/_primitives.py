@@ -145,6 +145,14 @@ class _RadialCubatureMap(AbstractCubatureMap):
         del reference
         return jnp.ones(jnp.asarray(chart_indices).shape, dtype=bool)
 
+    def evaluate(
+        self,
+        chart_indices: Array,
+        reference: Array,
+        /,
+    ):
+        return super().evaluate(chart_indices, reference)
+
 
 @jax.custom_jvp
 def _finite_norm(value: Array) -> Array:

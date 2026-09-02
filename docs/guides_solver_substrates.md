@@ -386,10 +386,10 @@ remain in its certification precision.
 ## Temporal backend state representation
 
 `DifferentialProblem` owns the public state dtype and shape independently of the
-temporal backend representation. Standard Diffrax solves preserve real states
-natively. Complex states default to `DiffraxComplexStatePolicy(\"real_imag\")`, which
-prepares a real backend state with shape `(2,) + state_shape`, componentwise real
-adaptive tolerance geometry, and explicit packing evidence.
+temporal backend representation. Standard Diffrax solves use the default
+`DiffraxComplexStatePolicy("real_coordinates")`: real states remain native, while
+complex states lower to a real-coordinate backend representation with componentwise
+adaptive tolerance geometry and explicit `RealCoordinateEvidence`.
 
 Vector fields, stochastic coefficients, complex argument leaves, events, dense
 interpolation, and saved trajectories cross this boundary through one prepared

@@ -19,6 +19,43 @@ from .._strict import StrictModule
 
 CubatureComponent: TypeAlias = Literal["interior", "boundary"]
 
+
+class CubatureMapEvaluation(StrictModule):
+    """One batched physical map evaluation with measure and admissibility evidence."""
+
+    points: Array
+    measure_scale: Array
+    admissible: Array
+    orientation: Array
+    normal: Array | None
+
+    def __init__(
+        self,
+        points: Array,
+        measure_scale: Array,
+        admissible: Array,
+        orientation: Array,
+        normal: Array | None = None,
+        /,
+    ):
+        points_ = jnp.asarray(points)
+        scale = jnp.asarray(measure_scale, dtype=jnp.real(points_).dtype)
+        admissible_ = jnp.asarray(admissible, dtype=bool)
+        orientation_ = jnp.asarray(orientation, dtype=scale.dtype)
+        if points_.shape[:-1] != scale.shape:
+            raise ValueError("measure_scale must match mapped-point leading dimensions.")
+        if admissible_.shape != scale.shape or orientation_.shape != scale.shape:
+            raise ValueError("admissible and orientation must match measure_scale.")
+        normal_ = None if normal is None else jnp.asarray(normal, dtype=points_.dtype)
+        if normal_ is not None and normal_.shape != points_.shape:
+            raise ValueError("normal must match mapped points when supplied.")
+        self.points = points_
+        self.measure_scale = scale
+        self.admissible = admissible_
+        self.orientation = orientation_
+        self.normal = normal_
+
+
 _REFERENCE_DIMENSION = {
     "triangle": 2,
     "tetrahedron": 3,
@@ -62,6 +99,41 @@ class AbstractCubatureMap(StrictModule):
     @abstractmethod
     def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
         raise NotImplementedError
+
+    @abstractmethod
+    def evaluate(
+        self,
+        chart_indices: Array,
+        reference: Array,
+        /,
+    ) -> CubatureMapEvaluation:
+        """Evaluate the legacy map contract as one fail-closed geometry product."""
+
+        points = self.map(chart_indices, reference)
+        measure_scale = jnp.asarray(
+            self.jacobian(chart_indices, reference),
+            dtype=jnp.real(points).dtype,
+        )
+        if measure_scale.shape != points.shape[:-1]:
+            raise ValueError(
+                "Legacy CubatureMap.jacobian must return scalar measure scale "
+                "matching mapped-point leading dimensions."
+            )
+        orientation = jnp.ones_like(measure_scale)
+        mask = self.reference_mask(chart_indices, reference)
+        admissible = (
+            jnp.asarray(mask, dtype=bool)
+            & jnp.all(jnp.isfinite(points), axis=-1)
+            & jnp.isfinite(measure_scale)
+            & (measure_scale > 0)
+            & (orientation != 0)
+        )
+        return CubatureMapEvaluation(
+            points,
+            measure_scale,
+            admissible,
+            orientation,
+        )
 
 
 class CubatureAtlas(StrictModule):
@@ -138,6 +210,15 @@ class CubatureAtlas(StrictModule):
         indices, reference_ = self._validate_inputs(chart_indices, reference)
         return self.mapping.reference_mask(indices, reference_)
 
+    def evaluate(
+        self,
+        chart_indices: Array,
+        reference: Array,
+        /,
+    ) -> CubatureMapEvaluation:
+        indices, reference_ = self._validate_inputs(chart_indices, reference)
+        return self.mapping.evaluate(indices, reference_)
+
     def select(
         self,
         *,
@@ -201,6 +282,14 @@ class _SelectedCubatureMap(AbstractCubatureMap):
     def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
         return self.base.reference_mask(self.chart_indices[chart_indices], reference)
 
+    def evaluate(
+        self,
+        chart_indices: Array,
+        reference: Array,
+        /,
+    ) -> CubatureMapEvaluation:
+        return self.base.evaluate(self.chart_indices[chart_indices], reference)
+
 
 class _TranslatedCubatureMap(AbstractCubatureMap):
     base: AbstractCubatureMap
@@ -231,6 +320,21 @@ class _TranslatedCubatureMap(AbstractCubatureMap):
     def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
         return self.base.reference_mask(chart_indices, reference)
 
+    def evaluate(
+        self,
+        chart_indices: Array,
+        reference: Array,
+        /,
+    ) -> CubatureMapEvaluation:
+        evaluation = self.base.evaluate(chart_indices, reference)
+        return CubatureMapEvaluation(
+            evaluation.points + self.offset,
+            evaluation.measure_scale,
+            evaluation.admissible,
+            evaluation.orientation,
+            evaluation.normal,
+        )
+
 
 @runtime_checkable
 class CubatureAtlasProvider(Protocol):
@@ -243,6 +347,7 @@ class CubatureAtlasProvider(Protocol):
 
 __all__ = [
     "AbstractCubatureMap",
+    "CubatureMapEvaluation",
     "CubatureAtlas",
     "CubatureAtlasProvider",
     "CubatureComponent",

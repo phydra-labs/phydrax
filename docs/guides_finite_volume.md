@@ -386,6 +386,11 @@ fluxes to coarse faces, and reports the global conservation defect.
 The reported interface defect uses the compensated accounting reduction described
 above; AMR synchronization values selected to be elementwise identical remain zero
 by construction.
+`FiniteVolumeMultiblockRuntimePlan` couples the block candidates and every mortar to
+one global secondary positivity factor. The same accepted mortar integral is retained
+for both sides; an inadmissible fallback causes atomic rejection and returns the
+unchanged base states.
+
 
 `ConservativeAMRSubcyclingPlan` accumulates time-integrated coarse and fine interface
 fluxes. `FluxRegister` records orientation, refinement ratio, accumulation time, and the
@@ -434,13 +439,15 @@ topology remain static.
 
 ## Current limitations
 
-- Bathymetric shallow water currently requires static Cartesian structured geometry;
-  mapped, triangle, unstructured, moving, SBP, spectral, and DGSEM beds are rejected.
-- Wet/dry shallow water supports piecewise-constant and equilibrium-aware MUSCL
-  reconstruction; balanced WENO is not yet supported.
+- Balanced shallow water supports static Cartesian and mapped geometry through the
+  explicit `ShallowWaterBathymetryPlan`; arbitrary-normal/ALE face contributions are
+  available to fixed-topology stage lowerings.
+- Equilibrium WENO-Z records characteristic use, dry-stencil fallback, and eigenbasis
+  condition evidence rather than silently switching methods.
 - Initial transverse solver support is a primitive building block, not a complete
   three-dimensional CTU implementation.
-- Mapped fluxes currently use Rusanov or HLL.
+- Mapped viscous periodic axes require a certified `MappedPeriodicSeamPlan`; undeclared
+  or geometrically mismatched seams fail before residual evaluation.
 - Periodic Cartesian constrained MHD is executed by
   `UpwindConstrainedTransportPlan` and `ConstrainedMHDSSPRK3Plan`, then composed with
   gravity, cooling, or OU forcing through the prepared balance-law transport adapter.

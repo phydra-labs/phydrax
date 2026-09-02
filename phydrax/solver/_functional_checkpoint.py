@@ -13,7 +13,11 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from .._model._structure import deserialise_model_leaf, serialise_model_leaf
-from .._training import TrainingProgress
+from .._training import (
+    DelayedTargetPolicy,
+    ExponentialMovingAverageTargetPolicy,
+    TrainingProgress,
+)
 from .._training_checkpoint import (
     _deserialize_root_key,
     _prune_state_files,
@@ -27,6 +31,26 @@ from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingStat
 
 
 _FUNCTIONAL_CHECKPOINT_FORMAT = "phydrax-functional-training-checkpoint"
+
+
+def _target_policy_contract(state: FunctionalTrainingState, /) -> dict[str, Any] | None:
+    if state.target_state is None:
+        return None
+    policy = state.target_state.policy
+    if isinstance(policy, DelayedTargetPolicy):
+        return {
+            "kind": "delayed",
+            "delay": policy.delay,
+        }
+    if isinstance(policy, ExponentialMovingAverageTargetPolicy):
+        return {
+            "kind": "exponential-moving-average",
+            "decay": policy.decay,
+            "start_step": policy.start_step,
+            "update_every": policy.update_every,
+            "source": policy.source,
+        }
+    raise TypeError("Functional checkpoint target policy has an unsupported type.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +75,12 @@ def save_functional_training_checkpoint(
         raise TypeError("plan must be a FunctionalTrainingPlan.")
     if state.progress.update_step < 0:
         raise ValueError("Checkpoint progress must be non-negative.")
+    if state.target_state is not None and int(state.target_state.update_count) != int(
+        state.progress.update_step
+    ):
+        raise ValueError(
+            "Checkpoint target state is not at the accepted-update boundary."
+        )
     destination = Path(path)
     state_path, checksum = _publish_state(
         destination,
@@ -68,6 +98,7 @@ def save_functional_training_checkpoint(
         **_serialize_root_key(state.key),
         "plan_id": plan.plan_id,
         "run_id": state.run_id,
+        "target_policy": _target_policy_contract(state),
         "discretization_bundle_id": solver.discretization_bundle.bundle_id,
         "progress": asdict(state.progress),
         "training_seconds": state.training_seconds,
@@ -91,6 +122,7 @@ def _read_functional_manifest(path: str | Path, /) -> tuple[dict[str, Any], Path
         "key_impl",
         "plan_id",
         "run_id",
+        "target_policy",
         "discretization_bundle_id",
         "progress",
         "training_seconds",
@@ -133,7 +165,12 @@ def load_functional_training_checkpoint(
     manifest, state_path = _read_functional_manifest(path)
     if manifest["plan_id"] != plan.plan_id:
         raise ValueError("Functional checkpoint training-plan identity mismatch.")
-    if manifest["discretization_bundle_id"] != solver_like.discretization_bundle.bundle_id:
+    if manifest["target_policy"] != _target_policy_contract(state_like):
+        raise ValueError("Functional checkpoint target-policy identity mismatch.")
+    if (
+        manifest["discretization_bundle_id"]
+        != solver_like.discretization_bundle.bundle_id
+    ):
         raise ValueError("Functional checkpoint discretization identity mismatch.")
     if manifest["run_id"] != state_like.run_id:
         raise ValueError("Functional checkpoint run identity mismatch.")
@@ -153,11 +190,20 @@ def load_functional_training_checkpoint(
         jnp.array_equal(jr.key_data(restored.key), jr.key_data(manifest_key))
     ):
         raise ValueError("Functional checkpoint PRNG state disagrees with its manifest.")
+    if _target_policy_contract(restored) != manifest["target_policy"]:
+        raise ValueError(
+            "Functional checkpoint target policy disagrees with its manifest."
+        )
+    if restored.target_state is not None and int(
+        restored.target_state.update_count
+    ) != int(progress.update_step):
+        raise ValueError("Functional checkpoint target state disagrees with its step.")
     restored = FunctionalTrainingState(
         current_functions=restored.current_functions,
         best_functions=restored.best_functions,
         previous_functions=restored.previous_functions,
         optimizer_state=restored.optimizer_state,
+        target_state=restored.target_state,
         key=restored.key,
         pseudo_inverse_steps=restored.pseudo_inverse_steps,
         term_multipliers=restored.term_multipliers,

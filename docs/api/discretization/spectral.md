@@ -124,6 +124,30 @@
 
 ::: phydrax.discretization.spherical_laplacian_operator
 
+---
+
+::: phydrax.discretization.SphericalSamplePlan
+
+---
+
+::: phydrax.discretization.PreparedSphericalSampleOperator
+
+---
+
+::: phydrax.discretization.SphericalSpinOperatorPlan
+
+---
+
+::: phydrax.discretization.SphericalCoordinateDerivativeResult
+
+---
+
+::: phydrax.discretization.SphericalRotationPlan
+
+---
+
+::: phydrax.discretization.SphericalClebschGordanPlan
+
 ## Pseudospectral realization
 
 ::: phydrax.discretization.PseudospectralMethodPlan
@@ -179,6 +203,17 @@
 
 ---
 
+::: phydrax.discretization.SpectralSplitFormPlan
+
+---
+
+::: phydrax.discretization.SpectralSplitFormReport
+
+---
+
+
+---
+
 ::: phydrax.discretization.PreparedSpectralConservationDynamics
 
 ---
@@ -188,6 +223,18 @@
 ---
 
 ::: phydrax.discretization.SpectralEntropyDiagnostics
+
+## Incompressible channel solves
+
+::: phydrax.discretization.ChannelStokesPlan
+
+---
+
+::: phydrax.discretization.ChannelStokesPreparationReport
+
+---
+
+::: phydrax.discretization.HermitianSpectralCoordinates
 
 ## Bounded formulations
 

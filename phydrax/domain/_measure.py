@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -26,6 +27,15 @@ MeasureKind = Literal[
 ]
 
 
+def _nonnegative(value: Array, message: str, /) -> Array:
+    invalid = jnp.any(value < 0)
+    if isinstance(invalid, jax_core.Tracer):
+        return eqx.error_if(value, invalid, message)
+    if bool(invalid):
+        raise ValueError(message)
+    return value
+
+
 class ExactMass(StrictModule):
     """Analytically or structurally exact total measure mass."""
 
@@ -33,9 +43,7 @@ class ExactMass(StrictModule):
 
     def __init__(self, value: ArrayLike, /):
         value_ = jnp.asarray(value, dtype=float).reshape(())
-        if bool(value_ < 0):
-            raise ValueError("Measure mass must be non-negative.")
-        self.value = value_
+        self.value = _nonnegative(value_, "Measure mass must be non-negative.")
 
 
 class EstimatedMass(StrictModule):
@@ -57,8 +65,9 @@ class EstimatedMass(StrictModule):
     ):
         value_ = jnp.asarray(value, dtype=float).reshape(())
         uncertainty_ = jnp.asarray(uncertainty, dtype=float).reshape(())
-        if bool(value_ < 0) or bool(uncertainty_ < 0):
-            raise ValueError("Estimated mass and uncertainty must be non-negative.")
+        message = "Estimated mass and uncertainty must be non-negative."
+        value_ = _nonnegative(value_, message)
+        uncertainty_ = _nonnegative(uncertainty_, message)
         if int(evaluations) <= 0:
             raise ValueError("EstimatedMass.evaluations must be positive.")
         if not provenance:
@@ -111,12 +120,20 @@ class BaseMeasure(StrictModule):
             raise ValueError(f"Unknown measure kind {kind!r}.")
         if not isinstance(mass, (ExactMass, EstimatedMass, UnknownMass)):
             raise TypeError("BaseMeasure.mass must be an explicit Mass descriptor.")
-        if (
-            normalized
-            and isinstance(mass, ExactMass)
-            and not bool(jnp.isclose(mass.value, 1.0))
-        ):
-            raise ValueError("A normalized exact measure must have unit mass.")
+        if normalized and isinstance(mass, ExactMass):
+            invalid = ~jnp.isclose(mass.value, 1.0)
+            if isinstance(invalid, jax_core.Tracer):
+                mass = eqx.tree_at(
+                    lambda value: value.value,
+                    mass,
+                    eqx.error_if(
+                        mass.value,
+                        invalid,
+                        "A normalized exact measure must have unit mass.",
+                    ),
+                )
+            elif bool(invalid):
+                raise ValueError("A normalized exact measure must have unit mass.")
         self.kind = kind
         self.mass = mass
         self.normalized = bool(normalized)

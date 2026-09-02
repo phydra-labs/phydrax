@@ -38,8 +38,6 @@ class FunctionalStateDecoder(StrictModule):
         self.query_size = int(query_size)
         if self.query_size <= 0:
             raise ValueError("query_size must be positive.")
-        if jnp.issubdtype(subspace.pack().dtype, jnp.complexfloating):
-            raise TypeError("Initial WARP support requires real selected parameters.")
         self.subspace = subspace
 
     def reconstruct(self, vector: Array, /) -> PyTree[Any]:
@@ -121,7 +119,7 @@ class WeightSpaceRecurrentModel(StrictModule):
         input_mode: str = "difference",
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
-        dtype: Any = jnp.float32,
+        dtype: Any | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         if execution not in ("serial", "associative"):
@@ -133,7 +131,7 @@ class WeightSpaceRecurrentModel(StrictModule):
             input_mode=input_mode,
             maximum_retention=maximum_retention,
             input_scale=input_scale,
-            dtype=dtype,
+            dtype=subspace.pack().dtype if dtype is None else dtype,
             key=key,
         )
         self.execution = execution

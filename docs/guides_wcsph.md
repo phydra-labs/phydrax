@@ -118,10 +118,20 @@ Positions, velocity, density, material evaluation, pair geometry, pressure,
 viscosity, and selected-route reductions remain differentiable. Fixed timesteps
 are the inverse-problem default.
 
+## Runtime emission
+
+WCSPH uses the shared `SPHParticleSourcePlan` and `SPHRuntimeState`. Continuity
+density sources initialize the declared positive source density; summation
+density sources validate it and let the existing density operator recompute the
+accepted value. Source mass remainder plus population mass is exact, while
+momentum and barotropic reset energy have explicit cumulative ledgers. Activity
+changes occur only at the accepted event boundary and invalidate cached
+neighborhood/splat routes before the next epoch.
+
 ## Current limits
 
-The method has one particle set, one barotropic material, fixed smoothing length,
-periodic or unbounded interactions, and optional Morris physical viscosity. It
-does not yet include wall particles, free-surface correction, delta-SPH,
-artificial viscosity, density renormalization, transport velocity, adaptive h,
-multiphase flow, IISPH, or DFSPH.
+The method has one barotropic material, fixed smoothing length, periodic or
+unbounded interactions, and optional Morris physical viscosity. It does not yet
+include wall particles, free-surface correction, delta-SPH, artificial
+viscosity, density renormalization, transport velocity, adaptive h, multiphase
+flow, IISPH, or DFSPH.

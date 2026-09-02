@@ -54,13 +54,16 @@
             - __init__
             - sample
             - fixed
-            - supports_reference_transform
-            - reference_measure
-            - to_reference
-            - from_reference
+            - reference_transport
 
 ---
-::: phydrax.domain.ReferenceDistribution
+::: phydrax.domain.ReferenceTransport
+    options:
+        members:
+            - __init__
+            - to_reference
+            - from_reference
+            - evidence
 
 ---
 

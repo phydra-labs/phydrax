@@ -178,7 +178,7 @@ def operator_fit_schema(
 
 
 def operator_dataset_fingerprint(dataset: OperatorDataset, /) -> str:
-    """Hash one immutable operator dataset's values, geometry, and provenance."""
+    """Hash one immutable operator dataset's batches, case metadata, and provenance."""
     if not isinstance(dataset, OperatorDataset):
         raise TypeError("dataset must be an OperatorDataset.")
     assert dataset.provenance is not None
@@ -186,7 +186,12 @@ def operator_dataset_fingerprint(dataset: OperatorDataset, /) -> str:
         "format": _OPERATOR_DATASET_FINGERPRINT_FORMAT,
         "schema": operator_batch_schema(dataset.batch, target=dataset.targets),
         "arrays": array_tree_fingerprint(
-            {"batch": dataset.batch, "targets": dataset.targets}
+            {
+                "batch": dataset.batch,
+                "targets": dataset.targets,
+                "case_log_weights": dataset.case_log_weights,
+                "case_mask": dataset.case_mask,
+            }
         ),
         "provenance": [
             {

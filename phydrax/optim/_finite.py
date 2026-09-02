@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import abc
 import math
 from collections.abc import Callable, Sequence
+from enum import IntEnum
 from numbers import Integral
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -18,10 +20,17 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ._branch_and_bound import (
+    AbstractBranchAndBoundProblem,
+    branch_and_bound,
+    BranchAndBoundPolicy,
+    BranchAndBoundStatus,
+)
 
 
 _FINITE_SPACE_VERSION = 1
 _FINITE_SEARCH_METHOD_ID = "finite-exhaustive-v1"
+FiniteEvaluator = Callable[[PyTree[Array]], tuple[Array, Array]]
 
 
 def _is_finite_axis(value: Any, /) -> bool:
@@ -132,6 +141,7 @@ class FiniteProductSpace(StrictModule):
     axis_paths: tuple[str, ...] = eqx.field(static=True)
     axis_tree_definition: Any = eqx.field(static=True)
     point_tree_definition: Any = eqx.field(static=True)
+    space_id: str = eqx.field(static=True)
 
     def __init__(self, axes: PyTree[FiniteAxis], /):
         path_axes, axis_tree_definition = jax.tree_util.tree_flatten_with_path(
@@ -162,6 +172,7 @@ class FiniteProductSpace(StrictModule):
         self.axis_paths = tuple(_path_name(path) for path, _ in path_axes)
         self.axis_tree_definition = axis_tree_definition
         self.point_tree_definition = jax.tree_util.tree_structure(point)
+        self.space_id = self._compute_space_id()
 
     def _axis_blocks(self, /) -> tuple[FiniteAxis, ...]:
         return tuple(jax.tree_util.tree_leaves(self.axes, is_leaf=_is_finite_axis))
@@ -172,8 +183,7 @@ class FiniteProductSpace(StrictModule):
             tuple(axis.point_spec() for axis in self._axis_blocks())
         )
 
-    def signature(self, /) -> str:
-        """Return a content-sensitive identity for this finite candidate space."""
+    def _compute_space_id(self, /) -> str:
         axes = []
         for path, axis in zip(
             self.axis_paths,
@@ -198,6 +208,10 @@ class FiniteProductSpace(StrictModule):
                 "axes": axes,
             }
         )
+
+    def signature(self, /) -> str:
+        """Return the content-sensitive identity of this finite candidate space."""
+        return self.space_id
 
     def _unravel_unchecked(self, flat_index: Array, /) -> tuple[Array, ...]:
         remaining = jnp.asarray(flat_index, dtype=jnp.int64)
@@ -302,147 +316,247 @@ class FiniteExhaustiveSearch(StrictModule):
         return min(requested, count)
 
 
-class _FiniteMinimumState(StrictModule):
-    minimum: Array
-    valid: Array
-    flat_index: Array
+class FiniteSearchStatus(IntEnum):
+    """Observable completion state for one finite search."""
+
+    COMPLETE = 0
+    NO_VALID_CANDIDATES = 1
+    FRONTIER_CAPACITY_EXCEEDED = 2
+    STOPPED = 3
+
+
+class FiniteMinimum(StrictModule):
+    """Exact scalar minimum with stable flat-index tie breaking."""
+
+
+class FiniteTopK(StrictModule):
+    """Exact fixed-capacity scalar top-k reducer."""
+
+    k: int = eqx.field(static=True)
+
+    def __init__(self, k: int, /):
+        if isinstance(k, bool) or not isinstance(k, Integral):
+            raise TypeError("k must be a positive integer.")
+        resolved = int(k)
+        if resolved <= 0:
+            raise ValueError("k must be positive.")
+        self.k = resolved
+
+
+class FinitePareto(StrictModule):
+    """Exact nondominated archive with a declared static capacity."""
+
+    objective_count: int = eqx.field(static=True)
+    capacity: int = eqx.field(static=True)
+
+    def __init__(self, objective_count: int, capacity: int, /):
+        if any(
+            isinstance(value, bool) or not isinstance(value, Integral)
+            for value in (objective_count, capacity)
+        ):
+            raise TypeError("objective_count and capacity must be positive integers.")
+        objectives = int(objective_count)
+        capacity_ = int(capacity)
+        if objectives <= 0 or capacity_ <= 0:
+            raise ValueError("objective_count and capacity must be positive.")
+        self.objective_count = objectives
+        self.capacity = capacity_
+
+
+FiniteReducer = FiniteMinimum | FiniteTopK | FinitePareto
+
+
+class FiniteLandscapePolicy(StrictModule):
+    """Explicit storage budget for index-aligned finite objective landscapes."""
+
+    retain: bool = eqx.field(static=True)
+    maximum_entries: int = eqx.field(static=True)
+    maximum_bytes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        retain: bool = False,
+        maximum_entries: int = 1_000_000,
+        maximum_bytes: int = 64 * 1024 * 1024,
+    ):
+        if not isinstance(retain, bool):
+            raise TypeError("retain must be a bool.")
+        entries = int(maximum_entries)
+        bytes_ = int(maximum_bytes)
+        if entries <= 0 or bytes_ <= 0:
+            raise ValueError("Landscape storage budgets must be positive.")
+        self.retain = retain
+        self.maximum_entries = entries
+        self.maximum_bytes = bytes_
+
+
+class FiniteSearchProgress(StrictModule):
+    """Immutable host-callback snapshot between compiled evaluation batches."""
+
     attempted_evaluations: Array
     invalid_evaluations: Array
+    retained_candidates: Array
+    total_candidates: int = eqx.field(static=True)
+    complete: bool = eqx.field(static=True)
 
 
-class _FiniteMinimumEvidence(StrictModule):
-    minimum: Array
+@runtime_checkable
+class FiniteSearchCallback(Protocol):
+    """Host-only progress callback; return true to request an explicit stop."""
+
+    def __call__(self, progress: FiniteSearchProgress, /) -> bool: ...
+
+
+class FiniteLocalRefinement(StrictModule):
+    """Typed continuous refinement composed after, never inside, finite search."""
+
+    encode: Callable[[Any], Array] = eqx.field(static=True)
+    decode: Callable[[Array], Any] = eqx.field(static=True)
+    solve: Callable[[Array], tuple[Array, Any]] = eqx.field(static=True)
+    refinement_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        encode: Callable[[Any], Array],
+        decode: Callable[[Array], Any],
+        solve: Callable[[Array], tuple[Array, Any]],
+        /,
+        *,
+        refinement_id: str = "finite-local-refinement",
+    ):
+        if not all(callable(value) for value in (encode, decode, solve)):
+            raise TypeError("encode, decode, and solve must be callable.")
+        identifier = str(refinement_id)
+        if not identifier:
+            raise ValueError("refinement_id must be non-empty.")
+        self.encode = encode
+        self.decode = decode
+        self.solve = solve
+        self.refinement_id = identifier
+
+
+class FiniteSearchResult(StrictModule):
+    """Fixed-capacity reducer output and exactness/storage evidence."""
+
+    points: PyTree[Array]
+    scores: Array
     valid: Array
-    flat_index: Array
-    product_index: tuple[Array, ...]
+    flat_indices: Array
+    product_indices: tuple[Array, ...]
+    landscape_scores: Array | None
+    landscape_valid: Array | None
+    landscape_evaluated: Array | None
     attempted_evaluations: Array
     invalid_evaluations: Array
+    status: Array
+    exact: Array
+    refined_point: Any
+    refined_score: Array | None
+    refinement_evidence: Any
+    space_id: str = eqx.field(static=True)
+    reducer_id: str = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
+        return self.status == int(FiniteSearchStatus.COMPLETE)
 
 
-FiniteEvaluator = Callable[[PyTree[Array]], tuple[Array, Array]]
-
-
-def _merge_minimum(
-    left: _FiniteMinimumState,
-    right: _FiniteMinimumState,
+def _reducer_shape(
+    reducer: FiniteReducer,
+    score_spec: jax.ShapeDtypeStruct,
+    space_size: int,
     /,
-) -> _FiniteMinimumState:
-    right_wins = right.valid & (
-        ~left.valid
-        | (right.minimum < left.minimum)
-        | ((right.minimum == left.minimum) & (right.flat_index < left.flat_index))
-    )
-    return _FiniteMinimumState(
-        minimum=jnp.where(right_wins, right.minimum, left.minimum),
-        valid=left.valid | right.valid,
-        flat_index=jnp.where(right_wins, right.flat_index, left.flat_index),
-        attempted_evaluations=(left.attempted_evaluations + right.attempted_evaluations),
-        invalid_evaluations=left.invalid_evaluations + right.invalid_evaluations,
-    )
-
-
-def _batch_minimum(
-    scores: Array,
-    declared_valid: Array,
-    flat_indices: Array,
-    /,
-) -> _FiniteMinimumState:
-    effective_valid = declared_valid & jnp.isfinite(scores)
-    safe_scores = jnp.where(effective_valid, scores, jnp.inf)
-    local_index = jnp.argmin(safe_scores, axis=0)
-    minimum = jnp.take_along_axis(
-        safe_scores,
-        local_index[None, ...],
-        axis=0,
-    )[0]
-    valid = jnp.any(effective_valid, axis=0)
-    flat_index = flat_indices[0] + local_index.astype(jnp.int64)
-    return _FiniteMinimumState(
-        minimum=minimum,
-        valid=valid,
-        flat_index=jnp.where(valid, flat_index, -1),
-        attempted_evaluations=jnp.asarray(scores.shape[0], dtype=jnp.int64),
-        invalid_evaluations=jnp.sum(~effective_valid, axis=0, dtype=jnp.int64),
-    )
-
-
-def _evaluate_finite_batch(
-    evaluator: FiniteEvaluator,
-    space: FiniteProductSpace,
-    flat_indices: Array,
-    /,
-) -> _FiniteMinimumState:
-    points = space._take_unchecked(flat_indices)
-    points = jax.tree_util.tree_map(jax.lax.stop_gradient, points)
-    scores, declared_valid = jax.vmap(evaluator)(points)
-    return _batch_minimum(scores, declared_valid, flat_indices)
-
-
-@eqx.filter_jit
-def _run_exhaustive_minimum(
-    evaluator: FiniteEvaluator,
-    space: FiniteProductSpace,
-    /,
-    *,
-    batch_size: int,
-    output_shape: tuple[int, ...],
-    output_dtype: str,
-) -> _FiniteMinimumEvidence:
-    state = _FiniteMinimumState(
-        minimum=jnp.full(output_shape, jnp.inf, dtype=np.dtype(output_dtype)),
-        valid=jnp.zeros(output_shape, dtype=bool),
-        flat_index=jnp.full(output_shape, -1, dtype=jnp.int64),
-        attempted_evaluations=jnp.asarray(0, dtype=jnp.int64),
-        invalid_evaluations=jnp.zeros(output_shape, dtype=jnp.int64),
-    )
-    full_batches, remainder = divmod(space.size, batch_size)
-
-    def body(batch_index, current):
-        start = jnp.asarray(batch_index, dtype=jnp.int64) * batch_size
-        indices = start + jnp.arange(batch_size, dtype=jnp.int64)
-        batch = _evaluate_finite_batch(evaluator, space, indices)
-        return _merge_minimum(current, batch)
-
-    state = jax.lax.fori_loop(0, full_batches, body, state)
-    if remainder:
-        start = full_batches * batch_size
-        indices = start + jnp.arange(remainder, dtype=jnp.int64)
-        state = _merge_minimum(
-            state,
-            _evaluate_finite_batch(evaluator, space, indices),
+) -> tuple[int, int, str]:
+    if isinstance(reducer, FiniteMinimum):
+        if score_spec.shape != ():
+            raise ValueError("FiniteMinimum requires one scalar objective.")
+        return 1, 1, "minimum"
+    if isinstance(reducer, FiniteTopK):
+        if score_spec.shape != ():
+            raise ValueError("FiniteTopK requires one scalar objective.")
+        if reducer.k > space_size:
+            raise ValueError("FiniteTopK.k cannot exceed the finite space size.")
+        return reducer.k, 1, f"top-k:{reducer.k}"
+    if isinstance(reducer, FinitePareto):
+        if score_spec.shape != (reducer.objective_count,):
+            raise ValueError(
+                "FinitePareto evaluator scores must have trailing shape "
+                f"({reducer.objective_count},)."
+            )
+        return (
+            reducer.capacity,
+            reducer.objective_count,
+            (f"pareto:{reducer.objective_count}:{reducer.capacity}"),
         )
+    raise TypeError("reducer must be FiniteMinimum, FiniteTopK, or FinitePareto.")
 
-    safe_flat_index = jnp.where(state.valid, state.flat_index, 0)
-    product_index = tuple(
-        jnp.where(state.valid, index, -1)
-        for index in space._unravel_unchecked(safe_flat_index)
+
+def _stable_scalar_reduce(
+    scores: Array,
+    valid: Array,
+    indices: Array,
+    capacity: int,
+    /,
+) -> tuple[Array, Array, Array]:
+    safe = jnp.where(valid, scores, jnp.inf)
+    index_order = jnp.argsort(indices, stable=True)
+    safe = safe[index_order]
+    valid = valid[index_order]
+    indices = indices[index_order]
+    score_order = jnp.argsort(safe, stable=True)
+    selected = score_order[:capacity]
+    selected_valid = valid[selected] & jnp.isfinite(safe[selected])
+    return (
+        jnp.where(selected_valid, safe[selected], jnp.nan),
+        selected_valid,
+        jnp.where(selected_valid, indices[selected], -1),
     )
-    return _FiniteMinimumEvidence(
-        minimum=jax.lax.stop_gradient(jnp.where(state.valid, state.minimum, jnp.nan)),
-        valid=jax.lax.stop_gradient(state.valid),
-        flat_index=jax.lax.stop_gradient(state.flat_index),
-        product_index=jax.tree_util.tree_map(
-            jax.lax.stop_gradient,
-            product_index,
-        ),
-        attempted_evaluations=state.attempted_evaluations,
-        invalid_evaluations=state.invalid_evaluations,
+
+
+def _pareto_reduce(
+    scores: Array,
+    valid: Array,
+    indices: Array,
+    capacity: int,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    finite = valid & jnp.all(jnp.isfinite(scores), axis=-1)
+    candidate = scores[:, None, :]
+    competitor = scores[None, :, :]
+    dominates = (
+        finite[None, :]
+        & jnp.all(competitor <= candidate, axis=-1)
+        & jnp.any(competitor < candidate, axis=-1)
+    )
+    nondominated = finite & ~jnp.any(dominates, axis=-1)
+    order = jnp.argsort(indices, stable=True)
+    ordered_nondominated = nondominated[order]
+    selected_positions = jnp.nonzero(
+        ordered_nondominated,
+        size=capacity,
+        fill_value=0,
+    )[0]
+    selected = order[selected_positions]
+    count = jnp.sum(nondominated, dtype=jnp.int32)
+    slot = jnp.arange(capacity, dtype=jnp.int32)
+    selected_valid = slot < count
+    return (
+        jnp.where(selected_valid[:, None], scores[selected], jnp.nan),
+        selected_valid,
+        jnp.where(selected_valid, indices[selected], -1),
+        count > capacity,
     )
 
 
-def _exhaustive_minimum(
+def _finite_evaluator_contract(
     evaluator: FiniteEvaluator,
     space: FiniteProductSpace,
-    search: FiniteExhaustiveSearch,
+    reducer: FiniteReducer,
     /,
-) -> _FiniteMinimumEvidence:
+) -> tuple[jax.ShapeDtypeStruct, int, int, str]:
     if not callable(evaluator):
         raise TypeError("evaluator must be callable.")
-    if not isinstance(space, FiniteProductSpace):
-        raise TypeError("space must be a FiniteProductSpace.")
-    if not isinstance(search, FiniteExhaustiveSearch):
-        raise TypeError("search must be a FiniteExhaustiveSearch.")
-
     output = eqx.filter_eval_shape(evaluator, space.point_spec())
     if not isinstance(output, tuple) or len(output) != 2:
         raise TypeError("Finite evaluators must return a (score, valid) tuple.")
@@ -452,25 +566,381 @@ def _exhaustive_minimum(
     ):
         raise TypeError("Finite evaluator scores and validity must be arrays.")
     if not np.issubdtype(np.dtype(score_spec.dtype), np.floating):
-        raise TypeError("Finite evaluator scores must be real floating-point arrays.")
-    if np.dtype(valid_spec.dtype) != np.dtype(bool):
-        raise TypeError("Finite evaluator validity must be boolean.")
-    if score_spec.shape != valid_spec.shape:
-        raise ValueError("Finite evaluator score and validity shapes must match.")
-    if any(size == 0 for size in score_spec.shape):
-        raise ValueError("Finite evaluator output dimensions must be nonempty.")
+        raise TypeError("Finite evaluator scores must use a real floating dtype.")
+    if np.dtype(valid_spec.dtype) != np.dtype(bool) or valid_spec.shape != ():
+        raise ValueError("Finite evaluator validity must be one boolean scalar.")
+    capacity, objectives, reducer_id = _reducer_shape(reducer, score_spec, space.size)
+    return score_spec, capacity, objectives, reducer_id
 
-    return _run_exhaustive_minimum(
-        evaluator,
-        space,
-        batch_size=search.effective_batch_size(space.size),
-        output_shape=tuple(int(size) for size in score_spec.shape),
-        output_dtype=str(np.dtype(score_spec.dtype)),
+
+class FiniteCertifiedLowerBound(StrictModule, abc.ABC):
+    """Caller-owned certified lower bound over half-open flat-index boxes."""
+
+    __strict_abstract__ = True
+
+    certificate_id: str = eqx.field(static=True)
+
+    @abc.abstractmethod
+    def lower_bound(
+        self,
+        space: FiniteProductSpace,
+        start: int,
+        stop: int,
+        /,
+    ) -> float:
+        raise NotImplementedError
+
+
+class FiniteAdaptiveSearch(StrictModule):
+    """Certified adaptive finite minimum through the shared branch-and-bound engine."""
+
+    bound: FiniteCertifiedLowerBound
+    policy: BranchAndBoundPolicy
+
+    def __init__(
+        self,
+        bound: FiniteCertifiedLowerBound,
+        /,
+        *,
+        policy: BranchAndBoundPolicy | None = None,
+    ):
+        if not isinstance(bound, FiniteCertifiedLowerBound):
+            raise TypeError("bound must be a FiniteCertifiedLowerBound.")
+        identifier = str(bound.certificate_id)
+        if not identifier:
+            raise ValueError("Finite lower-bound certificate_id must be non-empty.")
+        policy_ = BranchAndBoundPolicy() if policy is None else policy
+        if not isinstance(policy_, BranchAndBoundPolicy):
+            raise TypeError("policy must be a BranchAndBoundPolicy.")
+        self.bound = bound
+        self.policy = policy_
+
+
+class _FiniteAdaptiveProblem(AbstractBranchAndBoundProblem):
+    evaluator: FiniteEvaluator = eqx.field(static=True)
+    space: FiniteProductSpace
+    bound: FiniteCertifiedLowerBound
+
+    def __init__(
+        self,
+        evaluator: FiniteEvaluator,
+        space: FiniteProductSpace,
+        bound: FiniteCertifiedLowerBound,
+        /,
+    ):
+        self.evaluator = evaluator
+        self.space = space
+        self.bound = bound
+        self.problem_id = canonical_fingerprint(
+            {
+                "kind": "finite-adaptive-search",
+                "space": space.space_id,
+                "bound": bound.certificate_id,
+            }
+        )
+
+    def root(self, /):
+        return (0, self.space.size)
+
+    def node_id(self, node, /) -> str:
+        return f"{int(node[0]):020d}:{int(node[1]):020d}"
+
+    def lower_bound(self, node, /) -> float:
+        start, stop = (int(node[0]), int(node[1]))
+        value = float(self.bound.lower_bound(self.space, start, stop))
+        if not np.isfinite(value):
+            return value
+        if stop - start == 1:
+            score, valid = self.evaluator(self.space.take(start))
+            score_ = float(np.asarray(score))
+            valid_ = bool(np.asarray(valid)) and np.isfinite(score_)
+            if valid_ and value > score_:
+                raise ValueError(
+                    "Finite lower-bound certificate exceeds a singleton objective."
+                )
+        return value
+
+    def feasible(self, node, /) -> bool:
+        start, stop = (int(node[0]), int(node[1]))
+        return 0 <= start < stop <= self.space.size
+
+    def complete(self, node, /) -> bool:
+        return int(node[1]) - int(node[0]) == 1
+
+    def objective(self, node, /) -> float:
+        score, valid = self.evaluator(self.space.take(int(node[0])))
+        value = float(np.asarray(score))
+        return value if bool(np.asarray(valid)) and np.isfinite(value) else math.inf
+
+    def branch(self, node, /):
+        start, stop = (int(node[0]), int(node[1]))
+        midpoint = start + (stop - start) // 2
+        return ((start, midpoint), (midpoint, stop))
+
+
+def _search_finite_adaptive(
+    evaluator: FiniteEvaluator,
+    space: FiniteProductSpace,
+    search: FiniteAdaptiveSearch,
+    /,
+) -> FiniteSearchResult:
+    score_spec, capacity, objectives, reducer_id = _finite_evaluator_contract(
+        evaluator, space, FiniteMinimum()
+    )
+    del score_spec, capacity, objectives
+    execution = branch_and_bound(
+        _FiniteAdaptiveProblem(evaluator, space, search.bound),
+        policy=search.policy,
+    )
+    valid = execution.incumbent is not None and np.isfinite(
+        float(np.asarray(execution.objective))
+    )
+    index = int(execution.incumbent[0]) if valid else 0
+    flat_indices = jnp.asarray([index if valid else -1], dtype=jnp.int64)
+    mask = jnp.asarray([valid])
+    points = space._take_unchecked(jnp.asarray([index], dtype=jnp.int64))
+    product_indices = tuple(
+        jnp.where(mask, value, -1)
+        for value in space._unravel_unchecked(jnp.asarray([index], dtype=jnp.int64))
+    )
+    exact = execution.status == int(BranchAndBoundStatus.OPTIMAL)
+    status = jnp.where(
+        valid,
+        jnp.where(
+            exact,
+            int(FiniteSearchStatus.COMPLETE),
+            int(FiniteSearchStatus.STOPPED),
+        ),
+        int(FiniteSearchStatus.NO_VALID_CANDIDATES),
+    ).astype(jnp.int32)
+    return FiniteSearchResult(
+        points,
+        jnp.asarray([float(np.asarray(execution.objective)) if valid else jnp.nan]),
+        mask,
+        flat_indices,
+        product_indices,
+        None,
+        None,
+        None,
+        execution.explored_nodes.astype(jnp.int64),
+        jnp.asarray(0, dtype=jnp.int64),
+        status,
+        exact & valid,
+        None,
+        None,
+        execution,
+        space.space_id,
+        reducer_id,
+    )
+
+
+def search_finite(
+    evaluator: FiniteEvaluator,
+    space: FiniteProductSpace,
+    reducer: FiniteReducer | None = None,
+    /,
+    *,
+    search: FiniteExhaustiveSearch | FiniteAdaptiveSearch | None = None,
+    landscape: FiniteLandscapePolicy | None = None,
+    callback: FiniteSearchCallback | None = None,
+    refinement: FiniteLocalRefinement | None = None,
+) -> FiniteSearchResult:
+    """Stream exact finite reducers over deterministic flat indices.
+
+    Callback orchestration is deliberately host-side and occurs only between
+    compiled, fixed-shape batches. Selection and optional refinement are
+    nondifferentiable; refinement evidence never changes the finite exactness claim.
+    """
+
+    reducer_ = FiniteMinimum() if reducer is None else reducer
+    search_ = FiniteExhaustiveSearch() if search is None else search
+    landscape_ = FiniteLandscapePolicy() if landscape is None else landscape
+    if not isinstance(landscape_, FiniteLandscapePolicy):
+        raise TypeError("landscape must be a FiniteLandscapePolicy.")
+    if callback is not None and not callable(callback):
+        raise TypeError("callback must be callable or None.")
+    if refinement is not None and not isinstance(refinement, FiniteLocalRefinement):
+        raise TypeError("refinement must be a FiniteLocalRefinement or None.")
+    if isinstance(search_, FiniteAdaptiveSearch):
+        if not isinstance(reducer_, FiniteMinimum):
+            raise TypeError("FiniteAdaptiveSearch supports FiniteMinimum only.")
+        if landscape_.retain or callback is not None or refinement is not None:
+            raise ValueError(
+                "Adaptive search does not support landscape, callback, or refinement."
+            )
+        return _search_finite_adaptive(evaluator, space, search_)
+    if not isinstance(search_, FiniteExhaustiveSearch):
+        raise TypeError(
+            "search must be a FiniteExhaustiveSearch or FiniteAdaptiveSearch."
+        )
+    score_spec, capacity, objectives, reducer_id = _finite_evaluator_contract(
+        evaluator, space, reducer_
+    )
+    entries = space.size * objectives
+    bytes_ = entries * np.dtype(score_spec.dtype).itemsize
+    if landscape_.retain and (
+        entries > landscape_.maximum_entries or bytes_ > landscape_.maximum_bytes
+    ):
+        raise ValueError(
+            "Finite landscape exceeds its explicit entry or byte storage budget."
+        )
+
+    retained_scores = jnp.full((capacity, objectives), jnp.nan, dtype=score_spec.dtype)
+    retained_valid = jnp.zeros((capacity,), dtype=bool)
+    retained_indices = jnp.full((capacity,), -1, dtype=jnp.int64)
+    landscape_scores = (
+        jnp.full((space.size, objectives), jnp.nan, dtype=score_spec.dtype)
+        if landscape_.retain
+        else None
+    )
+    landscape_valid = jnp.zeros((space.size,), dtype=bool) if landscape_.retain else None
+    landscape_evaluated = (
+        jnp.zeros((space.size,), dtype=bool) if landscape_.retain else None
+    )
+    attempted = jnp.asarray(0, dtype=jnp.int64)
+    invalid = jnp.asarray(0, dtype=jnp.int64)
+    overflow = jnp.asarray(False)
+    stopped = False
+    batch_size = search_.effective_batch_size(space.size)
+
+    @eqx.filter_jit
+    def evaluate_batch(indices):
+        points = space._take_unchecked(indices)
+        points = jax.tree_util.tree_map(jax.lax.stop_gradient, points)
+        return jax.vmap(evaluator)(points)
+
+    for start in range(0, space.size, batch_size):
+        stop = min(start + batch_size, space.size)
+        indices = jnp.arange(start, stop, dtype=jnp.int64)
+        batch_scores, declared_valid = evaluate_batch(indices)
+        batch_scores = batch_scores[:, None] if objectives == 1 else batch_scores
+        effective_valid = declared_valid & jnp.all(jnp.isfinite(batch_scores), axis=-1)
+        attempted = attempted + jnp.asarray(stop - start, dtype=jnp.int64)
+        invalid = invalid + jnp.sum(~effective_valid, dtype=jnp.int64)
+        if landscape_.retain:
+            landscape_scores = landscape_scores.at[start:stop].set(batch_scores)
+            landscape_valid = landscape_valid.at[start:stop].set(effective_valid)
+            landscape_evaluated = landscape_evaluated.at[start:stop].set(True)
+        combined_scores = jnp.concatenate((retained_scores, batch_scores), axis=0)
+        combined_valid = jnp.concatenate((retained_valid, effective_valid), axis=0)
+        combined_indices = jnp.concatenate((retained_indices, indices), axis=0)
+        if isinstance(reducer_, (FiniteMinimum, FiniteTopK)):
+            scalar, retained_valid, retained_indices = _stable_scalar_reduce(
+                combined_scores[:, 0],
+                combined_valid,
+                combined_indices,
+                capacity,
+            )
+            retained_scores = scalar[:, None]
+        else:
+            (
+                retained_scores,
+                retained_valid,
+                retained_indices,
+                batch_overflow,
+            ) = _pareto_reduce(
+                combined_scores,
+                combined_valid,
+                combined_indices,
+                capacity,
+            )
+            overflow = overflow | batch_overflow
+        if callback is not None:
+            stopped = bool(
+                callback(
+                    FiniteSearchProgress(
+                        jnp.asarray(attempted, dtype=jnp.int64),
+                        jnp.asarray(invalid, dtype=jnp.int64),
+                        jnp.sum(retained_valid, dtype=jnp.int32),
+                        space.size,
+                        stop == space.size,
+                    )
+                )
+            )
+            if stopped:
+                break
+
+    any_valid = jnp.any(retained_valid)
+    status = jnp.where(
+        stopped,
+        int(FiniteSearchStatus.STOPPED),
+        jnp.where(
+            overflow,
+            int(FiniteSearchStatus.FRONTIER_CAPACITY_EXCEEDED),
+            jnp.where(
+                any_valid,
+                int(FiniteSearchStatus.COMPLETE),
+                int(FiniteSearchStatus.NO_VALID_CANDIDATES),
+            ),
+        ),
+    ).astype(jnp.int32)
+    exact = status == int(FiniteSearchStatus.COMPLETE)
+    safe_indices = jnp.where(retained_valid, retained_indices, 0)
+    points = space._take_unchecked(safe_indices)
+    product_indices = tuple(
+        jnp.where(retained_valid, value, -1)
+        for value in space._unravel_unchecked(safe_indices)
+    )
+    refined_point = None
+    refined_score = None
+    refinement_evidence = None
+    if refinement is not None:
+        if not bool(np.asarray(retained_valid[0])):
+            raise ValueError("Local refinement requires a valid finite seed.")
+        seed = jax.tree_util.tree_map(lambda value: value[0], points)
+        encoded = jnp.asarray(refinement.encode(seed))
+        if encoded.ndim != 1 or not jnp.issubdtype(encoded.dtype, jnp.floating):
+            raise TypeError(
+                "FiniteLocalRefinement.encode must return one floating vector."
+            )
+        refined_coordinates, refinement_evidence = refinement.solve(encoded)
+        refined_point = refinement.decode(jnp.asarray(refined_coordinates))
+        candidate_score, candidate_valid = evaluator(refined_point)
+        if jnp.asarray(candidate_score).shape != score_spec.shape:
+            raise ValueError("Refined objective shape differs from the finite objective.")
+        refined_score = jnp.where(candidate_valid, candidate_score, jnp.nan)
+
+    return FiniteSearchResult(
+        jax.tree_util.tree_map(jax.lax.stop_gradient, points),
+        jax.lax.stop_gradient(
+            retained_scores[:, 0] if objectives == 1 else retained_scores
+        ),
+        jax.lax.stop_gradient(retained_valid),
+        jax.lax.stop_gradient(retained_indices),
+        jax.tree_util.tree_map(jax.lax.stop_gradient, product_indices),
+        None if landscape_scores is None else jax.lax.stop_gradient(landscape_scores),
+        None if landscape_valid is None else jax.lax.stop_gradient(landscape_valid),
+        (
+            None
+            if landscape_evaluated is None
+            else jax.lax.stop_gradient(landscape_evaluated)
+        ),
+        jnp.asarray(attempted, dtype=jnp.int64),
+        jnp.asarray(invalid, dtype=jnp.int64),
+        status,
+        exact,
+        refined_point,
+        refined_score,
+        refinement_evidence,
+        space.space_id,
+        reducer_id,
     )
 
 
 __all__ = [
+    "FiniteAdaptiveSearch",
     "FiniteAxis",
+    "FiniteCertifiedLowerBound",
     "FiniteExhaustiveSearch",
+    "FiniteLandscapePolicy",
+    "FiniteLocalRefinement",
+    "FiniteMinimum",
+    "FinitePareto",
     "FiniteProductSpace",
+    "FiniteSearchCallback",
+    "FiniteSearchProgress",
+    "FiniteSearchResult",
+    "FiniteSearchStatus",
+    "FiniteTopK",
+    "search_finite",
 ]

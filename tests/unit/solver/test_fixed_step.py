@@ -331,6 +331,14 @@ def test_fixed_step_rollout_observes_fail_closed_endpoint_state():
         phx.solver.FixedStepReplayPolicy("full"),
         phx.solver.FixedStepReplayPolicy("step"),
         phx.solver.FixedStepReplayPolicy("block", block_size=2),
+        phx.solver.FixedStepReplayPolicy(
+            "scheduled",
+            schedule=phx.solver.prepare_replay_schedule(
+                5,
+                8,
+                phx.solver.AdaptiveReplayPreparationPolicy(16, 20),
+            ),
+        ),
     ),
 )
 @pytest.mark.parametrize("retention", ("final", "checkpoints", "trajectory"))
@@ -374,6 +382,14 @@ def test_fixed_step_replay_preserves_primal_gradient_and_retention(replay, reten
         phx.solver.FixedStepReplayPolicy("full"),
         phx.solver.FixedStepReplayPolicy("step"),
         phx.solver.FixedStepReplayPolicy("block", block_size=3),
+        phx.solver.FixedStepReplayPolicy(
+            "scheduled",
+            schedule=phx.solver.prepare_replay_schedule(
+                5,
+                8,
+                phx.solver.AdaptiveReplayPreparationPolicy(16, 20),
+            ),
+        ),
     ),
 )
 def test_legacy_fixed_step_replay_preserves_save_stride(replay):

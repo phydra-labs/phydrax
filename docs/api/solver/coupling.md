@@ -132,25 +132,53 @@ transactional, transfer, waveform, and differentiation contracts.
 
 ::: phydrax.solver.coupling.solve_coupling
 
-## Fixed-grid waveforms and subcycling
+## Fixed-capacity waveforms, adaptive windows, and epochs
+
+::: phydrax.solver.coupling.CouplingWaveformPlan
+
+---
+
+::: phydrax.solver.coupling.CouplingWaveformGrid
+
+---
 
 ::: phydrax.solver.coupling.CouplingWaveform
 
 ---
 
-::: phydrax.solver.coupling.AbstractCouplingTemporalTransfer
+::: phydrax.solver.coupling.BarycentricCouplingTemporalTransfer
 
 ---
 
-::: phydrax.solver.coupling.HeldCouplingTemporalTransfer
+::: phydrax.solver.coupling.CouplingWaveformAdaptationPolicy
 
 ---
 
-::: phydrax.solver.coupling.LinearCouplingTemporalTransfer
+::: phydrax.solver.coupling.adapt_coupling_waveform_grid
 
 ---
 
-::: phydrax.solver.coupling.interpolate_coupling_waveform
+::: phydrax.solver.coupling.AdaptiveCouplingWindowPolicy
+
+---
+
+::: phydrax.solver.coupling.AdaptiveCouplingRolloutPlan
+
+---
+
+::: phydrax.solver.coupling.rollout_adaptive_coupling
+
+---
+
+::: phydrax.solver.coupling.PreparedCouplingEpoch
+
+---
+
+::: phydrax.solver.coupling.CouplingEpochTransitionPlan
+
+---
+
+::: phydrax.solver.coupling.transition_coupling_epoch
 
 ---
 

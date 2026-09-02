@@ -19,7 +19,7 @@ from ..._strict import StrictModule
 from ...data_utils import train_test_split_indices
 from .._evolution import DiscreteEvolution
 from .._layout import InputLayout
-from .._system import AbstractInputPolicy
+from .._system import AbstractInputPolicy, DiscreteStepContext
 from ._sindy import _result_from_regression, SINDyResult
 from ._sindy_design import SINDyDesign, SINDyDesignDiagnostics, SINDyProblem
 from ._sparse_regression import AbstractSparseRegression, SparseRegressionResult
@@ -168,6 +168,15 @@ class _ObservedInputPolicy(AbstractInputPolicy):
         denominator = jnp.where(right_time > left_time, right_time - left_time, 1.0)
         fraction = (query - left_time) / denominator
         return (1.0 - fraction) * self.values[index] + fraction * self.values[upper]
+
+    def evaluate_step(
+        self,
+        context: DiscreteStepContext,
+        state,
+        args=None,
+        /,
+    ) -> Array:
+        return self.evaluate(context.source, state, args)
 
 
 def _case_input_policy(problem: SINDyProblem, case: int, /):

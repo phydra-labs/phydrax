@@ -275,3 +275,15 @@ $$
 x_j=\tfrac{b-a}{2}\,\xi_j+\tfrac{a+b}{2},\qquad
 \tilde w_j=\tfrac{b-a}{2}\,w_j.
 $$
+
+## Probability reference transports
+
+`ProbabilityDomain.reference_transport` is the sole canonical-coordinate
+surface shared by sampling, integration, and interpolation. Built-in uniform,
+normal, and log-normal laws provide exact typed transports. A custom scalar law
+may opt in through `ReferenceTransportProvider`, or through the declared
+`ContinuousScalarQuantileLaw` hypotheses used by
+`construct_reference_transport`. Construction records round-trip, event-shape,
+orientation, and open-tail evidence. Empirical, discrete, mixed, merely
+sampleable, or undeclared dependent laws never receive a fabricated transport;
+use a weighted/discrete target or supply a certified explicit transport.

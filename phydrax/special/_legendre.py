@@ -88,13 +88,21 @@ def _ellipe_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, A
 
 
 def ellipk(m: ArrayLike) -> Array:
-    """Complete elliptic integral of the first kind with parameter ``m``."""
+    """Complete principal elliptic integral of the first kind."""
+    if jnp.issubdtype(jnp.asarray(m).dtype, jnp.complexfloating):
+        return elliprf(0.0 + 0.0j, 1.0 - jnp.asarray(m), 1.0 + 0.0j)
     (promoted_m,) = promote_real("ellipk", m)
     return _ellipk_array(promoted_m)
 
 
 def ellipe(m: ArrayLike) -> Array:
-    """Complete elliptic integral of the second kind with parameter ``m``."""
+    """Complete principal elliptic integral of the second kind."""
+    if jnp.issubdtype(jnp.asarray(m).dtype, jnp.complexfloating):
+        value = jnp.asarray(m)
+        return (
+            elliprf(0.0 + 0.0j, 1.0 - value, 1.0 + 0.0j)
+            - value * elliprd(0.0 + 0.0j, 1.0 - value, 1.0 + 0.0j) / 3.0
+        )
     (promoted_m,) = promote_real("ellipe", m)
     return _ellipe_array(promoted_m)
 
@@ -170,7 +178,9 @@ def _ellipkm1_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array,
 
 
 def ellipkm1(p: ArrayLike) -> Array:
-    """Evaluate ``K(1 - p)`` accurately near the logarithmic singularity."""
+    """Evaluate principal ``K(1 - p)``."""
+    if jnp.issubdtype(jnp.asarray(p).dtype, jnp.complexfloating):
+        return ellipk(1.0 - jnp.asarray(p))
     (promoted_p,) = promote_real("ellipkm1", p)
     return _ellipkm1_array(promoted_p)
 
@@ -414,6 +424,15 @@ def _reduce_amplitude(phi: Array) -> tuple[Array, Array]:
 
 def ellipkinc(phi: ArrayLike, m: ArrayLike) -> Array:
     """Incomplete elliptic integral of the first kind ``F(phi | m)``."""
+    if jnp.issubdtype(jnp.result_type(phi, m), jnp.complexfloating):
+        phi_, m_ = jnp.broadcast_arrays(jnp.asarray(phi), jnp.asarray(m))
+        sine = jnp.sin(phi_)
+        cosine = jnp.cos(phi_)
+        return sine * elliprf(
+            cosine * cosine,
+            1.0 - m_ * sine * sine,
+            jnp.ones_like(m_),
+        )
     phi, m = promote_real("ellipkinc", phi, m)
     phi, m = jnp.broadcast_arrays(phi, m)
     invalid = m > 1.0
@@ -491,6 +510,15 @@ def _ellipeinc_jvp(
 
 def ellipeinc(phi: ArrayLike, m: ArrayLike) -> Array:
     """Incomplete elliptic integral of the second kind ``E(phi | m)``."""
+    if jnp.issubdtype(jnp.result_type(phi, m), jnp.complexfloating):
+        phi_, m_ = jnp.broadcast_arrays(jnp.asarray(phi), jnp.asarray(m))
+        sine = jnp.sin(phi_)
+        cosine = jnp.cos(phi_)
+        y = 1.0 - m_ * sine * sine
+        return (
+            sine * elliprf(cosine * cosine, y, jnp.ones_like(m_))
+            - m_ * sine**3 * elliprd(cosine * cosine, y, jnp.ones_like(m_)) / 3.0
+        )
     phi, m = promote_real("ellipeinc", phi, m)
     phi, m = jnp.broadcast_arrays(phi, m)
     return _ellipeinc_array(phi, m)
@@ -498,6 +526,12 @@ def ellipeinc(phi: ArrayLike, m: ArrayLike) -> Array:
 
 def ellippi(n: ArrayLike, m: ArrayLike) -> Array:
     """Complete elliptic integral of the third kind ``Pi(n | m)``."""
+    if jnp.issubdtype(jnp.result_type(n, m), jnp.complexfloating):
+        n_, m_ = jnp.broadcast_arrays(jnp.asarray(n), jnp.asarray(m))
+        return (
+            elliprf(0.0 + 0.0j, 1.0 - m_, jnp.ones_like(m_))
+            + n_ * elliprj(0.0 + 0.0j, 1.0 - m_, jnp.ones_like(m_), 1.0 - n_) / 3.0
+        )
     n, m = promote_real("ellippi", n, m)
     n, m = jnp.broadcast_arrays(n, m)
     return _complete_pi_array(n, m)
@@ -505,6 +539,20 @@ def ellippi(n: ArrayLike, m: ArrayLike) -> Array:
 
 def ellippiinc(n: ArrayLike, phi: ArrayLike, m: ArrayLike) -> Array:
     """Incomplete elliptic integral of the third kind ``Pi(n; phi | m)``."""
+    if jnp.issubdtype(jnp.result_type(n, phi, m), jnp.complexfloating):
+        n_, phi_, m_ = jnp.broadcast_arrays(
+            jnp.asarray(n), jnp.asarray(phi), jnp.asarray(m)
+        )
+        sine = jnp.sin(phi_)
+        cosine = jnp.cos(phi_)
+        y = 1.0 - m_ * sine * sine
+        return (
+            sine * elliprf(cosine * cosine, y, jnp.ones_like(m_))
+            + n_
+            * sine**3
+            * elliprj(cosine * cosine, y, jnp.ones_like(m_), 1.0 - n_ * sine * sine)
+            / 3.0
+        )
     n, phi, m = promote_real("ellippiinc", n, phi, m)
     n, phi, m = jnp.broadcast_arrays(n, phi, m)
     invalid = (n >= 1.0) | (m > 1.0)

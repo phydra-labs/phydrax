@@ -14,6 +14,7 @@ from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunctio
 
 from ..._strict import StrictModule
 from ...metrix import LeviCivitaConnection, RiemannianMetric
+from ...stochastic._calculus import stratonovich_correction
 from ._domain_ops import (
     _factor_and_dim,
     div,
@@ -26,10 +27,7 @@ from ._riemannian_ops import (
     riemannian_div,
     riemannian_div_tensor,
 )
-from ._stochastic_estimators import (
-    directional_stratonovich_correction,
-    factor_hvp_contraction,
-)
+from ._stochastic_estimators import factor_hvp_contraction
 
 
 StochasticInterpretation = Literal["ito", "stratonovich"]
@@ -115,7 +113,7 @@ class _StratonovichCorrectionCallable(StrictModule):
             local_args[self.state_position] = value
             return self.diffusion.func(*local_args, key=key, **kwargs)
 
-        return directional_stratonovich_correction(evaluate, state)
+        return stratonovich_correction(evaluate, state).correction
 
 
 class _CoordinateToCovariantDriftCallable(StrictModule):

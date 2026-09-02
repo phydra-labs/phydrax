@@ -315,7 +315,7 @@ def test_rough_second_level_control_is_rejected_with_rde_direction():
         )
 
 
-def test_complex_cde_uses_real_imaginary_diffrax_packing():
+def test_complex_cde_uses_declared_real_coordinates():
     path = _declared_path(
         lambda time, side: jnp.asarray([time]),
         lambda time, side: jnp.asarray([1.0]),
@@ -343,8 +343,8 @@ def test_complex_cde_uses_real_imaginary_diffrax_packing():
 
     evidence = solution.differential_solution.temporal_evidence
     assert evidence is not None
-    assert evidence.state_packing is not None
-    assert evidence.state_packing.strategy == "real_imag"
+    assert evidence.state_coordinates is not None
+    assert evidence.state_coordinates.domain_kind == "full"
     assert solution.states.dtype == jnp.complex128
     assert jnp.allclose(
         solution.states[:, 0],

@@ -21,6 +21,7 @@ from ..._interpolation import (
     BSplineGrid,
     BSplineGridBank,
     TrainableBSplineGrid,
+    TrainableBSplineGridBank,
 )
 from ..._interpolation._rational_spline import _rational_quotient_jets
 from ..._polynomial._orthogonal import (
@@ -221,7 +222,7 @@ class _BSplineQuadrature(StrictModule, NonTrainableState):
 class BSplineEdgeBasis(AbstractEdgeBasis):
     """Compactly supported B-spline KAN edge basis on fixed or trainable grids."""
 
-    grid: BSplineGrid | BSplineGridBank | TrainableBSplineGrid
+    grid: BSplineGrid | BSplineGridBank | TrainableBSplineGrid | TrainableBSplineGridBank
     regularization_order: int = eqx.field(static=True)
     per_input: bool = eqx.field(static=True)
     knot_entropy_weight: float = eqx.field(static=True)
@@ -233,7 +234,11 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         degree: int | None = None,
         *,
         num_intervals: int | None = None,
-        grid: BSplineGrid | BSplineGridBank | TrainableBSplineGrid | None = None,
+        grid: BSplineGrid
+        | BSplineGridBank
+        | TrainableBSplineGrid
+        | TrainableBSplineGridBank
+        | None = None,
         regularization_order: int = 2,
         per_input: bool = False,
         knot_entropy_weight: float = 0.0,
@@ -244,10 +249,17 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
             interval_count = 8 if num_intervals is None else num_intervals
             grid_ = BSplineGrid.open_uniform(degree_, interval_count)
         else:
-            if not isinstance(grid, (BSplineGrid, BSplineGridBank, TrainableBSplineGrid)):
+            if not isinstance(
+                grid,
+                (
+                    BSplineGrid,
+                    BSplineGridBank,
+                    TrainableBSplineGrid,
+                    TrainableBSplineGridBank,
+                ),
+            ):
                 raise TypeError(
-                    "grid must be a BSplineGrid, BSplineGridBank, or "
-                    "TrainableBSplineGrid."
+                    "grid must be a fixed or trainable B-spline grid or grid bank."
                 )
             if degree is not None and degree != grid.degree:
                 raise ValueError("degree must match the explicit B-spline grid.")
@@ -258,8 +270,6 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
             grid_ = grid
         if grid_.degree < 1:
             raise ValueError("B-spline KAN edge degree must be positive.")
-        if per_input and isinstance(grid_, TrainableBSplineGrid):
-            raise ValueError("Trainable per-input B-spline grid banks are not supported.")
         if (
             isinstance(regularization_order, bool)
             or not isinstance(regularization_order, int)
@@ -277,7 +287,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
             raise ValueError(
                 "Knot regularization weights must be finite and nonnegative."
             )
-        if isinstance(grid_, TrainableBSplineGrid):
+        if isinstance(grid_, (TrainableBSplineGrid, TrainableBSplineGridBank)):
             quadrature = None
         else:
             quadrature_points, quadrature_weights = grid_.derivative_quadrature(
@@ -289,7 +299,9 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
             )
         self.grid = grid_
         self.regularization_order = regularization_order
-        self.per_input = bool(per_input or isinstance(grid_, BSplineGridBank))
+        self.per_input = bool(
+            per_input or isinstance(grid_, (BSplineGridBank, TrainableBSplineGridBank))
+        )
         self.knot_entropy_weight = entropy_weight
         self.knot_neighbor_weight = neighbor_weight
         self._quadrature = quadrature
@@ -304,14 +316,30 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
 
     def for_layer(self, in_size: int, out_size: int, /) -> AbstractEdgeBasis:
         del out_size
-        if isinstance(self.grid, BSplineGridBank):
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:
                 raise ValueError(
                     "B-spline grid-bank size must match the KAN layer input size."
                 )
             return self
         if isinstance(self.grid, TrainableBSplineGrid):
-            return self
+            if not self.per_input:
+                return self
+            return BSplineEdgeBasis(
+                grid=TrainableBSplineGridBank(
+                    jnp.broadcast_to(
+                        self.grid.raw_span_logits,
+                        (in_size, self.grid.num_intervals),
+                    ),
+                    self.grid.degree,
+                    intervals=(self.grid.lower, self.grid.upper),
+                    minimum_spans=self.grid.minimum_span,
+                ),
+                regularization_order=self.regularization_order,
+                per_input=True,
+                knot_entropy_weight=self.knot_entropy_weight,
+                knot_neighbor_weight=self.knot_neighbor_weight,
+            )
         if not self.per_input:
             return self
         return BSplineEdgeBasis(
@@ -329,7 +357,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         initialization: EdgeInitialization,
         key: Key[Array, ""],
     ) -> Array:
-        if isinstance(self.grid, BSplineGridBank):
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:
                 raise ValueError(
                     "B-spline grid-bank size must match the KAN layer input size."
@@ -349,7 +377,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         coefficients_, inputs_ = _validate_edge_arrays(
             coefficients, inputs, self.coefficient_count
         )
-        if isinstance(self.grid, BSplineGridBank):
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != int(coefficients_.shape[1]):
                 raise ValueError(
                     "B-spline grid-bank size must match the edge input axis."
@@ -390,7 +418,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
             quadrature_weights = self._quadrature.weights
         quadrature_points = quadrature_points.astype(coefficients_.real.dtype)
         quadrature_weights = quadrature_weights.astype(coefficients_.real.dtype)
-        if isinstance(self.grid, BSplineGridBank):
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != int(coefficients_.shape[1]):
                 raise ValueError(
                     "B-spline grid-bank size must match the edge input axis."
@@ -412,7 +440,15 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
                 bounds="error",
             ).values
             magnitude = jnp.real(derivative * jnp.conj(derivative))
-            return jnp.sum(magnitude * quadrature_weights[None, :, :])
+            penalty = jnp.sum(magnitude * quadrature_weights[None, :, :])
+            if isinstance(self.grid, TrainableBSplineGridBank):
+                penalty = penalty + jnp.sum(
+                    self.grid.regularization(
+                        entropy_weight=self.knot_entropy_weight,
+                        neighbor_weight=self.knot_neighbor_weight,
+                    )
+                )
+            return penalty
         case_shape = tuple(int(size) for size in coefficients_.shape[:2])
         query = jnp.broadcast_to(
             quadrature_points,
@@ -429,10 +465,12 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         ).values
         magnitude = jnp.real(derivative * jnp.conj(derivative))
         penalty = jnp.sum(magnitude * quadrature_weights)
-        if isinstance(self.grid, TrainableBSplineGrid):
-            penalty = penalty + self.grid.regularization(
-                entropy_weight=self.knot_entropy_weight,
-                neighbor_weight=self.knot_neighbor_weight,
+        if isinstance(self.grid, (TrainableBSplineGrid, TrainableBSplineGridBank)):
+            penalty = penalty + jnp.sum(
+                self.grid.regularization(
+                    entropy_weight=self.knot_entropy_weight,
+                    neighbor_weight=self.knot_neighbor_weight,
+                )
             )
         return penalty
 
@@ -467,9 +505,9 @@ class RationalBSplineEdgeParameters(StrictModule):
 
 
 class RationalBSplineEdgeBasis(AbstractEdgeBasis):
-    """Positive-weight rational B-spline KAN edges on fixed grids."""
+    """Positive-weight rational B-spline KAN edges on fixed or trainable grids."""
 
-    grid: BSplineGrid | BSplineGridBank
+    grid: BSplineGrid | BSplineGridBank | TrainableBSplineGrid | TrainableBSplineGridBank
     regularization_order: int = eqx.field(static=True)
     per_input: bool = eqx.field(static=True)
     maximum_log_weight: float = eqx.field(static=True)
@@ -477,14 +515,18 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
     weight_variation_weight: float = eqx.field(static=True)
     minimum_denominator: float = eqx.field(static=True)
     denominator_weight: float = eqx.field(static=True)
-    _quadrature: _BSplineQuadrature
+    _quadrature: _BSplineQuadrature | None
 
     def __init__(
         self,
         degree: int | None = None,
         *,
         num_intervals: int | None = None,
-        grid: BSplineGrid | BSplineGridBank | None = None,
+        grid: BSplineGrid
+        | BSplineGridBank
+        | TrainableBSplineGrid
+        | TrainableBSplineGridBank
+        | None = None,
         regularization_order: int = 2,
         per_input: bool = False,
         maximum_log_weight: float = 4.0,
@@ -498,8 +540,18 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
             interval_count = 8 if num_intervals is None else num_intervals
             grid_ = BSplineGrid.open_uniform(degree_, interval_count)
         else:
-            if not isinstance(grid, (BSplineGrid, BSplineGridBank)):
-                raise TypeError("grid must be a fixed BSplineGrid or BSplineGridBank.")
+            if not isinstance(
+                grid,
+                (
+                    BSplineGrid,
+                    BSplineGridBank,
+                    TrainableBSplineGrid,
+                    TrainableBSplineGridBank,
+                ),
+            ):
+                raise TypeError(
+                    "grid must be a fixed or trainable B-spline grid or grid bank."
+                )
             if degree is not None and degree != grid.degree:
                 raise ValueError("degree must match the explicit rational spline grid.")
             if num_intervals is not None:
@@ -532,21 +584,26 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
                 "Rational weight bounds and regularizers must be finite and nonnegative, "
                 "with positive maximum_log_weight and minimum_denominator."
             )
-        quadrature_points, quadrature_weights = grid_.derivative_quadrature(
-            regularization_order
-        )
+        quadrature = None
+        if not isinstance(grid_, (TrainableBSplineGrid, TrainableBSplineGridBank)):
+            quadrature_points, quadrature_weights = grid_.derivative_quadrature(
+                regularization_order
+            )
+            quadrature = _BSplineQuadrature(
+                quadrature_points,
+                quadrature_weights,
+            )
         self.grid = grid_
         self.regularization_order = regularization_order
-        self.per_input = bool(per_input or isinstance(grid_, BSplineGridBank))
+        self.per_input = bool(
+            per_input or isinstance(grid_, (BSplineGridBank, TrainableBSplineGridBank))
+        )
         self.maximum_log_weight = static_values[0]
         self.weight_magnitude_weight = static_values[1]
         self.weight_variation_weight = static_values[2]
         self.minimum_denominator = static_values[3]
         self.denominator_weight = static_values[4]
-        self._quadrature = _BSplineQuadrature(
-            quadrature_points,
-            quadrature_weights,
-        )
+        self._quadrature = quadrature
 
     @property
     def degree(self) -> int:
@@ -558,12 +615,33 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
 
     def for_layer(self, in_size: int, out_size: int, /) -> AbstractEdgeBasis:
         del out_size
-        if isinstance(self.grid, BSplineGridBank):
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:
                 raise ValueError(
                     "Rational spline grid-bank size must match the KAN input size."
                 )
             return self
+        if isinstance(self.grid, TrainableBSplineGrid):
+            if not self.per_input:
+                return self
+            return RationalBSplineEdgeBasis(
+                grid=TrainableBSplineGridBank(
+                    jnp.broadcast_to(
+                        self.grid.raw_span_logits,
+                        (in_size, self.grid.num_intervals),
+                    ),
+                    self.grid.degree,
+                    intervals=(self.grid.lower, self.grid.upper),
+                    minimum_spans=self.grid.minimum_span,
+                ),
+                regularization_order=self.regularization_order,
+                per_input=True,
+                maximum_log_weight=self.maximum_log_weight,
+                weight_magnitude_weight=self.weight_magnitude_weight,
+                weight_variation_weight=self.weight_variation_weight,
+                minimum_denominator=self.minimum_denominator,
+                denominator_weight=self.denominator_weight,
+            )
         if not self.per_input:
             return self
         return RationalBSplineEdgeBasis(
@@ -584,7 +662,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         initialization: EdgeInitialization,
         key: Key[Array, ""],
     ) -> RationalBSplineEdgeParameters:
-        if isinstance(self.grid, BSplineGridBank):
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:
                 raise ValueError(
                     "Rational spline grid-bank size must match the KAN input size."
@@ -631,7 +709,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
             raise ValueError(
                 "Rational edge inputs must match the output-by-input parameter axes."
             )
-        if isinstance(self.grid, BSplineGridBank) and (
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)) and (
             self.grid.num_grids != int(control_values.shape[1])
         ):
             raise ValueError(
@@ -650,7 +728,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         query: Array,
         derivative_order: int = 0,
     ) -> Array:
-        if isinstance(self.grid, BSplineGridBank):
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             return bspline_batched_evaluate(
                 self.grid.knots,
                 coefficients,
@@ -722,9 +800,16 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
     def regularization(self, coefficients: Any) -> Array:
         control_values, raw_log_weights, _ = self._validated_parameters(coefficients)
         weights, log_weights = self._positive_weights(raw_log_weights)
-        quadrature_points = self._quadrature.points.astype(control_values.real.dtype)
-        quadrature_weights = self._quadrature.weights.astype(control_values.real.dtype)
-        if isinstance(self.grid, BSplineGridBank):
+        if self._quadrature is None:
+            quadrature_points, quadrature_weights = self.grid.derivative_quadrature(
+                self.regularization_order
+            )
+        else:
+            quadrature_points = self._quadrature.points
+            quadrature_weights = self._quadrature.weights
+        quadrature_points = quadrature_points.astype(control_values.real.dtype)
+        quadrature_weights = quadrature_weights.astype(control_values.real.dtype)
+        if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             query = jnp.broadcast_to(
                 quadrature_points[None, :, :],
                 (
@@ -762,7 +847,10 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         denominator_penalty = self.denominator_weight * jnp.sum(
             jax.nn.relu(self.minimum_denominator - denominator) ** 2 * integration_weights
         )
-        return energy + magnitude_penalty + variation_penalty + denominator_penalty
+        penalty = energy + magnitude_penalty + variation_penalty + denominator_penalty
+        if isinstance(self.grid, (TrainableBSplineGrid, TrainableBSplineGridBank)):
+            penalty = penalty + jnp.sum(self.grid.regularization())
+        return penalty
 
 
 __all__ = [
@@ -771,6 +859,7 @@ __all__ = [
     "TrainableBSplineGrid",
     "BSplineGrid",
     "BSplineGridBank",
+    "TrainableBSplineGridBank",
     "OrthogonalPolynomialEdgeBasis",
     "RationalBSplineEdgeBasis",
     "RationalBSplineEdgeParameters",

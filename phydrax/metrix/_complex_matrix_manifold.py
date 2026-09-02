@@ -244,7 +244,7 @@ class UnitaryManifold(AbstractGeodesicManifold):
         ambient_cotangent: ArrayLike,
         /,
     ) -> Array:
-        return self.project_tangent(point, ambient_cotangent)
+        return self.project_tangent(point, jnp.conj(ambient_cotangent))
 
     def inner(
         self,
@@ -352,7 +352,7 @@ class SpecialUnitaryManifold(AbstractGeodesicManifold):
         ambient_cotangent: ArrayLike,
         /,
     ) -> Array:
-        return self.project_tangent(point, ambient_cotangent)
+        return self.project_tangent(point, jnp.conj(ambient_cotangent))
 
     def inner(
         self,
@@ -475,7 +475,7 @@ class AffineInvariantHPDManifold(AbstractGeodesicManifold):
         /,
     ) -> Array:
         matrix = self._matrix(point, "HPD point")
-        cotangent = self.project_tangent(matrix, ambient_cotangent)
+        cotangent = self.project_tangent(matrix, jnp.conj(ambient_cotangent))
         return _hermitian(matrix @ cotangent @ matrix)
 
     def inner(
@@ -605,7 +605,7 @@ class ComplexStiefelManifold(AbstractRiemannianManifold):
         return vector - matrix @ correction
 
     def egrad_to_rgrad(self, point: ArrayLike, ambient_cotangent: ArrayLike, /) -> Array:
-        return self.project_tangent(point, ambient_cotangent)
+        return self.project_tangent(point, jnp.conj(ambient_cotangent))
 
     def inner(
         self,

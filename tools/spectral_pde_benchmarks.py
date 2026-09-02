@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from dataclasses import asdict, dataclass
+from math import prod
 
 import jax
 import jax.numpy as jnp
@@ -211,12 +212,14 @@ def run_spectral_pde_benchmark(
         real_solution.states[:, 1],
     )
     packed_defect = jnp.max(jnp.abs(packed_solution.states - expected_packed))
-    packing = packed_solution.temporal_evidence.state_packing
-    if packing is None:
-        raise RuntimeError("Complex Diffrax benchmark did not prepare state packing.")
-    backend_itemsize = jnp.dtype(packing.backend_dtype).itemsize
+    coordinates = packed_solution.temporal_evidence.state_coordinates
+    if coordinates is None:
+        raise RuntimeError(
+            "Complex Diffrax benchmark did not prepare real state coordinates."
+        )
+    backend_itemsize = jnp.dtype(coordinates.coordinate_dtype).itemsize
     public_bytes = state.size * state.dtype.itemsize
-    backend_bytes = 2 * state.size * backend_itemsize
+    backend_bytes = prod(coordinates.coordinate_shape) * backend_itemsize
     finite = bool(
         jnp.all(jnp.isfinite(actual))
         & jnp.isfinite(maximum_error)
@@ -239,8 +242,8 @@ def run_spectral_pde_benchmark(
         maximum_drift_error=float(maximum_error),
         parameter_gradient_error=float(gradient_error),
         alias_defect=float(alias_defect),
-        state_packing_evidence_id=packing.evidence_id,
-        packed_backend_shape=packing.backend_shape,
+        state_packing_evidence_id=coordinates.evidence_id,
+        packed_backend_shape=coordinates.coordinate_shape,
         packed_public_bytes=int(public_bytes),
         packed_backend_bytes=int(backend_bytes),
         packed_diffrax_wall_ms=float(packed_wall),
@@ -248,6 +251,36 @@ def run_spectral_pde_benchmark(
         packed_pathwise_defect=float(packed_defect),
         finite=finite,
     )
+
+
+def split_form_capacity_metrics(
+    mode_count: int,
+    /,
+    *,
+    pair_chunk_size: int,
+) -> dict[str, int | float]:
+    """Analytic pair/workspace evidence for the certified Fourier split route."""
+    count = int(mode_count)
+    space = phx.discretization.TensorSpectralPlan(
+        (phx.discretization.FourierBasisPlan(count),)
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
+    prepared = (
+        phx.discretization.SpectralConservationMethodPlan(
+            split_form=phx.discretization.SpectralSplitFormPlan(
+                phx.discretization.EntropyConservativeEulerFluxPlan(),
+                pair_chunk_size=int(pair_chunk_size),
+            )
+        )
+        .prepare(space)
+        .split_form
+    )
+    return {
+        "mode_count": count,
+        "pair_count": prepared.report.pair_count,
+        "pair_chunk_size": prepared.report.pair_chunk_size,
+        "pair_workspace_bytes": prepared.report.pair_workspace_bytes,
+        "skew_sbp_defect": prepared.report.skew_sbp_defect,
+    }
 
 
 def main() -> None:

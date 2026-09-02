@@ -144,7 +144,9 @@ def test_freshwater_changes_volume_and_conserves_salt_inventory():
     )
     ocean = _ocean(freshwater=freshwater)
     state = _state(ocean)
-    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(state)
+    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(
+        ocean, state
+    )
     method = phx.applications.ocean.HydrostaticIMEXMidpointMethod(ocean)
 
     result = method.step(

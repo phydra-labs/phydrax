@@ -488,3 +488,34 @@ residual; success requires the original residual to pass.
 ---
 
 ::: phydrax.continuation.solve_deflated
+
+## Declared generalized pencils and Hopf loci
+
+`ContinuationStabilityPencil` supplies a square standard or generalized pencil on
+one declared stability space. A rectangular residual is analyzable only when the
+caller supplies both a lift and projection; absent that closure it has no intrinsic
+stability spectrum. The DAE adapter uses the documented `A = -F_y`,
+`B = F_ydot` convention and preserves finite/infinite generalized-mode evidence.
+
+`GeneralizedPencilStabilityAnalyzer` routes the pencil through PhydraX's native
+general eigensolve. `HopfContinuationAdapter` represents the conjugate mode in real
+blocks, adds normalization and reference-phase equations, and returns an ordinary
+`ContinuationCurveProblem` for the existing plan/prepare/run lifecycle.
+`HopfPointEvidence` is accepted only for positive frequency, small real-block
+residual, spectral isolation, transversality, and a full-rank augmented corrector.
+This is local evidence for the finite represented branch, not branch completeness,
+center-manifold validity, or a normal-form coefficient.
+
+::: phydrax.continuation.ContinuationStabilityPencil
+
+---
+
+::: phydrax.continuation.GeneralizedPencilStabilityAnalyzer
+
+---
+
+::: phydrax.continuation.HopfContinuationAdapter
+
+---
+
+::: phydrax.continuation.hopf_point_evidence

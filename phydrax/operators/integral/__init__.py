@@ -6,6 +6,7 @@ from . import layer_potential, vortex as vortex
 from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
 from ._convolution_quadrature import *  # noqa: F403
 from ._convolution_quadrature import __all__ as _convolution_quadrature_all
+from ._diffrax_collocation import DiffraxCollocationIntegralOperator
 from ._local_ops import local_integral, local_integral_ball
 from ._spatial_ops import nonlocal_integral, spatial_integral
 from ._time_convolution import time_convolution
@@ -70,6 +71,7 @@ __all__ = [
     "AbstractLayerKernel",
     "BoundaryPanelization2D",
     "double_layer_principal_value_matrix",
+    "DiffraxCollocationIntegralOperator",
     "integral",
     "integrate_boundary",
     "integrate_interior",

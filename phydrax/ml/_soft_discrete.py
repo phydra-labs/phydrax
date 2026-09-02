@@ -9,6 +9,15 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._strict import StrictModule
+from ..transport._ordering import (
+    ordered_ranks,
+    OrderingSurrogate,
+    PAVOrdering,
+    SinkhornOrdering,
+    WeightedPAVOrdering,
+)
+
 
 def _positive_temperature(temperature: ArrayLike, /) -> Array:
     value = jnp.asarray(temperature, dtype=float)
@@ -24,6 +33,115 @@ def _real_values(values: ArrayLike, /, *, name: str) -> Array:
     if not jnp.issubdtype(array.dtype, jnp.floating):
         raise TypeError(f"{name} must have a real floating dtype.")
     return array
+
+
+class RelaxedDiscreteSample(StrictModule):
+    """Relaxed sample plus optional hard forward estimator evidence."""
+
+    value: Array
+    relaxed: Array
+    hard: Array | None
+    estimator: str = eqx.field(static=True)
+
+
+def relaxed_bernoulli(
+    logits: ArrayLike,
+    /,
+    *,
+    key,
+    temperature: ArrayLike = 1.0,
+    hard: bool = False,
+) -> RelaxedDiscreteSample:
+    """Stateless Binary Concrete sample with optional straight-through hardening."""
+    if not isinstance(hard, bool):
+        raise TypeError("hard must be a bool.")
+    logits_ = _real_values(logits, name="logits")
+    temperature_ = _positive_temperature(temperature)
+    uniform = jax.random.uniform(
+        key,
+        logits_.shape,
+        dtype=logits_.dtype,
+        minval=jnp.finfo(logits_.dtype).tiny,
+        maxval=1.0 - jnp.finfo(logits_.dtype).eps,
+    )
+    logistic = jnp.log(uniform) - jnp.log1p(-uniform)
+    relaxed = jax.nn.sigmoid((logits_ + logistic) / temperature_)
+    if not hard:
+        return RelaxedDiscreteSample(relaxed, relaxed, None, "binary-concrete")
+    hard_sample = (logits_ + logistic >= 0.0).astype(relaxed.dtype)
+    value = relaxed + jax.lax.stop_gradient(hard_sample - relaxed)
+    return RelaxedDiscreteSample(
+        value,
+        relaxed,
+        hard_sample,
+        "binary-concrete-straight-through",
+    )
+
+
+def relaxed_top_k(
+    logits: ArrayLike,
+    k: int,
+    /,
+    *,
+    key,
+    ordering: OrderingSurrogate | None = None,
+    temperature: ArrayLike = 1.0,
+    axis: int = -1,
+    hard: bool = False,
+) -> RelaxedDiscreteSample:
+    """Gumbel top-k relaxation under one declared ordering estimator."""
+    if isinstance(k, bool) or int(k) <= 0:
+        raise ValueError("k must be a positive integer.")
+    if not isinstance(axis, int) or not isinstance(hard, bool):
+        raise TypeError("axis must be an int and hard must be a bool.")
+    logits_ = _real_values(logits, name="logits")
+    position = axis if axis >= 0 else logits_.ndim + axis
+    if position < 0 or position >= logits_.ndim:
+        raise ValueError("axis is out of range.")
+    count = int(logits_.shape[position])
+    cardinality = int(k)
+    if cardinality > count:
+        raise ValueError("k cannot exceed the selected axis size.")
+    temperature_ = _positive_temperature(temperature)
+    method = PAVOrdering(float(temperature_)) if ordering is None else ordering
+    if not isinstance(method, (PAVOrdering, SinkhornOrdering, WeightedPAVOrdering)):
+        raise TypeError("ordering must be a declared soft ordering surrogate.")
+    if isinstance(method, WeightedPAVOrdering):
+        raise ValueError(
+            "relaxed_top_k does not define atom masses; use PAV or Sinkhorn ordering."
+        )
+    uniform = jax.random.uniform(
+        key,
+        logits_.shape,
+        dtype=logits_.dtype,
+        minval=jnp.finfo(logits_.dtype).tiny,
+        maxval=1.0 - jnp.finfo(logits_.dtype).eps,
+    )
+    perturbed = logits_ - jnp.log(-jnp.log(uniform))
+    ranks = ordered_ranks(
+        perturbed,
+        method,
+        axis=position,
+        descending=True,
+    )
+    relaxed = jax.nn.sigmoid(
+        (jnp.asarray(cardinality, dtype=logits_.dtype) - 0.5 - ranks) / temperature_
+    )
+    if not hard:
+        return RelaxedDiscreteSample(relaxed, relaxed, None, "gumbel-soft-top-k")
+    indices = jax.lax.top_k(jnp.moveaxis(perturbed, position, -1), cardinality)[1]
+    hard_moved = jnp.sum(
+        jax.nn.one_hot(indices, count, dtype=logits_.dtype),
+        axis=-2,
+    )
+    hard_sample = jnp.moveaxis(hard_moved, -1, position)
+    value = relaxed + jax.lax.stop_gradient(hard_sample - relaxed)
+    return RelaxedDiscreteSample(
+        value,
+        relaxed,
+        hard_sample,
+        "gumbel-top-k-straight-through",
+    )
 
 
 def masked_softmax(
@@ -146,8 +264,11 @@ def soft_topk_weights(
 
 
 __all__ = [
+    "RelaxedDiscreteSample",
     "gumbel_softmax",
     "masked_softmax",
+    "relaxed_bernoulli",
+    "relaxed_top_k",
     "soft_ranks",
     "soft_topk_weights",
     "temperature_sigmoid",

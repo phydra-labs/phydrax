@@ -13,6 +13,7 @@ import pytest
 import phydrax as phx
 from phydrax._numerics import smolyak_axis_data
 from phydrax._trainable import partition_trainable
+from phydrax.operators.interpolation import _smolyak as smolyak_module
 
 
 def _square_domain():
@@ -251,3 +252,87 @@ def test_plan_validation_and_fitted_diagnostics_are_explicit():
     assert approximation.func.num_evaluations == approximation.func.num_unique_nodes
     assert approximation.func.maximum_active_dimension <= 2
     assert approximation.func.num_blocks > 0
+
+
+@pytest.mark.parametrize(
+    ("capacity", "expected_status"),
+    (
+        ({"max_indices": 1, "max_nodes": 100}, "maximum-indices"),
+        ({"max_indices": 100, "max_nodes": 1}, "maximum-nodes"),
+    ),
+)
+def test_adaptive_interpolation_rejects_frontier_before_fitting(
+    monkeypatch,
+    capacity,
+    expected_status,
+):
+    class CountingCallable:
+        def __init__(self):
+            self.count = 0
+
+        def __call__(self, x, *, key, iter_=None):
+            del key, iter_
+            self.count += 1
+            return x**2
+
+    source = CountingCallable()
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    function = interval.Function(
+        "x",
+        binding=phx.domain.FunctionBinding(pass_key=True),
+    )(source)
+    fitted_index_counts = []
+    original = smolyak_module._interpolate_index_set
+
+    def instrumented(function, plan, index_set, /, *, key):
+        fitted_index_counts.append(len(index_set.indices))
+        return original(function, plan, index_set, key=key)
+
+    monkeypatch.setattr(smolyak_module, "_interpolate_index_set", instrumented)
+    result = phx.operators.interpolate_adaptive_smolyak(
+        function,
+        phx.operators.AdaptiveSmolyakInterpolationPlan(
+            1,
+            max_rounds=2,
+            absolute_tolerance=0.0,
+            relative_tolerance=0.0,
+            **capacity,
+        ),
+    )
+
+    assert fitted_index_counts == [1]
+    assert source.count == 1
+    assert result.epochs[-1].status == expected_status
+    assert result.epochs[-1].selected is None
+    assert result.diagnostics.accepted_indices == 1
+    assert result.diagnostics.num_unique_nodes == 1
+
+
+def test_adaptive_interpolation_accepts_an_exactly_in_cap_refinement(monkeypatch):
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    function = interval.Function("x")(lambda x: 2.0 * x + 1.0)
+    fitted_node_counts = []
+    original = smolyak_module._interpolate_index_set
+
+    def instrumented(function, plan, index_set, /, *, key):
+        fitted, points = original(function, plan, index_set, key=key)
+        fitted_node_counts.append(int(points.shape[0]))
+        return fitted, points
+
+    monkeypatch.setattr(smolyak_module, "_interpolate_index_set", instrumented)
+    result = phx.operators.interpolate_adaptive_smolyak(
+        function,
+        phx.operators.AdaptiveSmolyakInterpolationPlan(
+            1,
+            max_indices=3,
+            max_nodes=2,
+            max_rounds=2,
+            absolute_tolerance=0.0,
+            relative_tolerance=0.0,
+        ),
+    )
+
+    assert fitted_node_counts == [1, 2]
+    assert result.epochs[0].status == "accepted"
+    assert result.epochs[-1].status == "maximum-nodes"
+    assert result.function({"x": jnp.asarray(-0.4)}).data == pytest.approx(0.2)

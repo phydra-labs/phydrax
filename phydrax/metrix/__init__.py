@@ -23,12 +23,27 @@ from ._adm_geometry import (
     adm_spacetime_projector,
     ADMConstraintResiduals,
 )
+from ._ambient import (
+    ImmersedRiemannianManifoldAdapter,
+    ManifoldTangentMeasureEvidence,
+    RegularLevelSetManifold,
+    RiemannianMapMeasureEvidence,
+)
 from ._atlas import (
     AtlasValidationReport,
     ComplexAtlasStructure,
     CoordinateAtlas,
     PatchwiseScalarField,
     validate_coordinate_atlas,
+)
+from ._atlas_construction import (
+    AtlasCandidate,
+    AtlasConstructionCertificate,
+    AtlasConstructionPolicy,
+    CompactAtlasDomain,
+    level_set_graph_candidate,
+    prepare_atlas,
+    PreparedAtlasConstruction,
 )
 from ._atlas_cover import AtlasCover, AtlasOverlap, ChartSupport
 from ._bigraded_forms import bigraded_wedge, BigradedForm, partial, partial_bar
@@ -67,6 +82,7 @@ from ._complex import (
     validate_almost_complex_structure,
     wirtinger_derivatives,
 )
+from ._complex_euclidean import ComplexEuclideanManifold
 from ._complex_matrix_manifold import (
     AffineInvariantHPDManifold,
     ComplexStiefelManifold,
@@ -120,6 +136,10 @@ from ._forms import (
     lie_derivative,
     pullback_form,
     wedge,
+)
+from ._gauge_renormalization import (
+    GaugeRenormalizationEvidence,
+    GaugeRenormalizationPlan,
 )
 from ._geodesic_problem import integrate_metric_geodesic, MetricGeodesicResult
 from ._hessian_geometry import HessianGeometry, validate_hessian_geometry
@@ -220,17 +240,27 @@ from ._patchwise import (
     PatchwiseTensorField,
 )
 from ._precision import GeometryPrecisionPolicy
+from ._privacy import (
+    PrivacyEvidence,
+    PrivateRelease,
+    RDPLedger,
+    RiemannianOutputGaussianMechanism,
+    TangentNoiseFrame,
+)
 from ._product_spectrum import product_laplacian_eigenbasis
 from ._product_state_geometry import ProductStateGeometry, ProductStateGeometryBlock
 from ._quantum_density import (
     bures_squared_distance,
     BuresDensityManifold,
     density_fidelity,
+    DensityRankStratification,
     faithful_density_from_cholesky,
     faithful_density_from_generator,
     FaithfulDensityReport,
-    FixedRankDensityStratum,
+    FixedRankDensityManifold,
     principal_purification,
+    RankStratumEvidence,
+    RankTransitionProposal,
     SLDQuantumFisherGeometry,
     uhlmann_alignment,
     UhlmannAlignment,
@@ -322,6 +352,25 @@ from ._validation import MetricValidationReport, validate_metric
 
 
 __all__ = [
+    "AtlasCandidate",
+    "AtlasConstructionCertificate",
+    "AtlasConstructionPolicy",
+    "CompactAtlasDomain",
+    "PreparedAtlasConstruction",
+    "level_set_graph_candidate",
+    "prepare_atlas",
+    "ImmersedRiemannianManifoldAdapter",
+    "ManifoldTangentMeasureEvidence",
+    "RegularLevelSetManifold",
+    "RiemannianMapMeasureEvidence",
+    "ComplexEuclideanManifold",
+    "GaugeRenormalizationEvidence",
+    "GaugeRenormalizationPlan",
+    "PrivacyEvidence",
+    "PrivateRelease",
+    "RDPLedger",
+    "RiemannianOutputGaussianMechanism",
+    "TangentNoiseFrame",
     "ADMConstraintResiduals",
     "ADMDecomposition",
     "ADMParameterization",
@@ -573,7 +622,10 @@ __all__ = [
     "PatchwiseMetric",
     "BuresDensityManifold",
     "FaithfulDensityReport",
-    "FixedRankDensityStratum",
+    "DensityRankStratification",
+    "FixedRankDensityManifold",
+    "RankStratumEvidence",
+    "RankTransitionProposal",
     "SLDQuantumFisherGeometry",
     "UhlmannAlignment",
     "bures_squared_distance",

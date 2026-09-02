@@ -56,9 +56,13 @@ public Phydrax cone product. Install `phydrax[clarabel]` and select
 evidence; the optimization adapter maps cone and bound layouts, restores rotated-SOC
 coordinates, and independently audits original-coordinate KKT residuals and rays.
 
-Clarabel execution transfers program arrays to SciPy CSC on the host. It is not
-JIT-compatible and exposes no Phydrax differentiation mode. No native or other
-external method is selected after a Clarabel failure.
+Clarabel execution transfers dense or canonical sparse program data to SciPy CSC on
+the host. It is not JIT-compatible and exposes no PhydraX differentiation mode. No
+native or other external method is selected after a Clarabel failure.
+
+`NativeHomogeneousConic` is the separate accelerator-resident PhydraX method over
+the same canonical coordinates, cone ordering, tolerances, result, and audit surface;
+it is not Clarabel code running on an accelerator.
 
 ::: phydrax.backends.ClarabelBackend
 
@@ -79,6 +83,26 @@ external method is selected after a Clarabel failure.
 ::: phydrax.backends.prepare_clarabel
 
 ---
+
+## CVXPY canonicalization interoperability
+
+CVXPY is an optional host modeling boundary, not a solver fallback.
+`cvxpy_availability` inspects it lazily. Supported real continuous problems are
+canonicalized to sparse LP/QP/product-cone data by `import_cvxpy_problem`; variable
+slices and parameter topology live in `CVXPYProgramBinding`. Complex graphs, custom
+atoms outside the supported canonical cones, graph-topology refresh, and mixed
+integer models fail closed.
+
+`refresh_cvxpy_program` re-canonicalizes parameter values and rejects any changed
+cone ordering, sparse relation, variable slice, or canonical inverse map.
+`restore_cvxpy_solution` sends canonical primal and cone-dual coordinates through
+CVXPY's recorded solving-chain inverse data, restoring original variable and
+constraint-dual values with their canonical signs.
+::: phydrax.backends.cvxpy_availability
+
+---
+
+::: phydrax.backends.CVXPY_CAPABILITIES
 
 ## Spineax cuDSS sparse direct execution
 
@@ -125,6 +149,11 @@ MPAX's default JIT loop is not reverse-mode differentiable. Algorithmic
 differentiation requires `unroll=True`, a finite iteration capacity, and
 `ConvexDifferentiationPolicy("algorithmic")`. It is not implicit KKT sensitivity.
 Warm starts require an MPAX method configured with `warm_start=True`.
+
+`MPAXPlan(representation="sparse")` requests the provider's assembled sparse LP/QP
+surface; `"dense"` remains explicit. This does not accept arbitrary PhydraX callback
+operators or general SOC/PSD/exponential/power cones. MPAX may use multiplication-only
+iterations internally, but `supports_matrix_free` remains false for callback input.
 
 ::: phydrax.backends.MPAXBackend
 

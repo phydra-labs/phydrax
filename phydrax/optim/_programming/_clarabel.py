@@ -24,7 +24,13 @@ from ._cones import (
 from ._exponential_cone import ExponentialCone
 from ._policy import ClarabelInteriorPoint, ConvexSolvePolicy
 from ._power_cone import PowerCone
-from ._problem import _conic_bound_indices, ConicProgram
+from ._problem import (
+    _conic_bound_indices,
+    _conic_matrix_mv,
+    _conic_matrix_transpose_mv,
+    _conic_quadratic_mv,
+    ConicProgram,
+)
 from ._psd_cone import PositiveSemidefiniteCone
 from ._quadratic import _max_abs, ConvexProgramResult
 from ._types import (
@@ -98,16 +104,40 @@ def _clarabel_cones(prepared, cone: AbstractConvexCone, /):
     return tuple(mapped), tuple(transforms), tuple(slices)
 
 
-def _provider_plan(policy: ConvexSolvePolicy, /) -> ClarabelPlan:
+def _provider_plan(
+    program: ConicProgram,
+    policy: ConvexSolvePolicy,
+    /,
+) -> ClarabelPlan:
     method = policy.method
     if not isinstance(method, ClarabelInteriorPoint):
         raise TypeError("Clarabel adapter requires ClarabelInteriorPoint.")
     source = method.plan
+    transformed_rows = (
+        program.num_constraints
+        + len(program.fixed_bound_indices)
+        + len(program.lower_bound_indices)
+        + len(program.upper_bound_indices)
+    )
+    # The public audit reconstructs block complementarity from one objective-gap
+    # contribution and at most one contribution per transformed cone row. The
+    # l1-to-linf bound therefore requires the provider residuals to be tighter by
+    # ``transformed_rows + 1`` before the reconstructed max norm can meet the
+    # requested tolerance.
+    audit_aggregation = transformed_rows + 1
+    dtype_floor = float(np.finfo(np.dtype(program.linear.dtype)).eps)
+    provider_floor = max(1e-12, dtype_floor)
     return ClarabelPlan(
         max_iterations=policy.termination.maximum_steps,
-        tolerance_gap_abs=max(policy.termination.absolute, 1e-12),
-        tolerance_gap_rel=max(policy.termination.relative, 1e-12),
-        tolerance_feasibility=max(policy.termination.absolute, 1e-12),
+        tolerance_gap_abs=max(
+            policy.termination.absolute / audit_aggregation, provider_floor
+        ),
+        tolerance_gap_rel=max(
+            policy.termination.relative / audit_aggregation, provider_floor
+        ),
+        tolerance_feasibility=max(
+            policy.termination.absolute / audit_aggregation, provider_floor
+        ),
         presolve=source.presolve,
         verbose=source.verbose,
     )
@@ -118,7 +148,7 @@ def _prepare_structure(
     policy: ConvexSolvePolicy,
     /,
 ) -> _PreparedClarabelProgram:
-    prepared = prepare_clarabel(_provider_plan(policy))
+    prepared = prepare_clarabel(_provider_plan(program, policy))
     cones, transforms, slices = _clarabel_cones(prepared, program.cone)
     fixed, lower, upper = _conic_bound_indices(
         program.bounds,
@@ -157,6 +187,19 @@ def prepare_clarabel_policy(
     return _prepare_structure(program, policy)
 
 
+def _host_sparse_case(operator, batch_index: int, count: int, /):
+    storage = operator.sparse_storage()
+    values = np.asarray(storage.values)
+    if storage.batch_shape:
+        values = values.reshape((count, storage.nnz))[batch_index]
+    else:
+        values = values.reshape((storage.nnz,))
+    return sp.csr_matrix(
+        (values, np.asarray(storage.indices), np.asarray(storage.indptr)),
+        shape=storage.shape,
+    )
+
+
 def _transformed_constraint_data(
     program: ConicProgram,
     structure: _ClarabelStructure,
@@ -164,9 +207,12 @@ def _transformed_constraint_data(
     /,
 ):
     count = int(np.prod(program.batch_shape)) if program.batch_shape else 1
-    matrix = np.asarray(program.constraint_matrix).reshape(
-        (count, program.num_constraints, program.num_variables)
-    )[batch_index]
+    if program.constraint_is_sparse:
+        matrix = _host_sparse_case(program.constraint_matrix, batch_index, count)
+    else:
+        matrix = np.asarray(program.constraint_matrix).reshape(
+            (count, program.num_constraints, program.num_variables)
+        )[batch_index]
     rhs = np.asarray(program.constraint_rhs).reshape((count, program.num_constraints))[
         batch_index
     ]
@@ -198,7 +244,17 @@ def _transformed_constraint_data(
     if structure.upper_indices.size:
         blocks.append(identity[structure.upper_indices])
         rhs_blocks.append(upper[structure.upper_indices])
-    return np.concatenate(blocks, axis=0), np.concatenate(rhs_blocks, axis=0)
+    matrix_output = (
+        sp.vstack(
+            tuple(
+                block if sp.issparse(block) else sp.csr_matrix(block) for block in blocks
+            ),
+            format="csr",
+        )
+        if program.constraint_is_sparse
+        else np.concatenate(blocks, axis=0)
+    )
+    return matrix_output, np.concatenate(rhs_blocks, axis=0)
 
 
 def _restore_cone_vector(
@@ -270,21 +326,16 @@ def _audit_result(
     iterations,
     policy,
     backend_version,
+    *,
+    backend="clarabel",
 ):
     dtype = program.linear.dtype
-    quadratic = (
-        jnp.zeros(
-            program.batch_shape + (program.num_variables, program.num_variables),
-            dtype=dtype,
-        )
-        if program.quadratic is None
-        else program.quadratic
+    quadratic_primal = _conic_quadratic_mv(program.quadratic, primal)
+    objective = 0.5 * oe.contract("...i,...i->...", primal, quadratic_primal) + jnp.sum(
+        program.linear * primal, axis=-1
     )
-    objective = 0.5 * oe.contract(
-        "...i,...ij,...j->...", primal, quadratic, primal
-    ) + jnp.sum(program.linear * primal, axis=-1)
     primal_residual = (
-        oe.contract("...ij,...j->...i", program.constraint_matrix, primal)
+        _conic_matrix_mv(program.constraint_matrix, primal)
         + slack
         - program.constraint_rhs
     )
@@ -293,9 +344,9 @@ def _audit_result(
     cone_violation = slack - cone_projection
     dual_violation = dual - dual_projection
     stationarity = (
-        oe.contract("...ij,...j->...i", quadratic, primal)
+        quadratic_primal
         + program.linear
-        + oe.contract("...ji,...j->...i", program.constraint_matrix, dual)
+        + _conic_matrix_transpose_mv(program.constraint_matrix, dual)
         - lower_dual
         + upper_dual
     )
@@ -361,10 +412,8 @@ def _audit_result(
 
     primal_ray_scale = jnp.maximum(1.0, _max_abs(primal))
     primal_ray = primal / primal_ray_scale[..., None]
-    quadratic_ray = _max_abs(oe.contract("...ij,...j->...i", quadratic, primal_ray))
-    recession_slack = -oe.contract(
-        "...ij,...j->...i", program.constraint_matrix, primal_ray
-    )
+    quadratic_ray = _max_abs(_conic_quadratic_mv(program.quadratic, primal_ray))
+    recession_slack = -_conic_matrix_mv(program.constraint_matrix, primal_ray)
     primal_ray_residual = jnp.maximum(
         quadratic_ray,
         jnp.maximum(
@@ -392,7 +441,7 @@ def _audit_result(
     lower_ray = lower_dual / dual_ray_scale[..., None]
     upper_ray = upper_dual / dual_ray_scale[..., None]
     dual_ray_stationarity = (
-        oe.contract("...ji,...j->...i", program.constraint_matrix, dual_ray)
+        _conic_matrix_transpose_mv(program.constraint_matrix, dual_ray)
         - lower_ray
         + upper_ray
     )
@@ -453,7 +502,7 @@ def _audit_result(
         structure_id=program.structure_id,
         policy_id=policy.policy_id,
         method_id=policy.method.method_id,
-        backend="clarabel",
+        backend=backend,
         backend_version=backend_version,
         convexity_evidence=program.convexity_evidence,
         regularization=policy.regularization,
@@ -492,7 +541,7 @@ def _audit_result(
         provenance=provenance,
         batch_shape=program.batch_shape,
         method=policy.method.method_id,
-        backend=f"clarabel-{backend_version}",
+        backend=f"{backend}-{backend_version}",
         regularization=policy.regularization,
         tolerance=policy.termination.absolute,
         max_iterations=policy.termination.maximum_steps,
@@ -519,7 +568,7 @@ def solve_clarabel_program(
         raise TypeError(
             "prepared_backend must be prepared Clarabel program state or None."
         )
-    expected_plan = _provider_plan(policy)
+    expected_plan = _provider_plan(program, policy)
     if selected.provider.plan.plan_id != expected_plan.plan_id:
         raise ValueError("Prepared Clarabel state does not match the solve policy.")
     prepared = selected.provider
@@ -528,20 +577,24 @@ def solve_clarabel_program(
     linear = np.asarray(program.linear, dtype=np.float64).reshape(
         (count, program.num_variables)
     )
-    quadratic = (
-        np.zeros(
-            (count, program.num_variables, program.num_variables),
-            dtype=np.float64,
+    if program.quadratic is None:
+        quadratic = tuple(
+            sp.csr_matrix((program.num_variables, program.num_variables))
+            for _ in range(count)
         )
-        if program.quadratic is None
-        else np.asarray(program.quadratic, dtype=np.float64).reshape(
+    elif program.quadratic_is_sparse:
+        quadratic = tuple(
+            _host_sparse_case(program.quadratic, index, count) for index in range(count)
+        )
+    else:
+        dense_quadratic = np.asarray(program.quadratic, dtype=np.float64).reshape(
             (count, program.num_variables, program.num_variables)
         )
+        quadratic = tuple(sp.csr_matrix(value) for value in dense_quadratic)
+    regularization = policy.regularization * sp.eye(
+        program.num_variables, dtype=np.float64, format="csr"
     )
-    quadratic = quadratic + policy.regularization * np.eye(
-        program.num_variables,
-        dtype=np.float64,
-    )
+    quadratic = tuple(value + regularization for value in quadratic)
     primal_values = []
     slack_values = []
     dual_values = []
@@ -551,10 +604,14 @@ def solve_clarabel_program(
     iteration_values = []
     for index in range(count):
         matrix, rhs = _transformed_constraint_data(program, structure, index)
-        matrix = np.asarray(matrix, dtype=np.float64)
+        matrix = (
+            matrix.astype(np.float64, copy=False)
+            if sp.issparse(matrix)
+            else np.asarray(matrix, dtype=np.float64)
+        )
         rhs = np.asarray(rhs, dtype=np.float64)
         solver = prepared.module.DefaultSolver(
-            sp.triu(sp.csc_matrix(quadratic[index])).tocsc(),
+            sp.triu(quadratic[index]).tocsc(),
             linear[index],
             sp.csc_matrix(matrix),
             rhs,

@@ -244,12 +244,33 @@ Run the same observable on nested harmonic layouts and use
 `fourier_modal_convergence_report`. Also vary Jones regularization and boundary
 cascade order for difficult metallic or cornered structures.
 
+## Advanced media, ports, and bounded adaptation
+
+`FrequencyMaxwellMaterial` carries all four constitutive blocks: permittivity,
+permeability, magnetoelectric ξ, and magnetoelectric ζ. Periodic or anisotropic
+semi-infinite exteriors use `PeriodicMaxwellPort` and a flux/decay-separated
+Schur-QZ invariant basis; `port_mode_excitation` addresses its stable mode IDs.
+Unresolved dimensions or a missing spectral-gap certificate fail closed.
+
+`ContinuousFourierModalLayer` prepares a fixed segment epoch with an embedded
+second/fourth-order commutator-free Magnus estimate. It never bisects inside a
+trace: exhausted segment capacity reports refinement required and the accepted
+epoch remains unchanged. `LateralTransformationOpticsPMLPlan` transforms every
+constitutive block and rejects singular, active, orientation-reversing, or
+nonperiodic-seam transforms.
+
+`diffraction_order_far_field` remains the exact discrete radiation API for an
+infinite periodic stack. Continuous directions are available only through
+`FiniteApertureFarFieldPlan`, with an explicit rectangular or sampled finite
+aperture and an aperture-power defect. `FourierModalHarmonicAdaptationPolicy`
+selects from a finite nested, conjugate-closed candidate set between epochs and
+uses the canonical spectral modal transfer; harmonic count never changes in a
+compiled solve.
+
 ## Limitations
 
 - Dense harmonic work scales cubically with harmonic count per changed layer.
 - Sharp corners and metals can converge nonmonotonically.
-- Semi-infinite ports must be homogeneous and isotropic.
-- Full-tensor layers currently use direct or inverse/Li factorization, not Jones
-  factorization.
-- Continuous-z media require explicit slicing.
-- Bianisotropy, lateral PML, and continuous angular interpolation are not included.
+- Adaptive harmonic selection and mode-cluster transitions are stopped events;
+  only a fixed separated subspace/layout has a derivative.
+- Continuous angular intensity is not claimed for an infinite periodic structure.

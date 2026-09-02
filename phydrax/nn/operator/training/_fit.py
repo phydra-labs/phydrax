@@ -23,8 +23,11 @@ import optax
 from ...._frozendict import frozendict
 from ...._trainable import combine_trainable, partition_trainable
 from ...._training import (
+    DelayedTargetPolicy,
     EvaluationParametersFn,
+    ExponentialMovingAverageTargetPolicy,
     resolve_evaluation_parameters,
+    TargetParameterState,
     TensorBoardLogger,
     TrainingCallback,
     TrainingController,
@@ -32,6 +35,10 @@ from ...._training import (
     TrainingSignalGuard,
 )
 from ...._training_objective import _ObjectiveContribution
+from ....optim import (
+    OptimizerStateCompressionPolicy,
+    prepare_compressed_optimizer,
+)
 from ..._loss import model_loss_labels, model_loss_values
 from ...layers._dropout import inference_mode
 from ...parameters import ParameterSubspace
@@ -90,6 +97,7 @@ from ._rollout import (
     OperatorRolloutPolicy,
     OperatorRolloutRoute,
 )
+from ._target_consistency import TargetOperatorConsistencyLoss
 from ._trained_operator import (
     operator_contract_fingerprint,
     TrainedOperator,
@@ -513,8 +521,12 @@ def fit_operator(
     | optax.GradientTransformationExtraArgs
     | None = None,
     optimizer_id: str | None = None,
+    optimizer_state_compression: OptimizerStateCompressionPolicy | None = None,
     evaluation_parameters: EvaluationParametersFn | None = None,
     evaluation_parameters_id: str | None = None,
+    target_policy: DelayedTargetPolicy
+    | ExponentialMovingAverageTargetPolicy
+    | None = None,
     parameter_subspace: ParameterSubspace | None = None,
     learning_rate: float = 1e-3,
     epochs: int = 1,
@@ -610,6 +622,13 @@ def fit_operator(
     specified_terms = () if loss_terms is None else tuple(loss_terms)
     if any(not isinstance(term, AbstractOperatorLossTerm) for term in specified_terms):
         raise TypeError("loss_terms must contain AbstractOperatorLossTerm instances.")
+    if (
+        any(isinstance(term, TargetOperatorConsistencyLoss) for term in specified_terms)
+        and target_policy is None
+    ):
+        raise ValueError(
+            "TargetOperatorConsistencyLoss requires a delayed or EMA target policy."
+        )
     target_aliases = _rollout_target_aliases(
         model,
         specified_terms,
@@ -726,18 +745,21 @@ def fit_operator(
         current_subspace = ParameterSubspace.from_leaf_paths(
             current_model,
             parameter_paths,
+            alias_groups=effective_subspace.alias_groups,
         )
         if current_subspace.leaf_shapes != effective_parameter_shapes:
             raise ValueError("Operator fit parameter-subspace shapes changed.")
         if current_subspace.leaf_dtypes != effective_parameter_dtypes:
             raise ValueError("Operator fit parameter-subspace dtypes changed.")
         validate_low_rank_subspace(current_model, current_subspace)
-        return current_subspace.initial, current_subspace.frozen
+        return current_subspace.initial, current_subspace
 
     def reconstruct_fit_model(current_parameters, current_fixed):
         if parameter_paths is None:
             return combine_trainable(current_parameters, current_fixed)
-        return eqx.combine(current_parameters, current_fixed)
+        if not isinstance(current_fixed, ParameterSubspace):
+            raise TypeError("Low-rank fit fixed state must be ParameterSubspace.")
+        return current_fixed.reconstruct(current_parameters)
 
     if normalization == "fit":
         if not isinstance(train, OperatorDataset):
@@ -908,11 +930,36 @@ def fit_operator(
         )
 
     parameters, fixed = partition_fit_model(model)
+    if optimizer_state_compression is not None:
+        if not isinstance(
+            optimizer_state_compression,
+            OptimizerStateCompressionPolicy,
+        ):
+            raise TypeError(
+                "optimizer_state_compression must be OptimizerStateCompressionPolicy."
+            )
+        optimizer = prepare_compressed_optimizer(
+            optimizer,
+            parameters,
+            optimizer_state_compression,
+            transformation_id=resolved_optimizer_id,
+        )
     optimizer_state = optimizer.init(parameters)
     evaluated_parameters = resolve_evaluation_parameters(
         evaluation_parameters,
         optimizer_state,
         parameters,
+    )
+    initial_target_parameters = (
+        evaluated_parameters
+        if isinstance(target_policy, ExponentialMovingAverageTargetPolicy)
+        and target_policy.source == "evaluation"
+        else parameters
+    )
+    target_state = (
+        None
+        if target_policy is None
+        else TargetParameterState.initialize(initial_target_parameters, target_policy)
     )
     evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     gradient_accumulator = _tree_zeros(parameters)
@@ -929,10 +976,14 @@ def fit_operator(
 
     def loss_components(
         current_model,
+        target_model,
         batch,
         targets,
         physical_batch,
         physical_targets,
+        case_log_weights,
+        case_mask,
+        sampling_probabilities,
         key,
         step,
         active_rollout_horizon,
@@ -977,6 +1028,19 @@ def fit_operator(
                 physical_batch,
                 key,
             )
+        if target_model is None:
+            target_execution_prediction = None
+            target_physical_prediction = None
+        else:
+            (
+                target_execution_prediction,
+                target_physical_prediction,
+            ) = predict_for_loss(
+                resolved_dtype.compute_model(inference_mode(target_model)),
+                batch,
+                physical_batch,
+                jr.fold_in(key, 991),
+            )
         context = OperatorLossContext(
             execution_prediction=execution_prediction,
             execution_batch=batch,
@@ -985,7 +1049,12 @@ def fit_operator(
             physical_batch=physical_batch,
             physical_targets=physical_targets,
             normalization=resolved_normalization,
+            case_log_weights=case_log_weights,
+            case_mask=case_mask,
+            sampling_probabilities=sampling_probabilities,
             task=task,
+            target_execution_prediction=target_execution_prediction,
+            target_physical_prediction=target_physical_prediction,
         )
         case_support = jnp.asarray(_case_count(batch), dtype=reduction_dtype)
 
@@ -1133,10 +1202,14 @@ def fit_operator(
 
     def gradient_fn(
         current_parameters,
+        target_parameters,
         batch,
         targets,
         physical_batch,
         physical_targets,
+        case_log_weights,
+        case_mask,
+        sampling_probabilities,
         key,
         step,
         active_rollout_horizon,
@@ -1144,12 +1217,21 @@ def fit_operator(
     ):
         def objective(candidate):
             current_model = reconstruct_fit_model(candidate, fixed)
+            target_model = (
+                reconstruct_fit_model(target_parameters, fixed)
+                if target_state is not None
+                else None
+            )
             total, components = loss_components(
                 current_model,
+                target_model,
                 batch,
                 targets,
                 physical_batch,
                 physical_targets,
+                case_log_weights,
+                case_mask,
+                sampling_probabilities,
                 key,
                 step,
                 active_rollout_horizon,
@@ -1250,9 +1332,15 @@ def fit_operator(
         supports = [0.0] * len(metric_names)
         batch_count = 0
         active_rollout_horizon = resolved_active_horizon(step)
+        target_model = (
+            reconstruct_fit_model(target_state.target, fixed)
+            if target_state is not None
+            else None
+        )
         for batch_index, training_batch in enumerate(prepared_epoch(loader, 0)):
             total, components = loss_components(
                 current_model,
+                target_model,
                 training_batch.batch,
                 training_batch.targets,
                 (
@@ -1265,6 +1353,9 @@ def fit_operator(
                     if training_batch.physical_targets is None
                     else training_batch.physical_targets
                 ),
+                training_batch.case_log_weights,
+                training_batch.case_mask,
+                training_batch.sampling_probabilities,
                 jr.fold_in(jr.fold_in(master_key, int(step)), 1000 + batch_index),
                 jnp.asarray(step, dtype=float),
                 active_rollout_horizon,
@@ -1329,6 +1420,17 @@ def fit_operator(
             "model_objective": _MODEL_OBJECTIVE_KEY_DOMAIN,
         },
         "optimizer_id": resolved_optimizer_id,
+        "target_policy": (None if target_policy is None else asdict(target_policy)),
+        "optimizer_state_compression": (
+            None
+            if optimizer_state_compression is None
+            else {
+                "format": repr(optimizer_state_compression.format),
+                "block_axes": optimizer_state_compression.block_axes,
+                "exact_roles": optimizer_state_compression.exact_roles,
+                "overflow": optimizer_state_compression.overflow,
+            }
+        ),
         "gradient_accumulation": int(gradient_accumulation),
         "parameter_subspace": (
             None
@@ -1386,7 +1488,7 @@ def fit_operator(
     initial_metrics: dict[str, float]
     if resume_manifest is not None:
         assert checkpoint is not None
-        state_template = (optimizer_state, loss_scale_state)
+        state_template = (optimizer_state, loss_scale_state, target_state)
         restored = load_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
@@ -1396,7 +1498,7 @@ def fit_operator(
         if restored.metadata["fit_contract"] != fit_contract:
             raise ValueError("Operator fit checkpoint contract mismatch.")
         model, best_model = restored.model
-        optimizer_state, loss_scale_state = restored.optimizer_state
+        optimizer_state, loss_scale_state, target_state = restored.optimizer_state
         metadata = restored.metadata
         if metadata.get("update_boundary") is not True:
             raise ValueError(
@@ -1465,7 +1567,7 @@ def fit_operator(
         save_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
-            (optimizer_state, loss_scale_state),
+            (optimizer_state, loss_scale_state, target_state),
             step=control.progress.update_step,
             key=master_key,
             normalization=resolved_normalization,
@@ -1569,6 +1671,7 @@ def fit_operator(
                     key = control.key_for(control.progress.microstep, site=0)
                     total, components, gradient, finite_array = run_gradient_fn(
                         parameters,
+                        (target_state.target if target_state is not None else parameters),
                         training_batch.batch,
                         training_batch.targets,
                         (
@@ -1581,6 +1684,9 @@ def fit_operator(
                             if training_batch.physical_targets is None
                             else training_batch.physical_targets
                         ),
+                        training_batch.case_log_weights,
+                        training_batch.case_mask,
+                        training_batch.sampling_probabilities,
                         key,
                         jnp.asarray(control.progress.update_step + 1, dtype=float),
                         resolved_active_horizon(control.progress.update_step + 1),
@@ -1662,6 +1768,16 @@ def fit_operator(
                     model = reconstruct_fit_model(parameters, fixed)
                     update_step = control.progress.update_step + 1
                     control.complete_update(update_step)
+                    if target_state is not None:
+                        target_state = target_state.update(
+                            parameters,
+                            accepted=True,
+                            evaluation_parameters=resolve_evaluation_parameters(
+                                evaluation_parameters,
+                                optimizer_state,
+                                parameters,
+                            ),
+                        )
                     metrics = {
                         name: (0.0 if support == 0.0 else numerator / support)
                         for name, numerator, support in zip(

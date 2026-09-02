@@ -13,22 +13,23 @@ import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
-from phydrax.domain import PointBatch, PointSampling, SampleLayout
 from phydrax.kernels import ScaleKernel, SquaredExponentialKernel
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import design_name
 from .._strict import StrictModule
+from ..domain._structure import PointBatch, PointSampling, SampleLayout
 from ..linalg import (
+    DenseCholesky,
     DenseLinearOperator,
-    DenseLU,
     FailurePolicy,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSolveStatus,
     LinearSystem,
     MixedPrecisionPolicy,
+    OperatorProperties,
     prepare,
     solve,
 )
@@ -38,6 +39,11 @@ from ._estimates import (
     IntegrationEstimate,
     IntegrationProvenance,
 )
+from ._kernel_mean_bq import (
+    FixedBayesianQuadratureDesign,
+    SequentialBayesianQuadratureDesign,
+)
+from ._kernel_means import AbstractKernelMean
 from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
 from ._targets import ProbabilityTarget
@@ -51,7 +57,7 @@ def _is_phydrax_normal(distribution: Any, /) -> bool:
     )
 
 
-class GaussianKernelMean(StrictModule):
+class GaussianKernelMean(AbstractKernelMean):
     """Analytic squared-exponential kernel mean for one Gaussian expectation.
 
     The current probability target is scalar, so the represented diagonal Gaussian
@@ -63,6 +69,10 @@ class GaussianKernelMean(StrictModule):
     location: Array
     scale: Array
     target_id: str = eqx.field(static=True)
+    target_mass: Array
+    normalized: bool = eqx.field(static=True)
+    exactness: str = eqx.field(static=True)
+    hypotheses: str = eqx.field(static=True)
     probability_label: str = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
@@ -103,6 +113,10 @@ class GaussianKernelMean(StrictModule):
         self.target_id = target.target_id
         self.probability_label = target.probability.label
         self.dimension = dimension
+        self.target_mass = jnp.asarray(1.0, dtype=self.location.dtype)
+        self.normalized = True
+        self.exactness = "analytic"
+        self.hypotheses = "normalized diagonal Gaussian and squared-exponential kernel"
 
     def _parameters(self, dtype: Any, /) -> tuple[Array, Array, Array, Array]:
         base = self.kernel.kernel if isinstance(self.kernel, ScaleKernel) else self.kernel
@@ -221,10 +235,12 @@ class GaussianKernelMean(StrictModule):
 
 
 class BayesianQuadraturePlan(StrictModule):
-    """Fixed-design GP quadrature for one bound Gaussian probability target."""
+    """Bounded fixed or sequential quadrature for one declared kernel mean."""
 
-    kernel_mean: GaussianKernelMean
-    design: PointSampling
+    kernel_mean: AbstractKernelMean
+    design: (
+        PointSampling | FixedBayesianQuadratureDesign | SequentialBayesianQuadratureDesign
+    )
     observation_noise: Array
     solve_regularization: Array
     solve_policy: LinearSolvePolicy
@@ -232,8 +248,12 @@ class BayesianQuadraturePlan(StrictModule):
 
     def __init__(
         self,
-        kernel_mean: GaussianKernelMean,
-        design: PointSampling,
+        kernel_mean: AbstractKernelMean,
+        design: (
+            PointSampling
+            | FixedBayesianQuadratureDesign
+            | SequentialBayesianQuadratureDesign
+        ),
         /,
         *,
         observation_noise: ArrayLike = 0.0,
@@ -241,23 +261,34 @@ class BayesianQuadraturePlan(StrictModule):
         solve_policy: LinearSolvePolicy | None = None,
         max_points: int = 4096,
     ):
-        if not isinstance(kernel_mean, GaussianKernelMean):
-            raise TypeError("kernel_mean must be a GaussianKernelMean.")
-        if not isinstance(design, PointSampling):
-            raise TypeError("Bayesian quadrature requires a fixed PointSampling design.")
-        if not isinstance(design.count, int) or design.count < 1:
-            raise ValueError("Bayesian quadrature PointSampling count must be positive.")
-        if design.layout is not None:
-            raise ValueError(
-                "Bayesian quadrature owns its scalar probability sample layout; "
-                "PointSampling.layout must be None."
+        if not isinstance(kernel_mean, AbstractKernelMean):
+            raise TypeError("kernel_mean must implement AbstractKernelMean.")
+        if isinstance(design, PointSampling):
+            if not isinstance(design.count, int) or design.count < 1:
+                raise ValueError(
+                    "Bayesian quadrature PointSampling count must be positive."
+                )
+            if design.layout is not None:
+                raise ValueError(
+                    "Bayesian quadrature owns its scalar probability sample layout; "
+                    "PointSampling.layout must be None."
+                )
+            design_count = design.count
+        elif isinstance(design, FixedBayesianQuadratureDesign):
+            design_count = design.count
+        elif isinstance(design, SequentialBayesianQuadratureDesign):
+            design_count = design.total_count
+        else:
+            raise TypeError(
+                "design must be PointSampling, FixedBayesianQuadratureDesign, or "
+                "SequentialBayesianQuadratureDesign."
             )
         limit = int(max_points)
         if limit < 1:
             raise ValueError("max_points must be positive.")
-        if design.count > limit:
+        if design_count > limit:
             raise ValueError(
-                f"Bayesian quadrature design has {design.count} points, exceeding "
+                f"Bayesian quadrature design has {design_count} points, exceeding "
                 f"max_points={limit}; no kernel matrix was allocated."
             )
         noise = jnp.asarray(observation_noise, dtype=float)
@@ -276,7 +307,7 @@ class BayesianQuadraturePlan(StrictModule):
         )
         policy = (
             LinearSolvePolicy(
-                DenseLU(),
+                DenseCholesky(),
                 failure=FailurePolicy("status"),
             )
             if solve_policy is None
@@ -284,9 +315,9 @@ class BayesianQuadraturePlan(StrictModule):
         )
         if not isinstance(policy, LinearSolvePolicy):
             raise TypeError("solve_policy must be a LinearSolvePolicy or None.")
-        if not isinstance(policy.method, DenseLU):
+        if not isinstance(policy.method, DenseCholesky):
             raise TypeError(
-                "Bayesian quadrature currently accepts only a DenseLU solve policy."
+                "Bayesian quadrature accepts only a DenseCholesky solve policy."
             )
         if (
             policy.preconditioning is not None
@@ -294,7 +325,7 @@ class BayesianQuadraturePlan(StrictModule):
             or policy.rank.relative_cutoff is not None
         ):
             raise ValueError(
-                "Bayesian quadrature DenseLU does not accept preconditioning, "
+                "Bayesian quadrature DenseCholesky does not accept preconditioning, "
                 "recycling, or a rank cutoff."
             )
         if policy.failure.mode != "status":
@@ -437,7 +468,7 @@ def materialize_bayesian_quadrature(
         or jnp.dtype(factorization_dtype) not in supported_solve_dtypes
     ):
         raise TypeError(
-            "Bayesian quadrature DenseLU requires float32 or float64 solve and "
+            "Bayesian quadrature DenseCholesky requires float32 or float64 solve and "
             "factorization dtypes; no kernel matrix was allocated."
         )
     entries = solve_design.shape[0] * solve_design.shape[0]
@@ -454,7 +485,7 @@ def materialize_bayesian_quadrature(
         )
         if mismatched_stages:
             raise ValueError(
-                "Bayesian quadrature DenseLU precision stages "
+                "Bayesian quadrature DenseCholesky precision stages "
                 f"{mismatched_stages!r} must match integration accumulation dtype "
                 f"{solve_design.dtype}; no kernel matrix was allocated."
             )
@@ -463,7 +494,7 @@ def materialize_bayesian_quadrature(
             or linear_precision.krylov_dtype is not None
         ):
             raise ValueError(
-                "Bayesian quadrature DenseLU has no preconditioner or Krylov "
+                "Bayesian quadrature DenseCholesky has no preconditioner or Krylov "
                 "precision stage; no kernel matrix was allocated."
             )
         lower_factorization = (
@@ -475,7 +506,7 @@ def materialize_bayesian_quadrature(
             > jnp.dtype(solve_design.dtype).itemsize
         ):
             raise ValueError(
-                "Bayesian quadrature DenseLU factorization precision cannot exceed "
+                "Bayesian quadrature DenseCholesky factorization precision cannot exceed "
                 "the solve dtype; no kernel matrix was allocated."
             )
         if (
@@ -483,7 +514,7 @@ def materialize_bayesian_quadrature(
             or linear_precision.condition_limit is not None
         ) and not lower_factorization:
             raise ValueError(
-                "Bayesian quadrature DenseLU refinement requires a lower "
+                "Bayesian quadrature DenseCholesky refinement requires a lower "
                 "factorization dtype; no kernel matrix was allocated."
             )
     factorization_bytes = entries * jnp.dtype(factorization_dtype).itemsize
@@ -528,7 +559,17 @@ def materialize_bayesian_quadrature(
     normalized_kernel_mean = kernel_mean / safe_system_scale
     prepared = prepare(
         LinearSystem(
-            DenseLinearOperator(system_matrix),
+            DenseLinearOperator(
+                system_matrix,
+                properties=OperatorProperties(
+                    self_adjoint=True,
+                    positive_definite=True,
+                    evidence={
+                        "self_adjoint": "construction",
+                        "positive_definite": "construction",
+                    },
+                ),
+            ),
             problem_id=f"bayesian-quadrature:{target.target_id}",
         ),
         effective_solve_policy,

@@ -2,9 +2,12 @@
 
 ## Conservative transfer
 
-`ConservativeParticleGridTransferPlan` builds a fixed-capacity normalized particle-to-cell relation. Gather and deposit use the same weights. Particle volume, momentum, force, impulse, and heat are deposited as extensive content; division by cell volume occurs only in the receiving fluid discretization.
-
-A relation fails when support is empty, cannot be normalized, or exceeds cells-per-particle capacity. Inactive particles contribute exactly zero.
+`MeshSplatTarget` plus `MeshCompactKernelSplatAssignment` builds the canonical
+fixed-capacity normalized particle-to-cell route on a declared `CellMesh`.
+Gather and extensive deposition use one adjoint-paired stencil. Particle volume,
+momentum, force, impulse, and heat remain extensive until division by the
+receiving cell measure. Empty support, route overflow, or failed normalization
+is explicit evidence; inactive runtime population slots contribute exactly zero.
 
 ## Unresolved coupling
 
