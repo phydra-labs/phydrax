@@ -9,10 +9,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._sharp_measures import QualifiedSharpGeometry
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._incompressible import FaceVelocity, PreparedMACOperators
-from ._mac_cut_cell import MACCutCellGeometryState
 from ._mac_interface_state import MACFreeSurfaceGeometryState
 
 
@@ -70,13 +70,19 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
         viscosity: ArrayLike,
         /,
         *,
-        solid: MACCutCellGeometryState | None = None,
+        solid: QualifiedSharpGeometry | None = None,
     ) -> MACFreeSurfaceViscousMeasures:
         mu = jnp.asarray(viscosity, dtype=interface.cell_fraction.dtype)
         if mu.shape == ():
             mu = jnp.full_like(interface.cell_fraction, mu)
         if mu.shape != interface.cell_fraction.shape:
             raise ValueError("viscosity must be scalar or cell shaped.")
+        if solid is not None:
+            if (
+                not isinstance(solid, QualifiedSharpGeometry)
+                or solid.operator_id != self.operators.prepared_id
+            ):
+                raise ValueError("Solid measures do not bind this prepared MAC grid.")
         solid_cell = (
             jnp.ones_like(interface.cell_fraction)
             if solid is None
@@ -111,7 +117,7 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
                 "kind": "mac-free-surface-viscous-measure-state",
                 "plan": self.plan_id,
                 "interface": interface.geometry_id,
-                "solid": None if solid is None else solid.geometry_id,
+                "solid": None if solid is None else solid.realization_id,
             }
         )
         return MACFreeSurfaceViscousMeasures(
@@ -121,7 +127,7 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
             mu,
             tuple(solid_fraction),
             finite,
-            interface.successful & (solid is None or solid.successful) & finite,
+            interface.successful & (solid is None or solid.accepted) & finite,
             identifier,
         )
 

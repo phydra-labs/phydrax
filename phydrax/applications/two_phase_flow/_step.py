@@ -137,6 +137,8 @@ class TwoPhaseStepEvidence(StrictModule):
     body_residual: Array
     topology_event_count: Array
     finite: Array
+    geometry_accepted: Array
+    solid_interface_conflict_count: Array
     successful: Array
 
 
@@ -166,6 +168,11 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             raise TypeError("two_phase must be PreparedIncompressibleTwoPhaseVOF.")
         if body is not None and not isinstance(body, TwoPhaseMovingBodyPlan):
             raise TypeError("body must be TwoPhaseMovingBodyPlan or None.")
+        if body is not None and two_phase.geometry is not None:
+            raise ValueError(
+                "VOF cannot combine qualified cut measures with the independent "
+                "penalty moving-body path."
+            )
         self.two_phase = two_phase
         self.body = body
         self.method_id = canonical_fingerprint(
@@ -197,6 +204,12 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             topology_event_count=jnp.asarray(0, dtype=jnp.int32),
             finite=jnp.asarray(True),
             successful=jnp.asarray(True),
+            geometry_accepted=(
+                jnp.asarray(True)
+                if self.two_phase.geometry is None
+                else self.two_phase.geometry.accepted
+            ),
+            solid_interface_conflict_count=jnp.asarray(0, dtype=jnp.int32),
         )
         return TwoPhaseContinuationState(
             state,
@@ -212,7 +225,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
         total_fluxes = tuple(
             component * measure
             for component, measure in zip(
-                velocity, discretization.face_measures, strict=True
+                velocity, self.two_phase.face_open_measure, strict=True
             )
         )
         liquid_fluxes = tuple(
@@ -223,10 +236,10 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             _cell_net_flux(flux, axis, periodic[axis])
             for axis, flux in enumerate(liquid_fluxes)
         )
-        content = discretization.cell_volumes * alpha
+        content = self.two_phase.cell_fluid_measure * alpha
         candidate = content - dt * net
         minimum = jnp.min(candidate)
-        maximum = jnp.max(candidate - discretization.cell_volumes)
+        maximum = jnp.max(candidate - self.two_phase.cell_fluid_measure)
         valid = (minimum >= -1.0e-12) & (maximum <= 1.0e-12)
         factor = jnp.where(
             valid,
@@ -286,7 +299,18 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
                 )
                 for axis, flux in enumerate(mass_fluxes)
             )
-            acceleration = -net / jnp.maximum(density, material.gas_density)
+            fluid_volume = self.two_phase.cell_fluid_measure
+            active = fluid_volume > 0.0
+            acceleration = jnp.where(
+                active,
+                -net
+                / jnp.where(
+                    active,
+                    fluid_volume * jnp.maximum(density, material.gas_density),
+                    1.0,
+                ),
+                0.0,
+            )
             rates.append(
                 _faces_from_cell(
                     acceleration,
@@ -311,7 +335,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
                 jnp.asarray(0.0, dtype=alpha.dtype),
                 jnp.asarray(0.0, dtype=alpha.dtype),
             )
-        volume = self.two_phase.plan.discretization.cell_volumes
+        volume = self.two_phase.cell_fluid_measure
 
         def area(value):
             gradients = jnp.stack(
@@ -322,7 +346,11 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
                 volume * jnp.sqrt(jnp.sum(gradients**2, axis=-1) + 1.0e-12)
             )
 
-        potential = jax.grad(area)(alpha) / volume
+        potential = jnp.where(
+            volume > 0.0,
+            jax.grad(area)(alpha) / jnp.where(volume > 0.0, volume, 1.0),
+            0.0,
+        )
         gradient = operators.gradient(potential)
         face_density = self.two_phase.face_density(density)
         force = tuple(
@@ -351,7 +379,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             )
             force.append(acceleration)
             work = work + jnp.sum(
-                discretization.face_measures[axis] * component * acceleration
+                self.two_phase.face_open_measure[axis] * component * acceleration
             )
         return tuple(force), work
 
@@ -364,7 +392,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
         args: Any,
         /,
     ) -> FixedStepResult:
-        del step_index, time, args
+        del step_index
         dt = jnp.asarray(step_size, dtype=state.state.liquid_content.dtype)
         previous_alpha = self.two_phase.alpha(state.state)
         velocity = self.two_phase.velocity(state.state)
@@ -380,7 +408,13 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             for axis, flux in enumerate(liquid_fluxes)
         )
         liquid_content = state.state.liquid_content - dt * net_liquid
-        alpha = liquid_content / self.two_phase.plan.discretization.cell_volumes
+        fluid_volume = self.two_phase.cell_fluid_measure
+        fluid_active = fluid_volume > 0.0
+        alpha = jnp.where(
+            fluid_active,
+            liquid_content / jnp.where(fluid_active, fluid_volume, 1.0),
+            0.0,
+        )
         density = self.two_phase.mixture_density(alpha)
         momentum_rate = self._consistent_momentum_rate(
             previous_alpha,
@@ -399,7 +433,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             for old_momentum, rho, measure, advection, surface, body in zip(
                 state.state.momentum,
                 face_density,
-                self.two_phase.operators.face_dual_measures,
+                self.two_phase.face_open_dual_measure,
                 momentum_rate,
                 capillary,
                 body_force,
@@ -407,13 +441,53 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             )
         )
         inverse_density = tuple(1.0 / rho for rho in face_density)
-        projection = self.two_phase.projection.project(
-            predictor_momentum,
-            inverse_density,
-            dt,
-            pressure=state.pressure,
-        )
-        momentum = projection.momentum
+        if self.two_phase.sharp_projection is None:
+            projection = self.two_phase.projection.project(
+                predictor_momentum,
+                inverse_density,
+                dt,
+                pressure=state.pressure,
+            )
+            momentum = projection.momentum
+            projected_velocity = projection.velocity
+            projection_finite = projection.finite
+            projection_converged = projection.converged
+            pressure_residual_norm = jnp.sqrt(
+                jnp.sum(
+                    self.two_phase.cell_fluid_measure * projection.pressure_residual**2
+                )
+            )
+        else:
+            open_dual = self.two_phase.face_open_dual_measure
+            predictor_velocity = tuple(
+                jnp.where(
+                    rho * measure > 0.0,
+                    value / jnp.where(rho * measure > 0.0, rho * measure, 1.0),
+                    0.0,
+                )
+                for value, rho, measure in zip(
+                    predictor_momentum, face_density, open_dual, strict=True
+                )
+            )
+            stage = self.two_phase.boundaries.evaluate(time, args)
+            projection = self.two_phase.sharp_projection.project(
+                predictor_velocity,
+                tuple(dt * value for value in inverse_density),
+                stage,
+                pressure=state.pressure,
+            )
+            projected_velocity = projection.velocity
+            momentum = tuple(
+                rho * measure * value
+                for rho, measure, value in zip(
+                    face_density, open_dual, projected_velocity, strict=True
+                )
+            )
+            projection_finite = projection.force.finite & jnp.isfinite(
+                projection.divergence_norm
+            )
+            projection_converged = projection.accepted
+            pressure_residual_norm = projection.linear.diagnostics.residual_norm
         alpha_level_set = self.two_phase.level_set_from_alpha(alpha)
         level_set = 0.5 * state.state.level_set + 0.5 * alpha_level_set
         phase_scalars = {}
@@ -442,8 +516,23 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
                 for axis, flux in enumerate(liquid_fluxes)
             )
             phase_scalars[name] = content - dt * net
+        geometry_epoch = (
+            jnp.asarray(-1, dtype=jnp.int32)
+            if self.two_phase.geometry is None
+            else self.two_phase.geometry.epoch
+        )
+        geometry_id = (
+            ""
+            if self.two_phase.geometry is None
+            else self.two_phase.geometry.realization_id
+        )
         candidate_state = TwoPhaseVOFState(
-            liquid_content, momentum, phase_scalars, level_set
+            liquid_content,
+            momentum,
+            phase_scalars,
+            level_set,
+            geometry_epoch,
+            geometry_id,
         )
         topology = self.two_phase.topology_evidence(candidate_state, previous_alpha)
         surface_energy_after = self._capillary_force(alpha, density)[1]
@@ -451,30 +540,33 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
         volume_scale = jnp.maximum(jnp.sum(state.state.liquid_content), 1.0)
         liquid_residual = jnp.abs(liquid_change) / volume_scale
         divergence = jnp.sqrt(
-            jnp.sum(
-                self.two_phase.plan.discretization.cell_volumes
-                * projection.divergence_after**2
-            )
+            jnp.sum(self.two_phase.cell_fluid_measure * projection.divergence_after**2)
         )
         alpha_minimum = jnp.min(alpha)
         alpha_maximum = jnp.max(alpha)
         clsvof_correction = jnp.sqrt(jnp.mean((level_set - alpha_level_set) ** 2))
-        pressure_residual_norm = jnp.sqrt(
-            jnp.sum(
-                self.two_phase.plan.discretization.cell_volumes
-                * projection.pressure_residual**2
-            )
+        geometry_accepted = (
+            jnp.asarray(True)
+            if self.two_phase.geometry is None
+            else self.two_phase.geometry.accepted
+            & (state.state.geometry_epoch == self.two_phase.geometry.epoch)
+        )
+        conflict_count = jnp.sum(
+            self.two_phase.plic(alpha).solid_interface_conflict,
+            dtype=jnp.int32,
         )
         finite = (
             topology.finite
-            & projection.finite
+            & projection_finite
             & jnp.all(jnp.isfinite(alpha))
             & jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(v)) for v in momentum)))
         )
         successful = (
             finite
-            & projection.converged
+            & projection_converged
+            & geometry_accepted
             & topology.valid
+            & (conflict_count == 0)
             & (alpha_minimum >= -64.0 * jnp.finfo(alpha.dtype).eps)
             & (alpha_maximum <= 1.0 + 64.0 * jnp.finfo(alpha.dtype).eps)
         )
@@ -492,6 +584,8 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             topology_event_count=topology.component_proxy,
             finite=finite,
             successful=successful,
+            geometry_accepted=geometry_accepted,
+            solid_interface_conflict_count=conflict_count,
         )
         kinetic_before = 0.5 * sum(
             jnp.sum(rho * measure * component**2)
@@ -499,7 +593,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
                 self.two_phase.face_density(
                     self.two_phase.mixture_density(previous_alpha)
                 ),
-                self.two_phase.operators.face_dual_measures,
+                self.two_phase.face_open_dual_measure,
                 velocity,
                 strict=True,
             )
@@ -508,8 +602,8 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             jnp.sum(rho * measure * component**2)
             for rho, measure, component in zip(
                 face_density,
-                self.two_phase.operators.face_dual_measures,
-                projection.velocity,
+                self.two_phase.face_open_dual_measure,
+                projected_velocity,
                 strict=True,
             )
         )

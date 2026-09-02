@@ -17,7 +17,9 @@ from ..._trainable import NonTrainableState
 from ._incompressible import PreparedMACOperators
 
 
-class MACCutCellGeometryState(StrictModule):
+class MACDiffuseSDFGeometryState(StrictModule):
+    """Unqualified diffuse SDF ramp; never valid for sharp-measure consumers."""
+
     cell_fluid_fraction: Array
     face_open_fraction: tuple[Array, ...]
     solid_normal: Array
@@ -30,7 +32,9 @@ class MACCutCellGeometryState(StrictModule):
     geometry_id: str = eqx.field(static=True)
 
 
-class MACCutCellGeometryPlan(StrictModule, NonTrainableState):
+class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
+    """Sample an SDF ramp for diffuse models without sharp certification."""
+
     operators: PreparedMACOperators
     signed_distance: Callable[[Array, Array, Any], ArrayLike] = eqx.field(static=True)
     wall_velocity_provider: Callable[[Array, Array, Any], ArrayLike] = eqx.field(
@@ -79,7 +83,7 @@ class MACCutCellGeometryPlan(StrictModule, NonTrainableState):
         )
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "mac-cut-cell-geometry",
+                "kind": "mac-diffuse-sdf-geometry",
                 "operators": operators.prepared_id,
                 "field_id": str(field_id),
                 "interface_width": width,
@@ -93,9 +97,9 @@ class MACCutCellGeometryPlan(StrictModule, NonTrainableState):
         /,
         *,
         args: Any = None,
-        previous: MACCutCellGeometryState | None = None,
+        previous: MACDiffuseSDFGeometryState | None = None,
         step_size: ArrayLike | None = None,
-    ) -> MACCutCellGeometryState:
+    ) -> MACDiffuseSDFGeometryState:
         time_ = jnp.asarray(time)
         phi = jnp.asarray(self.signed_distance(self.cell_points, time_, args))
         if phi.shape != self.operators.discretization.cell_shape:
@@ -138,7 +142,7 @@ class MACCutCellGeometryPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(normal))
             & jnp.isfinite(residual)
         )
-        return MACCutCellGeometryState(
+        return MACDiffuseSDFGeometryState(
             cell_fraction,
             tuple(face_fraction),
             normal,
@@ -152,4 +156,4 @@ class MACCutCellGeometryPlan(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["MACCutCellGeometryPlan", "MACCutCellGeometryState"]
+__all__ = ["MACDiffuseSDFGeometryPlan", "MACDiffuseSDFGeometryState"]

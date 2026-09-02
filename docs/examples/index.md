@@ -71,11 +71,14 @@ evidence. See
 python examples/advanced_capillary_wave.py
 python examples/advanced_rigid_hydroelastic_body.py
 python examples/advanced_two_phase_vof.py
+python examples/passive_tracer_maccormack.py
 ```
 
 These exercise variational graph capillarity, coherent wave forcing and absorption,
-mapped rigid/modal coupling, and conservative two-phase VOF flow. See
-[Advanced hydrodynamics](../guides_advanced_hydrodynamics.md) and
+mapped rigid/modal coupling, conservative two-phase VOF flow, and an explicitly
+nonconservative bounded periodic passive tracer. See
+[Advanced hydrodynamics](../guides_advanced_hydrodynamics.md),
+[Structured finite volume](../guides_finite_volume.md), and
 [Two-phase hydrodynamics](../guides_two_phase_hydrodynamics.md).
 
 ## Particle physics scripts

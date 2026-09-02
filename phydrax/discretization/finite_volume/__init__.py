@@ -167,7 +167,7 @@ from ._mac_composite_marker_transfer import (
     CompositeMarkerImpulseReflux,
     reflux_composite_marker_impulse,
 )
-from ._mac_cut_cell import MACCutCellGeometryPlan, MACCutCellGeometryState
+from ._mac_cut_cell import MACDiffuseSDFGeometryPlan, MACDiffuseSDFGeometryState
 from ._mac_distributed import (
     MACDistributedDiagnostics,
     MACDistributedPlanStatus,
@@ -196,6 +196,16 @@ from ._mac_momentum import (
     PreparedMACMomentumOperators,
 )
 from ._mac_ocean import MACOceanForcingEvidence, PreparedMACOceanForcing
+from ._mac_passive_tracer import (
+    MACPassiveTracerCharacteristicIntegrator,
+    MACPassiveTracerConservation,
+    MACPassiveTracerDifferentiation,
+    MACPassiveTracerInterpolation,
+    MACPassiveTracerMacCormackPlan,
+    MACPassiveTracerMacCormackResult,
+    MACPassiveTracerStatus,
+    PreparedMACPassiveTracerMacCormack,
+)
 from ._mac_scalar import (
     MACScalarAdvection,
     MACScalarBoundaryCondition,
@@ -210,6 +220,13 @@ from ._mac_scalar import (
     MACScalarStepRestriction,
     MACScalarTransport,
     PreparedMACScalarTransport,
+)
+from ._mac_sharp_geometry import (
+    MACExactSDFMeasurePlan,
+    MACSharpGeometryRefreshResult,
+    SignedDistanceProvider,
+    SweptMeasureRateProvider,
+    WallVelocityProvider,
 )
 from ._mac_variable_density import (
     FaceMomentumFlux,
@@ -603,8 +620,8 @@ __all__ = [
     "MACMarkerTransferDiagnostics",
     "MACMarkerTransferPlan",
     "MACCapillaryResult",
-    "MACCutCellGeometryPlan",
-    "MACCutCellGeometryState",
+    "MACDiffuseSDFGeometryPlan",
+    "MACDiffuseSDFGeometryState",
     "MACFreeSurfaceViscousMeasurePlan",
     "MACFreeSurfaceGeometryState",
     "MACFreeSurfaceViscousMeasures",
@@ -623,6 +640,15 @@ __all__ = [
     "MACOperatorPlan",
     "MACOperatorReport",
     "MACPressureClosureKind",
+    "MACPassiveTracerCharacteristicIntegrator",
+    "MACPassiveTracerConservation",
+    "MACPassiveTracerDifferentiation",
+    "MACPassiveTracerInterpolation",
+    "MACPassiveTracerMacCormackPlan",
+    "MACPassiveTracerMacCormackResult",
+    "MACPassiveTracerStatus",
+    "MACExactSDFMeasurePlan",
+    "MACSharpGeometryRefreshResult",
     "MACScalarAdvection",
     "MACScalarBoundaryCondition",
     "MACScalarBoundaryKind",
@@ -640,6 +666,9 @@ __all__ = [
     "MACVariableDensityReport",
     "MACVariableDensityTransportResult",
     "FaceMomentumFlux",
+    "SignedDistanceProvider",
+    "SweptMeasureRateProvider",
+    "WallVelocityProvider",
     "PreparedMACBoundaryPlan",
     "PreparedMappedMACMarkerTransfer",
     "PreparedMACDistributedTopology",
@@ -649,6 +678,7 @@ __all__ = [
     "PreparedMappedMACGeometry",
     "PreparedMACOperators",
     "PreparedHydrostaticGrid",
+    "PreparedMACPassiveTracerMacCormack",
     "PreparedMACScalarTransport",
     "PreparedMACVariableDensityOperators",
     "FiniteVolumeEntropyDiagnostics",

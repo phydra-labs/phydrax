@@ -4,6 +4,11 @@
 
 """Generic external-representation interchange contracts."""
 
+from ._inspection import (
+    HostInspectionConversion,
+    HostInspectionField,
+    HostInspectionFrame,
+)
 from ._report import (
     AdapterError,
     AdapterLoss,
@@ -14,6 +19,9 @@ from ._report import (
 
 
 __all__ = [
+    "HostInspectionConversion",
+    "HostInspectionField",
+    "HostInspectionFrame",
     "AdapterError",
     "AdapterLoss",
     "AdapterReport",

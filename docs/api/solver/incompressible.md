@@ -302,7 +302,19 @@
 
 ---
 
+::: phydrax.solver.MACSharpOperatorEvidence
+
+---
+
 ::: phydrax.solver.MACMovingSharpInterfaceEpochPlan
+
+---
+
+::: phydrax.solver.MACPassiveTracerContinuationState
+
+---
+
+::: phydrax.solver.MACPassiveTracerFixedStepMethod
 
 ---
 

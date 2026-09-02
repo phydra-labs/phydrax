@@ -466,6 +466,7 @@ nav:
         - Nonlinear systems: "api/nonlinear.md"
         - Continuation and bifurcation: "api/continuation.md"
         - Dynamical systems, identification, and chaos: "api/dynamics.md"
+        - Host interchange and inspection: "api/interchange.md"
         - Control: "api/control.md"
         - Circuit analysis: "api/circuit.md"
         - Astrodynamics applications: "api/astrodynamics.md"
