@@ -33,6 +33,7 @@ from ..discretization import (
 )
 from ..enforcement import EnforcementProgram
 from ..equations.trefftz import TrialSpaceCertificate
+from ..integration import FixedIntegration
 from ..nn.parameters import ParameterSubspace
 from ..nn.parameters._low_rank import (
     contains_low_rank_updates,
@@ -41,6 +42,7 @@ from ..nn.parameters._low_rank import (
 from ..optim._kfac._config import KFAC
 from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import AbstractRiemannianOptimizer
+from ..terms import MomentPenalty, ResidualPenalty
 from ..terms._randomized_moment import RandomizedMomentPenalty
 from ..terms._randomized_residual import RandomizedResidualTerm
 from ._functional_objective import (
@@ -48,6 +50,7 @@ from ._functional_objective import (
     evaluate_prepared_objective,
 )
 from ._functional_precision import FunctionalPrecisionPolicy
+from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
 
 
 def _has_signed_randomized_objective(
@@ -59,6 +62,22 @@ def _has_signed_randomized_objective(
         and term.loss_mode != "plug_in"
         for term in terms
     )
+
+def _validate_fixed_selection_terms(
+    terms: Sequence[AbstractScalarTerm],
+    /,
+) -> None:
+    for term in terms:
+        if isinstance(term, (ResidualPenalty, MomentPenalty)):
+            if not isinstance(term.source, FixedIntegration):
+                raise ValueError(
+                    "Functional selection residual and moment terms require "
+                    "FixedIntegration sources."
+                )
+        elif isinstance(term, AbstractSamplingTerm):
+            raise TypeError(
+                "Functional selection does not accept resampled evaluation terms."
+            )
 
 
 def _functional_discretization_bundle(
@@ -172,6 +191,7 @@ class FunctionalSolver(StrictModule):
     discretization_bundle: DiscretizationBundle
     precision: FunctionalPrecisionPolicy | None
     precision_evidence: PrecisionEvidenceEnvelope | None
+    training_state: FunctionalTrainingState | None
 
     def __init__(
         self,
@@ -193,6 +213,7 @@ class FunctionalSolver(StrictModule):
         self.training_diagnostics = frozendict()
         self.precision = None
         self.precision_evidence = None
+        self.training_state = None
         self.discretization_bundle = _functional_discretization_bundle(
             self.functions,
             self.objective.terms + self.objective.evaluation_terms,
@@ -392,6 +413,8 @@ class FunctionalSolver(StrictModule):
         profile_adaptive: bool = False,
         train_term_sample_size: int | None = None,
         precision: FunctionalPrecisionPolicy | None = None,
+        training: FunctionalTrainingPlan | None = None,
+        resume: bool = False,
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
@@ -470,6 +493,43 @@ class FunctionalSolver(StrictModule):
                 "Signed unbiased randomized terms require keep_best=False; "
                 "select models with an independent fixed validation objective."
             )
+        if training is not None and not isinstance(training, FunctionalTrainingPlan):
+            raise TypeError("training must be a FunctionalTrainingPlan or None.")
+        if bool(resume) and training is None:
+            raise ValueError("resume=True requires the originating training plan.")
+        if (
+            bool(resume)
+            and self.training_state is not None
+            and training is not None
+            and self.training_state.run_id != training.plan_id
+        ):
+            raise ValueError("In-memory functional training-plan identity mismatch.")
+        if (
+            training is not None
+            and keep_best
+            and training.selection is None
+            and (training.stateful or training.causal)
+        ):
+            raise ValueError(
+                "Stateful or causal training with keep_best=True requires a fixed "
+                "FunctionalSelectionPolicy."
+            )
+        if (
+            training is not None
+            and training.selection is not None
+            and not self.evaluation_terms
+        ):
+            raise ValueError(
+                "FunctionalSelectionPolicy requires at least one evaluation term."
+            )
+        if training is not None and training.selection is not None:
+            _validate_fixed_selection_terms(self.evaluation_terms)
+        if bool(resume) and self.training_state is None and (
+            training is None or training.checkpoint is None
+        ):
+            raise ValueError(
+                "resume=True requires in-memory training state or a checkpoint policy."
+            )
 
         from ._functional_backend import solve as _solve
         from ._functional_run import FunctionalSolveConfig
@@ -493,5 +553,7 @@ class FunctionalSolver(StrictModule):
             profile_adaptive=profile_adaptive,
             train_term_sample_size=train_term_sample_size,
             precision=precision,
+            training=training,
+            resume=bool(resume),
         )
         return _solve(self, optim=optimizer, config=config)

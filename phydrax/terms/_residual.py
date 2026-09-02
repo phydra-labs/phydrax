@@ -51,6 +51,7 @@ from ._integrated import (
     resolve_term_realization,
     validate_condition_source,
 )
+from ._residual_layout import ResidualBlockLayout
 
 
 _SOURCE_TYPES = (
@@ -289,6 +290,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
     scale: Array
     weight: Array
     density: DomainFunction | None
+    blocks: ResidualBlockLayout | None
     label: str | None = eqx.field(static=True)
     data_accuracy_eps: float = eqx.field(static=True)
 
@@ -300,6 +302,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         *,
         scale: ArrayLike = 1.0,
         density: DomainFunction | None = None,
+        blocks: ResidualBlockLayout | None = None,
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
     ):
@@ -322,6 +325,8 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
                 raise ValueError(
                     "Penalty density domain is incompatible with the condition."
                 )
+        if blocks is not None and not isinstance(blocks, ResidualBlockLayout):
+            raise TypeError("blocks must be a ResidualBlockLayout or None.")
         accuracy_eps = float(data_accuracy_eps)
         if not bool(jnp.isfinite(accuracy_eps)) or accuracy_eps <= 0.0:
             raise ValueError("data_accuracy_eps must be finite and positive.")
@@ -331,6 +336,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         self.scale = coefficient.reshape(())
         self.weight = self.scale
         self.density = density
+        self.blocks = blocks
         self.label = condition.label if label is None else str(label)
         self.data_accuracy_eps = accuracy_eps
 
@@ -461,6 +467,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
     def _quadratic_residual_data(
         self,
         functions: Mapping[str, DomainFunction],
+        residual_override: DomainFunction | None = None,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
@@ -526,7 +533,13 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             coefficients = (reduction_weights,)
             term_keys = (evaluation_key,)
 
-        residual_fn = self.condition.residual(functions)
+        residual_fn = (
+            self.condition.residual(functions)
+            if residual_override is None
+            else residual_override
+        )
+        if not isinstance(residual_fn, DomainFunction):
+            raise TypeError("residual_override must be a DomainFunction or None.")
         density = self.density
         if density is not None and density.domain.labels != residual_fn.domain.labels:
             density = density.promote(residual_fn.domain)

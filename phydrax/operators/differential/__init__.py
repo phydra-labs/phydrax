@@ -104,6 +104,15 @@ from ._monge_ampere import (
     domain_kahler_positivity_margin,
     domain_monge_ampere_residual,
 )
+from ._requests import (
+    DerivativeExecutionPlan,
+    DerivativeExecutionStrategy,
+    DerivativeRequest,
+    evaluate_fused_coordinate_derivatives,
+    FusedDerivativeEvaluation,
+    plan_derivative_execution,
+    trace_derivative_requests,
+)
 from ._riemannian_ops import (
     covariant_derivative,
     covariant_hessian,
@@ -288,4 +297,11 @@ __all__ = [
     "semi_riemannian_grad",
     "horizontal_grad",
     "sub_laplacian",
+    "DerivativeExecutionPlan",
+    "DerivativeExecutionStrategy",
+    "DerivativeRequest",
+    "FusedDerivativeEvaluation",
+    "evaluate_fused_coordinate_derivatives",
+    "plan_derivative_execution",
+    "trace_derivative_requests",
 ]

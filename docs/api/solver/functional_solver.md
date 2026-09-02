@@ -10,6 +10,9 @@ For a conceptual overview of loss evaluation, exact enforcement, and training-lo
 behavior, see [Guides → Solvers and training](../../guides_solver.md). For the
 four-layer model and integration-source choices, see
 [Conditions, integration, terms, and enforcement](../../guides_conditions.md).
+Stateful pseudo-transient, causal, balancing, NTK, checkpoint, sharding, and
+time-window behavior is covered by
+[Functional training runtime](../../guides_functional_training.md).
 
 !!! note
     Key notes:
@@ -26,10 +29,12 @@ four-layer model and integration-source choices, see
       with residual terms.
     - `partition_functions()` exposes the trainable/non-trainable state split used
       by `solve(...)`.
-    - `solve(...)` accepts standard and line-search Optax transformations, Phydrax
-      native scalar, least-squares, composite least-squares, and Riemannian methods,
-      Evosax distribution-based algorithms, and `phydrax.optim.kfac(...)`. Native
-      residual methods receive the same partitioned Equinox parameter tree returned by
+    - `solve(...)` accepts standard and line-search Optax transformations,
+      Phydrax-native [`soap(...)`](../optim.md#stateful-orthogonal-adaptive-preconditioning-soap),
+      native scalar, least-squares, composite least-squares, and Riemannian
+      methods, Evosax distribution-based algorithms, and
+      `phydrax.optim.kfac(...)`. Native residual methods receive the same
+      partitioned Equinox parameter tree returned by
       `partition_functions()`. Population-based Evosax algorithms require a separate
       finite search-space contract and are rejected.
     - `solve_linear_trial_space(...)` assembles directly bound
@@ -55,6 +60,17 @@ four-layer model and integration-source choices, see
       batches, per-step integration realizations, adaptive weights, evaluation
       keys, and the iteration value are reused by every candidate evaluation and
       by term diagnostics for that update.
+    - `FunctionalTrainingPlan` compiles optimizer-only residual transforms while
+      retaining the authored physical objective. `loss(...)` never changes meaning.
+    - Stateful or causal training with best-model selection requires independent
+      fixed `evaluation_terms` and `FunctionalSelectionPolicy`.
+    - Accepted-update checkpoints retain current and best fields, optimizer state,
+      previous pseudo-time fields, adaptive coefficients, collocation state, PRNG
+      state, and progress. `resume=True` rejects mismatched plan or
+      discretization identities.
+    - `FunctionalShardingPolicy` maps named coordax sample axes to a caller-owned
+      JAX mesh. Global numerator/support reductions are used instead of averaging
+      local means.
     - A constitutive energy that is defined only for admissible states can use
       `IntegralFunctional(source=..., nonfinite_integrand="propagate")` with a
       tested Optax line search such as `optax.lbfgs`. The default remains strict.
@@ -199,3 +215,35 @@ identity, and later `loss(...)` calls reuse the scoped contraction policy.
             - loss
             - solve
             - save_onnx
+
+---
+
+::: phydrax.solver.FunctionalTrainingPlan
+
+---
+
+::: phydrax.solver.PseudoTransientPolicy
+
+---
+
+::: phydrax.solver.CausalResidualPolicy
+
+---
+
+::: phydrax.solver.FunctionalTermBalancePolicy
+
+---
+
+::: phydrax.solver.FunctionalSelectionPolicy
+
+---
+
+::: phydrax.solver.FunctionalCheckpointPolicy
+
+---
+
+::: phydrax.solver.FunctionalShardingPolicy
+
+---
+
+::: phydrax.solver.FunctionalTimeWindowPlan

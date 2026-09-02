@@ -44,6 +44,10 @@ from ..optim._riemannian import (
     AbstractRiemannianOptimizer,
 )
 from ..optim._scalar import ScalarIterativeState
+from ._functional_checkpoint import (
+    load_functional_training_checkpoint,
+    save_functional_training_checkpoint,
+)
 from ._functional_objective import (
     evaluate_prepared_objective,
     evaluate_prepared_scalar_remainder,
@@ -56,16 +60,25 @@ from ._functional_reporting import (
     metric_suffix as _metric_suffix,
     term_label as _term_label,
 )
+from ._functional_residual import (
+    materialize_prepared_residual_terms,
+    prepared_term_residual_vector,
+)
 from ._functional_run import (
     expand_train_terms as _expanded_train_terms,
     replace_solver_state,
     select_train_terms as _active_train_terms,
     validate_term_sample_size as _train_term_sample_size,
 )
-from ._kfac_problem import (
-    frozen_term_residual_vector,
-    materialize_frozen_residual_terms,
-    materialize_frozen_terms,
+from ._functional_surrogate import (
+    _functional_ntk_diagnostic_values,
+    _functional_ntk_diagnostics,
+    prepare_functional_update,
+    PreparedFunctionalUpdate,
+)
+from ._functional_training import (
+    FunctionalTrainingPlan,
+    FunctionalTrainingState,
 )
 from ._model_losses import function_model_loss_labels
 
@@ -102,6 +115,8 @@ def solve_gradient(
     profile_adaptive: bool = False,
     train_term_sample_size: int | None = None,
     precision: FunctionalPrecisionPolicy | None = None,
+    training: FunctionalTrainingPlan | None = None,
+    resume: bool = False,
 ) -> "FunctionalSolver":
     if num_iter == 0:
         return self
@@ -187,21 +202,31 @@ def solve_gradient(
     )
 
     with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
+        resume_state = self.training_state if resume else None
+        source_functions = (
+            self.functions
+            if resume_state is None
+            else resume_state.current_functions
+        )
         if parameter_paths is None:
-            params, non_trainable = partition_trainable(self.functions)
+            params, non_trainable = partition_trainable(source_functions)
             explicit_subspace = False
         else:
             subspace = ParameterSubspace.from_leaf_paths(
-                self.functions,
+                source_functions,
                 parameter_paths,
             )
             if subspace.leaf_shapes != parameter_shapes:
                 raise ValueError("FunctionalSolver parameter-subspace shapes changed.")
             if subspace.leaf_dtypes != parameter_dtypes:
                 raise ValueError("FunctionalSolver parameter-subspace dtypes changed.")
-            validate_low_rank_subspace(self.functions, subspace)
+            validate_low_rank_subspace(source_functions, subspace)
             params, non_trainable = subspace.initial, subspace.frozen
             explicit_subspace = True
+        sharding_policy = None if training is None else training.sharding
+        if sharding_policy is not None:
+            params = sharding_policy.place_parameters(params)
+            non_trainable = sharding_policy.place_tree(non_trainable)
 
         def reconstruct_functions(current, fixed):
             if explicit_subspace:
@@ -267,7 +292,17 @@ def solve_gradient(
                 else jax.default_matmul_precision(precision.matmul_precision)
             )
 
+        def _physical_prepared(prepared_):
+            return (
+                prepared_.physical
+                if isinstance(prepared_, PreparedFunctionalUpdate)
+                else prepared_
+            )
+
         def _loss_wrt_params(params_, non_trainable_, prepared_):
+            if isinstance(prepared_, PreparedFunctionalUpdate):
+                values = prepared_.surrogate_values(params_, non_trainable_)
+                return values.total, values.flat_values
             functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
                 values = evaluate_prepared_objective(prepared_, functions)
@@ -277,7 +312,7 @@ def solve_gradient(
             functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
                 return evaluate_prepared_objective(
-                    prepared_,
+                    _physical_prepared(prepared_),
                     functions,
                     include_model_losses=False,
                 ).term_values
@@ -285,7 +320,9 @@ def solve_gradient(
         def _data_metrics_wrt_terms(params_, non_trainable_, prepared_):
             functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
-                return prepared_data_metrics(prepared_, functions)
+                return prepared_data_metrics(
+                    _physical_prepared(prepared_), functions
+                )
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
@@ -307,19 +344,26 @@ def solve_gradient(
             prepared_,
         ):
             if is_composite:
+                physical_ = _physical_prepared(prepared_)
                 assert _opt_composite is not None
-                frozen_terms = materialize_frozen_residual_terms(prepared_)
+                residual_terms = materialize_prepared_residual_terms(physical_)
 
                 def _residual_fn(p, _):
+                    if isinstance(prepared_, PreparedFunctionalUpdate):
+                        if prepared_.residual is None:
+                            raise ValueError(
+                                "GeneralizedGaussNewton requires residual roots."
+                            )
+                        return prepared_.residual.roots(p)
                     pieces = tuple(
-                        frozen_term_residual_vector(
+                        prepared_term_residual_vector(
                             p,
                             non_trainable_,
-                            self,
+                            self.enforcement,
                             term,
-                            iter_=prepared_.iteration,
+                            iteration=physical_.iteration,
                         )
-                        for term in frozen_terms
+                        for term in residual_terms
                     )
                     if not pieces:
                         raise ValueError(
@@ -331,7 +375,7 @@ def solve_gradient(
                 def _scalar_fn(p, _):
                     functions = reconstruct_functions(p, non_trainable_)
                     return evaluate_prepared_scalar_remainder(
-                        prepared_,
+                        physical_,
                         functions,
                     )
 
@@ -355,19 +399,29 @@ def solve_gradient(
                 return params_, opt_state, loss_val, terms
 
             if is_least_squares:
+                physical_ = _physical_prepared(prepared_)
                 assert _opt_least_squares is not None
-                frozen_terms = materialize_frozen_terms(prepared_)
+                residual_terms = materialize_prepared_residual_terms(
+                    physical_, require_all=True
+                )
 
                 def _residual_fn(p):
+                    if isinstance(prepared_, PreparedFunctionalUpdate):
+                        if prepared_.residual is None:
+                            raise ValueError(
+                                "Least-squares FunctionalSolver methods require "
+                                "residual roots."
+                            )
+                        return prepared_.residual.roots(p)
                     pieces = tuple(
-                        frozen_term_residual_vector(
+                        prepared_term_residual_vector(
                             p,
                             non_trainable_,
-                            self,
+                            self.enforcement,
                             term,
-                            iter_=prepared_.iteration,
+                            iteration=physical_.iteration,
                         )
-                        for term in frozen_terms
+                        for term in residual_terms
                     )
                     if not pieces:
                         raise ValueError(
@@ -544,29 +598,219 @@ def solve_gradient(
         if opt is None:
             raise ValueError("Optimizer is not configured.")
         opt_state = (
-            opt.init(params)
+            resume_state.optimizer_state
+            if resume_state is not None
+            else opt.init(params)
             if preinitialized_opt_state is None
             else preinitialized_opt_state
         )
+        restored_objective = None
+        if (
+            resume
+            and resume_state is None
+            and training is not None
+            and training.checkpoint is not None
+        ):
+            state_template = FunctionalTrainingState(
+                current_functions=source_functions,
+                best_functions=source_functions,
+                previous_functions=(
+                    source_functions if training.pseudo_transient else None
+                ),
+                optimizer_state=opt_state,
+                key=jr.key(seed),
+                pseudo_inverse_steps=tuple(
+                    policy.initial_inverse_step for policy in training.pseudo_transient
+                ),
+                term_multipliers=jnp.ones(
+                    (
+                        0
+                        if training.term_balance is None
+                        else len(training.term_balance.blocks)
+                    ),
+                    dtype=float,
+                ),
+                progress=TrainingProgress(),
+                run_id=training.plan_id,
+            )
+            restored = load_functional_training_checkpoint(
+                training.checkpoint.path,
+                self,
+                state_template,
+                training,
+            )
+            resume_state = restored.state
+            restored_objective = restored.objective
+            source_functions = resume_state.current_functions
+            if parameter_paths is None:
+                params, non_trainable = partition_trainable(source_functions)
+            else:
+                resumed_subspace = ParameterSubspace.from_leaf_paths(
+                    source_functions, parameter_paths
+                )
+                if (
+                    resumed_subspace.leaf_shapes != parameter_shapes
+                    or resumed_subspace.leaf_dtypes != parameter_dtypes
+                ):
+                    raise ValueError(
+                        "Checkpoint parameter subspace changed shape or dtype."
+                    )
+                params = resumed_subspace.initial
+                non_trainable = resumed_subspace.frozen
+            opt_state = resume_state.optimizer_state
+            if sharding_policy is not None:
+                params = sharding_policy.place_parameters(params)
+                non_trainable = sharding_policy.place_tree(non_trainable)
+                opt_state = sharding_policy.place_tree(opt_state)
         current_evaluation_params = resolve_evaluation_parameters(
             evaluation_parameters,
             opt_state,
             params,
         )
+        selection_policy = None if training is None else training.selection
+        initial_progress = (
+            resume_state.progress
+            if resume_state is not None
+            else TrainingProgress(
+                best_value=None if selection_policy is not None else float("inf")
+            )
+        )
         control = TrainingController(
             total_steps=int(num_iter),
-            key=jr.key(seed),
-            progress=TrainingProgress(best_value=float("inf")),
+            key=jr.key(seed) if resume_state is None else resume_state.key,
+            progress=initial_progress,
         )
-        control.best_payload = current_evaluation_params
-        objective = self.objective
+        if resume_state is None:
+            control.best_payload = current_evaluation_params
+        elif parameter_paths is None:
+            control.best_payload = partition_trainable(
+                resume_state.best_functions
+            )[0]
+        else:
+            control.best_payload = ParameterSubspace.from_leaf_paths(
+                resume_state.best_functions, parameter_paths
+            ).initial
+        objective = self.objective if restored_objective is None else restored_objective
+        if keep_best and selection_policy is not None and resume_state is None:
+            initial_selection = objective.prepare_evaluation(
+                key=jr.fold_in(control.key, 1200),
+                iteration=jnp.asarray(0.0),
+            )
+            initial_selection_functions = reconstruct_functions(
+                current_evaluation_params, non_trainable
+            )
+            initial_selection_value = evaluate_prepared_objective(
+                initial_selection, initial_selection_functions
+            ).total
+            control.select(
+                float(initial_selection_value),
+                current_evaluation_params,
+                step=0,
+                mode=selection_policy.mode,
+                min_delta=selection_policy.min_delta,
+                patience=selection_policy.patience,
+            )
         out_file = log_fp if log_fp is not None else None
         refresh_wall_time = 0.0
         optimizer_wall_time = 0.0
         first_optimizer_step_wall_time = 0.0
         steady_optimizer_step_wall_time = 0.0
+        training_started = time.perf_counter()
+        latest_ntk_diagnostics = None
+        prepared = None
+        previous_functions = (
+            None
+            if training is None or not training.pseudo_transient
+            else source_functions
+            if resume_state is None or resume_state.previous_functions is None
+            else resume_state.previous_functions
+        )
+        pseudo_inverse_steps = (
+            ()
+            if training is None
+            else resume_state.pseudo_inverse_steps
+            if resume_state is not None
+            else tuple(
+                policy.initial_inverse_step for policy in training.pseudo_transient
+            )
+        )
+        term_multipliers = (
+            jnp.zeros((0,), dtype=float)
+            if training is None or training.term_balance is None
+            else resume_state.term_multipliers
+            if resume_state is not None
+            else jnp.ones((len(training.term_balance.blocks),), dtype=float)
+        )
+        previous_gradient = (
+            None if resume_state is None else resume_state.previous_gradient
+        )
 
-        for epoch in range(int(num_iter)):
+        def make_training_state(
+            current_params,
+            selected_params,
+            optimizer_state,
+        ):
+            if training is None:
+                raise RuntimeError("Functional training state requires a training plan.")
+            current_functions_ = reconstruct_functions(
+                current_params, non_trainable
+            )
+            selected_functions_ = reconstruct_functions(
+                selected_params, non_trainable
+            )
+            pseudo_inverse_steps_ = pseudo_inverse_steps
+            term_multipliers_ = term_multipliers
+            return FunctionalTrainingState(
+                current_functions=current_functions_,
+                best_functions=selected_functions_,
+                previous_functions=previous_functions,
+                optimizer_state=optimizer_state,
+                key=control.key,
+                pseudo_inverse_steps=pseudo_inverse_steps_,
+                term_multipliers=term_multipliers_,
+                previous_gradient=previous_gradient,
+                progress=control.progress,
+                run_id=training.plan_id,
+                training_seconds=(
+                    (0.0 if resume_state is None else resume_state.training_seconds)
+                    + time.perf_counter()
+                    - training_started
+                ),
+                resumed_from_step=start_step,
+            )
+
+        start_step = 0 if resume_state is None else resume_state.progress.update_step
+        def publish_checkpoint(checkpoint_solver, checkpoint_state):
+            if training is None or training.checkpoint is None:
+                return
+            if sharding_policy is not None:
+                sharding_policy.synchronize(
+                    f"functional-checkpoint-before-{checkpoint_state.progress.update_step}"
+                )
+            if sharding_policy is None or sharding_policy.is_primary_process:
+                save_functional_training_checkpoint(
+                    training.checkpoint.path,
+                    checkpoint_solver,
+                    checkpoint_state,
+                    training,
+                )
+            if sharding_policy is not None:
+                sharding_policy.synchronize(
+                    f"functional-checkpoint-after-{checkpoint_state.progress.update_step}"
+                )
+        if start_step >= int(num_iter):
+            resumed_result = replace_solver_state(
+                self,
+                functions=resume_state.best_functions,
+                objective=objective,
+            )
+            return eqx.tree_at(
+                lambda solver: solver.training_state,
+                resumed_result,
+                resume_state,
+                is_leaf=lambda value: value is None,
+            )
+        for epoch in range(start_step, int(num_iter)):
             if signal_guard.stop_requested:
                 _log_training_signal_stop(
                     optimizer_label,
@@ -592,18 +836,57 @@ def solve_gradient(
                     jax.block_until_ready(objective)
                     refresh_wall_time += time.perf_counter() - refresh_started
                 optimizer_started = time.perf_counter() if profile_adaptive else 0.0
-                active_terms, active_term_indices, term_scale = _active_train_terms(
+                _active_terms, active_term_indices, term_scale = _active_train_terms(
                     objective.terms,
                     sample_size=term_sample_size,
                     key=jr.fold_in(subkey, 17),
                 )
-                prepared = objective.prepare_training(
+                physical_prepared = objective.prepare_training(
                     active_term_indices,
                     scale=term_scale,
                     evaluation_key=subkey,
                     sampling_key=jr.fold_in(subkey, 211),
                     iteration=iter_,
                 )
+                if sharding_policy is not None:
+                    physical_prepared = sharding_policy.place_prepared(
+                        physical_prepared
+                    )
+                prepared = (
+                    physical_prepared
+                    if training is None
+                    else prepare_functional_update(
+                        physical_prepared,
+                        params,
+                        non_trainable,
+                        self.enforcement,
+                        training=training,
+                        previous_functions=previous_functions,
+                        pseudo_inverse_steps=pseudo_inverse_steps,
+                        term_multipliers=term_multipliers,
+                        previous_gradient=previous_gradient,
+                    )
+                )
+                if isinstance(prepared, PreparedFunctionalUpdate):
+                    pseudo_inverse_steps = prepared.pseudo_inverse_steps
+                    term_multipliers = prepared.term_multipliers
+                    if prepared.diagnostic_gradient is not None:
+                        previous_gradient = prepared.diagnostic_gradient
+                if (
+                    isinstance(prepared, PreparedFunctionalUpdate)
+                    and training is not None
+                    and training.diagnostics is not None
+                    and training.diagnostics.ntk
+                    and training.diagnostics.due(epoch + 1)
+                ):
+                    if prepared.residual is None:
+                        raise ValueError("NTK diagnostics require residual roots.")
+                    latest_ntk_diagnostics = _functional_ntk_diagnostics(
+                        prepared.residual,
+                        params,
+                        training.diagnostics,
+                        jr.fold_in(subkey, 1701),
+                    )
                 pre_update_params = params
                 params, opt_state, loss_val, term_values = solve_step(
                     params,
@@ -611,6 +894,8 @@ def solve_gradient(
                     opt_state,
                     prepared,
                 )
+                if training is not None and training.pseudo_transient:
+                    previous_functions = functions_snapshot
                 iterative_step_metrics = (
                     _opt_least_squares.step_metrics(opt_state)
                     if _opt_least_squares is not None
@@ -652,7 +937,27 @@ def solve_gradient(
                     params,
                 )
                 evaluation_loss = None
-                if keep_best:
+                if keep_best and selection_policy is not None:
+                    if selection_policy.due(step):
+                        selection_prepared = objective.prepare_evaluation(
+                            key=jr.fold_in(subkey, 1201),
+                            iteration=iter_,
+                        )
+                        selection_functions = reconstruct_functions(
+                            current_evaluation_params, non_trainable
+                        )
+                        evaluation_loss = evaluate_prepared_objective(
+                            selection_prepared, selection_functions
+                        ).total
+                        control.select(
+                            float(evaluation_loss),
+                            current_evaluation_params,
+                            step=step,
+                            mode=selection_policy.mode,
+                            min_delta=selection_policy.min_delta,
+                            patience=selection_policy.patience,
+                        )
+                elif keep_best:
                     if evaluation_parameters is None:
                         selection_parameters = (
                             params
@@ -678,6 +983,35 @@ def solve_gradient(
                         selection_parameters,
                         step=step,
                     )
+                if (
+                    training is not None
+                    and training.checkpoint is not None
+                    and training.checkpoint.due(step)
+                ):
+                    checkpoint_selected = (
+                        control.selected(current_evaluation_params)
+                        if keep_best
+                        else current_evaluation_params
+                    )
+                    checkpoint_state = make_training_state(
+                        params,
+                        checkpoint_selected,
+                        opt_state,
+                    )
+                    checkpoint_solver = replace_solver_state(
+                        self,
+                        functions=checkpoint_state.best_functions,
+                        objective=objective,
+                    )
+                    checkpoint_solver = eqx.tree_at(
+                        lambda solver: solver.training_state,
+                        checkpoint_solver,
+                        checkpoint_state,
+                        is_leaf=lambda value: value is None,
+                    )
+                    publish_checkpoint(checkpoint_solver, checkpoint_state)
+                if control.stop_requested:
+                    break
                 iter_time_s = time.perf_counter() - iter_start
                 if signal_guard.stop_requested:
                     _log_training_signal_stop(
@@ -1300,6 +1634,26 @@ def solve_gradient(
             precision,
             precision_evidence,
         )
+        if training is not None:
+            training_state = make_training_state(params, chosen, opt_state)
+            result = eqx.tree_at(
+                lambda solver: solver.training_state,
+                result,
+                training_state,
+                is_leaf=lambda value: value is None,
+            )
+            if training.checkpoint is not None and training.checkpoint.save_final:
+                publish_checkpoint(result, training_state)
+        objective_plane_diagnostics: dict[str, Any] = {}
+        if isinstance(prepared, PreparedFunctionalUpdate):
+            objective_plane_diagnostics = {
+                "objective/physical": prepared.physical_values(functions).total,
+                "objective/surrogate": prepared.surrogate_loss(
+                    chosen, non_trainable
+                ),
+                "gradient_alignment/intra": prepared.intra_gradient_alignment,
+                "gradient_alignment/inter": prepared.inter_gradient_alignment,
+            }
         diagnostics = frozendict(
             {
                 "profile_enabled": jnp.asarray(profile_adaptive),
@@ -1312,6 +1666,8 @@ def solve_gradient(
                     steady_optimizer_step_wall_time / max(completed - 1, 1)
                 ),
             }
+            | objective_plane_diagnostics
+            | _functional_ntk_diagnostic_values(latest_ntk_diagnostics)
             | riemannian_diagnostics
             | mirror_diagnostics
             | iterative_diagnostics

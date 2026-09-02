@@ -22,11 +22,10 @@ from jax.flatten_util import ravel_pytree
 import phydrax as phx
 from phydrax._trainable import combine_trainable, partition_trainable
 from phydrax.operators.differential import laplacian, partial_n
-from phydrax.solver._kfac_problem import (
-    frozen_loss,
-    frozen_loss_and_flat_gradient,
-    materialize_frozen_terms,
-    term_residual_jacobians,
+from phydrax.solver._functional_residual import (
+    prepare_functional_residual,
+    prepared_residual_jacobians,
+    prepared_residual_loss_and_flat_gradient,
 )
 
 
@@ -278,21 +277,21 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
             sampling_key=key,
             iteration=step + 1,
         )
-        terms = materialize_frozen_terms(prepared)
-        loss, gradient, unravel = frozen_loss_and_flat_gradient(
+        residual_map = prepare_functional_residual(
+            prepared,
             params,
             non_trainable,
-            solver,
-            terms,
-            iter_=step + 1,
+            solver.enforcement,
+            require_all=True,
         )
-        flat, jacobians, _ = term_residual_jacobians(
+        loss, gradient, unravel = prepared_residual_loss_and_flat_gradient(
             params,
             non_trainable,
-            solver,
-            terms,
-            iter_=step + 1,
+            solver.enforcement,
+            residual_map.terms,
+            iteration=step + 1,
         )
+        flat, jacobians, _ = prepared_residual_jacobians(residual_map, params)
         curvature = float(damping) * jnp.eye(flat.size, dtype=flat.dtype)
         for jacobian in jacobians:
             curvature = curvature + jacobian.T @ jacobian
@@ -300,13 +299,7 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
         step_size = 1.0
         for _ in range(10):
             candidate = flat - step_size * direction
-            candidate_loss = frozen_loss(
-                unravel(candidate),
-                non_trainable,
-                solver,
-                terms,
-                iter_=step + 1,
-            )
+            candidate_loss = residual_map.loss(unravel(candidate))
             if bool(candidate_loss < loss):
                 flat = candidate
                 break

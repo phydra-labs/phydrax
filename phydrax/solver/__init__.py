@@ -520,6 +520,16 @@ from ._fractional_memory import (
     FractionalVectorField,
     solve_caputo_fractional,
 )
+from ._functional_checkpoint import (
+    FunctionalTrainingCheckpoint,
+    load_functional_training_checkpoint,
+    save_functional_training_checkpoint,
+)
+from ._functional_correction import (
+    freeze_domain_function,
+    FunctionalCorrectionProblem,
+    prepare_functional_correction,
+)
 from ._functional_differential import (
     FunctionalCollocationPlan,
     FunctionalDifferentialBoundaryProblem,
@@ -527,8 +537,32 @@ from ._functional_differential import (
     FunctionalDifferentialSolution,
     solve_functional_differential,
 )
+from ._functional_ntk import (
+    FunctionalNTKView,
+    prepare_functional_ntk,
+    PreparedFunctionalNTK,
+)
 from ._functional_precision import FunctionalMatmulPrecision, FunctionalPrecisionPolicy
+from ._functional_sharding import FunctionalShardingPolicy
 from ._functional_solver import FunctionalSolver
+from ._functional_training import (
+    CausalResidualPolicy,
+    FunctionalCheckpointPolicy,
+    FunctionalDiagnosticsPolicy,
+    FunctionalSelectionPolicy,
+    FunctionalTermBalancePolicy,
+    FunctionalTrainingPlan,
+    FunctionalTrainingState,
+    PseudoTransientAdaptation,
+    PseudoTransientPolicy,
+    ResidualRelaxationMap,
+)
+from ._functional_windows import (
+    FunctionalTimeWindowPlan,
+    FunctionalTimeWindowResult,
+    FunctionalWindowAdapter,
+    train_functional_time_windows,
+)
 from ._gaussian_lindblad import (
     damped_thermal_oscillator,
     GaussianLindbladProblem,
@@ -2288,6 +2322,30 @@ __all__ = [
     "prepare_functional_stationarity",
     "prepare_virtual_work_equilibrium",
     "FunctionalSolver",
+    "FunctionalTrainingCheckpoint",
+    "load_functional_training_checkpoint",
+    "save_functional_training_checkpoint",
+    "FunctionalNTKView",
+    "PreparedFunctionalNTK",
+    "prepare_functional_ntk",
+    "FunctionalShardingPolicy",
+    "FunctionalTimeWindowPlan",
+    "FunctionalTimeWindowResult",
+    "FunctionalWindowAdapter",
+    "train_functional_time_windows",
+    "freeze_domain_function",
+    "FunctionalCorrectionProblem",
+    "prepare_functional_correction",
+    "CausalResidualPolicy",
+    "FunctionalCheckpointPolicy",
+    "FunctionalDiagnosticsPolicy",
+    "FunctionalSelectionPolicy",
+    "FunctionalTermBalancePolicy",
+    "FunctionalTrainingPlan",
+    "FunctionalTrainingState",
+    "PseudoTransientAdaptation",
+    "PseudoTransientPolicy",
+    "ResidualRelaxationMap",
     "InteriorLaplaceDirichletResult",
     "LaplaceCapacitanceResult3D",
     "solve_laplace_capacitance_3d",

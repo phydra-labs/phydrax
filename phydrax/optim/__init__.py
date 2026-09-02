@@ -284,6 +284,7 @@ from ._robust_losses import (
     SoftL1Loss,
     TukeyLoss,
 )
+from ._soap import scale_by_soap, soap, SOAPPreconditioner, SOAPState
 from ._sparse_kkt import (
     assemble_sparse_augmented_kkt,
     plan_sparse_augmented_kkt,
@@ -532,6 +533,10 @@ __all__ = [
     "QuadraticProgram",
     "ConvexProgramResult",
     "kfac",
+    "soap",
+    "scale_by_soap",
+    "SOAPPreconditioner",
+    "SOAPState",
     "implicit_least_squares",
     "implicit_constrained_minimize",
     "implicit_minimize",

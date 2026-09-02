@@ -417,6 +417,23 @@ factorization, stability, and orthogonality maps live in
 are constructed on demand. The same package owns explicit model-PyTree
 selection through `ParameterSubspace`.
 
+Finite-width empirical neural tangent kernels reuse the same selected parameter
+PyTrees, prepared linearizations, vector spaces, matrix-free operators, and
+spectral diagnostics as the wider linear-algebra runtime. Functional residual
+kernels additionally retain exact integration coefficients, masks, enforcement,
+complex realification, and named residual blocks. The functional training
+runtime keeps authored physical terms separate from pseudo-transient, causal,
+and dynamically balanced optimizer surrogates; independent fixed evaluation
+terms own model selection. Exact accepted-update checkpoints, named sample-axis
+sharding, physical time windows, and defect correction preserve those
+identities rather than introducing a parallel PINN framework. Native SOAP
+supplies bounded per-axis Shampoo covariances and Adam moments in adaptive
+orthogonal bases through the same Optax-compatible solver boundary; its complete
+basis and moment state participates in exact resume. See
+[Functional training runtime](guides_functional_training.md),
+[Neural tangent kernels](api/nn/neural_tangent.md), and
+[API → Optimization → SOAP](api/optim.md#stateful-orthogonal-adaptive-preconditioning-soap).
+
 `NeuralGalerkinProblem` evolves a selected model subspace as a Diffrax parameter
 ODE. Fixed physical integration realizations define the field metric; rectangular
 least squares or a damped empirical Gram solve supplies the tangent rate. The result
