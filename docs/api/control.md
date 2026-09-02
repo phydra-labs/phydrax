@@ -13,6 +13,7 @@ failure, or hide a fallback.
 | Roll out a supplied control | `ControlProblem.rollout` | Discrete or differential dynamics; returns a `ControlTrajectory` without evaluating cost or constraints. |
 | Audit a supplied control | `ControlProblem.evaluate` | Adds left-rectangle sampled cost and sampled constraint residuals. Nonlinear feasibility is checked only at declared sample sites and is not certified between them. |
 | Unconstrained affine-quadratic control | `finite_horizon_lqr`, `continuous_lqr`, `discrete_lqr` | Riccati solutions with residual, conditioning, stability, and convergence diagnostics. |
+| Unconstrained affine-quadratic feedback game | `control.games.finite_horizon_lq_feedback_nash` | Simultaneous full-state feedback Nash policy with explicit player ownership, per-player values, curvature, rank, conditioning, stationarity, Bellman, and causal-failure evidence. |
 | Constrained affine discrete control | `compile_linear_quadratic_control`, `solve_linear_quadratic_control` | Canonical, uncondensed QP with exact decision and constraint layouts. |
 | Receding-horizon affine control | `solve_receding_horizon_mpc` | Re-solves canonical QPs and records every subproblem result and exact state handoff. |
 | One unconstrained nonlinear case | `solve_ilqr` | iLQR with a fixed requested regularization and explicit line-search or curvature failure. |
@@ -280,6 +281,56 @@ the policy only where `result.valid` is true.
 ::: phydrax.control.continuous_lqr
 
 ::: phydrax.control.discrete_lqr
+
+## Linear-quadratic feedback games
+
+`phydrax.control.games` solves finite-horizon discrete affine linear-quadratic
+games with simultaneous full-state feedback. Every player minimizes an
+individual quadratic-affine cost that may depend on the full joint control.
+The returned joint `AffineFeedbackPolicy` uses `u = K x + k`; its contiguous
+control rows are owned by the ordered `PlayerControlPartition`.
+
+For `case_shape = C`, `P` players, `T` stages, state size `n`, and joint control
+size `m`, dynamics arrays have shapes `C + (T, n, n)` and `C + (T, n, m)`.
+Player stage costs carry shapes `C + (P, T, ...)`; terminal costs carry
+`C + (P, ...)`. Stage, player, and case axes are explicit and never
+broadcast. The problem has `T` controls and `T + 1` player-value nodes.
+Stage costs are discrete sums; they are not duration-weighted
+`ControlProblem` sampled costs.
+
+At each stage, player-owned first-order rows form one generally nonsymmetric
+coupled Nash system. The authoritative policy comes only from a Phydrax
+`DenseLU` solve with a declared multiple-RHS layout. A separate
+diagnostic-only SVD supplies numerical rank and the full condition number; it
+is never used to solve or repair the system. No inverse, pseudoinverse,
+symmetrization of the coupled system, diagonal jitter, clipping,
+regularization, zero policy, or method fallback is permitted.
+
+A successful result certifies positive continuation-augmented own-action
+curvature, full coupled rank, finite output, and bounded independent
+stationarity and Bellman residuals. Failure to satisfy those conditions means
+this method did not certify a unique feedback Nash policy; it is not a proof
+that no equilibrium exists. `first_failed_stage` is `-1` on success, `T` for
+a terminal-cost failure, or the first direct causal failure encountered by
+the reverse recursion. Earlier stages then report `DEPENDENCY_FAILED`.
+Invalid policy and value arrays are retained only as numerical evidence and
+must not be applied.
+
+The scope is deterministic, unconstrained, discrete-time, finite-horizon,
+simultaneous, full-state feedback with all players minimizing. It does not
+represent open-loop Nash, zero-sum maximizers, constrained or generalized
+Nash equilibria, nonlinear iLQ games, stochastic games, partial observations,
+or mean-field games.
+
+::: phydrax.control.games.PlayerControlPartition
+
+::: phydrax.control.games.LQFeedbackNashStatus
+
+::: phydrax.control.games.FiniteHorizonLQFeedbackNashDiagnostics
+
+::: phydrax.control.games.FiniteHorizonLQFeedbackNashResult
+
+::: phydrax.control.games.finite_horizon_lq_feedback_nash
 
 ## Frequency response
 
