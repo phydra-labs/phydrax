@@ -10,7 +10,7 @@ import time
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
-from math import ceil, prod
+from math import ceil
 from pathlib import Path
 from typing import Any, Literal
 
@@ -34,7 +34,12 @@ from ...._training import (
     TrainingProgress,
     TrainingSignalGuard,
 )
-from ...._training_objective import _ObjectiveContribution
+from ...._training_objective import (
+    _combine_objective_contributions,
+    _GradientAccumulationState,
+    _ObjectiveAccumulator,
+    _ObjectiveContribution,
+)
 from ....optim import (
     OptimizerStateCompressionPolicy,
     prepare_compressed_optimizer,
@@ -55,6 +60,7 @@ from ..sharding import (
     OperatorShardingPolicy,
     replicate_operator_model,
     shard_operator_batch,
+    shard_operator_case_array,
     shard_operator_targets,
 )
 from ..task import OperatorTask
@@ -72,13 +78,19 @@ from ._execution import (
     nondimensionalize_targets,
 )
 from ._fingerprint import operator_fit_schema
-from ._loader import OperatorBatchLoader, OperatorTrainingBatch
+from ._loader import (
+    _pad_case_payload,
+    OperatorBatchLoader,
+    OperatorTrainingBatch,
+)
 from ._loss_scale import (
     OperatorLossScalePolicy,
     OperatorLossScaleState,
     tree_all_finite,
 )
 from ._losses import (
+    _case_mean_contribution,
+    _weighted_case_reduction,
     AbstractOperatorLossTerm,
     OperatorLossContext,
     ResidualOperatorRolloutLoss,
@@ -282,6 +294,28 @@ def _place_batch(
     physical_targets = (
         raw.targets if raw.physical_targets is None else raw.physical_targets
     )
+    case_log_weights = raw.case_log_weights
+    case_mask = raw.case_mask
+    if sharding_policy is not None:
+        divisor = sharding_policy.data_axis_size
+        size = int(physical_batch.case_shape[0])
+        capacity = ((size + divisor - 1) // divisor) * divisor
+        (
+            physical_batch,
+            physical_targets,
+            case_log_weights,
+            case_mask,
+        ) = _pad_case_payload(
+            physical_batch,
+            physical_targets,
+            case_log_weights,
+            case_mask,
+            capacity=capacity,
+        )
+    sampling_probabilities = jnp.ones(
+        jnp.asarray(case_log_weights).shape,
+        dtype=dtype_policy.reduction_dtype,
+    )
     batch, targets = _nondimensionalize(
         physical_batch,
         physical_targets,
@@ -296,6 +330,11 @@ def _place_batch(
         )
     batch = dtype_policy.cast_batch(batch)
     targets = dtype_policy.cast_targets(targets)
+    case_log_weights = jnp.asarray(
+        case_log_weights,
+        dtype=dtype_policy.reduction_dtype,
+    )
+    case_mask = jnp.asarray(case_mask, dtype=bool)
     if sharding_policy is not None:
         batch = shard_operator_batch(batch, sharding_policy)
         targets = shard_operator_targets(targets, sharding_policy)
@@ -304,10 +343,26 @@ def _place_batch(
             physical_targets,
             sharding_policy,
         )
+        case_log_weights = shard_operator_case_array(
+            case_log_weights,
+            sharding_policy,
+        )
+        case_mask = shard_operator_case_array(case_mask, sharding_policy)
+        sampling_probabilities = shard_operator_case_array(
+            sampling_probabilities,
+            sharding_policy,
+        )
+    else:
+        case_log_weights = jax.device_put(case_log_weights)
+        case_mask = jax.device_put(case_mask)
+        sampling_probabilities = jax.device_put(sampling_probabilities)
     return replace(
         raw,
         batch=batch,
         targets=targets,
+        case_log_weights=case_log_weights,
+        case_mask=case_mask,
+        sampling_probabilities=sampling_probabilities,
         physical_batch=physical_batch,
         physical_targets=physical_targets,
     )
@@ -364,22 +419,6 @@ def _default_losses(
         )
         for model_name, target_name in output_map.items()
     )
-
-
-def _case_count(batch: OperatorBatch, /) -> int:
-    return prod(batch.case_shape) if batch.case_shape else 1
-
-
-def _tree_zeros(tree: Any, /) -> Any:
-    return jax.tree_util.tree_map(jnp.zeros_like, tree)
-
-
-def _tree_add_scaled(left: Any, right: Any, scale: float, /) -> Any:
-    return jax.tree_util.tree_map(lambda x, y: x + y * scale, left, right)
-
-
-def _tree_scale(tree: Any, scale: Any, /) -> Any:
-    return jax.tree_util.tree_map(lambda value: value * scale, tree)
 
 
 def _validate_training_precision(
@@ -622,6 +661,15 @@ def fit_operator(
     specified_terms = () if loss_terms is None else tuple(loss_terms)
     if any(not isinstance(term, AbstractOperatorLossTerm) for term in specified_terms):
         raise TypeError("loss_terms must contain AbstractOperatorLossTerm instances.")
+    if int(gradient_accumulation) > 1:
+        unsupported = tuple(
+            term.name for term in specified_terms if term.accumulation_kind != "case_mean"
+        )
+        if unsupported:
+            raise ValueError(
+                "gradient_accumulation > 1 requires case-additive mean loss terms; "
+                f"unsupported terms: {unsupported}."
+            )
     if (
         any(isinstance(term, TargetOperatorConsistencyLoss) for term in specified_terms)
         and target_policy is None
@@ -962,12 +1010,12 @@ def fit_operator(
         else TargetParameterState.initialize(initial_target_parameters, target_policy)
     )
     evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
-    gradient_accumulator = _tree_zeros(parameters)
-    accumulated_support = 0.0
-    accumulated_microsteps = 0
-    accumulated_metric_numerators = [0.0] * len(metric_names)
-    accumulated_metric_supports = [0.0] * len(metric_names)
     reduction_dtype = jnp.dtype(resolved_dtype.reduction_dtype)
+    gradient_accumulator = _GradientAccumulationState.empty(
+        parameters,
+        accumulation_dtype=reduction_dtype,
+    )
+    accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
     loss_scale_state = (
         OperatorLossScaleState(jnp.asarray(1.0, dtype=reduction_dtype))
         if loss_scale_policy is None
@@ -1056,22 +1104,19 @@ def fit_operator(
             target_execution_prediction=target_execution_prediction,
             target_physical_prediction=target_physical_prediction,
         )
-        case_support = jnp.asarray(_case_count(batch), dtype=reduction_dtype)
 
         def recurrent_contribution(term, term_index):
             assert scanned is not None
             assert rollout_policy is not None
             assert rollout_route is not None
             assert active_rollout_horizon is not None
-            numerator = jnp.asarray(0.0, dtype=reduction_dtype)
-            support = jnp.asarray(0.0, dtype=reduction_dtype)
+            depth_contributions = []
             empty_targets = OperatorTargetBatch(
                 {},
                 case_axes=batch.case_axes,
                 case_shape=batch.case_shape,
             )
             for depth in range(int(active_rollout_horizon)):
-                active = jnp.asarray(1.0, dtype=reduction_dtype)
                 time_weight = jnp.asarray(
                     term.time_weights[depth],
                     dtype=reduction_dtype,
@@ -1105,14 +1150,15 @@ def fit_operator(
                         squared=True,
                         reduction="none",
                     )
-                    weighted = (
-                        jnp.asarray(term.weight, dtype=reduction_dtype)
-                        * active
-                        * time_weight
-                        * jnp.sum(per_case, dtype=reduction_dtype)
+                    case_value = _weighted_case_reduction(
+                        per_case,
+                        context,
+                        "mean",
                     )
-                    numerator = numerator + weighted
-                    support = support + active * time_weight * case_support
+                    contribution = _case_mean_contribution(
+                        jnp.asarray(term.weight, dtype=reduction_dtype) * case_value,
+                        context,
+                    )
                 else:
                     execution_step_prediction = _scan_step_value(
                         execution_predictions,
@@ -1127,6 +1173,9 @@ def fit_operator(
                         physical_batch=physical_step_batch,
                         physical_targets=empty_targets,
                         normalization=resolved_normalization,
+                        case_log_weights=case_log_weights,
+                        case_mask=case_mask,
+                        sampling_probabilities=sampling_probabilities,
                         task=task,
                     )
                     residual = term.residual_term.contribution(
@@ -1142,14 +1191,20 @@ def fit_operator(
                         training=training,
                         context=residual_context,
                     )
-                    numerator = numerator + (
+                    contribution = _ObjectiveContribution(
                         jnp.asarray(term.weight, dtype=reduction_dtype)
-                        * active
-                        * time_weight
-                        * residual.numerator
+                        * residual.numerator,
+                        residual.support,
+                        residual.log_scale,
                     )
-                    support = support + active * time_weight * residual.support
-            return _ObjectiveContribution(numerator, support)
+                depth_contributions.append(
+                    _ObjectiveContribution(
+                        contribution.numerator * time_weight,
+                        contribution.support * time_weight,
+                        contribution.log_scale,
+                    )
+                )
+            return _combine_objective_contributions(tuple(depth_contributions))
 
         term_contributions = tuple(
             (
@@ -1176,9 +1231,9 @@ def fit_operator(
         )
         attached = (
             tuple(
-                _ObjectiveContribution(
-                    resolved_dtype.reduction(value) * case_support,
-                    case_support,
+                _case_mean_contribution(
+                    resolved_dtype.reduction(value),
+                    context,
                 )
                 for value in model_loss_values(
                     evaluated_model,
@@ -1194,9 +1249,9 @@ def fit_operator(
             (component.value for component in components),
             start=jnp.asarray(0.0, dtype=reduction_dtype),
         )
-        total = _ObjectiveContribution(
-            resolved_dtype.reduction(total_value) * case_support,
-            case_support,
+        total = _case_mean_contribution(
+            resolved_dtype.reduction(total_value),
+            context,
         )
         return total, components
 
@@ -1245,9 +1300,10 @@ def fit_operator(
                     loss_scale_state_,
                 )
             )
-            total_arrays = (total.numerator, total.support)
+            total_arrays = (total.numerator, total.support, total.log_scale)
             component_arrays = tuple(
-                (component.numerator, component.support) for component in components
+                (component.numerator, component.support, component.log_scale)
+                for component in components
             )
             return scaled, (total_arrays, component_arrays)
 
@@ -1328,8 +1384,7 @@ def fit_operator(
         )
 
     def evaluate(current_model, loader: OperatorBatchLoader, step: int):
-        numerators = [0.0] * len(metric_names)
-        supports = [0.0] * len(metric_names)
+        metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
         batch_count = 0
         active_rollout_horizon = resolved_active_horizon(step)
         target_model = (
@@ -1362,18 +1417,22 @@ def fit_operator(
                 training=False,
             )
             contributions = (total,) + components
-            for index, contribution in enumerate(contributions):
-                numerators[index] += float(jax.device_get(contribution.numerator))
-                supports[index] += float(jax.device_get(contribution.support))
+            metric_accumulators = [
+                accumulator.add(contribution)
+                for accumulator, contribution in zip(
+                    metric_accumulators,
+                    contributions,
+                    strict=True,
+                )
+            ]
             batch_count += 1
         if batch_count == 0:
             raise ValueError("Evaluation data must contain at least one batch.")
         return {
-            name: (0.0 if support == 0.0 else numerator / support)
-            for name, numerator, support in zip(
+            name: float(jax.device_get(accumulator.value))
+            for name, accumulator in zip(
                 metric_names,
-                numerators,
-                supports,
+                metric_accumulators,
                 strict=True,
             )
         }
@@ -1522,11 +1581,14 @@ def fit_operator(
         validation_steps = [int(value) for value in metadata["validation_steps"]]
         validation_history = [dict(values) for values in metadata["validation_metrics"]]
         initial_metrics = dict(metadata["initial_metrics"])
-        accumulated_metric_numerators = [0.0] * len(metric_names)
-        accumulated_metric_supports = [0.0] * len(metric_names)
         prior_training_seconds = float(metadata["training_seconds"])
         resumed_from_step = progress.update_step
         parameters, fixed = partition_fit_model(model)
+        gradient_accumulator = _GradientAccumulationState.empty(
+            parameters,
+            accumulation_dtype=reduction_dtype,
+        )
+        accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
         evaluated_parameters = resolve_evaluation_parameters(
             evaluation_parameters,
             optimizer_state,
@@ -1556,7 +1618,7 @@ def fit_operator(
             control.best_payload = evaluation_model
 
     def save_progress(training_seconds: float) -> None:
-        if checkpoint is None or accumulated_microsteps != 0:
+        if checkpoint is None or not gradient_accumulator.is_empty:
             return
         primary = sharding_policy is None or sharding_policy.is_primary_process
         if not primary:
@@ -1692,7 +1754,11 @@ def fit_operator(
                         resolved_active_horizon(control.progress.update_step + 1),
                         loss_scale_state,
                     )
-                    values = (total,) + components
+                    total_contribution = _ObjectiveContribution(*total)
+                    component_contributions = tuple(
+                        _ObjectiveContribution(*component) for component in components
+                    )
+                    contributions = (total_contribution,) + component_contributions
                     finite = bool(jax.device_get(finite_array))
                     control.progress = replace(
                         control.progress,
@@ -1700,11 +1766,13 @@ def fit_operator(
                         next_batch_index=training_batch.batch_index + 1,
                     )
                     if not finite:
-                        gradient_accumulator = _tree_zeros(parameters)
-                        accumulated_support = 0.0
-                        accumulated_microsteps = 0
-                        accumulated_metric_numerators = [0.0] * len(metric_names)
-                        accumulated_metric_supports = [0.0] * len(metric_names)
+                        gradient_accumulator = _GradientAccumulationState.empty(
+                            parameters,
+                            accumulation_dtype=reduction_dtype,
+                        )
+                        accumulated_metrics = [
+                            _ObjectiveAccumulator() for _ in metric_names
+                        ]
                         if loss_scale_policy is None or not loss_scale_policy.dynamic:
                             raise FloatingPointError(
                                 "Non-finite operator loss or gradient encountered."
@@ -1724,30 +1792,38 @@ def fit_operator(
                             },
                         )
                         continue
-                    gradient_accumulator = _tree_add_scaled(
-                        gradient_accumulator,
+                    gradient_accumulator = gradient_accumulator.add(
                         gradient,
-                        1.0,
+                        total_contribution,
                     )
-                    accumulated_support += float(jax.device_get(total[1]))
-                    accumulated_microsteps += 1
-                    for index, (numerator, support) in enumerate(values):
-                        accumulated_metric_numerators[index] += float(
-                            jax.device_get(numerator)
+                    accumulated_metrics = [
+                        accumulator.add(contribution)
+                        for accumulator, contribution in zip(
+                            accumulated_metrics,
+                            contributions,
+                            strict=True,
                         )
-                        accumulated_metric_supports[index] += float(
-                            jax.device_get(support)
-                        )
+                    ]
                     if (
-                        accumulated_microsteps < int(gradient_accumulation)
+                        gradient_accumulator.microsteps < int(gradient_accumulation)
                         and training_batch.batch_index + 1
                         < raw_train_loader.batches_per_epoch
                     ):
                         continue
+                    if not bool(
+                        jax.device_get(gradient_accumulator.has_positive_support)
+                    ):
+                        gradient_accumulator = _GradientAccumulationState.empty(
+                            parameters,
+                            accumulation_dtype=reduction_dtype,
+                        )
+                        accumulated_metrics = [
+                            _ObjectiveAccumulator() for _ in metric_names
+                        ]
+                        continue
 
-                    averaged_gradient = _tree_scale(
-                        gradient_accumulator,
-                        1.0 / accumulated_support,
+                    averaged_gradient = gradient_accumulator.normalized_gradient(
+                        parameters
                     )
                     (
                         candidate_parameters,
@@ -1779,21 +1855,20 @@ def fit_operator(
                             ),
                         )
                     metrics = {
-                        name: (0.0 if support == 0.0 else numerator / support)
-                        for name, numerator, support in zip(
+                        name: float(jax.device_get(accumulator.value))
+                        for name, accumulator in zip(
                             metric_names,
-                            accumulated_metric_numerators,
-                            accumulated_metric_supports,
+                            accumulated_metrics,
                             strict=True,
                         )
                     }
                     train_steps.append(update_step)
                     train_history.append(metrics)
-                    gradient_accumulator = _tree_zeros(parameters)
-                    accumulated_support = 0.0
-                    accumulated_microsteps = 0
-                    accumulated_metric_numerators = [0.0] * len(metric_names)
-                    accumulated_metric_supports = [0.0] * len(metric_names)
+                    gradient_accumulator = _GradientAccumulationState.empty(
+                        parameters,
+                        accumulation_dtype=reduction_dtype,
+                    )
+                    accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
                     if loss_scale_policy is not None:
                         loss_scale_state = loss_scale_policy.on_finite_update(
                             loss_scale_state

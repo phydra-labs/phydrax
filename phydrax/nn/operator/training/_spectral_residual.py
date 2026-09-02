@@ -20,7 +20,12 @@ from jaxtyping import Array, Key
 from ...._frozendict import frozendict
 from ....equations._spectral_residual import CompiledSpectralResidual
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
-from ._losses import AbstractOperatorLossTerm, OperatorLossContext
+from ._losses import (
+    _weighted_case_reduction,
+    AbstractOperatorLossTerm,
+    OperatorAccumulationKind,
+    OperatorLossContext,
+)
 
 
 def _parameter_names(expression) -> frozenset[str]:
@@ -261,8 +266,12 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
             energies = jax.vmap(lambda state: self.compiled.residual_energy(state, None))(
                 states
             )
-        value = jnp.mean(energies)
+        value = _weighted_case_reduction(energies, context, "mean")
         return jnp.asarray(self.weight, dtype=value.dtype) * value
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean"
 
     @property
     def fingerprint(self) -> str:

@@ -289,6 +289,150 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
     )
 
 
+def test_standard_optax_gradient_accumulation_preserves_update_semantics():
+    solver = _fixed_interval_solver()
+    standard = solver.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        gradient_accumulation=1,
+        keep_best=False,
+        log_every=0,
+        training=phx.solver.FunctionalTrainingPlan(),
+    )
+    accumulated = solver.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        gradient_accumulation=3,
+        keep_best=False,
+        log_every=0,
+        training=phx.solver.FunctionalTrainingPlan(),
+        target_policy=DelayedTargetPolicy(1),
+    )
+
+    assert accumulated.training_state is not None
+    assert accumulated.training_state.progress.update_step == 2
+    assert accumulated.training_state.progress.microstep == 6
+    assert accumulated.training_state.gradient_accumulation == 3
+    assert accumulated.training_state.target_state is not None
+    assert int(accumulated.training_state.target_state.update_count) == 2
+    assert jnp.allclose(
+        standard["u"].func(),
+        accumulated["u"].func(),
+    )
+
+
+def test_accumulated_functional_checkpoint_resume_is_exact(tmp_path):
+    solver = _fixed_interval_solver()
+    target_policy = DelayedTargetPolicy(1)
+    checkpoint_plan = phx.solver.FunctionalTrainingPlan(
+        checkpoint=phx.solver.FunctionalCheckpointPolicy(
+            tmp_path / "accumulated-functional",
+            every=1,
+        )
+    )
+    uninterrupted = solver.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        gradient_accumulation=2,
+        keep_best=False,
+        log_every=0,
+        training=phx.solver.FunctionalTrainingPlan(),
+        target_policy=target_policy,
+    )
+    interrupted = solver.solve(
+        num_iter=1,
+        optim=optax.sgd(0.05),
+        gradient_accumulation=2,
+        keep_best=False,
+        log_every=0,
+        training=checkpoint_plan,
+        target_policy=target_policy,
+    )
+    disk_resumed = solver.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        gradient_accumulation=2,
+        keep_best=False,
+        log_every=0,
+        training=checkpoint_plan,
+        target_policy=target_policy,
+        resume=True,
+    )
+    memory_resumed = interrupted.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        gradient_accumulation=2,
+        keep_best=False,
+        log_every=0,
+        training=checkpoint_plan,
+        target_policy=target_policy,
+        resume=True,
+    )
+
+    assert uninterrupted.training_state is not None
+    assert disk_resumed.training_state is not None
+    assert memory_resumed.training_state is not None
+    assert disk_resumed.training_state.progress.microstep == 4
+    assert memory_resumed.training_state.progress.microstep == 4
+    assert eqx.tree_equal(
+        disk_resumed.training_state.current_functions,
+        uninterrupted.training_state.current_functions,
+    )
+    assert eqx.tree_equal(
+        memory_resumed.training_state.current_functions,
+        uninterrupted.training_state.current_functions,
+    )
+    with pytest.raises(ValueError, match="gradient-accumulation identity"):
+        interrupted.solve(
+            num_iter=2,
+            optim=optax.sgd(0.05),
+            gradient_accumulation=1,
+            keep_best=False,
+            log_every=0,
+            training=checkpoint_plan,
+            target_policy=target_policy,
+            resume=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "optimizer",
+    (
+        phx.optim.GaussNewton(),
+        phx.optim.NewtonKrylov(),
+        optax.chain(
+            optax.sgd(0.1),
+            optax.scale_by_backtracking_linesearch(max_backtracking_steps=1),
+        ),
+    ),
+    ids=("least-squares", "iterative", "optax-linesearch"),
+)
+def test_gradient_accumulation_rejects_nonstandard_functional_backends(optimizer):
+    with pytest.raises(ValueError, match="only by standard Optax"):
+        _fixed_interval_solver().solve(
+            num_iter=1,
+            optim=optimizer,
+            gradient_accumulation=2,
+            keep_best=False,
+            log_every=0,
+        )
+
+
+def test_gradient_accumulation_rejects_stateful_functional_preparation():
+    plan = phx.solver.FunctionalTrainingPlan(
+        diagnostics=phx.solver.FunctionalDiagnosticsPolicy(every=1),
+    )
+    with pytest.raises(ValueError, match="does not support stateful"):
+        _fixed_interval_solver().solve(
+            num_iter=1,
+            optim=optax.sgd(0.05),
+            gradient_accumulation=2,
+            keep_best=False,
+            log_every=0,
+            training=plan,
+        )
+
+
 def test_checkpoint_resume_replays_resampled_collocation(tmp_path):
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(

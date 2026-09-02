@@ -5,6 +5,11 @@
 ### Added
 - Added `phydrax.ein` as the package-wide optimized contraction boundary with
   native named JAX rearrangement, reduction, and repetition.
+- Added log-stable numerator/support gradient accumulation shared by operator,
+  discrete-dynamics, and standard-Optax functional training. Operator case
+  measures now remain exact across weighted, masked, uneven, lazy, and sharded
+  microbatches; optimizer, target, reporting, and checkpoint state advance only
+  at accepted positive-support update boundaries.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact
