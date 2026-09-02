@@ -16,8 +16,14 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ._abelian import AbelianLeg, AbelianTensor, AbelianTensorLayout
 from ._abelian_core import (
+    abelian_mps_inner,
+    AbelianMatrixProductOperator,
     AbelianMatrixProductState,
+    add_abelian_mps,
+    apply_abelian_mpo,
     canonicalize_abelian_mps,
+    compress_abelian_mps,
+    scale_abelian_mps,
 )
 from ._precision import TensorNetworkPrecisionPolicy
 
@@ -28,6 +34,8 @@ class AbelianTensorTruncationEvidence(StrictModule):
     per_sector_retained_ranks: Array
     selected_modes: Array
     discarded_weight: Array
+    overflow_discarded_weight: Array
+    protected_sectors_satisfied: Array
     valid: Array
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     precision_policy_id: str = eqx.field(static=True)
@@ -86,7 +94,18 @@ def apply_abelian_two_site_gate(
     maximum_bond_dimension: int,
     normalize: bool = True,
     conservation_tolerance: float = 1e-10,
+    protected_charges: Sequence[Sequence[int]] = (),
+    prepared_routes: tuple[
+        tuple[
+            tuple[tuple[int, int, int], ...],
+            tuple[tuple[int, int, int], ...],
+        ],
+        ...,
+    ]
+    | None = None,
 ) -> tuple[AbelianMatrixProductState, AbelianTensorTruncationEvidence]:
+    """Apply a conserving gate through sector blocks and truncate globally."""
+
     if not isinstance(state, AbelianMatrixProductState):
         raise TypeError("state must be AbelianMatrixProductState.")
     site = int(left_site)
@@ -116,95 +135,160 @@ def apply_abelian_two_site_gate(
         > float(conservation_tolerance),
         "Two-site gate violates the declared Abelian charge conservation.",
     )
-    left_dense = precision.contraction(left_tensor.to_dense())
-    right_dense = precision.contraction(right_tensor.to_dense())
-    theta = oe.contract("lpi,iqr->lpqr", left_dense, right_dense)
-    theta = oe.contract("abij,lijr->labr", gate_, theta)
+    protected = tuple(
+        left_physical.group.normalize(charge) for charge in protected_charges
+    )
+    if len(set(protected)) != len(protected):
+        raise ValueError("Protected Abelian charges must be unique.")
     left_virtual = left_tensor.layout.legs[0]
     right_virtual = right_tensor.layout.legs[2]
-    left_offsets = _offsets(left_virtual)
     left_physical_offsets = _offsets(left_physical)
     right_physical_offsets = _offsets(right_physical)
-    right_offsets = _offsets(right_virtual)
-    matrix_dense = precision.factorization(
-        theta.reshape(
-            (
-                left_virtual.size * left_physical.size,
-                right_physical.size * right_virtual.size,
-            )
-        )
-    )
     decompositions = []
-    all_singular_values = []
+    retained_spectra = []
+    overflow_weight = jnp.asarray(0.0, dtype=gate_.real.dtype)
     total_available = 0
+    group = middle.group
+    if prepared_routes is not None and len(prepared_routes) != len(middle.charges):
+        raise ValueError("Prepared Abelian gate routes do not match the bond.")
     for middle_sector, middle_charge in enumerate(middle.charges):
-        row_routes = []
-        row_indices = []
-        for left_sector, left_charge in enumerate(left_virtual.charges):
-            for physical_sector, physical_charge in enumerate(left_physical.charges):
-                if left_virtual.group.add(left_charge, physical_charge) != middle_charge:
-                    continue
-                indices = [
-                    (left_offsets[left_sector] + left_index) * left_physical.size
-                    + left_physical_offsets[physical_sector]
-                    + physical_index
-                    for left_index in range(left_virtual.capacities[left_sector])
-                    for physical_index in range(left_physical.capacities[physical_sector])
-                ]
-                row_routes.append((left_sector, physical_sector, len(indices)))
-                row_indices.extend(indices)
-        column_routes = []
-        column_indices = []
-        for physical_sector, physical_charge in enumerate(right_physical.charges):
-            for right_sector, right_charge in enumerate(right_virtual.charges):
-                if left_virtual.group.add(middle_charge, physical_charge) != right_charge:
-                    continue
-                indices = [
-                    (right_physical_offsets[physical_sector] + physical_index)
-                    * right_virtual.size
-                    + right_offsets[right_sector]
-                    + right_index
-                    for physical_index in range(
-                        right_physical.capacities[physical_sector]
-                    )
-                    for right_index in range(right_virtual.capacities[right_sector])
-                ]
-                column_routes.append((physical_sector, right_sector, len(indices)))
-                column_indices.extend(indices)
-        sector_matrix = matrix_dense[
-            jnp.ix_(jnp.asarray(row_indices), jnp.asarray(column_indices))
-        ]
-        u, singular_values, vh = jnp.linalg.svd(sector_matrix, full_matrices=False)
+        if prepared_routes is None:
+            row_routes = tuple(
+                (
+                    left_sector,
+                    physical_sector,
+                    left_virtual.capacities[left_sector]
+                    * left_physical.capacities[physical_sector],
+                )
+                for left_sector, left_charge in enumerate(left_virtual.charges)
+                for physical_sector, physical_charge in enumerate(left_physical.charges)
+                if group.add(left_charge, physical_charge) == middle_charge
+            )
+            column_routes = tuple(
+                (
+                    physical_sector,
+                    right_sector,
+                    right_physical.capacities[physical_sector]
+                    * right_virtual.capacities[right_sector],
+                )
+                for physical_sector, physical_charge in enumerate(right_physical.charges)
+                for right_sector, right_charge in enumerate(right_virtual.charges)
+                if group.add(middle_charge, physical_charge) == right_charge
+            )
+        else:
+            row_routes, column_routes = prepared_routes[middle_sector]
+        row_count = sum(route[2] for route in row_routes)
+        column_count = sum(route[2] for route in column_routes)
+        sector_matrix = jnp.zeros(
+            (row_count, column_count), dtype=jnp.result_type(gate_, left_tensor.blocks[0])
+        )
+        row_cursor = 0
+        for left_out_sector, left_out_physical, row_size in row_routes:
+            column_cursor = 0
+            for right_out_physical, right_out_sector, column_size in column_routes:
+                contribution = jnp.zeros(
+                    (row_size, column_size), dtype=sector_matrix.dtype
+                )
+                for left_index, left_source_sector in enumerate(
+                    left_tensor.layout.sectors
+                ):
+                    if (
+                        left_source_sector[0] != left_out_sector
+                        or left_source_sector[2] != middle_sector
+                    ):
+                        continue
+                    for right_index, right_source_sector in enumerate(
+                        right_tensor.layout.sectors
+                    ):
+                        if (
+                            right_source_sector[0] != middle_sector
+                            or right_source_sector[2] != right_out_sector
+                        ):
+                            continue
+                        left_in_physical = left_source_sector[1]
+                        right_in_physical = right_source_sector[1]
+                        gate_block = gate_[
+                            left_physical_offsets[
+                                left_out_physical
+                            ] : left_physical_offsets[left_out_physical]
+                            + left_physical.capacities[left_out_physical],
+                            right_physical_offsets[
+                                right_out_physical
+                            ] : right_physical_offsets[right_out_physical]
+                            + right_physical.capacities[right_out_physical],
+                            left_physical_offsets[
+                                left_in_physical
+                            ] : left_physical_offsets[left_in_physical]
+                            + left_physical.capacities[left_in_physical],
+                            right_physical_offsets[
+                                right_in_physical
+                            ] : right_physical_offsets[right_in_physical]
+                            + right_physical.capacities[right_in_physical],
+                        ]
+                        local = oe.contract(
+                            "abij,lix,xjr->labr",
+                            gate_block,
+                            precision.contraction(left_tensor.blocks[left_index]),
+                            precision.contraction(right_tensor.blocks[right_index]),
+                        ).reshape((row_size, column_size))
+                        contribution = contribution + local
+                sector_matrix = sector_matrix.at[
+                    row_cursor : row_cursor + row_size,
+                    column_cursor : column_cursor + column_size,
+                ].set(contribution)
+                column_cursor += column_size
+            row_cursor += row_size
+        u, singular_values, vh = jnp.linalg.svd(
+            precision.factorization(sector_matrix), full_matrices=False
+        )
         sector_capacity = middle.capacities[middle_sector]
-        available = min(int(singular_values.shape[0]), sector_capacity)
-        u_pad = jnp.zeros((sector_matrix.shape[0], sector_capacity), dtype=u.dtype)
-        vh_pad = jnp.zeros((sector_capacity, sector_matrix.shape[1]), dtype=vh.dtype)
+        stored = min(int(singular_values.shape[0]), sector_capacity)
+        u_pad = jnp.zeros((row_count, sector_capacity), dtype=u.dtype)
+        vh_pad = jnp.zeros((sector_capacity, column_count), dtype=vh.dtype)
         s_pad = jnp.zeros((sector_capacity,), dtype=singular_values.dtype)
-        u_pad = u_pad.at[:, :available].set(u[:, :available])
-        vh_pad = vh_pad.at[:available, :].set(vh[:available, :])
-        s_pad = s_pad.at[:available].set(singular_values[:available])
+        u_pad = u_pad.at[:, :stored].set(u[:, :stored])
+        vh_pad = vh_pad.at[:stored, :].set(vh[:stored, :])
+        s_pad = s_pad.at[:stored].set(singular_values[:stored])
+        overflow_weight = overflow_weight + precision.sum(
+            jnp.abs(singular_values[stored:]) ** 2
+        )
         decompositions.append((row_routes, column_routes, u_pad, s_pad, vh_pad))
-        all_singular_values.append(s_pad)
-        total_available += available
-    spectrum = jnp.concatenate(all_singular_values)
-    retained = min(capacity, total_available)
+        retained_spectra.append(s_pad)
+        total_available += int(singular_values.shape[0])
+    spectrum = jnp.concatenate(retained_spectra)
+    retained_limit = min(capacity, int(spectrum.shape[0]))
+    selected = jnp.zeros(spectrum.shape, dtype=bool)
+    sector_starts = []
+    cursor = 0
+    protected_selected = 0
+    for sector, charge in enumerate(middle.charges):
+        sector_starts.append(cursor)
+        if charge in protected and middle.capacities[sector] > 0:
+            local = retained_spectra[sector]
+            local_index = jnp.argmax(jnp.abs(local))
+            if protected_selected < retained_limit:
+                selected = selected.at[cursor + local_index].set(True)
+                protected_selected += 1
+        cursor += middle.capacities[sector]
     order = jnp.argsort(-jnp.abs(spectrum), stable=True)
-    selected = jnp.zeros(spectrum.shape, dtype=bool).at[order[:retained]].set(True)
-    discarded = precision.decision(
-        precision.sum(jnp.where(selected, 0.0, jnp.abs(spectrum) ** 2))
-    )
-    left_blocks = {
-        sector: jnp.zeros(shape, dtype=theta.dtype)
-        for sector, shape in zip(
-            left_tensor.layout.sectors, left_tensor.layout.block_shapes, strict=True
-        )
-    }
-    right_blocks = {
-        sector: jnp.zeros(shape, dtype=theta.dtype)
-        for sector, shape in zip(
-            right_tensor.layout.sectors, right_tensor.layout.block_shapes, strict=True
-        )
-    }
+    remaining = retained_limit - protected_selected
+    positions = jnp.nonzero(
+        ~selected[order],
+        size=spectrum.shape[0],
+        fill_value=spectrum.shape[0],
+    )[0]
+    safe_positions = jnp.minimum(positions[:remaining], spectrum.shape[0] - 1)
+    chosen = order[safe_positions]
+    selected = selected.at[chosen].set(positions[:remaining] < spectrum.shape[0])
+    retained = retained_limit
+    discarded_within = precision.sum(jnp.where(selected, 0.0, jnp.abs(spectrum) ** 2))
+    discarded = precision.decision(discarded_within + overflow_weight)
+    left_blocks = [
+        jnp.zeros(shape, dtype=gate_.dtype) for shape in left_tensor.layout.block_shapes
+    ]
+    right_blocks = [
+        jnp.zeros(shape, dtype=gate_.dtype) for shape in right_tensor.layout.block_shapes
+    ]
     retained_per_sector = []
     cursor_spectrum = 0
     for middle_sector, decomposition in enumerate(decompositions):
@@ -216,20 +300,35 @@ def apply_abelian_two_site_gate(
         weighted = (singular_values * sector_mask)[:, None] * vh
         cursor = 0
         for left_sector, physical_sector, size in row_routes:
-            shape = left_blocks[(left_sector, physical_sector, middle_sector)].shape
-            left_blocks[(left_sector, physical_sector, middle_sector)] = u[
-                cursor : cursor + size
-            ].reshape(shape)
+            key = (left_sector, physical_sector, middle_sector)
+            if key in left_tensor.layout.sectors:
+                index = left_tensor.layout.sectors.index(key)
+                left_blocks[index] = u[cursor : cursor + size].reshape(
+                    left_blocks[index].shape
+                )
             cursor += size
         cursor = 0
         for physical_sector, right_sector, size in column_routes:
-            shape = right_blocks[(middle_sector, physical_sector, right_sector)].shape
-            right_blocks[(middle_sector, physical_sector, right_sector)] = weighted[
-                :, cursor : cursor + size
-            ].reshape(shape)
+            key = (middle_sector, physical_sector, right_sector)
+            if key in right_tensor.layout.sectors:
+                index = right_tensor.layout.sectors.index(key)
+                right_blocks[index] = weighted[:, cursor : cursor + size].reshape(
+                    right_blocks[index].shape
+                )
             cursor += size
         cursor_spectrum += sector_capacity
     active_counts = jnp.stack(retained_per_sector)
+    protected_checks = tuple(
+        (
+            active_counts[middle.charges.index(charge)] > 0
+            if charge in middle.charges
+            else jnp.asarray(False)
+        )
+        for charge in protected
+    )
+    protected_satisfied = (
+        jnp.all(jnp.stack(protected_checks)) if protected_checks else jnp.asarray(True)
+    )
     new_middle_left = middle.with_active(active_counts)
     new_middle_right = new_middle_left.dual()
     left_legs = list(left_tensor.layout.legs)
@@ -242,16 +341,8 @@ def apply_abelian_two_site_gate(
     right_layout = AbelianTensorLayout(
         tuple(right_legs), total_charge=right_tensor.layout.total_charge
     )
-    new_left = AbelianTensor(
-        left_layout,
-        tuple(left_blocks[sector] for sector in left_layout.sectors),
-        precision=precision,
-    )
-    new_right = AbelianTensor(
-        right_layout,
-        tuple(right_blocks[sector] for sector in right_layout.sectors),
-        precision=precision,
-    )
+    new_left = AbelianTensor(left_layout, tuple(left_blocks), precision=precision)
+    new_right = AbelianTensor(right_layout, tuple(right_blocks), precision=precision)
     tensors = list(state.tensors)
     tensors[site] = new_left
     tensors[site + 1] = new_right
@@ -269,7 +360,9 @@ def apply_abelian_two_site_gate(
         active_counts,
         selected,
         discarded,
-        jnp.isfinite(discarded) & (discarded >= 0.0),
+        precision.decision(overflow_weight),
+        protected_satisfied,
+        jnp.isfinite(discarded) & (discarded >= 0.0) & protected_satisfied,
         precision_evidence,
         precision.policy_id,
     )
@@ -435,10 +528,252 @@ def abelian_product_mps(
     return AbelianMatrixProductState(tuple(tensors))
 
 
+class AbelianDMRGEvidence(StrictModule):
+    energies: Array
+    residual_norms: Array
+    discarded_weights: Array
+    charge_drifts: Array
+    protected_sectors_satisfied: Array
+    converged: Array
+    valid: Array
+    sweep_count: int = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
+
+
+class AbelianTDVPEvidence(StrictModule):
+    times: Array
+    norm_residuals: Array
+    energy_values: Array
+    discarded_weights: Array
+    charge_drifts: Array
+    protected_sectors_satisfied: Array
+    valid: Array
+    step_count: int = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
+
+
+def _abelian_energy(
+    state: AbelianMatrixProductState,
+    hamiltonian: AbelianMatrixProductOperator,
+    /,
+    *,
+    maximum_bond_dimension: int,
+) -> tuple[Array, AbelianMatrixProductState, Array]:
+    applied, compression = apply_abelian_mpo(
+        hamiltonian,
+        state,
+        maximum_bond_dimension=maximum_bond_dimension,
+        normalize=False,
+    )
+    denominator = abelian_mps_inner(state, state)
+    energy = abelian_mps_inner(state, applied) / denominator
+    return jnp.real(energy), applied, compression.accumulated_discarded_weight
+
+
+def abelian_finite_dmrg(
+    initial_state: AbelianMatrixProductState,
+    hamiltonian: AbelianMatrixProductOperator,
+    /,
+    *,
+    maximum_sweeps: int,
+    maximum_bond_dimension: int,
+    descent_step: ArrayLike,
+    residual_tolerance: float = 1e-8,
+    protected_charges: Sequence[Sequence[int]] = (),
+) -> tuple[AbelianMatrixProductState, AbelianDMRGEvidence]:
+    """Bounded variational residual sweeps in the fixed total-charge sector."""
+
+    sweeps = int(maximum_sweeps)
+    if sweeps < 1:
+        raise ValueError("maximum_sweeps must be positive.")
+    capacity = int(maximum_bond_dimension)
+    if capacity < 1:
+        raise ValueError("maximum_bond_dimension must be positive.")
+    step = jnp.asarray(descent_step, dtype=initial_state.norm().dtype)
+    step = eqx.error_if(
+        step,
+        (~jnp.isfinite(step)) | (step <= 0),
+        "Abelian DMRG descent_step must be finite and positive.",
+    )
+    current = canonicalize_abelian_mps(
+        initial_state, center=initial_state.site_count // 2, normalize=True
+    )
+    energies = []
+    residuals = []
+    losses = []
+    drifts = []
+    protected_ok = []
+    initial_charge = current.total_charge
+    for _ in range(sweeps):
+        energy, applied, application_loss = _abelian_energy(
+            current,
+            hamiltonian,
+            maximum_bond_dimension=capacity,
+        )
+        residual = add_abelian_mps(applied, scale_abelian_mps(current, -energy))
+        residual_norm = jnp.sqrt(
+            jnp.maximum(jnp.real(abelian_mps_inner(residual, residual)), 0.0)
+        )
+        trial = add_abelian_mps(current, scale_abelian_mps(residual, -step))
+        current, compression = compress_abelian_mps(
+            trial,
+            maximum_bond_dimension=capacity,
+            normalize=True,
+            protected_charges=protected_charges,
+        )
+        energies.append(energy)
+        residuals.append(residual_norm)
+        losses.append(application_loss + compression.accumulated_discarded_weight)
+        drifts.append(
+            jnp.asarray(
+                0.0 if current.total_charge == initial_charge else 1.0,
+                dtype=energy.dtype,
+            )
+        )
+        protected_ok.append(compression.protected_sectors_satisfied)
+    energy_values = jnp.stack(energies)
+    residual_values = jnp.stack(residuals)
+    loss_values = jnp.stack(losses)
+    drift_values = jnp.stack(drifts)
+    protected_values = jnp.stack(protected_ok)
+    converged = residual_values[-1] <= float(residual_tolerance)
+    valid = (
+        jnp.all(jnp.isfinite(energy_values))
+        & jnp.all(jnp.isfinite(residual_values))
+        & jnp.all(jnp.isfinite(loss_values))
+        & jnp.all(drift_values == 0)
+        & jnp.all(protected_values)
+    )
+    return current, AbelianDMRGEvidence(
+        energy_values,
+        residual_values,
+        loss_values,
+        drift_values,
+        protected_values,
+        converged,
+        valid,
+        sweeps,
+        current.precision.policy_id,
+    )
+
+
+def abelian_finite_tdvp(
+    initial_state: AbelianMatrixProductState,
+    hamiltonian: AbelianMatrixProductOperator,
+    step_size: ArrayLike,
+    /,
+    *,
+    step_count: int,
+    maximum_bond_dimension: int,
+    imaginary_time: bool = False,
+    normalize: bool = True,
+    protected_charges: Sequence[Sequence[int]] = (),
+) -> tuple[AbelianMatrixProductState, AbelianTDVPEvidence]:
+    """Second-order midpoint evolution with block-native MPO applications."""
+
+    count = int(step_count)
+    if count < 1:
+        raise ValueError("step_count must be positive.")
+    capacity = int(maximum_bond_dimension)
+    if capacity < 1:
+        raise ValueError("maximum_bond_dimension must be positive.")
+    step = jnp.asarray(step_size, dtype=initial_state.norm().dtype)
+    step = eqx.error_if(
+        step,
+        (~jnp.isfinite(step)) | (step <= 0),
+        "Abelian TDVP step_size must be finite and positive.",
+    )
+    factor = jnp.asarray(-1.0 if imaginary_time else -1.0j)
+    current = initial_state.normalized() if normalize else initial_state
+    initial_charge = current.total_charge
+    times = []
+    norm_residuals = []
+    energies = []
+    losses = []
+    drifts = []
+    protected_ok = []
+    for index in range(count):
+        energy, first_action, first_loss = _abelian_energy(
+            current,
+            hamiltonian,
+            maximum_bond_dimension=capacity,
+        )
+        midpoint = add_abelian_mps(
+            current, scale_abelian_mps(first_action, factor * step * 0.5)
+        )
+        midpoint, midpoint_compression = compress_abelian_mps(
+            midpoint,
+            maximum_bond_dimension=capacity,
+            normalize=False,
+            protected_charges=protected_charges,
+        )
+        _, second_action, second_loss = _abelian_energy(
+            midpoint,
+            hamiltonian,
+            maximum_bond_dimension=capacity,
+        )
+        trial = add_abelian_mps(current, scale_abelian_mps(second_action, factor * step))
+        current, final_compression = compress_abelian_mps(
+            trial,
+            maximum_bond_dimension=capacity,
+            normalize=normalize,
+            protected_charges=protected_charges,
+        )
+        norm_residual = jnp.abs(current.norm() - 1.0) if normalize else jnp.asarray(0.0)
+        times.append((index + 1) * step)
+        norm_residuals.append(norm_residual)
+        energies.append(energy)
+        losses.append(
+            first_loss
+            + second_loss
+            + midpoint_compression.accumulated_discarded_weight
+            + final_compression.accumulated_discarded_weight
+        )
+        drifts.append(
+            jnp.asarray(
+                0.0 if current.total_charge == initial_charge else 1.0,
+                dtype=energy.dtype,
+            )
+        )
+        protected_ok.append(
+            midpoint_compression.protected_sectors_satisfied
+            & final_compression.protected_sectors_satisfied
+        )
+    time_values = jnp.stack(times)
+    norm_values = jnp.stack(norm_residuals)
+    energy_values = jnp.stack(energies)
+    loss_values = jnp.stack(losses)
+    drift_values = jnp.stack(drifts)
+    protected_values = jnp.stack(protected_ok)
+    valid = (
+        jnp.all(jnp.isfinite(time_values))
+        & jnp.all(jnp.isfinite(norm_values))
+        & jnp.all(jnp.isfinite(energy_values))
+        & jnp.all(jnp.isfinite(loss_values))
+        & jnp.all(drift_values == 0)
+        & jnp.all(protected_values)
+    )
+    return current, AbelianTDVPEvidence(
+        time_values,
+        norm_values,
+        energy_values,
+        loss_values,
+        drift_values,
+        protected_values,
+        valid,
+        count,
+        current.precision.policy_id,
+    )
+
+
 __all__ = [
+    "AbelianDMRGEvidence",
     "AbelianNearestNeighborHamiltonian",
+    "AbelianTDVPEvidence",
     "AbelianTEBDEvidence",
     "AbelianTensorTruncationEvidence",
+    "abelian_finite_dmrg",
+    "abelian_finite_tdvp",
     "abelian_product_mps",
     "abelian_tebd_step",
     "apply_abelian_two_site_gate",

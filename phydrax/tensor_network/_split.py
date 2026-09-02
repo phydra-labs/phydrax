@@ -81,7 +81,7 @@ def truncated_svd(
     available = int(singular_values.shape[0])
     retained = min(capacity, available)
     discarded = precision.decision(
-        precision.sum(jnp.abs(singular_values[retained:]) ** 2)
+        jnp.real(precision.sum(jnp.abs(singular_values[retained:]) ** 2))
     )
     u = u[:, :retained]
     singular_values = singular_values[:retained]

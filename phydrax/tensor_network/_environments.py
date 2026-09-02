@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
 from ._core import LocallyPurifiedDensity, MatrixProductOperator, MatrixProductState
 
 
@@ -306,7 +309,154 @@ def mpo_hermiticity_residual(operator: MatrixProductOperator, /) -> Array:
     return operator.precision.decision(jnp.sqrt(difference_squared) / scale)
 
 
+class PreparedChainEnvironments(StrictModule):
+    """Reusable finite-chain contraction environments with refresh identity."""
+
+    bra: MatrixProductState
+    operator: MatrixProductOperator
+    ket: MatrixProductState
+    left: tuple[Array, ...]
+    right: tuple[Array, ...]
+    numeric_version: Array
+    prepared_id: str = eqx.field(static=True)
+
+
+class OneSiteMPOEffectiveAction(StrictModule):
+    left_environment: Array
+    operator_tensor: Array
+    right_environment: Array
+
+    def __call__(self, vector: Array, /) -> Array:
+        return oe.contract(
+            "abc,bpqe,def,cqf->apd",
+            self.left_environment,
+            self.operator_tensor,
+            self.right_environment,
+            vector,
+        )
+
+
+class TwoSiteMPOEffectiveAction(StrictModule):
+    left_environment: Array
+    left_operator: Array
+    right_operator: Array
+    right_environment: Array
+
+    def __call__(self, vector: Array, /) -> Array:
+        return oe.contract(
+            "abc,bpim,mqjn,dne,cije->apqd",
+            self.left_environment,
+            self.left_operator,
+            self.right_operator,
+            self.right_environment,
+            vector,
+        )
+
+
+class BondOverlapEffectiveAction(StrictModule):
+    left_environment: Array
+    right_environment: Array
+
+    def __call__(self, vector: Array, /) -> Array:
+        return oe.contract(
+            "abc,dbf,cf->ad",
+            self.left_environment,
+            self.right_environment,
+            vector,
+        )
+
+
+def prepare_chain_environments(
+    bra: MatrixProductState,
+    operator: MatrixProductOperator,
+    ket: MatrixProductState,
+    /,
+) -> PreparedChainEnvironments:
+    left, right = build_mps_mpo_environments(bra, operator, ket)
+    prepared_id = canonical_fingerprint(
+        {
+            "kind": "prepared-chain-environments",
+            "bra": bra.structure_id,
+            "operator": operator.structure_id,
+            "ket": ket.structure_id,
+        }
+    )
+    return PreparedChainEnvironments(
+        bra,
+        operator,
+        ket,
+        left,
+        right,
+        jnp.asarray(0, dtype=jnp.int32),
+        prepared_id,
+    )
+
+
+def refresh_chain_environments(
+    prepared: PreparedChainEnvironments,
+    bra: MatrixProductState,
+    operator: MatrixProductOperator,
+    ket: MatrixProductState,
+    /,
+) -> PreparedChainEnvironments:
+    if not isinstance(prepared, PreparedChainEnvironments):
+        raise TypeError("prepared must be PreparedChainEnvironments.")
+    expected = canonical_fingerprint(
+        {
+            "kind": "prepared-chain-environments",
+            "bra": bra.structure_id,
+            "operator": operator.structure_id,
+            "ket": ket.structure_id,
+        }
+    )
+    if expected != prepared.prepared_id:
+        raise ValueError("Chain environment structure changed; prepare again.")
+    left, right = build_mps_mpo_environments(bra, operator, ket)
+    return PreparedChainEnvironments(
+        bra,
+        operator,
+        ket,
+        left,
+        right,
+        prepared.numeric_version + 1,
+        prepared.prepared_id,
+    )
+
+
+def one_site_effective_action(
+    prepared: PreparedChainEnvironments, site: int, /
+) -> OneSiteMPOEffectiveAction:
+    site_ = int(site)
+    if not 0 <= site_ < prepared.operator.site_count:
+        raise ValueError("Effective-action site is outside the chain.")
+    precision = prepared.bra.precision
+    return OneSiteMPOEffectiveAction(
+        precision.accumulation(prepared.left[site_]),
+        precision.accumulation(prepared.operator.tensors[site_]),
+        precision.accumulation(prepared.right[site_ + 1]),
+    )
+
+
+def two_site_effective_action(
+    prepared: PreparedChainEnvironments, bond: int, /
+) -> TwoSiteMPOEffectiveAction:
+    bond_ = int(bond)
+    if not 0 <= bond_ < prepared.operator.site_count - 1:
+        raise ValueError("Effective-action bond is outside the chain.")
+    precision = prepared.bra.precision
+    return TwoSiteMPOEffectiveAction(
+        precision.accumulation(prepared.left[bond_]),
+        precision.accumulation(prepared.operator.tensors[bond_]),
+        precision.accumulation(prepared.operator.tensors[bond_ + 1]),
+        precision.accumulation(prepared.right[bond_ + 2]),
+    )
+
+
 __all__ = [
+    "BondOverlapEffectiveAction",
+    "OneSiteMPOEffectiveAction",
+    "PreparedChainEnvironments",
+    "TwoSiteMPOEffectiveAction",
     "build_mps_mpo_environments",
     "lpdo_one_site_reduced",
     "lpdo_raw_trace",
@@ -318,4 +468,8 @@ __all__ = [
     "mps_mpo_inner",
     "mps_norm_squared",
     "mps_one_site_expectation",
+    "one_site_effective_action",
+    "prepare_chain_environments",
+    "refresh_chain_environments",
+    "two_site_effective_action",
 ]

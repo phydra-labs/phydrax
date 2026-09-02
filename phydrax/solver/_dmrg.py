@@ -21,22 +21,25 @@ from ..linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
-from ..tensor_network import (
-    build_mps_mpo_environments,
-    canonicalize_mps,
-    MatrixProductOperator,
-    MatrixProductState,
-    mpo_hermiticity_residual,
-    mps_mpo_expectation,
-)
+from ..tensor_network._canonical import canonicalize_mps
+from ..tensor_network._core import MatrixProductOperator, MatrixProductState
 from ..tensor_network._environments import (
     _left_mps_mpo_step,
     _right_mps_mpo_step,
+    mpo_hermiticity_residual,
+    mps_mpo_expectation,
+    mps_norm_squared,
+    prepare_chain_environments,
+    PreparedChainEnvironments,
+    refresh_chain_environments,
+    two_site_effective_action,
+    TwoSiteMPOEffectiveAction,
 )
+from ..tensor_network._mpo import apply_mpo_exact
 from ..tensor_network._split import truncated_svd
 
 
-class DMRGStatus(IntEnum):
+class FiniteDMRGStatus(IntEnum):
     SUCCESS = 0
     INVALID_HAMILTONIAN = 1
     LOCAL_SOLVE_FAILED = 2
@@ -45,7 +48,7 @@ class DMRGStatus(IntEnum):
     ENERGY_INCREASE = 5
 
 
-class DMRGProblem(StrictModule):
+class FiniteDMRGProblem(StrictModule):
     initial_state: MatrixProductState
     hamiltonian: MatrixProductOperator
     problem_id: str = eqx.field(static=True)
@@ -78,7 +81,7 @@ class DMRGProblem(StrictModule):
         self.problem_id = identifier
 
 
-class DMRGPolicy(StrictModule):
+class FiniteDMRGPolicy(StrictModule):
     maximum_bond_dimension: int = eqx.field(static=True)
     maximum_sweeps: int = eqx.field(static=True)
     energy_tolerance: float = eqx.field(static=True)
@@ -87,6 +90,7 @@ class DMRGPolicy(StrictModule):
     hermiticity_tolerance: float = eqx.field(static=True)
     maximum_environment_elements: int = eqx.field(static=True)
     maximum_local_elements: int = eqx.field(static=True)
+    maximum_residual_elements: int = eqx.field(static=True)
     maximum_history_elements: int = eqx.field(static=True)
     eigen_policy: eigen_linalg.EigenSolvePolicy
     policy_id: str = eqx.field(static=True)
@@ -103,6 +107,7 @@ class DMRGPolicy(StrictModule):
         hermiticity_tolerance: float = 1e-9,
         maximum_environment_elements: int = 100_000_000,
         maximum_local_elements: int = 10_000_000,
+        maximum_residual_elements: int = 100_000_000,
         maximum_history_elements: int = 10_000_000,
         eigen_policy: eigen_linalg.EigenSolvePolicy | None = None,
     ):
@@ -113,6 +118,7 @@ class DMRGPolicy(StrictModule):
         resource_limits = (
             int(maximum_environment_elements),
             int(maximum_local_elements),
+            int(maximum_residual_elements),
             int(maximum_history_elements),
         )
         if any(value < 1 for value in resource_limits):
@@ -156,7 +162,8 @@ class DMRGPolicy(StrictModule):
         self.hermiticity_tolerance = tolerances[3]
         self.maximum_environment_elements = resource_limits[0]
         self.maximum_local_elements = resource_limits[1]
-        self.maximum_history_elements = resource_limits[2]
+        self.maximum_residual_elements = resource_limits[2]
+        self.maximum_history_elements = resource_limits[3]
         self.eigen_policy = selected
         self.policy_id = canonical_fingerprint(
             {
@@ -174,34 +181,39 @@ class DMRGPolicy(StrictModule):
         )
 
 
-class DMRGCostEstimate(StrictModule):
+class FiniteDMRGCostEstimate(StrictModule):
     environment_elements: int = eqx.field(static=True)
     maximum_local_elements: int = eqx.field(static=True)
+    residual_elements: int = eqx.field(static=True)
     history_elements: int = eqx.field(static=True)
 
 
-class DMRGPlan(StrictModule):
-    policy: DMRGPolicy
-    cost: DMRGCostEstimate
+class FiniteDMRGPlan(StrictModule):
+    policy: FiniteDMRGPolicy
+    cost: FiniteDMRGCostEstimate
     state_structure_id: str = eqx.field(static=True)
     hamiltonian_structure_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
-class PreparedDMRG(StrictModule):
-    problem: DMRGProblem
-    plan: DMRGPlan
+class PreparedFiniteDMRG(StrictModule):
+    problem: FiniteDMRGProblem
+    plan: FiniteDMRGPlan
     initial_state: MatrixProductState
+    environments: PreparedChainEnvironments
     hermiticity_residual: Array
     numeric_version: Array
     prepared_id: str = eqx.field(static=True)
 
 
-class DMRGDiagnostics(StrictModule):
+class FiniteDMRGDiagnostics(StrictModule):
     energy_history: Array
     energy_change_history: Array
     local_residual_history: Array
+    projected_residual_history: Array
+    global_residual_history: Array
+    energy_variance_history: Array
     discarded_weight_history: Array
     canonical_residual_history: Array
     active_sweeps: Array
@@ -210,14 +222,14 @@ class DMRGDiagnostics(StrictModule):
 
     @property
     def successful(self) -> Array:
-        return self.status == int(DMRGStatus.SUCCESS)
+        return self.status == int(FiniteDMRGStatus.SUCCESS)
 
 
-class DMRGResult(StrictModule):
+class FiniteDMRGResult(StrictModule):
     final_state: MatrixProductState
     best_state: MatrixProductState
     energy: Array
-    diagnostics: DMRGDiagnostics
+    diagnostics: FiniteDMRGDiagnostics
     numeric_version: Array
     prepared_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -227,15 +239,15 @@ class DMRGResult(StrictModule):
         return self.diagnostics.successful
 
 
-def plan_dmrg(
-    problem: DMRGProblem,
-    policy: DMRGPolicy,
+def plan_finite_dmrg(
+    problem: FiniteDMRGProblem,
+    policy: FiniteDMRGPolicy,
     /,
-) -> DMRGPlan:
-    if not isinstance(problem, DMRGProblem):
-        raise TypeError("problem must be a DMRGProblem.")
-    if not isinstance(policy, DMRGPolicy):
-        raise TypeError("policy must be a DMRGPolicy.")
+) -> FiniteDMRGPlan:
+    if not isinstance(problem, FiniteDMRGProblem):
+        raise TypeError("problem must be a FiniteDMRGProblem.")
+    if not isinstance(policy, FiniteDMRGPolicy):
+        raise TypeError("policy must be a FiniteDMRGPolicy.")
     state = problem.initial_state
     operator = problem.hamiltonian
     environment_elements = sum(
@@ -257,14 +269,30 @@ def plan_dmrg(
         for index in range(state.site_count - 1)
     )
     updates = 2 * (state.site_count - 1)
-    history = policy.maximum_sweeps * (2 * updates + 3) + policy.maximum_sweeps + 1
-    cost = DMRGCostEstimate(environment_elements, maximum_local, history)
+    residual_elements = sum(
+        int(
+            operator.tensors[index].shape[0]
+            * state.tensors[index].shape[0]
+            * state.physical_dimensions[index]
+            * operator.tensors[index].shape[-1]
+            * state.tensors[index].shape[-1]
+        )
+        for index in range(state.site_count)
+    )
+    history = policy.maximum_sweeps * (2 * updates + 6) + policy.maximum_sweeps + 1
+    cost = FiniteDMRGCostEstimate(
+        environment_elements, maximum_local, residual_elements, history
+    )
     if environment_elements > policy.maximum_environment_elements:
-        raise MemoryError("DMRG environments exceed maximum_environment_elements.")
+        raise MemoryError("Finite DMRG environments exceed maximum_environment_elements.")
     if maximum_local > policy.maximum_local_elements:
-        raise MemoryError("DMRG local problem exceeds maximum_local_elements.")
+        raise MemoryError("Finite DMRG local problem exceeds maximum_local_elements.")
+    if residual_elements > policy.maximum_residual_elements:
+        raise MemoryError(
+            "Finite DMRG residual action exceeds maximum_residual_elements."
+        )
     if history > policy.maximum_history_elements:
-        raise MemoryError("DMRG histories exceed maximum_history_elements.")
+        raise MemoryError("Finite DMRG histories exceed maximum_history_elements.")
     plan_id = canonical_fingerprint(
         {
             "kind": "dmrg-plan",
@@ -274,7 +302,7 @@ def plan_dmrg(
             "policy": policy.policy_id,
         }
     )
-    return DMRGPlan(
+    return FiniteDMRGPlan(
         policy,
         cost,
         state.structure_id,
@@ -284,7 +312,7 @@ def plan_dmrg(
     )
 
 
-def _validate_dmrg_structure(problem: DMRGProblem, plan: DMRGPlan, /) -> None:
+def _validate_dmrg_structure(problem: FiniteDMRGProblem, plan: FiniteDMRGPlan, /) -> None:
     if problem.problem_id != plan.problem_id:
         raise ValueError("DMRG problem identity changed; replan is required.")
     if problem.initial_state.structure_id != plan.state_structure_id:
@@ -293,64 +321,57 @@ def _validate_dmrg_structure(problem: DMRGProblem, plan: DMRGPlan, /) -> None:
         raise ValueError("DMRG Hamiltonian structure changed; replan is required.")
 
 
-def prepare_dmrg(
-    problem: DMRGProblem,
-    plan_or_policy: DMRGPlan | DMRGPolicy,
+def prepare_finite_dmrg(
+    problem: FiniteDMRGProblem,
+    plan_or_policy: FiniteDMRGPlan | FiniteDMRGPolicy,
     /,
-) -> PreparedDMRG:
-    if not isinstance(problem, DMRGProblem):
-        raise TypeError("problem must be a DMRGProblem.")
+) -> PreparedFiniteDMRG:
+    if not isinstance(problem, FiniteDMRGProblem):
+        raise TypeError("problem must be a FiniteDMRGProblem.")
     plan = (
         plan_or_policy
-        if isinstance(plan_or_policy, DMRGPlan)
-        else plan_dmrg(problem, plan_or_policy)
+        if isinstance(plan_or_policy, FiniteDMRGPlan)
+        else plan_finite_dmrg(problem, plan_or_policy)
     )
     _validate_dmrg_structure(problem, plan)
     state, _ = canonicalize_mps(problem.initial_state, center=0, normalize=True)
+    environments = prepare_chain_environments(state, problem.hamiltonian, state)
     hermiticity = mpo_hermiticity_residual(problem.hamiltonian)
-    prepared_id = canonical_fingerprint({"kind": "prepared-dmrg", "plan": plan.plan_id})
-    return PreparedDMRG(
+    prepared_id = canonical_fingerprint(
+        {"kind": "prepared-finite-dmrg", "plan": plan.plan_id}
+    )
+    return PreparedFiniteDMRG(
         problem,
         plan,
         state,
+        environments,
         hermiticity,
         jnp.asarray(0, dtype=jnp.int32),
         prepared_id,
     )
 
 
-def refresh_dmrg(prepared: PreparedDMRG, problem: DMRGProblem, /) -> PreparedDMRG:
-    if not isinstance(prepared, PreparedDMRG):
-        raise TypeError("prepared must be PreparedDMRG.")
-    if not isinstance(problem, DMRGProblem):
-        raise TypeError("problem must be DMRGProblem.")
+def refresh_finite_dmrg(
+    prepared: PreparedFiniteDMRG, problem: FiniteDMRGProblem, /
+) -> PreparedFiniteDMRG:
+    if not isinstance(prepared, PreparedFiniteDMRG):
+        raise TypeError("prepared must be PreparedFiniteDMRG.")
+    if not isinstance(problem, FiniteDMRGProblem):
+        raise TypeError("problem must be FiniteDMRGProblem.")
     _validate_dmrg_structure(problem, prepared.plan)
     state, _ = canonicalize_mps(problem.initial_state, center=0, normalize=True)
-    return PreparedDMRG(
+    environments = refresh_chain_environments(
+        prepared.environments, state, problem.hamiltonian, state
+    )
+    return PreparedFiniteDMRG(
         problem,
         prepared.plan,
         state,
+        environments,
         mpo_hermiticity_residual(problem.hamiltonian),
         prepared.numeric_version + 1,
         prepared.prepared_id,
     )
-
-
-class _TwoSiteEffectiveAction(StrictModule):
-    left_environment: Array
-    left_operator: Array
-    right_operator: Array
-    right_environment: Array
-
-    def __call__(self, vector: Array, /) -> Array:
-        return oe.contract(
-            "abc,bpim,mqjn,dne,cije->apqd",
-            self.left_environment,
-            self.left_operator,
-            self.right_operator,
-            self.right_environment,
-            vector,
-        )
 
 
 def _local_eigen_policy(
@@ -380,7 +401,7 @@ def _solve_two_site(
     left_environment: Array,
     right_environment: Array,
     bond: int,
-    policy: DMRGPolicy,
+    policy: FiniteDMRGPolicy,
     direction: int,
     /,
 ):
@@ -388,7 +409,7 @@ def _solve_two_site(
     left = precision.contraction(state.tensors[bond])
     right = precision.contraction(state.tensors[bond + 1])
     theta = oe.contract("lpi,iqr->lpqr", left, right)
-    action = _TwoSiteEffectiveAction(
+    action = TwoSiteMPOEffectiveAction(
         precision.accumulation(left_environment),
         precision.accumulation(hamiltonian.tensors[bond]),
         precision.accumulation(hamiltonian.tensors[bond + 1]),
@@ -439,22 +460,72 @@ def _solve_two_site(
 
 
 def _energy(state: MatrixProductState, hamiltonian: MatrixProductOperator, /) -> Array:
-    return mps_mpo_expectation(state, hamiltonian)
+    norm_squared = mps_norm_squared(state)
+    return mps_mpo_expectation(state, hamiltonian) / norm_squared
 
 
-def solve_dmrg(
-    problem_or_prepared: DMRGProblem | PreparedDMRG,
-    policy: DMRGPolicy | None = None,
+def _global_residual_and_variance(
+    state: MatrixProductState,
+    hamiltonian: MatrixProductOperator,
+    energy: Array,
     /,
-) -> DMRGResult:
-    if isinstance(problem_or_prepared, PreparedDMRG):
+) -> tuple[Array, Array]:
+    norm_squared = mps_norm_squared(state)
+    image = apply_mpo_exact(hamiltonian, state)
+    second_moment = mps_norm_squared(image) / norm_squared
+    raw_variance = jnp.real(second_moment - jnp.conj(energy) * energy)
+    roundoff = (
+        64.0
+        * jnp.finfo(raw_variance.dtype).eps
+        * jnp.maximum(
+            jnp.maximum(jnp.abs(second_moment), jnp.abs(energy) ** 2),
+            1.0,
+        )
+    )
+    variance = jnp.where(
+        jnp.abs(raw_variance) <= roundoff,
+        jnp.asarray(0.0, dtype=raw_variance.dtype),
+        jnp.maximum(raw_variance, 0.0),
+    )
+    return jnp.sqrt(variance), variance
+
+
+def _projected_galerkin_residual(
+    state: MatrixProductState,
+    hamiltonian: MatrixProductOperator,
+    energy: Array,
+    /,
+) -> Array:
+    residuals = []
+    for bond in range(state.site_count - 1):
+        centered, _ = canonicalize_mps(state, center=bond, normalize=True)
+        environments = prepare_chain_environments(centered, hamiltonian, centered)
+        action = two_site_effective_action(environments, bond)
+        theta = oe.contract(
+            "lpi,iqr->lpqr",
+            centered.precision.contraction(centered.tensors[bond]),
+            centered.precision.contraction(centered.tensors[bond + 1]),
+        )
+        defect = action(theta) - energy * theta
+        residuals.append(
+            jnp.linalg.norm(defect) / jnp.maximum(jnp.linalg.norm(theta), 1.0)
+        )
+    return jnp.max(jnp.stack(residuals))
+
+
+def solve_finite_dmrg(
+    problem_or_prepared: FiniteDMRGProblem | PreparedFiniteDMRG,
+    policy: FiniteDMRGPolicy | None = None,
+    /,
+) -> FiniteDMRGResult:
+    if isinstance(problem_or_prepared, PreparedFiniteDMRG):
         if policy is not None:
             raise ValueError("policy must be omitted for a prepared DMRG solve.")
         prepared = problem_or_prepared
     else:
         if policy is None:
             raise ValueError("policy is required for an unprepared DMRG problem.")
-        prepared = prepare_dmrg(problem_or_prepared, policy)
+        prepared = prepare_finite_dmrg(problem_or_prepared, policy)
 
     plan_policy = prepared.plan.policy
     state = prepared.initial_state
@@ -465,6 +536,9 @@ def solve_dmrg(
     energy_history = jnp.full((sweeps + 1,), jnp.nan, dtype=real_dtype)
     energy_change_history = jnp.full((sweeps,), jnp.nan, dtype=real_dtype)
     local_residual_history = jnp.full((sweeps, updates), jnp.nan, dtype=real_dtype)
+    projected_history = jnp.full((sweeps,), jnp.nan, dtype=real_dtype)
+    global_history = jnp.full((sweeps,), jnp.nan, dtype=real_dtype)
+    variance_history = jnp.full((sweeps,), jnp.nan, dtype=real_dtype)
     discarded_history = jnp.full((sweeps, updates), jnp.nan, dtype=real_dtype)
     canonical_history = jnp.full((sweeps,), jnp.nan, dtype=real_dtype)
     active_sweeps = jnp.zeros((sweeps,), dtype=bool)
@@ -474,7 +548,7 @@ def solve_dmrg(
     best_state = state
     best_energy = jnp.real(initial_energy)
     previous_energy = best_energy
-    status = DMRGStatus.MAXIMUM_SWEEPS_REACHED
+    status = FiniteDMRGStatus.MAXIMUM_SWEEPS_REACHED
 
     if not bool(
         jax.device_get(
@@ -482,13 +556,18 @@ def solve_dmrg(
             & (prepared.hermiticity_residual <= plan_policy.hermiticity_tolerance)
         )
     ):
-        status = DMRGStatus.INVALID_HAMILTONIAN
+        status = FiniteDMRGStatus.INVALID_HAMILTONIAN
     else:
         for sweep in range(sweeps):
             residuals = []
             discarded = []
             local_success = True
-            left_envs, right_envs = build_mps_mpo_environments(state, hamiltonian, state)
+            environments = (
+                prepared.environments
+                if sweep == 0
+                else prepare_chain_environments(state, hamiltonian, state)
+            )
+            left_envs, right_envs = environments.left, environments.right
             left_values = list(left_envs)
             for bond in range(state.site_count - 1):
                 state, _, residual, successful, truncation = _solve_two_site(
@@ -513,8 +592,12 @@ def solve_dmrg(
                     break
 
             if local_success:
-                left_envs, right_envs = build_mps_mpo_environments(
+                reverse_environments = prepare_chain_environments(
                     state, hamiltonian, state
+                )
+                left_envs, right_envs = (
+                    reverse_environments.left,
+                    reverse_environments.right,
                 )
                 right_values = list(right_envs)
                 for bond in range(state.site_count - 2, -1, -1):
@@ -540,12 +623,18 @@ def solve_dmrg(
                         break
 
             if not local_success:
-                status = DMRGStatus.LOCAL_SOLVE_FAILED
+                status = FiniteDMRGStatus.LOCAL_SOLVE_FAILED
                 break
 
             state, canonical = canonicalize_mps(state, center=0, normalize=True)
             energy_value = _energy(state, hamiltonian)
             energy = jnp.real(energy_value)
+            projected_residual = _projected_galerkin_residual(
+                state, hamiltonian, energy_value
+            )
+            global_residual, energy_variance = _global_residual_and_variance(
+                state, hamiltonian, energy_value
+            )
             energy_change = jnp.abs(energy - previous_energy)
             energy_increase = energy - previous_energy
             residual_array = jnp.stack(residuals)
@@ -557,6 +646,9 @@ def solve_dmrg(
             energy_history = energy_history.at[sweep + 1].set(energy)
             energy_change_history = energy_change_history.at[sweep].set(energy_change)
             local_residual_history = local_residual_history.at[sweep].set(residual_array)
+            projected_history = projected_history.at[sweep].set(projected_residual)
+            global_history = global_history.at[sweep].set(global_residual)
+            variance_history = variance_history.at[sweep].set(energy_variance)
             discarded_history = discarded_history.at[sweep].set(discarded_array)
             canonical_history = canonical_history.at[sweep].set(canonical_residual)
             active_sweeps = active_sweeps.at[sweep].set(True)
@@ -564,17 +656,20 @@ def solve_dmrg(
             finite = (
                 jnp.isfinite(energy)
                 & jnp.all(jnp.isfinite(residual_array))
+                & jnp.isfinite(projected_residual)
+                & jnp.isfinite(global_residual)
+                & jnp.isfinite(energy_variance)
                 & jnp.all(jnp.isfinite(discarded_array))
                 & jnp.isfinite(canonical_residual)
             )
             if not bool(jax.device_get(finite)):
-                status = DMRGStatus.NONFINITE_ITERATE
+                status = FiniteDMRGStatus.NONFINITE_ITERATE
                 break
             if float(jax.device_get(energy)) < float(jax.device_get(best_energy)):
                 best_energy = energy
                 best_state = state
             if float(jax.device_get(energy_increase)) > plan_policy.energy_tolerance:
-                status = DMRGStatus.ENERGY_INCREASE
+                status = FiniteDMRGStatus.ENERGY_INCREASE
                 break
 
             truncation_floor = jnp.sqrt(jnp.max(discarded_array))
@@ -583,25 +678,30 @@ def solve_dmrg(
             )
             converged = (
                 (jnp.max(residual_array) <= residual_threshold)
+                & (projected_residual <= residual_threshold)
+                & (global_residual <= residual_threshold)
                 & (energy_change <= plan_policy.energy_tolerance)
                 & (canonical_residual <= plan_policy.canonical_tolerance)
             )
             previous_energy = energy
             if bool(jax.device_get(converged)):
-                status = DMRGStatus.SUCCESS
+                status = FiniteDMRGStatus.SUCCESS
                 break
 
-    diagnostics = DMRGDiagnostics(
+    diagnostics = FiniteDMRGDiagnostics(
         energy_history,
         energy_change_history,
         local_residual_history,
+        projected_history,
+        global_history,
+        variance_history,
         discarded_history,
         canonical_history,
         active_sweeps,
         prepared.hermiticity_residual,
         jnp.asarray(int(status), dtype=jnp.int32),
     )
-    return DMRGResult(
+    return FiniteDMRGResult(
         state,
         best_state,
         best_energy,
@@ -613,16 +713,16 @@ def solve_dmrg(
 
 
 __all__ = [
-    "DMRGCostEstimate",
-    "DMRGDiagnostics",
-    "DMRGPlan",
-    "DMRGPolicy",
-    "DMRGProblem",
-    "DMRGResult",
-    "DMRGStatus",
-    "PreparedDMRG",
-    "plan_dmrg",
-    "prepare_dmrg",
-    "refresh_dmrg",
-    "solve_dmrg",
+    "FiniteDMRGCostEstimate",
+    "FiniteDMRGDiagnostics",
+    "FiniteDMRGPlan",
+    "FiniteDMRGPolicy",
+    "FiniteDMRGProblem",
+    "FiniteDMRGResult",
+    "FiniteDMRGStatus",
+    "PreparedFiniteDMRG",
+    "plan_finite_dmrg",
+    "prepare_finite_dmrg",
+    "refresh_finite_dmrg",
+    "solve_finite_dmrg",
 ]

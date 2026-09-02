@@ -272,11 +272,14 @@ nav:
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
         - Local quantum programs: "guides_quantum_programs.md"
+        - Tensor platform: "guides_tensor_platform.md"
     - Examples:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
         - Variational substrate: "api/variational.md"
+        - Tensor trains and quantics: "api/tensor_train.md"
+        - Tensor-network platform: "api/tensor_network.md"
         - Atomistic:
             - Core learning and dynamics: "api/atomistic.md"
             - Force fields and interaction sites: "api/atomistic_force_fields.md"

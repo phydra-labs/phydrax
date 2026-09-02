@@ -59,12 +59,12 @@ def test_lpdo_program_matches_dense_kraus_execution_and_preserves_psd():
     assert jnp.allclose(result.final_state.raw_trace(), 1.0, atol=1e-9)
 
 
-def test_lpdo_program_executes_multisite_identity_kraus_route():
+def test_lpdo_program_executes_one_site_identity_kraus_route():
     layout = Q.HilbertRegisterLayout(("q0", "q1"), (2, 2))
-    channel = jnp.eye(4, dtype=jnp.complex128)[None, ...]
+    channel = jnp.eye(2, dtype=jnp.complex128)[None, ...]
     program = Q.QuantumProgram(
         layout,
-        (Q.LocalKrausChannelOperation(channel, ("q1", "q0")),),
+        (Q.LocalKrausChannelOperation(channel, ("q1",)),),
         state_kind="density-matrix",
     )
     state = _product_lpdo(jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128))

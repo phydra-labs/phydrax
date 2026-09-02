@@ -70,3 +70,55 @@ state, physicality, resource, routing, and transformation contracts.
 ::: phydrax.solver.LPDOQuantumProgramDiagnostics
 
 ::: phydrax.solver.LPDOQuantumProgramResult
+
+## Instruments and experiments
+
+::: phydrax.solver.QuantumPOVM
+
+::: phydrax.solver.QuantumInstrument
+
+::: phydrax.solver.QuantumExperimentProgram
+
+::: phydrax.solver.prepare_quantum_experiment
+
+::: phydrax.solver.execute_quantum_experiment_exact
+
+::: phydrax.solver.sample_quantum_experiment
+
+::: phydrax.solver.estimate_quantum_experiment_gradient
+
+## Compilation and controls
+
+::: phydrax.solver.HardwareTopology
+
+::: phydrax.solver.QuantumCompilationPolicy
+
+::: phydrax.solver.compile_quantum_program
+
+::: phydrax.solver.FixedGridQuantumControl
+
+::: phydrax.solver.discretize_fixed_grid_control
+
+## Tensor open systems and process learning
+
+::: phydrax.solver.MPOHamiltonian
+
+::: phydrax.solver.MPOLindbladian
+
+::: phydrax.solver.LPDOChannelEvolutionPlan
+
+::: phydrax.solver.evolve_lpdo_local_channels
+
+::: phydrax.solver.StinespringProcessModel
+
+::: phydrax.solver.fit_stinespring_process_model
+
+::: phydrax.solver.QuantumDigitalTwinState
+
+## Service boundary
+
+::: phydrax.solver.QuantumServicePolicy
+
+::: phydrax.solver.QuantumServiceRequest
+
+::: phydrax.solver.admit_quantum_service_request

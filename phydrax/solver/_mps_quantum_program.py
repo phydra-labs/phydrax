@@ -182,6 +182,20 @@ def plan_mps_quantum_program(
     if template_state.physical_dimensions != program.layout.local_dimensions:
         raise ValueError("MPS physical dimensions must match the program layout.")
     routes = tuple(_route(program, operation) for operation in program.operations)
+    for route in routes:
+        if len(route.target_indices) > 2:
+            raise ValueError(
+                "MPS execution supports only one-site and two-site operations; "
+                "decompose larger operations before planning."
+            )
+        if (
+            len(route.target_indices) == 2
+            and abs(route.target_indices[1] - route.target_indices[0]) != 1
+        ):
+            raise ValueError(
+                "Non-nearest-neighbor MPS operations require an explicit "
+                "caller-visible SWAP compilation."
+            )
     maximum_window = 0
     split_count = 0
     for route in routes:
@@ -402,21 +416,14 @@ def execute_mps_quantum_program(
     )
     current = state
     truncations = []
-    for operation, route, evidence in zip(
+    for operation, route in zip(
         prepared.program.operations,
         prepared.plan.routes,
-        prepared.operation_evidence,
         strict=True,
     ):
-        dimension = operation.unitary.shape[0]
-        safe_unitary = jnp.where(
-            evidence.valid,
-            operation.unitary,
-            jnp.eye(dimension, dtype=operation.unitary.dtype),
-        )
         window = _contract_window(current, route)
         transformed = _apply_unitary(
-            window, route, current.physical_dimensions, safe_unitary
+            window, route, current.physical_dimensions, operation.unitary
         )
         replacement, records = _split_window(
             current, route, transformed, prepared.plan.policy

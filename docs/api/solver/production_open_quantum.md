@@ -43,9 +43,9 @@ network contractions, solves local effective Hamiltonians through
 than energy change alone. It retains the best-energy state and reports every
 local eigensolver residual and discarded bond weight.
 
-::: phydrax.solver.DMRGPolicy
+::: phydrax.solver.FiniteDMRGPolicy
 
-::: phydrax.solver.solve_dmrg
+::: phydrax.solver.solve_finite_dmrg
 
 One-site matrix-product TDVP uses the symmetric projector-splitting sweep:
 forward site evolution, backward bond evolution, then the mirrored reverse
@@ -53,9 +53,9 @@ sweep. Real- and imaginary-time modes are distinct from sampled variational
 TDVP. Normalization is always an explicit policy choice and defaults off, so
 norm loss remains observable.
 
-::: phydrax.solver.MatrixProductTDVPPolicy
+::: phydrax.solver.FiniteTDVPPolicy
 
-::: phydrax.solver.solve_matrix_product_tdvp
+::: phydrax.solver.solve_finite_tdvp
 
 ## Production HEOM and cross-representation campaigns
 

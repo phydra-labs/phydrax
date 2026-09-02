@@ -39,24 +39,24 @@ def _problem(sites: int):
 
 def _case(sites: int, bond: int, repeats: int):
     state, hamiltonian = _problem(sites)
-    dmrg_problem = phx.solver.DMRGProblem(state, hamiltonian)
-    dmrg_policy = phx.solver.DMRGPolicy(
+    dmrg_problem = phx.solver.FiniteDMRGProblem(state, hamiltonian)
+    dmrg_policy = phx.solver.FiniteDMRGPolicy(
         maximum_bond_dimension=bond,
         maximum_sweeps=2,
         eigen_policy=phx.linalg.eigen.EigenSolvePolicy(
             phx.linalg.eigen.DenseEigh(), count=1, which="smallest-algebraic"
         ),
     )
-    prepared = phx.solver.prepare_dmrg(dmrg_problem, dmrg_policy)
+    prepared = phx.solver.prepare_finite_dmrg(dmrg_problem, dmrg_policy)
     dmrg, dmrg_timing = measure_repeated(
-        lambda: phx.solver.solve_dmrg(prepared), warmup=1, repeats=repeats
+        lambda: phx.solver.solve_finite_dmrg(prepared), warmup=1, repeats=repeats
     )
-    tdvp_policy = phx.solver.MatrixProductTDVPPolicy(
+    tdvp_policy = phx.solver.FiniteTDVPPolicy(
         "real-time", step_size=0.01, steps=1, norm_tolerance=1e-5
     )
     tdvp, tdvp_timing = measure_repeated(
-        lambda: phx.solver.solve_matrix_product_tdvp(
-            phx.solver.MatrixProductTDVPProblem(state, hamiltonian), tdvp_policy
+        lambda: phx.solver.solve_finite_tdvp(
+            phx.solver.FiniteTDVPProblem(state, hamiltonian), tdvp_policy
         ),
         warmup=1,
         repeats=repeats,

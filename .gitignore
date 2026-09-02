@@ -48,6 +48,8 @@ benchmarks/*
 !benchmarks/tensor_network_quantum_program.json
 !benchmarks/tensor_network_variational.py
 !benchmarks/tensor_network_variational.json
+!benchmarks/tensor_platform_profiles.py
+!benchmarks/tensor_platform_profiles.json
 !benchmarks/iga_h1.json
 !benchmarks/iga_h1_qualification.json
 !benchmarks/iga_closure_qualification.json

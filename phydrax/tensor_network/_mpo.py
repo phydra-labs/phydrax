@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
@@ -94,6 +97,19 @@ def adjoint_mpo(operator: MatrixProductOperator, /) -> MatrixProductOperator:
     if not isinstance(operator, MatrixProductOperator):
         raise TypeError("operator must be a MatrixProductOperator.")
     tensors = tuple(jnp.swapaxes(jnp.conj(tensor), 1, 2) for tensor in operator.tensors)
+    return MatrixProductOperator(tensors, precision=operator.precision)
+
+
+def scale_mpo(
+    operator: MatrixProductOperator, coefficient: ArrayLike, /
+) -> MatrixProductOperator:
+    """Scale an MPO without changing its finite-chain structure."""
+    if not isinstance(operator, MatrixProductOperator):
+        raise TypeError("operator must be a MatrixProductOperator.")
+    value = jnp.asarray(coefficient)
+    if value.ndim != 0:
+        raise ValueError("MPO coefficient must be scalar.")
+    tensors = (operator.tensors[0] * value,) + operator.tensors[1:]
     return MatrixProductOperator(tensors, precision=operator.precision)
 
 
@@ -214,14 +230,12 @@ def compress_mpo(
     return result, _compression_evidence(result, records)
 
 
-def apply_mpo(
+def apply_mpo_exact(
     operator: MatrixProductOperator,
     state: MatrixProductState,
     /,
-    *,
-    maximum_bond_dimension: int,
-    normalize: bool = False,
-) -> tuple[MatrixProductState, ChainCompressionEvidence]:
+) -> MatrixProductState:
+    """Apply an MPO exactly, exposing the resulting product bond capacity."""
     if not isinstance(operator, MatrixProductOperator) or not isinstance(
         state, MatrixProductState
     ):
@@ -249,7 +263,18 @@ def apply_mpo(
                 )
             )
         )
-    exact = MatrixProductState(tuple(tensors), precision=precision)
+    return MatrixProductState(tuple(tensors), precision=precision)
+
+
+def apply_mpo(
+    operator: MatrixProductOperator,
+    state: MatrixProductState,
+    /,
+    *,
+    maximum_bond_dimension: int,
+    normalize: bool = False,
+) -> tuple[MatrixProductState, ChainCompressionEvidence]:
+    exact = apply_mpo_exact(operator, state)
     return compress_mps(
         exact,
         maximum_bond_dimension=maximum_bond_dimension,
@@ -296,13 +321,153 @@ def compose_mpo(
     return compress_mpo(exact, maximum_bond_dimension=maximum_bond_dimension)
 
 
+class VariationalCompressionPolicy(StrictModule):
+    maximum_bond_dimension: int = eqx.field(static=True)
+    maximum_sweeps: int = eqx.field(static=True)
+    gradient_step: float = eqx.field(static=True)
+    residual_tolerance: float = eqx.field(static=True)
+    maximum_tensor_elements: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        /,
+        *,
+        maximum_bond_dimension: int,
+        maximum_sweeps: int = 8,
+        gradient_step: float = 0.05,
+        residual_tolerance: float = 1e-8,
+        maximum_tensor_elements: int = 10_000_000,
+    ):
+        bond = int(maximum_bond_dimension)
+        sweeps = int(maximum_sweeps)
+        step = float(gradient_step)
+        tolerance = float(residual_tolerance)
+        elements = int(maximum_tensor_elements)
+        if (
+            bond < 1
+            or sweeps < 1
+            or not isfinite(step)
+            or step <= 0.0
+            or not isfinite(tolerance)
+            or tolerance < 0.0
+            or elements < 1
+        ):
+            raise ValueError("Variational compression policy values are invalid.")
+        self.maximum_bond_dimension = bond
+        self.maximum_sweeps = sweeps
+        self.gradient_step = step
+        self.residual_tolerance = tolerance
+        self.maximum_tensor_elements = elements
+
+
+class VariationalCompressionEvidence(StrictModule):
+    objective_history: Array
+    gradient_residual_history: Array
+    discarded_weight_history: Array
+    active_sweeps: Array
+    converged: Array
+    initial_compression: ChainCompressionEvidence
+
+
+def _tuple_inner(left, right, /):
+    environment = jnp.ones((1, 1), dtype=jnp.result_type(left[0], right[0]))
+    for first, second in zip(left, right, strict=True):
+        environment = oe.contract("ab,api,bpj->ij", environment, jnp.conj(first), second)
+    return environment.reshape(())
+
+
+def _compression_objective(candidate, target, target_norm, /):
+    own = jnp.real(_tuple_inner(candidate, candidate))
+    cross = jnp.real(_tuple_inner(candidate, target))
+    return jnp.maximum(own - 2.0 * cross + target_norm, 0.0)
+
+
+def variational_compress_mps(
+    target: MatrixProductState,
+    policy: VariationalCompressionPolicy,
+    /,
+) -> tuple[MatrixProductState, VariationalCompressionEvidence]:
+    """Minimize the MPS distance by bounded projected tensor-gradient sweeps."""
+    if not isinstance(target, MatrixProductState) or not isinstance(
+        policy, VariationalCompressionPolicy
+    ):
+        raise TypeError("Variational compression requires an MPS and policy.")
+    target_elements = sum(int(tensor.size) for tensor in target.tensors)
+    if target_elements > policy.maximum_tensor_elements:
+        raise MemoryError("Variational compression exceeds maximum_tensor_elements.")
+    candidate, initial_evidence = compress_mps(
+        target,
+        maximum_bond_dimension=policy.maximum_bond_dimension,
+        normalize=False,
+    )
+    real_dtype = target.tensors[0].real.dtype
+    objectives = jnp.full((policy.maximum_sweeps + 1,), jnp.nan, dtype=real_dtype)
+    residuals = jnp.full((policy.maximum_sweeps,), jnp.nan, dtype=real_dtype)
+    discarded = jnp.full((policy.maximum_sweeps,), jnp.nan, dtype=real_dtype)
+    active = jnp.zeros((policy.maximum_sweeps,), dtype=bool)
+    target_values = target.precision.accumulation(target.tensors)
+    target_norm = jnp.real(_tuple_inner(target_values, target_values))
+    objective = _compression_objective(
+        target.precision.accumulation(candidate.tensors),
+        target_values,
+        target_norm,
+    )
+    objectives = objectives.at[0].set(objective)
+    converged = jnp.asarray(False)
+
+    for sweep in range(policy.maximum_sweeps):
+        candidate_values = target.precision.accumulation(candidate.tensors)
+        gradient = jax.grad(_compression_objective)(
+            candidate_values, target_values, target_norm
+        )
+        residual = jnp.sqrt(sum(jnp.real(jnp.vdot(value, value)) for value in gradient))
+        updated = MatrixProductState(
+            tuple(
+                value - policy.gradient_step * derivative
+                for value, derivative in zip(candidate.tensors, gradient, strict=True)
+            ),
+            precision=target.precision,
+        )
+        candidate, sweep_evidence = compress_mps(
+            updated,
+            maximum_bond_dimension=policy.maximum_bond_dimension,
+            normalize=False,
+        )
+        objective = _compression_objective(
+            target.precision.accumulation(candidate.tensors),
+            target_values,
+            target_norm,
+        )
+        objectives = objectives.at[sweep + 1].set(objective)
+        residuals = residuals.at[sweep].set(residual)
+        discarded = discarded.at[sweep].set(sweep_evidence.accumulated_discarded_weight)
+        active = active.at[sweep].set(True)
+        converged = residual <= policy.residual_tolerance
+        if bool(converged):
+            break
+    evidence = VariationalCompressionEvidence(
+        objectives,
+        residuals,
+        discarded,
+        active,
+        converged,
+        initial_evidence,
+    )
+    return candidate, evidence
+
+
 __all__ = [
     "ChainCompressionEvidence",
+    "VariationalCompressionEvidence",
+    "VariationalCompressionPolicy",
     "add_mpo",
     "adjoint_mpo",
     "apply_mpo",
+    "apply_mpo_exact",
     "compose_mpo",
     "compress_mpo",
     "compress_mps",
     "product_mpo",
+    "scale_mpo",
+    "variational_compress_mps",
 ]
