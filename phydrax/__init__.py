@@ -9,6 +9,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from . import ein as ein
+
 from . import (
     backends,
     combinatorial,
@@ -86,6 +88,7 @@ __all__ = [
     "topology",
     "domain",
     "dynamics",
+    "ein",
     "equations",
     "enforcement",
     "export",

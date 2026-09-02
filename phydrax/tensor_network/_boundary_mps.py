@@ -8,8 +8,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
@@ -83,7 +84,7 @@ class BoundaryMPSResult(StrictModule):
 
 def _double_tensor(tensor: Array, /) -> Array:
     shape = tuple(int(value * value) for value in tensor.shape[:4])
-    return oe.contract(
+    return ein.contract(
         "urdlp,URDLp->uUrRdDlL",
         jnp.conj(tensor),
         tensor,
@@ -143,7 +144,7 @@ def _compress_boundary(
         gauge = jnp.max(jnp.abs(jnp.conj(kept_u.T) @ kept_u - identity))
         values[column] = kept_u.reshape((left.shape[0], left.shape[1], retained))
         transfer = jnp.where(keep, kept_singular, 0.0)[:, None] * kept_vh
-        values[column + 1] = oe.contract(
+        values[column + 1] = ein.contract(
             "ka,adb->kdb", transfer, values[column + 1], optimize=False
         )
         errors.append(discarded)
@@ -177,7 +178,7 @@ def contract_peps_boundary_mps(
         for column in range(state.columns):
             transfer = transfers[row * state.columns + column]
             old = boundary[column]
-            candidate = oe.contract("aub,urdl->aldrb", old, transfer, optimize="greedy")
+            candidate = ein.contract("aub,urdl->aldrb", old, transfer, optimize="greedy")
             applied.append(
                 candidate.reshape(
                     (
@@ -201,7 +202,9 @@ def contract_peps_boundary_mps(
 
     message = jnp.ones((1,), dtype=boundary[0].dtype)
     for tensor in boundary:
-        message = oe.contract("a,adb->db", message, tensor, optimize=False).reshape((-1,))
+        message = ein.contract("a,adb->db", message, tensor, optimize=False).reshape(
+            (-1,)
+        )
     scalar = jnp.sum(message) * jnp.exp(logarithmic_scale)
     errors_array = (
         jnp.stack(tuple(truncation_errors))

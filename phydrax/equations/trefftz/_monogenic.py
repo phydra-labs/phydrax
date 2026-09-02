@@ -13,8 +13,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -298,7 +299,7 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
         ):
             monomials = jnp.prod(normalized[None, :] ** exponents, axis=1)
             features.append(
-                oe.contract("m,mrb->rb", monomials, coefficients, backend="jax")
+                ein.contract("m,mrb->rb", monomials, coefficients, backend="jax")
             )
         return jnp.concatenate(features, axis=0)
 
@@ -332,7 +333,7 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
                 / self.normalization.scale.astype(normalized.dtype) ** order_
             )
             features.append(
-                oe.contract("m,mrb->rb", monomials, coefficients, backend="jax")
+                ein.contract("m,mrb->rb", monomials, coefficients, backend="jax")
             )
         return jnp.concatenate(features, axis=0)
 
@@ -382,7 +383,7 @@ class LinearMonogenicField(AbstractArrayModel, StructuredDerivativeProvider):
         )
 
     def _contract(self, features: Array, /) -> Array:
-        values = oe.contract("cr,rb->cb", self.coefficients, features, backend="jax")
+        values = ein.contract("cr,rb->cb", self.coefficients, features, backend="jax")
         return values[0] if self.channels == 1 else values
 
     def __call__(self, point: Array, /, *, key: Any = None) -> Array:

@@ -11,8 +11,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -424,7 +425,7 @@ class ReferenceDeadTraction(AbstractMechanicalLoad):
         traction = _scalar_parameter(state, current.dtype) * _vector_field(
             self.traction, reference, state, args
         )
-        potential = -oe.contract("...i,...i->...", traction, current - reference)
+        potential = -ein.contract("...i,...i->...", traction, current - reference)
         return _single_evaluation(traction, potential, self, measure)
 
 
@@ -479,7 +480,7 @@ class ReferenceDeadBodyForce(AbstractMechanicalLoad):
         force = _scalar_parameter(state, current.dtype) * _vector_field(
             self.body_force, reference, state, args
         )
-        potential = -oe.contract("...i,...i->...", force, current - reference)
+        potential = -ein.contract("...i,...i->...", force, current - reference)
         return _single_evaluation(force, potential, self, measure)
 
 
@@ -660,7 +661,7 @@ class ClosedSurfacePressure(AbstractMechanicalLoad):
         assert current_normal is not None
         pressure = self.pressure_at_state(state, current.dtype)
         volume_density = (
-            oe.contract("...i,...i->...", current, current_normal) / current.shape[-1]
+            ein.contract("...i,...i->...", current, current_normal) / current.shape[-1]
         )
         volume = jnp.sum(volume_density * measure.current_measure)
         force = pressure * current_normal
@@ -786,7 +787,7 @@ class PneumaticPressure(AbstractMechanicalLoad):
         del reference, reference_normal, args
         assert current_normal is not None
         volume_density = (
-            oe.contract("...i,...i->...", current, current_normal) / current.shape[-1]
+            ein.contract("...i,...i->...", current, current_normal) / current.shape[-1]
         )
         volume = jnp.sum(volume_density * measure.current_measure)
         pressure = self.pressure_at_volume(volume, state)

@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -72,9 +73,13 @@ class _P1HypersingularAction3D(StrictModule, NonTrainableState):
         if value.shape != (self.vertex_count,):
             raise ValueError("P1 hypersingular input must have one value per vertex.")
         local = value[self.faces]
-        curl_density = oe.contract("fid,fi->fd", self.surface_curls, local, backend="jax")
+        curl_density = ein.contract(
+            "fid,fi->fd", self.surface_curls, local, backend="jax"
+        )
         acted = jax.vmap(self.single_layer.mv, in_axes=1, out_axes=1)(curl_density)
-        local_result = oe.contract("fid,fd->fi", self.surface_curls, acted, backend="jax")
+        local_result = ein.contract(
+            "fid,fd->fi", self.surface_curls, acted, backend="jax"
+        )
         result = jnp.zeros((self.vertex_count,), dtype=local_result.dtype)
         result = result.at[self.faces.reshape((-1,))].add(local_result.reshape((-1,)))
         if self.correction is not None:
@@ -86,11 +91,15 @@ class _P1HypersingularAction3D(StrictModule, NonTrainableState):
         if value.shape != (self.vertex_count,):
             raise ValueError("P1 hypersingular input must have one value per vertex.")
         local = value[self.faces]
-        curl_density = oe.contract("fid,fi->fd", self.surface_curls, local, backend="jax")
+        curl_density = ein.contract(
+            "fid,fi->fd", self.surface_curls, local, backend="jax"
+        )
         acted = jax.vmap(self.single_layer.transpose_mv, in_axes=1, out_axes=1)(
             curl_density
         )
-        local_result = oe.contract("fid,fd->fi", self.surface_curls, acted, backend="jax")
+        local_result = ein.contract(
+            "fid,fd->fi", self.surface_curls, acted, backend="jax"
+        )
         result = jnp.zeros((self.vertex_count,), dtype=local_result.dtype)
         result = result.at[self.faces.reshape((-1,))].add(local_result.reshape((-1,)))
         if self.correction is not None:
@@ -245,7 +254,7 @@ def _assemble_p1_blocks(
                     np.sum((scale * double_kernel)[:, None] * source_basis, axis=0)
                 )
                 normal_values.append(
-                    oe.contract(
+                    ein.contract(
                         "q,qi,qj->ij",
                         scale
                         * single_kernel

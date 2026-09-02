@@ -10,9 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax.discretization import (
@@ -79,7 +79,7 @@ class SphericalSpectralConv(StrictModule):
                 f"{self.in_channels}) input."
             )
         coefficients = plan.analysis(array)
-        transformed = oe.contract(
+        transformed = ein.contract(
             "...lmi,lio->...lmo",
             coefficients,
             self.weight,
@@ -186,9 +186,7 @@ class SFNO(AbstractOperatorModel):
         key: Key[Array, ""] = DOC_KEY0,
     ):
         if not isinstance(discretization, SphericalSpectralDiscretization):
-            raise TypeError(
-                "discretization must be a SphericalSpectralDiscretization."
-            )
+            raise TypeError("discretization must be a SphericalSpectralDiscretization.")
         plan = discretization.transform
         if plan.spin != 0 or not plan.reality:
             raise ValueError("SFNO currently requires a real spin-zero spherical space.")

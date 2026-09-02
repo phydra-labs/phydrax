@@ -11,8 +11,9 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
@@ -308,7 +309,7 @@ class BSplineGridTransfer(StrictModule, NonTrainableState):
             "B-spline projection coefficients must be finite.",
         )
         moved = jnp.moveaxis(coefficients_, axis, -1)
-        projected = oe.contract("ji,...i->...j", self.matrix, moved)
+        projected = ein.contract("ji,...i->...j", self.matrix, moved)
         return jnp.moveaxis(projected, -1, axis)
 
 

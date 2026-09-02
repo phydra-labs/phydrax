@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -94,7 +95,7 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
         )
 
     def contents(self, nodal_state: ArrayLike, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "si,...iv->...sv",
             self.dg_to_subcell,
             jnp.asarray(nodal_state),
@@ -105,7 +106,7 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
         return self.contents(nodal_state) / self.subcell_volumes[:, None]
 
     def reconstruct(self, subcell_contents: ArrayLike, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "is,...sv->...iv",
             self.subcell_to_dg,
             jnp.asarray(subcell_contents),

@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -259,7 +260,7 @@ class PreparedViscousDGOperator(StrictModule):
 
     def _differentiate(self, value: Array, axis: int, /) -> Array:
         moved = jnp.moveaxis(value, axis + 1, 1)
-        differentiated = oe.contract(
+        differentiated = ein.contract(
             "ij,cj...->ci...",
             self.dynamics.sbp.derivative_matrix,
             moved,
@@ -273,7 +274,7 @@ class PreparedViscousDGOperator(StrictModule):
             axis=-1,
         )
         return (
-            oe.contract(
+            ein.contract(
                 "c...ia,c...ak->c...ik",
                 reference,
                 self.dynamics.metrics.contravariant_cofactors,
@@ -285,7 +286,7 @@ class PreparedViscousDGOperator(StrictModule):
     def _face_weights(self) -> Array:
         result = self.dynamics.sbp.norm_weights
         for _axis in range(1, self._dimension - 1):
-            result = oe.contract("...i,j->...ij", result, self.dynamics.sbp.norm_weights)
+            result = ein.contract("...i,j->...ij", result, self.dynamics.sbp.norm_weights)
         return result.reshape((-1,))
 
     def _local_mass(self) -> Array:
@@ -364,7 +365,7 @@ class PreparedViscousDGOperator(StrictModule):
                 pair.owner_cell, pair.owner_side
             ].reshape((-1, self._dimension))
             measure = jnp.sqrt(
-                oe.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
+                ein.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
             )
             normal = scaled_normal / measure[:, None]
             common = 0.5 * (plus + minus) + self.plan.beta * (plus - minus)
@@ -406,7 +407,7 @@ class PreparedViscousDGOperator(StrictModule):
                         int(owner_cell), side
                     ].reshape((-1, self._dimension))
                     measure = jnp.sqrt(
-                        oe.contract(
+                        ein.contract(
                             "qd,qd->q", scaled_normal, scaled_normal, backend="jax"
                         )
                     )
@@ -438,7 +439,7 @@ class PreparedViscousDGOperator(StrictModule):
         gradient = self.corrected_gradient(time, value, args)
         context = self.dynamics._context(jnp.asarray(time), args)
         flux = self.dynamics.system.viscous_flux(local, gradient, context.user_args)
-        contravariant = oe.contract(
+        contravariant = ein.contract(
             "c...ik,c...ak->c...ia",
             flux,
             self.dynamics.metrics.contravariant_cofactors,
@@ -470,11 +471,11 @@ class PreparedViscousDGOperator(StrictModule):
                 pair.owner_cell, pair.owner_side
             ].reshape((-1, self._dimension))
             measure = jnp.sqrt(
-                oe.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
+                ein.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
             )
             normal = scaled_normal / measure[:, None]
-            plus_normal = oe.contract("qik,qk->qi", plus_flux, normal, backend="jax")
-            minus_normal = oe.contract("qik,qk->qi", minus_flux, normal, backend="jax")
+            plus_normal = ein.contract("qik,qk->qi", plus_flux, normal, backend="jax")
+            minus_normal = ein.contract("qik,qk->qi", minus_flux, normal, backend="jax")
             common = (
                 0.5 * (plus_normal + minus_normal)
                 + self.plan.beta * (plus_normal - minus_normal)
@@ -520,7 +521,7 @@ class PreparedViscousDGOperator(StrictModule):
                         int(owner_cell), side
                     ].reshape((-1, self._dimension))
                     measure = jnp.sqrt(
-                        oe.contract(
+                        ein.contract(
                             "qd,qd->q", scaled_normal, scaled_normal, backend="jax"
                         )
                     )
@@ -537,10 +538,10 @@ class PreparedViscousDGOperator(StrictModule):
                     exterior_flux = self.dynamics.system.viscous_flux(
                         exterior, plus_gradient, local_context.user_args
                     )
-                    plus_normal = oe.contract(
+                    plus_normal = ein.contract(
                         "qik,qk->qi", plus_flux, normal, backend="jax"
                     )
-                    exterior_normal = oe.contract(
+                    exterior_normal = ein.contract(
                         "qik,qk->qi", exterior_flux, normal, backend="jax"
                     )
                     common = (
@@ -557,7 +558,7 @@ class PreparedViscousDGOperator(StrictModule):
                             local_context.user_args,
                         )
                         traction = common[..., 1 : 1 + self._dimension]
-                        mechanical = oe.contract(
+                        mechanical = ein.contract(
                             "i,qi->q",
                             patch.boundary.wall_velocity.astype(common.dtype),
                             traction,

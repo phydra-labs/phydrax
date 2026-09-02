@@ -24,7 +24,12 @@ from ..data import (
     OperatorPrediction,
     OperatorTargetBatch,
 )
-from ._losses import AbstractOperatorLossTerm, OperatorLossContext
+from ._losses import (
+    _weighted_case_reduction,
+    AbstractOperatorLossTerm,
+    OperatorAccumulationKind,
+    OperatorLossContext,
+)
 
 
 OperatorSupportReduction = Literal["mean", "integral"]
@@ -132,10 +137,13 @@ def _handle_zero_measure(
 def _reduce_cases(
     values: Array,
     reduction: OperatorCaseReduction,
+    context: OperatorLossContext | None,
     /,
     *,
     active: Array | None = None,
 ) -> Array:
+    if context is not None:
+        return _weighted_case_reduction(values, context, reduction)
     if reduction == "sum":
         return jnp.sum(values)
     if active is None:
@@ -155,6 +163,7 @@ def _reduce_pointwise(
     support_reduction: OperatorSupportReduction,
     case_reduction: OperatorCaseReduction,
     zero_measure: OperatorZeroMeasure,
+    context: OperatorLossContext | None,
 ) -> Array:
     scores = jnp.asarray(pointwise)
     expected = case_shape + query.sample_shape
@@ -172,7 +181,12 @@ def _reduce_pointwise(
             jnp.zeros_like(per_case),
         )
     per_case = _handle_zero_measure(per_case, measure, zero_measure)
-    return _reduce_cases(per_case, case_reduction, active=measure > 0.0)
+    return _reduce_cases(
+        per_case,
+        case_reduction,
+        context,
+        active=measure > 0.0,
+    )
 
 
 def _fingerprint(kind: str, values: dict[str, Any], /) -> str:
@@ -203,6 +217,7 @@ def _pointwise_term(
     term: Any,
     prediction: OperatorPrediction,
     targets: OperatorTargetBatch,
+    context: OperatorLossContext,
     /,
     *,
     objective: Literal["nll", "soft_cross_entropy", "focal"],
@@ -246,6 +261,7 @@ def _pointwise_term(
         score,
         query,
         prediction.case_shape,
+        context=context,
         support_reduction=term.support_reduction,
         case_reduction=term.case_reduction,
         zero_measure=term.zero_measure,
@@ -284,8 +300,18 @@ class OperatorClassificationNLL(AbstractOperatorLossTerm):
         training: bool,
         context: OperatorLossContext,
     ) -> Array:
-        del model, batch, key, step, training, context
-        return _pointwise_term(self, prediction, targets, objective="nll")
+        del model, batch, key, step, training
+        return _pointwise_term(
+            self,
+            prediction,
+            targets,
+            context,
+            objective="nll",
+        )
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean" if self.case_reduction == "mean" else "single_batch"
 
     @property
     def fingerprint(self) -> str:
@@ -323,13 +349,18 @@ class OperatorSoftClassificationLoss(AbstractOperatorLossTerm):
         training: bool,
         context: OperatorLossContext,
     ) -> Array:
-        del model, batch, key, step, training, context
+        del model, batch, key, step, training
         return _pointwise_term(
             self,
             prediction,
             targets,
+            context,
             objective="soft_cross_entropy",
         )
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean" if self.case_reduction == "mean" else "single_batch"
 
     @property
     def fingerprint(self) -> str:
@@ -416,15 +447,20 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
         training: bool,
         context: OperatorLossContext,
     ) -> Array:
-        del model, batch, key, step, training, context
+        del model, batch, key, step, training
         return _pointwise_term(
             self,
             prediction,
             targets,
+            context,
             objective="focal",
             gamma=self.gamma,
             alpha=self.alpha,
         )
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean" if self.case_reduction == "mean" else "single_batch"
 
     @property
     def fingerprint(self) -> str:
@@ -536,7 +572,7 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
     ) -> Array:
         if self.weight == 0.0:
             return jnp.zeros((), dtype=float)
-        del model, batch, key, step, training, context
+        del model, batch, key, step, training
         logits, target, query = _resolve_fields(
             prediction,
             targets,
@@ -698,9 +734,14 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
         value = _reduce_cases(
             per_case,
             self.case_reduction,
+            context,
             active=measure > 0.0,
         )
         return jnp.asarray(self.weight, dtype=value.dtype) * value
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean" if self.case_reduction == "mean" else "single_batch"
 
     @property
     def fingerprint(self) -> str:

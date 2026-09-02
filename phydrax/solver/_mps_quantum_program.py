@@ -9,8 +9,9 @@ from math import isfinite, prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -329,7 +330,7 @@ def _contract_window(state, route):
     )
     window = tensors[0]
     for tensor in tensors[1:]:
-        window = oe.contract("l...a,apb->l...pb", window, tensor)
+        window = ein.contract("l...a,apb->l...pb", window, tensor)
     return window
 
 
@@ -354,7 +355,7 @@ def _apply_unitary(window, route, physical_dimensions, unitary):
         for position in route.target_positions
     )
     gate = unitary.reshape(target_dimensions + target_dimensions)
-    return oe.contract(
+    return ein.contract(
         window,
         [0] + physical_labels + [span + 1],
         gate,

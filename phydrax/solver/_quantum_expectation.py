@@ -9,8 +9,9 @@ from math import isfinite, prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -206,7 +207,7 @@ def _state_reduced_density(
     ordered = jnp.transpose(state.reshape(batch_shape + local_dimensions), permutation)
     target_dimension = prod(local_dimensions[index] for index in target_indices)
     grouped = ordered.reshape(batch_shape + (-1, target_dimension))
-    return oe.contract("...ri,...rj->...ij", grouped, jnp.conj(grouped))
+    return ein.contract("...ri,...rj->...ij", grouped, jnp.conj(grouped))
 
 
 def _density_reduced_density(
@@ -235,7 +236,7 @@ def _density_reduced_density(
         + [bra_labels[index] for index in target_indices]
     )
     tensor = density.reshape(batch_shape + local_dimensions + local_dimensions)
-    reduced = oe.contract(
+    reduced = ein.contract(
         tensor,
         batch_labels + ket_labels + bra_labels,
         output_labels,
@@ -289,7 +290,7 @@ def evaluate_dense_quantum_observables(
             [plan.observables[index].matrix for index in indices],
             axis=0,
         )
-        group_values = oe.contract("...ij,kji->...k", reduced, matrices)
+        group_values = ein.contract("...ij,kji->...k", reduced, matrices)
         for local_index, output_index in enumerate(indices):
             outputs[output_index] = group_values[..., local_index]
     values = jnp.stack(outputs, axis=-1)

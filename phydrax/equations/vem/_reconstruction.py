@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._polynomial import ScaledMonomialBasis
@@ -60,10 +61,10 @@ def project_virtual_element_field(
         strict=True,
     ):
         local = values[gathers] * orientations
-        l2.append(oe.contract("cai,ci->ca", projection.l2_coefficients, local))
-        h1.append(oe.contract("cai,ci->ca", projection.h1_coefficients, local))
+        l2.append(ein.contract("cai,ci->ca", projection.l2_coefficients, local))
+        h1.append(ein.contract("cai,ci->ca", projection.h1_coefficients, local))
         differential.append(
-            oe.contract("cai,ci->ca", projection.differential_coefficients, local)
+            ein.contract("cai,ci->ca", projection.differential_coefficients, local)
         )
     return VirtualElementReconstruction(
         l2_coefficients=tuple(l2),
@@ -131,20 +132,20 @@ def evaluate_virtual_element_reconstruction(
         vector_coefficients = coefficients.reshape(
             (coefficients.shape[0], 2, projection.basis.feature_count)
         )
-        value = oe.contract("cqa,cda->cqd", basis, vector_coefficients)
+        value = ein.contract("cqa,cda->cqd", basis, vector_coefficients)
         differential_basis = ScaledMonomialBasis(2, projection.differential_degree)
         differential_values = differential_basis.evaluate(
             points_,
             geometry.centroids[indices],
             geometry.characteristic_lengths[indices],
         )
-        differential = oe.contract(
+        differential = ein.contract(
             "cqa,ca->cq",
             differential_values,
             reconstruction.differential_coefficients[block][indices],
         )
         return value, differential
-    value = oe.contract("cqa,ca->cq", basis, coefficients)
+    value = ein.contract("cqa,ca->cq", basis, coefficients)
     if projection.family == "DiscontinuousL2":
         return value, None
     gradient_basis = projection.basis.gradient(
@@ -152,7 +153,7 @@ def evaluate_virtual_element_reconstruction(
         geometry.centroids[indices],
         geometry.characteristic_lengths[indices],
     )
-    gradient = oe.contract(
+    gradient = ein.contract(
         "cqad,ca->cqd", gradient_basis, reconstruction.h1_coefficients[block][indices]
     )
     return value, gradient
@@ -209,16 +210,13 @@ def evaluate_virtual_element_trace(
             routes.append(offset + edges * (degree - 1) + interior)
         routes.append(connectivity[:, 1])
         gathered = reconstruction.state[jnp.stack(tuple(routes), axis=1)]
-        return oe.contract("qi,ei->eq", basis_values, gathered)
+        return ein.contract("qi,ei->eq", basis_values, gathered)
     values = [jnp.ones_like(parameters_)]
     if degree:
         values.append(parameters_)
     for order in range(2, degree + 1):
         values.append(
-            (
-                (2 * order - 1) * parameters_ * values[-1]
-                - (order - 1) * values[-2]
-            )
+            ((2 * order - 1) * parameters_ * values[-1] - (order - 1) * values[-2])
             / order
         )
     dual = 2 * jnp.arange(degree + 1, dtype=parameters_.dtype) + 1
@@ -226,7 +224,7 @@ def evaluate_virtual_element_trace(
     modes = jnp.arange(degree + 1, dtype=jnp.int32)
     routes = offset + edges[:, None] * (degree + 1) + modes[None, :]
     gathered = reconstruction.state[routes]
-    return oe.contract("qi,ei->eq", basis_values, gathered)
+    return ein.contract("qi,ei->eq", basis_values, gathered)
 
 
 __all__ = [

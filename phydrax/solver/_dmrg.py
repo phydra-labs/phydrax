@@ -10,8 +10,9 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -408,7 +409,7 @@ def _solve_two_site(
     precision = state.precision
     left = precision.contraction(state.tensors[bond])
     right = precision.contraction(state.tensors[bond + 1])
-    theta = oe.contract("lpi,iqr->lpqr", left, right)
+    theta = ein.contract("lpi,iqr->lpqr", left, right)
     action = TwoSiteMPOEffectiveAction(
         precision.accumulation(left_environment),
         precision.accumulation(hamiltonian.tensors[bond]),
@@ -501,7 +502,7 @@ def _projected_galerkin_residual(
         centered, _ = canonicalize_mps(state, center=bond, normalize=True)
         environments = prepare_chain_environments(centered, hamiltonian, centered)
         action = two_site_effective_action(environments, bond)
-        theta = oe.contract(
+        theta = ein.contract(
             "lpi,iqr->lpqr",
             centered.precision.contraction(centered.tensors[bond]),
             centered.precision.contraction(centered.tensors[bond + 1]),

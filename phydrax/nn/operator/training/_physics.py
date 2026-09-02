@@ -15,8 +15,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
@@ -26,7 +27,12 @@ from ..data import (
     OperatorFieldBatch,
     OperatorPrediction,
 )
-from ._losses import AbstractOperatorLossTerm, OperatorLossContext
+from ._losses import (
+    _weighted_case_reduction,
+    AbstractOperatorLossTerm,
+    OperatorAccumulationKind,
+    OperatorLossContext,
+)
 
 
 OperatorReduction = Literal["none", "mean", "sum"]
@@ -103,7 +109,7 @@ def operator_hilbert_inner_product(
             raise ValueError(
                 f"channel_metric must have shape {(channels, channels)}; got {metric.shape}."
             )
-        density = oe.contract(
+        density = ein.contract(
             "...i,ij,...j->...",
             jnp.conj(left_array),
             metric,
@@ -533,7 +539,7 @@ def operator_weak_form_loss(
     residual_flat = residual_array.reshape((case_count, sample_count, channel_count))
     tests_flat = tests.reshape((case_count, sample_count, tests.shape[-1]))
     weights = query.weights(case_shape=case).reshape((case_count, sample_count))
-    moments = oe.contract(
+    moments = ein.contract(
         "cst,csk,cs->ctk",
         jnp.conj(tests_flat),
         residual_flat,
@@ -541,7 +547,7 @@ def operator_weak_form_loss(
     )
     energy = jnp.abs(moments) ** 2
     if normalize_tests:
-        test_energy = oe.contract(
+        test_energy = ein.contract(
             "cst,cst,cs->ct",
             jnp.conj(tests_flat),
             tests_flat,
@@ -616,14 +622,20 @@ class WeakOperatorLoss(AbstractOperatorLossTerm):
             step=step,
             training=training,
         )
-        value = operator_weak_form_loss(
+        case_values = operator_weak_form_loss(
             residual,
             tests,
             selected_batch.query(query_name),
             case_shape=selected_batch.case_shape,
             normalize_tests=self.normalize_tests,
+            reduction="none",
         )
+        value = _weighted_case_reduction(case_values, context, "mean")
         return jnp.asarray(self.weight, dtype=jnp.asarray(value).dtype) * value
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean"
 
     @property
     def fingerprint(self) -> str:

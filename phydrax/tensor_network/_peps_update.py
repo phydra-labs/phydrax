@@ -8,8 +8,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
@@ -133,7 +134,7 @@ def _two_site_matrix(
     if direction == "right":
         if first.shape[1] != second.shape[3]:
             raise ValueError("Horizontal PEPS update bond dimensions differ.")
-        tensor = oe.contract(
+        tensor = ein.contract(
             "axbcp,defxq,PQpq->abcPdefQ",
             first,
             second,
@@ -145,7 +146,7 @@ def _two_site_matrix(
     else:
         if first.shape[2] != second.shape[0]:
             raise ValueError("Vertical PEPS update bond dimensions differ.")
-        tensor = oe.contract(
+        tensor = ein.contract(
             "abxcp,xdefq,PQpq->abcPdefQ",
             first,
             second,

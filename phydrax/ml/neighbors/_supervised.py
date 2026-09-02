@@ -9,8 +9,9 @@ from typing import Any, ClassVar, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel
 from ..._model._binding import ModelBinding
@@ -1133,7 +1134,7 @@ class NearestCentroidRecipe(AbstractRecipe):
         )
         one_hot = jax.nn.one_hot(labels, self.class_count)
         class_weight = jnp.sum(weights[..., :, None] * one_hot, axis=-2)
-        centroids = oe.contract(
+        centroids = ein.contract(
             "...nc,...nf->...cf", weights[..., :, None] * one_hot, x
         ) / jnp.maximum(class_weight[..., :, None], jnp.finfo(weights.dtype).tiny)
         class_mask = class_weight > 0

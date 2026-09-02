@@ -291,11 +291,13 @@ nav:
         - Quantum operators and dynamics: "guides_quantum.md"
         - Local quantum programs: "guides_quantum_programs.md"
         - Circuit-QED device modeling: "guides_circuit_qed.md"
+        - Einstein operations: "guides_ein.md"
         - Tensor platform: "guides_tensor_platform.md"
     - Examples:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
+        - Einstein operations: "api/ein.md"
         - Variational substrate: "api/variational.md"
         - Tensor trains and quantics: "api/tensor_train.md"
         - Tensor-network platform: "api/tensor_network.md"

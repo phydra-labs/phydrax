@@ -9,8 +9,9 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -137,7 +138,7 @@ def _lift_physical_mpo(operator: MatrixProductOperator, /) -> MatrixProductOpera
         operator.tensors, operator.input_dimensions, strict=True
     ):
         identity = jnp.eye(dimension, dtype=tensor.dtype)
-        lifted = oe.contract("apqb,kl->apkqlb", tensor, identity)
+        lifted = ein.contract("apqb,kl->apkqlb", tensor, identity)
         tensors.append(
             lifted.reshape(
                 (

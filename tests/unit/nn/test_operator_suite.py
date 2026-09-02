@@ -161,6 +161,8 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "WaveletNeuralOperator",
             "MultiwaveletOperator",
             "ManifoldSpectralOperator",
+            "ChemicalConditionalAffineOperator",
+            "ConditionalFunctionFrameFlowOperator",
             "CoordinateConditionedOperator",
             "ConditionalFunctionFrameFlowOperator",
             "UPT",

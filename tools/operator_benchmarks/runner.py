@@ -331,6 +331,8 @@ def _train_operator_with_trace(
     steps: int = 100,
     learning_rate: float = 1e-3,
     trainable: bool = True,
+    batch_size: int | None = None,
+    gradient_accumulation: int = 1,
     validation_interval: int = 10,
     patience: int | None = None,
     minimum_delta: float = 0.0,
@@ -345,6 +347,10 @@ def _train_operator_with_trace(
     """Adapt an immutable benchmark scenario to the production operator fitter."""
     if int(steps) < 0:
         raise ValueError("steps must be non-negative.")
+    if batch_size is not None and int(batch_size) <= 0:
+        raise ValueError("batch_size must be positive when supplied.")
+    if int(gradient_accumulation) <= 0:
+        raise ValueError("gradient_accumulation must be positive.")
     if int(validation_interval) <= 0:
         raise ValueError("validation_interval must be positive.")
     if patience is not None and int(patience) <= 0:
@@ -423,7 +429,8 @@ def _train_operator_with_trace(
         learning_rate=float(learning_rate),
         epochs=max(int(steps), 1),
         steps=int(steps) if trainable else 0,
-        batch_size=training_data.size,
+        batch_size=training_data.size if batch_size is None else int(batch_size),
+        gradient_accumulation=int(gradient_accumulation),
         validation_batch_size=validation_data.size,
         shuffle=False,
         seed=int(scenario.seed),
@@ -489,6 +496,8 @@ def train_operator(
     steps: int = 100,
     learning_rate: float = 1e-3,
     trainable: bool = True,
+    batch_size: int | None = None,
+    gradient_accumulation: int = 1,
     validation_interval: int = 10,
     patience: int | None = None,
     minimum_delta: float = 0.0,
@@ -507,6 +516,8 @@ def train_operator(
         steps=steps,
         learning_rate=learning_rate,
         trainable=trainable,
+        batch_size=batch_size,
+        gradient_accumulation=gradient_accumulation,
         validation_interval=validation_interval,
         patience=patience,
         minimum_delta=minimum_delta,
@@ -924,6 +935,8 @@ def run_operator_benchmark(
     architecture_configuration: tuple[tuple[str, str], ...] = (),
     seed: int = 0,
     trainable: bool = True,
+    batch_size: int | None = None,
+    gradient_accumulation: int = 1,
     validation_interval: int = 10,
     patience: int | None = None,
     minimum_delta: float = 0.0,
@@ -956,6 +969,8 @@ def run_operator_benchmark(
         steps=steps,
         learning_rate=learning_rate,
         trainable=trainable,
+        batch_size=batch_size,
+        gradient_accumulation=gradient_accumulation,
         validation_interval=validation_interval,
         patience=patience,
         minimum_delta=minimum_delta,

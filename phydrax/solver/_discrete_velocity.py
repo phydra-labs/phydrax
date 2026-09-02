@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -104,7 +105,7 @@ class PreparedConservativeFiniteVolumeDVM(StrictModule, NonTrainableState):
             time, values, args
         )
         population_defect = diagnostics.conservation_defect
-        moment_defect = oe.contract(
+        moment_defect = ein.contract(
             "mq,q->m", self.declared_moment_matrix, population_defect
         )
         return residual, FiniteVolumeDVMResidualEvidence(

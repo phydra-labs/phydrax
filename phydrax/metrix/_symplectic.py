@@ -11,8 +11,9 @@ from math import factorial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import inverse as matrix_inverse
@@ -164,7 +165,7 @@ class _PoissonBracketEvaluator(StrictModule):
         right_value = jnp.asarray(self.right(coordinates))
         if left_value.shape != () or right_value.shape != ():
             raise ValueError("Poisson brackets require scalar functions.")
-        return oe.contract(
+        return ein.contract(
             "i,ij,j->",
             jax.grad(self.left)(coordinates),
             self.poisson.bivector_function(coordinates),
@@ -306,9 +307,9 @@ def poisson_jacobi_tensor(
     def pointwise(point: Array) -> Array:
         bivector = poisson.bivector_function(point)
         derivative = jax.jacfwd(poisson.bivector_function)(point)
-        first = oe.contract("il,jkl->ijk", bivector, derivative)
-        second = oe.contract("jl,kil->ijk", bivector, derivative)
-        third = oe.contract("kl,ijl->ijk", bivector, derivative)
+        first = ein.contract("il,jkl->ijk", bivector, derivative)
+        second = ein.contract("jl,kil->ijk", bivector, derivative)
+        third = ein.contract("kl,ijl->ijk", bivector, derivative)
         return first + second + third
 
     return _pointwise_array(pointwise, coordinates, poisson.chart.dimension)
@@ -343,7 +344,7 @@ def symplecticity_residual(
         raise ValueError("Map and symplectic-form charts are incompatible.")
     jacobian = map.jacobian(coordinates)
     target_matrix = target.matrix(map(coordinates))
-    pullback = oe.contract("...ai,...ab,...bj->...ij", jacobian, target_matrix, jacobian)
+    pullback = ein.contract("...ai,...ab,...bj->...ij", jacobian, target_matrix, jacobian)
     return jnp.max(jnp.abs(pullback - source.matrix(coordinates)), axis=(-2, -1))
 
 

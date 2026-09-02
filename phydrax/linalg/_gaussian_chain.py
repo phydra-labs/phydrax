@@ -12,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._dense_inverse import dense_inverse
@@ -71,7 +72,7 @@ def _solve(matrix: Array, right: Array, /) -> Array:
 
 
 def _matvec(matrix: Array, vector: Array, /) -> Array:
-    return oe.contract("...ij,...j->...i", matrix, vector)
+    return ein.contract("...ij,...j->...i", matrix, vector)
 
 
 def combine_gaussian_filter_elements(
@@ -154,7 +155,7 @@ def _observation_conditioned_elements(
     predicted_residual = (
         observations
         - observation_offsets
-        - oe.contract("...ij,...j->...i", effective_matrix, offsets)
+        - ein.contract("...ij,...j->...i", effective_matrix, offsets)
     )
     innovation_covariance = (
         effective_matrix @ process_covariances @ jnp.swapaxes(effective_matrix, -1, -2)
@@ -178,7 +179,7 @@ def _observation_conditioned_elements(
     transition_observation = effective_matrix @ transitions
     solved_residual = _solve(innovation_covariance, predicted_residual[..., None])[..., 0]
     solved_transition = _solve(innovation_covariance, transition_observation)
-    information_vector = oe.contract(
+    information_vector = ein.contract(
         "...ji,...j->...i", transition_observation, solved_residual
     )
     information_matrix = jnp.swapaxes(transition_observation, -1, -2) @ solved_transition
@@ -265,7 +266,7 @@ def associative_gaussian_smoother(
     )
     pair_valid = valid[:-1] & valid[1:]
     gains = jnp.where(pair_valid[..., None, None], gains, 0.0)
-    conditional_offsets = filtered_means[:-1] - oe.contract(
+    conditional_offsets = filtered_means[:-1] - ein.contract(
         "...ij,...j->...i", gains, predicted_means[1:]
     )
     conditional_covariances = filtered_covariances[:-1] - (
@@ -1356,7 +1357,7 @@ def sample_gaussian_markov(
         )(member_keys_)
     )(keys)
     initial_factor = jnp.linalg.cholesky(covariances[:, 0])
-    initial = means[None, :, 0, :] + oe.contract(
+    initial = means[None, :, 0, :] + ein.contract(
         "cij,scj->sci", initial_factor, normals[:, :, 0, :]
     )
     initial = jnp.where(node_valid[None, :, 0, None], initial, 0.0)
@@ -1382,9 +1383,9 @@ def sample_gaussian_markov(
         def sample_step(previous, inputs):
             transition_, offset_, factor_, normal_, active_ = inputs
             value = (
-                oe.contract("cij,scj->sci", transition_, previous)
+                ein.contract("cij,scj->sci", transition_, previous)
                 + offset_[None, ...]
-                + oe.contract("cij,scj->sci", factor_, normal_)
+                + ein.contract("cij,scj->sci", factor_, normal_)
             )
             value = jnp.where(active_[None, :, None], value, 0.0)
             return value, value

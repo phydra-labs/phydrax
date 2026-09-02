@@ -9,8 +9,9 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -156,9 +157,9 @@ class FiniteElementHPTopology(StrictModule, NonTrainableState):
                     raise ValueError("hp parent routes or tree identities are invalid.")
             local_children = children[slot, children_valid[slot]]
             if local_children.size:
-                if (
-                    active_[slot] and np.any(active_[local_children])
-                ) or np.unique(local_children).size != local_children.size:
+                if (active_[slot] and np.any(active_[local_children])) or np.unique(
+                    local_children
+                ).size != local_children.size:
                     raise ValueError(
                         "An active hp leaf cannot own active allocated children."
                     )
@@ -629,7 +630,7 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
             jnp.arange(matrices.shape[2])[None, :] < self.source_dof_count[:, None]
         ).reshape((matrices.shape[0], matrices.shape[2]) + (1,) * (values.ndim - 2))
         local = jnp.where(source_mask, local, 0.0)
-        mapped = oe.contract("rts,rs...->rt...", matrices, local)
+        mapped = ein.contract("rts,rs...->rt...", matrices, local)
         target_mask = (
             jnp.arange(matrices.shape[1])[None, :] < self.target_dof_count[:, None]
         ).reshape((matrices.shape[0], matrices.shape[1]) + (1,) * (values.ndim - 2))
@@ -657,7 +658,7 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
             jnp.arange(matrices.shape[2])[None, :] < self.target_dof_count[:, None]
         ).reshape((matrices.shape[0], matrices.shape[2]) + (1,) * (values.ndim - 2))
         local = jnp.where(target_mask, local, 0.0)
-        mapped = oe.contract("rst,rt...->rs...", matrices, local)
+        mapped = ein.contract("rst,rt...->rs...", matrices, local)
         source_mask = (
             jnp.arange(matrices.shape[1])[None, :] < self.source_dof_count[:, None]
         ).reshape((matrices.shape[0], matrices.shape[1]) + (1,) * (values.ndim - 2))

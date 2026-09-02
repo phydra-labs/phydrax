@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -262,16 +263,16 @@ def prepare_algebra_derivations(
         dtype=policy.dtype,
     )
     matrices = jnp.swapaxes(basis, 0, 1).reshape((nullity, dimension, dimension))
-    unit_residual = _maximum_or_zero(oe.contract("nij,j->ni", matrices, unit))
+    unit_residual = _maximum_or_zero(ein.contract("nij,j->ni", matrices, unit))
     if nullity:
-        commutators = oe.contract("aij,bjk->abik", matrices, matrices) - oe.contract(
+        commutators = ein.contract("aij,bjk->abik", matrices, matrices) - ein.contract(
             "bij,ajk->abik",
             matrices,
             matrices,
         )
         flattened = commutators.reshape((nullity, nullity, constraint.variable_count))
         projector = basis @ jnp.swapaxes(jnp.conj(basis), -1, -2)
-        projected = oe.contract("...v,vw->...w", flattened, projector)
+        projected = ein.contract("...v,vw->...w", flattened, projector)
         closure_residual = _maximum_or_zero(flattened - projected)
     else:
         closure_residual = jnp.asarray(0.0, dtype=policy.dtype)

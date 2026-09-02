@@ -11,8 +11,9 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
@@ -223,12 +224,12 @@ class RecedingHorizonMPC(StrictModule):
             previous_solution = local_solution
             applied_control = local_solution.controls[..., 0, :]
             next_state = (
-                oe.contract(
+                ein.contract(
                     "...ij,...j->...i",
                     specification.dynamics_matrices[..., stage, :, :],
                     current_state,
                 )
-                + oe.contract(
+                + ein.contract(
                     "...ij,...j->...i",
                     specification.control_matrices[..., stage, :, :],
                     applied_control,
@@ -367,12 +368,12 @@ class RecedingHorizonMPC(StrictModule):
         current = problem.initial_state
         for stage in range(horizon):
             current = (
-                oe.contract(
+                ein.contract(
                     "...ij,...j->...i",
                     problem.dynamics_matrices[..., stage, :, :],
                     current,
                 )
-                + oe.contract(
+                + ein.contract(
                     "...ij,...j->...i",
                     problem.control_matrices[..., stage, :, :],
                     controls[..., stage, :],
@@ -474,7 +475,7 @@ class RecedingHorizonMPC(StrictModule):
             )
         inequality_slack = jnp.maximum(
             qp.inequality_rhs[..., : qp.num_user_inequalities]
-            - oe.contract(
+            - ein.contract(
                 "...ij,...j->...i",
                 qp.inequality_matrix[..., : qp.num_user_inequalities, :],
                 primal,
@@ -659,37 +660,37 @@ def _realized_objective(
     /,
 ) -> Array:
     stages = states[..., :-1, :]
-    state_quadratic = 0.5 * oe.contract(
+    state_quadratic = 0.5 * ein.contract(
         "...ti,...tij,...tj->...t",
         stages,
         specification.state_costs,
         stages,
     )
-    control_quadratic = 0.5 * oe.contract(
+    control_quadratic = 0.5 * ein.contract(
         "...ti,...tij,...tj->...t",
         controls,
         specification.control_costs,
         controls,
     )
-    cross = oe.contract(
+    cross = ein.contract(
         "...ti,...tij,...tj->...t",
         stages,
         specification.state_control_cross,
         controls,
     )
-    stage_linear = oe.contract(
+    stage_linear = ein.contract(
         "...ti,...ti->...t", specification.state_linear, stages
-    ) + oe.contract("...ti,...ti->...t", specification.control_linear, controls)
+    ) + ein.contract("...ti,...ti->...t", specification.control_linear, controls)
     final_state = states[..., -1, :]
     terminal = (
         0.5
-        * oe.contract(
+        * ein.contract(
             "...i,...ij,...j->...",
             final_state,
             specification.terminal_state_cost,
             final_state,
         )
-        + oe.contract("...i,...i->...", specification.terminal_linear, final_state)
+        + ein.contract("...i,...i->...", specification.terminal_linear, final_state)
         + specification.terminal_constant
     )
     return (

@@ -8,8 +8,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -83,7 +84,7 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
         normal_velocity_derivative = (
             velocity[safe_neighbour]
             - velocity[owner]
-            - oe.contract(
+            - ein.contract(
                 "fij,fj->fi",
                 average_velocity_gradient,
                 tangential_connector,
@@ -97,7 +98,7 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
                 axis=-1,
             )
         ) / projected_distance
-        current_velocity_normal = oe.contract(
+        current_velocity_normal = ein.contract(
             "fij,fj->fi", average_velocity_gradient, normal
         )
         current_temperature_normal = jnp.sum(
@@ -162,7 +163,7 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
                 owner_velocity_gradient
                 + (
                     boundary_velocity_derivative
-                    - oe.contract("fij,fj->fi", owner_velocity_gradient, normal)
+                    - ein.contract("fij,fj->fi", owner_velocity_gradient, normal)
                 )[..., :, None]
                 * normal[:, None, :]
             )
@@ -208,7 +209,7 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
             bulk_face,
             conductivity_face,
         )
-        normal_flux = oe.contract("fij,fj->fi", viscous_flux, normal, backend="jax")
+        normal_flux = ein.contract("fij,fj->fi", viscous_flux, normal, backend="jax")
         traction = normal_flux[:, 1 : 1 + system.dimension]
         energy = normal_flux[:, -1]
         for patch_id, policy in enumerate(boundaries.boundaries):

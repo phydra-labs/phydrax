@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -59,7 +60,7 @@ class AbstractItoScoreDiffusion(StrictModule):
     ) -> Array:
         factor = self.diffusion_factor(time, state)
         vector = _vector(covector, self.dimension, owner="score covector")
-        return oe.contract("ik,jk,j->i", factor, factor, vector)
+        return ein.contract("ik,jk,j->i", factor, factor, vector)
 
     def covariance_divergence(self, time: ArrayLike, state: ArrayLike, /) -> Array:
         value = _vector(state, self.dimension, owner="state")
@@ -68,7 +69,7 @@ class AbstractItoScoreDiffusion(StrictModule):
             return self.covariance(time, current)
 
         derivative = jax.jacfwd(covariance_at)(value)
-        return oe.contract("ijj->i", derivative)
+        return ein.contract("ijj->i", derivative)
 
     def reverse_drift(
         self,
@@ -162,7 +163,6 @@ class MatrixGaussianDiffusion(AbstractItoScoreDiffusion):
         del time
         _vector(state, self.dimension, owner="state")
         return self.dynamics.dispersion
-
 
     def marginal_transition(
         self,

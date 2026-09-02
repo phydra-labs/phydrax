@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -191,9 +192,9 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner):
     ) -> PyTree[Array]:
         del iteration
         coordinates = self.space.flatten(residual)
-        coefficients = oe.contract("nr,n->r", jnp.conj(self.basis), coordinates)
+        coefficients = ein.contract("nr,n->r", jnp.conj(self.basis), coordinates)
         attenuation = self.ritz_values / (self.ritz_values + self.shift)
-        correction = oe.contract("nr,r,r->n", self.basis, attenuation, coefficients)
+        correction = ein.contract("nr,r,r->n", self.basis, attenuation, coefficients)
         return self.space.unflatten((coordinates - correction) / self.shift)
 
     def cost_for(
@@ -357,8 +358,8 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         probes, _ = jnp.linalg.qr(probes, mode="reduced")
         images = _operator_columns(setup_operator, probes)
         core = 0.5 * (
-            oe.contract("nk,nl->kl", jnp.conj(probes), images)
-            + oe.contract("nk,nl->kl", jnp.conj(images), probes)
+            ein.contract("nk,nl->kl", jnp.conj(probes), images)
+            + ein.contract("nk,nl->kl", jnp.conj(images), probes)
         )
         core_spectrum = HermitianSpectrum(core, tolerance=self.psd_tolerance)
         core_scale = jnp.maximum(jnp.max(jnp.abs(core_spectrum.eigenvalues)), 1.0)
@@ -382,10 +383,10 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         )
         core_values = jnp.maximum(core_spectrum.eigenvalues, 0.0) + stabilization
         inverse_root = jnp.reciprocal(jnp.sqrt(core_values))
-        factor = oe.contract(
+        factor = ein.contract(
             "nk,kl,l->nl", images, core_spectrum.eigenvectors, inverse_root
         )
-        reduced = oe.contract("nk,nl->kl", jnp.conj(factor), factor)
+        reduced = ein.contract("nk,nl->kl", jnp.conj(factor), factor)
         reduced_spectrum = HermitianSpectrum(reduced, tolerance=self.psd_tolerance)
         descending = jnp.arange(sketch_size - 1, -1, -1)
         selected = descending[: self.rank]
@@ -395,7 +396,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
             jnp.max(sigma_square), jnp.asarray(1.0, dtype=real_dtype)
         )
         safe_sigma = jnp.maximum(sigma_square, spectral_floor)
-        basis = oe.contract(
+        basis = ein.contract(
             "nk,kr,r->nr", factor, selected_vectors, jnp.reciprocal(jnp.sqrt(safe_sigma))
         )
         ritz_values = jnp.maximum(sigma_square - stabilization, 0.0)

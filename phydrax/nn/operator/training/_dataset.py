@@ -96,8 +96,6 @@ class OperatorDataset:
         admissible = jnp.isfinite(log_weights) | jnp.isneginf(log_weights)
         if not bool(jnp.all(~mask | admissible)):
             raise ValueError("Active dataset case log weights must be finite or -inf.")
-        if not bool(jnp.any(mask & jnp.isfinite(log_weights))):
-            raise ValueError("OperatorDataset requires positive active case mass.")
         object.__setattr__(self, "case_log_weights", log_weights)
         object.__setattr__(self, "case_mask", mask)
 
@@ -305,6 +303,8 @@ def operator_dataset_from_arrays(
     target_queries: Mapping[str, str] | None = None,
     target_specs: Mapping[str, OperatorOutputSpec] | None = None,
     provenance: Sequence[OperatorCaseProvenance] | None = None,
+    case_log_weights: Array | None = None,
+    case_mask: Array | None = None,
     case_axis: str = "case",
 ) -> OperatorDataset:
     """Adapt dense case-first arrays to the canonical operator protocol."""
@@ -343,6 +343,8 @@ def operator_dataset_from_arrays(
         batch,
         target_batch,
         None if provenance is None else tuple(provenance),
+        case_log_weights=case_log_weights,
+        case_mask=case_mask,
     )
 
 
@@ -361,6 +363,8 @@ def operator_dataset_from_cases(
     *,
     case_axis: str = "case",
     provenance: Sequence[OperatorCaseProvenance] | None = None,
+    case_log_weights: Sequence[float] | Array | None = None,
+    case_mask: Sequence[bool] | Array | None = None,
 ) -> OperatorDataset:
     """Collate variable-cardinality point-cloud cases with mask-safe padding."""
     batch_tuple = tuple(batches)
@@ -419,6 +423,8 @@ def operator_dataset_from_cases(
         stacked_batch,
         stacked_targets,
         None if provenance is None else tuple(provenance),
+        case_log_weights=case_log_weights,
+        case_mask=case_mask,
     )
 
 

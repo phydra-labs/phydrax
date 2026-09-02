@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -171,7 +172,7 @@ def _combine_corner_routes(
     first = jnp.sum(
         jnp.where(valid_[..., None], weights_[..., None] * offsets_, 0.0), axis=1
     )
-    second = oe.contract(
+    second = ein.contract(
         "pr,pri,prj->pij", jnp.where(valid_, weights_, 0.0), offsets_, offsets_
     )
     gradient_sum = jnp.sum(jnp.where(valid_[..., None], gradients_, 0.0), axis=1)
@@ -276,7 +277,7 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
 
     def update_input(self, position, deformation_gradient, committed_input, /):
         del position, committed_input
-        edges = oe.contract("pij,pjk->pik", deformation_gradient, self.reference_edges)
+        edges = ein.contract("pij,pjk->pik", deformation_gradient, self.reference_edges)
         return CPDIAssignmentInput(edges)
 
     def build(
@@ -288,7 +289,7 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
         edges = assignment_input.current_edges
         dimension = position.shape[1]
         signs = _corner_signs(dimension).astype(position.dtype)
-        corner_offsets = oe.contract("pij,cj->pci", edges, signs)
+        corner_offsets = ein.contract("pij,cj->pci", edges, signs)
         corners = position[:, None, :] + corner_offsets
         inverse = solve_small_linear(
             SmallLinearSolvePlan(dimension),
@@ -296,7 +297,7 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
             jnp.broadcast_to(jnp.eye(dimension, dtype=position.dtype), edges.shape),
         )
         parent = signs / signs.shape[0]
-        gradients = oe.contract("ca,pai->pci", parent, inverse.value)
+        gradients = ein.contract("ca,pai->pci", parent, inverse.value)
         spacing = self._spacing(layout, axes).astype(position.dtype)
         extent = jnp.max(jnp.abs(corner_offsets) / spacing[None, None, :], axis=(1, 2))
         valid = (
@@ -370,7 +371,7 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
 
     def update_input(self, position, deformation_gradient, committed_input, /):
         if committed_input is None:
-            corners = position[:, None, :] + oe.contract(
+            corners = position[:, None, :] + ein.contract(
                 "pij,pcj->pci", deformation_gradient, self.reference_corner_offsets
             )
         else:
@@ -382,11 +383,11 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
                     committed_input.deformation_gradient.shape,
                 ),
             )
-            increment = oe.contract(
+            increment = ein.contract(
                 "pij,pjk->pik", deformation_gradient, inverse_old.value
             )
             relative = committed_input.corners - committed_input.center[:, None, :]
-            corners = position[:, None, :] + oe.contract(
+            corners = position[:, None, :] + ein.contract(
                 "pij,pcj->pci", increment, relative
             )
         return CPDI2AssignmentInput(corners, position, deformation_gradient)
@@ -401,13 +402,13 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
         dimension = position.shape[1]
         signs = _corner_signs(dimension).astype(position.dtype)
         parent = signs / signs.shape[0]
-        jacobian = oe.contract("pci,ca->pia", corners, parent)
+        jacobian = ein.contract("pci,ca->pia", corners, parent)
         inverse = solve_small_linear(
             SmallLinearSolvePlan(dimension),
             jacobian,
             jnp.broadcast_to(jnp.eye(dimension, dtype=position.dtype), jacobian.shape),
         )
-        gradients = oe.contract("ca,pai->pci", parent, inverse.value)
+        gradients = ein.contract("ca,pai->pci", parent, inverse.value)
         spacing = self._spacing(layout, axes).astype(position.dtype)
         offsets = corners - position[:, None, :]
         extent = jnp.max(jnp.abs(offsets) / spacing[None, None, :], axis=(1, 2))

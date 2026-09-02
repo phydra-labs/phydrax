@@ -7,8 +7,8 @@ from __future__ import annotations
 from typing import Literal
 
 import jax.numpy as jnp
-import opt_einsum as oe
 
+import phydrax.ein as ein
 from phydrax.domain import AbstractScalarDomain, DomainComponent, DomainFunction
 
 from ...metrix import RiemannianMetric, tangent_projector_from_normal
@@ -119,9 +119,9 @@ def surface_grad(
         P = tangent_projector_from_normal(nv)
 
         if gv.ndim == nv.ndim:
-            return oe.contract("...ij,...j->...i", P, gv)
+            return ein.contract("...ij,...j->...i", P, gv)
         if gv.ndim == nv.ndim + 1:
-            return oe.contract("...md,...dj->...mj", gv, P)
+            return ein.contract("...md,...dj->...mj", gv, P)
         raise ValueError(
             f"surface_grad got incompatible ranks: grad(u).ndim={gv.ndim}, normal.ndim={nv.ndim}."
         )
@@ -184,7 +184,7 @@ def surface_div(
             raise ValueError(
                 "surface_div expects a Jacobian and projector with at least 2 dims."
             )
-        return oe.contract("...ij,...ji->...", P, Jv)
+        return ein.contract("...ij,...ji->...", P, Jv)
 
     return DomainFunction(domain=joined, deps=deps, func=_op, metadata=v.metadata)
 
@@ -350,9 +350,9 @@ def ambient_surface_hessian_trace(
             )
         P = tangent_projector_from_normal(nv)
         if Hv.ndim == P.ndim:
-            return oe.contract("...ij,...jk,...ki->...", P, Hv, P)
+            return ein.contract("...ij,...jk,...ki->...", P, Hv, P)
         if Hv.ndim == P.ndim + 1:
-            return oe.contract("...ij,...mjk,...ki->...m", P, Hv, P)
+            return ein.contract("...ij,...mjk,...ki->...m", P, Hv, P)
         raise ValueError(
             "ambient_surface_hessian_trace got incompatible ranks: "
             f"H.ndim={Hv.ndim}, P.ndim={P.ndim}."

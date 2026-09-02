@@ -8,7 +8,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -134,9 +135,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
         rotation = quaternion_rotation_matrix(kinematics.orientation)
         return contract("...ij,...j->...i", rotation[owner], reference)
 
-    def evaluate(
-        self, kinematics: RigidBodyKinematics, /
-    ) -> LagrangianMarkerKinematics:
+    def evaluate(self, kinematics: RigidBodyKinematics, /) -> LagrangianMarkerKinematics:
         if not isinstance(kinematics, RigidBodyKinematics):
             raise TypeError("kinematics must be RigidBodyKinematics.")
         offset = self._world_offset(kinematics)
@@ -144,9 +143,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
         position = kinematics.position[owner] + offset
         if self.bodies.ambient_dimension == 2:
             omega = kinematics.angular_velocity[owner, 0]
-            spin = jnp.stack(
-                (-omega * offset[:, 1], omega * offset[:, 0]), axis=-1
-            )
+            spin = jnp.stack((-omega * offset[:, 1], omega * offset[:, 0]), axis=-1)
         else:
             spin = jnp.cross(kinematics.angular_velocity[owner], offset)
         velocity = kinematics.velocity[owner] + spin
@@ -166,9 +163,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
             angular = value.rotation[safe_slots]
             if self.bodies.ambient_dimension == 2:
                 omega = angular[:, 0]
-                spin = jnp.stack(
-                    (-omega * offset[:, 1], omega * offset[:, 0]), axis=-1
-                )
+                spin = jnp.stack((-omega * offset[:, 1], omega * offset[:, 0]), axis=-1)
             else:
                 spin = jnp.cross(angular, offset)
             return jnp.where(mobile_marker[:, None], translation + spin, 0.0)
@@ -179,6 +174,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
             target=self.markers.active_velocity_space,
             operator_id=f"rigid-marker-velocity/{self.prepared_id}",
         )
+
     def generalized_mass_operator(
         self,
         kinematics: RigidBodyKinematics,
@@ -198,9 +194,7 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
                 return mobile_inertia[:, None] * rotation
 
         else:
-            inertia, _ = rigid_body_world_inertia(
-                self.bodies, kinematics.orientation
-            )
+            inertia, _ = rigid_body_world_inertia(self.bodies, kinematics.orientation)
             mobile_inertia = inertia[self.mobile_indices]
 
             def angular_action(rotation):
@@ -234,7 +228,6 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
             ),
             operator_id=f"rigid-marker-mass/{self.prepared_id}",
         )
-
 
     def generalized_velocity(
         self, kinematics: RigidBodyKinematics, /

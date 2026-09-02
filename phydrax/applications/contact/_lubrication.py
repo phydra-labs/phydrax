@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -386,7 +387,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
         local_stiffness = (
             coefficient[:, None, None]
             * self.cell_area[:, None, None]
-            * oe.contract(
+            * ein.contract(
                 "cid,cjd->cij",
                 self.basis_gradients,
                 self.basis_gradients,
@@ -401,7 +402,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
         cell_velocity = jnp.mean(
             thickness[self.cells][..., None] * velocity[self.cells], axis=1
         )
-        local_advection = -self.cell_area[:, None] * oe.contract(
+        local_advection = -self.cell_area[:, None] * ein.contract(
             "cid,cd->ci", self.basis_gradients, cell_velocity, backend="jax"
         )
         right_hand_side = jnp.zeros((node_count,), dtype=thickness.dtype)

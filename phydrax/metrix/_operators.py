@@ -9,8 +9,9 @@ from string import ascii_lowercase
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._connection import AbstractAffineConnection, LeviCivitaConnection
 from ._metric import AbstractSemiRiemannianMetric, RiemannianMetric
@@ -33,7 +34,7 @@ def _gradient_point(
 ) -> Array:
     _scalar_value(field, coordinates)
     differential = jax.jacfwd(field)(coordinates)
-    return oe.contract("ij,j->i", metric.inverse(coordinates), differential)
+    return ein.contract("ij,j->i", metric.inverse(coordinates), differential)
 
 
 def gradient(
@@ -61,7 +62,7 @@ def _connection_hessian_point(
     _scalar_value(field, coordinates)
     differential = jax.jacfwd(field)(coordinates)
     second = jax.jacfwd(jax.jacfwd(field))(coordinates)
-    correction = oe.contract(
+    correction = ein.contract(
         "kij,k->ij", connection.coefficients(coordinates), differential
     )
     return second - correction
@@ -107,7 +108,7 @@ def laplace_beltrami(
 
     def pointwise(point: Array) -> Array:
         hessian = _connection_hessian_point(field, LeviCivitaConnection(metric), point)
-        return oe.contract("ij,ij->", metric.inverse(point), hessian)
+        return ein.contract("ij,ij->", metric.inverse(point), hessian)
 
     return _pointwise_array(pointwise, coordinates, metric.chart.dimension)
 
@@ -127,7 +128,7 @@ def _connection_divergence_point(
         )
     derivative = jax.jacfwd(field)(coordinates)
     coefficients = connection.coefficients(coordinates)
-    return jnp.trace(derivative) + oe.contract("iik,k->", coefficients, values)
+    return jnp.trace(derivative) + ein.contract("iik,k->", coefficients, values)
 
 
 def connection_divergence(
@@ -191,14 +192,14 @@ def _affine_covariant_derivative_point(
             else:
                 connection_subscript = f"yx{letters[slot]}"
                 sign = -1.0
-            correction = oe.contract(
+            correction = ein.contract(
                 f"{connection_subscript},{tensor_subscript}->{output}",
                 coefficients,
                 values,
             )
             result = result + sign * correction
     if tensor_type.density_weight != 0.0:
-        connection_trace = oe.contract("aax->x", coefficients)
+        connection_trace = ein.contract("aax->x", coefficients)
         result = (
             result - tensor_type.density_weight * values[..., None] * connection_trace
         )

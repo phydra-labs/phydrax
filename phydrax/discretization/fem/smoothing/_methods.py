@@ -8,8 +8,9 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -310,14 +311,14 @@ class FullySmoothedAxisymmetricPlan(StrictModule, NonTrainableState):
         shape_matrix = shape_matrix.at[:, 0, 0::2].set(shape_values)
         shape_matrix = shape_matrix.at[:, 1, 1::2].set(shape_values)
         factor = 2.0 * jnp.pi * geometry.centroid[:, 0] * geometry.area
-        stiffness = oe.contract(
+        stiffness = ein.contract(
             "p,psi,st,ptj->pij",
             factor,
             strain,
             self.constitutive,
             strain,
         )
-        mass = self.density * oe.contract(
+        mass = self.density * ein.contract(
             "p,pai,paj->pij",
             factor,
             shape_matrix,

@@ -14,8 +14,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._numerics import (
     normalize_least_squares_design,
@@ -653,7 +654,7 @@ def solve_bsde_least_squares(
                 ridge_value,
             )
 
-        martingale = oe.contract(
+        martingale = ein.contract(
             "pon,pn->po",
             z_value.reshape((num_paths, output_size, noise_size)),
             increments[:, step],

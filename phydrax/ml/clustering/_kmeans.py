@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
@@ -63,7 +64,7 @@ def _update_centers(
     weighted = w[..., :, None] * membership
     mass = jnp.sum(weighted, axis=-2)
     proposed = (
-        oe.contract("...nk,...nf->...kf", weighted, x)
+        ein.contract("...nk,...nf->...kf", weighted, x)
         / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
     )
     empty = mass <= jnp.finfo(w.dtype).eps * jnp.maximum(
@@ -114,7 +115,7 @@ def _fit_kmeans(
             weighted = w[..., :, None] * responsibility
             mass = jnp.sum(weighted, axis=-2)
             next_centers = (
-                oe.contract("...nk,...nf->...kf", weighted, x)
+                ein.contract("...nk,...nf->...kf", weighted, x)
                 / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
             )
             empty = mass <= jnp.finfo(w.dtype).eps * jnp.maximum(
@@ -386,7 +387,7 @@ class KMedoids(AbstractRecipe):
                 * w[..., :, None]
             )
             mass = jnp.sum(membership, axis=-2)
-            costs = oe.contract("...ik,...ij->...kj", membership, pairwise)
+            costs = ein.contract("...ik,...ij->...kj", membership, pairwise)
             candidate_valid = jnp.swapaxes(membership > 0.0, -1, -2)
             indices = jnp.argmin(jnp.where(candidate_valid, costs, jnp.inf), axis=-1)
             proposed = jnp.take_along_axis(x, indices[..., :, None], axis=-2)
@@ -518,7 +519,7 @@ class StreamingKMeans(StrictModule):
         weighted = w[..., :, None] * responsibility
         batch_mass = jnp.sum(weighted, axis=-2)
         total_mass = self.cluster_mass + batch_mass
-        numerator = self.cluster_mass[..., :, None] * self.centers + oe.contract(
+        numerator = self.cluster_mass[..., :, None] * self.centers + ein.contract(
             "...nk,...nf->...kf", weighted, x
         )
         centers = jnp.where(
@@ -611,7 +612,7 @@ class MiniBatchKMeans(AbstractRecipe):
             weighted = batch_w[..., :, None] * membership
             increment = jnp.sum(weighted, axis=-2)
             total = mass + increment
-            numerator = mass[..., :, None] * centers + oe.contract(
+            numerator = mass[..., :, None] * centers + ein.contract(
                 "...bk,...bf->...kf", weighted, batch_x
             )
             centers = jnp.where(

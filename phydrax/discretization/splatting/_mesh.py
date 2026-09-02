@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, GatherStencil
@@ -474,7 +475,7 @@ class PreparedMeshParticleGridSplat(StrictModule, NonTrainableState):
         finite = jnp.all(jnp.where(active_[:, None], jnp.isfinite(value), True), axis=-1)
         if self.assignment_kind == "barycentric":
             relative = geometry - self.route_origins.astype(geometry.dtype)
-            reduced = oe.contract(
+            reduced = ein.contract(
                 "pij,pj->pi",
                 self.route_inverse.astype(geometry.dtype),
                 relative,
@@ -786,7 +787,7 @@ def prepare_particle_grid_splat_transition(
         )
         if transfer.shape != expected:
             raise ValueError(f"target_transfer must have shape {expected}.")
-        migrated_content = oe.contract(
+        migrated_content = ein.contract(
             "ts,s...->t...",
             transfer.astype(source.target_content.dtype),
             source.target_content,

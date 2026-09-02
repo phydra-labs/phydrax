@@ -11,8 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ._base import (
@@ -172,7 +173,7 @@ def _hard_confusion_components(
     mass = jnp.sum(jnp.where(active, weights, 0.0), axis=axis)
     true_hot = jax.nn.one_hot(true.astype(jnp.int32), classes, dtype=weights.dtype)
     pred_hot = jax.nn.one_hot(pred.astype(jnp.int32), classes, dtype=weights.dtype)
-    confusion = oe.contract(
+    confusion = ein.contract(
         "...ni,...n,...nj->...ij",
         true_hot,
         jnp.where(active, weights, 0.0),
@@ -317,7 +318,7 @@ def smooth_confusion_matrix(
         from_logits=from_logits,
     )
     true_hot = jax.nn.one_hot(labels, classes, dtype=probability.dtype)
-    confusion = oe.contract(
+    confusion = ein.contract(
         "...ni,...n,...nj->...ij",
         true_hot,
         jnp.where(active, weights, 0.0),
@@ -425,7 +426,7 @@ def smooth_balanced_accuracy_score(
         from_logits=from_logits,
     )
     true_hot = jax.nn.one_hot(labels, classes, dtype=probability.dtype)
-    confusion = oe.contract(
+    confusion = ein.contract(
         "...ni,...n,...nj->...ij",
         true_hot,
         jnp.where(active, weights, 0.0),

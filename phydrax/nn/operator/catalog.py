@@ -86,6 +86,19 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             encode_once_decode_many=True,
             resolution_transfer=True,
         )
+    if architecture == "ChemicalConditionalAffineOperator":
+        return OperatorCapabilitySpec(
+            source_geometries=("abstract", "point_cloud"),
+            query_geometries=("point_cloud",),
+            spatial_dimensions=(1,),
+            source_query_relations=("independent",),
+            quadrature="unused",
+            masks="supported",
+            topology="unused",
+            input_representations=("generic_channels", "scalar"),
+            output_representations=("generic_channels",),
+            autoregressive_rollout=True,
+        )
     if architecture == "DeepONet":
         return OperatorCapabilitySpec(
             source_geometries=(
@@ -513,6 +526,13 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "stable",
         "Tucker factorization uses the validated public FNO factorization path.",
         configuration=(("factorization", "tucker"),),
+    ),
+    "ChemicalConditionalAffineOperator": _status(
+        "ChemicalConditionalAffineOperator",
+        "ChemicalConditionalAffineOperator",
+        "research",
+        "Structural conditional-affinity, reaction-realizable reconstruction, and "
+        "focused local-transition checks exist; broad chemistry qualification is pending.",
     ),
     "DeepONet": _status(
         "DeepONet",

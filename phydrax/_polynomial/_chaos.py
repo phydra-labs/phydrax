@@ -12,8 +12,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -150,7 +151,7 @@ def evaluate_tensor_basis(
             multiindices.indices[:, coordinate],
             axis=-1,
         )
-        result = oe.contract("...k,...k->...k", result, selected)
+        result = ein.contract("...k,...k->...k", result, selected)
     return result
 
 

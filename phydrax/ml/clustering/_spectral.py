@@ -9,8 +9,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -55,7 +56,7 @@ def _deterministic_embedding_kmeans(
         )
         mass = jnp.sum(membership, axis=-2)
         proposed = (
-            oe.contract("...nk,...nf->...kf", membership, embedding)
+            ein.contract("...nk,...nf->...kf", membership, embedding)
             / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
         )
         return jnp.where((mass > 0.0)[..., :, None], proposed, centers)
@@ -140,7 +141,7 @@ class SpectralClustering(AbstractRecipe):
             jax.nn.one_hot(labels, self.cluster_count, dtype=w.dtype) * w[..., :, None]
         )
         centers = (
-            oe.contract("...nk,...nf->...kf", membership, x)
+            ein.contract("...nk,...nf->...kf", membership, x)
             / jnp.maximum(cluster_mass, jnp.finfo(w.dtype).tiny)[..., :, None]
         )
         active_clusters = cluster_mass > 0.0

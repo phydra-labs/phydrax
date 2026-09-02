@@ -7,10 +7,10 @@ from typing import Sequence
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
 import phydrax as phx
+import phydrax.ein as ein
 
 
 def _metadata(
@@ -647,7 +647,7 @@ def run_stochastic_heat_process_benchmark(
     final_states = rollout.states[:, :, -1]
     empirical_mean = jnp.mean(final_states, axis=1)
     centered = final_states - empirical_mean[:, None]
-    empirical_covariance = oe.contract(
+    empirical_covariance = ein.contract(
         "cri,crj->cij",
         centered,
         centered,

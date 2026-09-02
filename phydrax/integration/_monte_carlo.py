@@ -10,9 +10,9 @@ import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -703,11 +703,13 @@ def _integrate_stratified_samples(
         estimate = numerator
         error_samples = effective
     expand = (slice(None),) + (None,) * (values.ndim - 1)
-    stratum_means = oe.contract("hn,n...->h...", membership, effective) / counts[expand]
-    error_means = oe.contract("hn,n...->h...", membership, error_samples) / counts[expand]
+    stratum_means = ein.contract("hn,n...->h...", membership, effective) / counts[expand]
+    error_means = (
+        ein.contract("hn,n...->h...", membership, error_samples) / counts[expand]
+    )
     centered = error_samples - error_means[strata]
     stratum_variances = (
-        oe.contract(
+        ein.contract(
             "hn,n...->h...",
             membership,
             jnp.real(centered * jnp.conj(centered)),

@@ -27,6 +27,8 @@ Top-level package namespace. Most functionality lives in subpackages:
   exact and sliced Wasserstein distances, and differentiable order operations
 - `phydrax.kernels`: composable positive-definite covariance functions shared by
   Gaussian-process and coreset algorithms
+- `phydrax.ein`: exact optimized contraction dispatch plus named static JAX
+  rearrangement, reduction, and repetition
 - `phydrax.linalg`: paired vector spaces, composable dense/matrix-free/block
   operators, linear problem contracts, reusable solve and factorization plans,
   and standard/generalized eigensolvers

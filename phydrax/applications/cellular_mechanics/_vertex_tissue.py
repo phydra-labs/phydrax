@@ -19,8 +19,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -1026,7 +1027,9 @@ class PreparedVertexTissue(StrictModule, NonTrainableState):
         """Interpolate intensive cell fields to vertices by incidence averaging."""
 
         _validate_state(self, state)
-        return oe.contract("vc,cf->vf", self.vertex_cell_interpolation, state.cell_fields)
+        return ein.contract(
+            "vc,cf->vf", self.vertex_cell_interpolation, state.cell_fields
+        )
 
     def spread_vertex_field_sources(self, vertex_sources: ArrayLike, /) -> Array:
         """Apply the exact transpose of cell-to-vertex field interpolation."""
@@ -1035,7 +1038,7 @@ class PreparedVertexTissue(StrictModule, NonTrainableState):
         expected = (self.plan.vertex_capacity, self.plan.field_count)
         if sources.shape != expected:
             raise ValueError(f"vertex_sources must have shape {expected}.")
-        return oe.contract("vc,vf->cf", self.vertex_cell_interpolation, sources)
+        return ein.contract("vc,vf->cf", self.vertex_cell_interpolation, sources)
 
 
 class _VertexTissueGeometry(StrictModule):
@@ -1102,7 +1105,7 @@ def _vertex_tissue_geometry(
         flux = jnp.sum(
             jnp.where(
                 triangle_valid,
-                oe.contract("fti,fti->ft", first + jnp.zeros_like(cross), cross) / 6.0,
+                ein.contract("fti,fti->ft", first + jnp.zeros_like(cross), cross) / 6.0,
                 0.0,
             ),
             axis=1,
@@ -1229,7 +1232,7 @@ def evaluate_vertex_tissue(
         prepared, state.positions
     )
     raw_conservative = -gradient
-    active_forces = oe.contract(
+    active_forces = ein.contract(
         "cv,cd->vd", prepared.cell_vertex_distribution, plan.cell_traction
     )
     cell_mask = plan.cell_active
@@ -1389,7 +1392,9 @@ def couple_vertex_tissue_particles(
         .at[safe]
         .add(routed_force)
     )
-    vertex_force = oe.contract("cv,cd->vd", prepared.cell_vertex_distribution, cell_force)
+    vertex_force = ein.contract(
+        "cv,cd->vd", prepared.cell_vertex_distribution, cell_force
+    )
     residual = jnp.sqrt(
         jnp.sum((jnp.sum(vertex_force, axis=0) - jnp.sum(routed_force, axis=0)) ** 2)
     )
@@ -1762,7 +1767,7 @@ def propose_vertex_tissue_topology(
     if event.target_plan.field_names != source.plan.field_names:
         raise ValueError("Target and source field identities must agree.")
     prepared = event.target_plan.prepare(event.target_positions)
-    fields = oe.contract("ts,sf->tf", event.cell_transfer, state.cell_fields)
+    fields = ein.contract("ts,sf->tf", event.cell_transfer, state.cell_fields)
     target_state = VertexTissueState(
         event.target_positions, fields, state.time, prepared.prepared_id
     )
@@ -2085,7 +2090,7 @@ def evaluate_vertex_tissue_topology(
             <= event.conservation_tolerance
         )
     )
-    expected_fields = oe.contract("ts,sf->tf", transfer, source_state.cell_fields)
+    expected_fields = ein.contract("ts,sf->tf", transfer, source_state.cell_fields)
     mapping_valid = (
         jnp.all(
             jnp.abs(candidate.state.cell_fields - expected_fields)

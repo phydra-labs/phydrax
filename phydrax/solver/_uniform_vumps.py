@@ -10,8 +10,9 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -184,7 +185,7 @@ class UniformVUMPSResult(StrictModule):
 
 def _operator_transfer(bra, operator, ket, /):
     bond, operator_bond = int(ket.shape[0]), int(operator.shape[0])
-    return oe.contract("apr,wpqx,bqs->awbrxs", jnp.conj(bra), operator, ket).reshape(
+    return ein.contract("apr,wpqx,bqs->awbrxs", jnp.conj(bra), operator, ket).reshape(
         (bond * operator_bond * bond, bond * operator_bond * bond)
     )
 
@@ -206,7 +207,7 @@ def _cell_overlap(bra_tensors, ket_tensors, /):
     bond = int(ket_tensors[0].shape[0])
     transfer = jnp.eye(bond * bond, dtype=jnp.result_type(*bra_tensors, *ket_tensors))
     for bra, ket in zip(bra_tensors, ket_tensors, strict=True):
-        transfer = transfer @ oe.contract("apr,bps->abrs", jnp.conj(bra), ket).reshape(
+        transfer = transfer @ ein.contract("apr,bps->abrs", jnp.conj(bra), ket).reshape(
             (bond * bond, bond * bond)
         )
     return jnp.trace(transfer)
@@ -587,7 +588,7 @@ def solve_uniform_tangent_response(
                 energies = energies.at[:mode_count].set(computed)
                 weights = weights.at[:mode_count].set(computed_weights)
                 active = active.at[:mode_count].set(True)
-                response = oe.contract(
+                response = ein.contract(
                     "m,wm->w",
                     computed_weights,
                     1.0
