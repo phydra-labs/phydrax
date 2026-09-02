@@ -181,6 +181,65 @@ and the ordinary spectral PDE compiler evolves spherical coefficients with the m
 Laplace--Beltrami multiplier. Closed S2 rejects boundary conditions and retains the
 global-frame gradient/divergence nonclaim.
 
+## Radial-spherical and rotational transforms
+
+`RadialLaguerrePlan` uses the normalized order-two generalized Laguerre basis
+
+`K_p^tau(r) = sqrt(p! / (p+2)!) tau^(-3/2) exp(-r / (2 tau)) L_p^(2)(r / tau)`
+
+with physical pairing `integral_0^infinity r^2 f(r) conjugate(g(r)) dr`.
+Its theorem nodes are positive samples on the radial half-line. `tau` is a
+length scale: it is not an outer boundary, and the largest theorem node is not
+a finite-ball radius. The basis does not impose Cartesian-origin regularity or
+an outer boundary condition.
+
+`FourierLaguerrePlan` composes this radial transform with the existing
+`SphericalHarmonicPlan` without changing S2FFT's
+`s2fft-orthonormal-condon-shortley` convention. Sample and coefficient axes
+are respectively `(p, theta, phi)` and `(p, ell, m)`. The angular coefficient
+axes retain padded `(L, 2*L-1)` storage; invalid `|m| > ell` capacity remains
+inactive.
+
+`WignerTransformPlan` uses active ZYZ Euler angles and unnormalized Haar
+measure `sin(beta) d alpha d beta d gamma`, whose total mass is `8*pi**2`.
+Samples are stored as `(gamma, beta, alpha)` and coefficients as
+`(n, ell, m)`. Valid coefficients satisfy
+`ell >= max(abs(m), abs(n))`. `WignerLaguerrePlan` prefixes the same radial
+axis, producing `(p, n, ell, m)` coefficients.
+
+`DirectionalBallWaveletPlan` uses scales whose index increases with
+frequency: `kappa_j(t) = kappa(lambda**(-j) * t)`. Its directional detail
+coefficients are reduced-resolution functions on the radial--SO(3) product,
+while the scaling coefficients remain full resolution. The scaling filter is
+a two-dimensional radial/angular complement; it is not a product of two
+one-dimensional low-pass filters.
+
+These are exact finite sampling transforms for their declared bandlimited
+spaces. They do not define a bounded-ball PDE discretization, a finite-volume
+measure, a diagonal Laplacian, a Cartesian voxel transform, or exact
+projection from arbitrary radial shells.
+
+```python
+radial = phx.discretization.RadialLaguerrePlan(16, tau=0.8)
+angular = phx.discretization.SphericalHarmonicPlan(16, reality=False)
+fourier_laguerre = phx.discretization.FourierLaguerrePlan(radial, angular)
+wavelets = phx.discretization.DirectionalBallWaveletPlan(
+    fourier_laguerre,
+    directional_bandlimit=3,
+)
+
+coefficients = wavelets.analysis(values)
+reconstructed = wavelets.synthesis(coefficients)
+```
+
+Directional details are complex even when the source field is real. Their
+ragged scale tuple has a canonical radial-major order and carries the producing
+transform identity; synthesis rejects missing, extra, reordered, malformed, or
+foreign leaves before applying any transform. `max_precompute_bytes`,
+`max_runtime_bytes`, and `max_scale_pairs` bound materialization before large
+allocations. See `examples/directional_ball_wavelet_denoising.py` for immutable
+coefficient replacement in a complete inverse-problem workflow.
+
 ## Operators
 
 Modal endomorphisms are exposed through canonical `phydrax.linalg` operators:

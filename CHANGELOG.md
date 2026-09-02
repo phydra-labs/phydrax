@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added native order-two radial Laguerre, Fourier--Laguerre, Wigner, and
+  Wigner--Laguerre transforms with physical `r**2 dr` normalization, together
+  with resource-bounded exact directional ball wavelets and immutable ragged
+  multiresolution coefficients.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact
