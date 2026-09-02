@@ -132,7 +132,6 @@ from .spectral._fno import (
     IFNO,
     IFNOConvergence,
     MultiScaleSpectralConvND,
-    spectral_resample,
     SpectralConvND,
 )
 from .spectral._hofno import HOFNO
@@ -273,7 +272,6 @@ __all__ = [
     "IFNO",
     "IFNOConvergence",
     "MultiScaleSpectralConvND",
-    "spectral_resample",
     "SpectralConvND",
     "GAOT",
     "GeometryInformedFlower",

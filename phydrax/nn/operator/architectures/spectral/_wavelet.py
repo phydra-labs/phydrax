@@ -19,11 +19,6 @@ from jax import core as jax_core
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
-from phydrax._spectral import (
-    DiscreteWaveletTransform,
-    MultiresolutionCoefficients,
-    WaveletBoundary,
-)
 from phydrax._spectral._multiwavelet import AlpertMultiwaveletTransform
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
@@ -32,6 +27,11 @@ from phydrax.nn.layers import sample_rectilinear_grid
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+from phydrax.signal import (
+    DiscreteWaveletTransform,
+    MultiresolutionCoefficients,
+    WaveletBoundary,
+)
 
 
 class _WaveletSubbandMixerND(StrictModule):

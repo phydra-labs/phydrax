@@ -29,7 +29,6 @@ from ._bspline_projection import (
 from ._fourier import (
     FOURIER_CAPABILITIES,
     fourier_interpolate,
-    fourier_resample,
     FourierEvaluationMethod,
 )
 from ._inverse_distance import (
@@ -110,7 +109,6 @@ __all__ = [
     "cubic_hermite_interpolate",
     "cubic_hermite_segment",
     "fourier_interpolate",
-    "fourier_resample",
     "linear_interpolate",
     "linear_segment",
     "linear_stencil",

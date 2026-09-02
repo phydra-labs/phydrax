@@ -17,7 +17,6 @@ import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
-from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._scan import (
@@ -36,6 +35,7 @@ from phydrax.nn.operator.architectures.spectral._fno import (
 )
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+from phydrax.signal import fourier_resample as _fourier_resample
 
 
 AliasingPolicy = Literal["collocation", "dealiased"]
@@ -48,7 +48,8 @@ def _dealiased_spectral_resample(
     /,
 ) -> Array:
     """Band-limited periodic resampling that preserves real Nyquist modes."""
-    return _fourier_resample(values, output_shape)
+    axes = tuple(range(values.ndim - len(output_shape) - 1, values.ndim - 1))
+    return _fourier_resample(values, output_shape, axes=axes)
 
 
 def _complex_normal(key: Key[Array, ""], shape: tuple[int, ...], scale: float) -> Array:

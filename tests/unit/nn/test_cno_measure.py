@@ -223,6 +223,24 @@ def test_cno_uses_circular_measure_layers_and_periodic_feature_width():
     assert all(block.first.circular and block.second.circular for block in model.blocks)
 
 
+def test_cno_oversampled_activation_uses_explicit_periodic_spatial_axes():
+    layer = phx.nn.operator.architectures.AntiAliasedConvND(
+        spatial_ndim=1,
+        in_channels=1,
+        out_channels=2,
+        kernel_size=3,
+        oversample_factor=2,
+        circular=True,
+        key=jr.key(25),
+    )
+    values = jnp.ones((8, 1))
+
+    output = layer(values, quadrature=jnp.full((8,), 1.0 / 8.0))
+
+    assert output.shape == (8, 2)
+    assert jnp.all(jnp.isfinite(output))
+
+
 def test_cno_rejects_missing_physical_source_quadrature():
     axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -256,7 +274,7 @@ def test_cno_rejects_missing_physical_source_quadrature():
         model(batch)
 
 
-def test_uno_rejects_masked_source_or_query_sites():
+def test_uno_transports_masked_measure_and_zeros_invalid_queries():
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(7, dtype=float) / 7,
@@ -264,19 +282,21 @@ def test_uno_rejects_masked_source_or_query_sites():
         basis="fourier",
         periodic=True,
     )
-    mask = jnp.asarray([True, True, False, True, True, True, True])
+    source_mask = jnp.asarray([True, True, False, True, True, True, True])
+    query_mask = jnp.asarray([True, True, True, True, True, False, True])
     batch = phx.nn.operator.OperatorBatch(
         inputs={
             "source": phx.nn.operator.FunctionSamples(
                 values=jnp.ones((7,)),
                 axes=(axis,),
-                mask=mask,
+                mask=source_mask,
             )
         },
         queries={
             "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 axes=(axis,),
+                mask=query_mask,
             )
         },
     )
@@ -287,5 +307,10 @@ def test_uno_rejects_masked_source_or_query_sites():
         key=jr.key(24),
     )
 
-    with pytest.raises(ValueError, match="does not support masked"):
-        model(batch)
+    output = model(batch)
+
+    assert output.shape == (7,)
+    assert jnp.all(jnp.isfinite(output))
+    assert output[2] == 0.0
+    assert output[5] == 0.0
+    assert jnp.any(output[source_mask & query_mask] != 0.0)

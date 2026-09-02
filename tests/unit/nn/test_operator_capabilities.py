@@ -168,7 +168,7 @@ def test_cno_and_uno_declare_their_actual_measure_and_mask_support():
 
     assert cno_masked.accepted
     assert "MISSING_PHYSICAL_QUADRATURE" in cno_missing_measure.codes
-    assert "MASKED_INPUT_UNSUPPORTED" in uno_masked.codes
+    assert uno_masked.accepted
 
 
 def test_cno_family_catalog_requires_exact_periodic_uniform_fourier_axes():

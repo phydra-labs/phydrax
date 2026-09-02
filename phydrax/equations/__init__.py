@@ -445,6 +445,7 @@ from ._radiation_material import (
     RadiationScaleContract,
     SpectralFrequencyGrid,
 )
+from ._radiation_moments import MultigroupM1RadiationSystem
 from ._radiative import (
     RadiativeCoolingBoundsPolicy,
     TabulatedCoolingCurve,
@@ -1108,6 +1109,7 @@ __all__ = [
     "RadiationMatterExchangeResult",
     "RadiationMeanEvaluation",
     "RadiationScaleContract",
+    "MultigroupM1RadiationSystem",
     "SpectralFrequencyGrid",
     "ChemicalPhaseSpec",
     "ChemicalSpeciesSchema",

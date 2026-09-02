@@ -17,7 +17,6 @@ from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._doc import DOC_KEY0
-from phydrax._spectral._fourier import fourier_resample as spectral_resample
 from phydrax._strict import StrictModule
 from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey
@@ -29,6 +28,7 @@ from phydrax.nn.layers._measure_convolution import (
 )
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+from phydrax.signal import fourier_resample as _fourier_resample
 
 
 CNOActivation = Literal["gelu", "silu", "tanh"]
@@ -424,13 +424,24 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             output = output[tuple(slices)]
         if self.activation is not None:
             shape = tuple(int(size) for size in output.shape[-self.spatial_ndim - 1 : -1])
+            spatial_axes = tuple(
+                range(output.ndim - self.spatial_ndim - 1, output.ndim - 1)
+            )
             if self.oversample_factor == 1:
                 output = _activate(self.activation, output)
             else:
                 fine_shape = tuple(self.oversample_factor * size for size in shape)
                 if self.circular:
-                    fine = spectral_resample(output, fine_shape)
-                    output = spectral_resample(_activate(self.activation, fine), shape)
+                    fine = _fourier_resample(
+                        output,
+                        fine_shape,
+                        axes=spatial_axes,
+                    )
+                    output = _fourier_resample(
+                        _activate(self.activation, fine),
+                        shape,
+                        axes=spatial_axes,
+                    )
                 else:
                     fine_full = (
                         output.shape[: -self.spatial_ndim - 1]
