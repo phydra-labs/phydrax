@@ -43,6 +43,10 @@ from ._classification_losses import (
     OperatorSupportReduction,
     OperatorZeroMeasure,
 )
+from ._conditional_affine import (
+    ChemicalConditionalAffineDriverLoss,
+    ChemicalConditionalAffineTeacherForcedLoss,
+)
 from ._coreset import (
     compress_operator_cases,
     compress_operator_queries,
@@ -208,6 +212,8 @@ __all__ = [
     "AffineNormalizer",
     "AbstractOperatorLossTerm",
     "CochainResidualInput",
+    "ChemicalConditionalAffineDriverLoss",
+    "ChemicalConditionalAffineTeacherForcedLoss",
     "CochainResidualLoss",
     "SpectralPDEResidualLoss",
     "AbstractOperatorOutputTransform",

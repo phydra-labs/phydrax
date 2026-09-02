@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added research-tier conditional-affine chemical transitions with exact
+  directional mass-action certification, inverse-free exponential/phi actions,
+  reaction-shared positive rate correction, stoichiometric extent
+  reconstruction, staged operator losses, portable artifacts, and explicit
+  local `DiscreteSystem` deployment without clipping or hidden fallback.
 - Added native order-two radial Laguerre, Fourier--Laguerre, Wigner, and
   Wigner--Laguerre transforms with physical `r**2 dr` normalization, together
   with resource-bounded exact directional ball wavelets and immutable ragged
