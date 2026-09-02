@@ -123,9 +123,12 @@ trajectory boundaries. `weights` are sample evidence, not a padding mask. Inputs
 whether they align with samples or transitions. Derivatives carry a separate validity
 mask.
 
-The four adapters preserve the source contract:
+Source adapters preserve the source contract:
 
 - `trajectory_data_from_evolution` retains canonical evolution node and segment status;
+- `trajectory_data_from_fixed_step` requires an explicit retained-state projection,
+  projection ID, and `StateLayout`; it preserves times and validity without compacting
+  rejected samples and rejects final-only one-sample retention;
 - `trajectory_data_from_differential_solution` retains deterministic, DAE, or ensemble
   solver sample axes, including DAE state rates and their componentwise validity,
   delay solutions, and structured differential solutions;
@@ -137,6 +140,8 @@ The four adapters preserve the source contract:
 ::: phydrax.dynamics.TrajectoryTransitions
 
 ::: phydrax.dynamics.identification.trajectory_data_from_evolution
+::: phydrax.dynamics.identification.trajectory_data_from_fixed_step
+
 
 ::: phydrax.dynamics.identification.trajectory_data_from_differential_solution
 

@@ -8,6 +8,7 @@ from ._adapters import (
     trajectory_data_from_control,
     trajectory_data_from_differential_solution,
     trajectory_data_from_evolution,
+    trajectory_data_from_fixed_step,
     trajectory_data_from_stochastic,
 )
 from ._differentiation import (
@@ -214,6 +215,7 @@ __all__ = [
     "local_polynomial_derivative",
     "trajectory_data_from_control",
     "trajectory_data_from_differential_solution",
+    "trajectory_data_from_fixed_step",
     "fit_ensemble_sindy",
     "select_sindy_model",
     "named_coefficient_constraint",

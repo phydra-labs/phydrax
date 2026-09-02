@@ -9,6 +9,8 @@ import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._interpolation import GatherStencil
+from ..._sharp_measures import QualifiedSharpGeometry
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..finite_volume import FaceVelocity, PreparedMACOperators
@@ -17,6 +19,7 @@ from ..splatting import (
     AbstractStructuredSplatAssignment,
     ParticleGridSplatBudget,
     ParticleGridSplatPlan,
+    ParticleGridSplatState,
     PreparedParticleGridSplat,
     SplatExecutionPolicy,
     TensorBSplineSplatAssignment,
@@ -152,6 +155,73 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         ):
             raise ValueError("FLIP transfer state belongs to another prepared transfer.")
 
+    def _validate_geometry(self, geometry: QualifiedSharpGeometry | None, /) -> str:
+        if geometry is None:
+            return ""
+        if (
+            not isinstance(geometry, QualifiedSharpGeometry)
+            or geometry.operator_id != self.plan.operators.prepared_id
+        ):
+            raise ValueError("FLIP geometry binds another prepared MAC grid.")
+        return geometry.realization_id
+
+    def _solid_aware_state(
+        self,
+        state: ParticleGridSplatState,
+        target_open_fraction,
+        /,
+    ) -> ParticleGridSplatState:
+        fraction = jnp.asarray(target_open_fraction)
+        if fraction.size != state.stencil.source_size:
+            raise ValueError("Solid support does not match the FLIP transfer target.")
+        flat = fraction.reshape(-1)
+        valid = state.stencil.valid
+        safe_indices = jnp.where(valid, state.stencil.indices, 0)
+        route_open = flat[safe_indices]
+        raw = jnp.where(valid, state.stencil.weights * route_open, 0.0)
+        partition = jnp.sum(raw, axis=-1)
+        scale = jnp.maximum(jnp.max(jnp.abs(raw), initial=0.0), 1.0)
+        tolerance = jnp.finfo(raw.dtype).eps * max(16, raw.shape[-1]) * scale
+        supported = state.source_active_mask & (partition > tolerance)
+        weights = jnp.where(
+            supported[..., None],
+            raw / jnp.where(supported[..., None], partition[..., None], 1.0),
+            0.0,
+        )
+        route_valid = valid & (route_open > 0.0) & supported[..., None]
+        positive = route_valid & (weights > 0.0)
+        minimum = jnp.min(jnp.where(positive, weights, jnp.inf), initial=jnp.inf)
+        minimum = jnp.where(jnp.isfinite(minimum), minimum, 0.0)
+        invalid = state.invalid_geometry_mask | (state.source_active_mask & ~supported)
+        active_supported = jnp.all(~state.source_active_mask | supported)
+        stencil = GatherStencil(
+            indices=state.stencil.indices,
+            weights=weights,
+            source_size=state.stencil.source_size,
+            valid=route_valid,
+            support=supported,
+            case_shape=state.stencil.case_shape,
+        )
+        return ParticleGridSplatState(
+            stencil=stencil,
+            assignment_state=state.assignment_state,
+            source_active_mask=state.source_active_mask,
+            supported_mask=supported,
+            truncated_support_mask=state.truncated_support_mask,
+            out_of_domain_mask=state.out_of_domain_mask,
+            invalid_geometry_mask=invalid,
+            partition_sums=jnp.where(supported, jnp.sum(weights, axis=-1), 0.0),
+            minimum_route_weight=minimum,
+            minimum_domain_margin=state.minimum_domain_margin,
+            valid_route_count=jnp.sum(route_valid, dtype=jnp.int32),
+            dropped_source_count=jnp.sum(
+                state.source_active_mask & ~supported, dtype=jnp.int32
+            ),
+            invalid_geometry_count=jnp.sum(invalid, dtype=jnp.int32),
+            successful=state.successful & active_supported,
+            prepared_id=state.prepared_id,
+        )
+
     def particle_to_grid(
         self,
         state: FLIPTransferState,
@@ -160,8 +230,10 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         /,
         *,
         masses: ArrayLike | None = None,
+        geometry: QualifiedSharpGeometry | None = None,
     ) -> FLIPParticleToGridResult:
         self._validate_state(state)
+        geometry_id = self._validate_geometry(geometry)
         values = jnp.asarray(velocity, dtype=self.particles.safe_masses.dtype)
         expected = (self.particles.capacity, self.dimension)
         if values.shape != expected:
@@ -180,9 +252,27 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         if masses.shape != (self.particles.capacity,):
             raise ValueError("masses must have particle-capacity shape.")
         volume = masses / density
-        cell = self.cell.deposit_content(state.cell, volume)
-        cell_volume = self.plan.operators.discretization.cell_volumes.astype(values.dtype)
-        liquid_fraction = cell.content / cell_volume
+        cell_state = (
+            state.cell
+            if geometry is None
+            else self._solid_aware_state(state.cell, geometry.cell_fluid_fraction)
+        )
+        cell = self.cell.deposit_content(cell_state, volume)
+        cell_volume = (
+            self.plan.operators.discretization.cell_volumes.astype(values.dtype)
+            if geometry is None
+            else geometry.cell_fluid_measure.astype(values.dtype)
+        )
+        cell_active = (
+            jnp.ones_like(cell_volume, dtype=bool)
+            if geometry is None
+            else geometry.cell_active
+        )
+        liquid_fraction = jnp.where(
+            cell_active,
+            cell.content / jnp.where(cell_active, cell_volume, 1.0),
+            0.0,
+        )
         face_mass = []
         face_momentum = []
         face_velocity = []
@@ -192,6 +282,11 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         for axis, (transfer, route) in enumerate(
             zip(self.faces, state.faces, strict=True)
         ):
+            route = (
+                route
+                if geometry is None
+                else self._solid_aware_state(route, geometry.face_open_fraction[axis])
+            )
             payload = jnp.stack((masses, masses * values[:, axis]), axis=-1)
             result = transfer.deposit_content(route, payload)
             mass = result.content[..., 0]
@@ -199,6 +294,8 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             scale = jnp.maximum(jnp.max(jnp.abs(mass), initial=0.0), 1.0)
             tolerance = jnp.finfo(mass.dtype).eps * max(16, transfer.route_count) * scale
             support = mass > tolerance
+            if geometry is not None:
+                support = support & geometry.face_active[axis]
             velocity_component = jnp.where(
                 support, momentum / jnp.where(support, mass, 1.0), 0.0
             )
@@ -212,6 +309,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             successful = (
                 successful & result.successful & jnp.all(jnp.isfinite(velocity_component))
             )
+        geometry_accepted = jnp.asarray(True) if geometry is None else geometry.accepted
         finite = (
             jnp.all(jnp.isfinite(liquid_fraction))
             & jnp.all(jnp.isfinite(values))
@@ -229,7 +327,8 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             cell.balance.maximum_absolute_balance_defect,
             momentum_defect,
             finite,
-            successful & finite,
+            successful & finite & geometry_accepted,
+            geometry_id,
             self.prepared_id,
         )
 
@@ -239,16 +338,23 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         old_velocity: FaceVelocity,
         new_velocity: FaceVelocity,
         /,
+        geometry: QualifiedSharpGeometry | None = None,
     ) -> FLIPGridToParticleResult:
         self._validate_state(state)
+        geometry_id = self._validate_geometry(geometry)
         old = self.plan.operators.validate_velocity(old_velocity)
         new = self.plan.operators.validate_velocity(new_velocity)
         pic = []
         increment = []
         supports = []
-        for transfer, route, previous, current in zip(
-            self.faces, state.faces, old, new, strict=True
+        for axis, (transfer, route, previous, current) in enumerate(
+            zip(self.faces, state.faces, old, new, strict=True)
         ):
+            route = (
+                route
+                if geometry is None
+                else self._solid_aware_state(route, geometry.face_open_fraction[axis])
+            )
             pic_result = transfer.gather(route, current)
             delta_result = transfer.gather(route, current - previous)
             pic.append(pic_result.values)
@@ -257,13 +363,15 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         pic_values = jnp.stack(tuple(pic), axis=-1)
         increments = jnp.stack(tuple(increment), axis=-1)
         support = jnp.all(jnp.stack(tuple(supports)), axis=0)
+        geometry_accepted = jnp.asarray(True) if geometry is None else geometry.accepted
         finite = jnp.all(jnp.isfinite(pic_values)) & jnp.all(jnp.isfinite(increments))
         return FLIPGridToParticleResult(
             pic_values,
             increments,
             support,
             finite,
-            support.all() & finite,
+            support.all() & finite & geometry_accepted,
+            geometry_id,
             self.prepared_id,
         )
 

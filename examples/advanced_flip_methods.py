@@ -60,7 +60,7 @@ def wall_velocity(points, time, args):
     return jnp.zeros_like(points)
 
 
-solid_plan = phx.discretization.finite_volume.MACCutCellGeometryPlan(
+solid_plan = phx.discretization.finite_volume.MACDiffuseSDFGeometryPlan(
     mac,
     solid_sdf,
     wall_velocity,

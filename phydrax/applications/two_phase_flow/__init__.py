@@ -7,6 +7,8 @@
 from ._io import (
     read_two_phase_checkpoint,
     two_phase_diagnostic_view,
+    two_phase_inspection_frame,
+    two_phase_inspection_frames,
     TwoPhaseDiagnosticView,
     write_two_phase_checkpoint,
     write_two_phase_output,
@@ -45,6 +47,8 @@ __all__ = [
     "TwoPhaseVOFView",
     "read_two_phase_checkpoint",
     "two_phase_diagnostic_view",
+    "two_phase_inspection_frame",
+    "two_phase_inspection_frames",
     "write_two_phase_checkpoint",
     "write_two_phase_output",
 ]

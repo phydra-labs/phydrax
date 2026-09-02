@@ -140,12 +140,23 @@ map.
 
 ## Sharp-interface family
 
-`MACSharpInterfaceProjectionPlan` consumes cell fluid fractions, face apertures,
-interface area/centroid/normal, and body IDs. It performs a cut-cell pressure
-projection, applies moving-wall fluxes, stabilizes small cells with a reported defect,
-accepts a pressure-jump source, and integrates pressure plus supplied viscous traction
-into body force and torque. Its acceptance gate covers geometry, linear convergence,
-divergence, and finite traction.
+`MACSharpInterfaceProjectionPlan` consumes one qualified sharp-geometry realization,
+not raw fractions. The realization carries absolute fluid cell volumes and open face
+measures, lower/upper measure bounds, source fidelity, topology/component identities,
+and acceptance evidence. Exact source, certified bounded source, exact
+piecewise-linear surrogate, and diffuse/unqualified data are distinct contracts.
+
+Preparation constructs compact active cell/face spaces and an explicit weighted
+divergence/gradient adjoint pair. Neumann gauges are applied once per disconnected
+active-fluid component; Dirichlet pressure closure does not receive a mean gauge.
+Small cells below the accepted lower-volume threshold fail closed rather than gaining
+an unqualified denominator floor.
+
+Interface area, centroid, normal, and traction have independent moment evidence.
+Projection remains available when qualified fluid measures exist but unqualified
+traction is never reported as a physical zero. `MACMovingSharpInterfaceEpochPlan`
+refreshes numeric measures only while support and active topology remain fixed; a
+topology change requests a host epoch rebuild.
 
 ## Fluctuating hydrodynamics and FIB
 
@@ -193,7 +204,7 @@ independent refinement, conservation, failure-injection, and reproducibility run
 | Deformable accepted-time coupling | FE marker map, nonlinear implicit structure, injected native contact residual | implemented; structural-model qualification required |
 | Mapped/ALE/remesh | mapped normal-face operators, accepted geometry, GCL/remesh contracts, mapped marker transfer | implemented; mapping-specific GCL and convergence qualification required |
 | AMR/distributed/topology epochs | finest-owner transfer, composite projection contract, owner-computes exchange, conservative epoch transfer | implemented; backend scaling and hierarchy qualification required |
-| Sharp cut-cell | moving-wall cut-cell projection, pressure jump, traction, small-cell defect | implemented; geometry-family convergence qualification required |
+| Sharp cut-cell | qualified fixed-topology fluid measures, component-aware compatible projection, pressure jump, optional qualified traction, moving-epoch refresh | implemented substrate; each geometry realization and coupled FLIP/VOF profile requires independent measure/conservation qualification |
 | Stochastic inertial/FIB | factored fluctuating forcing, inertial update, overdamped mobility square root and drift | implemented; equilibrium/FDT statistical qualification required |
 
 ## Failure semantics

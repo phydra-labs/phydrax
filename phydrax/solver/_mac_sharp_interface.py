@@ -13,7 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
+from .._sharp_measures import QualifiedSharpGeometry
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import (
@@ -23,9 +24,11 @@ from ..discretization.finite_volume import (
     PreparedMACOperators,
 )
 from ..linalg import (
+    ArraySpace,
+    ConjugateGradient,
+    DiagonalPairing,
     DifferentiationPolicy,
     FunctionLinearOperator,
-    GMRES,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
@@ -41,16 +44,19 @@ class MACSharpInterfaceStatus(IntFlag):
     DIVERGENCE_FAILED = 2
     GEOMETRY_FAILED = 4
     NONFINITE = 8
+    OPERATOR_EVIDENCE_FAILED = 16
 
 
-class MACSharpInterfaceGeometry(StrictModule, NonTrainableState):
-    cell_fluid_fraction: Array
-    face_fluid_aperture: FaceVelocity
-    interface_area: Array
-    interface_centroid: Array
-    interface_normal: Array
-    body_id: Array
-    geometry_id: str = eqx.field(static=True)
+class MACSharpOperatorEvidence(StrictModule, NonTrainableState):
+    """Numerical witnesses for the declared weighted active pressure space."""
+
+    weighted_adjoint_residual: Array
+    symmetry_residual: Array
+    component_nullspace_residual: Array
+    minimum_probe_rayleigh_quotient: Array
+    finite: Array
+    passed: Array
+    evidence_id: str = eqx.field(static=True)
 
 
 class MACSharpInterfaceForce(StrictModule):
@@ -59,6 +65,8 @@ class MACSharpInterfaceForce(StrictModule):
     pressure_force: Array
     viscous_force: Array
     finite: Array
+    available: Array
+    geometry_id: str = eqx.field(static=True)
 
 
 class MACSharpInterfaceProjectionResult(StrictModule):
@@ -70,162 +78,436 @@ class MACSharpInterfaceProjectionResult(StrictModule):
     linear: LinearSolveResult
     force: MACSharpInterfaceForce
     stabilization_defect: Array
+    geometry_evidence: Any
+    operator_evidence: MACSharpOperatorEvidence
     status: Array
     accepted: Array
+    geometry_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
+class _UnionFind:
+    def __init__(self, size: int):
+        self.parent = list(range(size))
+
+    def find(self, value: int) -> int:
+        while self.parent[value] != value:
+            self.parent[value] = self.parent[self.parent[value]]
+            value = self.parent[value]
+        return value
+
+    def union(self, first: int, second: int) -> None:
+        first_root = self.find(first)
+        second_root = self.find(second)
+        if first_root != second_root:
+            self.parent[second_root] = first_root
+
+
+def _active_components(
+    operators: PreparedMACOperators,
+    boundaries: PreparedMACBoundaryPlan,
+    geometry: QualifiedSharpGeometry,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    shape = operators.discretization.cell_shape
+    active = np.asarray(geometry.cell_active, dtype=bool)
+    apertures = tuple(np.asarray(value) for value in geometry.face_open_measure_lower)
+    flat_active = np.flatnonzero(active.reshape(-1))
+    if flat_active.size == 0:
+        raise ValueError("Sharp projection requires at least one certainly fluid cell.")
+    active_position = {int(flat): index for index, flat in enumerate(flat_active)}
+    union = _UnionFind(int(flat_active.size))
+
+    def connect(first: tuple[int, ...], second: tuple[int, ...], opened: bool) -> None:
+        first_flat = int(np.ravel_multi_index(first, shape))
+        second_flat = int(np.ravel_multi_index(second, shape))
+        first_active = first_flat in active_position
+        second_active = second_flat in active_position
+        if opened and first_active != second_active:
+            raise ValueError(
+                "A certainly open MAC face cannot connect active and inactive cells."
+            )
+        if opened and first_active:
+            union.union(active_position[first_flat], active_position[second_flat])
+
+    for axis, structured_axis in enumerate(operators.discretization.grid.structured_axes):
+        if structured_axis.periodic:
+            for face_index in np.ndindex(apertures[axis].shape):
+                upper = list(face_index)
+                lower = list(face_index)
+                lower[axis] = (lower[axis] - 1) % shape[axis]
+                connect(tuple(lower), tuple(upper), apertures[axis][face_index] > 0.0)
+        else:
+            interior_shape = list(apertures[axis].shape)
+            interior_shape[axis] -= 2
+            for local in np.ndindex(tuple(interior_shape)):
+                face = list(local)
+                face[axis] += 1
+                lower = list(face)
+                upper = list(face)
+                lower[axis] -= 1
+                connect(tuple(lower), tuple(upper), apertures[axis][tuple(face)] > 0.0)
+
+    roots = [union.find(index) for index in range(flat_active.size)]
+    ordered_roots: dict[int, int] = {}
+    labels = np.empty(flat_active.size, dtype=np.int32)
+    for index, root in enumerate(roots):
+        if root not in ordered_roots:
+            ordered_roots[root] = len(ordered_roots)
+        labels[index] = ordered_roots[root]
+    anchored = np.zeros(len(ordered_roots), dtype=bool)
+    for boundary, axis, side_index in zip(
+        boundaries.sides,
+        boundaries.side_axes,
+        boundaries.side_indices,
+        strict=True,
+    ):
+        if boundary.kind not in ("pressure-outlet", "traction-open"):
+            continue
+        axis_index = int(axis)
+        lower_side = int(side_index) == 0
+        face_slice: list[slice | int] = [slice(None)] * len(shape)
+        face_slice[axis_index] = (
+            0 if lower_side else apertures[axis_index].shape[axis_index] - 1
+        )
+        open_boundary = apertures[axis_index][tuple(face_slice)] > 0.0
+        cell_slice: list[slice | int] = [slice(None)] * len(shape)
+        cell_slice[axis_index] = 0 if lower_side else shape[axis_index] - 1
+        boundary_active = active[tuple(cell_slice)]
+        for tangential in np.argwhere(open_boundary & boundary_active):
+            cell_index = list(tangential)
+            cell_index.insert(axis_index, 0 if lower_side else shape[axis_index] - 1)
+            flat = int(np.ravel_multi_index(tuple(cell_index), shape))
+            anchored[labels[active_position[flat]]] = True
+    return flat_active.astype(np.int32), labels, ~anchored
+
+
 class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
-    """Conservative cut-cell pressure projection and sharp traction integration."""
+    """Compatible sharp projection on explicit weighted active spaces.
+
+    Cell pressure uses absolute fluid-volume weights. Open-face velocity uses
+    aperture times the original face dual measure. Consequently ``G = -D*``;
+    aperture occurs exactly once and no denominator floor is hidden in the
+    operator. One gauge is added for every unanchored connected component.
+    """
 
     operators: PreparedMACOperators
     boundaries: PreparedMACBoundaryPlan
-    geometry: MACSharpInterfaceGeometry
-    minimum_fluid_fraction: float = eqx.field(static=True)
+    geometry: QualifiedSharpGeometry
+    active_cell_indices: Array
+    component_labels: Array
+    unanchored_components: Array
+    pressure_space: ArraySpace
     tolerance: float = eqx.field(static=True)
     linear_policy: LinearSolvePolicy
+    operator_evidence: MACSharpOperatorEvidence
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         operators: PreparedMACOperators,
         boundaries: PreparedMACBoundaryPlan,
-        cell_fluid_fraction: ArrayLike,
-        face_fluid_aperture: FaceVelocity,
-        interface_area: ArrayLike,
-        interface_centroid: ArrayLike,
-        interface_normal: ArrayLike,
-        body_id: ArrayLike,
+        geometry: QualifiedSharpGeometry,
         /,
         *,
-        minimum_fluid_fraction: float = 1.0e-3,
         tolerance: float = 1.0e-9,
         linear_policy: LinearSolvePolicy | None = None,
     ):
+        if not isinstance(operators, PreparedMACOperators):
+            raise TypeError("operators must be PreparedMACOperators.")
+        if not isinstance(boundaries, PreparedMACBoundaryPlan):
+            raise TypeError("boundaries must be PreparedMACBoundaryPlan.")
         if boundaries.operators.prepared_id != operators.prepared_id:
             raise ValueError("Sharp-interface boundaries and operators differ.")
-        fraction = np.asarray(cell_fluid_fraction)
-        apertures = tuple(np.asarray(value) for value in face_fluid_aperture)
-        area = np.asarray(interface_area)
-        centroid = np.asarray(interface_centroid)
-        normal = np.asarray(interface_normal)
-        bodies = np.asarray(body_id)
-        dimension = len(operators.discretization.cell_shape)
-        if fraction.shape != operators.discretization.cell_shape:
-            raise ValueError("cell_fluid_fraction must have the MAC cell shape.")
-        if len(apertures) != dimension or any(
-            value.shape != operators.discretization.face_layouts[axis].shape
-            for axis, value in enumerate(apertures)
-        ):
-            raise ValueError("face_fluid_aperture does not match MAC face layouts.")
-        if (
-            area.shape != fraction.shape
-            or bodies.shape != fraction.shape
-            or centroid.shape != fraction.shape + (dimension,)
-            or normal.shape != centroid.shape
-        ):
-            raise ValueError("Sharp-interface cell geometry shapes are incompatible.")
-        if (
-            np.any(~np.isfinite(fraction))
-            or np.any((fraction < 0.0) | (fraction > 1.0))
-            or any(
-                np.any(~np.isfinite(value)) or np.any((value < 0.0) | (value > 1.0))
-                for value in apertures
-            )
-            or np.any(~np.isfinite(area))
-            or np.any(area < 0.0)
-            or np.any(~np.isfinite(centroid))
-            or np.any(~np.isfinite(normal))
-        ):
-            raise ValueError("Sharp-interface geometry is not finite/admissible.")
-        cut = (fraction > 0.0) & (fraction < 1.0) & (area > 0.0)
-        norm = np.linalg.norm(normal, axis=-1)
-        if np.any(np.abs(norm[cut] - 1.0) > 1.0e-8):
-            raise ValueError("Cut-cell interface normals must be unit length.")
-        minimum = float(minimum_fluid_fraction)
-        tolerance_ = float(tolerance)
-        if not 0.0 < minimum <= 1.0 or tolerance_ <= 0.0:
-            raise ValueError("Sharp-interface stabilization/tolerance is invalid.")
-        geometry_id = canonical_fingerprint(
+        if not isinstance(geometry, QualifiedSharpGeometry):
+            raise TypeError("geometry must be QualifiedSharpGeometry.")
+        discretization = operators.discretization
+        expected_pairing = canonical_fingerprint(
             {
-                "kind": "mac-sharp-interface-geometry",
-                "arrays": array_tree_fingerprint(
-                    (fraction, apertures, area, centroid, normal, bodies)
-                ),
+                "pressure": operators.pressure_space.space_id,
+                "velocity": operators.velocity_space.space_id,
             }
         )
-        self.operators = operators
-        self.boundaries = boundaries
-        self.geometry = MACSharpInterfaceGeometry(
-            jnp.asarray(fraction),
-            tuple(jnp.asarray(value) for value in apertures),
-            jnp.asarray(area),
-            jnp.asarray(centroid),
-            jnp.asarray(normal),
-            jnp.asarray(bodies, dtype=jnp.int32),
-            geometry_id,
+        if (
+            geometry.operator_id != operators.prepared_id
+            or geometry.support_id != discretization.support.support_id
+            or geometry.cell_field_id != discretization.cell_space.field_space_id
+            or geometry.face_field_ids
+            != tuple(space.field_space_id for space in discretization.face_spaces)
+            or geometry.pairing_id != expected_pairing
+        ):
+            raise ValueError("Qualified sharp geometry binds another MAC support/space.")
+        if not bool(np.asarray(geometry.accepted)) or not bool(
+            np.asarray(geometry.qualified)
+        ):
+            raise ValueError(
+                "Sharp projection rejects unaccepted or unqualified geometry."
+            )
+        tolerance_ = float(tolerance)
+        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
+            raise ValueError("Sharp-interface tolerance must be positive and finite.")
+        indices, labels, unanchored = _active_components(operators, boundaries, geometry)
+        active_volumes = np.asarray(geometry.cell_fluid_measure).reshape(-1)[indices]
+        pressure_space = ArraySpace(
+            (int(indices.size),),
+            dtype=operators.pressure_space.dtype,
+            pairing=DiagonalPairing(
+                jnp.asarray(active_volumes),
+                pairing_id=canonical_fingerprint(
+                    {
+                        "kind": "sharp-active-fluid-volume-pairing",
+                        "geometry": geometry.realization_id,
+                    }
+                ),
+            ),
         )
-        self.minimum_fluid_fraction = minimum
-        self.tolerance = tolerance_
-        self.linear_policy = (
+        policy = (
             LinearSolvePolicy(
-                GMRES(restart=50),
+                ConjugateGradient(),
                 tolerance=TolerancePolicy(
-                    relative=tolerance_,
-                    absolute=tolerance_,
-                    max_steps=1000,
+                    relative=tolerance_, absolute=tolerance_, max_steps=1000
                 ),
                 differentiation=DifferentiationPolicy("mathematical"),
             )
             if linear_policy is None
             else linear_policy
         )
+        if not isinstance(policy, LinearSolvePolicy):
+            raise TypeError("linear_policy must be LinearSolvePolicy or None.")
+        self.operators = operators
+        self.boundaries = boundaries
+        self.geometry = geometry
+        self.active_cell_indices = jnp.asarray(indices)
+        self.component_labels = jnp.asarray(labels)
+        self.unanchored_components = jnp.asarray(unanchored)
+        self.pressure_space = pressure_space
+        self.tolerance = tolerance_
+        self.linear_policy = policy
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "mac-sharp-interface-projection",
+                "kind": "mac-qualified-sharp-interface-projection",
                 "operators": operators.prepared_id,
                 "boundaries": boundaries.prepared_id,
-                "geometry": geometry_id,
-                "minimum_fluid_fraction": minimum,
+                "geometry": geometry.realization_id,
+                "active_cells": int(indices.size),
+                "components": int(unanchored.size),
+                "unanchored_components": unanchored.tolist(),
                 "tolerance": tolerance_,
             }
         )
+        evidence = self._build_operator_evidence()
+        self.operator_evidence = evidence
+        if not bool(np.asarray(evidence.passed)):
+            raise RuntimeError(
+                "Sharp active operators failed weighted compatibility evidence."
+            )
 
-    def _effective_fraction(self) -> Array:
-        fraction = self.geometry.cell_fluid_fraction
-        return jnp.where(
-            fraction > 0.0,
-            jnp.maximum(fraction, self.minimum_fluid_fraction),
-            1.0,
+    @property
+    def component_count(self) -> int:
+        return int(self.unanchored_components.size)
+
+    def _pack(self, value: ArrayLike, /) -> Array:
+        full = self.operators.validate_pressure(value)
+        return full.reshape(-1)[self.active_cell_indices]
+
+    def _unpack(self, value: ArrayLike, /) -> Array:
+        active = self.pressure_space.validate(jnp.asarray(value))
+        full = jnp.zeros(
+            self.operators.discretization.cell_shape, dtype=active.dtype
+        ).reshape(-1)
+        return (
+            full.at[self.active_cell_indices]
+            .set(active)
+            .reshape(self.operators.discretization.cell_shape)
         )
+
+    def _component_means(self, value: Array, /) -> Array:
+        weights = self.geometry.cell_fluid_measure.reshape(-1)[
+            self.active_cell_indices
+        ].astype(value.dtype)
+        means = []
+        for component in range(self.component_count):
+            mask = self.component_labels == component
+            denominator = jnp.sum(jnp.where(mask, weights, 0.0))
+            means.append(jnp.sum(jnp.where(mask, weights * value, 0.0)) / denominator)
+        return jnp.stack(tuple(means))
+
+    def gauge(self, value: ArrayLike, /) -> Array:
+        active = self.pressure_space.validate(jnp.asarray(value))
+        means = self._component_means(active)
+        correction = means[self.component_labels]
+        remove = self.unanchored_components[self.component_labels]
+        return jnp.where(remove, active - correction, active)
+
+    def _gauge_completion(self, value: Array, /) -> Array:
+        means = self._component_means(value)
+        include = self.unanchored_components[self.component_labels]
+        return jnp.where(include, means[self.component_labels], 0.0)
 
     def divergence(self, velocity: FaceVelocity, /) -> Array:
         values = self.operators.validate_velocity(velocity)
-        flux = tuple(
+        integrated = tuple(
             aperture * value
             for aperture, value in zip(
-                self.geometry.face_fluid_aperture, values, strict=True
+                self.geometry.face_open_fraction, values, strict=True
             )
         )
-        raw = self.operators.divergence(flux) / self._effective_fraction()
-        return jnp.where(self.geometry.cell_fluid_fraction > 0.0, raw, 0.0)
+        full_volume_divergence = self.operators.divergence(integrated)
+        numerator = (
+            self.geometry.cell_full_measure.astype(full_volume_divergence.dtype)
+            * full_volume_divergence
+        )
+        denominator = self.geometry.cell_fluid_measure.astype(
+            full_volume_divergence.dtype
+        )
+        return jnp.where(
+            self.geometry.cell_active,
+            numerator / jnp.where(self.geometry.cell_active, denominator, 1.0),
+            0.0,
+        )
 
     def gradient(
         self,
         pressure: ArrayLike,
+        stage: MACBoundaryStageData | None,
+        /,
+        *,
+        homogeneous: bool,
+    ) -> FaceVelocity:
+        return self.boundaries.pressure_gradient(pressure, stage, homogeneous=homogeneous)
+
+    def _core_action(
+        self,
+        value: Array,
+        inverse_momentum: FaceVelocity,
         stage: MACBoundaryStageData,
         /,
-    ) -> FaceVelocity:
-        derivative = self.boundaries.pressure_gradient(
-            pressure,
-            stage,
-            homogeneous=self.boundaries.closure_kind == "neumann",
+    ) -> Array:
+        pressure = self._unpack(value)
+        derivative = self.gradient(pressure, stage, homogeneous=True)
+        correction = tuple(
+            coefficient * gradient
+            for coefficient, gradient in zip(inverse_momentum, derivative, strict=True)
         )
-        return tuple(
-            aperture * value
-            for aperture, value in zip(
-                self.geometry.face_fluid_aperture, derivative, strict=True
+        return self._pack(-self.divergence(correction))
+
+    def _gauged_action(
+        self,
+        value: Array,
+        inverse_momentum: FaceVelocity,
+        stage: MACBoundaryStageData,
+        /,
+    ) -> Array:
+        projected = self.gauge(value)
+        core = self.gauge(self._core_action(projected, inverse_momentum, stage))
+        return core + self._gauge_completion(value)
+
+    def _transpose_action(
+        self,
+        value: Array,
+        inverse_momentum: FaceVelocity,
+        stage: MACBoundaryStageData,
+        /,
+    ) -> Array:
+        weights = self.geometry.cell_fluid_measure.reshape(-1)[
+            self.active_cell_indices
+        ].astype(value.dtype)
+        return weights * self._gauged_action(value / weights, inverse_momentum, stage)
+
+    def _build_operator_evidence(self) -> MACSharpOperatorEvidence:
+        dtype = self.operators.pressure_space.dtype
+        count = self.pressure_space.shape[0]
+        pressure = jnp.sin(jnp.arange(count, dtype=dtype) + 0.37)
+        second = jnp.cos(jnp.arange(count, dtype=dtype) + 0.19)
+        velocity = tuple(
+            jnp.sin(
+                jnp.arange(int(np.prod(layout.shape)), dtype=dtype) + axis + 0.41
+            ).reshape(layout.shape)
+            for axis, layout in enumerate(self.operators.discretization.face_layouts)
+        )
+        velocity = self.boundaries.homogeneous_rate(velocity)
+        stage = self.boundaries.homogeneous_stage()
+        full_pressure = self._unpack(pressure)
+        derivative = self.gradient(full_pressure, stage, homogeneous=True)
+        cell_pairing = jnp.sum(
+            self.geometry.cell_fluid_measure * full_pressure * self.divergence(velocity)
+        )
+        face_pairing = sum(
+            jnp.sum(dual * aperture * component * gradient)
+            for dual, aperture, component, gradient in zip(
+                self.operators.face_dual_measures,
+                self.geometry.face_open_fraction,
+                velocity,
+                derivative,
+                strict=True,
             )
+        )
+        adjoint_residual = jnp.abs(cell_pairing + face_pairing)
+        unit = tuple(
+            jnp.ones(layout.shape, dtype=dtype)
+            for layout in self.operators.discretization.face_layouts
+        )
+        first_action = self._gauged_action(pressure, unit, stage)
+        second_action = self._gauged_action(second, unit, stage)
+        weights = self.geometry.cell_fluid_measure.reshape(-1)[
+            self.active_cell_indices
+        ].astype(dtype)
+        symmetry_residual = jnp.abs(
+            jnp.sum(weights * pressure * second_action)
+            - jnp.sum(weights * first_action * second)
+        )
+        nullspace_residual = jnp.asarray(0.0, dtype=dtype)
+        for component in range(self.component_count):
+            if bool(np.asarray(self.unanchored_components[component])):
+                constant = (self.component_labels == component).astype(dtype)
+                nullspace_residual = jnp.maximum(
+                    nullspace_residual,
+                    jnp.max(jnp.abs(self._core_action(constant, unit, stage))),
+                )
+        probe = pressure + 0.23 * second
+        probe_action = self._gauged_action(probe, unit, stage)
+        denominator = jnp.sum(weights * probe**2)
+        rayleigh = jnp.sum(weights * probe * probe_action) / denominator
+        scale = jnp.maximum(
+            1.0,
+            jnp.maximum(
+                jnp.abs(cell_pairing),
+                jnp.maximum(
+                    jnp.abs(face_pairing),
+                    jnp.maximum(
+                        jnp.sum(jnp.abs(weights * pressure * second_action)),
+                        jnp.sum(jnp.abs(weights * first_action * second)),
+                    ),
+                ),
+            ),
+        )
+        numeric_tolerance = 1024.0 * jnp.finfo(dtype).eps * scale
+        finite = (
+            jnp.isfinite(adjoint_residual)
+            & jnp.isfinite(symmetry_residual)
+            & jnp.isfinite(nullspace_residual)
+            & jnp.isfinite(rayleigh)
+        )
+        passed = (
+            finite
+            & (adjoint_residual <= numeric_tolerance)
+            & (symmetry_residual <= numeric_tolerance)
+            & (nullspace_residual <= numeric_tolerance)
+            & (rayleigh > 0.0)
+        )
+        return MACSharpOperatorEvidence(
+            adjoint_residual,
+            symmetry_residual,
+            nullspace_residual,
+            rayleigh,
+            finite,
+            passed,
+            canonical_fingerprint(
+                {
+                    "kind": "mac-sharp-weighted-operator-evidence",
+                    "plan": self.plan_id,
+                    "probe_size": count,
+                }
+            ),
         )
 
     def force(
@@ -238,6 +520,9 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
     ) -> MACSharpInterfaceForce:
         pressure_ = self.operators.validate_pressure(pressure)
         dimension = len(self.operators.discretization.cell_shape)
+        available = self.geometry.evidence.interface_moments_qualified
+        zero_force = jnp.zeros((dimension,), dtype=pressure_.dtype)
+        zero_torque = jnp.zeros((1 if dimension == 2 else 3,), dtype=pressure_.dtype)
         viscous = (
             jnp.zeros(self.geometry.interface_normal.shape, dtype=pressure_.dtype)
             if viscous_traction is None
@@ -246,32 +531,41 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
         if viscous.shape != self.geometry.interface_normal.shape:
             raise ValueError("viscous_traction must have one vector per cell.")
         pressure_density = -pressure_[..., None] * self.geometry.interface_normal
+        axes = tuple(range(dimension))
         pressure_force = jnp.sum(
-            self.geometry.interface_area[..., None] * pressure_density,
-            axis=tuple(range(dimension)),
+            self.geometry.interface_measure[..., None] * pressure_density, axis=axes
         )
         viscous_force = jnp.sum(
-            self.geometry.interface_area[..., None] * viscous,
-            axis=tuple(range(dimension)),
+            self.geometry.interface_measure[..., None] * viscous, axis=axes
         )
-        traction = pressure_density + viscous
         point = (
             jnp.zeros((dimension,), dtype=pressure_.dtype)
             if reference_point is None
             else jnp.asarray(reference_point, dtype=pressure_.dtype)
         )
         arm = self.geometry.interface_centroid - point
-        weighted = self.geometry.interface_area[..., None] * traction
+        weighted = self.geometry.interface_measure[..., None] * (
+            pressure_density + viscous
+        )
         torque_density = (
             (arm[..., 0] * weighted[..., 1] - arm[..., 1] * weighted[..., 0])[..., None]
             if dimension == 2
             else jnp.cross(arm, weighted)
         )
-        torque = jnp.sum(torque_density, axis=tuple(range(dimension)))
+        torque = jnp.sum(torque_density, axis=axes)
+        pressure_force = jnp.where(available, pressure_force, zero_force)
+        viscous_force = jnp.where(available, viscous_force, zero_force)
+        torque = jnp.where(available, torque, zero_torque)
         total = pressure_force + viscous_force
         finite = jnp.all(jnp.isfinite(total)) & jnp.all(jnp.isfinite(torque))
         return MACSharpInterfaceForce(
-            total, torque, pressure_force, viscous_force, finite
+            total,
+            torque,
+            pressure_force,
+            viscous_force,
+            finite,
+            available,
+            self.geometry.realization_id,
         )
 
     def project(
@@ -288,153 +582,178 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
         reference_point: ArrayLike | None = None,
     ) -> MACSharpInterfaceProjectionResult:
         stage = self.boundaries.validate_stage(boundary_stage)
-        boundary = self.boundaries.correction_descriptor(stage)
-        values = self.operators.validate_velocity(velocity)
+        values = self.boundaries.enforce(
+            self.operators.validate_velocity(velocity), stage
+        )
         inverse = self.operators.validate_velocity(inverse_momentum)
+        inverse_positive = jnp.all(
+            jnp.stack(
+                tuple(jnp.all(jnp.isfinite(value) & (value > 0.0)) for value in inverse)
+            )
+        )
         wall = (
-            tuple(jnp.zeros_like(value) for value in values)
+            self.geometry.wall_velocity
             if wall_velocity is None
             else self.operators.validate_velocity(wall_velocity)
         )
-        effective = tuple(
-            aperture * value + (1.0 - aperture) * prescribed
-            for aperture, value, prescribed in zip(
-                self.geometry.face_fluid_aperture, values, wall, strict=True
+        values = tuple(
+            jnp.where(active, value, prescribed)
+            for active, value, prescribed in zip(
+                self.geometry.face_active, values, wall, strict=True
             )
         )
-        divergence_before = self.divergence(effective)
+        divergence_before = self.divergence(values)
         source = (
             jnp.zeros_like(divergence_before)
             if jump_source is None
             else self.operators.validate_pressure(jump_source)
         )
-        fraction = self.geometry.cell_fluid_fraction
-        volumes = self.operators.discretization.cell_volumes.astype(
-            divergence_before.dtype
+        swept_source = jnp.where(
+            self.geometry.cell_active,
+            self.geometry.swept_cell_measure_rate
+            / jnp.where(self.geometry.cell_active, self.geometry.cell_fluid_measure, 1.0),
+            0.0,
+        )
+        target = source + swept_source
+        boundary_gradient = self.gradient(
+            jnp.zeros_like(divergence_before), stage, homogeneous=False
+        )
+        boundary_corrected = tuple(
+            value - coefficient * gradient
+            for value, coefficient, gradient in zip(
+                values, inverse, boundary_gradient, strict=True
+            )
         )
 
-        def gauge(value):
-            weight = volumes * fraction
-            mean = jnp.sum(weight * value) / jnp.maximum(jnp.sum(weight), 1.0)
-            return jnp.where(fraction > 0.0, value - mean, 0.0)
-
         def action(value):
-            derivative = self.gradient(gauge(value), stage)
-            correction = tuple(
-                coefficient * gradient
-                for coefficient, gradient in zip(inverse, derivative, strict=True)
-            )
-            fluid = gauge(-self.divergence(correction))
-            return jnp.where(fraction > 0.0, fluid, value)
+            return self._gauged_action(value, inverse, stage)
+
+        def transpose_action(value):
+            return self._transpose_action(value, inverse, stage)
 
         operator = FunctionLinearOperator(
             action,
-            source=self.operators.pressure_space,
-            target=self.operators.pressure_space,
-            transpose_action=action,
+            source=self.pressure_space,
+            target=self.pressure_space,
+            transpose_action=transpose_action,
             properties=OperatorProperties(
                 self_adjoint=True,
                 positive_definite=True,
                 evidence={
-                    "self_adjoint": "construction",
+                    "self_adjoint": "verified",
                     "positive_definite": "construction",
                 },
             ),
             operator_id=f"mac-sharp-pressure/{self.plan_id}",
         )
-        right_hand_side = gauge(-divergence_before + source)
-        initial = (
+        right_hand_side = self.gauge(
+            self._pack(-self.divergence(boundary_corrected) + target)
+        )
+        incoming = (
             jnp.zeros_like(divergence_before)
             if pressure is None
             else self.operators.validate_pressure(pressure)
         )
+        initial = self.gauge(self._pack(incoming))
         linear = solve(
             LinearSystem(operator, problem_id=f"mac-sharp-pressure/{self.plan_id}"),
             right_hand_side,
             policy=self.linear_policy,
             initial_guess=initial,
         )
-        pressure_value = gauge(linear.value)
-        derivative = self.gradient(pressure_value, stage)
+        pressure_active = self.gauge(linear.value)
+        pressure_value = self._unpack(pressure_active)
+        derivative = self.gradient(pressure_value, stage, homogeneous=True)
+        total_gradient = tuple(
+            homogeneous + boundary
+            for homogeneous, boundary in zip(derivative, boundary_gradient, strict=True)
+        )
         corrected_open = tuple(
             value - coefficient * gradient
             for value, coefficient, gradient in zip(
-                values, inverse, derivative, strict=True
+                values, inverse, total_gradient, strict=True
             )
         )
-        corrected = tuple(
-            aperture * value + (1.0 - aperture) * prescribed
-            for aperture, value, prescribed in zip(
-                self.geometry.face_fluid_aperture,
-                corrected_open,
-                wall,
-                strict=True,
+        corrected_candidate = tuple(
+            jnp.where(active, value, prescribed)
+            for active, value, prescribed in zip(
+                self.geometry.face_active, corrected_open, wall, strict=True
             )
         )
-        corrected = boundary.affine_velocity(corrected)
-        divergence_after = self.divergence(corrected) - source
-        divergence_norm = jnp.sqrt(jnp.sum(volumes * fraction * divergence_after**2))
-        stabilization_defect = jnp.sum(
-            volumes * (self._effective_fraction() - fraction) * divergence_after
-        )
+        corrected_candidate = self.boundaries.enforce(corrected_candidate, stage)
+        divergence_after_candidate = self.divergence(corrected_candidate) - target
+        volumes = self.geometry.cell_fluid_measure.astype(divergence_before.dtype)
+        divergence_norm = jnp.sqrt(jnp.sum(volumes * divergence_after_candidate**2))
+        scale = jnp.sqrt(jnp.sum(volumes * divergence_before**2))
         integrated_force = self.force(
             pressure_value,
             viscous_traction=viscous_traction,
             reference_point=reference_point,
         )
-        scale = jnp.sqrt(jnp.sum(volumes * fraction * divergence_before**2))
         finite = (
-            jnp.isfinite(divergence_norm)
-            & jnp.isfinite(stabilization_defect)
+            inverse_positive
+            & jnp.isfinite(divergence_norm)
             & integrated_force.finite
+            & jnp.all(jnp.isfinite(pressure_value))
         )
         divergence_valid = divergence_norm <= self.tolerance * jnp.maximum(scale, 1.0)
+        geometry_valid = self.geometry.accepted & self.operator_evidence.passed
+        accepted = (
+            linear.successful
+            & divergence_valid
+            & finite
+            & geometry_valid
+            & stage.successful
+        )
+        corrected = tuple(
+            jnp.where(accepted, candidate, original)
+            for candidate, original in zip(corrected_candidate, values, strict=True)
+        )
+        pressure_output = jnp.where(accepted, pressure_value, incoming)
+        divergence_after = self.divergence(corrected) - target
         status = jnp.asarray(int(MACSharpInterfaceStatus.SUCCESS), dtype=jnp.int32)
         status = status | jnp.where(
-            linear.successful,
-            0,
-            int(MACSharpInterfaceStatus.LINEAR_SOLVE_FAILED),
+            linear.successful, 0, int(MACSharpInterfaceStatus.LINEAR_SOLVE_FAILED)
         ).astype(jnp.int32)
         status = status | jnp.where(
-            divergence_valid,
+            divergence_valid, 0, int(MACSharpInterfaceStatus.DIVERGENCE_FAILED)
+        ).astype(jnp.int32)
+        status = status | jnp.where(
+            self.geometry.accepted, 0, int(MACSharpInterfaceStatus.GEOMETRY_FAILED)
+        ).astype(jnp.int32)
+        status = status | jnp.where(
+            self.operator_evidence.passed,
             0,
-            int(MACSharpInterfaceStatus.DIVERGENCE_FAILED),
+            int(MACSharpInterfaceStatus.OPERATOR_EVIDENCE_FAILED),
         ).astype(jnp.int32)
         status = status | jnp.where(
             finite, 0, int(MACSharpInterfaceStatus.NONFINITE)
         ).astype(jnp.int32)
-        accepted = linear.successful & divergence_valid & finite
         return MACSharpInterfaceProjectionResult(
             corrected,
-            pressure_value,
+            pressure_output,
             divergence_before,
             divergence_after,
             divergence_norm,
             linear,
             integrated_force,
-            stabilization_defect,
+            jnp.asarray(0.0, dtype=divergence_norm.dtype),
+            self.geometry.evidence,
+            self.operator_evidence,
             status,
             accepted,
+            self.geometry.realization_id,
             self.plan_id,
         )
 
 
-MACSharpGeometryProvider = Callable[[Array, Any], "MACSharpInterfaceGeometryData"]
-MACInterfaceJumpSource = Callable[[Array, MACSharpInterfaceGeometry, Any], Array]
-
-
-class MACSharpInterfaceGeometryData(StrictModule):
-    cell_fluid_fraction: Array
-    face_fluid_aperture: FaceVelocity
-    interface_area: Array
-    interface_centroid: Array
-    interface_normal: Array
-    body_id: Array
-    swept_cell_volume_rate: Array
+MACSharpGeometryProvider = Callable[[Array, Any], QualifiedSharpGeometry]
+MACInterfaceJumpSource = Callable[[Array, QualifiedSharpGeometry, Any], Array]
 
 
 class MACMovingSharpInterfaceEpochResult(StrictModule):
-    geometry: MACSharpInterfaceGeometryData
+    candidate_geometry: QualifiedSharpGeometry
+    geometry: QualifiedSharpGeometry
     projection: MACSharpInterfaceProjectionPlan
     time: Array
     step_size: Array
@@ -444,17 +763,17 @@ class MACMovingSharpInterfaceEpochResult(StrictModule):
     maximum_gcl_residual: Array
     finite: Array
     accepted: Array
+    refresh_required: Array
     epoch_id: str = eqx.field(static=True)
 
 
 class MACMovingSharpInterfaceEpochPlan(StrictModule, NonTrainableState):
-    """Fixed-capacity moving cut-cell geometry with swept-volume evidence."""
+    """Host refresh owner for qualified fixed-capacity moving geometry epochs."""
 
     operators: PreparedMACOperators
     boundaries: PreparedMACBoundaryPlan
     provider: MACSharpGeometryProvider = eqx.field(static=True)
     geometry_family_id: str = eqx.field(static=True)
-    minimum_fluid_fraction: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -466,65 +785,52 @@ class MACMovingSharpInterfaceEpochPlan(StrictModule, NonTrainableState):
         /,
         *,
         geometry_family_id: str,
-        minimum_fluid_fraction: float = 1.0e-3,
         tolerance: float = 1.0e-9,
     ):
         if not callable(provider):
             raise TypeError("provider must be callable.")
         identifier = str(geometry_family_id)
-        minimum = float(minimum_fluid_fraction)
         tolerance_ = float(tolerance)
-        if not identifier or not 0.0 < minimum <= 1.0 or tolerance_ <= 0.0:
+        if not identifier or not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Moving sharp-interface policy is invalid.")
         self.operators = operators
         self.boundaries = boundaries
         self.provider = provider
         self.geometry_family_id = identifier
-        self.minimum_fluid_fraction = minimum
         self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "mac-moving-sharp-interface-epochs",
+                "kind": "mac-qualified-moving-sharp-interface-epochs",
                 "operators": operators.prepared_id,
                 "boundaries": boundaries.prepared_id,
                 "geometry_family": identifier,
-                "minimum_fluid_fraction": minimum,
                 "tolerance": tolerance_,
             }
         )
 
     def projection(
         self, time: ArrayLike, args: Any = None, /
-    ) -> tuple[MACSharpInterfaceGeometryData, MACSharpInterfaceProjectionPlan]:
-        data = self.provider(jnp.asarray(time), args)
-        if not isinstance(data, MACSharpInterfaceGeometryData):
-            raise TypeError(
-                "Moving sharp-interface provider returned an invalid geometry."
-            )
-        projection = MACSharpInterfaceProjectionPlan(
+    ) -> tuple[QualifiedSharpGeometry, MACSharpInterfaceProjectionPlan]:
+        geometry = self.provider(jnp.asarray(time), args)
+        if not isinstance(geometry, QualifiedSharpGeometry):
+            raise TypeError("Moving sharp provider must return QualifiedSharpGeometry.")
+        return geometry, MACSharpInterfaceProjectionPlan(
             self.operators,
             self.boundaries,
-            data.cell_fluid_fraction,
-            data.face_fluid_aperture,
-            data.interface_area,
-            data.interface_centroid,
-            data.interface_normal,
-            data.body_id,
-            minimum_fluid_fraction=self.minimum_fluid_fraction,
+            geometry,
             tolerance=self.tolerance,
         )
-        return data, projection
 
     def transition(
         self,
         previous_time: ArrayLike,
-        previous: MACSharpInterfaceGeometryData,
+        previous: QualifiedSharpGeometry,
         time: ArrayLike,
         args: Any = None,
         /,
     ) -> MACMovingSharpInterfaceEpochResult:
-        if not isinstance(previous, MACSharpInterfaceGeometryData):
-            raise TypeError("previous must be MACSharpInterfaceGeometryData.")
+        if not isinstance(previous, QualifiedSharpGeometry):
+            raise TypeError("previous must be QualifiedSharpGeometry.")
         previous_time_ = jnp.asarray(previous_time)
         time_ = jnp.asarray(time)
         step = time_ - previous_time_
@@ -533,40 +839,46 @@ class MACMovingSharpInterfaceEpochPlan(StrictModule, NonTrainableState):
             ~jnp.isfinite(step) | (step <= 0.0),
             "Moving sharp-interface epoch requires a positive time step.",
         )
-        current, projection = self.projection(time_, args)
-        volumes = self.operators.discretization.cell_volumes.astype(
-            current.cell_fluid_fraction.dtype
-        )
-        volume_rate = (
-            volumes * (current.cell_fluid_fraction - previous.cell_fluid_fraction) / step
-        )
-        residual = volume_rate - current.swept_cell_volume_rate
+        candidate, candidate_projection = self.projection(time_, args)
+        volume_rate = (candidate.cell_fluid_measure - previous.cell_fluid_measure) / step
+        residual = volume_rate - candidate.swept_cell_measure_rate
         maximum = jnp.max(jnp.abs(residual))
         scale = jnp.maximum(
             1.0,
             jnp.max(jnp.abs(volume_rate))
-            + jnp.max(jnp.abs(current.swept_cell_volume_rate)),
+            + jnp.max(jnp.abs(candidate.swept_cell_measure_rate)),
         )
-        finite = jnp.all(jnp.isfinite(residual)) & jnp.all(
-            jnp.isfinite(current.swept_cell_volume_rate)
-        )
-        accepted = finite & (maximum <= self.tolerance * scale)
+        finite = jnp.all(jnp.isfinite(residual))
+        accepted = candidate.accepted & finite & (maximum <= self.tolerance * scale)
+        if bool(np.asarray(accepted)):
+            geometry = candidate
+            projection = candidate_projection
+        else:
+            geometry = previous
+            projection = MACSharpInterfaceProjectionPlan(
+                self.operators,
+                self.boundaries,
+                previous,
+                tolerance=self.tolerance,
+            )
         return MACMovingSharpInterfaceEpochResult(
-            current,
+            candidate,
+            geometry,
             projection,
             time_,
             step,
             volume_rate,
-            current.swept_cell_volume_rate,
+            candidate.swept_cell_measure_rate,
             residual,
             maximum,
             finite,
             accepted,
+            ~accepted,
             canonical_fingerprint(
                 {
                     "kind": "mac-moving-sharp-interface-epoch",
                     "plan": self.plan_id,
-                    "geometry": projection.geometry.geometry_id,
+                    "accepted_geometry": geometry.realization_id,
                 }
             ),
         )
@@ -693,9 +1005,8 @@ __all__ = [
     "MACMovingSharpInterfaceEpochResult",
     "MACSharpGeometryProvider",
     "MACSharpInterfaceForce",
-    "MACSharpInterfaceGeometry",
-    "MACSharpInterfaceGeometryData",
     "MACSharpInterfaceProjectionPlan",
     "MACSharpInterfaceProjectionResult",
     "MACSharpInterfaceStatus",
+    "MACSharpOperatorEvidence",
 ]

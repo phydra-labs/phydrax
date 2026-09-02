@@ -134,3 +134,54 @@ def test_memory_solution_adapter_preserves_delay_masks_and_solver_identity():
         np.asarray(data.sample_valid), [True, True, True, False]
     )
     np.testing.assert_array_equal(np.asarray(data.transition_valid), [True, True, False])
+
+
+def test_fixed_step_adapter_requires_declared_projection_and_retained_trajectory():
+    def step(step_index, time, state, step_size, args):
+        del step_index, time, step_size, args
+        candidate = state + 1.0
+        return phx.solver.FixedStepResult(
+            candidate,
+            candidate,
+            jnp.asarray(True),
+            jnp.asarray(0.0),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.asarray(0.0),
+        )
+
+    problem = phx.solver.FixedStepProblem(
+        phx.solver.CallableFixedStepMethod(step, "projection-test"),
+        jnp.asarray([[0.0, 10.0], [1.0, 11.0]]),
+        t0=0.0,
+        t1=0.3,
+        step_size=0.1,
+    )
+    trajectory = phx.solver.FixedStepRolloutPlan(retention="trajectory").rollout(problem)
+    layout = phx.dynamics.StateLayout((2,), component_names=("first-row", "second-row"))
+
+    data = phx.dynamics.identification.trajectory_data_from_fixed_step(
+        trajectory,
+        lambda retained: retained[..., 0],
+        projection_id="first-column",
+        state_layout=layout,
+    )
+
+    np.testing.assert_array_equal(data.coordinates, trajectory.times)
+    np.testing.assert_array_equal(data.sample_valid, trajectory.valid)
+    np.testing.assert_array_equal(
+        data.states,
+        np.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 3.0], [3.0, 4.0]]),
+    )
+    assert data.state_layout is layout
+    assert data.source_id.endswith(":projection:first-column")
+
+    final = phx.solver.FixedStepRolloutPlan(retention="final").rollout(problem)
+    with pytest.raises(ValueError, match="final-only"):
+        phx.dynamics.identification.trajectory_data_from_fixed_step(
+            final,
+            lambda retained: retained[..., 0],
+            projection_id="first-column",
+            state_layout=layout,
+        )

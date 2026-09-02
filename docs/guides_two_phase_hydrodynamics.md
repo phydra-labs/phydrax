@@ -49,6 +49,19 @@ Capillary pressure derives from the discrete interface-area functional and is ma
 through the compatible pressure-gradient path. Surface energy and capillary work are
 reported separately.
 
+## Qualified static solid geometry
+
+An optional qualified sharp-geometry realization replaces full Cartesian cell volumes
+and face measures with accepted fluid volumes and open apertures throughout content,
+phase flux, momentum flux, inverse momentum, and pressure projection. Geometry,
+projection, PLIC, and transfer IDs must agree; failed geometry or pressure evidence
+rolls back the complete candidate state.
+
+The initial contract is static and fixed topology. A cell cut simultaneously by the
+solid boundary and the gas-liquid PLIC interface is rejected because the current PLIC
+reconstruction is defined on the full Cartesian cell, not the clipped fluid polytope.
+No contact angle is inferred in that case.
+
 ## Moving immersed body
 
 `TwoPhaseMovingBodyPlan` provides a fixed-radius moving immersed target with identified
@@ -68,6 +81,8 @@ pressure/divergence, topology events, and total residual.
 ## Limits
 
 - PLIC reconstruction is fixed-grid;
+- qualified sharp solids are initially static and fixed topology;
+- cells cut by both solid and gas-liquid interfaces fail closed;
 - interface events and contact are nondifferentiable;
 - no AMR/reflux or distributed phase transport;
 - no subgrid air-entrainment model;

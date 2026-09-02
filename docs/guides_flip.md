@@ -67,6 +67,21 @@ default is inferred from graphics demonstrations.
 Grid extrapolation is reconstruction for G2P/advection only. It never enters mass or momentum
 balance evidence.
 
+## Qualified static solids
+
+An optional sharp-solid bundle binds one accepted fluid-volume/open-aperture
+realization, solid-aware P2G/G2P relations, sharp pressure projection, wall velocity,
+and particle collision under the same geometry identity. Particle stencil weights are
+restricted to accepted fluid support and renormalized; the matched relation is used in
+both transfer directions and reports partition-of-unity and support-loss evidence.
+
+The liquid mask is intersected with active fluid cells. Pressure, divergence,
+extrapolation, and grid updates exclude closed support. Geometry, transfer, projection,
+collision, and the particle/grid candidate commit or roll back atomically.
+
+Initial sharp-solid support is static and fixed topology. Moving geometry requires the
+accepted sharp-epoch refresh/GCL lifecycle; reseeding remains separate.
+
 ## Existing MAC and MPM boundaries
 
 FLIP does not call `CompiledMACIncompressibleDynamics.convection`; particle motion already carries
@@ -85,8 +100,8 @@ Gradients are branchwise for fixed particle routes, liquid mask, extrapolation w
 route, and accepted step. Classification or route transitions invalidate the local derivative
 program.
 
-The initial scope is constant-density, inviscid, fixed particles, periodic or stationary aligned
-closed boundaries, first-order volume classification, and single-device execution. Particle SDF,
-ghost-fluid fractions, surface tension, arbitrary or moving solids, reseeding, variable-density
-FLIP, staggered APIC–FLIP, free-surface viscosity, and distributed particle ownership remain
-unsupported.
+The baseline scope is constant-density, inviscid, fixed particles, periodic or
+stationary closed boundaries, first-order liquid classification, and single-device
+execution. Qualified fixed-topology static solids are optional. Moving sharp solids,
+reseed integration, variable-density FLIP, staggered APIC–FLIP, free-surface
+viscosity, and distributed particle ownership remain unsupported.

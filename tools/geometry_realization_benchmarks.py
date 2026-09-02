@@ -133,6 +133,53 @@ def _finite_element_case(*, warmup: int, repeats: int):
     }
 
 
+def _sharp_measure_case(count: int, *, warmup: int, repeats: int):
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(count),
+            phx.discretization.UniformCellAxisSpec(count),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
+    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
+    mac = phx.discretization.MACOperatorPlan(discretization).prepare()
+
+    def plane(points, time, args):
+        del time, args
+        return points[..., 0] - 0.3125
+
+    plan = phx.discretization.MACExactSDFMeasurePlan(
+        mac,
+        plane,
+        phx.geometry.ExactSDFEnclosureCertificate(
+            phx.geometry.exact_signed_distance_certificate(smooth=True)
+        ),
+        source_id=f"benchmark-plane-{count}",
+        subdivisions=8,
+    )
+    realization, first_seconds = measure_synchronized(plan.prepare)
+    _, distribution = measure_repeated(
+        plan.prepare,
+        warmup=warmup,
+        repeats=repeats,
+    )
+    return {
+        "accepted": bool(realization.accepted),
+        "bound_width": float(
+            jnp.sum(
+                realization.cell_fluid_measure_upper
+                - realization.cell_fluid_measure_lower
+            )
+        ),
+        "cells": count * count,
+        "first_realization_seconds": first_seconds,
+        "logical_plan_bytes": logical_array_bytes(plan),
+        "realization": distribution.to_seconds_dict(),
+        "resolution_per_axis": count,
+        "topology_resolved": bool(realization.evidence.topology_resolved),
+    }
+
+
 def run(*, smoke: bool, warmup: int, repeats: int):
     resolutions = (7,) if smoke else (7, 9)
     return {
@@ -143,6 +190,11 @@ def run(*, smoke: bool, warmup: int, repeats: int):
         "surface": [
             _surface_case(count, warmup=warmup, repeats=repeats) for count in resolutions
         ],
+        "sharp_measure": _sharp_measure_case(
+            8 if smoke else 16,
+            warmup=warmup,
+            repeats=repeats,
+        ),
     }
 
 

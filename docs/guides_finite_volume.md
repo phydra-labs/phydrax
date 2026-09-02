@@ -396,6 +396,24 @@ State and parameter gradients are supported for a fixed hierarchy. Refinement ta
 slot activation, migration routes, and topology changes are discrete and are not
 differentiated.
 
+## Bounded passive-tracer transport
+
+`MACPassiveTracerMacCormackPlan` prepares a two-pass semi-Lagrangian MacCormack
+operator for periodic, cell-centered `point_value` scalars on a prepared Cartesian
+MAC grid. It traces midpoint characteristics through one frozen face-velocity field,
+forms the reverse-advection correction, and clips the corrected value to the original
+donor-corner envelope.
+
+This is an explicitly nonconservative side lane. Pairing-weighted integral change is
+reported as diagnostics and never reclassified as a conserved balance. The operator
+must not transport finite-volume cell averages, phase fraction, density, momentum,
+temperature, salinity, charge, or energy. Nonperiodic boundaries, mapped grids,
+staggered payloads, vector payloads, and adaptive routes are rejected.
+
+`MACPassiveTracerFixedStepMethod` may compose one tracer with an existing fixed-step
+method. Carrier velocity is sampled from the pre-step base state. The base and tracer
+candidate are committed or rolled back together.
+
 ## Differentiability contract
 
 The substrate differentiates the fixed discrete program. Method metadata distinguishes:

@@ -43,11 +43,22 @@ def run():
     view = phx.applications.two_phase_flow.two_phase_diagnostic_view(
         two_phase, result.accepted_state
     )
+    _, accepted_inspection = phx.applications.two_phase_flow.two_phase_inspection_frames(
+        two_phase,
+        result,
+        time=jnp.asarray(0.0),
+        step=0,
+        step_size=jnp.asarray(0.001),
+        result_id="advanced-two-phase-vof-step",
+    )
     return {
         "successful": bool(result.successful),
         "liquid_volume": float(view.liquid_volume),
         "interface_measure": float(view.interface_measure),
         "topology_events": int(view.topology_event_count),
+        "inspection_fields": tuple(
+            field.name for field in accepted_inspection.frame.fields
+        ),
     }
 
 

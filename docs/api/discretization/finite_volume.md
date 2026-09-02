@@ -241,6 +241,22 @@
 
 ---
 
+::: phydrax.discretization.MACDiffuseSDFGeometryPlan
+
+---
+
+::: phydrax.discretization.MACExactSDFMeasurePlan
+
+---
+
+::: phydrax.geometry.QualifiedSharpGeometry
+
+---
+
+::: phydrax.geometry.SharpGeometryEvidence
+
+---
+
 ::: phydrax.discretization.MACBoundaryPlan
 
 ---
@@ -266,6 +282,18 @@
 ---
 
 ::: phydrax.discretization.PreparedMACScalarTransport
+
+---
+
+::: phydrax.discretization.MACPassiveTracerMacCormackPlan
+
+---
+
+::: phydrax.discretization.PreparedMACPassiveTracerMacCormack
+
+---
+
+::: phydrax.discretization.MACPassiveTracerMacCormackResult
 
 ---
 
