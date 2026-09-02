@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -41,7 +42,7 @@ class LocalMPSJump(StrictModule):
         if self.operator.shape[1] != tensor.shape[1]:
             raise ValueError("Jump physical dimension does not match the MPS site.")
         operator = state.precision.contraction(self.operator)
-        updated = oe.contract(
+        updated = ein.contract(
             "oi,lir->lor",
             operator,
             state.precision.contraction(tensor),
@@ -117,9 +118,7 @@ class MPSQuantumTrajectoryResult(StrictModule):
         self.discarded_weight_history = jnp.asarray(discarded_weight_history)
         self.root_residuals = jnp.asarray(root_residuals)
         self.root_ambiguous = jnp.asarray(root_ambiguous, dtype=bool)
-        self.event_capacity_saturated = jnp.asarray(
-            event_capacity_saturated, dtype=bool
-        )
+        self.event_capacity_saturated = jnp.asarray(event_capacity_saturated, dtype=bool)
         self.event_count = int(jnp.sum(self.active_events))
         self.maximum_events = int(self.active_events.shape[0])
         self.valid = (
@@ -148,9 +147,7 @@ def _nonhermitian_mps_step(
     normals: dict[int, Array] = {}
     for jump in problem.jumps:
         normal = jnp.conj(jump.operator.T) @ jump.operator
-        normals[jump.site] = normals.get(
-            jump.site, jnp.zeros_like(normal)
-        ) + normal
+        normals[jump.site] = normals.get(jump.site, jnp.zeros_like(normal)) + normal
 
     def damp(current, scale):
         result = current
@@ -292,9 +289,7 @@ def solve_mps_quantum_jump(
             rates = jnp.stack([jump.rate(normalized_event) for jump in problem.jumps])
             total = jnp.sum(rates)
             if not bool(
-                jnp.all(jnp.isfinite(rates))
-                & jnp.all(rates >= 0.0)
-                & (total > 0.0)
+                jnp.all(jnp.isfinite(rates)) & jnp.all(rates >= 0.0) & (total > 0.0)
             ):
                 root_ambiguous = root_ambiguous.at[event_count].set(True)
                 state = candidate
@@ -302,14 +297,10 @@ def solve_mps_quantum_jump(
                 break
             local_key = derive_key(key, channel_address, event_count)
             channel = jax.random.categorical(local_key, jnp.log(rates / total))
-            state = problem.jumps[int(channel)].apply(
-                normalized_event, normalize=True
-            )
+            state = problem.jumps[int(channel)].apply(normalized_event, normalize=True)
             event_time = index * step + elapsed + event_duration
             times = times.at[event_count].set(event_time)
-            channels = channels.at[event_count].set(
-                jnp.asarray(channel, dtype=jnp.int32)
-            )
+            channels = channels.at[event_count].set(jnp.asarray(channel, dtype=jnp.int32))
             active = active.at[event_count].set(True)
             event_count += 1
             elapsed += float(event_duration)

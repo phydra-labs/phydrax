@@ -11,7 +11,6 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 from nufftax import (
     nufft1d1,
@@ -21,6 +20,8 @@ from nufftax import (
     nufft3d1,
     nufft3d2,
 )
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -56,9 +57,9 @@ def _direct_type2(phases: Array, coefficients: Array, /) -> Array:
             coefficients.dtype
         )
         result = (
-            oe.contract("mk,k...->m...", phase, result)
+            ein.contract("mk,k...->m...", phase, result)
             if position == 0
-            else oe.contract("mk,mk...->m...", phase, result)
+            else ein.contract("mk,mk...->m...", phase, result)
         )
     return result
 
@@ -69,8 +70,8 @@ def _direct_type1(phases: Array, values: Array, mode_shape: tuple[int, ...], /) 
         phase = jnp.exp(1j * phases[:, axis, None] * axis_modes[None, :]).astype(
             values.dtype
         )
-        result = oe.contract("m...,mk->m...k", result, phase)
-    return oe.contract("m...->...", result)
+        result = ein.contract("m...,mk->m...k", result, phase)
+    return ein.contract("m...->...", result)
 
 
 def fourier_type2(

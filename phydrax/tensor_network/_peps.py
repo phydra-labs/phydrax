@@ -9,8 +9,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -282,7 +283,7 @@ def contract_peps_exact(
         dtype=str(state.tensors[0].dtype),
     )
     transfers = tuple(
-        oe.contract(
+        ein.contract(
             "urdlp,URDLp->uUrRdDlL", jnp.conj(first), second, optimize="greedy"
         ).reshape(shape)
         for first, second, shape in zip(state.tensors, right.tensors, shapes, strict=True)
@@ -386,7 +387,8 @@ def contract_pepo_trace_exact(
         dtype=str(operator.tensors[0].dtype),
     )
     arrays = tuple(
-        oe.contract("urdlpp->urdl", tensor, optimize=False) for tensor in operator.tensors
+        ein.contract("urdlpp->urdl", tensor, optimize=False)
+        for tensor in operator.tensors
     )
     contracted = execute_contraction(prepare_contraction(plan, arrays))
     evidence = PEPSContractionEvidence(

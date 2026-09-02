@@ -12,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -251,7 +252,7 @@ def _gaussian_data(
     log_density = -0.5 * (
         mean.size * jnp.log(jnp.asarray(2.0 * jnp.pi, dtype=mean.dtype))
         + 2.0 * jnp.sum(jnp.log(jnp.diag(factor)))
-        + oe.contract("i,i->", solution, solution)
+        + ein.contract("i,i->", solution, solution)
     )
     return factor, log_density, eigenvalues, valid
 
@@ -463,7 +464,7 @@ class _ProjectedEulerTransition(AbstractTransitionKernel):
             & rank_valid
             & jnp.isfinite(prepared.log_abs_determinant())
         )
-        quadratic = oe.contract("i,i->", difference, solved.value)
+        quadratic = ein.contract("i,i->", difference, solved.value)
         value = -0.5 * (
             self.support.rank * jnp.log(2.0 * jnp.pi)
             + prepared.log_abs_determinant()
@@ -749,26 +750,26 @@ def sing_constrained_smoother(
     reduced_problem, evidence = _projected_sing_problem(problem, support)
     reduced = sing_smoother(reduced_problem, **kwargs)
     reduced_means = reduced.means
-    ambient_flat = support.origin + oe.contract(
+    ambient_flat = support.origin + ein.contract(
         "...r,dr->...d", reduced_means, support.tangent_basis
     )
     ambient_means = ambient_flat.reshape(
         reduced.case_shape + (reduced.moments.num_nodes,) + problem.model.state_shape
     )
-    covariances = oe.contract(
+    covariances = ein.contract(
         "dr,...rs,es->...de",
         support.tangent_basis,
         reduced.covariances,
         support.tangent_basis,
     )
-    cross = oe.contract(
+    cross = ein.contract(
         "dr,...rs,es->...de",
         support.tangent_basis,
         reduced.transition_cross_covariances,
         support.tangent_basis,
     )
     residuals = (
-        oe.contract("cd,...d->...c", support.constraints, ambient_flat) - support.offset
+        ein.contract("cd,...d->...c", support.constraints, ambient_flat) - support.offset
     )
     valid = (
         reduced.valid

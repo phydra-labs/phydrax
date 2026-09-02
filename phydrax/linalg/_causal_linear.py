@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ._gaussian_chain import (
     associative_gaussian_filter,
@@ -48,9 +49,9 @@ def _compose_affine(
 ) -> tuple[Array, Array]:
     earlier_transition, earlier_offset = earlier
     later_transition, later_offset = later
-    transition = oe.contract("...ij,...jk->...ik", later_transition, earlier_transition)
+    transition = ein.contract("...ij,...jk->...ik", later_transition, earlier_transition)
     offset = (
-        oe.contract("...ij,...j->...i", later_transition, earlier_offset) + later_offset
+        ein.contract("...ij,...j->...i", later_transition, earlier_offset) + later_offset
     )
     return transition, offset
 
@@ -126,7 +127,7 @@ def causal_linearized_residual(
     if direction.shape != residual.shape:
         raise ValueError("step must have the same shape as residuals.")
     predecessor = jnp.concatenate((jnp.zeros_like(direction[:1]), direction[:-1]), axis=0)
-    propagated = oe.contract("tij,tj->ti", matrices, predecessor)
+    propagated = ein.contract("tij,tj->ti", matrices, predecessor)
     return residual + direction - propagated
 
 
@@ -186,7 +187,7 @@ def _damped_causal_least_squares(
         axis=0,
     )
     predicted_means = (
-        oe.contract("tij,tj->ti", filter_transitions, predecessor_means) + filter_offsets
+        ein.contract("tij,tj->ti", filter_transitions, predecessor_means) + filter_offsets
     )
     predicted_covariances = (
         filter_transitions

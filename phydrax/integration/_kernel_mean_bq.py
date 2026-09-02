@@ -13,8 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -190,7 +191,7 @@ def prepare_kernel_mean_bayesian_quadrature(
     factor = _prepare_factor(system, plan.solve_policy)
     solve_result = solve(factor.prepared, kernel_vector)
     weights = _solve_vector(factor, kernel_vector)
-    posterior_variance = double_mean - oe.contract("i,i->", kernel_vector, weights)
+    posterior_variance = double_mean - ein.contract("i,i->", kernel_vector, weights)
     variance_history = (
         jnp.asarray((posterior_variance,), dtype=points.dtype)
         if selection_variances.shape[0] == 0
@@ -229,7 +230,7 @@ def reduce_kernel_mean_bayesian_quadrature(
         array = jnp.asarray(leaf)
         if array.ndim == 0 or array.shape[0] != prepared.points.shape[0]:
             raise ValueError("Every integrand leaf must start with the BQ point axis.")
-        return oe.contract("i,i...->...", prepared.weights, array)
+        return ein.contract("i,i...->...", prepared.weights, array)
 
     return jax.tree_util.tree_map(reduce_leaf, values)
 
@@ -262,7 +263,7 @@ def _select_sequential(
         factor = _prepare_factor(system, solve_policy)
         selected_mean = kernel_mean.mean(points)
         solved_mean = _solve_vector(factor, selected_mean)
-        current_variance = kernel_mean.double_mean() - oe.contract(
+        current_variance = kernel_mean.double_mean() - ein.contract(
             "i,i->", selected_mean, solved_mean
         )
         variance_history.append(current_variance)
@@ -272,7 +273,7 @@ def _select_sequential(
         solved_cross = jax.vmap(lambda row: _solve_vector(factor, row))(cross)
         numerator = means - cross @ solved_mean
         denominator = (
-            diagonal + observation_noise - oe.contract("ij,ij->i", cross, solved_cross)
+            diagonal + observation_noise - ein.contract("ij,ij->i", cross, solved_cross)
         )
         valid = (
             ~jnp.asarray(used)

@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._polynomial import ScaledMonomialBasis
@@ -114,7 +115,7 @@ def _diffusion_polynomial_matrices(
                 geometry.characteristic_lengths,
             )
             if values.shape == cubature.weights.shape:
-                matrix = oe.contract(
+                matrix = ein.contract(
                     "cq,cq,cqad,cqbd->cab",
                     cubature.weights,
                     values,
@@ -122,7 +123,7 @@ def _diffusion_polynomial_matrices(
                     basis_gradient,
                 )
             elif values.shape == cubature.weights.shape + (2, 2):
-                matrix = oe.contract(
+                matrix = ein.contract(
                     "cq,cqad,cqde,cqbe->cab",
                     cubature.weights,
                     basis_gradient,
@@ -145,7 +146,7 @@ def _diffusion_polynomial_matrices(
                 geometry.centroids,
                 geometry.characteristic_lengths,
             )
-            matrix = oe.contract(
+            matrix = ein.contract(
                 "cq,cq,cqa,cqb->cab",
                 cubature.weights,
                 values,
@@ -184,7 +185,7 @@ def _mass_polynomial_matrices(
             geometry.centroids,
             geometry.characteristic_lengths,
         )
-        scalar_matrix = oe.contract(
+        scalar_matrix = ein.contract(
             "cq,cq,cqa,cqb->cab",
             cubature.weights,
             values,
@@ -237,7 +238,9 @@ def _factorized_action(
         discretization.dof_map.orientations,
         strict=True,
     ):
-        consistent = oe.contract("cai,cab,cbj->cij", coefficient, polynomial, coefficient)
+        consistent = ein.contract(
+            "cai,cab,cbj->cij", coefficient, polynomial, coefficient
+        )
         stabilized = stabilize_virtual_element_tensor(
             projection,
             consistent,
@@ -488,8 +491,8 @@ def _boundary_operator_and_rhs(
         value = _boundary_data(action.value, points, edges, discretization, context)
         if alpha.shape != weighted.shape or value.shape != weighted.shape:
             raise ValueError("VEM Robin data must be scalar on boundary quadrature.")
-        matrices = oe.contract("eq,eq,eqi,eqj->eij", weighted, alpha, basis, basis)
-        rhs = oe.contract("eq,eq,eqi->ei", weighted, value, basis)
+        matrices = ein.contract("eq,eq,eqi,eqj->eij", weighted, alpha, basis, basis)
+        rhs = ein.contract("eq,eq,eqi->ei", weighted, value, basis)
         operator = SparseCoordinateOperator(
             EdgeRelation(
                 jnp.broadcast_to(routes[:, None, :], matrices.shape).reshape((-1,)),
@@ -515,7 +518,7 @@ def _boundary_operator_and_rhs(
     value = _boundary_data(action.load, points, edges, discretization, context)
     if value.shape != weighted.shape:
         raise ValueError("VEM boundary load must be scalar on boundary quadrature.")
-    rhs = oe.contract("eq,eq,eqi->ei", weighted, value, basis)
+    rhs = ein.contract("eq,eq,eqi->ei", weighted, value, basis)
     return None, routes, rhs
 
 
@@ -827,7 +830,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                                 "Vector VEM source must have two components "
                                 "at cell quadrature."
                             )
-                        component_moments = oe.contract(
+                        component_moments = ein.contract(
                             "cq,cqd,cqa->cda", cubature.weights, values, basis
                         )
                         moments = component_moments.reshape(
@@ -838,10 +841,12 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                             raise ValueError(
                                 "Scalar VEM source must be scalar at cell quadrature."
                             )
-                        moments = oe.contract(
+                        moments = ein.contract(
                             "cq,cq,cqa->ca", cubature.weights, values, basis
                         )
-                    local = oe.contract("cai,ca->ci", projection.l2_coefficients, moments)
+                    local = ein.contract(
+                        "cai,ca->ci", projection.l2_coefficients, moments
+                    )
                     local = (
                         jnp.where(_cell_mask(action, indices)[:, None], local, 0.0)
                         * orientations

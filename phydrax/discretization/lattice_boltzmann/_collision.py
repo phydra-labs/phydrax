@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -288,7 +289,7 @@ def macroscopic_raw_moments(
 ) -> tuple[Array, Array]:
     values = precision.accumulation(populations)
     velocities = precision.accumulation(velocity_set.velocities)
-    return jnp.sum(values, axis=-1), oe.contract("...q,qd->...d", values, velocities)
+    return jnp.sum(values, axis=-1), ein.contract("...q,qd->...d", values, velocities)
 
 
 def quadratic_equilibrium(
@@ -303,8 +304,8 @@ def quadratic_equilibrium(
     c = precision.coefficient(velocity_set.velocities)
     weights = precision.coefficient(velocity_set.weights)
     cs2 = precision.coefficient(velocity_set.sound_speed_squared)
-    cu = oe.contract("...d,qd->...q", u, c)
-    u2 = oe.contract("...d,...d->...", u, u)
+    cu = ein.contract("...d,qd->...q", u, c)
+    u2 = ein.contract("...d,...d->...", u, u)
     return precision.compute(
         weights
         * rho[..., None]
@@ -373,9 +374,9 @@ def regularized_nonequilibrium(
     weights = precision.coefficient(velocity_set.weights)
     cs2 = precision.coefficient(velocity_set.sound_speed_squared)
     identity = jnp.eye(velocity_set.dimension, dtype=nonequilibrium.dtype)
-    stress = oe.contract("...q,qa,qb->...ab", nonequilibrium, c, c)
-    hermite = oe.contract("qa,qb->qab", c, c) - cs2 * identity
-    return weights * oe.contract("qab,...ab->...q", hermite, stress) / (2.0 * cs2**2)
+    stress = ein.contract("...q,qa,qb->...ab", nonequilibrium, c, c)
+    hermite = ein.contract("qa,qb->qab", c, c) - cs2 * identity
+    return weights * ein.contract("qab,...ab->...q", hermite, stress) / (2.0 * cs2**2)
 
 
 def _entropy(populations: Array, weights: Array) -> Array:
@@ -448,7 +449,7 @@ def _collision_diagnostics(
             certification_dtype=old.dtype,
         ),
     )
-    force_momentum = oe.contract(
+    force_momentum = ein.contract(
         "...q,qd->...d", raw_force, jnp.asarray(lattice.velocities, dtype=old.dtype)
     )
     before = _entropy(old, weights)

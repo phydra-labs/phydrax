@@ -84,6 +84,13 @@ native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
 
+Einstein-style array operations are shared through `phydrax.ein`: an exact
+optimized contraction boundary plus named static JAX rearrangement, reduction,
+and repetition. Patterns compile to reshape, transpose, reduction, and
+broadcast primitives without runtime axis metadata. See
+[Guide → Einstein operations](guides_ein.md) and
+[API → Einstein operations](api/ein.md).
+
 Certified positive-semidefinite actions may prepare a fixed-rank
 `RandomizedNystromPreconditioner`. Its deterministic sketch, positive shift,
 refresh mode, retained Ritz evidence, storage, and exact setup matvec count flow
@@ -1594,6 +1601,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Solver substrates](guides_solver_substrates.md)
 - [Differential operators](guides_differential.md)
 - [Linear algebra runtime](api/linalg.md)
+- [Einstein operations](guides_ein.md)
 - [Metrix: differentiable geometry](api/metrix/index.md)
 - [Positive-definite kernels](api/kernels.md)
 - [Integrals and measures](guides_integrals.md)

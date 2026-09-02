@@ -10,8 +10,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -150,7 +151,7 @@ class PreparedTriangleWLSQ(StrictModule, NonTrainableState):
         difference = neighbours - value[:, None, ...]
         mask = self.valid.reshape(self.valid.shape + (1,) * (difference.ndim - 2))
         difference = jnp.where(mask, difference, 0.0)
-        return oe.contract(
+        return ein.contract(
             "cin,cn...->c...i",
             self.factors.astype(value.dtype),
             difference,
@@ -198,8 +199,8 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
         face_centers = discretization.face_centers.astype(value.dtype)
         owner_offset = face_centers - centers[owner]
         neighbour_offset = face_centers - centers[safe_neighbour]
-        owner_delta = oe.contract("f...i,fi->f...", gradient[owner], owner_offset)
-        neighbour_delta = oe.contract(
+        owner_delta = ein.contract("f...i,fi->f...", gradient[owner], owner_offset)
+        neighbour_delta = ein.contract(
             "f...i,fi->f...",
             gradient[safe_neighbour],
             neighbour_offset,

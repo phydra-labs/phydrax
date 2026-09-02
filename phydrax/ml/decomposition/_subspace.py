@@ -8,8 +8,9 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
@@ -147,7 +148,7 @@ class SubspaceModel(AbstractArrayModel):
         basis = self.weighted_components.reshape((cases, self.out_size, self.in_size))
         root = jnp.sqrt(jnp.where(support & (metric > 0.0), metric, 1.0))
         centered = jnp.where(support, flat - offset, 0)
-        scores = oe.contract("cnf,crf->cnr", centered * root, jnp.conj(basis))
+        scores = ein.contract("cnf,crf->cnr", centered * root, jnp.conj(basis))
         return scores.reshape(self.case_shape + sample_shape + (self.out_size,))
 
     def inverse_transform(self, scores: ArrayLike, /) -> Array:
@@ -158,7 +159,7 @@ class SubspaceModel(AbstractArrayModel):
         metric = self.feature_metric.reshape((cases, 1, self.in_size))
         support = self.feature_support.reshape((cases, 1, self.in_size))
         root = jnp.sqrt(jnp.where(support & (metric > 0.0), metric, 1.0))
-        reconstructed = oe.contract("cnr,crf->cnf", flat, basis) / root
+        reconstructed = ein.contract("cnr,crf->cnf", flat, basis) / root
         offset = self.offset.reshape((cases, 1, self.in_size))
         reconstructed = jnp.where(support, reconstructed + offset, offset)
         return reconstructed.reshape(self.case_shape + sample_shape + (self.in_size,))

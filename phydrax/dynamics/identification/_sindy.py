@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...metrix import EuclideanStateGeometry
@@ -63,7 +64,7 @@ class SINDyResult(StrictModule):
         /,
     ) -> Array:
         evaluation = self.library.evaluate(states, inputs)
-        values = oe.contract("of,...f->...o", self.coefficients, evaluation.values)
+        values = ein.contract("of,...f->...o", self.coefficients, evaluation.values)
         return values.reshape(evaluation.valid.shape + self.state_layout.shape)
 
     def render_equations(

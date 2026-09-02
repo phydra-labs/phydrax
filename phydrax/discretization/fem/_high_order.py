@@ -13,8 +13,9 @@ import jax
 import jax.numpy as jnp
 import modepy as mp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import (
@@ -118,7 +119,7 @@ def lagrange_1d_tabulation(
         points_, nodes_, weights
     )
     differentiation = barycentric_differentiation_matrix(nodes_, weights=weights)
-    gradients = oe.contract("qi,ij->qj", values, differentiation)
+    gradients = ein.contract("qi,ij->qj", values, differentiation)
     return values, gradients
 
 
@@ -129,17 +130,17 @@ def _dense_tensor_tabulation(
         values = basis[0]
         components = (gradients[0],)
     elif len(basis) == 2:
-        values = oe.contract("qi,qj->qij", basis[0], basis[1])
+        values = ein.contract("qi,qj->qij", basis[0], basis[1])
         components = (
-            oe.contract("qi,qj->qij", gradients[0], basis[1]),
-            oe.contract("qi,qj->qij", basis[0], gradients[1]),
+            ein.contract("qi,qj->qij", gradients[0], basis[1]),
+            ein.contract("qi,qj->qij", basis[0], gradients[1]),
         )
     elif len(basis) == 3:
-        values = oe.contract("qi,qj,qk->qijk", basis[0], basis[1], basis[2])
+        values = ein.contract("qi,qj,qk->qijk", basis[0], basis[1], basis[2])
         components = (
-            oe.contract("qi,qj,qk->qijk", gradients[0], basis[1], basis[2]),
-            oe.contract("qi,qj,qk->qijk", basis[0], gradients[1], basis[2]),
-            oe.contract("qi,qj,qk->qijk", basis[0], basis[1], gradients[2]),
+            ein.contract("qi,qj,qk->qijk", gradients[0], basis[1], basis[2]),
+            ein.contract("qi,qj,qk->qijk", basis[0], gradients[1], basis[2]),
+            ein.contract("qi,qj,qk->qijk", basis[0], basis[1], gradients[2]),
         )
     else:
         raise ValueError("Tensor tabulation requires one, two, or three axes.")
@@ -394,11 +395,11 @@ class TensorProductTabulation(StrictModule, NonTrainableState):
 
 def _factorized_forward(factors: tuple[Array, ...], values: Array, /) -> Array:
     if len(factors) == 1:
-        return oe.contract("ai,...i->...a", factors[0], values)
+        return ein.contract("ai,...i->...a", factors[0], values)
     if len(factors) == 2:
-        return oe.contract("ai,...ij,bj->...ab", factors[0], values, factors[1])
+        return ein.contract("ai,...ij,bj->...ab", factors[0], values, factors[1])
     if len(factors) == 3:
-        return oe.contract(
+        return ein.contract(
             "ai,...ijk,bj,ck->...abc",
             factors[0],
             values,
@@ -410,11 +411,11 @@ def _factorized_forward(factors: tuple[Array, ...], values: Array, /) -> Array:
 
 def _factorized_transpose(factors: tuple[Array, ...], values: Array, /) -> Array:
     if len(factors) == 1:
-        return oe.contract("ai,...a->...i", factors[0], values)
+        return ein.contract("ai,...a->...i", factors[0], values)
     if len(factors) == 2:
-        return oe.contract("ai,...ab,bj->...ij", factors[0], values, factors[1])
+        return ein.contract("ai,...ab,bj->...ij", factors[0], values, factors[1])
     if len(factors) == 3:
-        return oe.contract(
+        return ein.contract(
             "ai,...abc,bj,ck->...ijk",
             factors[0],
             values,

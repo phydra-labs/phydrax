@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._model import AbstractArrayModel
@@ -297,7 +298,7 @@ class StokesLayerPotential3D(AbstractArrayModel):
             blocks = jax.vmap(self.kernel.source_traction, in_axes=(None, 0, 0))(
                 point, self.panelization.points, self.panelization.normals
             )
-        return oe.contract(
+        return ein.contract(
             "nij,n,nj->i",
             blocks,
             self.panelization.weights,
@@ -323,7 +324,7 @@ class StokesLayerPotential3D(AbstractArrayModel):
         vectors = jax.vmap(self.kernel.pressure_vector, in_axes=(None, 0))(
             point, self.panelization.points
         )
-        return oe.contract(
+        return ein.contract(
             "nj,n,nj->",
             vectors,
             self.panelization.weights,

@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
@@ -294,7 +295,7 @@ class ManifoldMultiheadWarp(StrictModule):
         logits = -0.5 * squared_distance / (self.kernel_scale**2)
         logits = jnp.where(head_mask, logits, -jnp.inf)
         weights = jax.nn.softmax(logits, axis=-1)
-        sampled = oe.contract("...hqs,...hsc->...hqc", weights, projected)
+        sampled = ein.contract("...hqs,...hsc->...hqc", weights, projected)
         sampled = jnp.moveaxis(sampled, len(case_shape), head_axis)
         output = sampled.reshape(case_shape + (count, self.out_channels))
         output = output * mask[..., None].astype(output.dtype)

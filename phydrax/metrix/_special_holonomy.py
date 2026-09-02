@@ -10,8 +10,9 @@ from math import factorial, isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -518,7 +519,7 @@ def validate_local_g2_structure(
     phi = _dense_three_form(coefficients)
     metric = structure.metric(point_values)
     inverse_metric = structure.metric.inverse(point_values)
-    contraction = oe.contract(
+    contraction = ein.contract(
         "...ikl,...ka,...lb,...jab->...ij",
         phi,
         inverse_metric,
@@ -652,9 +653,9 @@ def validate_g2_derivations(
     restricted = matrices[:, imaginary, :][:, :, imaginary]
     phi = bridge.associative_tensor().astype(basis.dtype)
     action = (
-        oe.contract("nai,ajk->nijk", restricted, phi, backend="jax")
-        + oe.contract("naj,iak->nijk", restricted, phi, backend="jax")
-        + oe.contract("nak,ija->nijk", restricted, phi, backend="jax")
+        ein.contract("nai,ajk->nijk", restricted, phi, backend="jax")
+        + ein.contract("naj,iak->nijk", restricted, phi, backend="jax")
+        + ein.contract("nak,ija->nijk", restricted, phi, backend="jax")
     )
     form_residual = _maximum_or_zero(action)
     skew_residual = _maximum_or_zero(restricted + jnp.swapaxes(restricted, -1, -2))

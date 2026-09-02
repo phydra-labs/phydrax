@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -188,9 +189,11 @@ class MechanicalLoadAction(StrictModule, NonTrainableState):
             )
         reference_local = self.reference_coordinates[self.gathers]
         current_local = current[self.gathers]
-        reference_points = oe.contract("cqi,cia->cqa", self.basis_values, reference_local)
-        current_points = oe.contract("cqi,cia->cqa", self.basis_values, current_local)
-        deformation_gradient = oe.contract(
+        reference_points = ein.contract(
+            "cqi,cia->cqa", self.basis_values, reference_local
+        )
+        current_points = ein.contract("cqi,cia->cqa", self.basis_values, current_local)
+        deformation_gradient = ein.contract(
             "cqir,cis->cqsr", self.reference_gradients, current_local
         )
         measure = self.measure_plan.evaluate(deformation_gradient)
@@ -212,7 +215,7 @@ class MechanicalLoadAction(StrictModule, NonTrainableState):
     ) -> MechanicalLoadActionEvaluation:
         evaluation, measure = self._quadrature_state(current_coordinates, state, args)
         weight = measure.measure(evaluation.semantics.measure_frame)
-        local_force = oe.contract(
+        local_force = ein.contract(
             "cqi,cq,cqa->cia",
             self.basis_values,
             weight,

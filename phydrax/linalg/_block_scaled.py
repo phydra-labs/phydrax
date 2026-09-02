@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import jax.numpy as jnp
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from .._precision import dequantize_mx, MicroscaledArray
 

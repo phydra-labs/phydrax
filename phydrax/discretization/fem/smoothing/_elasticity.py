@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -45,7 +46,7 @@ def smoothing_local_stiffness(
     if constitutive_.shape != (3, 3):
         raise ValueError("2-D elasticity constitutive matrix must have shape (3, 3).")
     strain = smoothing_strain_matrix(layout, geometry)
-    local = oe.contract(
+    local = ein.contract(
         "p,psi,st,ptj->pij",
         geometry.area,
         strain,
@@ -112,7 +113,7 @@ class SmoothedElasticityOperator(StrictModule, NonTrainableState):
         flat_valid = jnp.repeat(valid, 2, axis=1)
         safe = jnp.where(flat_valid, flat_routes, 0)
         local_value = jnp.where(flat_valid, flat_value[safe], 0.0)
-        local_result = oe.contract("pij,pj->pi", self.local_stiffness, local_value)
+        local_result = ein.contract("pij,pj->pi", self.local_stiffness, local_value)
         local_result = jnp.where(flat_valid, local_result, 0.0)
         result = jnp.zeros_like(flat_value).at[safe].add(local_result)
         return result.reshape(original_shape)

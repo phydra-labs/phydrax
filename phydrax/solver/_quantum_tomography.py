@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -197,7 +198,7 @@ def _negative_log_likelihood_cotangent(
 ) -> Array:
     probabilities = problem.precision.accumulation(problem.povm.probabilities(density))
     safe = jnp.maximum(probabilities, jnp.finfo(probabilities.dtype).tiny)
-    return -oe.contract(
+    return -ein.contract(
         "k,kij->ij",
         problem.precision.accumulation(problem.data.counts / safe),
         problem.precision.accumulation(problem.povm.effects),

@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ....linalg import (
@@ -93,7 +94,7 @@ def _apply_channel_metric(values: Array, metric: Array | None, /) -> Array:
         raise ValueError(
             "Channel metric must be square and match the trailing channel dimension."
         )
-    return oe.contract("ij,...j->...i", matrix, values)
+    return ein.contract("ij,...j->...i", matrix, values)
 
 
 def _riesz_map(

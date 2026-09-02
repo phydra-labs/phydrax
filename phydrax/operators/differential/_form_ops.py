@@ -8,9 +8,9 @@ from math import comb
 from typing import Any, Literal
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction
 
 from ..._strict import StrictModule
@@ -407,7 +407,7 @@ class _DomainHodgeCallable(StrictModule):
             rows = self.source_indices[:, None, :, None]
             columns = self.source_indices[None, :, None, :]
             induced_inverse = jnp.linalg.det(inverse[..., rows, columns])
-            paired = oe.contract("...ij,...j->...i", induced_inverse, coefficients)
+            paired = ein.contract("...ij,...j->...i", induced_inverse, coefficients)
         values = (
             self.orientation
             * self.metric.volume_density(coordinates)[..., None]

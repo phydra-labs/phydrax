@@ -12,9 +12,9 @@ import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
-from opt_einsum import contract
 
 from phydrax.domain import GridBatch, PointBatch
+from phydrax.ein import contract
 
 from ...._axis_factorization import (
     AxisContractionPlan,
@@ -339,8 +339,7 @@ class LatentContractionModel(
             )
         if not isinstance(batch, (PointBatch, GridBatch)):
             raise TypeError(
-                "LatentContractionModel factorization requires a PointBatch "
-                "or GridBatch."
+                "LatentContractionModel factorization requires a PointBatch or GridBatch."
             )
         if self.output_activation is not _identity:
             raise ValueError(
@@ -369,9 +368,7 @@ class LatentContractionModel(
                     "Factorized partial axis must be non-negative and order positive."
                 )
             matching = tuple(
-                name
-                for name, labels in self.factor_inputs.items()
-                if variable in labels
+                name for name, labels in self.factor_inputs.items() if variable in labels
             )
             if len(matching) != 1:
                 raise ValueError(
@@ -1236,12 +1233,8 @@ class Separable(_AbstractStructuredInputModel):
                     (self.latent_size, _get_size(self.out_size)),
                     dtype=jnp.result_type(value),
                 )
-                for model, model_key in zip(
-                    group_models, group_keys, strict=True
-                ):
-                    product = product * self._reshape_latents(
-                        model(value, key=model_key)
-                    )
+                for model, model_key in zip(group_models, group_keys, strict=True):
+                    product = product * self._reshape_latents(model(value, key=model_key))
                 return product
 
             if coordinate_index == derivative_coordinate:
@@ -1255,9 +1248,7 @@ class Separable(_AbstractStructuredInputModel):
                 )(coordinate)
             else:
                 latents = jax.vmap(group_latents)(coordinate)
-            factors.append(
-                AxisFactor(f"coordinate_{coordinate_index}", latents, (axis,))
-            )
+            factors.append(AxisFactor(f"coordinate_{coordinate_index}", latents, (axis,)))
             model_index += clones
         if not self.keep_outputs_complex and any(
             jnp.iscomplexobj(factor.tensor) for factor in factors

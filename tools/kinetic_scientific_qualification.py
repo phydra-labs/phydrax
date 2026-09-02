@@ -9,9 +9,9 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 
 import phydrax as phx
+import phydrax.ein as ein
 from benchmarks._runtime import capture_environment
 from phydrax.discretization.finite_difference._boundary import HaloPlan
 from phydrax.discretization.finite_difference._distributed import (
@@ -57,7 +57,7 @@ def _collision_forcing_case():
     source = guo_raw_source(velocity, force, lattice, precision)
     source_mass = float(jnp.max(jnp.abs(jnp.sum(source, axis=-1))))
     source_momentum = jnp.max(
-        jnp.abs(oe.contract("...q,qd->...d", source, lattice.velocities) - force)
+        jnp.abs(ein.contract("...q,qd->...d", source, lattice.velocities) - force)
     )
     return {
         "shear_decay": baseline,

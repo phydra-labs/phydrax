@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -125,13 +126,13 @@ class SINGSparseGPDrift(StrictModule):
         if value.shape != (self.inducing_points.shape[1],):
             raise ValueError("state dimension must match inducing_points.")
         features = self._features(value)
-        outputs = oe.contract("om,om->o", features, self.whitened_mean)
+        outputs = ein.contract("om,om->o", features, self.whitened_mean)
         checked = eqx.error_if(
             outputs, ~self.valid, "Sparse GP drift kernel factorization is invalid."
         )
         if self.output_mixing is None:
             return checked
-        return oe.contract("so,o->s", self.output_mixing, checked)
+        return ein.contract("so,o->s", self.output_mixing, checked)
 
     def fitc_variance(self, state: ArrayLike, /) -> Array:
         """Return the declared independent-output FITC predictive variance."""
@@ -140,8 +141,8 @@ class SINGSparseGPDrift(StrictModule):
         prior = jnp.stack(
             tuple(kernel.diagonal(value[None, :])[0] for kernel in self.kernels)
         )
-        conditional = prior - oe.contract("om,om->o", features, features)
-        posterior_projection = oe.contract(
+        conditional = prior - ein.contract("om,om->o", features, features)
+        posterior_projection = ein.contract(
             "om,omr,onr,on->o",
             features,
             self.whitened_factor,
@@ -157,7 +158,7 @@ class SINGSparseGPDrift(StrictModule):
 
     def kl_divergence(self) -> Array:
         """KL of the represented full-rank whitened Gaussian to unit normal."""
-        covariances = oe.contract(
+        covariances = ein.contract(
             "omr,onr->omn", self.whitened_factor, self.whitened_factor
         )
         signs, log_determinants = jnp.linalg.slogdet(covariances)

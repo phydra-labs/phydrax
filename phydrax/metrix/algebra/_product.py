@@ -10,8 +10,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -195,7 +196,7 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         if self.backend == "dense":
             if self.dense_kernel is None:
                 raise RuntimeError("Dense algebra product lost its kernel.")
-            output = oe.contract(
+            output = ein.contract(
                 "...l,olr,...r->...o",
                 left_,
                 self.dense_kernel.astype(dtype),

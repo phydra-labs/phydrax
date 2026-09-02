@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.ein` as the package-wide optimized contraction boundary with
+  native named JAX rearrangement, reduction, and repetition.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
 from ...._model import AbstractArrayModel
@@ -185,7 +186,9 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
         del key
         value = jnp.asarray(target, dtype=float)
         if value.shape != (2,):
-            raise ValueError(f"Laplace layer target must have shape (2,); got {value.shape}.")
+            raise ValueError(
+                f"Laplace layer target must have shape (2,); got {value.shape}."
+            )
         return contract(
             "n,n,n->",
             self._kernels(value),
@@ -201,7 +204,6 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization
-
 
     def model_metadata(self) -> Mapping[str, Any]:
         return {TRIAL_SPACE_CERTIFICATE_KEY: self._certificate}
@@ -242,8 +244,7 @@ def _analytic_double_layer_diagonal_limit(
     )
     speed_squared = jnp.dot(first, first)
     coefficient = (
-        -jnp.dot(first, normal_derivative)
-        - 0.5 * jnp.dot(second, frame.normal[0])
+        -jnp.dot(first, normal_derivative) - 0.5 * jnp.dot(second, frame.normal[0])
     ) / (2.0 * jnp.pi * speed_squared)
     return coefficient
 
@@ -263,9 +264,7 @@ def double_layer_principal_value_matrix(
     differences = targets[:, None, :] - sources[None, :, :]
     squared = jnp.sum(differences * differences, axis=-1)
     safe_squared = jnp.where(squared == 0.0, 1.0, squared)
-    values = contract("tni,ni->tn", differences, normals) / (
-        2.0 * jnp.pi * safe_squared
-    )
+    values = contract("tni,ni->tn", differences, normals) / (2.0 * jnp.pi * safe_squared)
 
     diagonal = jnp.stack(
         tuple(

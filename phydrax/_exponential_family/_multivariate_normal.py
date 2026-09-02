@@ -7,9 +7,10 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 from ..linalg import FactorizationPolicy, inverse, OperatorProperties
@@ -135,7 +136,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
             batch_shape + (self.event_size, self.event_size),
         )
         precision = _positive_definite_inverse(covariance_array)
-        linear = oe.contract("...ij,...j->...i", precision, location_array)
+        linear = ein.contract("...ij,...j->...i", precision, location_array)
         return self.natural(jnp.concatenate((linear, svec(-0.5 * precision)), axis=-1))
 
     def law_from_location_covariance(self, location: ArrayLike, covariance: ArrayLike, /):
@@ -163,7 +164,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         linear, _ = self._split(natural_values)
         precision = self._precision(natural_values)
         covariance = _positive_definite_inverse(precision)
-        location = oe.contract("...ij,...j->...i", covariance, linear)
+        location = ein.contract("...ij,...j->...i", covariance, linear)
         return location, covariance
 
     def _natural_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
@@ -182,7 +183,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
     def _mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
         location, second_packed = self._split(values)
         second = smat(second_packed, matrix_dimension=self.event_size)
-        covariance = second - oe.contract("...i,...j->...ij", location, location)
+        covariance = second - ein.contract("...i,...j->...ij", location, location)
         covariance = 0.5 * (covariance + jnp.swapaxes(covariance, -1, -2))
         eigenvalues = jnp.linalg.eigvalsh(covariance)
         scale = jnp.max(jnp.abs(eigenvalues), axis=-1)
@@ -207,7 +208,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         observation = raw.astype(jnp.result_type(raw, 0.0))
         valid = jnp.all(jnp.isfinite(observation), axis=-1)
         safe = jnp.where(valid[..., None], observation, 0.0)
-        outer = oe.contract("...i,...j->...ij", safe, safe)
+        outer = ein.contract("...i,...j->...ij", safe, safe)
         return StatisticBatch(
             jnp.concatenate((safe, svec(outer)), axis=-1),
             valid,
@@ -236,15 +237,15 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
 
     def _mean_values(self, natural_values: Array, /) -> Array:
         location, covariance = self._location_covariance(natural_values)
-        second = covariance + oe.contract("...i,...j->...ij", location, location)
+        second = covariance + ein.contract("...i,...j->...ij", location, location)
         return jnp.concatenate((location, svec(second)), axis=-1)
 
     def _natural_from_mean_values(self, mean_values: Array, /) -> Array:
         location, second_packed = self._split(mean_values)
         second = smat(second_packed, matrix_dimension=self.event_size)
-        covariance = second - oe.contract("...i,...j->...ij", location, location)
+        covariance = second - ein.contract("...i,...j->...ij", location, location)
         precision = _positive_definite_inverse(covariance)
-        linear = oe.contract("...ij,...j->...i", precision, location)
+        linear = ein.contract("...ij,...j->...i", precision, location)
         return jnp.concatenate((linear, svec(-0.5 * precision)), axis=-1)
 
     def _sample(
@@ -261,7 +262,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
             shape=sample_shape + location.shape,
             dtype=natural_values.dtype,
         )
-        transformed = oe.contract("...ij,...j->...i", factor, noise)
+        transformed = ein.contract("...ij,...j->...i", factor, noise)
         return location + transformed
 
 

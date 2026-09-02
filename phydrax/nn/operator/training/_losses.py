@@ -15,8 +15,9 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._frozendict import frozendict
 from ...._training_objective import _ObjectiveContribution
@@ -763,7 +764,7 @@ def _weighted_case_reduction(
         "Weighted operator reduction requires positive finite case mass.",
     )
     normalized = weights / mass
-    return oe.contract("i,i->", normalized, values.reshape((-1,)))
+    return ein.contract("i,i->", normalized, values.reshape((-1,)))
 
 
 __all__ = [

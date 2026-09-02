@@ -9,9 +9,10 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -204,11 +205,11 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         particles = state.particle_populations
         energy_populations = state.total_energy_populations
         density = jnp.sum(particles, axis=-1)
-        momentum = oe.contract("...q,qd->...d", particles, self.quadrature.velocities)
+        momentum = ein.contract("...q,qd->...d", particles, self.quadrature.velocities)
         total_energy = jnp.sum(energy_populations, axis=-1)
         safe_density = jnp.where(density > 0.0, density, 1.0)
         velocity = momentum / safe_density[..., None]
-        kinetic_energy = 0.5 * oe.contract("...d,...d->...", momentum, velocity)
+        kinetic_energy = 0.5 * ein.contract("...d,...d->...", momentum, velocity)
         specific_internal_energy = (total_energy - kinetic_energy) / safe_density
         pressure = self.material.pressure(density, specific_internal_energy)
         return (
@@ -290,7 +291,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         total_energy = values[..., -1]
         safe_density = jnp.where(density > 0.0, density, 1.0)
         velocity = momentum / safe_density[..., None]
-        kinetic_energy = 0.5 * oe.contract("...d,...d->...", momentum, velocity)
+        kinetic_energy = 0.5 * ein.contract("...d,...d->...", momentum, velocity)
         internal_energy = (total_energy - kinetic_energy) / safe_density
         pressure = self.material.pressure(density, internal_energy)
         valid = self.material.admissible(density, pressure) & jnp.all(
@@ -303,12 +304,12 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         momentum = values[..., 1:-1]
         total_energy = values[..., -1]
         velocity = momentum / density[..., None]
-        kinetic_energy = 0.5 * oe.contract("...d,...d->...", momentum, velocity)
+        kinetic_energy = 0.5 * ein.contract("...d,...d->...", momentum, velocity)
         internal_energy = (total_energy - kinetic_energy) / density
         pressure = self.material.pressure(density, internal_energy)
         temperature = self.quadrature.reference_temperature
-        velocity_square = oe.contract("...d,...d->...", velocity, velocity)
-        projected_velocity = oe.contract(
+        velocity_square = ein.contract("...d,...d->...", velocity, velocity)
+        projected_velocity = ein.contract(
             "...d,qd->...q", velocity, self.quadrature.velocities
         )
         particle_raw = (
@@ -325,10 +326,10 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
             )
         )
         target_particle_moments = jnp.concatenate((density[..., None], momentum), axis=-1)
-        recovered_particle_moments = oe.contract(
+        recovered_particle_moments = ein.contract(
             "mq,...q->...m", self.particle_moment_matrix, particle_raw
         )
-        particle_equilibrium = particle_raw + oe.contract(
+        particle_equilibrium = particle_raw + ein.contract(
             "qm,...m->...q",
             self.particle_moment_lift,
             target_particle_moments - recovered_particle_moments,
@@ -360,12 +361,12 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         momentum = values[..., 1:-1]
         total_energy = values[..., -1]
         velocity = momentum / density[..., None]
-        kinetic_energy = 0.5 * oe.contract("...d,...d->...", momentum, velocity)
+        kinetic_energy = 0.5 * ein.contract("...d,...d->...", momentum, velocity)
         pressure = self.material.pressure(
             density, (total_energy - kinetic_energy) / density
         )
         target_flux = (total_energy + pressure)[..., None] * velocity
-        energy_velocity_flux = oe.contract(
+        energy_velocity_flux = ein.contract(
             "...q,qd->...d",
             equilibrium.total_energy_populations,
             self.quadrature.velocities,
@@ -435,7 +436,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         raw_particle_increment = particle_rate[..., None] * (
             equilibrium.particle_populations - state.particle_populations
         )
-        particle_increment = oe.contract(
+        particle_increment = ein.contract(
             "pq,...q->...p", self.particle_nullspace_projector, raw_particle_increment
         )
         raw_energy_increment = energy_rate[..., None] * (

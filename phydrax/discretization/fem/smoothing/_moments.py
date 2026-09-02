@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._common import SmoothingPatchGeometry, SmoothingPatchLayout
 
@@ -25,7 +26,7 @@ def boundary_moment(
     weighted_boundary = (
         geometry.boundary_lengths[..., None] * layout.rule_weights[None, None, :]
     )
-    numerator = oe.contract(
+    numerator = ein.contract(
         "peq,peql,ped->pld",
         weighted_boundary,
         layout.boundary_shape_values,

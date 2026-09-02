@@ -11,9 +11,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import opt_einsum as oe
 import optax
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -91,7 +92,7 @@ class SparseVariationalGaussianState(StrictModule):
     @property
     def covariance(self) -> Array:
         lower = self.scale_tril
-        return oe.contract("ik,jk->ij", lower, lower)
+        return ein.contract("ik,jk->ij", lower, lower)
 
     @property
     def kl_standard_normal(self) -> Array:
@@ -164,10 +165,10 @@ class SparseVariationalGaussianProcessELBO(StrictModule):
         factor = self.inducing_factor(state)
         cross = self.kernel.matrix(inputs, state.inducing_points)
         features = jsp.linalg.solve_triangular(factor, cross.T, lower=True).T
-        mean = oe.contract("bi,i->b", features, state.mean)
+        mean = ein.contract("bi,i->b", features, state.mean)
         projected_prior = jnp.sum(features**2, axis=1)
         conditional_variance = self.kernel.diagonal(inputs) - projected_prior
-        transformed = oe.contract("bi,ij->bj", features, state.scale_tril)
+        transformed = ein.contract("bi,ij->bj", features, state.scale_tril)
         variance = conditional_variance + jnp.sum(transformed**2, axis=1)
         return mean, jnp.maximum(variance, 0.0)
 

@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -442,7 +443,7 @@ class ExponentialConvolutionDelay(StrictModule, NonTrainableState):
 
     def observation(self, moments: ArrayLike, args: Any = None, /) -> Array:
         values = jnp.asarray(moments)
-        combined = oe.contract("r,r...->...", self.weights, values)
+        combined = ein.contract("r,r...->...", self.weights, values)
         return jnp.asarray(self.reducer(combined, args))
 
     def advance(

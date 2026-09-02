@@ -11,8 +11,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -197,13 +198,13 @@ class EntropyReferenceOperator(StrictModule, NonTrainableState):
             metric_pair = 0.5 * (
                 cofactors[:, :, None, direction, :] + cofactors[:, None, :, direction, :]
             )
-            contravariant = oe.contract(
+            contravariant = ein.contract(
                 "cijvd,cijd->cijv",
                 physical_flux,
                 metric_pair,
                 backend="jax",
             )
-            result = result + 2.0 * oe.contract(
+            result = result + 2.0 * ein.contract(
                 "ij,cijv->civ",
                 self.weak_derivatives[direction],
                 contravariant,
@@ -241,10 +242,10 @@ def prepare_entropy_reference_operator(
         raise TypeError("element must be FiniteElementSpec.")
     volume = reference_rule_data(volume_rule)
     values, gradients = element.tabulate(volume.points)
-    mass = oe.contract("q,qi,qj->ij", volume.weights, values, values, backend="jax")
+    mass = ein.contract("q,qi,qj->ij", volume.weights, values, values, backend="jax")
     weak = jnp.stack(
         tuple(
-            oe.contract(
+            ein.contract(
                 "q,qi,qj->ij",
                 volume.weights,
                 values,
@@ -270,7 +271,7 @@ def prepare_entropy_reference_operator(
         trace = element.tabulate(points)[0]
         boundary = boundary + jnp.stack(
             tuple(
-                oe.contract(
+                ein.contract(
                     "q,q,qi,qj->ij",
                     weights,
                     normals[..., direction],
@@ -284,7 +285,7 @@ def prepare_entropy_reference_operator(
     defect = weak + jnp.swapaxes(weak, -1, -2) - boundary
     constant = jnp.ones((element.local_dof_count,), dtype=mass.dtype)
     constant_defect = jnp.max(
-        jnp.abs(oe.contract("dij,j->di", weak, constant, backend="jax"))
+        jnp.abs(ein.contract("dij,j->di", weak, constant, backend="jax"))
     )
     mass_host = np.asarray(mass)
     eigenvalues = np.linalg.eigvalsh(mass_host)
@@ -364,7 +365,7 @@ def entropy_mortar_evidence(
         for direction in range(normal_.shape[-1])
     )
     production = (
-        oe.contract(
+        ein.contract(
             "...v,...v->...", right_variables - left_variables, flux, backend="jax"
         )
         - potential_jump
@@ -404,7 +405,7 @@ def boundary_entropy_evidence(
         normal_[..., direction] * entropy_pair.entropy_potential(state, direction)
         for direction in range(normal_.shape[-1])
     )
-    numerical = oe.contract("...v,...v->...", variables, flux, backend="jax") - potential
+    numerical = ein.contract("...v,...v->...", variables, flux, backend="jax") - potential
     supply = jnp.asarray(allowed_entropy_supply)
     defect = numerical - supply
     compatible = jnp.all(defect <= tolerance)

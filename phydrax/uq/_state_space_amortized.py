@@ -11,9 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jax.typing import DTypeLike
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..stochastic import StateSpaceProblem
@@ -129,7 +130,7 @@ class AmortizedGaussianMarkovEncoder(StrictModule):
         if feature_size != self.input_size:
             raise ValueError("Amortized feature size does not match the encoder.")
         local_hidden = jnp.tanh(
-            oe.contract("hi,cti->cth", self.hidden_weight, feature_values)
+            ein.contract("hi,cti->cth", self.hidden_weight, feature_values)
             + self.hidden_bias
         )
         context_float = context.astype(local_hidden.dtype)
@@ -144,7 +145,7 @@ class AmortizedGaussianMarkovEncoder(StrictModule):
         )
         hidden = jnp.tanh(local_hidden + 0.5 * (prefix + suffix))
         temporal = (
-            oe.contract("oh,cth->cto", self.temporal_weight, hidden) + self.temporal_bias
+            ein.contract("oh,cth->cto", self.temporal_weight, hidden) + self.temporal_bias
         )
         transition_raw, offsets, raw_scale = jnp.split(temporal, 3, axis=-1)
         transition_diagonal = 0.95 * jnp.tanh(transition_raw)
@@ -153,7 +154,9 @@ class AmortizedGaussianMarkovEncoder(StrictModule):
             jnp.sum(context_float, axis=1, keepdims=True),
             1.0,
         )
-        initial = oe.contract("oh,ch->co", self.initial_weight, pooled) + self.initial_bias
+        initial = (
+            ein.contract("oh,ch->co", self.initial_weight, pooled) + self.initial_bias
+        )
         initial_offset, initial_raw_scale = jnp.split(initial, 2, axis=-1)
         flat_prior = prior.reshape((case_count, self.state_size))
         initial_location = flat_prior + initial_offset

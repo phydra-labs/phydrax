@@ -13,9 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
@@ -132,7 +132,7 @@ class _DepthwiseSpectralConvND(StrictModule):
             ) + (slice(0, modes[-1]),)
             block = transformed[(..., *slices, slice(None))]
             weight = self.weight[(corner, slice(None), *mode_slices)]
-            result = oe.contract(
+            result = ein.contract(
                 f"...{letters}c,c{letters}->...{letters}c",
                 block,
                 weight,

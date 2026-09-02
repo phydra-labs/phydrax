@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -73,7 +74,7 @@ def radau_collocation_defects(
         raise ValueError("Radau interval times must be strictly increasing.")
     state_shape = states_.shape[1:]
     flat_rates = rates.reshape((intervals, method.stage_count, -1))
-    increments = oe.contract("ij,njd->nid", method.A, flat_rates)
+    increments = ein.contract("ij,njd->nid", method.A, flat_rates)
     stage_states = (
         states_[:-1, None].reshape((intervals, 1, -1))
         + widths[:, None, None] * increments
@@ -91,7 +92,7 @@ def radau_collocation_defects(
     stage_defects = jax.vmap(interval_defects)(
         stage_times, stage_states, rates, controls_
     )
-    endpoint_increment = oe.contract("j,njd->nd", method.b, flat_rates).reshape(
+    endpoint_increment = ein.contract("j,njd->nd", method.b, flat_rates).reshape(
         (intervals,) + state_shape
     )
     endpoint_defects = (
@@ -454,8 +455,8 @@ def manifold_radau_stages(
     if tangents.shape[0] != method.stage_count:
         raise ValueError("stage_tangents leading axis must equal stage_count.")
     flat = tangents.reshape((method.stage_count, -1))
-    local_stages = oe.contract("ij,jd->id", method.A, flat).reshape(tangents.shape)
-    local_endpoint = oe.contract("j,jd->d", method.b, flat).reshape(anchor_.shape)
+    local_stages = ein.contract("ij,jd->id", method.A, flat).reshape(tangents.shape)
+    local_endpoint = ein.contract("j,jd->d", method.b, flat).reshape(anchor_.shape)
     stages = jax.vmap(lambda local: geometry.retract(anchor_, local))(local_stages)
     endpoint = geometry.retract(anchor_, local_endpoint)
     contained = jnp.concatenate(

@@ -17,6 +17,7 @@ from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+from phydrax.ein import contract
 from phydrax.metrix.clifford import (
     CliffordProductPlan,
     extract_layout,
@@ -157,7 +158,12 @@ class CliffordGradeLinear(eqx.Module):
                     dtype=jnp.asarray(values).dtype,
                 )
             else:
-                mixed = jnp.einsum("oi,...ib->...ob", weight, grade_values)
+                mixed = contract(
+                    "oi,...ib->...ob",
+                    weight,
+                    grade_values,
+                    backend="jax",
+                )
             if grade == 0 and self.scalar_bias is not None:
                 mixed = mixed + self.scalar_bias.reshape(
                     (1,) * len(leading) + self.scalar_bias.shape + (1,)

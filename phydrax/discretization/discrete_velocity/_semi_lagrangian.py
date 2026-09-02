@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -214,8 +215,8 @@ class PreparedOffLatticeSemiLagrangianDVM(StrictModule, NonTrainableState):
         source_integrals = self._population_integrals(source_space, values)
         target_integrals = self._population_integrals(target_space, transported)
         moment_matrix = self.quadrature.hydrodynamic_moment_matrix()
-        source_moments = oe.contract("mq,q->m", moment_matrix, source_integrals)
-        target_moments = oe.contract("mq,q->m", moment_matrix, target_integrals)
+        source_moments = ein.contract("mq,q->m", moment_matrix, source_integrals)
+        target_moments = ein.contract("mq,q->m", moment_matrix, target_integrals)
         residual = target_moments - source_moments
         return transported, SemiLagrangianTransportEvidence(
             source_population_integrals=source_integrals,

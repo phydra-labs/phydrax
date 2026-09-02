@@ -10,8 +10,9 @@ from itertools import combinations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -300,8 +301,8 @@ class MHDCharacteristicReconstructionPlan(StrictModule, NonTrainableState):
         left_matrix, _right_matrix, speeds = self.eigensystem(
             left_state, right_state, int(axis), args
         )
-        left_characteristic = oe.contract("...ij,...j->...i", left_matrix, left_state)
-        right_characteristic = oe.contract("...ij,...j->...i", left_matrix, right_state)
+        left_characteristic = ein.contract("...ij,...j->...i", left_matrix, left_state)
+        right_characteristic = ein.contract("...ij,...j->...i", left_matrix, right_state)
         return left_characteristic, right_characteristic, speeds
 
 

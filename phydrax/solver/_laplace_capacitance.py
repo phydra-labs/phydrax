@@ -9,8 +9,9 @@ from collections.abc import Mapping
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -251,7 +252,7 @@ class PreparedLaplaceCapacitance3D(StrictModule, NonTrainableState):
             for index in range(len(self.conductor_names))
         )
         surface_charge = epsilon * layer_density
-        capacitance = oe.contract(
+        capacitance = ein.contract(
             "if,f,fj->ij",
             self.masks,
             self.galerkin.face_areas,
@@ -416,14 +417,14 @@ def differentiate_laplace_capacitance_coordinates_3d(
         capacitance_tangents.append(
             result.permittivity
             * (
-                oe.contract(
+                ein.contract(
                     "if,f,fj->ij",
                     prepared.masks,
                     d_area[parameter],
                     result.layer_density,
                     backend="jax",
                 )
-                + oe.contract(
+                + ein.contract(
                     "if,f,fj->ij",
                     prepared.masks,
                     prepared.galerkin.face_areas,

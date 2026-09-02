@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -612,7 +613,7 @@ class LaplaceDP0ExactNearProvider3D(AbstractExactNearProvider3D):
             differences,
         )
         kernel = 1.0 / (4.0 * jnp.pi * jnp.linalg.norm(safe_differences, axis=-1))
-        regular = oe.contract(
+        regular = ein.contract(
             "tq,sr,tsqr->ts",
             pair_data.regular_weights[targets],
             pair_data.regular_weights[sources],

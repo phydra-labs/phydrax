@@ -9,9 +9,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import ArrayLike
 
+import phydrax.ein as ein
 from phydrax.domain import DomainFunction, ReferencedDensityField
 
 from ..._strict import StrictModule
@@ -65,7 +65,7 @@ class _WeightedLaplacianCallable(StrictModule):
         )
         coordinates = args[self.coordinate_position]
         log_weight_differential = jax.grad(self.measure._log_weight_point)(coordinates)
-        correction = oe.contract(
+        correction = ein.contract(
             "...i,...ij,...j->...",
             log_weight_differential,
             self.measure.metric.inverse(coordinates),
