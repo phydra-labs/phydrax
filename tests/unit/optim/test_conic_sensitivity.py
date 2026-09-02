@@ -31,6 +31,9 @@ def _prepare(
     regularization=0.0,
     linear=None,
     regularity_tolerance=1e-7,
+    representation="dense",
+    stability=None,
+    generalized=None,
 ):
     policy = _policy(regularization=regularization)
     if solution is None:
@@ -79,6 +82,9 @@ def _prepare(
         prepared,
         execution,
         linear=linear,
+        representation=representation,
+        stability=stability,
+        generalized=generalized,
         regularity_tolerance=regularity_tolerance,
     )
     return prepared, execution, sensitivity
@@ -572,3 +578,37 @@ def test_advanced_cone_projection_boundaries_are_nonregular():
         assert not derivative.projection_regular
         assert not derivative.regular
         assert jnp.all(jnp.isnan(derivative.value))
+
+
+def test_matrix_free_sensitivity_requires_matching_verified_stability():
+    program = phx.optim.ConicProgram(
+        jnp.asarray([[1.0]]),
+        jnp.asarray([-1.0]),
+        jnp.asarray([[1.0]]),
+        jnp.asarray([1.0]),
+        phx.optim.ZeroCone(1),
+    )
+    solution = (
+        jnp.asarray([1.0]),
+        jnp.asarray([0.0]),
+        jnp.asarray([0.0]),
+        jnp.asarray([0.0]),
+        jnp.asarray([0.0]),
+    )
+    linear = phx.linalg.LinearSolvePolicy(phx.linalg.LSMR())
+
+    def stability(operator):
+        return phx.linalg.StabilityLowerBound(operator, 0.25, evidence="verified")
+
+    _, _, prepared = _prepare(
+        program,
+        solution=solution,
+        linear=linear,
+        representation="matrix-free",
+        stability=stability,
+    )
+    tangent = _tangent(program, rhs=jnp.asarray([1.0]))
+    result = phx.optim.conic_primal_jvp(prepared, tangent)
+    assert result.representation == "matrix-free"
+    assert result.regular
+    assert jnp.allclose(result.value, jnp.asarray([1.0]), atol=1e-5)

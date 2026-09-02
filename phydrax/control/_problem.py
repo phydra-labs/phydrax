@@ -42,8 +42,8 @@ class ControlProblem(StrictModule):
     dynamics: DiscreteControlDynamics | DifferentialControlDynamics
     time_grid: TimeGrid
     initial_state: Array
-    running_cost: RunningCost | None
-    terminal_cost: TerminalCost | None
+    running_cost: RunningCost | None = eqx.field(static=True)
+    terminal_cost: TerminalCost | None = eqx.field(static=True)
     path_constraints: tuple[PathConstraint, ...]
     terminal_constraints: tuple[TerminalConstraint, ...]
     args: Any

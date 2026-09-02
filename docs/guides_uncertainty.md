@@ -424,9 +424,11 @@ observation_values = jnp.sin(2.0 * jnp.pi * observation_times)
 
 plan = phx.uq.compile_state_space_kernel(
     phx.kernels.Matern32Kernel(length_scale=0.6),
-    observation_times,
-    prediction_times,
-    train_mask=observation_available,
+    phx.uq.StateSpaceGaussianProcessDesign(
+        observation_times,
+        prediction_times,
+        train_mask=observation_available,
+    ),
 )
 temporal_gp = phx.uq.fit_state_space_gaussian_process(
     plan,
@@ -1335,8 +1337,9 @@ Non-finite candidates are counted and excluded from selection. The population is
 optimizer state shaped by selection; it is not a posterior sample. Population
 dispersion convergence is not stationarity evidence or proof of a global optimum.
 
-For expensive, smooth, low-dimensional posterior objectives, use the sequential GP
-initializer instead of spending complete differential-evolution populations:
+For expensive, smooth, low-dimensional posterior objectives, use the canonical
+q=1 continuous Bayesian-optimization initializer instead of spending complete
+differential-evolution populations:
 
 ```python
 surrogate = phx.uq.GaussianProcessLikelihoodState(
@@ -1344,11 +1347,13 @@ surrogate = phx.uq.GaussianProcessLikelihoodState(
     noise_scale=0.0,
     jitter=1e-8,
 )
-search = phx.uq.GaussianProcessMAPSearch(
+search = phx.uq.GaussianProcessBayesianOptimization(
     32,
-    surrogate=surrogate,
+    objective_surrogate=surrogate,
     initial_evaluations=8,
-    candidate_count=512,
+    batch_size=1,
+    candidate_tuple_count=512,
+    fantasy_count=128,
 )
 global_mode = phx.uq.search_map(
     posterior,
@@ -1362,24 +1367,20 @@ global_mode = phx.uq.search_map(
 ```
 
 The surrogate operates on affine unit-box coordinates and standardizes finite
-negative-log-density observations before fitting. `noise_scale` is declared in raw
-negative-log-density units and is divided by the active objective scale;
-`jitter` is already in standardized covariance units. Non-finite evaluations remain
-in the archive, are excluded from the GP, and still suppress duplicate proposals.
-If fewer than two finite evaluations exist or the surrogate becomes non-finite, the
-initializer records a deterministic space-filling fallback.
+negative-log-density observations before fitting. `noise_scale` is declared in
+raw negative-log-density units and is divided by the active objective scale;
+`jitter` is already in standardized covariance units. Non-finite evaluations
+remain in the archive, are excluded from the GP, and still suppress duplicate
+proposals.
 
-`GaussianProcessMAPSearchResult` retains every evaluated position, raw objective,
-validity flag, proposal kind, running best value, fallback count, surrogate-failure
-count, bounds, root key, design identity, and exact evaluation count. It reports
-budget exhaustion rather than convergence. The implementation is sequential and
-refactors the exact GP after every observation. For evaluation budget `B`,
-candidate-pool width `C`, and bounded-position dimension `d`, the total surrogate
-work is `O(B^4 + C B^3)` (the sums of dense `O(n^3)` refactorizations and
-`O(C n^2)` posterior predictions), plus kernel-evaluation work and the user
-objective. Peak retained storage is `O(B^2 + B C d)`: the largest covariance and
-the pre-materialized, disjoint candidate pools. It does not support parallel
-fantasies, categorical variables, constraints, or automatic kernel fitting.
+`BayesianOptimizationMAPResult` returns the best unconstrained position and
+physical parameters together with canonical `.evidence`: every evaluation,
+proposal kind, acquisition estimate and Monte Carlo error, kernel-fit result,
+fantasy key, bounds, root key, and resource counts. Budget exhaustion is not a
+convergence or global-optimality certificate. The `search_map` adapter is the
+q=1 continuous specialization; mixed/categorical, constrained, pending-point,
+and larger-q workflows use the underlying Bayesian-optimization problem
+surface directly.
 
 ### Local MAP refinement
 
@@ -1864,24 +1865,61 @@ The result retains the optimization path, ELBO, target and approximation densiti
 importance log ratios, runtime, and sample memory.
 
 Use `sample_nested` when normalized model evidence or separated modes are central to
-the analysis. It samples the declared prior subject to monotonically increasing
-likelihood constraints and retains the complete weighted quadrature:
+the analysis. The canonical route prepares every capacity, prior coordinate, proposal
+kernel, and variable-live allocation policy before execution:
 
 ```python
+capacity = phx.uq.NestedSamplingCapacity(
+    max_live=750,
+    max_dead_points=5000,
+    max_likelihood_evaluations=50000,
+    max_dynamic_batches=16,
+    max_clusters=16,
+    max_phantoms=2048,
+)
+prior = phx.uq.NestedPriorPlan(
+    continuous_paths=("['source']",),
+)
+proposal = phx.uq.NestedProposalPlan(
+    "hit-and-run",
+    ellipsoid=True,
+    maximum_attempts=100,
+    rejection_fallback=True,
+)
+plan = phx.uq.NestedSamplingPlan(
+    capacity,
+    prior,
+    proposal,
+    initial_live=500,
+    dynamic=phx.uq.DynamicNestedPolicy(
+        pilot_dead_points=500,
+        additional_live_per_batch=50,
+        allocation_cadence=100,
+    ),
+)
 nested = phx.uq.sample_nested(
     posterior,
     key=jr.key(13),
-    num_live=500,
-    method="hit-and-run",
+    plan=plan,
 )
 equal_weight = nested.resample_posterior(jr.key(14), num_samples=1000)
 ```
 
-`nested.log_evidence_shrinkage_std` measures uncertainty from stochastic prior-volume
-compression only. It does not include missed modes, insufficient constrained-chain
-mixing, or omitted likelihood normalization. Inspect `nested.diagnostics`, especially
-the insertion-rank cross-check, constraint satisfaction, cap exhaustion, and effective
-lineage count. The raw `nested.samples` are dependent weighted points; use
+`NestedSamplingCapacity` fixes live, dead-point, likelihood-evaluation,
+dynamic-batch, ellipsoid-cluster, and phantom storage. `NestedPriorPlan` classifies
+every parameter-tree path exactly; finite-counting and periodic coordinates require
+their explicit typed declarations. `NestedProposalPlan` composes prepared
+hit-and-run or coordinate-slice kernels with optional ellipsoid, discrete, periodic,
+phantom, learned-flow, and gradient-guided branches. Exact constrained-prior
+rejection is available only when `rejection_fallback=True`.
+
+Prepared expected-log-volume execution is deterministic quadrature:
+`nested.log_evidence_shrinkage_std` is zero and is not a stochastic
+prior-volume uncertainty estimate. It does not cover missed modes, insufficient
+constrained-kernel mixing, or omitted likelihood normalization. Inspect
+`nested.diagnostics`, especially
+the insertion-rank cross-check, constraint satisfaction, capacity exhaustion, and
+effective lineage count. The raw `nested.samples` are dependent weighted points; use
 `nested.posterior_measure()` for weighted integration.
 
 Nested sampling requires a deterministic likelihood. Do not use minibatch likelihood
@@ -1890,16 +1928,11 @@ NaN and positive-infinite likelihoods are errors; negative infinity is exact zer
 likelihood and remains part of the prior-volume traversal. The initial live set must
 contain at least one finite-likelihood point.
 
-The default covariance-shaped hit-and-run method requires more live points than the
-flattened parameter dimension. Use `"slice-within-gibbs"` when the live covariance is
-unreliable or the target is approximately axis-aligned. Increasing `num_delete`
-vectorizes replacements but changes the batch order statistics, so compare accelerator
-settings against `num_delete=1`.
-
-Nested checkpoints use iteration counts and semantic random streams. Supply
-`checkpoint_path`, `checkpoint_id`, and later `resume_from`; resuming validates the
-posterior fingerprint, parameter tree, algorithm settings, and runtime versions
-without invoking the prior sampler again.
+Prepared checkpoint state includes the variable live population, proposal adaptation,
+phantom ring, dynamic-allocation epochs, weighted dead points, semantic random streams,
+and exact capacity cursors. Supply `checkpoint_path`, `checkpoint_id`, and later
+`resume_from`; resuming validates the posterior, plan, parameter tree, and runtime
+identities without invoking the prior sampler again.
 
 Use `sample_tempered_smc` for demonstrated low-dimensional multimodal posteriors.
 It draws particles from declared priors, adaptively chooses likelihood temperatures
@@ -2430,9 +2463,9 @@ Phydrax currently recommends:
    benchmarked against NUTS or Laplace where feasible.
 7. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
 8. Tempered SMC for low-dimensional mode discovery and evidence estimation.
-9. Static nested sampling for normalized model evidence, separated modes, and an
-   algorithmically independent check on tempered SMC; require insertion-rank and
-   constrained-mixing diagnostics.
+9. Prepared variable-live nested sampling for normalized model evidence, separated
+   modes, and an algorithmically independent check on tempered SMC; require
+   insertion-rank and constrained-mixing diagnostics.
 10. Fixed-step SGLD, optionally with an exact-center control variate, for large
    uniformly factorized likelihoods after step-halving and exact-reference checks.
    Use SGNHT only when its momentum/thermostat dynamics improve measured mixing.

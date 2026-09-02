@@ -28,8 +28,8 @@ from ..linalg import (
     matrix_phi1_action,
     MatrixFunctionPolicy,
 )
-from ..stochastic import WienerRealization
 from ..stochastic._spatial_noise import SpatialNoiseBasis
+from ..stochastic._wiener import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._spde import SemidiscreteSPDE
 

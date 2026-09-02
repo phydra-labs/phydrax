@@ -758,9 +758,11 @@ temporal_plan = phx.uq.compile_state_space_kernel(
         phx.kernels.Matern52Kernel(length_scale=0.25),
         0.03**2,
     ),
-    sensor_time,
-    forecast_time,
-    train_mask=sensor_available,
+    phx.uq.StateSpaceGaussianProcessDesign(
+        sensor_time,
+        forecast_time,
+        train_mask=sensor_available,
+    ),
 )
 temporal_result = phx.uq.fit_state_space_gaussian_process(
     temporal_plan,

@@ -621,6 +621,7 @@ OperatorClassificationKind = Literal[
     "ordinal",
 ]
 OperatorClassificationTarget = Literal["hard", "soft"]
+OperatorOrdinalCutpointPolicy = Literal["fixed", "learned"]
 
 
 class OperatorClassificationSpec(StrictModule):
@@ -635,6 +636,7 @@ class OperatorClassificationSpec(StrictModule):
     classes: tuple[str, ...]
     target: OperatorClassificationTarget
     thresholds: tuple[float, ...]
+    cutpoint_policy: OperatorOrdinalCutpointPolicy
 
     def __init__(
         self,
@@ -644,6 +646,7 @@ class OperatorClassificationSpec(StrictModule):
         *,
         target: OperatorClassificationTarget = "hard",
         thresholds: Sequence[float] = (),
+        cutpoint_policy: OperatorOrdinalCutpointPolicy = "fixed",
     ):
         if kind not in ("binary", "multiclass", "multilabel", "ordinal"):
             raise ValueError(
@@ -666,32 +669,40 @@ class OperatorClassificationSpec(StrictModule):
             raise ValueError(
                 f"{kind} classification requires {requirement} ordered classes."
             )
-        if kind == "ordinal" and target == "soft":
-            raise ValueError("Soft ordinal operator targets are not supported.")
+        if cutpoint_policy not in ("fixed", "learned"):
+            raise ValueError("cutpoint_policy must be 'fixed' or 'learned'.")
         resolved_thresholds = tuple(float(value) for value in thresholds)
         if kind == "ordinal":
-            if len(resolved_thresholds) != len(ordered) - 1:
+            if cutpoint_policy == "fixed":
+                if len(resolved_thresholds) != len(ordered) - 1:
+                    raise ValueError(
+                        "Fixed ordinal classification requires one threshold between "
+                        "each adjacent pair of classes."
+                    )
+                if any(not math.isfinite(value) for value in resolved_thresholds) or any(
+                    right <= left
+                    for left, right in zip(
+                        resolved_thresholds,
+                        resolved_thresholds[1:],
+                        strict=False,
+                    )
+                ):
+                    raise ValueError(
+                        "Ordinal thresholds must be finite and strictly increasing."
+                    )
+            elif resolved_thresholds:
                 raise ValueError(
-                    "Ordinal classification requires one fixed threshold between "
-                    "each adjacent pair of classes."
+                    "Learned ordinal cutpoints live in the model head, not the spec."
                 )
-            if any(not math.isfinite(value) for value in resolved_thresholds) or any(
-                right <= left
-                for left, right in zip(
-                    resolved_thresholds,
-                    resolved_thresholds[1:],
-                    strict=False,
-                )
-            ):
-                raise ValueError(
-                    "Ordinal thresholds must be finite and strictly increasing."
-                )
-        elif resolved_thresholds:
-            raise ValueError("Only ordinal classification accepts thresholds.")
+        elif resolved_thresholds or cutpoint_policy != "fixed":
+            raise ValueError(
+                "Only ordinal classification accepts cutpoint configuration."
+            )
         self.kind = kind
         self.classes = ordered
         self.target = target
         self.thresholds = resolved_thresholds
+        self.cutpoint_policy = cutpoint_policy
 
     @property
     def class_count(self) -> int:
@@ -699,15 +710,15 @@ class OperatorClassificationSpec(StrictModule):
 
     @property
     def prediction_channel_shape(self) -> tuple[int, ...]:
-        if self.kind in ("binary", "ordinal"):
+        if self.kind == "binary":
             return ()
+        if self.kind == "ordinal":
+            return () if self.cutpoint_policy == "fixed" else (self.class_count - 1,)
         return (self.class_count,)
 
     @property
     def target_channel_shape(self) -> tuple[int, ...]:
-        if self.kind == "multilabel" or (
-            self.kind == "multiclass" and self.target == "soft"
-        ):
+        if self.kind == "multilabel" or self.target == "soft":
             return (self.class_count,)
         return ()
 
@@ -717,6 +728,7 @@ class OperatorClassificationSpec(StrictModule):
             "classes": list(self.classes),
             "target": self.target,
             "thresholds": list(self.thresholds),
+            "cutpoint_policy": self.cutpoint_policy,
         }
 
     @classmethod
@@ -725,7 +737,13 @@ class OperatorClassificationSpec(StrictModule):
         value: Mapping[str, Any],
         /,
     ) -> "OperatorClassificationSpec":
-        expected = {"kind", "classes", "target", "thresholds"}
+        expected = {
+            "kind",
+            "classes",
+            "target",
+            "thresholds",
+            "cutpoint_policy",
+        }
         missing = expected - set(value)
         unknown = set(value) - expected
         if missing or unknown:
@@ -738,6 +756,7 @@ class OperatorClassificationSpec(StrictModule):
             value["classes"],
             target=value["target"],
             thresholds=value["thresholds"],
+            cutpoint_policy=value["cutpoint_policy"],
         )
 
 
@@ -1648,6 +1667,7 @@ __all__ = [
     "OperatorClassificationKind",
     "OperatorClassificationSpec",
     "OperatorClassificationTarget",
+    "OperatorOrdinalCutpointPolicy",
     "OperatorFieldBatch",
     "OperatorCaseProvenance",
     "OperatorOutputSpec",

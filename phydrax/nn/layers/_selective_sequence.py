@@ -307,6 +307,7 @@ class SelectiveStateSpaceBlock(StrictModule):
                 batch.valid,
                 reset=batch.reset,
                 time=batch.time,
+                time_direction=batch.time_direction,
             ),
             initial_state=state0.convolution,
         )
@@ -318,8 +319,12 @@ class SelectiveStateSpaceBlock(StrictModule):
             final_time = jnp.asarray(state0.last_time, dtype=compute_dtype)
             final_has_time = jnp.asarray(state0.has_time, dtype=bool)
         else:
-            times, _, _, continuation = normalize_physical_schedule(
-                batch.time,
+            direction_sign = jnp.asarray(
+                1.0 if batch.time_direction == "forward" else -1.0,
+                dtype=compute_dtype,
+            )
+            directed_times, _, _, continuation = normalize_physical_schedule(
+                direction_sign * batch.time,
                 case_shape=batch.case_shape,
                 sequence_length=batch.sequence_length,
                 mask=batch.valid,
@@ -327,6 +332,7 @@ class SelectiveStateSpaceBlock(StrictModule):
                 dtype=compute_dtype,
                 require_prefix=False,
             )
+            times = direction_sign * directed_times
             previous_time = jnp.asarray(state0.last_time, dtype=compute_dtype)
             previous_has_time = jnp.asarray(state0.has_time, dtype=bool)
             if (
@@ -339,17 +345,19 @@ class SelectiveStateSpaceBlock(StrictModule):
             first_continuation = (
                 batch.valid[..., 0] & ~batch.reset[..., 0] & previous_has_time
             )
+            directed_first_step = direction_sign * (times[..., 0] - previous_time)
             times = eqx.error_if(
                 times,
-                jnp.any(first_continuation & (times[..., 0] < previous_time)),
-                "Continuation times must be non-decreasing across sequence chunks.",
+                jnp.any(first_continuation & (directed_first_step < 0)),
+                "Continuation times must follow the declared physical-time "
+                "direction across sequence chunks.",
             )
             first_step = jnp.where(
                 first_continuation,
-                times[..., 0] - previous_time,
+                directed_first_step,
                 jnp.zeros_like(previous_time),
             )
-            intervals = times[..., 1:] - times[..., :-1]
+            intervals = direction_sign * (times[..., 1:] - times[..., :-1])
             physical_step = jnp.concatenate(
                 (
                     first_step[..., None],
@@ -419,6 +427,7 @@ class SelectiveStateSpaceBlock(StrictModule):
                 batch.valid,
                 reset=batch.reset,
                 time=batch.time,
+                time_direction=batch.time_direction,
             ),
             initial_state=recurrent0,
             execution=execution,

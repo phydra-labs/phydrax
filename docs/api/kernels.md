@@ -380,3 +380,20 @@ smoke workflow with:
 ```bash
 python -m tools.spectral_kernel_benchmarks --smoke
 ```
+
+## Compact homogeneous spectral and geodesic kernels
+
+`PreparedCompactHomogeneousSpectrum` binds a finite highest-weight/mode
+frontier, Casimir values, positive multiplicities, zonal/character evaluator,
+and a certified nonnegative tail bound for SO, SU, real Stiefel, or Grassmann
+spaces. `CompactHomogeneousHeatKernel` and
+`CompactHomogeneousMaternKernel` use nonnegative spectral weights and therefore
+advertise covariance capability together with `KernelEvaluationEvidence`.
+
+`GeodesicRadialKernel` exposes principal SO/SU matrix-angle branches,
+Grassmann principal angles, or a declared bounded Stiefel shooting/log provider.
+Cut-locus, membership, and shooting-residual failures end the epoch.
+`GeodesicExponentialKernel` does **not** claim global positive definiteness on an
+arbitrary compact manifold. It enters PSD consumers only when constructed with
+a separately justified family theorem; `require_positive_definite` otherwise
+fails closed.

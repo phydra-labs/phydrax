@@ -89,9 +89,17 @@ def run(*, smoke=False):
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         (phx.discretization.CellBlock("tri", "triangle", jnp.asarray(((0, 1, 2),))),),
     )
-    located = phx.discretization.PreparedSimplicialCellLocator(mesh).locate(
-        jnp.asarray(((0.2, 0.2), (0.3, 0.1)))
-    )
+    finite_element = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+    located = phx.discretization.PreparedSimplicialCellLocator(
+        phx.discretization.fem.prepare_finite_element_cell_map(finite_element, 0),
+        finite_element.default_runtime.coordinates,
+        phx.discretization.SimplicialLocationPolicy(1, 8, 3),
+    ).locate(jnp.asarray(((0.2, 0.2), (0.3, 0.1))))
     successful = bool(
         collision.successful
         and diagnostics.successful

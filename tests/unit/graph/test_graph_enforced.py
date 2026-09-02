@@ -204,15 +204,7 @@ def test_graph_value_enforcement_integrates_with_functional_solver():
 
     functions = {"u": u}
     condition = phx.conditions.Dirichlet("u", boundary, target=5.0)
-    spec = phx.enforcement.EnforcementSpec(
-        condition,
-        kind="custom",
-        transform=lambda value, _get_field: phx.enforcement.enforce_graph_values(
-            value,
-            boundary,
-            target=5.0,
-        ),
-    )
+    spec = phx.enforcement.EnforcementSpec(condition)
     program = phx.enforcement.compile(functions, [spec])
     solver = phx.solver.FunctionalSolver(
         functions=functions,

@@ -12,7 +12,7 @@ import numpy as np
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ...discretization import ParticleCell
+from ...discretization import PeriodicCell
 from .._classical import (
     HarmonicAnglePotential,
     HarmonicBondPotential,
@@ -1024,7 +1024,7 @@ def from_openmm_system(
     cell = (
         None
         if resolved_cell is None
-        else ParticleCell(resolved_cell, periodic_axes=(True, True, True))
+        else PeriodicCell(resolved_cell, periodic_axes=(True, True, True))
     )
     nonbonded = {
         "cutoff": cutoff_value,
@@ -1213,7 +1213,7 @@ def from_parmed_structure(
                 for vector in structure.box_vectors
             ]
         )
-        cell = ParticleCell(vectors * length_factor)
+        cell = PeriodicCell(vectors * length_factor)
     topology = MolecularTopologyPlan(
         bonds=np.asarray(bond_routes, dtype=np.int64).reshape((-1, 2)),
         angles=np.asarray(angle_routes, dtype=np.int64).reshape((-1, 3)),

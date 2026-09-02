@@ -49,6 +49,7 @@ from ._shallow_water import (
     reconstruct_shallow_water_faces,
     shallow_water_observables,
     ShallowWaterBalancedFaceResult,
+    ShallowWaterBathymetryPlan,
     ShallowWaterHydrostaticHLLPlan,
     ShallowWaterObservables,
 )
@@ -338,26 +339,31 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             "Finite-volume capacity must be finite and positive.",
         )
         if isinstance(method.interface_solver, ShallowWaterHydrostaticHLLPlan):
-            if isinstance(discretization, MappedFiniteVolumeDiscretization):
-                raise ValueError(
-                    "Initial hydrostatic shallow water requires Cartesian "
-                    "structured finite volumes."
-                )
             if capacity is not None:
                 raise ValueError(
                     "Initial hydrostatic shallow water does not support capacity fields."
                 )
             if bathymetry is None:
                 raise ValueError("Hydrostatic shallow water requires a bathymetry field.")
-            bathymetry_: PreparedShallowWaterBathymetry | None = (
-                PreparedShallowWaterBathymetry(
+            if isinstance(bathymetry, ShallowWaterBathymetryPlan):
+                bathymetry_ = bathymetry.prepare(discretization, precision=precision_)
+            elif isinstance(bathymetry, PreparedShallowWaterBathymetry):
+                if (
+                    bathymetry.geometry_id != discretization.prepared_id
+                    or bathymetry.precision_id != precision_.policy_id
+                ):
+                    raise ValueError(
+                        "Prepared bathymetry belongs to different geometry/precision."
+                    )
+                bathymetry_ = bathymetry
+            else:
+                bathymetry_ = PreparedShallowWaterBathymetry(
                     bathymetry,
                     discretization.cell_shape,
                     geometry_id=discretization.prepared_id,
                     precision_id=precision_.policy_id,
                     dtype=precision_.reconstruction_dtype,
                 )
-            )
         else:
             if bathymetry is not None:
                 raise ValueError(
@@ -583,8 +589,23 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             left, right, bed_left, bed_right = self._reconstruct_balanced(
                 time, value, axis, args
             )
-            contributions.append(
-                solver.face_contribution(
+            if isinstance(self.discretization, MappedFiniteVolumeDiscretization):
+                normal = (
+                    self.discretization.face_area_vectors[axis]
+                    / self.discretization.face_measures[axis][..., None]
+                )
+                contribution = solver.normal_face_contribution(
+                    self.system,
+                    self.precision.flux(left),
+                    self.precision.flux(right),
+                    self.precision.flux(bed_left),
+                    self.precision.flux(bed_right),
+                    normal,
+                    None,
+                    args,
+                )
+            else:
+                contribution = solver.face_contribution(
                     self.system,
                     self.precision.flux(left),
                     self.precision.flux(right),
@@ -593,7 +614,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     axis,
                     args,
                 )
-            )
+            contributions.append(contribution)
         return tuple(contributions)
 
     def _override_boundary_flux(

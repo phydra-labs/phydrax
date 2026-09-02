@@ -200,6 +200,23 @@ stability evidence, source-backed presets, and axisymmetric primitive moments.
 separate immutable accepted data from candidate field/material/topology state.
 Rejected attempts do not increment state or material versions.
 
+
+## CAD meshing and prepared cell maps
+
+`CADFEMMeshingPolicy` and `mesh_brep_for_fem` provide the bounded affine
+triangle/tetrahedron Gmsh route from a reopenable, revision-checked
+`BRepSource`. The result retains CAD entity associations, canonical
+`CellMesh`/`SurfaceModel` topology, Jacobian and boundary-residual evidence,
+and conversion count/byte caps. There is no query-tessellation fallback,
+automatic healing, high-order positivity claim, or differentiable remeshing.
+Gmsh's internal workspace is reported as not hard-bounded by its Python API.
+
+`prepare_finite_element_cell_map(discretization, block_index)` freezes the
+coordinate element and gathers while keeping coordinates, cell indices, and
+reference iterates as JAX inputs. Its paired evaluation returns physical
+points, Jacobians, left inverses, determinant/measure, and validity margins;
+curved particle location and other consumers must reuse this map.
+
 ## Current limits
 
 Execution remains single-device unless a caller supplies a JAX named-axis

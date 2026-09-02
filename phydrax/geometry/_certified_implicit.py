@@ -11,7 +11,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellComplexTopology
+from ..discretization._topology import CellComplexTopology
 
 
 class CertifiedImplicitCover(StrictModule, NonTrainableState):

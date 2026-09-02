@@ -15,7 +15,6 @@ from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
-from ..solver._memory_kernel import DynamicalMapPhysicality
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -327,6 +326,8 @@ class ProcessTensorMPO(StrictModule):
                 status="unknown-general-temporal-bond",
                 precision_evidence=self.precision_evidence,
             )
+        from ..solver._memory_kernel import DynamicalMapPhysicality
+
         reports = [
             DynamicalMapPhysicality(
                 tensor[0, :, :, 0],

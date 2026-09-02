@@ -168,15 +168,17 @@ materialize. A dense oracle exists only when explicitly requested under a
 ```text
 region = phx.geometry.MeshRegion(vertices, faces)
 galerkin = phx.operators.prepare_laplace_single_layer_dp0_3d(region)
+epoch = phx.operators.BoundaryMeshEpoch(galerkin._binding.mesh)
 
 left = phx.discretization.EntitySelection(galerkin.surface_entities, left_face_mask)
 right = phx.discretization.EntitySelection(galerkin.surface_entities, right_face_mask)
 
-result = phx.solver.solve_laplace_capacitance_3d(
+prepared = phx.solver.LaplaceCapacitancePlan3D(
+    epoch,
     galerkin,
     {"left": left, "right": right},
-    permittivity=epsilon,
-)
+).prepare()
+result = prepared.solve(permittivity=epsilon)
 ```
 
 Conductor selections are canonicalized by name. They must be nonempty, disjoint, cover

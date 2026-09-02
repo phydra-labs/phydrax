@@ -400,3 +400,31 @@ def test_diffrax_delay_accepts_direct_adjoint():
         max_steps=64,
     )
     assert jnp.allclose(solution.states[0, 0], jnp.exp(0.06), atol=2e-7)
+
+
+def test_complex_delay_and_fixed_capacity_segmented_route_use_real_coordinates():
+    problem = _constant_delay_problem(
+        lambda time, state, delayed, args: jnp.conj(delayed[0]),
+        lambda time, args: jnp.asarray([1.0 + 0.25j]),
+        jnp.asarray([0.1]),
+        t0=0.0,
+        t1=0.2,
+    )
+    times = jnp.asarray([0.0, 0.1, 0.2])
+    whole = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=times,
+        dense=True,
+    )
+    segmented = phx.solver.solve_diffrax_delay_segmented(
+        problem,
+        save_times=times,
+        segment_policy=phx.solver.FixedCapacitySegmentPolicy(4, 128),
+        dt0=0.01,
+    )
+
+    assert whole.states.dtype == jnp.complex128
+    assert jnp.all(jnp.isfinite(whole.states))
+    assert jnp.all(jnp.isfinite(whole.evaluate(jnp.asarray([0.05, 0.15]))))
+    assert segmented.states.dtype == jnp.complex128
+    assert jnp.all(jnp.isfinite(segmented.states))

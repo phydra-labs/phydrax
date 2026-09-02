@@ -105,7 +105,7 @@ def test_force_field_mapping_roundtrip_preserves_energy():
 
 
 def test_force_field_term_families_and_settle():
-    cell = phx.discretization.ParticleCell(jnp.eye(3) * 6.0)
+    cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
     topology = phx.atomistic.MolecularTopologyPlan(
         torsions=[[0, 1, 2, 3]],
         impropers=[[0, 1, 2, 3]],
@@ -458,7 +458,7 @@ def test_free_energy_estimators_on_identical_states():
 
 
 def test_collective_variable_families():
-    cell = phx.discretization.ParticleCell(jnp.eye(3) * 8.0)
+    cell = phx.discretization.PeriodicCell(jnp.eye(3) * 8.0)
     system = phx.atomistic.AtomisticSystemPlan(
         [0, 1, 2, 3],
         [1, 1, 1, 1],
@@ -896,7 +896,7 @@ def test_rigid_coordinate_map_and_rotational_step():
 
 
 def test_implicit_polarization_and_multipole_pme():
-    cell = phx.discretization.ParticleCell(jnp.eye(3) * 6.0)
+    cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
     _, system, neighborhood, _, _, state = _runtime(cell=cell, charges=[0.4, -0.2, -0.2])
     multipoles = phx.atomistic.PermanentMultipoleSiteData(
         [0.4, -0.2, -0.2],

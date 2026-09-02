@@ -1,9 +1,11 @@
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax.discretization.spectral._modal_discovery import PreparedModalSupport
 
 
 class _UnitCoefficient(eqx.Module):
@@ -99,3 +101,26 @@ def test_implicit_modal_field_binds_one_time_domain_and_guards_resources():
             space,
             maximum_query_points=3,
         )
+
+
+def test_sparse_modal_field_ignores_padded_duplicate_indices_and_gradients():
+    coefficients = jnp.asarray([[2.5], [17.0], [-9.0]])
+    support = PreparedModalSupport(
+        jnp.asarray([[0], [0], [1]], dtype=jnp.int32),
+        coefficients,
+        jnp.asarray([True, False, False]),
+        jnp.asarray([6.25, 0.0, 0.0]),
+        jnp.asarray([0.0, 0.0, 0.0]),
+        "padded-support",
+        "padded-plan",
+    )
+    field = phx.nn.models.SparseImplicitModalField(support, (2,))
+
+    assert jnp.array_equal(field(), jnp.asarray([[2.5], [0.0]]))
+
+    def zero_mode(values):
+        updated = eqx.tree_at(lambda candidate: candidate.coefficients, support, values)
+        return phx.nn.models.SparseImplicitModalField(updated, (2,))()[0, 0]
+
+    gradient = jax.grad(zero_mode)(coefficients)
+    assert jnp.array_equal(gradient, jnp.asarray([[1.0], [0.0], [0.0]]))

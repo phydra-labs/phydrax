@@ -254,7 +254,7 @@ class ParameterGeometry(StrictModule):
         moments = [
             jnp.zeros(
                 self._factor_shape(point.shape, manifold),
-                dtype=point.dtype,
+                dtype=point.real.dtype,
             )
             for point, manifold in zip(points, self.manifolds, strict=True)
         ]
@@ -293,7 +293,7 @@ class ParameterGeometry(StrictModule):
                     )(flattened_points, flattened_vectors).reshape(factor_shape)
                 else:
                     squared = manifold.inner(point, vector, vector)
-            weighted = jnp.asarray(weight, dtype=point.dtype) * jnp.real(squared)
+            weighted = jnp.asarray(weight, dtype=point.real.dtype) * jnp.real(squared)
             outputs.append(jnp.maximum(weighted, 0.0))
         return self.tree_definition.unflatten(outputs)
 

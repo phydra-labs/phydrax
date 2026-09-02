@@ -98,14 +98,19 @@ def _model(seed=0):
         key=map_key,
     )
     return phx.nn.operator.architectures.FunctionFrameReconstructor(
-        source_frame=source_frame,
-        target_frame=target_frame,
-        coefficient_map=coefficient_map,
-        policy=phx.nn.operator.architectures.FunctionProjectionPolicy(
-            ridge=1e-5,
-            rank_policy="regularized",
-            require_physical_quadrature=True,
+        sources=(
+            phx.nn.operator.architectures.FunctionFrameSource(
+                "source",
+                source_frame,
+                coefficient_map=coefficient_map,
+                projection_policy=phx.nn.operator.architectures.FunctionProjectionPolicy(
+                    ridge=1e-5,
+                    rank_policy="regularized",
+                    require_physical_quadrature=True,
+                ),
+            ),
         ),
+        target_frame=target_frame,
     )
 
 

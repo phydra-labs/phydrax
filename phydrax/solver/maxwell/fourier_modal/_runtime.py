@@ -22,7 +22,12 @@ from ._boundary_cascade import (
     identity_boundary_relation,
     prepare_layer_boundary,
 )
+from ._continuous import (
+    prepare_continuous_fourier_modal_layer,
+    PreparedContinuousFourierModalLayer,
+)
 from ._contracts import (
+    ContinuousFourierModalLayer,
     FourierModalLayer,
     FourierModalMaxwellProblem,
     FourierModalSourcePlane,
@@ -36,9 +41,9 @@ from ._factorization import (
 from ._layer import prepare_layer_operator, PreparedLayerOperator
 from ._scattering import (
     boundary_to_scattering,
-    HomogeneousPortModes,
     MaxwellPortScatteringOperator,
-    prepare_homogeneous_port_modes,
+    prepare_fourier_modal_port_modes,
+    PreparedFourierModalPortModes,
     shift_scattering_reference_planes,
 )
 from ._sources import (
@@ -154,17 +159,27 @@ class FourierModalCostEstimate(StrictModule, NonTrainableState):
 
 class FourierModalCapabilities(StrictModule, NonTrainableState):
     full_tensor_layers: bool = eqx.field(static=True)
+    bianisotropic_layers: bool = eqx.field(static=True)
     patterned_ports: bool = eqx.field(static=True)
+    continuous_z_layers: bool = eqx.field(static=True)
+    lateral_transformation_optics_pml: bool = eqx.field(static=True)
+    finite_aperture_far_fields: bool = eqx.field(static=True)
+    harmonic_epochs: bool = eqx.field(static=True)
     boundary_differentiation: bool = eqx.field(static=True)
-    modal_differentiation: bool = eqx.field(static=True)
+    modal_subspace_differentiation: bool = eqx.field(static=True)
     internal_sources: bool = eqx.field(static=True)
     brillouin_zone: bool = eqx.field(static=True)
 
     def __init__(self):
         self.full_tensor_layers = True
-        self.patterned_ports = False
+        self.bianisotropic_layers = True
+        self.patterned_ports = True
+        self.continuous_z_layers = True
+        self.lateral_transformation_optics_pml = True
+        self.finite_aperture_far_fields = True
+        self.harmonic_epochs = True
         self.boundary_differentiation = True
-        self.modal_differentiation = False
+        self.modal_subspace_differentiation = True
         self.internal_sources = True
         self.brillouin_zone = True
 
@@ -185,7 +200,11 @@ class PreparedFourierModalLayer(StrictModule):
     boundary: BoundaryRelation
 
 
-PreparedElement: TypeAlias = PreparedFourierModalLayer | FourierModalSourcePlane
+PreparedElement: TypeAlias = (
+    PreparedFourierModalLayer
+    | PreparedContinuousFourierModalLayer
+    | FourierModalSourcePlane
+)
 
 
 class PreparedFourierModalMaxwell(StrictModule):
@@ -194,8 +213,8 @@ class PreparedFourierModalMaxwell(StrictModule):
     elements: tuple[PreparedElement, ...]
     source_host_indices: tuple[int, ...] = eqx.field(static=True)
     global_boundary: BoundaryRelation
-    left_modes: HomogeneousPortModes
-    right_modes: HomogeneousPortModes
+    left_modes: PreparedFourierModalPortModes
+    right_modes: PreparedFourierModalPortModes
     interface_scattering: MaxwellPortScatteringOperator
     scattering: MaxwellPortScatteringOperator
     total_thickness: Array
@@ -401,7 +420,10 @@ def _compose_elements(
     for element in elements:
         component = (
             element.boundary
-            if isinstance(element, PreparedFourierModalLayer)
+            if isinstance(
+                element,
+                PreparedFourierModalLayer | PreparedContinuousFourierModalLayer,
+            )
             else identity_boundary_relation(tangential_size, dtype)
         )
         relation = compose_boundary_relations(relation, component)
@@ -419,17 +441,19 @@ def _finalize_prepared(
     count = problem.harmonics.harmonic_count
     dtype = jnp.dtype(problem.harmonics.plan.precision.coefficient_dtype)
     global_boundary = _compose_elements(elements, 2 * count, dtype)
-    left_modes = prepare_homogeneous_port_modes(
+    left_modes = prepare_fourier_modal_port_modes(
         problem.superstrate,
         problem.harmonics,
         problem.angular_frequency,
         problem.bloch_wavevector,
+        outward_sign=-1,
     )
-    right_modes = prepare_homogeneous_port_modes(
+    right_modes = prepare_fourier_modal_port_modes(
         problem.substrate,
         problem.harmonics,
         problem.angular_frequency,
         problem.bloch_wavevector,
+        outward_sign=1,
     )
     interface_scattering = boundary_to_scattering(
         global_boundary, left_modes, right_modes
@@ -438,7 +462,10 @@ def _finalize_prepared(
         (
             element.layer.thickness
             for element in elements
-            if isinstance(element, PreparedFourierModalLayer)
+            if isinstance(
+                element,
+                PreparedFourierModalLayer | PreparedContinuousFourierModalLayer,
+            )
         ),
         start=jnp.asarray(0.0, dtype=dtype),
     )
@@ -489,6 +516,13 @@ def prepare_fourier_modal_maxwell(
         if isinstance(element, FourierModalSourcePlane):
             prepared_elements.append(element)
             continue
+        if isinstance(element, ContinuousFourierModalLayer):
+            prepared_elements.append(
+                prepare_continuous_fourier_modal_layer(
+                    problem, element, plan.policy.boundary
+                )
+            )
+            continue
         key = (element.material.material_id, element.factorization.plan_id)
         base_material = material_cache.get(key)
         prepared_layer = _prepare_layer(
@@ -533,6 +567,24 @@ def refresh_fourier_modal_maxwell(
     )
     if len(spec_.layer_updates) != layer_count:
         raise ValueError("layer_updates must contain one entry per finite layer.")
+    if any(
+        isinstance(element, ContinuousFourierModalLayer) for element in problem.elements
+    ):
+        refreshed = prepare_fourier_modal_maxwell(problem, prepared.plan.policy)
+        refresh_count = prepared.refresh_count + 1
+        preparation_id = canonical_fingerprint(
+            {
+                "kind": "prepared-fourier-modal-maxwell",
+                "plan": prepared.plan.plan_id,
+                "numeric_version": problem.numeric_version,
+                "refresh_count": refresh_count,
+            }
+        )
+        return eqx.tree_at(
+            lambda value: (value.refresh_count, value.preparation_id),
+            refreshed,
+            (refresh_count, preparation_id),
+        )
     force_operator_refresh = (
         spec_.angular_frequency_changed or spec_.bloch_wavevector_changed
     )
@@ -652,7 +704,10 @@ def _affine_stack(
     affine_elements: list[AffineBoundaryRelation] = []
     source_index = 0
     for index, element in enumerate(prepared.elements):
-        if isinstance(element, PreparedFourierModalLayer):
+        if isinstance(
+            element,
+            PreparedFourierModalLayer | PreparedContinuousFourierModalLayer,
+        ):
             affine_elements.append(
                 homogeneous_affine_relation(element.boundary, excitation.rhs_count)
             )
@@ -797,7 +852,10 @@ def solve_fourier_modal_maxwell(
     layers = tuple(
         element
         for element in prepared.elements
-        if isinstance(element, PreparedFourierModalLayer)
+        if isinstance(
+            element,
+            PreparedFourierModalLayer | PreparedContinuousFourierModalLayer,
+        )
     )
     maximum_constitutive = jnp.max(
         jnp.stack(
@@ -820,6 +878,16 @@ def solve_fourier_modal_maxwell(
     propagation_converged = jnp.all(
         jnp.stack(
             tuple(layer.boundary.diagnostics.converged for layer in layers)
+            or (jnp.asarray(True),)
+        )
+    )
+    propagation_converged = propagation_converged & jnp.all(
+        jnp.stack(
+            tuple(
+                element.successful
+                for element in prepared.elements
+                if isinstance(element, PreparedContinuousFourierModalLayer)
+            )
             or (jnp.asarray(True),)
         )
     )

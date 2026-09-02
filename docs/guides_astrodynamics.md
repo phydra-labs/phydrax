@@ -48,12 +48,42 @@ returns fixed-capacity zero- and multi-revolution branches without choosing one 
 caller. Orbital events adapt scalar guards and resets to the existing hybrid-event and
 saltation substrate.
 
+## Regularized encounters and native TLE propagation
+
+`CloseEncounterRegularizationPlan` prepares exactly one dominant pair for a bounded
+segment. Preparation rejects simultaneous close pairs, tied/grazing selection,
+collisions, non-finite state, and invalid mass capacity. Execution uses a Sundman
+universal-variable solve, retains the KS coordinate and momentum evidence, and rolls
+back the complete state if time closure, perturbation ratio, collision separation, or
+iteration capacity fails. Collision merge/bounce remains an event reset rather than
+part of the smooth segment. `detect_close_encounter(...,
+regularization_prepared=True)` marks the explicit handoff; it never silently enables
+regularization.
+
+`TLEPropagationPlan` is the clean-cutover native TLE surface. The parsed period fixes a
+`near-earth` or `deep-space` route at preparation. The deep-space route includes
+solar/lunar secular and long-period terms plus fixed-capacity synchronous and
+twelve-hour resonance scans. Results retain the UTC epoch, TEME frame, WGS-72 constant
+set, regime, resonance kind, range/decay checks, residual, and executed resonance
+steps. Requests outside `maximum_minutes` fail rather than truncate. TLE parsing,
+regime, resonance, and revolution metadata are discrete; elapsed time remains a
+continuous input inside the prepared route.
+
 ## External data
 
 Ephemeris and time products require producer, version, checksum, license, frame,
 epoch, scale, and differentiability provenance. SPICE, SGP4, and coordinate-system
 adapters execute on the host and return native arrays. No provider lookup, network
 access, or file parsing occurs inside transformed computation.
+
+`bundled_astronomy_data_store()` resolves the small packaged, content-addressed
+astronomy set without networking: UTC/TAI leap seconds with an explicit coverage end,
+a bounded historical EOP/CIP interval, low-order Earth gravity, a one-day
+Sun/Earth/Moon Chebyshev example, and bounded IAU precession coefficients. The typed
+`load_bundled_*` functions verify digest and byte size before constructing the native
+product. These data are deterministic examples, not auto-current operational EOP,
+ephemeris, gravity, or TLE services; out-of-coverage evaluation fails and callers must
+provide an explicit `AstrodynamicsDataStore` for other coverage.
 
 ## Differentiability boundaries
 

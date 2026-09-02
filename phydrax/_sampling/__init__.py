@@ -2,8 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._adaptation import (
+    adapt_proposal_scale,
+    AdaptiveProposalState,
+    initialize_proposal_adaptation,
+    RobbinsMonroScalePolicy,
+)
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
+from ._chunks import MarkovChunkPlan, MarkovChunkResult, sample_markov_chunked
 from ._designs import (
     get_sampler,
     get_sampler_host,
@@ -13,6 +20,17 @@ from ._designs import (
     seed_from_key,
     unit_design,
 )
+from ._hamiltonian import (
+    adapt_hamiltonian_kernel,
+    HamiltonianAdaptationPlan,
+    HamiltonianAdaptationResult,
+    HamiltonianChainState,
+    HamiltonianSampleResult,
+    initialize_hamiltonian_state,
+    prepare_hamiltonian_kernel,
+    PreparedHamiltonianKernel,
+    sample_hamiltonian,
+)
 from ._markov import (
     MarkovSampleResult,
     MarkovState,
@@ -20,8 +38,19 @@ from ._markov import (
     MetropolisHastings,
     sample_markov,
 )
-from ._proposals import AbstractProposal, CallableProposal, GaussianRandomWalkProposal
-from ._transports import ReferenceTransport
+from ._proposals import (
+    AbstractProposal,
+    CallableProposal,
+    GaussianRandomWalkProposal,
+    ProposalMove,
+)
+from ._targets import (
+    FullMarkovTarget,
+    IncrementalMarkovTarget,
+    IncrementalTargetProposal,
+    MarkovTargetState,
+)
+from ._transports import UnitCubeTransport
 from ._types import (
     AntitheticDesign,
     DESIGN_ALGORITHM_VERSION,
@@ -46,6 +75,7 @@ from ._types import (
 
 __all__ = [
     "AbstractChainSampleResult",
+    "AdaptiveProposalState",
     "AbstractProposal",
     "AntitheticDesign",
     "CallableProposal",
@@ -54,32 +84,52 @@ __all__ = [
     "DesignLike",
     "DesignName",
     "HaltonDesign",
+    "FullMarkovTarget",
     "GaussianRandomWalkProposal",
     "HammersleyDesign",
     "IIDDesign",
+    "HamiltonianAdaptationPlan",
+    "HamiltonianAdaptationResult",
+    "HamiltonianChainState",
+    "HamiltonianSampleResult",
+    "IncrementalMarkovTarget",
+    "IncrementalTargetProposal",
     "MarkovSampleResult",
     "MarkovState",
     "MarkovTransitionInfo",
     "MetropolisHastings",
+    "MarkovChunkPlan",
+    "MarkovChunkResult",
+    "MarkovTargetState",
     "LatinHypercubeDesign",
     "RandomizedQMCDesign",
-    "ReferenceTransport",
+    "UnitCubeTransport",
     "SUPPORTED_DESIGNS",
     "SampleAddress",
+    "PreparedHamiltonianKernel",
+    "ProposalMove",
+    "RobbinsMonroScalePolicy",
     "SobolDesign",
     "design_signature",
     "UnitDesign",
     "derive_key",
+    "adapt_hamiltonian_kernel",
+    "adapt_proposal_scale",
     "design_capabilities",
     "design_name",
     "get_sampler",
     "get_sampler_host",
     "host_design",
     "host_design_factory",
+    "initialize_hamiltonian_state",
+    "initialize_proposal_adaptation",
     "materialize_design",
     "normalize_design_name",
     "resolve_design",
     "seed_from_key",
+    "prepare_hamiltonian_kernel",
     "sample_markov",
+    "sample_hamiltonian",
+    "sample_markov_chunked",
     "unit_design",
 ]

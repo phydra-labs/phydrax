@@ -4,7 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
-from phydrax.discretization import ParticleCell
+from phydrax.discretization import PeriodicCell
 from phydrax.discretization.bem._rwg import RWGSurfaceCurrentSpace3D
 from phydrax.discretization.bem._surface_complex import (
     OrientedTriangleSurfaceComplex3D,
@@ -57,7 +57,7 @@ _ALPHA = jnp.asarray([0.13, -0.07, 0.05])
 
 
 def _cell():
-    return ParticleCell(4.0 * jnp.eye(3))
+    return PeriodicCell(4.0 * jnp.eye(3))
 
 
 def _space():

@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import equinox as eqx
+import numpy as np
 from jaxtyping import Array, Key
 
 from phydrax.domain import DomainFunction
@@ -94,6 +95,36 @@ def compile(
     )
     if missing_dependencies:
         raise KeyError(f"Unknown enforcement dependencies {missing_dependencies!r}.")
+    for spec in resolved_specs:
+        proof = spec.transform.proof
+        if not proof.provider_certified:
+            raise ValueError(
+                "Typed hard enforcement requires certified right-inverse evidence."
+            )
+        pivot_terms = tuple(
+            coefficient
+            for coefficient, jet in spec.transform.equation.lhs.terms
+            if jet.field == spec.field
+        )
+        if len(pivot_terms) != 1:
+            raise ValueError("Each enforcement equation requires one pivot term.")
+        pivot = np.asarray(pivot_terms[0])
+        if not np.all(np.isfinite(pivot)) or np.any(pivot == 0):
+            raise ValueError(
+                "Enforcement pivot coefficient must be finite and nonsingular."
+            )
+        required = {
+            (value.field, value.variable, value.order)
+            for value in spec.derivative_requirements
+        }
+        certified = {
+            (value.field, value.variable, value.order)
+            for value in proof.derivative_requirements
+        }
+        if not required.issubset(certified):
+            raise ValueError(
+                "Enforcement proof does not cover every derivative requirement."
+            )
     certified_targets = tuple(
         spec.field
         for spec in resolved_specs

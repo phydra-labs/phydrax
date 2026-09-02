@@ -498,20 +498,21 @@ retaining unresolved action directions in covariance. Exact scalar GP inference
 automatically selects weight space for a lower-rank finite-feature kernel; learned
 feature maps and kernel hyperparameters remain differentiable leaves.
 
-Scalar temporal Matérn-3/2 and Matérn-5/2 kernels also compile to exact
-two- or three-state continuous linear Gaussian models. One stable sorted schedule
-shares train/query overlaps and repeated queries, while real observation masks
-represent query-only and missing training positions. Sequential square-root
-Kalman filtering and reverse-scan RTS smoothing return linear-storage query
-marginals and the exact active-observation log marginal likelihood. Hybrid
-short-gap/stationary long-gap process covariance stays bounded on wide irregular
-schedules. An origin-shifted internal schedule and stationary prior at one negative
-length scale avoid large-origin precision loss and zero-root parameter gradients.
-Results retain query-scoped status/masks, prepared/evaluated kernel and external
-schedule identity, method provenance, evaluated parameters, and precision evidence.
-Repeated training times, mixed compute dtypes, unsupported kernel algebra,
-SHO/CARMA, non-Gaussian likelihoods, and parallel execution are rejected rather
-than approximated; no large-noise sentinel or covariance repair is used.
+Finite stationary rational temporal kernels—including Matérn-3/2,
+Matérn-5/2, SHO, stable CARMA, finite sums, repeated/derivative observation
+rows, and prepared finite separable spatial designs—compile to exact
+finite-dimensional continuous linear Gaussian models. One stable sorted
+schedule shares train/query overlaps and repeated queries, while real
+observation masks represent query-only and missing training positions.
+Sequential square-root Kalman filtering and reverse-scan RTS smoothing return
+linear-storage query marginals and the exact active-observation log marginal
+likelihood. Hybrid short-gap/stationary long-gap process covariance stays
+bounded on wide irregular schedules, and results retain query-scoped
+status/masks, prepared/evaluated kernel and external schedule identity, method
+provenance, evaluated parameters, and precision evidence. Repeated training
+times, unsupported kernel algebra, mixed compute dtypes, approximate Laplace
+sites outside their declared evidence, and parallel square-root execution are
+rejected rather than repaired or silently approximated.
 
 Matrix-free JVP/VJP propagation
 transports diagonal, dense, low-rank, or operator-valued covariance through
@@ -562,19 +563,18 @@ Carlo expectations are declared approximations; they do not make nonlinear
 inference exact. Dense-only paths enforce dimension guards, and covariance inputs
 are never silently repaired.
 
-Integration-native fixed-design Bayesian quadrature binds an analytic
-`GaussianKernelMean` to one normalized Gaussian target identity and its exact
-probability label/location/scale content.
-`BayesianQuadraturePlan` supports squared-exponential kernels, optionally scaled,
-and applies prepared `phydrax.linalg` conditioning weights to scalar, array,
-field, or PyTree integrands through ordinary `materialize`/`reduce` calls.
-Observation noise and solve regularization remain distinct, child solve evidence
-is retained, and target mismatch, non-finite outputs, failed solves, resource
-overrun, and materially invalid posterior variance fail closed. The reported
-Bayesian posterior standard deviation is model-based uncertainty, **not a
-deterministic or frequentist error bound**. Active acquisition, WSABI,
-unnormalized evidence, arbitrary measures, and arbitrary kernels are explicit
-non-capabilities.
+Integration-native Bayesian quadrature binds an explicit kernel-mean object to
+its represented target. Exact embeddings cover supported interval kernels,
+finite positive measures, finite real feature kernels, and the normalized
+Gaussian squared-exponential route. Fixed and bounded sequential designs apply
+prepared `phydrax.linalg` conditioning weights to scalar, array, field, or
+PyTree integrands through ordinary `materialize`/`reduce` calls. Observation
+noise and solve regularization remain distinct; target mismatch, non-finite
+outputs, failed solves, resource overrun, and materially invalid posterior
+variance fail closed. The reported Bayesian posterior standard deviation is
+model/RKHS uncertainty, **not a deterministic or frequentist error bound**;
+exactness depends on the declared embedding, and WSABI, unnormalized evidence,
+and arbitrary undeclared kernels remain outside this surface.
 
 The completed state-space surface also includes SING natural-gradient
 variational smoothing for additive-noise latent SDEs; square-root sequential
@@ -840,6 +840,134 @@ declared metrics. Weighted product metrics, Riemannian SGD and momentum, conjuga
 gradient, and L-BFGS update those leaves through tangent conversion, retraction, and
 transport while ordinary leaves remain Euclidean.
 See [API → Optimization](api/optim.md#riemannian-optimization).
+
+### Bounded capability closures
+
+Finite-volume closure FVS-01–FVS-06 includes mapped-periodic viscous seams,
+coupled multiblock positivity, strict MAC restart, bounded polyhedral geometry,
+staged epoch transfer, moving-WLSQ and fixed-route remap derivatives,
+generalized entropy, mapped/ALE hydrostatic balance, and
+WENO/open/geostrophic/multilayer/Exner/shoreline/LPP mixed-precision routes.
+These are single-device, fixed-topology or fixed-combinatorics derivative
+envelopes rather than unrestricted distributed or topology-changing claims.
+
+The bounded stochastic closure includes multiplicative and affine-Hausdorff
+SING with explicit surrogate/audit semantics; finite coupled SPDE and
+particle/sparse-grid/separated Fokker–Planck approximations; represented-positive
+normalized densities and replayable stochastic boundaries; intrinsic
+Stratonovich and fixed-route rough preparation; finite-degree Wiener-signature
+certification; finite GW/assignment/Gaussian-component/learned transport;
+prepared finite diffusion bridges; and measure-explicit
+Riemannian/injective/conditional/eventful/hybrid/trajectory/finite-field flow
+laws. It makes no claim of infinite-dimensional execution, generic
+high-dimensional density solution, global GW/Monge optimality, exact mixture
+W2, continuum bridge exactness, path-space density, or densities for
+surjective/noninvertible routes.
+
+LPP-01–LPP-09 adds public-JAX precision rewrite and finite-workload selection
+evidence, portable sub-float32 formats and block-scaled contraction, local
+optimizer-state compression, complete complex training interchange, batched
+dense/sparse actions, and threshold-defined numerical inertia. Finite candidate
+selection is not universal hardware optimality; numerical inertia is not a
+symbolic proof; distributed compression, communication collectives, and
+provider qualification are not implied.
+
+UQI adds calibrated held-out MC-dropout intervals, frozen residual-noise
+mappings, proper/improper complex Gaussian laws, SWAG/SVGP state, overlap-gated
+Flow-NUTS, structured kinetic actions, scheduled SG-MCMC, audited minibatches,
+bounded nested plans, dense-exact causal mass, and buffered particle evidence.
+MC-dropout remains nonposterior uncertainty; the residual-weight mapping is
+exact only for frozen positive quadratic coefficients; bridge evidence needs
+overlap gates; stochastic geometry is an expected-log objective; and finite
+steps, missed modes, and finite buffers remain explicit limitations. The clean
+API uses
+`kinetic=MCMCMassAdaptationPlan.diagonal()/blocks(...)/diagonal_low_rank(...)`
+for `sample_hmc`, `sample_nuts`, and `sample_flow_nuts`, with no mass boolean.
+Causal NUTS uses `sample_nuts(..., trajectory="causal",
+causal_config=CausalNUTSConfig(...))`, fixed capacity
+`2**max_num_doublings`, dense-exact recurrence residual gates, and ordinary
+multinomial/U-turn selection over certified states only.
+
+GTA-01–GTA-06 and GTA-08–GTA-13 provide bounded atlas, rank-strata, topology,
+algebra, geometry-network, continuation, and certified-tail kernel products.
+GTA-07 remains qualification-only: no K3/quintic checkpoint, downloader,
+registry, format, or schema ships.
+
+MPC-01–MPC-05 closes bounded particle/mechanics routes for mesh splats and
+epochs, wet DEM reservoirs and stress evidence, LBVH/nonmatching hydroelastic
+and Reynolds-film contact, wall-vortex injection and load recovery,
+solver-owned hybrid-event replay, compressible augmentation, and atomic
+capacity-limited SPH emission. Obsolete
+`extract_hydroelastic_pressure_patch` and local replay/saltation names are not
+part of the public surface.
+
+The DAE/control/delay closure covers declared-incidence structural reduction,
+bounded DAE resets and manifold stages, generalized-pencil/Hopf continuation,
+case-axis iLQR, audited Radau/multiphase/complementarity/stochastic/manifold
+transcription, represented-interpolant path certificates, finite coefficient-box
+optimality certificates, one-Wiener-path stochastic adaptation, archived-primal
+delay backsolve, and finite-realization or checked-tail memory. Structural index
+claims are conditional on finite declared incidence, generalized spectra require
+a square projected pencil, and whole-solve JIT requires static
+segment/step/event maxima with fail-closed overflow.
+
+QPV-01–QPV-08 covers finite positive-regulator path integrals, canonical
+adaptive/source/geometry evidence, periodic/U(1)/exchange measures, root HMC and
+incremental caches, adaptive/symmetric and finite-subspace Cayley TDVP,
+resource-admitted electronic routes, PR #236 canonical `QuantumProgram`
+measurement/control/tensor execution, finite CPTP maps, and finite
+Fock/HEOM/compression/steady-state/identifiability certificates. It makes no
+regulator-zero, unrestricted scaling/QED, curved overdamped reflection, or
+unbounded-convergence claim.
+
+Optimization/search/calibration provides sparse native and Clarabel conic
+routes, bounded CVXPY/MPAX representations, finite reducers and mixed-integer
+search, guarded differential evolution, typed calibration, ordering
+surrogates, and prepared CSG continuation. It does not claim arbitrary CVXPY
+atoms, MPAX callback cones, MINLP, or global nonsmooth derivatives.
+The additional sparse route lowers `SparseStorage` directly to BCOO for MPAX
+zero/nonnegative cones. Matrix-free conic JVP/VJP uses
+`JacobianLinearOperator` with matching verified `StabilityLowerBound` and
+selected-projection derivative evidence; conic calibration has canonical
+exact/interval/group relative-entropy contracts; and KFAC exposes logical
+block-axis, kind, complex-Cartesian, and sharing metadata with structured layout
+lowering. The legacy private finite reducer is removed rather than aliased.
+
+
+CID-01–CID-12 adds typed proof-carrying hard enforcement, immutable adaptive
+signed populations, bounded discovery/cubature/Smolyak epochs, one validated
+probability reference-transport surface, GTA-owned geometry-Jacobian cubature,
+matrix-free scattered and mixed spectral reconstruction, lazy ragged execution,
+and trainable/certified KAN knot transitions. Selection and topology changes
+remain explicit nondifferentiable preparation boundaries.
+
+The bounded GP/BQ/coreset closure adds the finite stationary rational and
+separable state-space scopes above, finite-array-coordinate path functionals,
+finite-candidate Monte Carlo qEI/feasibility with Monte Carlo standard errors,
+explicit kernel-mean BQ, and moment/MMD or trajectory-block coresets. Lazy
+fixed-size saved-state blocks never cross flattened path/case/realization
+boundaries; selection retains positive weights, masks, and
+`StochasticDriverSegmentReference` provenance, and canonical lowering preserves
+driver/case/realization/coupling metadata in operator datasets. Path
+observations are not Fréchet or topology derivatives, Bayesian optimization
+carries no global-optimum claim, BQ uncertainty is model/RKHS uncertainty, and
+trajectory blocks are dependent views rather than fabricated independent
+paths. Kernel documentation covers `SHOKernel`, `CARMAKernel`, and
+`SignaturePDEKernel` regularity inheritance.
+
+Fixed-capacity per-collocation Diffrax quadrature participates in the canonical
+`IntegrationPlan`/`materialize`/`reduce` lifecycle with solver identity and
+failure evidence.
+
+SNM-01–SNM-17 includes arbitrary-query wavelets and directional scattering,
+point O(d) CNO, multi-source frames and coefficient flows, checksummed
+first-party FNO/DeepONet weights, complete recurrence/rollout, boundary-aware
+masked CNO/UNO, replayable Galerkin/characteristics, attention
+replacement/anchors, modal discovery/recovery, generalized residual layouts,
+transformed complex alias-aware low rank, constrained polyconvex/Onsager
+wrappers, CID collocation with typed integral rewrite and target/causal
+workflows, and soft/learned-cutpoint ordinal classification. Tier promotion is
+excluded.
 
 ## A first real PDE example: Poisson on a square
 
@@ -1156,20 +1284,22 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   independence clusters rather than treating coupled paths as independent.
   See [API → Stochastic → Martingales](api/stochastic/martingales.md).
 - **Optimal control, QPs, and MPC**: compose `ControlProblem` from a typed grid,
-  dynamics, parameterization, costs, and sampled constraints; use LQR/iLQR,
-  compiled linear-control QPs, bounded coefficient search, dense multiple
-  shooting, direct collocation, or receding-horizon MPC according to the problem
-  structure. `TrajectoryOptimizationProblem` adds controlled implicit DAEs,
-  bound-form global constraints, shared optimized parameters, and variable
-  duration for direct collocation. Per-interval audit evidence supports explicit
-  nested refinement, controlled DAEs can be causally replayed through a held input
-  policy, and structured Ipopt results retain typed work/KKT/warm-start evidence.
-  Results retain case/control axes, validity and backend status, plus control,
-  discretization, approximation, method, and backend IDs. Nonlinear sampled
-  constraints and off-grid audits are not continuous-time certificates; replay
-  is independent evidence; iLQR and multiple shooting are single-case; and
-  bounded search is not globally optimal. Dense paths enforce guards and never
-  hide failure behind repair or fallback.
+  dynamics, parameterization, costs, and sampled constraints; use LQR,
+  case-axis iLQR, compiled linear-control QPs, bounded coefficient search, dense
+  multiple shooting, direct collocation, or receding-horizon MPC according to
+  the problem structure. `TrajectoryOptimizationProblem` adds controlled
+  implicit DAEs, bound-form global constraints, shared optimized parameters,
+  and variable duration for direct collocation. Per-interval audit evidence
+  supports explicit nested refinement; represented interpolants can carry
+  separate continuous path certificates; controlled DAEs can be causally
+  replayed through a held input policy; and structured Ipopt results retain
+  typed work/KKT/warm-start evidence. Results retain case/control axes,
+  validity and backend status, plus control, discretization, approximation,
+  method, and backend IDs. A certificate covers only its represented
+  interpolant or finite coefficient box; replay remains independent evidence;
+  multiple shooting remains single-case; and bounded search is not globally
+  optimal. Dense paths enforce guards and never hide failure behind repair or
+  fallback.
   See [Control cookbook](cookbook/control.md), [API → Control](api/control.md),
   and [API → Optimization](api/optim.md).
 - **Linear systems, sensitivities, and spectra**: linearize dynamics; solve
@@ -1357,17 +1487,16 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
 - **Quantum systems and dynamics**: construct composite states, explicit
   mixed-dimensional Hilbert layouts, local unitary/Kraus programs, reduced
-  densities, information measures, matrix commutators, and closed- or open-system
-  residuals. Dense local programs plan exact target routes and resource envelopes,
-  refresh only numerical matrices under fixed structure, avoid global operator or
-  superoperator promotion, and return unitarity, trace-preservation, and state
-  physicality evidence. Connected discrete VMC and nonrelativistic finite-molecule
-  Coulomb VMC share persistent MCMC, matrix-free score/Gram SR, statuses,
-  diagnostics, and checkpoints. The continuum path includes exact or chunked-exact
-  coordinate traces, state-corrected electronic proposals, and a full-determinant
-  FermiNet under a conservative four-electron ceiling; it excludes larger,
-  periodic, or relativistic electron systems and stochastic traces. Complex
-  residual penalties remain real and nonnegative. See
+  densities, information measures, matrix commutators, and closed- or
+  open-system residuals. Dense local programs plan exact target routes and
+  resource envelopes, refresh only numerical matrices under fixed structure,
+  avoid global operator or superoperator promotion, and return unitarity,
+  trace-preservation, and state physicality evidence. Connected discrete VMC
+  and resource-admitted nonrelativistic finite electronic VMC share persistent
+  MCMC, matrix-free score/Gram SR, statuses, diagnostics, and checkpoints.
+  Periodic, no-pair, and stochastic-trace routes expose separate finite
+  admission and truncation evidence rather than a global electron ceiling.
+  Complex residual penalties remain real and nonnegative. See
   [Guides → Quantum operators and dynamics](guides_quantum.md),
   [Guides → Dense local quantum programs](guides_quantum_programs.md),
   [Cookbook → Variational Monte Carlo](cookbook/quantum_vmc.md), and

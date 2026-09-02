@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 
 from ...._data_plane import (
     BoundedPrefetchIterator,
@@ -48,6 +49,9 @@ class OperatorTrainingBatch:
     batch_index: int = 0
     microstep: int = 0
     provenance: tuple[OperatorCaseProvenance, ...] = ()
+    case_log_weights: Any = None
+    case_mask: Any = None
+    sampling_probabilities: Any = None
     physical_batch: OperatorBatch | None = None
     physical_targets: OperatorTargetBatch | None = None
 
@@ -324,6 +328,20 @@ class OperatorBatchLoader:
         targets = selected.targets
         physical_batch = batch
         physical_targets = targets
+        case_log_weights = selected.case_log_weights
+        case_mask = selected.case_mask
+        if isinstance(self.source, InMemoryOperatorCaseSource):
+            index = jnp.asarray(indices, dtype=int)
+            case_log_weights = jnp.take(
+                self.source.dataset.case_log_weights,
+                index,
+                axis=0,
+            )
+            case_mask = jnp.take(
+                self.source.dataset.case_mask,
+                index,
+                axis=0,
+            )
         if self.normalization is not None:
             batch = self.normalization.normalize_batch(batch)
             targets = self.normalization.normalize_targets(targets)
@@ -367,6 +385,13 @@ class OperatorBatchLoader:
             batch_index=int(batch_index),
             microstep=int(epoch) * self.batches_per_epoch + int(batch_index),
             provenance=tuple(selected.provenance),
+            case_log_weights=case_log_weights,
+            case_mask=case_mask,
+            sampling_probabilities=jnp.full(
+                (len(indices),),
+                len(indices) / self.source.size,
+                dtype=case_log_weights.dtype,
+            ),
             physical_batch=physical_batch,
             physical_targets=physical_targets,
         )

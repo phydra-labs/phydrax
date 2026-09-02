@@ -41,6 +41,8 @@ from .._exponential_family import (
 from .._likelihoods import (
     AbstractLikelihood,
     CategoricalExponentialFamilyLikelihood,
+    CircularComplexGaussianLikelihood,
+    ComplexGaussianLikelihood,
     GaussianLikelihood,
     GaussianLocationScaleLikelihood,
     IndependentBernoulliLikelihood,
@@ -72,6 +74,18 @@ from ..linalg._gaussian_chain import (
     sample_gaussian_markov,
 )
 from ._autoregressive_law import AutoregressiveLaw
+from ._bayesian_optimization import (
+    BAYESIAN_OPTIMIZATION_ACQUISITION,
+    BAYESIAN_OPTIMIZATION_FEASIBILITY_FIRST,
+    BAYESIAN_OPTIMIZATION_INITIAL,
+    BAYESIAN_OPTIMIZATION_SPACE_FILLING,
+    bayesian_optimize,
+    BayesianOptimizationDomain,
+    BayesianOptimizationPoint,
+    BayesianOptimizationProblem,
+    BayesianOptimizationResult,
+    GaussianProcessBayesianOptimization,
+)
 from ._bellman import (
     bellman_filter,
     bellman_filter_status_name,
@@ -100,6 +114,7 @@ from ._causal_hmc import (
     CausalHMCDiagnostics,
     CausalHMCFailurePolicy,
     CausalHMCLinearization,
+    CausalNUTSConfig,
 )
 from ._checkpoint import (
     CheckpointCompatibilityError,
@@ -158,6 +173,12 @@ from ._distributions import (
     LogNormal,
     Normal,
     Uniform,
+)
+from ._dropout_predictive import (
+    MCDropoutCalibration,
+    MCDropoutCalibrationEvidence,
+    MCDropoutCalibrationMethod,
+    sample_mc_dropout_predictive,
 )
 from ._eki import (
     EnsembleKalmanConvergenceError,
@@ -224,6 +245,12 @@ from ._fixed_lag import (
     FixedLagKalmanSmootherResult,
     FixedLagParticleSmootherResult,
 )
+from ._flow_evidence import (
+    estimate_flow_nuts_evidence,
+    FlowNUTSEvidenceResult,
+    FlowNUTSModeInitialization,
+    initialize_flow_nuts_from_tempered_smc,
+)
 from ._flow_mcmc import FlowNUTSConfig, FlowNUTSResult, sample_flow_nuts
 from ._flow_variational import (
     fit_flow_variational,
@@ -267,8 +294,11 @@ from ._gaussian_factor import (
 from ._gp_actions import (
     AbstractGaussianProcessActionPolicy,
     BlockSparseGaussianProcessActionPolicy,
+    ConjugateGradientGaussianProcessActionPolicy,
     FixedGaussianProcessActionPolicy,
     GaussianProcessActionKind,
+    GaussSeidelGaussianProcessActionPolicy,
+    LanczosGaussianProcessActionPolicy,
     PseudoInputGaussianProcessActionPolicy,
 )
 from ._gp_classification import (
@@ -292,6 +322,12 @@ from ._gp_computation_aware import (
     ComputationAwareGaussianProcessStatus,
     GaussianProcessComputationPolicy,
 )
+from ._gp_computation_structured import (
+    StructuredComputationAwareGaussianProcessFactor,
+)
+from ._gp_computation_variational import (
+    ComputationAwareSparseVariationalGaussianProcessELBO,
+)
 from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
 from ._gp_functional import (
     directional_derivative_functional,
@@ -305,7 +341,15 @@ from ._gp_functional import (
     laplacian_functional,
     LinearDifferentialFunctional,
     partial_derivative_functional,
+    path_directional_derivative_functional,
+    path_partial_derivative_functional,
+    path_value_functional,
     value_functional,
+)
+from ._gp_kernel_fit import (
+    fit_gaussian_process_kernel,
+    GaussianProcessKernelFitPolicy,
+    GaussianProcessKernelFitResult,
 )
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._gp_multioutput import (
@@ -380,8 +424,7 @@ from ._linearized import (
 )
 from ._map import find_map, MAPConvergenceError, MAPResult
 from ._map_candidate_search import MAPCandidateSearchResult, search_map_candidates
-from ._map_gp_search import GaussianProcessMAPSearch
-from ._map_search import GaussianProcessMAPSearchResult, MAPSearchResult, search_map
+from ._map_search import BayesianOptimizationMAPResult, MAPSearchResult, search_map
 from ._martingale import (
     jump_compensator_diagnostics,
     JumpCompensatorDiagnostics,
@@ -393,6 +436,12 @@ from ._martingale import (
     QuadraticVariationDiagnostics,
 )
 from ._mcmc import MCMCChainWarmup, MCMCResult, sample_hmc, sample_nuts
+from ._mcmc_kinetic import (
+    MCMCKineticKind,
+    MCMCMassAdaptationPlan,
+    prepare_mcmc_kinetic,
+    PreparedMCMCKinetic,
+)
 from ._measurement_likelihood import (
     CovarianceBatching,
     LinearizedGaussianMeasurementLikelihood,
@@ -416,10 +465,15 @@ from ._minibatch_diagnostics import (
     MinibatchPosteriorDiagnostics,
 )
 from ._minibatch_posterior import (
+    AbstractObservationFactor,
     ArrayMinibatchSource,
+    FactorSamplingState,
+    ImportanceMinibatchSource,
     LikelihoodBatch,
     MinibatchPosteriorProblem,
     MinibatchSource,
+    ObservationFactorSemantics,
+    prepare_importance_minibatch_source,
 )
 from ._nested import (
     NESTED_SAMPLING_INNER_KERNEL_FAILURE,
@@ -430,12 +484,26 @@ from ._nested import (
     NESTED_SAMPLING_NO_FINITE_LIVE_POINT,
     nested_sampling_status_name,
     NESTED_SAMPLING_SUCCESS,
-    NestedSamplingMethod,
     NestedSamplingResult,
     NestedSamplingStatus,
     sample_nested,
 )
 from ._nested_diagnostics import NestedSamplingDiagnostics
+from ._nested_extensions import (
+    DynamicNestedPolicy,
+    EllipsoidalNestedBounds,
+    NestedPriorPlan,
+    NestedProposalPlan,
+    NestedSamplingCapacity,
+    NestedSamplingPlan,
+    PeriodicNestedCoordinate,
+    PhantomNestedState,
+)
+from ._nested_plan_execution import (
+    PreparedNestedAdaptationState,
+    PreparedNestedProposalState,
+    PreparedNestedState,
+)
 from ._nonlinear_gaussian import (
     first_order_gaussian_transform,
     gauss_hermite_transform,
@@ -465,8 +533,10 @@ from ._operator_conformal import OperatorFunctionalConformal
 from ._operator_likelihood import (
     FixedOperatorObservationLikelihood,
     OperatorBatchObservationLikelihood,
+    OperatorFactorSamplingPlan,
     OperatorLikelihoodData,
     OperatorMinibatchSource,
+    OperatorStochasticGeometryPlan,
 )
 from ._operator_metrics import (
     operator_energy_score,
@@ -514,6 +584,14 @@ from ._particle import (
     sample_particle_ancestry_paths,
     sample_particle_backward_paths,
     write_particle_filter_checkpoint,
+)
+from ._particle_buffered import (
+    BufferedParticleBoundaryPlan,
+    BufferedParticleCorrectionDiagnostics,
+    BufferedParticleGradientEstimator,
+    ExactStateSpaceBoundaryCorrection,
+    ParticleBoundaryCorrection,
+    prepare_particle_boundary_correction,
 )
 from ._particle_genealogical_score import (
     particle_genealogical_score,
@@ -565,6 +643,7 @@ from ._posterior_terms import (
     FixedResidualLikelihood,
     FixedSupervisedLikelihood,
     GaussianProcessMarginalLikelihood,
+    ResidualPenaltyNoiseModel,
 )
 from ._precision import ParticlePrecisionPolicy, PredictivePrecisionPolicy
 from ._predictive import (
@@ -678,6 +757,18 @@ from ._sgmcmc import (
     SGMCMCControlVariate,
     SGMCMCResult,
 )
+from ._sgmcmc_advanced import (
+    AdvancedSGMCMCResult,
+    GradientNoiseCovarianceConfig,
+    PSGLDState,
+    RMSPropGeometryConfig,
+    sample_psgld,
+    sample_sghmc,
+    SGHMCState,
+    SGMCMCAdaptationConfig,
+    SGMCMCNoiseCovarianceState,
+    SGMCMCStepSchedule,
+)
 from ._sgmcmc_diagnostics import (
     SGMCMCDiagnostics,
     SGMCMCMixingError,
@@ -707,7 +798,31 @@ from ._sing import (
     SINGStatus,
     SINGStepResult,
 )
+from ._sing_gp import SINGSparseGPDrift
+from ._sing_learning import (
+    fit_sing,
+    SINGLearningPolicy,
+    SINGLearningResult,
+)
+from ._sing_transition import (
+    evaluate_sing_transition,
+    sing_constrained_smoother,
+    sing_objective,
+    SINGConstrainedResult,
+    SINGObjectiveKind,
+    SINGObjectiveResult,
+    SINGSupportPlan,
+    SINGTransitionEvaluation,
+    SINGTransitionMethod,
+    SINGTransitionPlan,
+)
 from ._smc import sample_tempered_smc, TemperedSMCResult
+from ._sparse_variational_gp import (
+    fit_sparse_variational_gaussian_process,
+    SparseVariationalGaussianProcessELBO,
+    SparseVariationalGaussianProcessResult,
+    SparseVariationalGaussianState,
+)
 from ._state_space_amortized import (
     AmortizedGaussianMarkovEncoder,
     AmortizedGaussianMarkovFamily,
@@ -743,8 +858,18 @@ from ._state_space_gp import (
     fit_state_space_gaussian_process,
     state_space_gaussian_process_status_name,
     STATE_SPACE_GP_SMOOTHER_FAILURE,
+    StateSpaceGaussianProcessDesign,
     StateSpaceGaussianProcessPlan,
     StateSpaceGaussianProcessResult,
+)
+from ._state_space_gp_nongaussian import (
+    fit_state_space_approximate_gaussian_process,
+    STATE_SPACE_GP_LAPLACE_CONVERGENCE_FAILURE,
+    STATE_SPACE_GP_LAPLACE_CURVATURE_FAILURE,
+    STATE_SPACE_GP_LAPLACE_GAUSSIAN_FAILURE,
+    STATE_SPACE_GP_LAPLACE_SITE_FAILURE,
+    StateSpaceGaussianProcessApproximateResult,
+    StateSpaceGaussianProcessLaplace,
 )
 from ._state_space_inference import (
     EXACT_STATE_SPACE_DEGENERATE_LIKELIHOOD,
@@ -796,6 +921,14 @@ from ._stochastic_spectra import (
     state_input_cross_spectral_density,
     state_output_cross_spectral_density,
     state_spectral_density,
+)
+from ._swag import (
+    fit_swag,
+    sample_swag_vector,
+    SWAGCollectionPlan,
+    SWAGResult,
+    SWAGState,
+    update_swag_state,
 )
 from ._topology import TopologyEnsembleSummary
 from ._transport_barycenters import (
@@ -989,6 +1122,10 @@ __all__ = [
     "FunctionalConformal",
     "NormalizedConformal",
     "SplitConformal",
+    "MCDropoutCalibration",
+    "MCDropoutCalibrationEvidence",
+    "MCDropoutCalibrationMethod",
+    "sample_mc_dropout_predictive",
     "EnsembleKalmanConvergenceError",
     "EnsembleKalmanDiagnostics",
     "EnsembleKalmanResult",
@@ -1162,6 +1299,8 @@ __all__ = [
     "sample_conditional_particle_path",
     "AbstractLikelihood",
     "CategoricalExponentialFamilyLikelihood",
+    "CircularComplexGaussianLikelihood",
+    "ComplexGaussianLikelihood",
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
     "IndependentBernoulliLikelihood",
@@ -1273,8 +1412,10 @@ __all__ = [
     "OptimalTransportEnsembleTransformResult",
     "FixedOperatorObservationLikelihood",
     "OperatorBatchObservationLikelihood",
+    "OperatorFactorSamplingPlan",
     "OperatorLikelihoodData",
     "OperatorMinibatchSource",
+    "OperatorStochasticGeometryPlan",
     "operator_input_predictive",
     "operator_prediction_field",
     "propagate_operator_linearized",
@@ -1292,10 +1433,15 @@ __all__ = [
     "diagnose_posterior",
     "PosteriorCapabilities",
     "PosteriorDiagnostics",
+    "AbstractObservationFactor",
     "ArrayMinibatchSource",
+    "FactorSamplingState",
+    "ImportanceMinibatchSource",
     "LikelihoodBatch",
     "MinibatchPosteriorProblem",
     "MinibatchSource",
+    "ObservationFactorSemantics",
+    "prepare_importance_minibatch_source",
     "diagnose_minibatch_posterior",
     "MinibatchPosteriorCapabilities",
     "MinibatchPosteriorDiagnostics",
@@ -1322,10 +1468,10 @@ __all__ = [
     "FixedSupervisedLikelihood",
     "FixedObservationLikelihood",
     "FixedResidualLikelihood",
+    "ResidualPenaltyNoiseModel",
     "ComputationAwareGaussianProcessELBO",
     "GaussianProcessMarginalLikelihood",
-    "GaussianProcessMAPSearch",
-    "GaussianProcessMAPSearchResult",
+    "BayesianOptimizationMAPResult",
     "find_map",
     "MAPCandidateSearchResult",
     "MAPConvergenceError",
@@ -1333,6 +1479,10 @@ __all__ = [
     "MAPSearchResult",
     "search_map",
     "search_map_candidates",
+    "estimate_flow_nuts_evidence",
+    "FlowNUTSEvidenceResult",
+    "FlowNUTSModeInitialization",
+    "initialize_flow_nuts_from_tempered_smc",
     "FlowNUTSConfig",
     "FlowNUTSResult",
     "fit_flow_variational",
@@ -1340,6 +1490,7 @@ __all__ = [
     "FlowVariationalFamily",
     "FlowVariationalResult",
     "CausalHMCConfig",
+    "CausalNUTSConfig",
     "AbstractStochasticGradientEstimator",
     "AutodiffStochasticGradientEstimator",
     "ParticleGenealogicalGradientEstimator",
@@ -1349,6 +1500,10 @@ __all__ = [
     "CausalHMCDiagnostics",
     "CausalHMCFailurePolicy",
     "CausalHMCLinearization",
+    "MCMCKineticKind",
+    "MCMCMassAdaptationPlan",
+    "PreparedMCMCKinetic",
+    "prepare_mcmc_kinetic",
     "MCMCChainWarmup",
     "MCMCConvergenceError",
     "MCMCConvergenceReport",
@@ -1366,11 +1521,31 @@ __all__ = [
     "NESTED_SAMPLING_NO_FINITE_LIVE_POINT",
     "NESTED_SAMPLING_SUCCESS",
     "NestedSamplingDiagnostics",
-    "NestedSamplingMethod",
     "NestedSamplingResult",
     "NestedSamplingStatus",
     "nested_sampling_status_name",
+    "DynamicNestedPolicy",
+    "EllipsoidalNestedBounds",
+    "NestedPriorPlan",
+    "NestedProposalPlan",
+    "NestedSamplingCapacity",
+    "NestedSamplingPlan",
+    "PeriodicNestedCoordinate",
+    "PhantomNestedState",
+    "PreparedNestedAdaptationState",
+    "PreparedNestedProposalState",
+    "PreparedNestedState",
     "sample_nested",
+    "fit_sparse_variational_gaussian_process",
+    "SparseVariationalGaussianProcessELBO",
+    "SparseVariationalGaussianProcessResult",
+    "SparseVariationalGaussianState",
+    "fit_swag",
+    "sample_swag_vector",
+    "SWAGCollectionPlan",
+    "SWAGResult",
+    "SWAGState",
+    "update_swag_state",
     "build_sgmcmc_control_variate",
     "sample_sgld",
     "sample_sgnht",
@@ -1379,12 +1554,28 @@ __all__ = [
     "AmortizedStateSpaceVariationalConfig",
     "AmortizedStateSpaceVariationalResult",
     "fit_amortized_state_space_variational",
+    "BufferedParticleBoundaryPlan",
+    "BufferedParticleCorrectionDiagnostics",
+    "BufferedParticleGradientEstimator",
+    "ExactStateSpaceBoundaryCorrection",
+    "ParticleBoundaryCorrection",
+    "prepare_particle_boundary_correction",
     "BufferedStateSpaceVariationalConfig",
     "BufferedStateSpaceVariationalDiagnostics",
     "BufferedStateSpaceVariationalResult",
     "fit_buffered_state_space_variational",
     "StateSpaceWindowBatch",
     "StateSpaceWindowPlan",
+    "AdvancedSGMCMCResult",
+    "GradientNoiseCovarianceConfig",
+    "PSGLDState",
+    "RMSPropGeometryConfig",
+    "SGHMCState",
+    "SGMCMCAdaptationConfig",
+    "SGMCMCNoiseCovarianceState",
+    "SGMCMCStepSchedule",
+    "sample_psgld",
+    "sample_sghmc",
     "SGMCMCControlVariate",
     "SGMCMCDiagnostics",
     "SGMCMCMixingError",
@@ -1501,11 +1692,54 @@ __all__ = [
     "SINGELBOResult",
     "SINGExecutionMethod",
     "SINGExpectationMethod",
+    "BAYESIAN_OPTIMIZATION_ACQUISITION",
+    "BAYESIAN_OPTIMIZATION_FEASIBILITY_FIRST",
+    "BAYESIAN_OPTIMIZATION_INITIAL",
+    "BAYESIAN_OPTIMIZATION_SPACE_FILLING",
+    "BayesianOptimizationDomain",
+    "BayesianOptimizationPoint",
+    "BayesianOptimizationProblem",
+    "BayesianOptimizationResult",
+    "GaussianProcessBayesianOptimization",
+    "bayesian_optimize",
+    "ConjugateGradientGaussianProcessActionPolicy",
+    "GaussSeidelGaussianProcessActionPolicy",
+    "LanczosGaussianProcessActionPolicy",
+    "StructuredComputationAwareGaussianProcessFactor",
+    "ComputationAwareSparseVariationalGaussianProcessELBO",
+    "path_directional_derivative_functional",
+    "path_partial_derivative_functional",
+    "path_value_functional",
+    "fit_gaussian_process_kernel",
+    "GaussianProcessKernelFitPolicy",
+    "GaussianProcessKernelFitResult",
+    "StateSpaceGaussianProcessDesign",
+    "fit_state_space_approximate_gaussian_process",
+    "STATE_SPACE_GP_LAPLACE_CONVERGENCE_FAILURE",
+    "STATE_SPACE_GP_LAPLACE_CURVATURE_FAILURE",
+    "STATE_SPACE_GP_LAPLACE_GAUSSIAN_FAILURE",
+    "STATE_SPACE_GP_LAPLACE_SITE_FAILURE",
+    "StateSpaceGaussianProcessApproximateResult",
+    "StateSpaceGaussianProcessLaplace",
     "SINGGrid",
     "SINGResult",
     "SINGState",
     "SINGStatus",
     "SINGStepResult",
+    "SINGConstrainedResult",
+    "evaluate_sing_transition",
+    "fit_sing",
+    "sing_objective",
+    "sing_constrained_smoother",
+    "SINGLearningPolicy",
+    "SINGLearningResult",
+    "SINGObjectiveKind",
+    "SINGObjectiveResult",
+    "SINGSparseGPDrift",
+    "SINGSupportPlan",
+    "SINGTransitionEvaluation",
+    "SINGTransitionMethod",
+    "SINGTransitionPlan",
     "SING_INFORMATION_NOT_POSITIVE_DEFINITE",
     "SING_INITIALIZATION_FAILURE",
     "SING_LINE_SEARCH_FAILURE",

@@ -499,10 +499,26 @@ basin coverage.
   `feasibility.certified` remains `False`. Do not report certified nonlinear feasibility.
 - QP, MPC, iLQR, and multiple shooting do not clip, project, add slack, repair an iterate,
   or change methods after failure. Requested regularization remains explicit.
-- iLQR and multiple shooting are single-case methods. Use explicit case axes only with
-  APIs whose result contracts declare them.
+- Prepared iLQR accepts homogeneous declared case axes and reports every case
+  independently. Host-only or heterogeneous backends remain explicit rejections.
 - Dense Lyapunov and Gramian routines default to `max_dimension=128`; dense QP-based
   routines default to `max_dense_dimension=512`. Use matrix-free actions or a different
   formulation rather than bypassing a guard accidentally.
 - Bounded differential evolution is a stochastic initializer or best-found bounded
   search, not a globally optimal control certificate.
+
+## Certifying a represented path and finite control box
+
+Use `CertifiedPathConstraint` only when its envelope matches the segment
+representation. Affine residuals can use `AffineBernsteinPathEnvelope`; nonlinear
+residuals need a conservative `LipschitzPathEnvelope` derivative bound. Call
+`certify_continuous_path_constraints` after solve and reject the result unless every
+active interval is certified. This certificate does not extend beyond the
+represented interpolant.
+
+For global evidence, construct `BoundedControlCertificatePlan` over finite
+coefficient vectors and supply either a convex primal/dual relaxation or a valid
+interval/Lipschitz lower bound. A continuously certified incumbent is the upper
+bound. Only complete coverage with `OPTIMAL`, or covered frontier boxes with
+`GAP_REACHED`, produces exact/epsilon-global evidence. `WORK_LIMIT` remains
+incomplete no matter how good its incumbent is.

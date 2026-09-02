@@ -13,8 +13,13 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..optim import FiniteAxis, FiniteExhaustiveSearch, FiniteProductSpace
-from ..optim._finite import _exhaustive_minimum
+from ..optim import (
+    FiniteAxis,
+    FiniteExhaustiveSearch,
+    FiniteMinimum,
+    FiniteProductSpace,
+    search_finite,
+)
 from ._global_search import _evaluate_control
 from ._parameterization import AbstractControlParameterization
 from ._problem import ControlProblem
@@ -275,15 +280,16 @@ def search_control_candidates(
     _validate_control_candidate_space(problem, parameterization, candidates)
 
     options = dict(solver_options)
-    evidence = _exhaustive_minimum(
+    evidence = search_finite(
         _ControlCandidateEvaluator(problem, parameterization, options),
         candidates,
-        search,
+        FiniteMinimum(),
+        search=search,
     )
-    valid = bool(evidence.valid)
-    flat_index = int(evidence.flat_index) if valid else -1
+    valid = bool(evidence.valid[0])
+    flat_index = int(evidence.flat_indices[0]) if valid else -1
     product_index = (
-        tuple(int(index) for index in evidence.product_index)
+        tuple(int(index[0]) for index in evidence.product_indices)
         if valid
         else (-1,) * len(candidates.product_shape)
     )
@@ -300,7 +306,7 @@ def search_control_candidates(
         parameterization=parameterization,
         evaluation=evaluation,
         coefficients=coefficients,
-        objective=evidence.minimum,
+        objective=evidence.scores[0],
         search=search,
         valid=valid,
         flat_index=flat_index,

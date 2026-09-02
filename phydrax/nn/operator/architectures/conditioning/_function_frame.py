@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import math
+from abc import abstractmethod
+from collections.abc import Callable, Mapping, Sequence
 from math import prod
 from typing import ClassVar, Literal
 
@@ -16,6 +18,7 @@ import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array
 
+from phydrax._frozendict import frozendict
 from phydrax._model import AbstractArrayModel, FrozenModel, register_artifact_value
 from phydrax._numerics import solve_weighted_least_squares
 from phydrax._strict import StrictModule
@@ -24,6 +27,7 @@ from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
+from phydrax.nn.operator.topology import gather_operator_graph_entities
 
 from ._deeponet import (
     AbstractBasisTrunk,
@@ -300,12 +304,132 @@ def _case_sum(value: Array, axes: tuple[int, ...]) -> Array:
     return jnp.sum(value, axis=axes)
 
 
+class AbstractFunctionFrameEvaluator(StrictModule):
+    """Explicit coordinate, topology, or prepared-manifold frame evaluator."""
+
+    @abstractmethod
+    def evaluate(
+        self,
+        query: FunctionSamples,
+        case_shape: tuple[int, ...],
+        channels: int,
+        rank: int,
+        /,
+        *,
+        key: EvalKey,
+    ) -> Array:
+        raise NotImplementedError
+
+
+class TopologyFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
+    """Evaluate a native graph/cochain entity model in canonical topology order."""
+
+    model: AbstractArrayModel
+    feature_name: str = eqx.field(static=True)
+    evaluator_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        model: AbstractArrayModel,
+        /,
+        *,
+        feature_name: str,
+        evaluator_id: str,
+    ):
+        if not isinstance(model, AbstractArrayModel):
+            raise TypeError("model must be AbstractArrayModel.")
+        if not feature_name or not evaluator_id:
+            raise ValueError("Topology evaluator names must be nonempty.")
+        self.model = model
+        self.feature_name = str(feature_name)
+        self.evaluator_id = str(evaluator_id)
+
+    def evaluate(
+        self,
+        query: FunctionSamples,
+        case_shape: tuple[int, ...],
+        channels: int,
+        rank: int,
+        /,
+        *,
+        key: EvalKey,
+    ) -> Array:
+        topology = query.topology
+        if topology is None:
+            raise ValueError(
+                "Topology frame evaluator requires FunctionSamples.topology."
+            )
+        if topology.entity == "node":
+            payload = topology.graph.nodes
+        elif topology.entity == "edge":
+            payload = topology.graph.edges
+        else:
+            payload = topology.graph.globals
+        if not isinstance(payload, Mapping) or self.feature_name not in payload:
+            raise KeyError(
+                f"Topology entity payload lacks feature {self.feature_name!r}."
+            )
+        entity_features = jnp.asarray(payload[self.feature_name])
+        flat = entity_features.reshape((entity_features.shape[0], -1))
+        entity_values = jax.vmap(lambda value: self.model(value, key=key))(flat)
+        if entity_values.shape[-1:] != (channels * rank,):
+            raise ValueError(
+                "Topology frame model output must equal channels times frame rank."
+            )
+        gathered = gather_operator_graph_entities(
+            query,
+            entity_values,
+            case_shape=case_shape,
+        )
+        return gathered.reshape(case_shape + query.sample_shape + (channels, rank))
+
+
+class PreparedManifoldFunctionFrameEvaluator(AbstractFunctionFrameEvaluator):
+    """Bind caller-prepared atlas/tangent/measure evaluation evidence."""
+
+    evaluator: Callable[..., Array]
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(self, evaluator: Callable[..., Array], /, *, evidence_id: str):
+        if not callable(evaluator) or not evidence_id:
+            raise ValueError(
+                "Prepared manifold evaluator requires callable and evidence id."
+            )
+        self.evaluator = evaluator
+        self.evidence_id = str(evidence_id)
+
+    def evaluate(
+        self,
+        query: FunctionSamples,
+        case_shape: tuple[int, ...],
+        channels: int,
+        rank: int,
+        /,
+        *,
+        key: EvalKey,
+    ) -> Array:
+        values = jnp.asarray(
+            self.evaluator(
+                query,
+                case_shape=case_shape,
+                key=key,
+            )
+        )
+        expected = case_shape + query.sample_shape + (channels, rank)
+        if values.shape != expected:
+            raise ValueError(
+                f"Prepared manifold evaluator must return {expected}; got {values.shape}."
+            )
+        return values
+
+
 class LearnedFunctionFrame(AbstractBasisTrunk):
     """Trainable coordinate-evaluated finite frame with weighted projection."""
 
-    basis_model: AbstractArrayModel
+    basis_model: AbstractArrayModel | None
     offset_model: AbstractArrayModel | None
     rank: int = eqx.field(static=True)
+    evaluator: AbstractFunctionFrameEvaluator | None
     latent_size: int = eqx.field(static=True)
     coord_dim: int = eqx.field(static=True)
     out_size: int | Literal["scalar"] = eqx.field(static=True)
@@ -314,15 +438,24 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
     def __init__(
         self,
         *,
-        basis_model: AbstractArrayModel,
+        basis_model: AbstractArrayModel | None = None,
         rank: int,
         coord_dim: int,
         out_size: int | Literal["scalar"] = "scalar",
         offset_model: AbstractArrayModel | None = None,
+        evaluator: AbstractFunctionFrameEvaluator | None = None,
         frame_id: str,
     ):
-        if not isinstance(basis_model, AbstractArrayModel):
-            raise TypeError("basis_model must be an AbstractArrayModel.")
+        if basis_model is not None and not isinstance(
+            basis_model,
+            AbstractArrayModel,
+        ):
+            raise TypeError("basis_model must be an AbstractArrayModel or None.")
+        if evaluator is not None and not isinstance(
+            evaluator,
+            AbstractFunctionFrameEvaluator,
+        ):
+            raise TypeError("evaluator must be AbstractFunctionFrameEvaluator or None.")
         if offset_model is not None and not isinstance(offset_model, AbstractArrayModel):
             raise TypeError("offset_model must be an AbstractArrayModel or None.")
         rank_ = int(rank)
@@ -330,25 +463,32 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         channels = _get_size(out_size)
         if rank_ <= 0 or coord_dim_ <= 0:
             raise ValueError("rank and coord_dim must be positive.")
-        if not frame_id:
-            raise ValueError("frame_id must be nonempty.")
-        if _get_size(basis_model.in_size) != coord_dim_:
-            raise ValueError("basis_model.in_size must match coord_dim.")
-        if _get_size(basis_model.out_size) != rank_ * channels:
-            raise ValueError("basis_model.out_size must equal rank*out_size.")
+        if basis_model is None and evaluator is None:
+            raise ValueError(
+                "A coordinate basis_model or explicit evaluator is required."
+            )
+        if basis_model is not None:
+            if _get_size(basis_model.in_size) != coord_dim_:
+                raise ValueError("basis_model.in_size must match coord_dim.")
+            if _get_size(basis_model.out_size) != rank_ * channels:
+                raise ValueError("basis_model.out_size must equal rank*out_size.")
         if offset_model is not None:
             if _get_size(offset_model.in_size) != coord_dim_:
                 raise ValueError("offset_model.in_size must match coord_dim.")
             if _get_size(offset_model.out_size) != channels:
                 raise ValueError("offset_model.out_size must match out_size.")
+        identifier = str(frame_id)
+        if not identifier:
+            raise ValueError("frame_id must be non-empty.")
 
         self.basis_model = basis_model
         self.offset_model = offset_model
         self.rank = rank_
         self.latent_size = rank_
         self.coord_dim = coord_dim_
+        self.evaluator = evaluator
         self.out_size = out_size
-        self.frame_id = str(frame_id)
+        self.frame_id = identifier
 
     @property
     def requires_fixed_query(self) -> bool:
@@ -367,6 +507,17 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         key: EvalKey = None,
     ) -> Array:
         cases = tuple(int(size) for size in case_shape)
+        if self.evaluator is not None:
+            values = self.evaluator.evaluate(
+                query,
+                cases,
+                self.channels,
+                self.rank,
+                key=key,
+            )
+            mask = query.mask_array(case_shape=cases)
+            return jnp.where(mask[..., None, None], values, 0.0)
+        assert self.basis_model is not None
         coordinates, usable = _frame_coordinates(query, self.coord_dim, cases)
         flat_basis = _evaluate_pointwise_model(
             self.basis_model,
@@ -630,21 +781,33 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         )
 
     def frozen(self) -> "LearnedFunctionFrame":
-        """Return the same frame geometry with all pointwise models frozen."""
         basis_model = (
-            self.basis_model
+            None
+            if self.basis_model is None
+            else self.basis_model
             if isinstance(self.basis_model, FrozenModel)
             else FrozenModel(self.basis_model)
         )
         offset_model = self.offset_model
         if offset_model is not None and not isinstance(offset_model, FrozenModel):
             offset_model = FrozenModel(offset_model)
+        evaluator = self.evaluator
+        if isinstance(evaluator, TopologyFunctionFrameEvaluator) and not isinstance(
+            evaluator.model,
+            FrozenModel,
+        ):
+            evaluator = TopologyFunctionFrameEvaluator(
+                FrozenModel(evaluator.model),
+                feature_name=evaluator.feature_name,
+                evaluator_id=evaluator.evaluator_id,
+            )
         return LearnedFunctionFrame(
             basis_model=basis_model,
             offset_model=offset_model,
             rank=self.rank,
             coord_dim=self.coord_dim,
             out_size=self.out_size,
+            evaluator=evaluator,
             frame_id=self.frame_id,
         )
 
@@ -747,46 +910,101 @@ class ProjectionBranchEncoder(AbstractBranchEncoder):
         return self.map_coefficients(report.require_coefficients(), key=key)
 
 
-class FunctionFrameEncoding(StrictModule):
-    """Reusable encoded source function plus its projection evidence."""
+class FunctionFrameSource(StrictModule):
+    """One explicitly named source frame and its coefficient map."""
 
-    coefficients: Array
-    report: FunctionProjectionReport
-    case_shape: tuple[int, ...] = eqx.field(static=True)
-    source_frame_id: str = eqx.field(static=True)
+    name: str = eqx.field(static=True)
+    frame: LearnedFunctionFrame
+    projection_policy: FunctionProjectionPolicy
+    coefficient_map: AbstractArrayModel | None
 
     def __init__(
         self,
-        coefficients: Array,
-        report: FunctionProjectionReport,
+        name: str,
+        frame: LearnedFunctionFrame,
+        /,
+        *,
+        projection_policy: FunctionProjectionPolicy | None = None,
+        coefficient_map: AbstractArrayModel | None = None,
+    ):
+        if not name:
+            raise ValueError("FunctionFrameSource name must be nonempty.")
+        if not isinstance(frame, LearnedFunctionFrame):
+            raise TypeError("frame must be LearnedFunctionFrame.")
+        policy = (
+            FunctionProjectionPolicy() if projection_policy is None else projection_policy
+        )
+        if not isinstance(policy, FunctionProjectionPolicy):
+            raise TypeError("projection_policy must be FunctionProjectionPolicy.")
+        if coefficient_map is not None and not isinstance(
+            coefficient_map,
+            AbstractArrayModel,
+        ):
+            raise TypeError("coefficient_map must be AbstractArrayModel or None.")
+        self.name = str(name)
+        self.frame = frame
+        self.projection_policy = policy
+        self.coefficient_map = coefficient_map
+
+
+class FunctionFrameEncoding(StrictModule):
+    """Reusable ordered multi-source coefficients and projection evidence."""
+
+    coefficients: frozendict[str, Array]
+    reports: frozendict[str, FunctionProjectionReport]
+    frame_ids: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    fused_coefficients: Array
+    case_shape: tuple[int, ...] = eqx.field(static=True)
+    fusion: Literal["sum", "product", "concat"] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        coefficients: Mapping[str, Array],
+        reports: Mapping[str, FunctionProjectionReport],
+        fused_coefficients: Array,
         /,
         *,
         case_shape: tuple[int, ...],
-        source_frame_id: str,
+        frame_ids: Sequence[tuple[str, str]],
+        fusion: Literal["sum", "product", "concat"],
     ):
-        if not isinstance(report, FunctionProjectionReport):
-            raise TypeError("report must be a FunctionProjectionReport.")
+        coefficient_values = frozendict(
+            (str(name), jnp.asarray(value)) for name, value in coefficients.items()
+        )
+        report_values = frozendict(reports)
+        if tuple(coefficient_values) != tuple(report_values):
+            raise ValueError("Encoding coefficient and report source order must agree.")
         shape = tuple(int(size) for size in case_shape)
-        coefficient_array = jnp.asarray(coefficients)
-        if coefficient_array.shape[: len(shape)] != shape:
-            raise ValueError("Encoded coefficients do not start with case_shape.")
-        if report.case_shape != shape:
-            raise ValueError("Encoding and projection report case shapes must agree.")
-        if report.frame_id != source_frame_id:
-            raise ValueError("Encoding source_frame_id must match its projection report.")
-        self.coefficients = coefficient_array
-        self.report = report
+        if any(value.shape[:-1] != shape for value in coefficient_values.values()):
+            raise ValueError(
+                "Every source coefficient must have the encoding case shape."
+            )
+        fused = jnp.asarray(fused_coefficients)
+        if fused.shape[:-1] != shape:
+            raise ValueError("Fused coefficients must have the encoding case shape.")
+        identities = tuple((str(name), str(frame_id)) for name, frame_id in frame_ids)
+        if tuple(name for name, _ in identities) != tuple(coefficient_values):
+            raise ValueError("Frame identities must follow source order.")
+        for name, frame_id in identities:
+            if report_values[name].frame_id != frame_id:
+                raise ValueError(
+                    f"Projection report for {name!r} has a stale frame identity."
+                )
+        self.coefficients = coefficient_values
+        self.reports = report_values
+        self.frame_ids = identities
+        self.fused_coefficients = fused
         self.case_shape = shape
-        self.source_frame_id = str(source_frame_id)
+        self.fusion = fusion
 
 
 class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
-    """Project a source function once and decode on independent target queries."""
+    """Project ordered named sources and decode their fused target coefficients."""
 
     operator_architecture: ClassVar[str] = "FunctionFrameReconstructor"
 
     operator: DeepONet
-    source_name: str = eqx.field(static=True)
+    sources: tuple[FunctionFrameSource, ...]
     in_size: int | Literal["scalar"] = eqx.field(static=True)
     out_size: int | Literal["scalar"] = eqx.field(static=True)
     coord_dim: int = eqx.field(static=True)
@@ -795,52 +1013,49 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
     def __init__(
         self,
         *,
-        source_frame: LearnedFunctionFrame,
+        sources: Sequence[FunctionFrameSource] | Mapping[str, FunctionFrameSource],
         target_frame: LearnedFunctionFrame,
-        policy: FunctionProjectionPolicy | None = None,
-        coefficient_map: AbstractArrayModel | None = None,
-        source_name: str = "source",
+        fusion: Literal["sum", "product", "concat"] = "sum",
+        branch_mixer: AbstractArrayModel | None = None,
     ):
-        if not isinstance(source_frame, LearnedFunctionFrame):
-            raise TypeError("source_frame must be a LearnedFunctionFrame.")
-        if not isinstance(target_frame, LearnedFunctionFrame):
-            raise TypeError("target_frame must be a LearnedFunctionFrame.")
-        name = str(source_name)
-        if not name:
-            raise ValueError("source_name must be nonempty.")
-        branch = ProjectionBranchEncoder(
-            source_frame,
-            policy=policy,
-            coefficient_map=coefficient_map,
-            latent_size=target_frame.rank,
+        source_values = (
+            tuple(sources.values()) if isinstance(sources, Mapping) else tuple(sources)
         )
+        if not source_values or any(
+            not isinstance(source, FunctionFrameSource) for source in source_values
+        ):
+            raise TypeError("sources must contain FunctionFrameSource values.")
+        names = tuple(source.name for source in source_values)
+        if len(set(names)) != len(names):
+            raise ValueError("Function-frame source names must be unique.")
+        if not isinstance(target_frame, LearnedFunctionFrame):
+            raise TypeError("target_frame must be LearnedFunctionFrame.")
+        branches = {
+            source.name: ProjectionBranchEncoder(
+                source.frame,
+                policy=source.projection_policy,
+                coefficient_map=source.coefficient_map,
+                latent_size=target_frame.rank,
+            )
+            for source in source_values
+        }
         self.operator = DeepONet(
-            branch={name: branch},
+            branch=branches,
             trunk=target_frame,
             coord_dim=target_frame.coord_dim,
             latent_size=target_frame.rank,
             out_size=target_frame.out_size,
-            in_size=source_frame.out_size,
-            fusion="sum",
-            source_key=name,
+            in_size=source_values[0].frame.out_size,
+            fusion=fusion,
+            branch_mixer=branch_mixer,
+            source_key=None,
             use_bias=False,
         )
-        self.source_name = name
-        self.in_size = source_frame.out_size
+        self.sources = source_values
+        self.in_size = source_values[0].frame.out_size
         self.out_size = target_frame.out_size
         self.coord_dim = target_frame.coord_dim
         self.latent_size = target_frame.rank
-
-    @property
-    def projection_branch(self) -> ProjectionBranchEncoder:
-        branch = self.operator.branches[self.source_name]
-        if not isinstance(branch, ProjectionBranchEncoder):
-            raise TypeError("Function-frame operator has an invalid projection branch.")
-        return branch
-
-    @property
-    def source_frame(self) -> LearnedFunctionFrame:
-        return self.projection_branch.frame
 
     @property
     def target_frame(self) -> LearnedFunctionFrame:
@@ -849,9 +1064,23 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
             raise TypeError("Function-frame operator has an invalid target frame.")
         return trunk
 
-    @property
-    def coefficient_map(self) -> AbstractArrayModel | None:
-        return self.projection_branch.coefficient_map
+    def _fuse(self, values: tuple[Array, ...], /, *, key: EvalKey) -> Array:
+        if self.operator.fusion == "sum":
+            result = values[0]
+            for value in values[1:]:
+                result = result + value
+            return result / jnp.sqrt(float(len(values)))
+        if self.operator.fusion == "product":
+            result = values[0]
+            for value in values[1:]:
+                result = result * value
+            return result
+        mixer = self.operator.branch_mixer
+        assert mixer is not None
+        concatenated = jnp.concatenate(values, axis=-1)
+        flat = concatenated.reshape((-1, concatenated.shape[-1]))
+        mixed = jax.vmap(lambda value: mixer(value, key=key))(flat)
+        return mixed.reshape(concatenated.shape[:-1] + (self.latent_size,))
 
     def encode_inputs(
         self,
@@ -861,27 +1090,38 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
         key: EvalKey = None,
     ) -> FunctionFrameEncoding:
         if not isinstance(batch, OperatorBatch):
-            raise TypeError("FunctionFrameReconstructor requires an OperatorBatch.")
-        if len(batch.inputs) != 1 or self.source_name not in batch.inputs:
-            raise ValueError(
-                "FunctionFrameReconstructor requires exactly its named source input "
-                f"{self.source_name!r}."
+            raise TypeError("FunctionFrameReconstructor requires OperatorBatch.")
+        if tuple(batch.inputs) != tuple(source.name for source in self.sources):
+            raise ValueError("Operator inputs must exactly match ordered frame sources.")
+        coefficients: dict[str, Array] = {}
+        reports: dict[str, FunctionProjectionReport] = {}
+        mapped = []
+        for index, source in enumerate(self.sources):
+            branch = self.operator.branches[source.name]
+            if not isinstance(branch, ProjectionBranchEncoder):
+                raise TypeError("Invalid projection branch.")
+            report = branch.project(
+                batch.input(source.name),
+                case_shape=batch.case_shape,
+                key=fold_in_eval_key(key, 2 * index),
             )
-        branch = self.projection_branch
-        report = branch.project(
-            batch.input(self.source_name),
-            case_shape=batch.case_shape,
-            key=key,
-        )
-        coefficients = branch.map_coefficients(
-            report.require_coefficients(),
-            key=key,
-        )
+            value = branch.map_coefficients(
+                report.require_coefficients(),
+                key=fold_in_eval_key(key, 2 * index + 1),
+            )
+            coefficients[source.name] = value
+            reports[source.name] = report
+            mapped.append(value)
+        fused = self._fuse(tuple(mapped), key=fold_in_eval_key(key, 2 * len(mapped)))
         return FunctionFrameEncoding(
             coefficients,
-            report,
+            reports,
+            fused,
             case_shape=batch.case_shape,
-            source_frame_id=self.source_frame.frame_id,
+            frame_ids=tuple(
+                (source.name, source.frame.frame_id) for source in self.sources
+            ),
+            fusion=self.operator.fusion,
         )
 
     def decode_query(
@@ -893,11 +1133,12 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
         key: EvalKey = None,
     ) -> Array:
         if not isinstance(state, FunctionFrameEncoding):
-            raise TypeError("state must be a FunctionFrameEncoding.")
-        if state.source_frame_id != self.source_frame.frame_id:
-            raise ValueError("Encoded state was produced by a different source frame.")
+            raise TypeError("state must be FunctionFrameEncoding.")
+        expected = tuple((source.name, source.frame.frame_id) for source in self.sources)
+        if state.frame_ids != expected or state.fusion != self.operator.fusion:
+            raise ValueError("Encoded state frame epoch or fusion identity is stale.")
         return self.target_frame.decode(
-            state.coefficients,
+            state.fused_coefficients,
             query,
             case_shape=state.case_shape,
             key=key,
@@ -910,21 +1151,28 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
         *,
         key: EvalKey = None,
     ) -> Array:
-        if not isinstance(batch, OperatorBatch):
-            raise TypeError("FunctionFrameReconstructor requires an OperatorBatch.")
         return self.__call_operator_batch__(batch, key=key)
 
     def frozen(self) -> "FunctionFrameReconstructor":
-        """Freeze source frame, target frame, and optional coefficient map."""
-        coefficient_map = self.coefficient_map
-        if coefficient_map is not None and not isinstance(coefficient_map, FrozenModel):
-            coefficient_map = FrozenModel(coefficient_map)
+        frozen_sources = tuple(
+            FunctionFrameSource(
+                source.name,
+                source.frame.frozen(),
+                projection_policy=source.projection_policy,
+                coefficient_map=(
+                    None
+                    if source.coefficient_map is None
+                    else FrozenModel(source.coefficient_map)
+                ),
+            )
+            for source in self.sources
+        )
+        mixer = self.operator.branch_mixer
         return FunctionFrameReconstructor(
-            source_frame=self.source_frame.frozen(),
+            sources=frozen_sources,
             target_frame=self.target_frame.frozen(),
-            policy=self.projection_branch.policy,
-            coefficient_map=coefficient_map,
-            source_name=self.source_name,
+            fusion=self.operator.fusion,
+            branch_mixer=None if mixer is None else FrozenModel(mixer),
         )
 
 
@@ -946,6 +1194,14 @@ for _artifact_id, _artifact_value in (
         "phydrax.operator.function_frame:ProjectionBranchEncoder@1",
         ProjectionBranchEncoder,
     ),
+    (
+        "phydrax.operator.function_frame:FunctionFrameSource@1",
+        FunctionFrameSource,
+    ),
+    (
+        "phydrax.operator.function_frame:TopologyFunctionFrameEvaluator@1",
+        TopologyFunctionFrameEvaluator,
+    ),
 ):
     register_artifact_value(_artifact_id, _artifact_value)
 
@@ -953,6 +1209,7 @@ del _artifact_id, _artifact_value
 
 
 __all__ = [
+    "AbstractFunctionFrameEvaluator",
     "FUNCTION_PROJECTION_INSUFFICIENT_SUPPORT",
     "FUNCTION_PROJECTION_INVALID_MEASURE",
     "FUNCTION_PROJECTION_NONFINITE",
@@ -961,6 +1218,9 @@ __all__ = [
     "FUNCTION_PROJECTION_SUCCESS",
     "FunctionFrameEncoding",
     "FunctionFrameReconstructor",
+    "FunctionFrameSource",
+    "PreparedManifoldFunctionFrameEvaluator",
+    "TopologyFunctionFrameEvaluator",
     "FunctionProjectionPolicy",
     "FunctionProjectionReport",
     "FunctionProjectionRankPolicy",

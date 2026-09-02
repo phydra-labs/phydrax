@@ -171,11 +171,7 @@ and constraints see the enforced values.
     assert bc.loss({"u": hard_u}) < 1e-12
 
     condition = phx.conditions.Dirichlet("u", boundary, target=5.0)
-    spec = phx.enforcement.EnforcementSpec(
-        condition,
-        kind="custom",
-        transform=lambda f, _: phx.enforcement.enforce_graph_values(f, boundary, target=5.0),
-    )
+    spec = phx.enforcement.EnforcementSpec(condition)
     functions = {"u": u}
     program = phx.enforcement.compile(functions, (spec,))
     solver = phx.solver.FunctionalSolver(

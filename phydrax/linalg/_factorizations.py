@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from math import prod
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -87,9 +88,14 @@ class FactorizationPolicy(StrictModule):
         self.materialization = (
             MaterializationPolicy() if materialization is None else materialization
         )
-        self.differentiation = (
-            DifferentiationPolicy() if differentiation is None else differentiation
+        differentiation_ = (
+            DifferentiationPolicy("mathematical")
+            if differentiation is None
+            else differentiation
         )
+        if not isinstance(differentiation_, DifferentiationPolicy):
+            raise TypeError("differentiation must be a DifferentiationPolicy or None.")
+        self.differentiation = differentiation_
         self.failure = FailurePolicy() if failure is None else failure
         self.resources = SolveResourcePolicy() if resources is None else resources
         self.precision = precision
@@ -144,24 +150,28 @@ class PreparedFactorization(StrictModule):
             }
         )
 
-    def solve(self, rhs: PyTree[Any], /):
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self.operator.batch_shape
+
+    def solve(self, rhs: PyTree[Any], /, *, rhs_layout=None):
         from ._runtime import solve
 
-        return solve(self.prepared_solve, rhs)
+        return solve(self.prepared_solve, rhs, rhs_layout=rhs_layout)
 
-    def solve_transpose(self, rhs: PyTree[Any], /):
+    def solve_transpose(self, rhs: PyTree[Any], /, *, rhs_layout=None):
         if not self.capabilities.transpose_solve:
             raise ValueError("This factorization does not support transpose solves.")
         from ._runtime import solve_transpose
 
-        return solve_transpose(self.prepared_solve, rhs)
+        return solve_transpose(self.prepared_solve, rhs, rhs_layout=rhs_layout)
 
-    def solve_adjoint(self, rhs: PyTree[Any], /):
+    def solve_adjoint(self, rhs: PyTree[Any], /, *, rhs_layout=None):
         if not self.capabilities.adjoint_solve:
             raise ValueError("This factorization does not support adjoint solves.")
         from ._runtime import solve_adjoint
 
-        return solve_adjoint(self.prepared_solve, rhs)
+        return solve_adjoint(self.prepared_solve, rhs, rhs_layout=rhs_layout)
 
     def materialize_inverse(self, /) -> MatrixInversionResult:
         if not self.capabilities.inverse_materialization:
@@ -290,7 +300,7 @@ def factorize(
         singular_values=svd,
         determinant=rows == columns,
         pseudodeterminant=svd,
-        nullspaces=svd and not operator.batch_shape,
+        nullspaces=svd,
         inverse_materialization=direct_solve and rows == columns,
         pseudoinverse_materialization=svd,
     )
@@ -659,6 +669,10 @@ def refresh_factorization(
     """Refresh numerical factors while preserving the symbolic plan and versioning."""
     if not isinstance(factorization, PreparedFactorization):
         raise TypeError("factorization must be a PreparedFactorization.")
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be an AbstractLinearOperator.")
+    if operator.batch_shape != factorization.batch_shape:
+        raise ValueError("Factorization refresh requires an unchanged batch shape.")
     previous_problem = factorization.prepared_solve.problem
     if isinstance(previous_problem, LinearSystem):
         problem = LinearSystem(operator, problem_id=previous_problem.problem_id)
@@ -702,13 +716,18 @@ def _nullspace(
         target_metric = _riesz_matrix(factorization.operator.target)
         kernel_operator = jnp.conj(jnp.swapaxes(matrix, -1, -2)) @ target_metric
         space = factorization.operator.target
+    batch_count = prod(factorization.batch_shape) if factorization.batch_shape else 1
     itemsize = matrix.dtype.itemsize
-    basis_bytes = space.size * space.size * itemsize
+    basis_bytes = batch_count * space.size * space.size * itemsize
     workspace_bytes = (
-        matrix.shape[-2] ** 2
-        + matrix.shape[-1] ** 2
-        + min(matrix.shape[-2], matrix.shape[-1])
-    ) * itemsize
+        batch_count
+        * (
+            matrix.shape[-2] ** 2
+            + matrix.shape[-1] ** 2
+            + min(matrix.shape[-2], matrix.shape[-1])
+        )
+        * itemsize
+    )
     if basis_bytes > factorization.policy.resources.factorization_bytes:
         raise ValueError(
             f"Nullspace basis requires {basis_bytes} bytes, exceeding the "
@@ -723,8 +742,8 @@ def _nullspace(
     vectors = jnp.conj(jnp.swapaxes(vh, -1, -2))
     rank = state.rank
     capacity = vectors.shape[-1]
-    order = (jnp.arange(capacity, dtype=jnp.int32) + rank) % capacity
-    basis = vectors[:, order]
+    order = (jnp.arange(capacity, dtype=jnp.int32) + rank[..., None]) % capacity
+    basis = jnp.take_along_axis(vectors, order[..., None, :], axis=-1)
     dimension = jnp.asarray(capacity, dtype=jnp.int32) - rank
     basis = _metric_orthonormalize(space, basis, dimension)
     return LinearSubspace(
@@ -751,25 +770,34 @@ def _metric_orthonormalize(
     dimension: Array,
     /,
 ) -> Array:
+    batch_shape = basis.shape[:-2]
     capacity = basis.shape[-1]
-    active = jnp.arange(capacity) < dimension
-    masked = jnp.where(active[None, :], basis, 0)
+    active = jnp.arange(capacity) < dimension[..., None]
+    masked = jnp.where(active[..., None, :], basis, 0)
+    batch_count = prod(batch_shape) if batch_shape else 1
+    flattened = masked.reshape((batch_count, space.size, capacity))
+    dimensions = dimension.reshape((batch_count,))
 
-    def inner(left, right):
-        return space.inner(space.unflatten(left), space.unflatten(right))
+    def orthonormalize_one(columns, active_dimension):
+        active_columns = jnp.arange(capacity) < active_dimension
 
-    gram = jax.vmap(
-        lambda left: jax.vmap(lambda right: inner(left, right), in_axes=1)(masked),
-        in_axes=1,
-    )(masked)
-    gram = 0.5 * (gram + jnp.conj(jnp.swapaxes(gram, -1, -2)))
-    gram = gram + jnp.diag((~active).astype(gram.dtype))
-    factor = jnp.linalg.cholesky(gram)
-    transform = jnp.linalg.solve(
-        jnp.conj(jnp.swapaxes(factor, -1, -2)),
-        jnp.eye(capacity, dtype=gram.dtype),
-    )
-    return masked @ transform
+        def inner(left, right):
+            return space.inner(space.unflatten(left), space.unflatten(right))
+
+        gram = jax.vmap(
+            lambda left: jax.vmap(lambda right: inner(left, right), in_axes=1)(columns),
+            in_axes=1,
+        )(columns)
+        gram = 0.5 * (gram + jnp.conj(jnp.swapaxes(gram, -1, -2)))
+        gram = gram + jnp.diag((~active_columns).astype(gram.dtype))
+        factor = jnp.linalg.cholesky(gram)
+        transform = jnp.linalg.solve(
+            jnp.conj(jnp.swapaxes(factor, -1, -2)),
+            jnp.eye(capacity, dtype=gram.dtype),
+        )
+        return columns @ transform
+
+    return jax.vmap(orthonormalize_one)(flattened, dimensions).reshape(basis.shape)
 
 
 __all__ = [

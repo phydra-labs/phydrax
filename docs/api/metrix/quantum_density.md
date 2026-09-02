@@ -48,3 +48,18 @@ histories.
 ::: phydrax.solver.LindbladProblem
 
 ::: phydrax.solver.solve_lindblad
+
+## Fixed-rank stratification
+
+`FixedRankDensityManifold(n, r)` stores a full-column purification factor and
+implements horizontal quotient geometry for exactly one rank. It never extends
+SLD/Bures inversion across support loss. `DensityRankStratification` classifies
+with explicit absolute/relative thresholds; eigenvalues in the ambiguity band
+produce invalid evidence instead of a rank gradient. `RankTransitionProposal`
+records source/target rank, trigger, deterministic truncation/embedding,
+discarded mass, and optimizer-state transfer semantics for a fresh host epoch.
+The union of ranks is not advertised as one smooth manifold.
+
+::: phydrax.metrix.FixedRankDensityManifold
+
+::: phydrax.metrix.DensityRankStratification

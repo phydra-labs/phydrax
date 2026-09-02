@@ -228,6 +228,27 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
         value = self._state(state, "Entropy-flux state")
         return self._entropy_flux_unchecked(value, axis, args)
 
+    def normal_entropy_flux(
+        self,
+        state: ArrayLike,
+        normal: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        """Contract the entropy-flux vector with an arbitrary physical normal."""
+        value = self._state(state, "Normal entropy-flux state")
+        normal_ = jnp.asarray(normal)
+        if normal_.shape[-1:] != (self.dimension,):
+            raise ValueError("Entropy-flux normal has the wrong dimension.")
+        fluxes = jnp.stack(
+            tuple(
+                self._entropy_flux_unchecked(value, axis, args)
+                for axis in range(self.dimension)
+            ),
+            axis=-1,
+        )
+        return oe.contract("...d,...d->...", fluxes, normal_, backend="jax")
+
     def relative_entropy(
         self,
         left: ArrayLike,
@@ -324,6 +345,37 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
             flux,
         ) - self._entropy_flux_unchecked(state, axis, args)
 
+    def normal_entropy_potential(
+        self,
+        state: ArrayLike,
+        normal: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        """Return v·(F·n) − q·n for an arbitrary physical normal."""
+        value = self._state(state, "Normal entropy-potential state")
+        normal_ = jnp.asarray(normal)
+        if normal_.shape[-1:] != (self.dimension,):
+            raise ValueError("Entropy-potential normal has the wrong dimension.")
+        fluxes = jnp.stack(
+            tuple(
+                _variable_output(
+                    self.system.physical_flux(value, axis, args),
+                    value.shape,
+                    "Conservation-system physical flux",
+                )
+                for axis in range(self.dimension)
+            ),
+            axis=-1,
+        )
+        physical = oe.contract("...id,...d->...i", fluxes, normal_, backend="jax")
+        return oe.contract(
+            "...i,...i->...",
+            self._entropy_variables_unchecked(value),
+            physical,
+            backend="jax",
+        ) - self.normal_entropy_flux(value, normal_, args)
+
     def interface_entropy_residual(
         self,
         left: ArrayLike,
@@ -350,6 +402,35 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
         ) - (
             self._entropy_potential_unchecked(right_value, axis_, args)
             - self._entropy_potential_unchecked(left_value, axis_, args)
+        )
+
+    def normal_interface_entropy_residual(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        numerical_flux: ArrayLike,
+        normal: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        """Tadmor interface residual for one arbitrary-normal shared flux."""
+        left_value = self._state(left, "Left normal-interface state")
+        right_value = self._state(right, "Right normal-interface state")
+        if left_value.shape != right_value.shape:
+            raise ValueError("Normal-interface states must have equal shapes.")
+        flux = _state_array(numerical_flux, self.component_count, "Numerical flux")
+        if flux.shape != left_value.shape:
+            raise ValueError("Numerical flux must match the interface state shape.")
+        variables_left = self._entropy_variables_unchecked(left_value)
+        variables_right = self._entropy_variables_unchecked(right_value)
+        return oe.contract(
+            "...i,...i->...",
+            variables_right - variables_left,
+            flux,
+            backend="jax",
+        ) - (
+            self.normal_entropy_potential(right_value, normal, args)
+            - self.normal_entropy_potential(left_value, normal, args)
         )
 
     def hessian_geometry(self) -> HessianGeometry:

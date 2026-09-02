@@ -26,6 +26,7 @@ from .._core import (
     DiscretizationRole,
     PreparationReport,
 )
+from .._periodic_cell import PeriodicCell
 from ._dem_boundary import (
     DEMBoundaryResponse,
     evaluate_dem_barrier,
@@ -50,6 +51,7 @@ from ._dem_kernels import reduce_dem_contact
 from ._dem_liquid import (
     conserved_bagheri_component,
     ConservedLiquidBridgeProcessPlan,
+    DEMBarrierLiquidAllocation,
     DEMLiquidEvaluation,
     DEMLiquidState,
 )
@@ -70,7 +72,6 @@ from ._neighborhood import (
 from ._pair_state import match_particle_pair_keys, ParticlePairKeySpace
 from ._pairwise import particle_pair_geometry
 from ._particle_morphology import ParticleDynamicBodyProperties
-from ._periodic_cell import ParticleCell
 from ._population import ParticlePopulationPlan
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._rigid_sphere import (
@@ -441,7 +442,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
     external_load_id: str | None = eqx.field(static=True)
     execution: ParticleExecutionPolicy
     precision: ParticlePrecisionPolicy
-    periodic_cell: ParticleCell | None
+    periodic_cell: PeriodicCell | None
     maximum_interaction_radius: float = eqx.field(static=True)
     liquid_component_index: int = eqx.field(static=True)
     key: DiscretizationKey
@@ -553,15 +554,11 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 for component in cohesion.components
             )
         )
-        if bagheri_present and barriers_:
-            raise ValueError(
-                "Bagheri capillary bridges currently support sphere pairs only."
-            )
         periodic_cell = None
         if method.periodic_cell_control is not None:
-            if not isinstance(neighborhood.box, ParticleCell):
+            if not isinstance(neighborhood.box, PeriodicCell):
                 raise ValueError(
-                    "Periodic DEM cell control requires a ParticleCell neighborhood."
+                    "Periodic DEM cell control requires a PeriodicCell neighborhood."
                 )
             if neighborhood.backend != "dense_pairs":
                 raise ValueError(
@@ -588,16 +585,34 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 > neighborhood.box.certified_condition_number
             ):
                 raise ValueError(
-                    "ParticleCell condition certificate does not cover cell control."
+                    "PeriodicCell condition certificate does not cover cell control."
                 )
             neighborhood.box.require_unique_image(maximum_interaction_radius)
             periodic_cell = neighborhood.box
         liquid_component_index = -1
         if method.liquid_process is not None:
             if barriers_:
-                raise ValueError(
-                    "Conserved liquid bridges currently support particle pairs only."
-                )
+                bindings = method.liquid_process.barrier_capillaries
+                if tuple(value.barrier_id for value in bindings) != barrier_ids:
+                    raise ValueError(
+                        "Conserved barrier capillaries must bind every DEM barrier "
+                        "exactly once and in prepared barrier order."
+                    )
+                for barrier, binding in zip(barriers_, bindings, strict=True):
+                    if binding.law != "bagheri":
+                        raise ValueError(
+                            "Conserved DEM barrier liquid currently requires "
+                            "the Bagheri sphere-surface law."
+                        )
+                    if (
+                        binding.geometry_policy == "isotropic_curvature"
+                        and "contact_curvature"
+                        not in {value.value for value in barrier.geometry.capabilities}
+                    ):
+                        raise ValueError(
+                            "Isotropic barrier capillarity requires certified "
+                            "contact curvature."
+                        )
             _, liquid_component_index = conserved_bagheri_component(
                 method.contact.cohesion
             )
@@ -1434,6 +1449,129 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 particle_contact,
                 particle_contact.successful & correction_successful,
             )
+
+        def evaluate_boundaries(histories):
+            capillary_plans = (
+                (None,) * len(self.barriers)
+                if self.method.liquid_process is None
+                else self.method.liquid_process.barrier_capillaries
+            )
+            return tuple(
+                evaluate_dem_barrier(
+                    barrier,
+                    self.bodies,
+                    kinematics,
+                    self.contact_model,
+                    history,
+                    step_size,
+                    time=time,
+                    args=args,
+                    body_properties=state.body_properties,
+                    normal_tolerance=self.method.distance_tolerance,
+                    capillary_plan=capillary_plan,
+                    frame_tolerance=self.method.frame_tolerance,
+                )
+                for barrier, history, capillary_plan in zip(
+                    self.barriers,
+                    histories,
+                    capillary_plans,
+                    strict=True,
+                )
+            )
+
+        boundary_responses = evaluate_boundaries(state.boundary_histories)
+        barrier_allocation = None
+        barrier_particles = None
+        barrier_indices = None
+        barrier_minimum_volume = None
+        if self.method.liquid_process is not None and self.barriers:
+            if state.liquid is None or liquid_allocation is None:
+                raise RuntimeError("Liquid bridge transaction was not initialized.")
+            bridge_plan, component_index = conserved_bagheri_component(
+                self.method.contact.cohesion
+            )
+            barrier_particles = jnp.tile(
+                jnp.arange(self.bodies.capacity, dtype=jnp.int32),
+                len(self.barriers),
+            )
+            barrier_indices = jnp.repeat(
+                jnp.arange(len(self.barriers), dtype=jnp.int32),
+                self.bodies.capacity,
+            )
+            requested_barrier_volume = []
+            barrier_birth_candidates = []
+            for barrier, history, response in zip(
+                self.barriers,
+                state.boundary_histories,
+                boundary_responses,
+                strict=True,
+            ):
+                previous_component = history.cohesion.components[component_index]
+                evaluated_component = response.contact.next_history.cohesion.components[
+                    component_index
+                ]
+                requested_barrier_volume.append(
+                    bridge_plan.pair_bridge_volume(
+                        self.bodies.material_ids,
+                        jnp.full(
+                            (self.bodies.capacity,),
+                            barrier.material_id,
+                            dtype=jnp.int32,
+                        ),
+                        self.materials.material_count,
+                    ).astype(batch.gap.dtype)
+                )
+                barrier_birth_candidates.append(
+                    state.body_properties.active
+                    & response.contact.active
+                    & (evaluated_component.previous_gap <= 0.0)
+                    & ~previous_component.active
+                )
+            requested_barrier_volume = jnp.concatenate(tuple(requested_barrier_volume))
+            barrier_birth_candidates = jnp.concatenate(tuple(barrier_birth_candidates))
+            barrier_minimum_volume = jnp.zeros_like(requested_barrier_volume)
+            allocation_state = DEMLiquidState(
+                liquid_allocation.film_volume,
+                state.liquid.barrier_reservoir_volume,
+                state.liquid.cumulative_evaporated_volume,
+                state.liquid.initial_total_volume,
+                state.liquid.balance_residual,
+                state.liquid.successful & liquid_allocation.successful,
+            )
+            barrier_allocation = self.method.liquid_process.allocate_barriers(
+                allocation_state,
+                barrier_particles,
+                barrier_indices,
+                requested_barrier_volume,
+                barrier_minimum_volume,
+                barrier_birth_candidates,
+                self.bodies.capacity,
+            )
+            seeded_histories = []
+            for barrier_index, history in enumerate(state.boundary_histories):
+                start = barrier_index * self.bodies.capacity
+                stop = start + self.bodies.capacity
+                component = history.cohesion.components[component_index]
+                seeded_component = eqx.tree_at(
+                    lambda value: value.bridge_volume,
+                    component,
+                    jnp.where(
+                        barrier_birth_candidates[start:stop],
+                        barrier_allocation.bridge_volume[start:stop],
+                        component.bridge_volume,
+                    ),
+                )
+                components = list(history.cohesion.components)
+                components[component_index] = seeded_component
+                seeded_histories.append(
+                    eqx.tree_at(
+                        lambda value: value.cohesion,
+                        history,
+                        DEMCohesionHistory(tuple(components)),
+                    )
+                )
+            boundary_responses = evaluate_boundaries(tuple(seeded_histories))
+
         liquid_evaluation = None
         if self.method.liquid_process is not None:
             if state.liquid is None or liquid_allocation is None:
@@ -1441,8 +1579,35 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             component = particle_contact.next_history.cohesion.components[
                 self.liquid_component_index
             ]
+            boundary_bridge_pending = jnp.zeros((), dtype=batch.gap.dtype)
+            pair_liquid_state = state.liquid
+            if barrier_allocation is not None:
+                liquid_allocation = eqx.tree_at(
+                    lambda value: value.film_volume,
+                    liquid_allocation,
+                    barrier_allocation.film_volume,
+                )
+                pair_liquid_state = DEMLiquidState(
+                    state.liquid.film_volume,
+                    barrier_allocation.barrier_reservoir_volume,
+                    state.liquid.cumulative_evaporated_volume,
+                    state.liquid.initial_total_volume,
+                    state.liquid.balance_residual,
+                    state.liquid.successful & barrier_allocation.successful,
+                )
+                for response in boundary_responses:
+                    boundary_component = (
+                        response.contact.next_history.cohesion.components[
+                            self.liquid_component_index
+                        ]
+                    )
+                    boundary_bridge_pending = (
+                        boundary_bridge_pending
+                        + jnp.sum(boundary_component.bridge_volume)
+                        + jnp.sum(response.contact.bridge_volume_release)
+                    )
             next_component, liquid_evaluation = self.method.liquid_process.advance(
-                state.liquid,
+                pair_liquid_state,
                 liquid_allocation,
                 component,
                 left,
@@ -1452,6 +1617,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 minimum_bridge_volume,
                 step_size,
                 self.bodies.capacity,
+                additional_bridge_volume=boundary_bridge_pending,
             )
             components = list(particle_contact.next_history.cohesion.components)
             components[self.liquid_component_index] = next_component
@@ -1480,6 +1646,114 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                     particle_contact.successful & liquid_evaluation.successful,
                 ),
             )
+            if barrier_allocation is not None:
+                barrier_bridge_volume = jnp.concatenate(
+                    tuple(
+                        response.contact.next_history.cohesion.components[
+                            self.liquid_component_index
+                        ].bridge_volume
+                        for response in boundary_responses
+                    )
+                )
+                barrier_release = jnp.concatenate(
+                    tuple(
+                        response.contact.bridge_volume_release
+                        for response in boundary_responses
+                    )
+                )
+                barrier_surface = jnp.concatenate(
+                    tuple(
+                        response.contact.bridge_surface_area
+                        for response in boundary_responses
+                    )
+                )
+                pair_bridge_total = jnp.sum(next_component.bridge_volume)
+                barrier_allocation_for_advance = DEMBarrierLiquidAllocation(
+                    barrier_allocation.bridge_volume,
+                    barrier_allocation.particle_withdrawal,
+                    barrier_allocation.barrier_withdrawal,
+                    liquid_evaluation.next_state.film_volume,
+                    liquid_evaluation.next_state.barrier_reservoir_volume,
+                    barrier_allocation.successful & liquid_evaluation.successful,
+                )
+                barrier_evaluation = self.method.liquid_process.advance_barriers(
+                    liquid_evaluation.next_state,
+                    barrier_allocation_for_advance,
+                    barrier_particles,
+                    barrier_indices,
+                    barrier_bridge_volume,
+                    barrier_release,
+                    barrier_surface,
+                    barrier_minimum_volume,
+                    step_size,
+                    self.bodies.capacity,
+                    other_bridge_volume=pair_bridge_total,
+                )
+                updated_boundaries = []
+                for barrier_index, response in enumerate(boundary_responses):
+                    start = barrier_index * self.bodies.capacity
+                    stop = start + self.bodies.capacity
+                    component = response.contact.next_history.cohesion.components[
+                        self.liquid_component_index
+                    ]
+                    next_boundary_component = eqx.tree_at(
+                        lambda value: (value.active, value.bridge_volume),
+                        component,
+                        (
+                            component.active
+                            & ~barrier_evaluation.evaporated_ruptures[start:stop],
+                            barrier_evaluation.bridge_volume[start:stop],
+                        ),
+                    )
+                    boundary_components = list(
+                        response.contact.next_history.cohesion.components
+                    )
+                    boundary_components[self.liquid_component_index] = (
+                        next_boundary_component
+                    )
+                    boundary_history = eqx.tree_at(
+                        lambda value: value.cohesion,
+                        response.contact.next_history,
+                        DEMCohesionHistory(tuple(boundary_components)),
+                    )
+                    boundary_contact = eqx.tree_at(
+                        lambda value: (
+                            value.next_history,
+                            value.cohesion_ruptures,
+                            value.bridge_evaporation_loss,
+                            value.successful,
+                        ),
+                        response.contact,
+                        (
+                            boundary_history,
+                            response.contact.cohesion_ruptures
+                            | barrier_evaluation.evaporated_ruptures[start:stop],
+                            barrier_evaluation.evaporated_bridge_volume[start:stop],
+                            response.contact.successful & barrier_evaluation.successful,
+                        ),
+                    )
+                    updated_boundaries.append(
+                        eqx.tree_at(
+                            lambda value: (
+                                value.contact,
+                                value.successful,
+                            ),
+                            response,
+                            (
+                                boundary_contact,
+                                response.successful & barrier_evaluation.successful,
+                            ),
+                        )
+                    )
+                boundary_responses = tuple(updated_boundaries)
+                liquid_evaluation = eqx.tree_at(
+                    lambda value: (value.next_state, value.successful),
+                    liquid_evaluation,
+                    (
+                        barrier_evaluation.next_state,
+                        liquid_evaluation.successful & barrier_evaluation.successful,
+                    ),
+                )
         pair_load = reduce_dem_contact(
             pairs,
             particle_contact,
@@ -1491,24 +1765,6 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         pair_force = pair_load.force
         pair_torque = pair_load.torque
-        boundary_responses = tuple(
-            evaluate_dem_barrier(
-                barrier,
-                self.bodies,
-                kinematics,
-                self.contact_model,
-                history,
-                step_size,
-                time=time,
-                args=args,
-                body_properties=state.body_properties,
-                normal_tolerance=self.method.distance_tolerance,
-                frame_tolerance=self.method.frame_tolerance,
-            )
-            for barrier, history in zip(
-                self.barriers, state.boundary_histories, strict=True
-            )
-        )
         particle_load = self.bodies.load(
             self.precision.output(pair_force), self.precision.output(pair_torque)
         )

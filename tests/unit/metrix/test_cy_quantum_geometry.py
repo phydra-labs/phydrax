@@ -38,9 +38,44 @@ def test_bures_density_geometry_sld_distance_and_uhlmann():
     assert bool(alignment.valid)
     assert jnp.allclose(jnp.abs(alignment.overlap), 1.0)
 
-    stratum = phx.metrix.FixedRankDensityStratum(2, 1)
-    pure = stratum.from_factor(jnp.asarray([[1.0 + 0.0j], [0.0j]]))
+    stratum = phx.metrix.FixedRankDensityManifold(2, 1)
+    factor = jnp.asarray([[1.0 + 0.0j], [0.0j]])
+    assert bool(stratum.contains(factor))
+    pure = stratum.density(factor)
     assert stratum.rank_residual(pure) == 0
+
+
+def test_fixed_rank_density_projection_is_horizontal_for_nonuniform_gram():
+    manifold = phx.metrix.FixedRankDensityManifold(3, 2)
+    factor = jnp.asarray(
+        [
+            [jnp.sqrt(0.8) + 0.0j, 0.0j],
+            [0.0j, jnp.sqrt(0.2) + 0.0j],
+            [0.0j, 0.0j],
+        ]
+    )
+    ambient = jnp.asarray(
+        [
+            [0.1 + 0.4j, -0.2 + 0.3j],
+            [0.5 - 0.1j, 0.2 + 0.6j],
+            [-0.3 + 0.2j, 0.7 - 0.4j],
+        ]
+    )
+
+    projected = manifold.project_tangent(factor, ambient)
+    horizontal_residual = jnp.conj(factor.T) @ projected - jnp.conj(projected.T) @ factor
+    assert jnp.allclose(horizontal_residual, 0.0, atol=1e-10)
+    assert jnp.allclose(jnp.real(jnp.vdot(factor, projected)), 0.0, atol=1e-10)
+
+
+def test_density_rank_stratification_rejects_non_density_inputs():
+    stratification = phx.metrix.DensityRankStratification(2)
+    density = jnp.diag(jnp.asarray([0.7, 0.3], dtype=complex))
+    anti_hermitian = jnp.diag(jnp.asarray([10.0j, -10.0j]))
+
+    assert bool(stratification.classify(density).valid)
+    assert not bool(stratification.classify(density + anti_hermitian).valid)
+    assert not bool(stratification.classify(jnp.diag(jnp.asarray([0.75, 0.75]))).valid)
 
 
 def test_homogeneous_hypersurface_patch_residue_and_measure():

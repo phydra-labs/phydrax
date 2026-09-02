@@ -15,8 +15,8 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics import DifferentialAlgebraicSystem, HeldInputPolicy, TimeGrid
-from ..solver import (
-    DAEInitializationSpec,
+from ..solver._dae_initialization import DAEInitializationSpec
+from ..solver._differential_algebraic import (
     DAESolvePolicy,
     DifferentialAlgebraicProblem,
     DifferentialAlgebraicSolution,

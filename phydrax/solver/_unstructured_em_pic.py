@@ -80,7 +80,7 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
                 "Whitney current edge space differs from Maxwell degree one."
             )
         cells = np.asarray(current.locator.cells, dtype=np.int32)
-        coordinates = np.asarray(current.locator.mesh.coordinates, dtype=float)
+        coordinates = np.asarray(current.locator.coordinates, dtype=float)
         gradients = []
         face_map: dict[tuple[int, int, int], int] = {}
         cell_faces = []

@@ -62,17 +62,28 @@ solid boundary and the gas-liquid PLIC interface is rejected because the current
 reconstruction is defined on the full Cartesian cell, not the clipped fluid polytope.
 No contact angle is inferred in that case.
 
-## Moving immersed body
+## Moving bodies, contact, and surface piercing
 
 `TwoPhaseMovingBodyPlan` provides a fixed-radius moving immersed target with identified
-center, velocity, and penalty. Body work is carried in the two-phase ledger. General
-contacting/surface-piercing rigid KKT follows the mapped-body product and is not implied
-by this initial penalty owner.
+center, velocity, and penalty; body work is carried in the two-phase ledger.
+`TwoPhaseCapabilityEventPlan` evaluates the canonical VOF/PLIC state for body contact,
+surface piercing, boundary wetting/drying, moving contact lines, overturning, and
+breaking/topology-change routes. It returns per-cell masks, a deterministic event
+bitset, contact-angle residual, and derivative availability. The event product does
+not pretend that a topology change is smooth; callers either begin a new fixed-topology
+epoch or hand off to the mapped rigid/hydroelastic contact product.
 
 ## Topology and ledger
 
 `TwoPhaseTopologyEvidence` reports liquid/gas volume, mixed cells, interface measure,
 changed-cell mask, and event proxy.
+
+`ConservativeTwoPhaseRemeshPlan` accepts preflighted cell-overlap volumes and
+face-transfer matrices between two prepared VOF products. It transfers extensive
+liquid/scalar content and face momentum atomically, reconstructs the auxiliary level
+set from transferred alpha, and reports source/target coverage and conservation
+defects. Connectivity selection and transfer construction are host-static; topology
+changes return `derivative_available=False`.
 
 `TwoPhaseVOFLedger` records phase volumes, momentum, kinetic/gravitational/surface
 energy, viscosity, capillary/body work, limiter, CLSVOF repair, reinitialization,
@@ -80,11 +91,14 @@ pressure/divergence, topology events, and total residual.
 
 ## Limits
 
-- PLIC reconstruction is fixed-grid;
+- PLIC reconstruction is fixed-grid, with branches and contact-angle routes fixed inside
+  an execution epoch;
 - qualified sharp solids are initially static and fixed topology;
 - cells cut by both solid and gas-liquid interfaces fail closed;
-- interface events and contact are nondifferentiable;
+- interface, wet/dry, moving-contact, piercing, breaking, contact, and remesh events are
+  nondifferentiable topology boundaries;
 - no AMR/reflux or distributed phase transport;
 - no subgrid air-entrainment model;
-- penalty bodies are not a replacement for monolithic contact KKT;
+- penalty bodies do not replace the mapped monolithic rigid/hydroelastic contact
+  product;
 - calibrated breaking/impact envelopes require their own qualification.

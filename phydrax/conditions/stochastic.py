@@ -37,6 +37,57 @@ from .boundary import _condition_value, ConditionValue
 CoefficientField: TypeAlias = DomainFunction | str
 
 
+class _StochasticBoundaryOperator(StrictModule):
+    expression: Any
+    target: ConditionValue
+    realization: Any
+    context: Any
+
+    def __call__(self, field: DomainFunction, /) -> DomainFunction:
+        result = self.expression(field, self.realization, self.context)
+        if not isinstance(result, DomainFunction):
+            raise TypeError(
+                "Stochastic boundary expression must return a DomainFunction."
+            )
+        return result - self.target
+
+
+def StochasticBoundaryResidual(
+    field: str,
+    on: ConditionSupport,
+    /,
+    *,
+    expression: Any,
+    target: ConditionValue = 0.0,
+    realization: Any = None,
+    context: Any = None,
+    label: str | None = None,
+) -> Residual:
+    """Build a replayable nonhomogeneous stochastic boundary residual.
+
+    ``expression`` receives ``(field, realization, context)`` and must return a
+    typed ``DomainFunction``.  The realization is fixed in the condition, so an
+    exact deterministic objective never resamples a random boundary target.
+    Nonlinear expressions remain residuals; this function makes no hard-enforcement
+    claim.
+    """
+    if not isinstance(field, str) or not field:
+        raise ValueError("field must be a non-empty function name.")
+    if not callable(expression):
+        raise TypeError("expression must be callable.")
+    return Residual(
+        field,
+        on,
+        _StochasticBoundaryOperator(
+            expression,
+            _condition_value(target, on, 0.0),
+            realization,
+            context,
+        ),
+        label=label,
+    )
+
+
 class _RiemannianNormalCallable(StrictModule):
     boundary: RiemannianHypersurface
 
@@ -383,6 +434,7 @@ __all__ = [
     "CoefficientField",
     "FokkerPlanck",
     "Kolmogorov",
+    "StochasticBoundaryResidual",
     "ProbabilityFlux",
     "WeightedFokkerPlanck",
     "WeightedKolmogorov",

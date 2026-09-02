@@ -265,18 +265,23 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             or coupling_.discretization_id != discretization.prepared_id
         ):
             raise ValueError("Coupling belongs to a different prepared geometry.")
-        if (
-            coupling_.motion is not None
-            and type(reconstruction) is not PiecewiseConstantReconstruction
-        ):
-            raise ValueError(
-                "Moving unstructured finite-volume coupling requires exact "
-                "PiecewiseConstantReconstruction because prepared high-order "
-                "operators bind static geometry "
-                f"(coupling={coupling_.prepared_id}, "
-                f"method={method.method_id}, "
-                f"reconstruction={type(reconstruction).__name__})."
-            )
+        if coupling_.motion is not None:
+            moving_polynomial = isinstance(
+                reconstruction, PreparedCellPolynomialReconstruction
+            ) and reconstruction.basis.degree in (1, 2)
+            moving_weno = isinstance(
+                reconstruction, PreparedUnstructuredWENOZReconstruction
+            ) and reconstruction.optimal.basis.degree in (1, 2)
+            if (
+                type(reconstruction) is not PiecewiseConstantReconstruction
+                and not moving_polynomial
+                and not moving_weno
+            ):
+                raise ValueError(
+                    "Moving unstructured finite-volume reconstruction requires "
+                    "piecewise constant or stage-refreshable degree-one WLSQ "
+                    f"(coupling={coupling_.prepared_id}, method={method.method_id})."
+                )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
         source_identifier = None if source_id is None else str(source_id)
@@ -701,6 +706,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         safe_state = jnp.where(active_mask[:, None], state, safe_seed[None, :])
         reconstruction_state = self.precision.reconstruction(safe_state)
         coefficients: Array | None = None
+        stage_lengths: Array | None = None
         outputs: list[tuple[Array, Array, Array]] = []
         for block_index, geometry_block in enumerate(metrics.face_blocks):
             layout = geometry_block.layout
@@ -722,34 +728,79 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 )
             elif isinstance(reconstruction, PreparedCellPolynomialReconstruction):
                 if coefficients is None:
-                    coefficients = reconstruction.coefficients(reconstruction_state)
-                left = reconstruction.evaluate_coefficients(
-                    reconstruction_state,
-                    coefficients,
-                    owner,
-                    points,
-                )
-                right = reconstruction.evaluate_coefficients(
-                    reconstruction_state,
-                    coefficients,
-                    safe_neighbour,
-                    points,
-                )
+                    if self.coupling.motion is None:
+                        coefficients = reconstruction.coefficients(reconstruction_state)
+                    else:
+                        coefficients, stage_lengths = reconstruction.stage_coefficients(
+                            reconstruction_state, metrics
+                        )
+                if stage_lengths is None:
+                    left = reconstruction.evaluate_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        owner,
+                        points,
+                    )
+                    right = reconstruction.evaluate_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        safe_neighbour,
+                        points,
+                    )
+                else:
+                    left = reconstruction.evaluate_stage_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        stage_lengths,
+                        metrics,
+                        owner,
+                        points,
+                    )
+                    right = reconstruction.evaluate_stage_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        stage_lengths,
+                        metrics,
+                        safe_neighbour,
+                        points,
+                    )
             elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
                 if coefficients is None:
                     coefficients = reconstruction.coefficients(reconstruction_state)
-                left = reconstruction.optimal.evaluate_coefficients(
-                    reconstruction_state,
-                    coefficients,
-                    owner,
-                    points,
-                )
-                right = reconstruction.optimal.evaluate_coefficients(
-                    reconstruction_state,
-                    coefficients,
-                    safe_neighbour,
-                    points,
-                )
+                    if self.coupling.motion is not None:
+                        _, stage_lengths = reconstruction.optimal.stage_coefficients(
+                            reconstruction_state, metrics
+                        )
+                if stage_lengths is None:
+                    left = reconstruction.optimal.evaluate_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        owner,
+                        points,
+                    )
+                    right = reconstruction.optimal.evaluate_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        safe_neighbour,
+                        points,
+                    )
+                else:
+                    left = reconstruction.optimal.evaluate_stage_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        stage_lengths,
+                        metrics,
+                        owner,
+                        points,
+                    )
+                    right = reconstruction.optimal.evaluate_stage_coefficients(
+                        reconstruction_state,
+                        coefficients,
+                        stage_lengths,
+                        metrics,
+                        safe_neighbour,
+                        points,
+                    )
                 left = reconstruction._limit(reconstruction_state, left, owner)
                 right = reconstruction._limit(
                     reconstruction_state,
@@ -974,33 +1025,75 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 ),
             )
         elif isinstance(reconstruction, PreparedCellPolynomialReconstruction):
-            coefficients = reconstruction.coefficients(reconstructed)
-            route_donor_trace = reconstruction.evaluate_coefficients(
-                reconstructed,
-                coefficients,
-                route_donor_cells,
-                route_points,
-            )
-            receptor_interior = reconstruction.evaluate_coefficients(
-                reconstructed,
-                coefficients,
-                cells,
-                points_array,
-            )
+            if self.coupling.motion is None:
+                coefficients = reconstruction.coefficients(reconstructed)
+                route_donor_trace = reconstruction.evaluate_coefficients(
+                    reconstructed,
+                    coefficients,
+                    route_donor_cells,
+                    route_points,
+                )
+                receptor_interior = reconstruction.evaluate_coefficients(
+                    reconstructed,
+                    coefficients,
+                    cells,
+                    points_array,
+                )
+            else:
+                coefficients, stage_lengths = reconstruction.stage_coefficients(
+                    reconstructed, metrics
+                )
+                route_donor_trace = reconstruction.evaluate_stage_coefficients(
+                    reconstructed,
+                    coefficients,
+                    stage_lengths,
+                    metrics,
+                    route_donor_cells,
+                    route_points,
+                )
+                receptor_interior = reconstruction.evaluate_stage_coefficients(
+                    reconstructed,
+                    coefficients,
+                    stage_lengths,
+                    metrics,
+                    cells,
+                    points_array,
+                )
         elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
             coefficients = reconstruction.coefficients(reconstructed)
-            route_donor_trace = reconstruction.optimal.evaluate_coefficients(
-                reconstructed,
-                coefficients,
-                route_donor_cells,
-                route_points,
-            )
-            receptor_interior = reconstruction.optimal.evaluate_coefficients(
-                reconstructed,
-                coefficients,
-                cells,
-                points_array,
-            )
+            if self.coupling.motion is None:
+                route_donor_trace = reconstruction.optimal.evaluate_coefficients(
+                    reconstructed,
+                    coefficients,
+                    route_donor_cells,
+                    route_points,
+                )
+                receptor_interior = reconstruction.optimal.evaluate_coefficients(
+                    reconstructed,
+                    coefficients,
+                    cells,
+                    points_array,
+                )
+            else:
+                _, stage_lengths = reconstruction.optimal.stage_coefficients(
+                    reconstructed, metrics
+                )
+                route_donor_trace = reconstruction.optimal.evaluate_stage_coefficients(
+                    reconstructed,
+                    coefficients,
+                    stage_lengths,
+                    metrics,
+                    route_donor_cells,
+                    route_points,
+                )
+                receptor_interior = reconstruction.optimal.evaluate_stage_coefficients(
+                    reconstructed,
+                    coefficients,
+                    stage_lengths,
+                    metrics,
+                    cells,
+                    points_array,
+                )
             route_donor_trace = reconstruction._limit(
                 reconstructed,
                 route_donor_trace,

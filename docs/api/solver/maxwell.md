@@ -90,6 +90,26 @@ Phydrax provides complementary Maxwell substrates.
 
 ::: phydrax.solver.maxwell.solve_compatible_maxwell_case_batch
 
+## Reduced-dimensional compatible Maxwell
+
+::: phydrax.solver.CompatibleMaxwell1DPlan
+
+---
+
+::: phydrax.solver.CompatibleMaxwell1DState
+
+---
+
+::: phydrax.solver.CompatibleMaxwell2DPlan
+
+---
+
+::: phydrax.solver.CompatibleMaxwell2DState
+
+---
+
+::: phydrax.solver.PreparedReducedMaxwellCPML
+
 ## Fourier-modal lifecycle
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalMaxwellProblem
@@ -121,8 +141,18 @@ Phydrax provides complementary Maxwell substrates.
 ::: phydrax.solver.maxwell.fourier_modal.FrequencyMaxwellMaterial
 
 ::: phydrax.solver.maxwell.fourier_modal.HomogeneousMaxwellPort
+::: phydrax.solver.maxwell.fourier_modal.PeriodicMaxwellPort
+
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalLayer
+::: phydrax.solver.maxwell.fourier_modal.ContinuousFourierModalLayer
+
+::: phydrax.solver.maxwell.fourier_modal.ContinuousZIntegrationPolicy
+
+::: phydrax.solver.maxwell.fourier_modal.LateralTransformationOpticsPMLPlan
+
+::: phydrax.solver.maxwell.fourier_modal.transform_fourier_modal_material
+
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalSourcePlane
 
@@ -157,10 +187,20 @@ Phydrax provides complementary Maxwell substrates.
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalExcitation
 
 ::: phydrax.solver.maxwell.fourier_modal.plane_wave_excitation
+::: phydrax.solver.maxwell.fourier_modal.port_mode_excitation
+
 
 ::: phydrax.solver.maxwell.fourier_modal.fields_in_layer
 
 ::: phydrax.solver.maxwell.fourier_modal.diffraction_order_far_field
+::: phydrax.solver.maxwell.fourier_modal.FiniteApertureFarFieldPlan
+
+::: phydrax.solver.maxwell.fourier_modal.finite_aperture_far_field
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalHarmonicAdaptationPolicy
+
+::: phydrax.solver.maxwell.fourier_modal.solve_adaptive_fourier_modal_case
+
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalSolveResult
 

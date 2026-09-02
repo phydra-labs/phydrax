@@ -110,6 +110,11 @@ def _case(case: str):
         ),
     )
     started = time.perf_counter()
+    epoch_mesh = phx.discretization.CellMesh.from_triangles(
+        region.vertices,
+        region.faces,
+    )
+    epoch = phx.operators.BoundaryMeshEpoch(epoch_mesh)
     prepared = phx.operators.prepare_laplace_single_layer_dp0_3d(region, policy=policy)
     preparation_seconds = time.perf_counter() - started
 
@@ -121,10 +126,13 @@ def _case(case: str):
     dense_error = float(jnp.max(jnp.abs(action - prepared.dense_oracle.matrix @ vector)))
 
     started = time.perf_counter()
-    result = phx.solver.solve_laplace_capacitance_3d(
+    capacitance_plan = phx.solver.LaplaceCapacitancePlan3D(
+        epoch,
         prepared,
         _selections(prepared, case),
     )
+    prepared_capacitance = capacitance_plan.prepare()
+    result = prepared_capacitance.solve()
     jax.block_until_ready(result.capacitance)
     solve_seconds = time.perf_counter() - started
     statuses = [int(linear.status) for linear in result.linear_results]
@@ -189,6 +197,11 @@ def _case(case: str):
         "relative_residuals": residuals,
         "capacitance": np.asarray(result.capacitance).tolist(),
         "reciprocity_defect": float(result.capacitance_reciprocity_defect),
+        "capacitance_plan_id": capacitance_plan.plan_id,
+        "capacitance_prepared_id": prepared_capacitance.prepared_id,
+        "capacitance_epoch_id": result.epoch_id,
+        "sensitivity_evidence_id": result.sensitivity.evidence_id,
+        "fixed_epoch_sensitivity": result.sensitivity.fixed_epoch,
         "sphere_relative_capacitance_error": sphere_relative_error,
         "sphere_error_limit": (
             None if sphere_faces is None else _SPHERE_ERROR_LIMITS[sphere_faces]

@@ -124,6 +124,29 @@ linear solves are differentiable while topology and triangulation remain fixed.
 Self-intersection, triangle inversion, loss of the star witness, rank loss, and
 boundary selection are validity or discrete derivative boundaries.
 
+## Extended bounded envelope
+
+Polynomial degree is any positive static value that fits
+`VirtualElementResourceBudget`; callable scalar/tensor diffusion and mass
+coefficients are evaluated at prepared cubature rather than replaced by cell
+averages. `ConformingHdiv`, `ConformingHcurl`, and `DiscontinuousL2`
+specifications make mixed-space intent explicit.
+
+`CellMesh.from_polyhedra` owns oriented face incidence through root
+`PolyhedralConnectivity`. `prepare_polyhedral_h1_virtual_element_3d` is the
+first consumer: it prepares a matrix-free degree-one H1 consistency plus
+projector-kernel stabilization action on star-visible, outward-oriented
+polyhedra, retaining volume, rank-margin, and polynomial-reproduction evidence.
+`prepare_polyhedral_polynomial_vem_3d` accepts the exact higher-degree
+face/cell-moment projector and consistency/stabilization tensors produced by
+the root-topology cubature route, and rejects rank loss or failed P_k
+reproduction. `VirtualElementProductPlan` binds mixed H1/L2, H(div)/L2, or
+H(curl)/L2 block actions with explicit inf-sup and commuting evidence.
+`CurvedVirtualElementEdge` retains mapped chart points, tangents, arc weights,
+and the minimum Jacobian. `adapt_virtual_element_p` and
+`adapt_virtual_element_hp` create immutable degree/topology epochs with
+constant-preserving transfers; marking and topology remain nondifferentiable.
+
 ## References
 
 - L. Beirao da Veiga et al., *Basic Principles of Virtual Element Methods*, 2013.

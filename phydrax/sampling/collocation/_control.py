@@ -28,7 +28,10 @@ from ._adaptive import (
     CollocationPolicy,
     CollocationPopulation,
 )
-from ._attention import ResidualAttentionCollocation
+from ._attention import (
+    ResidualAttentionCollocation,
+    ResidualAttentionPopulation,
+)
 from ._coreset import CoresetCollocationPolicy
 from ._separable import HierarchicalAxisPolicy, SeparableCollocationPolicy
 
@@ -362,13 +365,6 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
             )
             schedule = RefreshSchedule(base_policy.refresh_every, start_at=start_at)
         resolved_anchors = CoverageAnchors(0.0) if anchors is None else anchors
-        if (
-            isinstance(base_policy, ResidualAttentionCollocation)
-            and float(resolved_anchors.fraction) > 0.0
-        ):
-            raise ValueError(
-                "Residual attention keeps fixed support and does not accept coverage anchors."
-            )
         self.base_policy = base_policy
         self.schedule = schedule
         self.monitor = ResidualMonitor() if monitor is None else monitor
@@ -776,8 +772,13 @@ def _within_budget(
 
 
 def _validate_anchor_population(population: Any, /) -> None:
-    if not isinstance(population, CollocationPopulation):
-        raise TypeError("Coverage anchors require a paired CollocationPopulation.")
+    if not isinstance(
+        population,
+        (CollocationPopulation, ResidualAttentionPopulation),
+    ):
+        raise TypeError(
+            "Coverage anchors require a paired or residual-attention population."
+        )
 
 
 def _inject_coverage_anchors(
@@ -788,13 +789,58 @@ def _inject_coverage_anchors(
     fraction: float,
 ) -> Any:
     _validate_anchor_population(population)
-    if not isinstance(reference, CollocationPopulation):
-        raise TypeError("Paired anchor state must use matching populations.")
+    if type(reference) is not type(population):
+        raise TypeError("Coverage anchor state must use matching population types.")
+    if isinstance(population, ResidualAttentionPopulation):
+        return _inject_residual_attention_anchors(
+            population,
+            reference,
+            fraction=fraction,
+        )
     return _inject_collocation_anchors(
         population,
         reference,
         fraction=fraction,
     )
+
+
+def _inject_residual_attention_anchors(
+    population: ResidualAttentionPopulation,
+    reference: ResidualAttentionPopulation,
+    /,
+    *,
+    fraction: float,
+) -> ResidualAttentionPopulation:
+    axis, size = _single_axis_and_size(population.batch)
+    reference_axis, reference_size = _single_axis_and_size(reference.batch)
+    if axis != reference_axis or size != reference_size:
+        raise ValueError(
+            "Coverage anchor and residual-attention populations must have equal shape."
+        )
+    count = min(size - 1, max(1, int(round(size * fraction))))
+    indices = jnp.arange(count)
+    anchored_batch = _set_batch_rows(
+        population.batch,
+        indices,
+        _take_first_rows(reference.batch, count),
+    )
+    anchored = eqx.tree_at(lambda state: state.batch, population, anchored_batch)
+    anchored = eqx.tree_at(
+        lambda state: (
+            state.raw_score,
+            state.point_id,
+            state.age,
+            state.anchor_mask,
+        ),
+        anchored,
+        (
+            population.raw_score.at[:count].set(reference.raw_score[:count]),
+            population.point_id.at[:count].set(reference.point_id[:count]),
+            population.age.at[:count].set(reference.age[:count] + 1),
+            population.anchor_mask.at[:count].set(True),
+        ),
+    )
+    return anchored
 
 
 def _inject_collocation_anchors(

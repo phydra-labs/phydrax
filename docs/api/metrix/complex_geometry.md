@@ -93,3 +93,20 @@ a parallel form representation.
 explicitly declared `(n, 0)` complex volume form. It does not claim compactness,
 completeness, global canonical-bundle trivialization, or global Calabi–Yau
 topology.
+
+## Divisors, operator-specific analyticity, and gauge actions
+
+`CartierDivisor` stores finite-chart defining equations, multiplicities, and
+explicit nowhere-zero overlap units. It checks transition/cocycle residuals,
+transverse intersections, and cell clearance; sampled clearance never becomes a
+global divisor certificate. `MeromorphicSection` evaluates only away from its
+declared denominator divisor.
+
+`AlgebraAnalyticNetwork` always names its algebra product, multiplication side,
+full bracket plan, and `AnalyticityOperator`: complex holomorphic, slice regular,
+left/right Fueter, left/right monogenic, or a supplied certified linear
+operator. In particular, octonion composition is never generically called
+holomorphic. `GaugeRenormalizationPlan` separately declares the gauge action,
+inverse, affected state, and optimizer-state transport, and reports
+function/operator/state invariance residuals. Kähler additive gauge remains a
+different contract.

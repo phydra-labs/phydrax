@@ -7,7 +7,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ....discretization import ParticleCell
+from ....discretization import PeriodicCell
 from ....geometry import MeshRegion
 from ._periodic_core3d import (
     _ewald_green_host,
@@ -26,7 +26,7 @@ PeriodicLaplaceNeutralityError = PeriodicScalarCompatibilityError
 
 def periodic_laplace_green_3d(
     displacement: ArrayLike,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     bloch_wavevector: ArrayLike | None = None,
@@ -60,7 +60,7 @@ def periodic_laplace_green_3d(
 
 def prepare_periodic_laplace_single_layer_dp0_3d(
     region: MeshRegion,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     certified_fractional_clearance: float,

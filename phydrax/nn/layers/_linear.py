@@ -21,7 +21,12 @@ from .._utils import (
     _identity,
     SizeLike,
 )
-from ..parameters import AbstractParameterTransform, LowRankUpdate
+from ..parameters import (
+    AbstractParameterTransform,
+    LowRankUpdate,
+    SkewSymmetricTransform,
+    SymmetricTransform,
+)
 
 
 _key = DOC_KEY0
@@ -178,11 +183,22 @@ class Linear(_AbstractBaseModel):
                 x_flat = x_arr.reshape(leading_shape + (1,))
 
         if isinstance(self.weight, LowRankUpdate):
-            if self.weight_transform is not None:
-                raise ValueError(
-                    "Low-rank weights are incompatible with weight transforms."
+            if self.weight_transform is None:
+                x_flat = self.weight.apply(x_flat)
+            elif isinstance(self.weight_transform, SymmetricTransform):
+                x_flat = self.weight.apply_linear_transform(
+                    x_flat,
+                    mode="symmetric",
                 )
-            x_flat = self.weight.apply(x_flat)
+            elif isinstance(self.weight_transform, SkewSymmetricTransform):
+                x_flat = self.weight.apply_linear_transform(
+                    x_flat,
+                    mode="skew",
+                )
+            else:
+                raise ValueError(
+                    "This low-rank site does not support its weight transform."
+                )
         else:
             # Map raw weights into their physical parameter space when requested.
             w = (

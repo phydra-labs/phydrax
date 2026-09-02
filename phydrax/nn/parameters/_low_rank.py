@@ -57,6 +57,22 @@ class LowRankSpec:
         object.__setattr__(self, "stddev", stddev)
 
 
+LowRankSiteHandler: TypeAlias = Literal["identity", "symmetric", "skew"]
+
+
+@dataclass(frozen=True, slots=True)
+class LowRankAdaptationPlan:
+    """Host-prepared low-rank sites, handlers, and semantic alias groups."""
+
+    specs: tuple[tuple[str, LowRankSpec], ...]
+    site_handlers: tuple[tuple[str, LowRankSiteHandler], ...]
+    alias_groups: tuple[tuple[str, ...], ...]
+
+    @property
+    def paths(self) -> tuple[str, ...]:
+        return tuple(path for path, _ in self.specs)
+
+
 class LowRankUpdate(StrictModule):
     """Dense base weight plus one trainable low-rank update.
 
@@ -84,8 +100,8 @@ class LowRankUpdate(StrictModule):
         key: Key[Array, ""] = DOC_KEY0,
     ):
         value = jnp.asarray(base)
-        if not eqx.is_inexact_array(value) or jnp.iscomplexobj(value):
-            raise TypeError("Low-rank base weights must be real inexact JAX arrays.")
+        if not eqx.is_inexact_array(value):
+            raise TypeError("Low-rank base weights must be inexact JAX arrays.")
         if value.ndim != 2:
             raise ValueError("Low-rank base weights must be rank-two arrays.")
         spec = LowRankSpec(
@@ -101,9 +117,16 @@ class LowRankUpdate(StrictModule):
             )
         self.base = value
         self.left = jnp.zeros((output_size, spec.rank), dtype=value.dtype)
-        self.right = (
-            jr.normal(key, (spec.rank, input_size), dtype=value.dtype) * spec.stddev
-        )
+        if jnp.iscomplexobj(value):
+            real_dtype = value.real.dtype
+            normal = jr.normal(key, (2, spec.rank, input_size), dtype=real_dtype) * (
+                spec.stddev / sqrt(2.0)
+            )
+            self.right = (normal[0] + 1j * normal[1]).astype(value.dtype)
+        else:
+            self.right = (
+                jr.normal(key, (spec.rank, input_size), dtype=value.dtype) * spec.stddev
+            )
         assert spec.alpha is not None
         self.alpha = spec.alpha
         self.scaling = spec.scaling
@@ -123,8 +146,8 @@ class LowRankUpdate(StrictModule):
         base_ = jnp.asarray(base)
         left_ = jnp.asarray(left)
         right_ = jnp.asarray(right)
-        if not eqx.is_inexact_array(base_) or jnp.iscomplexobj(base_):
-            raise TypeError("Low-rank base weights must be real inexact JAX arrays.")
+        if not eqx.is_inexact_array(base_):
+            raise TypeError("Low-rank base weights must be inexact JAX arrays.")
         if base_.ndim != 2 or left_.ndim != 2 or right_.ndim != 2:
             raise ValueError("Low-rank bases and factors must be rank-two arrays.")
         if left_.shape[0] != base_.shape[0] or right_.shape[1] != base_.shape[1]:
@@ -186,6 +209,40 @@ class LowRankUpdate(StrictModule):
         update = contract("or,...r->...o", self.left, latent)
         return (base_output + self.scale * update).astype(base_output.dtype)
 
+    def apply_linear_transform(
+        self,
+        value: Array,
+        /,
+        *,
+        mode: Literal["symmetric", "skew"],
+    ) -> Array:
+        """Apply a symmetric/skew raw-space update without dense materialization."""
+        if self.shape[0] != self.shape[1] or jnp.iscomplexobj(self.base):
+            raise ValueError(
+                "Symmetric/skew low-rank updates require square real weights."
+            )
+        argument = jnp.asarray(value)
+        sign = 1.0 if mode == "symmetric" else -1.0
+        base_effective = 0.5 * (self.base + sign * self.base.T)
+        base_output = contract(
+            "oi,...i->...o",
+            jax.lax.stop_gradient(base_effective),
+            argument,
+        )
+        forward = contract(
+            "or,ri,...i->...o",
+            self.left,
+            self.right,
+            argument,
+        )
+        transpose = contract(
+            "ir,ro,...i->...o",
+            self.left,
+            self.right,
+            argument,
+        )
+        return base_output + 0.5 * self.scale * (forward + sign * transpose)
+
     def materialize(self) -> Array:
         """Return the dense effective weight for diagnostics, export, or deployment."""
         update = contract("or,ri->oi", self.left, self.right)
@@ -205,6 +262,11 @@ class LowRankAdaptationSite:
     scale: float
     base_parameter_count: int
     adapter_parameter_count: int
+    handler: LowRankSiteHandler = "identity"
+    raw_update_space: bool = True
+    materializes_effective_weight: bool = False
+    complex_representation: Literal["real", "native_complex"] = "real"
+    alias_group: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,13 +286,13 @@ class LowRankAdaptationReport:
 class _LinearSite:
     path: str
     layer: Any
+    module_id: int
 
 
 def _linear_sites(tree: PyTree[Any], /) -> tuple[_LinearSite, ...]:
     from ..layers._linear import Linear
 
     sites: list[_LinearSite] = []
-    aliases: dict[int, str] = {}
     leaves = jax.tree_util.tree_flatten_with_path(
         tree,
         is_leaf=lambda value: isinstance(value, Linear),
@@ -240,26 +302,23 @@ def _linear_sites(tree: PyTree[Any], /) -> tuple[_LinearSite, ...]:
             continue
         prefix = jax.tree_util.keystr(path)
         weight_path = f"{prefix}.weight" if prefix else ".weight"
-        previous = aliases.get(id(leaf))
-        if previous is not None:
-            raise ValueError(
-                "Low-rank adaptation does not support aliased Linear modules at "
-                f"{previous!r} and {weight_path!r}."
-            )
-        aliases[id(leaf)] = weight_path
-        sites.append(_LinearSite(weight_path, leaf))
+        sites.append(_LinearSite(weight_path, leaf, id(leaf)))
     return tuple(sites)
 
 
 def _is_adaptable(site: _LinearSite, /) -> bool:
     layer = site.layer
     weight = layer.weight
-    return bool(
-        not isinstance(weight, LowRankUpdate)
-        and layer.weight_transform is None
-        and eqx.is_inexact_array(weight)
-        and not jnp.iscomplexobj(weight)
-        and weight.ndim == 2
+    if isinstance(weight, LowRankUpdate) or not eqx.is_inexact_array(weight):
+        return False
+    if jnp.asarray(weight).ndim != 2:
+        return False
+    if layer.weight_transform is None:
+        return True
+    from ._transforms import SkewSymmetricTransform, SymmetricTransform
+
+    return isinstance(
+        layer.weight_transform, (SymmetricTransform, SkewSymmetricTransform)
     )
 
 
@@ -267,68 +326,173 @@ def _validate_adaptable(site: _LinearSite, /) -> Array:
     layer = site.layer
     if isinstance(layer.weight, LowRankUpdate):
         raise TypeError(f"Linear weight {site.path!r} is already low-rank adapted.")
-    if layer.weight_transform is not None:
-        raise ValueError(f"Linear weight {site.path!r} uses a weight transform.")
     weight = jnp.asarray(layer.weight)
-    if not eqx.is_inexact_array(weight) or jnp.iscomplexobj(weight) or weight.ndim != 2:
-        raise TypeError(
-            f"Linear weight {site.path!r} must be a real inexact rank-two array."
-        )
+    if not eqx.is_inexact_array(weight) or weight.ndim != 2:
+        raise TypeError(f"Linear weight {site.path!r} must be an inexact rank-two array.")
+    if layer.weight_transform is not None:
+        from ._transforms import SkewSymmetricTransform, SymmetricTransform
+
+        if not isinstance(
+            layer.weight_transform,
+            (SymmetricTransform, SkewSymmetricTransform),
+        ):
+            raise ValueError(
+                f"Linear weight {site.path!r} uses an unsupported weight transform."
+            )
+        if jnp.iscomplexobj(weight) or weight.shape[0] != weight.shape[1]:
+            raise ValueError(
+                "Symmetric/skew low-rank sites require square real raw weights."
+            )
     return weight
 
 
 def low_rank_sites(tree: PyTree[Any], /) -> tuple[str, ...]:
-    """Return deterministic paths of native Linear weights eligible for adaptation."""
-    return tuple(site.path for site in _linear_sites(tree) if _is_adaptable(site))
+    """Return deterministic paths, rejecting undeclared incidental aliases."""
+    sites = _linear_sites(tree)
+    identities = [site.module_id for site in sites]
+    if len(set(identities)) != len(identities):
+        raise ValueError(
+            "Low-rank sites contain aliased modules; declare alias_groups during prepare."
+        )
+    return tuple(site.path for site in sites if _is_adaptable(site))
 
 
-def adapt_low_rank(
+def prepare_low_rank_adaptation(
     tree: PyTree[Any],
     specs: Mapping[str, LowRankSpec],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
-) -> tuple[PyTree[Any], LowRankAdaptationReport]:
-    """Adapt exact native Linear weight paths and return immutable accounting."""
-    from ..layers._linear import Linear
+    alias_groups: tuple[tuple[str, ...], ...] = (),
+) -> LowRankAdaptationPlan:
+    """Validate low-rank surgery and freeze site/alias semantics on the host."""
+    from ._transforms import SkewSymmetricTransform, SymmetricTransform
 
     requested = {str(path): spec for path, spec in specs.items()}
     if not requested:
         raise ValueError("Low-rank adaptation requires at least one weight path.")
     if any(not isinstance(spec, LowRankSpec) for spec in requested.values()):
         raise TypeError("Every low-rank adaptation value must be a LowRankSpec.")
+    sites_by_path = {site.path: site for site in _linear_sites(tree)}
+    missing = tuple(path for path in requested if path not in sites_by_path)
+    if missing:
+        raise ValueError(f"Unknown native Linear weight paths: {missing!r}.")
+    handlers: list[tuple[str, LowRankSiteHandler]] = []
+    weights_by_path: dict[str, Array] = {}
+    for path, spec in requested.items():
+        site = sites_by_path[path]
+        weight = _validate_adaptable(site)
+        if spec.rank > min(weight.shape):
+            raise ValueError(
+                f"Low-rank rank {spec.rank} exceeds weight shape {weight.shape} "
+                f"at {path!r}."
+            )
+        transform = site.layer.weight_transform
+        weights_by_path[path] = weight
+        handler: LowRankSiteHandler
+        if transform is None:
+            handler = "identity"
+        elif isinstance(transform, SymmetricTransform):
+            handler = "symmetric"
+        elif isinstance(transform, SkewSymmetricTransform):
+            handler = "skew"
+        else:
+            raise ValueError(f"Unsupported low-rank site transform at {path!r}.")
+        handlers.append((path, handler))
+    handler_map = dict(handlers)
+    normalized_groups: list[tuple[str, ...]] = []
+    used: set[str] = set()
+    duplicate_paths = {
+        site.path
+        for site in sites_by_path.values()
+        if sum(other.module_id == site.module_id for other in sites_by_path.values()) > 1
+    }
+    declared_alias_paths = {path for declared in alias_groups for path in declared}
+    if duplicate_paths != declared_alias_paths:
+        raise ValueError(
+            "Incidental module aliases must be declared exactly in alias_groups."
+        )
+    for group in alias_groups:
+        paths = tuple(str(path) for path in group)
+        if len(paths) < 2 or len(set(paths)) != len(paths):
+            raise ValueError("Alias groups require at least two distinct paths.")
+        if any(path not in requested for path in paths):
+            raise ValueError("Every alias path must be an adapted site.")
+        if any(path in used for path in paths):
+            raise ValueError("Low-rank alias groups must be disjoint.")
+        first = requested[paths[0]]
+        if any(requested[path] != first for path in paths[1:]):
+            raise ValueError("Aliased low-rank sites must use identical specs.")
+        if any(handler_map[path] != handler_map[paths[0]] for path in paths[1:]):
+            raise ValueError("Aliased low-rank sites must use identical handlers.")
+        canonical_weight = weights_by_path[paths[0]]
+        if any(
+            not bool(jnp.array_equal(weights_by_path[path], canonical_weight))
+            for path in paths[1:]
+        ):
+            raise ValueError("Aliased low-rank sites must have identical base content.")
+        used.update(paths)
+        normalized_groups.append(paths)
+    return LowRankAdaptationPlan(
+        specs=tuple(requested.items()),
+        site_handlers=tuple(handlers),
+        alias_groups=tuple(normalized_groups),
+    )
+
+
+def adapt_low_rank(
+    tree: PyTree[Any],
+    plan: LowRankAdaptationPlan | Mapping[str, LowRankSpec],
+    /,
+    *,
+    key: Key[Array, ""] = DOC_KEY0,
+) -> tuple[PyTree[Any], LowRankAdaptationReport]:
+    """Apply a prepared adaptation plan and return immutable accounting."""
+    from ..layers._linear import Linear
+
+    prepared = (
+        prepare_low_rank_adaptation(tree, plan) if isinstance(plan, Mapping) else plan
+    )
+    if not isinstance(prepared, LowRankAdaptationPlan):
+        raise TypeError("plan must be a LowRankAdaptationPlan.")
+    requested = dict(prepared.specs)
+    handlers = dict(prepared.site_handlers)
     sites = _linear_sites(tree)
     sites_by_path = {site.path: site for site in sites}
     missing = tuple(path for path in requested if path not in sites_by_path)
     if missing:
-        raise ValueError(f"Unknown native Linear weight paths: {missing!r}.")
-
+        raise ValueError(
+            f"Prepared low-rank plan does not match this model tree: missing={missing!r}."
+        )
     ordered = tuple(site for site in sites if site.path in requested)
-    weights: dict[str, Array] = {}
-    for site in ordered:
-        weight = _validate_adaptable(site)
-        spec = requested[site.path]
-        if spec.rank > min(weight.shape):
-            raise ValueError(
-                f"Low-rank rank {spec.rank} exceeds weight shape {weight.shape} "
-                f"at {site.path!r}."
-            )
-        weights[site.path] = weight
+    weights = {site.path: _validate_adaptable(site) for site in ordered}
 
-    keys = jr.split(key, len(ordered))
-    replacements: dict[str, LowRankUpdate] = {}
-    records: list[LowRankAdaptationSite] = []
-    for site, site_key in zip(ordered, keys, strict=True):
-        spec = requested[site.path]
-        weight = weights[site.path]
-        update = LowRankUpdate(
-            weight,
+    alias_for: dict[str, tuple[str, ...]] = {}
+    canonical_for: dict[str, str] = {}
+    for group in prepared.alias_groups:
+        for path in group:
+            alias_for[path] = group
+            canonical_for[path] = group[0]
+    canonical_paths = tuple(
+        site.path
+        for site in ordered
+        if canonical_for.get(site.path, site.path) == site.path
+    )
+    canonical_updates: dict[str, LowRankUpdate] = {}
+    for index, path in enumerate(canonical_paths):
+        spec = requested[path]
+        canonical_updates[path] = LowRankUpdate(
+            weights[path],
             rank=spec.rank,
             alpha=spec.alpha,
             scaling=spec.scaling,
             stddev=spec.stddev,
-            key=site_key,
+            key=jr.fold_in(key, index),
         )
+    replacements: dict[str, LowRankUpdate] = {}
+    records: list[LowRankAdaptationSite] = []
+    for site in ordered:
+        canonical = canonical_for.get(site.path, site.path)
+        update = canonical_updates[canonical]
         replacements[site.path] = update
         records.append(
             LowRankAdaptationSite(
@@ -340,7 +504,14 @@ def adapt_low_rank(
                 scaling=update.scaling,
                 scale=update.scale,
                 base_parameter_count=update.base_parameter_count,
-                adapter_parameter_count=update.adapter_parameter_count,
+                adapter_parameter_count=(
+                    update.adapter_parameter_count if canonical == site.path else 0
+                ),
+                handler=handlers[site.path],
+                complex_representation=(
+                    "native_complex" if jnp.iscomplexobj(update.base) else "real"
+                ),
+                alias_group=alias_for.get(site.path, ()),
             )
         )
 
@@ -362,7 +533,11 @@ def adapt_low_rank(
     records_ = tuple(records)
     return adapted, LowRankAdaptationReport(
         sites=records_,
-        base_parameter_count=sum(site.base_parameter_count for site in records_),
+        base_parameter_count=sum(
+            site.base_parameter_count
+            for site in records_
+            if not site.alias_group or site.path == site.alias_group[0]
+        ),
         adapter_parameter_count=sum(site.adapter_parameter_count for site in records_),
     )
 
@@ -396,12 +571,30 @@ def contains_low_rank_updates(tree: PyTree[Any], /) -> bool:
     return bool(_low_rank_nodes(tree))
 
 
-def low_rank_parameter_subspace(tree: PyTree[Any], /) -> ParameterSubspace:
-    """Select exactly the trainable factors of every low-rank update in a PyTree."""
+def low_rank_parameter_subspace(
+    tree: PyTree[Any],
+    /,
+    *,
+    plan: LowRankAdaptationPlan | None = None,
+) -> ParameterSubspace:
+    """Select canonical factors and reconstruct every declared semantic alias."""
     paths = _low_rank_factor_paths(tree)
     if not paths:
         raise ValueError("The supplied PyTree contains no low-rank updates.")
-    return ParameterSubspace.from_leaf_paths(tree, paths)
+    alias_groups: tuple[tuple[str, ...], ...] = ()
+    if plan is not None:
+        if not isinstance(plan, LowRankAdaptationPlan):
+            raise TypeError("plan must be LowRankAdaptationPlan or None.")
+        groups = []
+        for weights in plan.alias_groups:
+            groups.append(tuple(f"{path}.left" for path in weights))
+            groups.append(tuple(f"{path}.right" for path in weights))
+        alias_groups = tuple(groups)
+    return ParameterSubspace.from_leaf_paths(
+        tree,
+        paths,
+        alias_groups=alias_groups,
+    )
 
 
 def validate_low_rank_subspace(
@@ -413,10 +606,12 @@ def validate_low_rank_subspace(
     expected = _low_rank_factor_paths(tree)
     if not expected:
         return
-    if subspace.leaf_paths != expected:
+    alias_paths = frozenset(path for group in subspace.alias_groups for path in group[1:])
+    canonical_expected = tuple(path for path in expected if path not in alias_paths)
+    if subspace.leaf_paths != canonical_expected:
         raise ValueError(
-            "Low-rank training requires a ParameterSubspace selecting exactly every "
-            "left and right adapter factor."
+            "Low-rank training requires exactly canonical left/right factors and "
+            "declared semantic alias reconstruction."
         )
 
 
@@ -439,14 +634,17 @@ def _strip_low_rank(tree: PyTree[Any], /) -> PyTree[Any]:
 
 __all__ = [
     "LowRankAdaptationReport",
+    "LowRankAdaptationPlan",
     "LowRankAdaptationSite",
     "LowRankSpec",
     "LowRankScaling",
+    "LowRankSiteHandler",
     "LowRankUpdate",
     "adapt_low_rank",
     "contains_low_rank_updates",
     "low_rank_parameter_subspace",
     "low_rank_sites",
+    "prepare_low_rank_adaptation",
     "merge_low_rank",
     "validate_low_rank_subspace",
 ]

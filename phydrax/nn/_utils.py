@@ -5,6 +5,8 @@
 from collections.abc import Sequence
 from typing import Any, Literal, TypeAlias
 
+from .._model import register_artifact_value
+
 
 SizeLike: TypeAlias = int | Sequence[int] | Literal["scalar"]
 
@@ -16,6 +18,9 @@ def _identity(*args: Any, **kwargs: Any) -> Any:
     if len(args) == 1:
         return args[0]
     return args
+
+
+register_artifact_value("phydrax.nn.utility:identity@1", _identity)
 
 
 def _tuple(item: Any, /) -> tuple[Any, ...] | None:

@@ -72,19 +72,14 @@ def test_native_ball_rule_preserves_volume_and_second_moment():
     assert x_second.value.data == pytest.approx(4.0 * math.pi / 15.0, rel=2e-13)
 
 
-def test_translation_and_uniform_scaling_preserve_native_cubature():
+def test_translation_and_nonuniform_scaling_preserve_native_cubature():
     source = phx.geometry.Circle((0.0, 0.0), 1.0).scaled(2.0).translated((3.0, -4.0))
     _, area = _integrate_geometry(source, "disk", 4)
     assert area.value.data == pytest.approx(4.0 * math.pi, rel=2e-13)
 
-    nonuniform = phx.domain.GeometryDomain(
-        phx.geometry.Circle((0.0, 0.0), 1.0).scaled((2.0, 1.0)).compile()
-    )
-    with pytest.raises(NotImplementedError, match="cubature"):
-        phx.integration.materialize(
-            phx.integration.over(nonuniform.component()),
-            phx.integration.FixedQuadraturePlan(phx.integration.CubatureRule("disk", 4)),
-        )
+    ellipse = phx.geometry.Circle((0.0, 0.0), 1.0).scaled((2.0, 1.0))
+    _, ellipse_area = _integrate_geometry(ellipse, "disk", 4)
+    assert ellipse_area.value.data == pytest.approx(2.0 * math.pi, rel=2e-13)
 
 
 def _tetrahedron_region():

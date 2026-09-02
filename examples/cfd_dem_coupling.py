@@ -35,9 +35,22 @@ compiled = phx.equations.compile_discrete_element_problem(
     neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(0),
 )
 state = compiled.initialize_state(0.0, jnp.asarray([[0.0, 0.0]]), jnp.zeros((1, 2)))
-transfer = phx.discretization.ConservativeParticleGridTransferPlan(
-    jnp.asarray([[0.0, 0.0]]), jnp.asarray([1.0]), 0.5, 1
-).prepare(particles)
+mesh = phx.discretization.CellMesh(
+    jnp.asarray(((-0.5, -0.5), (0.5, -0.5), (0.0, 1.0))),
+    (phx.discretization.CellBlock("cell", "triangle", jnp.asarray(((0, 1, 2),))),),
+)
+measure = phx.discretization.DiscreteMeasure(
+    "cell_volume",
+    mesh.support.support_id,
+    mesh.topology.entities(2).entity_set_id,
+    jnp.asarray((1.0,)),
+)
+transfer = phx.discretization.MeshCompactKernelSplatAssignment(0.5, 1).prepare(
+    phx.discretization.MeshSplatTarget(mesh, entity_dimension=2, measure=measure),
+    state.kinematics.position,
+    state.body_properties.active,
+    particles.particle_ids,
+)
 coupling = phx.equations.UnresolvedCFDEMCouplingPlan(
     compiled.dynamics,
     transfer,

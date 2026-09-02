@@ -41,9 +41,15 @@ scalar/polarized radiative transfer, QNM/ringdown products, detector networks, o
 occultation, and finite-source microlensing extend the concrete observation operators.
 
 Native early-universe products add relic backgrounds, fixed reaction BBN, recombination,
-a fixed-hierarchy Einstein--Boltzmann solver, halo/nonlinear products, CMB lensing,
-light cones, lensing planes, and baryonic feedback. Compact-object EOS/TOV models live
-in `phydrax.applications.compact_objects`, not inside cosmology.
+halo/nonlinear products, CMB lensing, light cones, lensing planes, and baryonic
+feedback. `ScalarEinsteinBoltzmannPlan` now generates its own flat-FLRW synchronous
+scalar evolution for CDM, baryons, photon temperature/polarization, massless relics,
+and metric variables. Its prepared fixed scans emit cold+baryon/total transfer tables
+and unlensed scalar TT/TE/EE products with constraint, tight-coupling overlap,
+hierarchy-tail, line-of-sight, and schedule evidence. The supplied
+`ScalarEvolutionOperatorTable` route remains an explicitly frozen external operator
+product, not a second native equation solver. Compact-object EOS/TOV models live in
+`phydrax.applications.compact_objects`, not inside cosmology.
 
 Every external product requires source, version, checksum, license, frame, epoch, scale,
 coverage, and differentiability provenance. No external data access occurs in JIT,

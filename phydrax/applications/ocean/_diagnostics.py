@@ -160,6 +160,9 @@ class HydrostaticDiagnosticView(StrictModule):
     volume: Array
     tracer_content: dict[str, Array]
     ledger: HydrostaticOceanLedger | None
+    eos_valid: Array
+    eos_finite: Array
+    eos_successful: Array
     successful: Array
     ocean_id: str = eqx.field(static=True)
 
@@ -218,7 +221,10 @@ def hydrostatic_diagnostic_view(
             name: jnp.sum(value) for name, value in physical.tracer_inventory.items()
         },
         ledger=ledger,
-        successful=epoch.valid & jnp.all(jnp.isfinite(view.density)),
+        eos_valid=view.eos_valid,
+        eos_finite=view.eos_finite,
+        eos_successful=view.eos_successful,
+        successful=epoch.valid & view.eos_successful,
         ocean_id=ocean.prepared_id,
     )
 
@@ -241,6 +247,9 @@ def write_hydrostatic_output(
         "kinetic_energy": view.kinetic_energy,
         "free_surface_energy": view.free_surface_energy,
         "volume": view.volume,
+        "eos_valid": view.eos_valid,
+        "eos_finite": view.eos_finite,
+        "eos_successful": view.eos_successful,
         "successful": view.successful,
     }
     for axis, component in enumerate(view.velocity):

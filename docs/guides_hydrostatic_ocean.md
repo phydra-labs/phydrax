@@ -34,9 +34,18 @@ flux, tracer advection, boundaries, freshwater, and accepted ledgers.
 - `partial-z`: fixed z levels intersect static bed and free surface, with small bottom
   cells merged upward.
 
-`LatitudeLongitudeHydrostaticGridPlan` provides a bounded-away-from-poles spherical
-backend with exact sine-difference cell areas, metric edge lengths, periodic longitude,
-and spherical Coriolis. It intentionally excludes both poles and mosaic seams.
+`LatitudeLongitudeHydrostaticGridPlan` remains the one-block bounded spherical C-grid.
+For global or polar work, `polar_cap`, `tripolar`, and
+`equiangular_cubed_sphere` prepare `SphericalHydrostaticMosaicPlan` products backed by
+the canonical `PreparedMultiblockGrid`. Every spherical block exposes a
+`PreparedHydrostaticGrid`; `prepare_ocean` and `prepare_oceans` pass those grids through
+the standard hydrostatic preparation workflow. Prepared topology interfaces,
+`seam_traces`, and `seam_transport_traces` provide executable block-face routes for
+cell fields and hydrostatic face transports, including trace orientation.
+`scatter_seam_flux` applies the equal/opposite integrated-flux convention. Blocks
+retain finite spherical cell areas, directional great-circle metric scales, tangent
+coordinates, Coriolis, and vertical capacity. Atlas topology, seam route, orientation,
+and block shapes remain static.
 
 A metric epoch contains current layer volumes, face apertures, active support, total
 depth, and finite/positivity evidence.
@@ -51,6 +60,17 @@ Vertical volume flux is diagnosed bottom-up from the exact horizontal layer-flux
 divergence. Bottom flux is zero and the top flux equals minus the depth-integrated
 horizontal divergence.
 
+`TEOS10GSW75EOS` implements the named official 75-term specific-volume polynomial for
+already supplied Absolute Salinity, Conservative Temperature, and sea pressure.
+Density, thermal expansion, haline contraction, and the density pressure derivative per
+Pa are JAX-native derivatives of the same polynomial. Funnel violations return
+`valid=False`; hydrostatic views preserve EOS validity, finiteness, and success
+evidence, and a step cannot commit unless both evaluated and accepted-state EOS
+evidence succeeds. Inputs are not clipped and never fall back to
+`NonlinearSeawaterPolynomialEOS`. This is not the complete GSW API and does not perform
+Practical/Absolute Salinity atlas conversion, freezing/ice calculations, or arbitrary
+Gibbs derivatives.
+
 ## Free surface
 
 `LinearImplicitFreeSurfacePlan` solves a matrix-free Helmholtz equation for eta and
@@ -58,9 +78,13 @@ applies the resulting depth-uniform pressure correction to every active layer.
 The operator has an identity mass term and therefore does not use a pressure gauge.
 The result reports continuity residual, CG iterations, finiteness, and success.
 
-`HydrostaticPrimitiveEquationPlan(external_mode="split-explicit")` instead subcycles
-the barotropic eta/transport system, evaluates boundaries each fast step, accumulates a
-time-integrated transport register, and reconciles the accepted layer transports.
+`HydrostaticPrimitiveEquationPlan(external_mode="split-explicit")` uses an explicit
+`ExternalModeSubcyclePolicy`. A fixed policy reproduces a declared count; an
+adaptive-CFL policy computes a masked count inside a fixed `maximum_substeps`
+capacity. The complete schedule, active mask, count, maximum Courant number, and
+capacity status remain in continuation/evidence. Every active fast step evaluates
+boundaries, accumulates the time-integrated transport register, and reconciles accepted
+layer transports. Capacity overflow fails the candidate rather than truncating it.
 
 ## Wetting and drying
 
@@ -69,7 +93,12 @@ every split-explicit substep. A donor cannot export more column volume than avai
 Free surface is never clipped after the update. Newly wet tracer inventory arrives only
 through conservative flux and declared source composition.
 
-The exact wet/dry path is nondifferentiable and is rejected as a smooth-gradient model.
+`WetDryEpochPolicy` and `HydrostaticWetDryEventPlan` make the topology boundary
+explicit. Smooth differentiation is valid while the wet mask is fixed. An isolated,
+transverse wet/dry transition returns reset/saltation evidence; simultaneous or grazing
+changes report `derivative_available=False`. Retained dry tracer/TKE inventory and
+zeroed inactive-face transports are observable. No global smooth shoreline gradient is
+claimed.
 
 ## Open boundaries
 
@@ -123,6 +152,16 @@ All vertical implicit solves use the checked batched tridiagonal line solver. In
 segments are decoupled, zero-flux mixing is conservative, and solve residuals enter the
 accepted evidence.
 
+## Passive trajectories
+
+`lower_ocean_trajectories` lowers padded observations into canonical
+`TrajectoryData`. `PassiveOceanTrajectoryPlan` samples a prepared hydrostatic snapshot
+and advances a fixed-capacity particle batch with explicit executed masks, exits,
+capacity status, and source identity. Diagnosed vertical volume transport is divided
+by horizontal cell area before sampling, so all three sampled components have velocity
+units. Spherical motion converts tangent velocity to longitude/latitude rates; topology
+and interpolation routing remain fixed.
+
 ## Time stepping and accepted ledgers
 
 `HydrostaticIMEXMidpointMethod` evaluates an explicit midpoint state and performs the
@@ -136,7 +175,7 @@ stores:
 - Coriolis work;
 - mixing residual/dissipation;
 - limiter, filter, and reconciliation corrections;
-- split-subcycle continuation.
+- the complete masked split-subcycle schedule and phase;
 
 Rejected steps preserve state, geometry-dependent history, and ledger.
 
@@ -152,14 +191,14 @@ energies, inventories, and ledger evidence without making derived fields authori
 
 ## Deliberate limits
 
-- latitude-longitude excludes poles;
-- tripolar/cubed-sphere seams are not yet implemented;
-- exact TEOS-10/GSW is not claimed;
+- mosaic topology and seam routing are fixed during an execution epoch;
+- the GSW75 surface is the documented SA/CT/sea-pressure subset, not all TEOS-10;
 - KPP/TKE/Redi/GM coefficients are native configurable closures, not calibrated global
   climate defaults;
 - distributed vertical decomposition is unsupported;
-- wet/dry gradients are unsupported;
-- adaptive split-subcycle counts are not used.
+- global smooth wet/dry topology gradients are unsupported;
+- passive trajectories do not choose a new grid or provider inside transformed
+  execution.
 
 ## Minimal construction
 
@@ -186,6 +225,6 @@ ocean = phx.applications.ocean.HydrostaticPrimitiveEquationPlan(
 ).prepare()
 state = ocean.initialize_state(jnp.zeros((3, 3)))
 continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(
-    state
+    ocean, state
 )
 ```

@@ -10,6 +10,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.control import DifferentialControlDynamics, DiscreteControlDynamics
 from phydrax.dynamics import (
     ContinuousSystem,
+    DiscreteStepContext,
     DiscreteSystem,
     InputLayout,
     StateLayout,
@@ -17,7 +18,7 @@ from phydrax.dynamics import (
 
 
 def make_discrete_control_dynamics(
-    transition: Callable[[Array, Array, Array, Any], ArrayLike],
+    transition: Callable[[DiscreteStepContext, Array, Array, Any], ArrayLike],
     /,
     *,
     state_shape: Sequence[int],

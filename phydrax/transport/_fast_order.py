@@ -16,6 +16,7 @@ import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 
@@ -100,6 +101,121 @@ def _pav_decreasing_jvp(primals, tangents):
     )
     projected_dot = tangent_sums[assignments] / block_sizes[assignments]
     return projected, projected_dot
+
+
+def _weighted_pav_decreasing_with_blocks(
+    values: Array, weights: Array, /
+) -> tuple[Array, Array, Array]:
+    """Weighted nonincreasing projection and its fixed block partition."""
+    count = values.shape[0]
+    levels = jnp.zeros_like(values)
+    masses = jnp.zeros_like(weights)
+    block_sizes = jnp.zeros((count,), dtype=jnp.int32)
+
+    def append(index, state):
+        levels_, masses_, sizes_, num_blocks = state
+        levels_ = levels_.at[num_blocks].set(values[index])
+        masses_ = masses_.at[num_blocks].set(weights[index])
+        sizes_ = sizes_.at[num_blocks].set(1)
+        num_blocks = num_blocks + 1
+
+        def violates(inner):
+            levels__, _, _, blocks__ = inner
+            return (blocks__ > 1) & (
+                levels__[jnp.maximum(blocks__ - 2, 0)]
+                < levels__[jnp.maximum(blocks__ - 1, 0)]
+            )
+
+        def merge(inner):
+            levels__, masses__, sizes__, blocks__ = inner
+            previous, current = blocks__ - 2, blocks__ - 1
+            mass = masses__[previous] + masses__[current]
+            level = (
+                masses__[previous] * levels__[previous]
+                + masses__[current] * levels__[current]
+            ) / mass
+            levels__ = levels__.at[previous].set(level)
+            masses__ = masses__.at[previous].set(mass)
+            sizes__ = sizes__.at[previous].set(sizes__[previous] + sizes__[current])
+            sizes__ = sizes__.at[current].set(0)
+            return levels__, masses__, sizes__, blocks__ - 1
+
+        return jax.lax.while_loop(violates, merge, (levels_, masses_, sizes_, num_blocks))
+
+    levels, masses, block_sizes, num_blocks = jax.lax.fori_loop(
+        0,
+        count,
+        append,
+        (levels, masses, block_sizes, jnp.asarray(0, dtype=jnp.int32)),
+    )
+    positions = jnp.arange(count, dtype=jnp.int32)
+    ends = jnp.cumsum(block_sizes)
+    ends = jnp.where(positions < num_blocks, ends, count + 1)
+    assignments = jnp.searchsorted(ends, positions, side="right")
+    return levels[assignments], assignments, masses
+
+
+@jax.custom_jvp
+def _weighted_pav_decreasing(values: Array, weights: Array, /) -> Array:
+    projected, _, _ = _weighted_pav_decreasing_with_blocks(values, weights)
+    return projected
+
+
+@_weighted_pav_decreasing.defjvp
+def _weighted_pav_decreasing_jvp(primals, tangents):
+    values, weights = primals
+    values_dot, weights_dot = tangents
+    projected, assignments, masses = _weighted_pav_decreasing_with_blocks(values, weights)
+    count = values.shape[0]
+    numerator_dot = jax.ops.segment_sum(
+        weights * values_dot + weights_dot * (values - projected),
+        assignments,
+        num_segments=count,
+    )
+    projected_dot = numerator_dot[assignments] / masses[assignments]
+    return projected, projected_dot
+
+
+def _weighted_standardize(values: Array, weights: Array, /) -> tuple[Array, Array, Array]:
+    mass = jnp.sum(weights)
+    center = jnp.sum(weights * values) / mass
+    centered = values - center
+    variance = jnp.sum(weights * centered**2) / mass
+    scale = jnp.where(variance > 0.0, jnp.sqrt(variance), 1.0)
+    return centered / scale, center, scale
+
+
+def _weighted_soft_sort_row(
+    values: Array, weights: Array, temperature: Array, /
+) -> Array:
+    standardized, center, scale = _weighted_standardize(values, weights)
+    permutation = jnp.argsort(standardized, stable=True)
+    ordered = standardized[permutation]
+    ordered_weights = weights[permutation]
+    mass = jnp.sum(ordered_weights)
+    anchors = (mass - jnp.cumsum(ordered_weights) + 0.5 * ordered_weights) / (
+        mass * temperature
+    )
+    relaxed = _weighted_pav_decreasing(anchors + ordered, ordered_weights) - anchors
+    return center + scale * relaxed
+
+
+def _weighted_soft_rank_row(
+    values: Array, weights: Array, temperature: Array, /
+) -> Array:
+    standardized, _, _ = _weighted_standardize(values, weights)
+    permutation = jnp.argsort(standardized, descending=True, stable=True)
+    ordered = standardized[permutation] / temperature
+    ordered_weights = weights[permutation]
+    mass = jnp.sum(ordered_weights)
+    anchors = (mass - jnp.cumsum(ordered_weights) + 0.5 * ordered_weights) / mass
+    projected = ordered - _weighted_pav_decreasing(ordered - anchors, ordered_weights)
+    inverse = (
+        jnp.zeros((values.shape[0],), dtype=jnp.int32)
+        .at[permutation]
+        .set(jnp.arange(values.shape[0], dtype=jnp.int32))
+    )
+    return (mass * projected)[inverse]
 
 
 def _standardize(values: Array, /) -> tuple[Array, Array, Array]:
@@ -319,4 +435,101 @@ def fast_soft_rank(
     return _restore(output, dims)
 
 
-__all__ = ["fast_soft_rank", "fast_soft_sort"]
+def _weighted_rows(
+    values: Value,
+    weights: Value,
+    /,
+    *,
+    temperature: ArrayLike,
+    axis: int | str,
+    operation,
+) -> tuple[Array, int, tuple[Any, ...] | None]:
+    data, position, dims = _data_axis(values, axis=axis)
+    weight_data, weight_position, weight_dims = _data_axis(weights, axis=axis)
+    if (
+        weight_dims != dims
+        or weight_position != position
+        or weight_data.shape != data.shape
+    ):
+        raise ValueError("weights must have the same shape and axis metadata as values.")
+    if np.dtype(weight_data.dtype) != np.dtype(data.dtype):
+        weight_data = weight_data.astype(data.dtype)
+    weight_data = eqx.error_if(
+        weight_data,
+        jnp.any(~jnp.isfinite(weight_data) | (weight_data <= 0.0)),
+        "Weighted PAV requires finite strictly positive weights.",
+    )
+    configured = _temperature(temperature, data.dtype)
+    moved = jnp.moveaxis(data, position, -1)
+    moved_weights = jnp.moveaxis(weight_data, position, -1)
+    count = moved.shape[-1]
+    if count == 1:
+        output = jnp.zeros_like(moved) if operation is _weighted_soft_rank_row else moved
+    else:
+        rows = moved.reshape((-1, count))
+        weight_rows = moved_weights.reshape((-1, count))
+        output = jax.vmap(
+            lambda row, row_weights: operation(row, row_weights, configured)
+        )(rows, weight_rows).reshape(moved.shape)
+    return jnp.moveaxis(output, -1, position), position, dims
+
+
+def fast_weighted_soft_sort(
+    values: Value,
+    weights: Value,
+    /,
+    *,
+    temperature: ArrayLike = 0.5,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> Array | cx.Field:
+    """Weighted PAV soft sort with fixed-partition value/weight derivatives."""
+    if not isinstance(descending, bool):
+        raise TypeError("descending must be a bool.")
+    output, position, dims = _weighted_rows(
+        values,
+        weights,
+        temperature=temperature,
+        axis=axis,
+        operation=_weighted_soft_sort_row,
+    )
+    if descending:
+        output = jnp.flip(output, axis=position)
+    return _restore(output, dims)
+
+
+def fast_weighted_soft_rank(
+    values: Value,
+    weights: Value,
+    /,
+    *,
+    temperature: ArrayLike = 0.5,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> Array | cx.Field:
+    """Weighted barycentric mass-rank surrogate from the PAV partition."""
+    if not isinstance(descending, bool):
+        raise TypeError("descending must be a bool.")
+    output, _position, dims = _weighted_rows(
+        values,
+        weights,
+        temperature=temperature,
+        axis=axis,
+        operation=_weighted_soft_rank_row,
+    )
+    if descending:
+        mass = jnp.sum(
+            _data_axis(weights, axis=axis)[0],
+            axis=_data_axis(weights, axis=axis)[1],
+            keepdims=True,
+        )
+        output = mass - output
+    return _restore(output, dims)
+
+
+__all__ = [
+    "fast_soft_rank",
+    "fast_soft_sort",
+    "fast_weighted_soft_rank",
+    "fast_weighted_soft_sort",
+]

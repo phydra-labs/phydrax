@@ -19,6 +19,7 @@ from phydrax.nn.operator.architectures.conditioning._function_frame import (
     FUNCTION_PROJECTION_REGULARIZED,
     FUNCTION_PROJECTION_SUCCESS,
     FunctionFrameReconstructor,
+    FunctionFrameSource,
     FunctionProjectionPolicy,
     LearnedFunctionFrame,
 )
@@ -551,7 +552,10 @@ def test_encoded_reconstructor_reuses_state_across_independent_queries():
         inputs={"source": support},
         queries={"query": query_a},
     )
-    model = FunctionFrameReconstructor(source_frame=frame, target_frame=frame)
+    model = FunctionFrameReconstructor(
+        sources=(FunctionFrameSource("source", frame),),
+        target_frame=frame,
+    )
 
     state = model.encode_inputs(batch)
     decoded_a = model.decode_query(state, query_a)
@@ -561,7 +565,7 @@ def test_encoded_reconstructor_reuses_state_across_independent_queries():
     np.testing.assert_allclose(decoded_b, frame.decode(coefficients, query_b), atol=2e-11)
     np.testing.assert_allclose(model(batch), decoded_a, atol=2e-11)
     assert model.operator.bias is None
-    assert bool(state.report.identified)
+    assert bool(state.reports["source"].identified)
 
 
 def test_reconstructor_maps_between_frames_with_different_ranks():
@@ -574,9 +578,14 @@ def test_reconstructor_maps_between_frames_with_different_ranks():
     )
     coefficient_map = _LinearMap(jnp.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]))
     model = FunctionFrameReconstructor(
-        source_frame=source,
+        sources=(
+            FunctionFrameSource(
+                "source",
+                source,
+                coefficient_map=coefficient_map,
+            ),
+        ),
         target_frame=target,
-        coefficient_map=coefficient_map,
     )
     source_coefficients = jnp.asarray([0.4, -1.25, 0.75])
     support = _projection_samples(
@@ -601,7 +610,10 @@ def test_reconstructor_maps_between_frames_with_different_ranks():
 
 def test_bias_free_identity_reconstructor_obeys_superposition():
     frame = _scalar_frame(frame_id="linear")
-    model = FunctionFrameReconstructor(source_frame=frame, target_frame=frame)
+    model = FunctionFrameReconstructor(
+        sources=(FunctionFrameSource("source", frame),),
+        target_frame=frame,
+    )
     coordinates = jnp.linspace(0.0, 1.0, 8)
     query = _samples(jnp.asarray([0.1, 0.4, 0.9]))
 
@@ -631,22 +643,30 @@ def test_frozen_reconstructor_removes_frame_and_map_arrays_from_training_partiti
         frame_id="frozen-target",
     )
     model = FunctionFrameReconstructor(
-        source_frame=source,
+        sources=(
+            FunctionFrameSource(
+                "source",
+                source,
+                coefficient_map=_LinearMap(jnp.ones((2, 3))),
+            ),
+        ),
         target_frame=target,
-        coefficient_map=_LinearMap(jnp.ones((2, 3))),
     ).frozen()
 
     parameters, _ = partition_trainable(model)
 
-    assert isinstance(model.source_frame.basis_model, FrozenModel)
+    assert isinstance(model.sources[0].frame.basis_model, FrozenModel)
     assert isinstance(model.target_frame.basis_model, FrozenModel)
-    assert isinstance(model.coefficient_map, FrozenModel)
+    assert isinstance(model.sources[0].coefficient_map, FrozenModel)
     assert jax.tree.leaves(parameters) == []
 
 
 def test_end_to_end_reconstruction_has_finite_frame_gradients():
     frame = _scalar_frame(frame_id="gradient")
-    model = FunctionFrameReconstructor(source_frame=frame, target_frame=frame)
+    model = FunctionFrameReconstructor(
+        sources=(FunctionFrameSource("source", frame),),
+        target_frame=frame,
+    )
     support_coordinates = jnp.linspace(0.0, 1.0, 8)
     source_coefficients = jnp.asarray([0.75, -0.4, 0.9])
     query_coordinates = jnp.asarray([0.05, 0.25, 0.55, 0.95])

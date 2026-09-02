@@ -1166,8 +1166,47 @@ breakdown state; truncation is not reported as success. Logarithm, square root,
 inverse square root, and fractional actions require positive-definite evidence,
 explicit bounds, or an explicit spectral representation. Spectral
 representations and reusable projections are bound to numerical operator
-content, not only an `operator_id`. Matrix functions currently require an
-unbatched endomorphism.
+content, not only an `operator_id`. Explicit dense operator batches accept
+shared or exactly batched actions; stochastic samples use probe-first layout.
+No leading axis is guessed to be an action/RHS axis.
+
+### Batched factor artifacts and numerical inertia
+
+`factorize` accepts static leading dense batches and returns one immutable
+`PreparedFactorization`, never a Python list of factors. Rank, singular values,
+determinants, pseudodeterminants, status, and fixed-capacity nullspaces retain
+the batch axes. `solve`, `solve_transpose`, and `solve_adjoint` accept
+`rhs_layout` so trailing independent actions remain distinct from operator
+batches. Native sparse LU/Cholesky similarly accepts one canonical shared CSR
+pattern with `batch_shape + (nnz,)` values and retains per-member diagnostics.
+Refresh rejects changed spaces, patterns, index width, or batch shape.
+
+`factorization_inertia(prepared, InertiaPolicy(...))` reports
+`InertiaEvidence`. The bounded-dense source verifies Hermiticity and encloses
+every eigenvalue using reconstruction and orthogonality defects. Certification
+is for the declared numerical zero threshold only, not exact symbolic nullity.
+Spineax/cuDSS remains truthful partial evidence: its positive and negative
+counts do not make its unavailable zero count reliable.
+
+### FP8 and microscaling
+
+The canonical precision plane includes scalar FP8 plus
+`MicroscalingFormat` payloads for MXFP8, MXFP6, and MXFP4.
+`quantize_mx`/`dequantize_mx` use deterministic RNE, E8M0 block scales,
+fixed zero padding, packed payloads, and explicit error-or-saturation overflow
+policy. Accumulation, residual, and certification roles reject FP8/MX.
+`contract_block_scaled` is the portable correctness path: it dequantizes to
+float32 or wider and contracts through `opt_einsum`; fused execution fails
+closed unless a concrete provider contract is added.
+
+`prepare_precision_rewrite` inspects a finite public-JAX primitive set and binds
+input/output avals, equation fingerprints, rules, and public device identity.
+Effectful or unknown equations fail unless recorded pass-through is explicitly
+requested. Dot/convolution precision and bounded reduction accumulation are
+executed under the prepared rule. `prepare_precision_selection` evaluates only
+the caller's finite ordered candidates and records compilation/numerical
+rejections and workload-local latency. Its claim is never universal hardware
+optimality or scientific-accuracy selection across other shapes or devices.
 
 ## Sparse interoperability
 
@@ -2583,3 +2622,32 @@ authoritative eigensolver.
 ---
 
 ::: phydrax.linalg.svd.svd
+
+## Explicit-norm generalized-pencil pseudospectra
+
+`PencilPerturbationNorm(a, b)` declares the only supported perturbation model:
+the weighted joint unstructured complex Frobenius norm of `(delta A, delta B)` in
+pairing-square-root coordinates. A zero scale freezes that pencil member; both scales
+cannot be zero.
+
+`PencilPseudospectrumProblem` uses nonzero homogeneous shifts `(alpha, beta)`.
+Preparation computes one complex generalized Schur decomposition and certifies both
+reconstructions and unitary factors. Execution scans
+`sigma_min(beta*S-alpha*T) / sqrt(abs(beta)**2*a**2 + abs(alpha)**2*b**2)`, including
+infinite shifts and frozen directions. Homogeneous rescaling is invariant. Structured,
+real-only, componentwise, sparse, low-rank, and user-defined perturbation norms are
+rejected rather than approximated.
+
+::: phydrax.linalg.eigen.PencilPerturbationNorm
+
+---
+
+::: phydrax.linalg.eigen.PencilPseudospectrumProblem
+
+---
+
+::: phydrax.linalg.eigen.PreparedPencilPseudospectrum
+
+---
+
+::: phydrax.linalg.eigen.pencil_pseudospectrum

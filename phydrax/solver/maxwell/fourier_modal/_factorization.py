@@ -243,6 +243,8 @@ class PreparedFourierMaterial(StrictModule):
 
     permittivity: Array
     permeability: Array
+    magnetoelectric_xi: Array
+    magnetoelectric_zeta: Array
     tangent_field: Array | None
     diagnostics: FourierFactorizationDiagnostics
     material_id: str = eqx.field(static=True)
@@ -393,8 +395,12 @@ def prepare_fourier_material(
 ) -> PreparedFourierMaterial:
     epsilon_samples, epsilon_scalar = _tensor_samples(material.permittivity, lattice)
     mu_samples, mu_scalar = _tensor_samples(material.permeability, lattice)
+    xi_samples, _ = _tensor_samples(material.magnetoelectric_xi, lattice)
+    zeta_samples, _ = _tensor_samples(material.magnetoelectric_zeta, lattice)
     epsilon = _component_convolutions(epsilon_samples, lattice)
     mu = _component_convolutions(mu_samples, lattice)
+    xi = _component_convolutions(xi_samples, lattice)
+    zeta = _component_convolutions(zeta_samples, lattice)
     tangent_field = None
     residual = jnp.asarray(0.0)
     defect = jnp.asarray(0.0)
@@ -444,6 +450,8 @@ def prepare_fourier_material(
     prepared = PreparedFourierMaterial(
         epsilon,
         mu,
+        xi,
+        zeta,
         tangent_field,
         diagnostics,
         material_id=material.material_id,
@@ -461,6 +469,10 @@ def translate_prepared_fourier_material(
     """Apply reciprocal-space translation without rebuilding material convolutions."""
     epsilon = _translate_tensor_convolutions(material.permittivity, lattice, translation)
     mu = _translate_tensor_convolutions(material.permeability, lattice, translation)
+    xi = _translate_tensor_convolutions(material.magnetoelectric_xi, lattice, translation)
+    zeta = _translate_tensor_convolutions(
+        material.magnetoelectric_zeta, lattice, translation
+    )
     tangent_field = material.tangent_field
     if tangent_field is not None:
         tangent_coefficients = lattice.analysis(tangent_field)
@@ -470,6 +482,8 @@ def translate_prepared_fourier_material(
     return PreparedFourierMaterial(
         epsilon,
         mu,
+        xi,
+        zeta,
         tangent_field,
         material.diagnostics,
         material_id=material.material_id,

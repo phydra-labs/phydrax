@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._core import DiscretizationCapability, DiscretizationKey, PreparationReport
+from .._periodic_cell import PeriodicCell
 from ._cell_list import CellListParticleNeighborhoodPlan
 from ._core import ParticleDiscretization
 from ._metric_cell_list import MetricCellListParticleNeighborhoodPlan
@@ -23,7 +24,6 @@ from ._neighborhood import (
     ParticleNeighborhoodState,
 )
 from ._pairwise import ParticleBox
-from ._periodic_cell import ParticleCell
 from ._precision import ParticleRealization
 
 
@@ -48,7 +48,7 @@ class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     base: AbstractParticleNeighborhoodPlan
     interaction_radius: float = eqx.field(static=True)
     skin: float = eqx.field(static=True)
-    box: ParticleBox | ParticleCell | None
+    box: ParticleBox | PeriodicCell | None
     backend: ParticleRealization = eqx.field(static=True)
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
@@ -112,7 +112,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     plan: VerletParticleNeighborhoodPlan
     base: AbstractPreparedParticleNeighborhood
     key: DiscretizationKey
-    box: ParticleBox | ParticleCell | None
+    box: ParticleBox | PeriodicCell | None
     backend: ParticleRealization = eqx.field(static=True)
     pair_capacity: int = eqx.field(static=True)
     particle_capacity: int = eqx.field(static=True)
@@ -181,7 +181,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     def _resolved_cell_vectors(self, dtype, cell_vectors: ArrayLike | None, /) -> Array:
         if cell_vectors is not None:
             value = jnp.asarray(cell_vectors, dtype=dtype)
-        elif isinstance(self.box, ParticleCell):
+        elif isinstance(self.box, PeriodicCell):
             value = self.box.vectors.astype(dtype)
         elif isinstance(self.box, ParticleBox):
             value = jnp.diag(self.box.lengths.astype(dtype))

@@ -157,6 +157,10 @@ def test_sample_hmc_causal_result_preserves_standard_contract():
     assert causal.causal_config is not None
     assert causal.causal_diagnostics is not None
     assert jnp.all(causal.causal_diagnostics.converged)
+    assert jnp.all(causal.causal_diagnostics.outer_iterations > 0)
+    assert jnp.all(jnp.isfinite(causal.causal_diagnostics.maximum_residual))
+    assert jnp.any(causal.causal_diagnostics.maximum_residual > 0.0)
+    assert jnp.all(causal.causal_diagnostics.transition_evaluations > 0)
     assert jnp.allclose(causal.samples, sequential.samples, atol=2e-8, rtol=2e-8)
     assert jnp.array_equal(causal.divergent, sequential.divergent)
 
@@ -170,11 +174,11 @@ def test_causal_hmc_configuration_rejects_unsupported_combinations():
         num_warmup=4,
         num_samples=4,
     )
-    with pytest.raises(ValueError, match="diagonal"):
+    with pytest.raises(ValueError, match="dense-exact"):
         phx.uq.sample_hmc(
             problem,
             **settings,
-            is_mass_matrix_diagonal=False,
+            kinetic=phx.uq.MCMCMassAdaptationPlan.blocks((("",),), max_block_size=2),
             trajectory_method="causal",
         )
     with pytest.raises(ValueError, match="requires trajectory_method"):
@@ -182,4 +186,92 @@ def test_causal_hmc_configuration_rejects_unsupported_combinations():
             problem,
             **settings,
             causal_config=phx.uq.CausalHMCConfig(),
+        )
+
+
+def test_default_pair_hutchinson_causal_hmc_produces_draws():
+    result = phx.uq.sample_hmc(
+        _posterior_problem(),
+        key=jax.random.key(15),
+        num_integration_steps=3,
+        num_chains=2,
+        num_warmup=4,
+        num_samples=4,
+        initial_step_size=0.05,
+        trajectory_method="causal",
+    )
+
+    assert result.samples.shape == (2, 4, 2)
+    assert jnp.all(jnp.isfinite(result.samples))
+    assert isinstance(result.causal_config, phx.uq.CausalHMCConfig)
+    assert result.causal_config.linearization == "pair-hutchinson"
+    assert result.causal_diagnostics is not None
+    assert jnp.all(result.causal_diagnostics.converged)
+    assert jnp.all(result.causal_diagnostics.transition_evaluations > 0)
+
+
+def test_causal_hmc_and_nuts_report_solver_fallback_records():
+    recurrence = phx.uq.CausalHMCConfig(
+        linearization="dense-exact",
+        trajectory_block_size=4,
+        absolute_residual=0.0,
+        relative_residual=0.0,
+        maximum_outer_iterations=1,
+        failure_policy="sequential",
+    )
+    hmc = phx.uq.sample_hmc(
+        _posterior_problem(),
+        key=jax.random.key(16),
+        num_integration_steps=4,
+        num_chains=2,
+        num_warmup=4,
+        num_samples=4,
+        initial_step_size=0.1,
+        trajectory_method="causal",
+        causal_config=recurrence,
+    )
+    nuts = phx.uq.sample_nuts(
+        _posterior_problem(),
+        key=jax.random.key(17),
+        num_chains=2,
+        num_warmup=4,
+        chain_method="interleaved",
+        num_samples=4,
+        initial_step_size=0.1,
+        max_num_doublings=2,
+        trajectory="causal",
+        causal_config=phx.uq.CausalNUTSConfig(
+            max_num_doublings=2,
+            recurrence=recurrence,
+        ),
+    )
+
+    for result in (hmc, nuts):
+        diagnostics = result.causal_diagnostics
+        assert diagnostics is not None
+        assert jnp.all(diagnostics.fallback_used == ~diagnostics.converged)
+        assert jnp.any(diagnostics.fallback_used)
+        assert jnp.all(diagnostics.outer_iterations == 1)
+        assert jnp.all(jnp.isfinite(diagnostics.maximum_residual))
+        assert jnp.any(diagnostics.maximum_residual > 0.0)
+        assert jnp.all(diagnostics.transition_evaluations > 0)
+        assert jnp.all(
+            diagnostics.accepted_nonlinear_steps + diagnostics.rejected_nonlinear_steps
+            > 0
+        )
+        assert jnp.all(diagnostics.transition_evaluations > result.num_integration_steps)
+
+
+def test_causal_nuts_rejects_conflicting_execution_capacity_before_sampling():
+    with pytest.raises(ValueError, match="must agree"):
+        phx.uq.sample_nuts(
+            _posterior_problem(),
+            key=jax.random.key(18),
+            num_chains=2,
+            num_warmup=4,
+            num_samples=4,
+            initial_position=jnp.asarray([jnp.nan, 0.0]),
+            max_num_doublings=3,
+            trajectory="causal",
+            causal_config=phx.uq.CausalNUTSConfig(max_num_doublings=2),
         )

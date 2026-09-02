@@ -7,7 +7,19 @@ from ._adapters import (
     trajectory_from_sgp4,
 )
 from ._analytical import J2SecularPlan, J2SecularResult
-from ._artifacts import ArtifactManifest, AstrodynamicsDataStore, PinnedArtifact
+from ._artifacts import (
+    ArtifactManifest,
+    AstrodynamicsDataStore,
+    ASTRONOMY_ASSET_MANIFESTS,
+    AstronomyCoefficientTable,
+    bundled_astronomy_data_store,
+    load_bundled_earth_gravity,
+    load_bundled_earth_orientation,
+    load_bundled_iau_coefficients,
+    load_bundled_leap_seconds,
+    load_bundled_sun_earth_moon_ephemeris,
+    PinnedArtifact,
+)
 from ._bodies import CelestialBodyCatalog
 from ._ccsds import (
     ccsds_numeric_records,
@@ -146,6 +158,12 @@ from ._propagation import (
     AstrodynamicsPropagationPlan,
     AstrodynamicsPropagationResult,
 )
+from ._regularization import (
+    CloseEncounterRegularizationPlan,
+    CloseEncounterRegularizationResult,
+    KSGaugePolicy,
+    PreparedCloseEncounterSegment,
+)
 from ._relativity import LenseThirringRelativity, SchwarzschildRelativity
 from ._scalable_gravity import (
     BarnesHutGravityPlan3D,
@@ -182,7 +200,15 @@ from ._time import (
     TimeScaleTransform,
     TimeScaleTransformResult,
 )
-from ._tle import parse_tle, Sgp4Plan, Sgp4Result, TleRecord
+from ._tle import (
+    parse_tle,
+    TLEDeepSpaceResonance,
+    TLEPropagationEpoch,
+    TLEPropagationPlan,
+    TLEPropagationRegime,
+    TLEPropagationResult,
+    TleRecord,
+)
 from ._tracking import (
     ObservationSchedule,
     TrackingObservable,
@@ -308,6 +334,8 @@ __all__ = [
     "AccessPlan",
     "AccessResult",
     "ArtifactManifest",
+    "ASTRONOMY_ASSET_MANIFESTS",
+    "AstronomyCoefficientTable",
     "AstrodynamicsDataStore",
     "AtmosphericDrag",
     "BarnesHutGravityPlan3D",
@@ -318,6 +346,8 @@ __all__ = [
     "ChebyshevEphemeris",
     "ChebyshevEphemerisEvaluation",
     "CloseEncounterPolicy",
+    "CloseEncounterRegularizationPlan",
+    "CloseEncounterRegularizationResult",
     "CompiledFramePath",
     "ConjunctionPlan",
     "ConjunctionResult",
@@ -339,6 +369,7 @@ __all__ = [
     "J2SecularPlan",
     "J2SecularResult",
     "LenseThirringRelativity",
+    "KSGaugePolicy",
     "LightTimePlan",
     "LightTimeResult",
     "LinearSensorPlan",
@@ -348,13 +379,17 @@ __all__ = [
     "OrbitDeterminationResult",
     "PinnedArtifact",
     "PreparedEarthOrientation",
+    "PreparedCloseEncounterSegment",
     "PreparedOctree3D",
     "ReactionWheelEffector",
     "SchwarzschildRelativity",
     "SensorEvaluation",
     "SequentialOrbitDeterminationPlan",
-    "Sgp4Plan",
-    "Sgp4Result",
+    "TLEDeepSpaceResonance",
+    "TLEPropagationEpoch",
+    "TLEPropagationPlan",
+    "TLEPropagationRegime",
+    "TLEPropagationResult",
     "SolarRadiationPressure",
     "SpaceWeatherTable",
     "SphericalHarmonicGravity",
@@ -378,4 +413,10 @@ __all__ = [
     "detect_close_encounter",
     "parse_ccsds_kvn",
     "parse_tle",
+    "bundled_astronomy_data_store",
+    "load_bundled_earth_gravity",
+    "load_bundled_earth_orientation",
+    "load_bundled_iau_coefficients",
+    "load_bundled_leap_seconds",
+    "load_bundled_sun_earth_moon_ephemeris",
 ]

@@ -27,6 +27,7 @@ from ..integration import (
     reduce,
     resolve_integration,
 )
+from ..integration._adaptive_signed import AdaptiveSignedEstimator
 
 
 class IntegralFunctional(AbstractSamplingTerm):
@@ -63,10 +64,11 @@ class IntegralFunctional(AbstractSamplingTerm):
         ):
             raise TypeError("source must be an IntegrationSource.")
         if isinstance(source, AdaptiveIntegration):
-            raise TypeError(
-                "IntegralFunctional does not support AdaptiveIntegration; "
-                "adaptive signed objectives require an explicit estimator contract."
-            )
+            if not isinstance(source.policy, AdaptiveSignedEstimator):
+                raise TypeError(
+                    "IntegralFunctional AdaptiveIntegration requires an "
+                    "AdaptiveSignedEstimator policy."
+                )
         nonfinite_policy = str(nonfinite_integrand).lower()
         if nonfinite_policy not in ("raise", "propagate"):
             raise ValueError("nonfinite_integrand must be 'raise' or 'propagate'.")

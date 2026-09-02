@@ -3,6 +3,7 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [tool.hatch.build]
+artifacts = ["phydrax/nn/operator/pretrained/*.npz"]
 exclude = [
   ".venv/**",
   ".uv/**",

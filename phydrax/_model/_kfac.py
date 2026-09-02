@@ -19,6 +19,16 @@ class KFACAffineBlock:
     parameterization: Literal["direct", "low_rank_update", "rwf", "transformed"] = (
         "direct"
     )
+    block_kind: Literal["dense-affine", "convolution", "tensor-contraction"] = (
+        "dense-affine"
+    )
+    input_axes: tuple[int, ...] = ()
+    output_axes: tuple[int, ...] = (0,)
+    coordinate_mode: Literal["real", "complex-cartesian"] = "real"
+    sharing_group: str | None = None
+    reshape: tuple[int, ...] = ()
+    permutation: tuple[int, ...] = ()
+    coordinate_pullback: Any | None = None
 
 
 class KFACLayoutProvider(abc.ABC):

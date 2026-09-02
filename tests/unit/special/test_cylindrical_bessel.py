@@ -166,17 +166,48 @@ def test_cylindrical_zero_argument_derivatives_and_hankel_limits():
     assert np.isposinf(second.imag)
 
 
-def test_cylindrical_order_derivatives_are_explicitly_unsupported():
-    for function in (
-        phx.special.jv,
-        phx.special.yv,
-        phx.special.hankel1,
-        phx.special.hankel2,
-    ):
-        with pytest.raises(
-            TypeError, match="not differentiable with respect to the order"
-        ):
-            jax.jacfwd(lambda order: function(order, 2.0))(jnp.asarray(0.3))
+def test_cylindrical_order_derivatives_match_scipy():
+    order = 0.3
+    argument = 2.0
+    step = np.cbrt(np.finfo(np.float64).eps) * (1.0 + abs(order))
+    cases = (
+        (
+            phx.special.jv,
+            phx.special.jv_order_derivative,
+            scipy.special.jv,
+        ),
+        (
+            phx.special.yv,
+            phx.special.yv_order_derivative,
+            scipy.special.yv,
+        ),
+        (
+            phx.special.hankel1,
+            lambda value, x: (
+                phx.special.jv_order_derivative(value, x)
+                + 1j * phx.special.yv_order_derivative(value, x)
+            ),
+            scipy.special.hankel1,
+        ),
+        (
+            phx.special.hankel2,
+            lambda value, x: (
+                phx.special.jv_order_derivative(value, x)
+                - 1j * phx.special.yv_order_derivative(value, x)
+            ),
+            scipy.special.hankel2,
+        ),
+    )
+    for function, explicit_derivative, reference in cases:
+        actual = jax.jacfwd(lambda value: function(value, argument))(jnp.asarray(order))
+        explicit = explicit_derivative(order, argument)
+        expected = (
+            reference(order + step, argument) - reference(order - step, argument)
+        ) / (2.0 * step)
+        np.testing.assert_allclose(
+            np.asarray(actual), np.asarray(explicit), rtol=2e-12, atol=2e-13
+        )
+        np.testing.assert_allclose(np.asarray(actual), expected, rtol=2e-7, atol=2e-9)
 
 
 def test_cylindrical_boundaries_domains_broadcasting_and_dtype():
@@ -196,8 +227,9 @@ def test_cylindrical_boundaries_domains_broadcasting_and_dtype():
         np.testing.assert_array_equal(
             np.asarray(function(orders[:, 0], jnp.inf)), np.zeros(4)
         )
-        with pytest.raises(TypeError, match="does not support complex-valued inputs"):
-            function(0.0, 1.0 + 0.2j)
+        complex_value = function(0.0, 1.0 + 0.2j)
+        assert jnp.iscomplexobj(complex_value)
+        assert jnp.all(jnp.isfinite(complex_value))
 
     assert phx.special.hankel1(0.3, 1.0).dtype == jnp.complex128
     assert (

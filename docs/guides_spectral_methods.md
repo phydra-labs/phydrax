@@ -158,9 +158,28 @@ meaning, exact sampling realization, and recursive versus precomputed execution.
 The physical measure sums to `4*pi*radius**2`. Scalar Laplace--Beltrami uses the
 negative-semidefinite multiplier `-ell*(ell+1)/radius**2`; `eigenpairs` reports the
 nonnegative spectrum of `-laplacian` and accepts only ranks ending at a complete
-`2*ell+1` degree block. Explicit eigenbases and dense Laplacians are separately
-resource-bounded. Coordinate partial derivatives, arbitrary masks, HEALPix sampling,
-and nonlinear spherical dealiasing are outside this contract.
+`2*ell+1` degree block. Explicit eigenbases and dense Laplacians are resource-bounded.
+
+`SphericalSamplePlan` adds fixed-capacity Cartesian samples, masks, positive weights,
+rank/condition budgets, and dense SVD-backed evaluate/fit. Its `healpix` constructor
+generates deterministic ring or standard nested centers and equal-area weights; this is
+bounded evaluation/fitting, not a fast HEALPix transform. Inactive rows are sanitized
+before geometry and arithmetic.
+
+Spin ladders apply the exact eth/ethbar multipliers in coefficient space. Coordinate
+derivatives are explicitly colatitude/longitude-chart valued and return a pole-validity
+mask. `SphericalRotationPlan` uses recursive Wigner-D blocks in the active ZYZ
+convention, while `SphericalClebschGordanPlan` prepares only triangle- and
+order-admissible product couplings. The common `SpectralModalTransferPlan` owns
+spherical and lattice-harmonic zero-fill/truncation; no second transfer hierarchy is
+created.
+
+Polynomial spherical nonlinearities use `L_eval = p*(L-1)+1` through the existing
+padding lifecycle. Nonpolynomial expressions require an explicit approximate modal
+filter. `modal_integral` evaluates the scalar spin-zero constant coefficient directly,
+and the ordinary spectral PDE compiler evolves spherical coefficients with the modal
+Laplace--Beltrami multiplier. Closed S2 rejects boundary conditions and retains the
+global-frame gradient/divergence nonclaim.
 
 ## Operators
 
@@ -258,6 +277,32 @@ For nonlinear PDEs, `CompiledModalResidualTerm` materializes the declared state 
 uses the compiler's explicit dealiasing policy. `maximum_query_points` and
 `maximum_feature_bytes` fail before hidden tensor or feature-table growth exceeds the
 declared resource budget.
+## Entropy-stable Fourier split forms and packed DNS
+
+`SpectralSplitFormPlan` is a bounded theorem: it accepts only the built-in analytic
+entropy-conservative Euler two-point flux, a real all-Fourier periodic space, no source,
+and no viscosity. Preparation certifies the diagonal norm, skew `Q=H D`, constants,
+pair count, and pair-chunk workspace. Execution evaluates each unordered pair once and
+scatters equal-and-opposite contributions; unsupported fluxes or resource excess fail
+before execution. The projected-flux route remains distinct and does not inherit this
+certificate.
+
+`HermitianSpectralCoordinates` is the sole minimal-real layout for real periodic DNS.
+Pass it as `state_coordinates` to Diffrax: callbacks and returned solutions remain full
+complex coefficients, while persistent backend state is independent real coordinates.
+The same chart can be supplied to spectral artifact I/O, which stores exact
+`RealCoordinateEvidence`, byte counts, fixed-mode counts, and conjugate-pair counts.
+Non-Hermitian states are rejected rather than clipped. Nonlinear transforms may still
+use full-complex work arrays, so this is a persistent/checkpoint storage claim, not a
+halved peak-work claim.
+
+Constant-viscosity Fourier--Chebyshev--Fourier channel plans declare
+`ultraspherical_banded` or the caller-explicit `dense_reference` oracle.
+`ChannelStokesPreparationReport` exposes bandwidth, horizontal batch, factors,
+workspace, pivot margin, constraint rank, and the single-device/unsharded-axis scope.
+Variable viscosity, failed pivots/constraints, and distributed line solves remain
+outside the contract.
+
 ## Nonlinear evaluation and dealiasing
 
 Nonlinear pseudospectral compilation requires an explicit policy. Quadratic Fourier

@@ -29,8 +29,11 @@ from ..._frozendict import frozendict
 from ..._model import AbstractArrayModel
 from ..._trainable import combine_trainable, partition_trainable
 from ..._training import (
+    DelayedTargetPolicy,
     EvaluationParametersFn,
+    ExponentialMovingAverageTargetPolicy,
     resolve_evaluation_parameters,
+    TargetParameterState,
     TensorBoardLogger,
     TrainingCallback,
     TrainingController,
@@ -41,7 +44,7 @@ from ..._training_objective import _ObjectiveContribution
 from ...metrix import EuclideanStateGeometry
 from .._layout import InputLayout, StateLayout
 from .._model_system import DiscreteModelTransition
-from .._system import DiscreteSystem
+from .._system import DiscreteStepContext, DiscreteSystem
 from .._trajectory import TrajectoryData
 from ._neural_checkpoint import (
     _load_neural_training_checkpoint,
@@ -150,6 +153,30 @@ class SupervisedDiscreteModelObjective:
 
 
 @dataclass(frozen=True, slots=True)
+class TargetDiscreteModelObjective:
+    """Rollout consistency against the stopped delayed/EMA target model."""
+
+    name: str = "target_consistency"
+    weight: float = 1.0
+    time_weights: Sequence[float] | None = None
+
+    def __post_init__(self) -> None:
+        _validate_objective_header(self.name, self.weight)
+        object.__setattr__(self, "time_weights", _coefficient_tuple(self.time_weights))
+
+    @property
+    def fingerprint(self) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "target_consistency",
+                "name": self.name,
+                "weight": float(self.weight),
+                "time_weights": self.time_weights,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReferenceBranchDiscreteModelObjective:
     """Diverted branches from the learned chain through a deterministic system."""
 
@@ -232,6 +259,7 @@ class ResidualDiscreteModelObjective:
 
 DiscreteModelObjective = (
     SupervisedDiscreteModelObjective
+    | TargetDiscreteModelObjective
     | ReferenceBranchDiscreteModelObjective
     | ResidualDiscreteModelObjective
 )
@@ -529,6 +557,25 @@ def _supervised_window_values(
     return jnp.sum(values * coefficients[None, :], axis=1), jnp.asarray(True)
 
 
+def _target_window_values(
+    objective: TargetDiscreteModelObjective,
+    states: Array,
+    target_states: Array,
+    batch: _NeuralWindowBatch,
+    active_horizon: Array,
+    state_rank: int,
+    /,
+) -> tuple[Array, Array]:
+    coefficients = _normalized_coefficients(
+        objective.time_weights,
+        batch.max_horizon,
+        active_horizon,
+    )
+    residual = states[:, 1:] - jax.lax.stop_gradient(target_states[:, 1:])
+    values = _mean_square(residual, state_rank)
+    return jnp.sum(values * coefficients[None, :], axis=1), jnp.asarray(True)
+
+
 def _residual_window_values(
     objective: ResidualDiscreteModelObjective,
     endpoint_states: Array,
@@ -644,6 +691,7 @@ def _reference_window_values(
     coefficient_total = jnp.asarray(0.0, dtype=endpoint_states.dtype)
     runtime_valid = jnp.asarray(True)
     reference = objective.reference
+    assert reference.step_size is not None
     eligible, _ = _active_window_evidence(batch, active_horizon)
 
     for origin in range(horizon):
@@ -666,7 +714,15 @@ def _reference_window_values(
                     def one(source, state, active):
                         return jax.lax.cond(
                             active,
-                            lambda _: reference.evaluate(source, state, None),
+                            lambda _: reference.evaluate(
+                                DiscreteStepContext(
+                                    source,
+                                    source + reference.step_size,
+                                    jnp.asarray(origin + branch, dtype=jnp.int32),
+                                ),
+                                state,
+                                None,
+                            ),
                             lambda _: state,
                             operand=None,
                         )
@@ -682,7 +738,11 @@ def _reference_window_values(
                         return jax.lax.cond(
                             active,
                             lambda _: reference.evaluate(
-                                source,
+                                DiscreteStepContext(
+                                    source,
+                                    source + reference.step_size,
+                                    jnp.asarray(origin + branch, dtype=jnp.int32),
+                                ),
                                 state,
                                 None,
                                 inputs=inputs,
@@ -736,6 +796,8 @@ def _objective_contributions(
     root_key: Array,
     iteration: Array | None = None,
     /,
+    *,
+    target_model: AbstractArrayModel | None = None,
 ) -> tuple[_ObjectiveContribution, tuple[_ObjectiveContribution, ...], Array]:
     resolved_iteration = (
         jnp.asarray(0, dtype=jnp.int32) if iteration is None else jnp.asarray(iteration)
@@ -749,11 +811,35 @@ def _objective_contributions(
         root_key,
         resolved_iteration,
     )
+    runtime_valid = rollout_valid
+    target_endpoint_states = None
+    if any(isinstance(value, TargetDiscreteModelObjective) for value in objectives):
+        if target_model is None:
+            raise ValueError("Target objective requires a target model.")
+        target_endpoint_states, _, _, target_valid = _rollout_states(
+            target_model,
+            batch,
+            active_horizon,
+            policy,
+            state_layout,
+            jr.fold_in(root_key, 707),
+            resolved_iteration,
+        )
+        runtime_valid = rollout_valid & target_valid
     term_contributions: list[_ObjectiveContribution] = []
     combined_window = jnp.zeros_like(evidence)
-    runtime_valid = rollout_valid
     for objective in objectives:
-        if isinstance(objective, SupervisedDiscreteModelObjective):
+        if isinstance(objective, TargetDiscreteModelObjective):
+            assert target_endpoint_states is not None
+            values, valid = _target_window_values(
+                objective,
+                endpoint_states,
+                target_endpoint_states,
+                batch,
+                active_horizon,
+                len(state_layout.shape),
+            )
+        elif isinstance(objective, SupervisedDiscreteModelObjective):
             values, valid = _supervised_window_values(
                 objective,
                 endpoint_states,
@@ -924,6 +1010,9 @@ def fit_discrete_model(
     optimizer_id: str | None = None,
     evaluation_parameters: EvaluationParametersFn | None = None,
     evaluation_parameters_id: str | None = None,
+    target_policy: DelayedTargetPolicy
+    | ExponentialMovingAverageTargetPolicy
+    | None = None,
     learning_rate: float = 1e-3,
     epochs: int = 1,
     steps: int | None = None,
@@ -1016,6 +1105,7 @@ def fit_discrete_model(
             term,
             (
                 SupervisedDiscreteModelObjective,
+                TargetDiscreteModelObjective,
                 ReferenceBranchDiscreteModelObjective,
                 ResidualDiscreteModelObjective,
             ),
@@ -1027,6 +1117,10 @@ def fit_discrete_model(
         raise ValueError("Objective names must be unique.")
     if not any(float(term.weight) > 0.0 for term in terms):
         raise ValueError("At least one objective must have positive weight.")
+    if any(isinstance(term, TargetDiscreteModelObjective) for term in terms) and (
+        target_policy is None
+    ):
+        raise ValueError("Target discrete objective requires target_policy.")
     assert rollout_policy.min_horizon is not None
     reachable_horizons = range(
         int(rollout_policy.min_horizon),
@@ -1034,7 +1128,12 @@ def fit_discrete_model(
     )
     for term in terms:
         if isinstance(
-            term, (SupervisedDiscreteModelObjective, ResidualDiscreteModelObjective)
+            term,
+            (
+                SupervisedDiscreteModelObjective,
+                TargetDiscreteModelObjective,
+                ResidualDiscreteModelObjective,
+            ),
         ):
             if (
                 term.time_weights is not None
@@ -1140,6 +1239,17 @@ def fit_discrete_model(
         optimizer_state,
         parameters,
     )
+    initial_target_parameters = (
+        evaluated_parameters
+        if isinstance(target_policy, ExponentialMovingAverageTargetPolicy)
+        and target_policy.source == "evaluation"
+        else parameters
+    )
+    target_state = (
+        None
+        if target_policy is None
+        else TargetParameterState.initialize(initial_target_parameters, target_policy)
+    )
     evaluation_model = eqx.nn.inference_mode(
         combine_trainable(evaluated_parameters, fixed)
     )
@@ -1166,14 +1276,15 @@ def fit_discrete_model(
         "objectives": [term.fingerprint for term in terms],
         "optimizer_id": resolved_optimizer_id,
         "evaluation_parameters_id": resolved_evaluation_id,
+        "target_policy": None if target_policy is None else asdict(target_policy),
         "batch_size": resolved_batch_size,
         "validation_batch_size": resolved_validation_batch,
         "shuffle": bool(shuffle),
         "seed": int(seed),
         "gradient_accumulation": int(gradient_accumulation),
-        "validation_policy": None
-        if validation_config is None
-        else asdict(validation_config),
+        "validation_policy": (
+            None if validation_config is None else asdict(validation_config)
+        ),
         "jit": bool(jit),
         "key_policy_id": _KEY_POLICY_ID,
         "root_key": array_tree_fingerprint(master_key),
@@ -1193,7 +1304,7 @@ def fit_discrete_model(
     resumed_from_step = 0
     prior_training_seconds = 0.0
 
-    def loss_components(current_model, batch, root_key, step):
+    def loss_components(current_model, target_model, batch, root_key, step):
         active_horizon = rollout_policy.active_horizon(step)
         return _objective_contributions(
             current_model,
@@ -1204,13 +1315,20 @@ def fit_discrete_model(
             state_layout,
             root_key,
             step,
+            target_model=target_model,
         )
 
-    def gradient_fn(current_parameters, batch, root_key, step):
+    def gradient_fn(current_parameters, target_parameters, batch, root_key, step):
         def objective(candidate):
             current_model = combine_trainable(candidate, fixed)
+            target_model = (
+                combine_trainable(target_parameters, fixed)
+                if target_state is not None
+                else None
+            )
             contribution, components, valid = loss_components(
                 current_model,
+                target_model,
                 batch,
                 root_key,
                 step,
@@ -1253,16 +1371,22 @@ def fit_discrete_model(
         numerators = np.zeros((len(metric_names),), dtype=float)
         support_total = 0.0
         evaluation_key = control.key_for(int(step), site=1000)
+        target_model = (
+            combine_trainable(target_state.target, fixed)
+            if target_state is not None
+            else None
+        )
         for _, batch in batches(source, 0, size, shuffle_data=False):
             total, components, valid_array = loss_components(
                 current_model,
+                target_model,
                 batch,
                 evaluation_key,
                 jnp.asarray(step, dtype=jnp.int32),
             )
             if not bool(jax.device_get(valid_array)):
                 raise FloatingPointError(
-                    "Model, reference, or residual failed during evaluation."
+                    "Model, reference, target, or residual failed during evaluation."
                 )
             support = float(jax.device_get(total.support))
             numerators[0] += float(jax.device_get(total.numerator))
@@ -1287,10 +1411,10 @@ def fit_discrete_model(
         restored = _load_neural_training_checkpoint(
             checkpoint,
             (model, best_model),
-            optimizer_state,
+            (optimizer_state, target_state),
         )
         model, best_model = restored.model
-        optimizer_state = restored.optimizer_state
+        optimizer_state, target_state = restored.optimizer_state
         metadata = restored.metadata
         progress = TrainingProgress(**metadata["progress"])
         if progress.update_step != restored.step or progress.update_step > maximum_steps:
@@ -1347,7 +1471,7 @@ def fit_discrete_model(
         _save_neural_training_checkpoint(
             checkpoint,
             (model, best_model),
-            optimizer_state,
+            (optimizer_state, target_state),
             step=control.progress.update_step,
             key=master_key,
             metadata={
@@ -1441,9 +1565,17 @@ def fit_discrete_model(
                     numerator, support, component_numerators, gradient, finite_array = (
                         run_gradient(
                             parameters,
+                            (
+                                target_state.target
+                                if target_state is not None
+                                else parameters
+                            ),
                             batch,
                             root_key,
-                            jnp.asarray(control.progress.update_step, dtype=jnp.int32),
+                            jnp.asarray(
+                                control.progress.update_step,
+                                dtype=jnp.int32,
+                            ),
                         )
                     )
                     if not bool(jax.device_get(finite_array)):
@@ -1495,6 +1627,16 @@ def fit_discrete_model(
                         model = combine_trainable(parameters, fixed)
                         update_step = control.progress.update_step + 1
                         control.complete_update(update_step)
+                        if target_state is not None:
+                            target_state = target_state.update(
+                                parameters,
+                                accepted=True,
+                                evaluation_parameters=resolve_evaluation_parameters(
+                                    evaluation_parameters,
+                                    optimizer_state,
+                                    parameters,
+                                ),
+                            )
                         metrics = {
                             name: float(value / accumulated_support)
                             for name, value in zip(
@@ -1629,9 +1771,14 @@ def fit_discrete_model(
     )
     sample_state = train.states.reshape((-1,) + state_layout.shape)[0]
     sample_coordinate = jnp.asarray(0.0, dtype=train.coordinates.dtype)
+    sample_context = DiscreteStepContext(
+        sample_coordinate,
+        sample_coordinate + step_size,
+        jnp.asarray(0, dtype=jnp.int32),
+    )
     if input_layout is None:
         jax.eval_shape(
-            lambda state: transition(sample_coordinate, state, None),
+            lambda state: transition(sample_context, state, None),
             sample_state,
         )
     else:
@@ -1639,7 +1786,7 @@ def fit_discrete_model(
         sample_input = train.inputs.reshape((-1,) + input_layout.shape)[0]
         jax.eval_shape(
             lambda state, inputs: transition(
-                sample_coordinate,
+                sample_context,
                 state,
                 inputs,
                 None,
@@ -1677,6 +1824,7 @@ __all__ = [
     "DiscreteModelValidationPolicy",
     "ReferenceBranchDiscreteModelObjective",
     "ResidualDiscreteModelObjective",
+    "TargetDiscreteModelObjective",
     "SupervisedDiscreteModelObjective",
     "fit_discrete_model",
 ]

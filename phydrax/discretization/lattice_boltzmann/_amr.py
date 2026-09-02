@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -30,7 +30,7 @@ class LatticeBoltzmannAMRTransferEvidence(StrictModule):
 
 
 class LatticeBoltzmannAMRTransferPlan(StrictModule, NonTrainableState):
-    """Ratio-two moment-conservative transfer for blockwise on-lattice populations."""
+    """Integer-ratio moment-conservative transfer for blockwise populations."""
 
     velocity_set: LatticeBoltzmannVelocitySet
     refinement_ratio: int = eqx.field(static=True)
@@ -49,8 +49,8 @@ class LatticeBoltzmannAMRTransferPlan(StrictModule, NonTrainableState):
             raise TypeError("velocity_set must be LatticeBoltzmannVelocitySet.")
         ratio = int(refinement_ratio)
         scale = float(nonequilibrium_scale)
-        if ratio != 2:
-            raise ValueError("Initial LBM AMR supports refinement ratio two only.")
+        if ratio < 2:
+            raise ValueError("LBM AMR refinement_ratio must be at least two.")
         if not np.isfinite(scale) or scale < 0.0:
             raise ValueError("nonequilibrium_scale must be finite and nonnegative.")
         self.velocity_set = velocity_set
@@ -76,7 +76,7 @@ class LatticeBoltzmannAMRTransferPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Fine populations have incompatible LBM shape.")
         if any(size % self.refinement_ratio for size in fine.shape[:-1]):
-            raise ValueError("Every fine spatial extent must be divisible by two.")
+            raise ValueError("Every fine spatial extent must be divisible by the ratio.")
         coarse_shape = tuple(size // self.refinement_ratio for size in fine.shape[:-1])
         reshape = []
         for size in coarse_shape:
@@ -150,7 +150,7 @@ class LatticeBoltzmannAMRInterfaceEvidence(StrictModule):
 
 
 class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
-    """Collision-aware equilibrium/nonequilibrium ratio-two transfer."""
+    """Collision-aware equilibrium/nonequilibrium integer-ratio transfer."""
 
     transfer: LatticeBoltzmannAMRTransferPlan
     precision: LatticeBoltzmannPrecisionPolicy
@@ -180,14 +180,27 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
             raise TypeError(
                 "coarse_scaling and fine_scaling must be LatticeBoltzmannScaling."
             )
+        ratio = transfer.refinement_ratio
         if not np.isclose(
-            float(fine_scaling.cell_size) * transfer.refinement_ratio,
+            float(fine_scaling.cell_size) * ratio,
             float(coarse_scaling.cell_size),
-        ) or not np.isclose(
-            float(fine_scaling.time_step) * transfer.refinement_ratio,
-            float(coarse_scaling.time_step),
         ):
-            raise ValueError("Collision-aware AMR requires ratio-two acoustic scaling.")
+            raise ValueError(
+                "LBM AMR spatial scalings do not match the refinement ratio."
+            )
+        time_ratio = float(coarse_scaling.time_step) / float(fine_scaling.time_step)
+        if not np.isfinite(time_ratio) or time_ratio < ratio:
+            raise ValueError(
+                "LBM AMR fine scaling must take at least one acoustic substep per child."
+            )
+        reference_density = float(coarse_scaling.reference_density)
+        sound_speed_squared = float(transfer.velocity_set.sound_speed_squared)
+        if not np.isclose(float(fine_scaling.reference_density), reference_density):
+            raise ValueError("LBM AMR levels must share one reference density.")
+        if not np.isclose(
+            float(coarse_scaling.sound_speed_squared), sound_speed_squared
+        ) or not np.isclose(float(fine_scaling.sound_speed_squared), sound_speed_squared):
+            raise ValueError("LBM AMR scaling sound speeds must match the velocity set.")
         self.transfer = transfer
         self.precision = precision
         self.coarse_scaling = coarse_scaling
@@ -207,12 +220,12 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         coarse_relaxation_rate: Array,
         fine_relaxation_rate: Array,
         /,
-    ) -> Array:
+    ) -> tuple[Array, Array]:
         coarse = jnp.asarray(coarse_relaxation_rate)
         fine = jnp.asarray(fine_relaxation_rate, dtype=coarse.dtype)
         if coarse.shape != () or fine.shape != ():
             raise ValueError("AMR relaxation rates must be scalar.")
-        valid = (
+        rate_valid = (
             jnp.isfinite(coarse)
             & (coarse > 0.0)
             & (coarse < 2.0)
@@ -220,14 +233,13 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
             & (fine > 0.0)
             & (fine < 2.0)
         )
-        coarse_tau_offset = 1.0 / coarse - 0.5
-        fine_tau_offset = 1.0 / fine - 0.5
+        safe_coarse = jnp.where(rate_valid, coarse, jnp.asarray(1.0, coarse.dtype))
+        safe_fine = jnp.where(rate_valid, fine, jnp.asarray(1.0, fine.dtype))
+        coarse_tau_offset = 1.0 / safe_coarse - 0.5
+        fine_tau_offset = 1.0 / safe_fine - 0.5
         scale = self.transfer.nonequilibrium_scale * fine_tau_offset / coarse_tau_offset
-        return eqx.error_if(
-            scale,
-            ~valid | ~jnp.isfinite(scale) | (scale <= 0.0),
-            "AMR nonequilibrium scaling is invalid.",
-        )
+        scale_valid = rate_valid & jnp.isfinite(scale) & (scale > 0.0)
+        return jnp.where(scale_valid, scale, jnp.asarray(1.0, scale.dtype)), scale_valid
 
     def _repeat(self, value: Array, /) -> Array:
         result = value
@@ -280,7 +292,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
             self.precision,
         )
         nonequilibrium = coarse - equilibrium
-        scale = self._scale(coarse_relaxation_rate, fine_relaxation_rate)
+        scale, scale_valid = self._scale(coarse_relaxation_rate, fine_relaxation_rate)
         fine_equilibrium = self._repeat(equilibrium)
         fine_nonequilibrium = scale * self._repeat(nonequilibrium)
         fine = self.precision.population(fine_equilibrium + fine_nonequilibrium)
@@ -303,6 +315,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         )
         successful = (
             transfer_evidence.successful
+            & scale_valid
             & jnp.all(jnp.isfinite(fine))
             & (jnp.min(fine) >= 0.0)
             & (mass_defect <= tolerance)
@@ -343,7 +356,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
             self.precision,
         )
         nonequilibrium = fine - equilibrium
-        scale = self._scale(coarse_relaxation_rate, fine_relaxation_rate)
+        scale, scale_valid = self._scale(coarse_relaxation_rate, fine_relaxation_rate)
         coarse_density = self._block_average(density[..., None])[..., 0]
         coarse_momentum = self._block_average(momentum)
         coarse_velocity = (
@@ -379,6 +392,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         )
         successful = (
             jnp.all(jnp.isfinite(coarse))
+            & scale_valid
             & (jnp.min(coarse) >= 0.0)
             & (mass_defect <= tolerance)
             & (momentum_defect <= tolerance)
@@ -398,40 +412,137 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         return coarse, evidence
 
 
-class LatticeBoltzmannAMRTemporalInterfacePlan(StrictModule, NonTrainableState):
-    """Fixed half-time interpolation for exactly two fine substeps."""
+LatticeBoltzmannAMRScalingKind = Literal["acoustic", "diffusive", "declared"]
 
-    interpolation_fraction: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
 
-    def __init__(self):
-        self.interpolation_fraction = 0.5
-        self.plan_id = canonical_fingerprint(
+class LatticeBoltzmannAMRScalingPolicy(StrictModule, NonTrainableState):
+    """Static temporal scaling for each integer-ratio AMR interface."""
+
+    kind: LatticeBoltzmannAMRScalingKind = eqx.field(static=True)
+    declared_substeps: tuple[int, ...] = eqx.field(static=True)
+    viscosity_tolerance: float = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        kind: LatticeBoltzmannAMRScalingKind = "acoustic",
+        /,
+        *,
+        declared_substeps: Sequence[int] = (),
+        viscosity_tolerance: float = 1.0e-10,
+    ):
+        if kind not in ("acoustic", "diffusive", "declared"):
+            raise ValueError("Unknown LBM AMR scaling kind.")
+        steps = tuple(int(value) for value in declared_substeps)
+        if any(value < 1 for value in steps):
+            raise ValueError("Declared AMR substep counts must be positive.")
+        if kind != "declared" and steps:
+            raise ValueError("Only declared scaling accepts declared_substeps.")
+        tolerance = float(viscosity_tolerance)
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("viscosity_tolerance must be finite and nonnegative.")
+        self.kind = kind
+        self.declared_substeps = steps
+        self.viscosity_tolerance = tolerance
+        self.policy_id = canonical_fingerprint(
             {
-                "kind": "lattice-boltzmann-amr-temporal-interface",
-                "interpolation_fraction": 0.5,
+                "kind": "lattice-boltzmann-amr-scaling",
+                "scaling": kind,
+                "declared_substeps": steps,
+                "viscosity_tolerance": tolerance,
             }
         )
 
-    def interpolate(self, start: Array, end: Array, /) -> Array:
-        start_ = jnp.asarray(start)
-        end_ = jnp.asarray(end, dtype=start_.dtype)
-        if start_.shape != end_.shape:
-            raise ValueError("AMR temporal endpoints must have matching shapes.")
-        fraction = jnp.asarray(self.interpolation_fraction, dtype=start_.dtype)
-        return (1.0 - fraction) * start_ + fraction * end_
+    def substeps(self, ratio: int, interface_index: int, /) -> int:
+        if self.kind == "acoustic":
+            return int(ratio)
+        if self.kind == "diffusive":
+            return int(ratio) ** 2
+        if interface_index >= len(self.declared_substeps):
+            raise ValueError("Declared AMR scaling lacks an interface substep count.")
+        return self.declared_substeps[interface_index]
+
+
+class LatticeBoltzmannAMRTemporalTracePlan(StrictModule, NonTrainableState):
+    """Declared polynomial temporal trace evaluated at every fine fraction."""
+
+    nodes: Array
+    coefficients: Array
+    exactness_degree: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        nodes: Sequence[float] = (0.0, 1.0),
+        coefficients: Sequence[Sequence[float]] = ((1.0, -1.0), (0.0, 1.0)),
+        /,
+        *,
+        exactness_degree: int = 1,
+    ):
+        nodes_ = np.asarray(nodes, dtype=float)
+        coefficients_ = np.asarray(coefficients, dtype=float)
+        degree = int(exactness_degree)
+        if (
+            nodes_.ndim != 1
+            or nodes_.size < 1
+            or coefficients_.ndim != 2
+            or coefficients_.shape[0] != nodes_.size
+            or coefficients_.shape[1] != degree + 1
+        ):
+            raise ValueError(
+                "AMR temporal coefficients must have shape (node_count, degree + 1)."
+            )
+        if (
+            degree < 0
+            or np.any(~np.isfinite(nodes_))
+            or np.any(~np.isfinite(coefficients_))
+            or np.any(np.diff(nodes_) <= 0.0)
+            or nodes_[0] < 0.0
+            or nodes_[-1] > 1.0
+        ):
+            raise ValueError("AMR temporal trace nodes/coefficients are invalid.")
+        powers = np.arange(degree + 1)
+        interpolation = coefficients_ @ (nodes_[:, None] ** powers[None, :]).T
+        if not np.allclose(interpolation, np.eye(nodes_.size), rtol=1e-10, atol=1e-12):
+            raise ValueError("AMR temporal coefficients must interpolate declared nodes.")
+        self.nodes = jnp.asarray(nodes_)
+        self.coefficients = jnp.asarray(coefficients_)
+        self.exactness_degree = degree
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "lattice-boltzmann-amr-temporal-trace",
+                "nodes": nodes_.tolist(),
+                "coefficients": coefficients_.tolist(),
+                "exactness_degree": degree,
+            }
+        )
+
+    @property
+    def node_count(self) -> int:
+        return int(self.nodes.shape[0])
+
+    def evaluate(self, values: Array, fraction: Array, /) -> Array:
+        values_ = jnp.asarray(values)
+        if values_.shape[0] != self.node_count:
+            raise ValueError("AMR trace values must match the declared temporal nodes.")
+        fraction_ = jnp.asarray(fraction, dtype=values_.real.dtype).reshape(())
+        powers = fraction_ ** jnp.arange(self.exactness_degree + 1, dtype=fraction_.dtype)
+        weights = self.coefficients.astype(fraction_.dtype) @ powers
+        return oe.contract("n,n...->...", weights.astype(values_.dtype), values_)
 
 
 class LatticeBoltzmannAMRState(StrictModule):
+    """Fixed-capacity populations and activity for every prepared AMR level."""
+
     level_populations: tuple[Array, ...]
     active_masks: tuple[Array, ...]
-    fine_subcycle_phase: Array
+    subcycle_phases: Array
 
     def __init__(
         self,
         level_populations: Sequence[Array],
         active_masks: Sequence[Array],
-        fine_subcycle_phase: Array | None = None,
+        subcycle_phases: Array | None = None,
     ):
         populations = tuple(jnp.asarray(value) for value in level_populations)
         masks = tuple(jnp.asarray(value, dtype=bool) for value in active_masks)
@@ -442,243 +553,479 @@ class LatticeBoltzmannAMRState(StrictModule):
         for values, mask in zip(populations, masks, strict=True):
             if mask.shape != values.shape[:-1]:
                 raise ValueError("AMR active masks must match level spatial shapes.")
-        phase = jnp.asarray(
-            0 if fine_subcycle_phase is None else fine_subcycle_phase,
+        phases = jnp.asarray(
+            (
+                jnp.zeros((max(len(populations) - 1, 0),), dtype=jnp.int32)
+                if subcycle_phases is None
+                else subcycle_phases
+            ),
             dtype=jnp.int32,
         )
-        if phase.shape != ():
-            raise ValueError("fine_subcycle_phase must be scalar.")
+        if phases.shape != (max(len(populations) - 1, 0),):
+            raise ValueError("subcycle_phases must contain one entry per interface.")
         self.level_populations = populations
         self.active_masks = masks
-        self.fine_subcycle_phase = phase
+        self.subcycle_phases = phases
+
+
+class LatticeBoltzmannAMRDiagnostics(StrictModule):
+    mass_defects: Array
+    momentum_defects: Array
+    nonequilibrium_scales: Array
+    viscosity_defects: Array
+    minimum_populations: Array
+    temporal_fractions: Array
+    interface_successful: Array
+    finite: Array
+    positive: Array
+    successful: Array
+    plan_id: str = eqx.field(static=True)
 
 
 class LatticeBoltzmannAMRAdvanceResult(StrictModule):
-    state: LatticeBoltzmannAMRState
-    transfer_evidence: LatticeBoltzmannAMRTransferEvidence
+    candidate_state: LatticeBoltzmannAMRState
+    accepted_state: LatticeBoltzmannAMRState
+    diagnostics: LatticeBoltzmannAMRDiagnostics
     successful: Array
 
 
-class LatticeBoltzmannCollisionAwareAMRAdvanceResult(StrictModule):
-    state: LatticeBoltzmannAMRState
-    interface_evidence: LatticeBoltzmannAMRInterfaceEvidence
-    successful: Array
+class PreparedLatticeBoltzmannAMR(StrictModule, NonTrainableState):
+    """Pure collision-aware fixed-hierarchy recursive LBM AMR execution."""
+
+    transfers: tuple[PreparedLatticeBoltzmannAMRTransfer, ...]
+    scaling: LatticeBoltzmannAMRScalingPolicy
+    temporal_trace: LatticeBoltzmannAMRTemporalTracePlan
+    substeps: tuple[int, ...] = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    def _coverage(self, parent: Array, child: Array, ratio: int, /) -> Array:
+        dimension = self.transfers[0].transfer.velocity_set.dimension
+        expected = tuple(ratio * size for size in parent.shape)
+        if child.shape != expected:
+            raise ValueError("Adjacent AMR level shapes do not match refinement ratio.")
+        reshape: list[int] = []
+        for size in parent.shape:
+            reshape.extend((size, ratio))
+        blocked = child.reshape(tuple(reshape))
+        axes = tuple(range(1, 2 * dimension, 2))
+        any_child = jnp.any(blocked, axis=axes)
+        all_child = jnp.all(blocked, axis=axes)
+        child = eqx.error_if(
+            child,
+            jnp.any(any_child != all_child),
+            "AMR activity must cover complete integer-ratio child blocks.",
+        )
+        parent = eqx.error_if(
+            parent,
+            jnp.any(all_child & ~parent),
+            "Every refined parent cell must be active.",
+        )
+        return all_child
+
+    def _viscosity_defect(
+        self,
+        interface_index: int,
+        relaxation_rates: tuple[Array, ...],
+        /,
+    ) -> tuple[Array, Array]:
+        transfer = self.transfers[interface_index]
+        coarse_rate = relaxation_rates[interface_index]
+        fine_rate = relaxation_rates[interface_index + 1]
+        rate_valid = (
+            jnp.isfinite(coarse_rate)
+            & (coarse_rate > 0.0)
+            & (coarse_rate < 2.0)
+            & jnp.isfinite(fine_rate)
+            & (fine_rate > 0.0)
+            & (fine_rate < 2.0)
+        )
+        safe_coarse = jnp.where(
+            rate_valid, coarse_rate, jnp.asarray(1.0, coarse_rate.dtype)
+        )
+        safe_fine = jnp.where(rate_valid, fine_rate, jnp.asarray(1.0, fine_rate.dtype))
+        coarse_scaling = transfer.coarse_scaling
+        fine_scaling = transfer.fine_scaling
+        coarse_lattice_viscosity = coarse_scaling.sound_speed_squared.astype(
+            coarse_rate.dtype
+        ) * (1.0 / safe_coarse - 0.5)
+        fine_lattice_viscosity = fine_scaling.sound_speed_squared.astype(
+            fine_rate.dtype
+        ) * (1.0 / safe_fine - 0.5)
+        coarse_viscosity = coarse_scaling.physical_viscosity(coarse_lattice_viscosity)
+        fine_viscosity = fine_scaling.physical_viscosity(fine_lattice_viscosity)
+        defect = jnp.abs(fine_viscosity - coarse_viscosity)
+        scale = jnp.maximum(jnp.abs(coarse_viscosity), jnp.abs(fine_viscosity))
+        tolerance = (
+            self.scaling.viscosity_tolerance + 256.0 * jnp.finfo(coarse_rate.dtype).eps
+        ) * jnp.maximum(scale, jnp.finfo(coarse_rate.dtype).tiny)
+        successful = (
+            rate_valid
+            & jnp.isfinite(coarse_viscosity)
+            & jnp.isfinite(fine_viscosity)
+            & (coarse_viscosity > 0.0)
+            & (fine_viscosity > 0.0)
+            & jnp.isfinite(defect)
+            & (defect <= tolerance)
+        )
+        return defect, successful
+
+    def advance(
+        self,
+        state: LatticeBoltzmannAMRState,
+        level_steps: Sequence[Callable[[Array, Array | None, Any], Array]],
+        relaxation_rates: Sequence[Array],
+        /,
+        *,
+        args: Any = None,
+        temporal_traces: Sequence[Array] | None = None,
+    ) -> LatticeBoltzmannAMRAdvanceResult:
+        if not isinstance(state, LatticeBoltzmannAMRState):
+            raise TypeError("state must be LatticeBoltzmannAMRState.")
+        steps = tuple(level_steps)
+        level_count = len(state.level_populations)
+        if len(steps) != level_count or len(self.transfers) != level_count - 1:
+            raise ValueError(
+                "Prepared AMR levels, transfers, and step callbacks mismatch."
+            )
+        rate_dtype = state.level_populations[0].real.dtype
+        rates = tuple(jnp.asarray(value, dtype=rate_dtype) for value in relaxation_rates)
+        if len(rates) != level_count or any(value.shape != () for value in rates):
+            raise ValueError("AMR requires one scalar relaxation rate per level.")
+        if temporal_traces is None:
+            if self.temporal_trace.node_count != 2:
+                raise ValueError(
+                    "Higher-order temporal traces require explicit per-interface values."
+                )
+            traces: tuple[Array, ...] | None = None
+        else:
+            traces = tuple(jnp.asarray(value) for value in temporal_traces)
+            if len(traces) != level_count - 1:
+                raise ValueError("One temporal trace is required per AMR interface.")
+        populations = list(state.level_populations)
+        evidence: list[LatticeBoltzmannAMRInterfaceEvidence] = [
+            LatticeBoltzmannAMRInterfaceEvidence(
+                jnp.asarray(0.0, dtype=rate_dtype),
+                jnp.asarray(0.0, dtype=rate_dtype),
+                jnp.asarray(0.0, dtype=rate_dtype),
+                jnp.asarray(0.0, dtype=rate_dtype),
+                jnp.asarray(jnp.inf, dtype=rate_dtype),
+                jnp.asarray(1.0, dtype=rate_dtype),
+                jnp.asarray(0.0, dtype=rate_dtype),
+                jnp.asarray(True),
+            )
+            for _ in self.transfers
+        ]
+        viscosity = [
+            self._viscosity_defect(index, rates) for index in range(len(self.transfers))
+        ]
+        fractions = jnp.zeros((len(self.transfers),), dtype=rate_dtype)
+
+        def advance_level(level: int, boundary: Array | None) -> Array:
+            nonlocal fractions
+            old = populations[level]
+            active = state.active_masks[level]
+            candidate = steps[level](old, boundary, args)
+            if candidate.shape != old.shape:
+                raise ValueError("LBM AMR level step changed a prepared array shape.")
+            candidate = jnp.where(active[..., None], candidate, old)
+            if level == level_count - 1:
+                populations[level] = candidate
+                return candidate
+            transfer = self.transfers[level]
+            coarse_rate = rates[level]
+            fine_rate = rates[level + 1]
+            ratio = transfer.transfer.refinement_ratio
+            child_active = state.active_masks[level + 1]
+            covered = self._coverage(active, child_active, ratio)
+            child_old = populations[level + 1]
+            prolonged_old, prolong_old_evidence = transfer.prolong(
+                old, coarse_rate, fine_rate
+            )
+            populations[level + 1] = jnp.where(
+                child_active[..., None], child_old, prolonged_old
+            )
+            trace_values = (
+                jnp.stack((old, candidate))
+                if traces is None
+                else traces[level].astype(candidate.dtype)
+            )
+            if trace_values.shape[1:] != old.shape:
+                raise ValueError(
+                    "AMR temporal trace spatial shape does not match parent."
+                )
+            for fine_index in range(self.substeps[level]):
+                fraction = jnp.asarray(
+                    (fine_index + 1) / self.substeps[level],
+                    dtype=fractions.dtype,
+                )
+                trace = self.temporal_trace.evaluate(trace_values, fraction)
+                advance_level(level + 1, trace)
+                fractions = fractions.at[level].set(fraction)
+            child_candidate = populations[level + 1]
+            prolonged_candidate, prolong_candidate_evidence = transfer.prolong(
+                candidate, coarse_rate, fine_rate
+            )
+            child_for_restriction = jnp.where(
+                child_active[..., None], child_candidate, prolonged_candidate
+            )
+            restricted, restriction_evidence = transfer.restrict(
+                child_for_restriction, coarse_rate, fine_rate
+            )
+            populations[level] = jnp.where(covered[..., None], restricted, candidate)
+            previous = evidence[level]
+            viscosity_successful = viscosity[level][1]
+            evidence[level] = LatticeBoltzmannAMRInterfaceEvidence(
+                jnp.maximum(
+                    previous.mass_defect,
+                    jnp.maximum(
+                        prolong_old_evidence.mass_defect,
+                        jnp.maximum(
+                            prolong_candidate_evidence.mass_defect,
+                            restriction_evidence.mass_defect,
+                        ),
+                    ),
+                ),
+                jnp.maximum(
+                    previous.momentum_defect,
+                    jnp.maximum(
+                        prolong_old_evidence.momentum_defect,
+                        jnp.maximum(
+                            prolong_candidate_evidence.momentum_defect,
+                            restriction_evidence.momentum_defect,
+                        ),
+                    ),
+                ),
+                jnp.maximum(
+                    previous.nonequilibrium_mass_defect,
+                    jnp.maximum(
+                        prolong_old_evidence.nonequilibrium_mass_defect,
+                        jnp.maximum(
+                            prolong_candidate_evidence.nonequilibrium_mass_defect,
+                            restriction_evidence.nonequilibrium_mass_defect,
+                        ),
+                    ),
+                ),
+                jnp.maximum(
+                    previous.nonequilibrium_momentum_defect,
+                    jnp.maximum(
+                        prolong_old_evidence.nonequilibrium_momentum_defect,
+                        jnp.maximum(
+                            prolong_candidate_evidence.nonequilibrium_momentum_defect,
+                            restriction_evidence.nonequilibrium_momentum_defect,
+                        ),
+                    ),
+                ),
+                jnp.minimum(
+                    previous.minimum_population,
+                    jnp.minimum(
+                        prolong_old_evidence.minimum_population,
+                        jnp.minimum(
+                            prolong_candidate_evidence.minimum_population,
+                            restriction_evidence.minimum_population,
+                        ),
+                    ),
+                ),
+                restriction_evidence.nonequilibrium_scale,
+                jnp.maximum(
+                    previous.temporal_interpolation_fraction,
+                    restriction_evidence.temporal_interpolation_fraction,
+                ),
+                previous.successful
+                & prolong_old_evidence.successful
+                & prolong_candidate_evidence.successful
+                & restriction_evidence.successful
+                & viscosity_successful,
+            )
+            return populations[level]
+
+        advance_level(0, None)
+        committed_populations = tuple(
+            jnp.where(active[..., None], candidate, original)
+            for candidate, original, active in zip(
+                populations,
+                state.level_populations,
+                state.active_masks,
+                strict=True,
+            )
+        )
+        candidate_state = LatticeBoltzmannAMRState(
+            committed_populations,
+            state.active_masks,
+            jnp.zeros_like(state.subcycle_phases),
+        )
+        mass_defects = jnp.stack(tuple(value.mass_defect for value in evidence))
+        momentum_defects = jnp.stack(tuple(value.momentum_defect for value in evidence))
+        nonequilibrium_scales = jnp.stack(
+            tuple(value.nonequilibrium_scale for value in evidence)
+        )
+        viscosity_defects = jnp.stack(tuple(value[0] for value in viscosity))
+        minimum_populations = jnp.stack(
+            tuple(value.minimum_population for value in evidence)
+        )
+        interface_successful = jnp.stack(tuple(value.successful for value in evidence))
+        finite = jnp.all(
+            jnp.stack(
+                tuple(jnp.all(jnp.isfinite(value)) for value in committed_populations)
+            )
+        )
+        positive = jnp.all(
+            jnp.stack(tuple(jnp.all(value >= 0.0) for value in committed_populations))
+        )
+        successful = jnp.all(interface_successful) & finite & positive
+        accepted = LatticeBoltzmannAMRState(
+            tuple(
+                jnp.where(successful, candidate, old)
+                for candidate, old in zip(
+                    candidate_state.level_populations,
+                    state.level_populations,
+                    strict=True,
+                )
+            ),
+            state.active_masks,
+            jnp.where(successful, candidate_state.subcycle_phases, state.subcycle_phases),
+        )
+        diagnostics = LatticeBoltzmannAMRDiagnostics(
+            mass_defects,
+            momentum_defects,
+            nonequilibrium_scales,
+            viscosity_defects,
+            minimum_populations,
+            fractions,
+            interface_successful,
+            finite,
+            positive,
+            successful,
+            self.prepared_id,
+        )
+        return LatticeBoltzmannAMRAdvanceResult(
+            candidate_state, accepted, diagnostics, successful
+        )
 
 
 class LatticeBoltzmannAMRPlan(StrictModule, NonTrainableState):
-    """Fixed two-level acoustic subcycling with explicit transfer evidence."""
+    """Finite integer-ratio hierarchy and temporal scaling contract."""
 
-    transfer: LatticeBoltzmannAMRTransferPlan
-    fine_substeps: int = eqx.field(static=True)
+    transfers: tuple[LatticeBoltzmannAMRTransferPlan, ...]
+    scaling: LatticeBoltzmannAMRScalingPolicy
+    temporal_trace: LatticeBoltzmannAMRTemporalTracePlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(
-        self, transfer: LatticeBoltzmannAMRTransferPlan, /, *, fine_substeps: int = 2
+        self,
+        transfers: LatticeBoltzmannAMRTransferPlan
+        | Sequence[LatticeBoltzmannAMRTransferPlan],
+        /,
+        *,
+        scaling: LatticeBoltzmannAMRScalingPolicy | None = None,
+        temporal_trace: LatticeBoltzmannAMRTemporalTracePlan | None = None,
     ):
-        if not isinstance(transfer, LatticeBoltzmannAMRTransferPlan):
-            raise TypeError("transfer must be LatticeBoltzmannAMRTransferPlan.")
-        if int(fine_substeps) != 2:
-            raise ValueError(
-                "Initial ratio-two LBM AMR requires exactly two fine substeps."
+        transfer_tuple = (
+            (transfers,)
+            if isinstance(transfers, LatticeBoltzmannAMRTransferPlan)
+            else tuple(transfers)
+        )
+        if not transfer_tuple or any(
+            not isinstance(value, LatticeBoltzmannAMRTransferPlan)
+            for value in transfer_tuple
+        ):
+            raise TypeError("LBM AMR requires one transfer plan per interface.")
+        lattice_id = transfer_tuple[0].velocity_set.lattice_id
+        if any(value.velocity_set.lattice_id != lattice_id for value in transfer_tuple):
+            raise ValueError("Every LBM AMR interface must use the same velocity set.")
+        scaling_ = LatticeBoltzmannAMRScalingPolicy() if scaling is None else scaling
+        trace_ = (
+            LatticeBoltzmannAMRTemporalTracePlan()
+            if temporal_trace is None
+            else temporal_trace
+        )
+        if not isinstance(scaling_, LatticeBoltzmannAMRScalingPolicy):
+            raise TypeError("scaling must be LatticeBoltzmannAMRScalingPolicy.")
+        if not isinstance(trace_, LatticeBoltzmannAMRTemporalTracePlan):
+            raise TypeError(
+                "temporal_trace must be LatticeBoltzmannAMRTemporalTracePlan."
             )
-        self.transfer = transfer
-        self.fine_substeps = 2
+        if scaling_.kind == "declared" and len(scaling_.declared_substeps) != len(
+            transfer_tuple
+        ):
+            raise ValueError("Declared scaling requires one substep count per interface.")
+        self.transfers = transfer_tuple
+        self.scaling = scaling_
+        self.temporal_trace = trace_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "lattice-boltzmann-amr-plan",
-                "transfer": transfer.transfer_id,
-                "fine_substeps": 2,
+                "transfers": tuple(value.transfer_id for value in transfer_tuple),
+                "scaling": scaling_.policy_id,
+                "temporal_trace": trace_.plan_id,
             }
         )
 
-    def advance_two_level(
+    def prepare(
         self,
-        state: LatticeBoltzmannAMRState,
-        coarse_step: Callable[[Array, Any], Array],
-        fine_step: Callable[[Array, Any], Array],
+        precision: LatticeBoltzmannPrecisionPolicy,
+        level_scalings: Sequence[LatticeBoltzmannScaling],
         /,
-        *,
-        args: Any = None,
-    ) -> LatticeBoltzmannAMRAdvanceResult:
-        if (
-            not isinstance(state, LatticeBoltzmannAMRState)
-            or len(state.level_populations) != 2
+    ) -> PreparedLatticeBoltzmannAMR:
+        if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):
+            raise TypeError("precision must be LatticeBoltzmannPrecisionPolicy.")
+        scalings = tuple(level_scalings)
+        if len(scalings) != len(self.transfers) + 1 or any(
+            not isinstance(value, LatticeBoltzmannScaling) for value in scalings
         ):
-            raise TypeError("advance_two_level requires a two-level LBM AMR state.")
-        coarse_old, fine_old = state.level_populations
-        coarse_active, fine_active = state.active_masks
-        dimension = self.transfer.velocity_set.dimension
-        expected_fine_shape = tuple(2 * size for size in coarse_old.shape[:-1])
-        if fine_old.shape[:-1] != expected_fine_shape:
-            raise ValueError("Fine AMR level must refine every coarse extent by two.")
-        reshape = []
-        for size in coarse_old.shape[:-1]:
-            reshape.extend((size, 2))
-        blocked_mask = fine_active.reshape(tuple(reshape))
-        reduction_axes = tuple(range(1, 2 * dimension, 2))
-        any_fine = jnp.any(blocked_mask, axis=reduction_axes)
-        covered = jnp.all(blocked_mask, axis=reduction_axes)
-        partial = any_fine != covered
-        fine_active = eqx.error_if(
-            fine_active,
-            jnp.any(partial),
-            "Fine AMR activity must cover complete ratio-two child blocks.",
+            raise TypeError("LBM AMR requires one physical scaling per level.")
+        substeps = tuple(
+            self.scaling.substeps(transfer.refinement_ratio, index)
+            for index, transfer in enumerate(self.transfers)
         )
-        coarse_active = eqx.error_if(
-            coarse_active,
-            jnp.any(covered & ~coarse_active),
-            "Every refined coarse cell must be active.",
-        )
-
-        prolonged_old, _ = self.transfer.prolong(coarse_old)
-        fine_candidate = jnp.where(fine_active[..., None], fine_old, prolonged_old)
-        coarse_candidate = coarse_step(coarse_old, args)
-        coarse_candidate = jnp.where(
-            coarse_active[..., None], coarse_candidate, coarse_old
-        )
-        for _ in range(self.fine_substeps):
-            stepped = fine_step(fine_candidate, args)
-            fine_candidate = jnp.where(fine_active[..., None], stepped, fine_candidate)
-        prolonged_candidate, _ = self.transfer.prolong(coarse_candidate)
-        fine_for_restriction = jnp.where(
-            fine_active[..., None], fine_candidate, prolonged_candidate
-        )
-        restricted, evidence = self.transfer.restrict(fine_for_restriction)
-        corrected_coarse = jnp.where(covered[..., None], restricted, coarse_candidate)
-        successful = (
-            evidence.successful
-            & jnp.all((~coarse_active[..., None]) | jnp.isfinite(corrected_coarse))
-            & jnp.all((~fine_active[..., None]) | jnp.isfinite(fine_candidate))
-        )
-        accepted_coarse = jnp.where(successful, corrected_coarse, coarse_old)
-        committed_fine = jnp.where(fine_active[..., None], fine_candidate, fine_old)
-        accepted_fine = jnp.where(successful, committed_fine, fine_old)
-        candidate_state = LatticeBoltzmannAMRState(
-            (accepted_coarse, accepted_fine),
-            state.active_masks,
-            jnp.asarray(0, dtype=jnp.int32),
-        )
-        return LatticeBoltzmannAMRAdvanceResult(candidate_state, evidence, successful)
-
-    def advance_two_level_collision_aware(
-        self,
-        state: LatticeBoltzmannAMRState,
-        transfer: PreparedLatticeBoltzmannAMRTransfer,
-        temporal: LatticeBoltzmannAMRTemporalInterfacePlan,
-        coarse_step: Callable[[Array, Any], Array],
-        fine_step: Callable[[Array, Array, Any], Array],
-        coarse_relaxation_rate: Array,
-        fine_relaxation_rate: Array,
-        /,
-        *,
-        args: Any = None,
-    ) -> LatticeBoltzmannCollisionAwareAMRAdvanceResult:
-        if (
-            not isinstance(state, LatticeBoltzmannAMRState)
-            or len(state.level_populations) != 2
+        prepared_transfers = []
+        for index, (transfer, substep_count) in enumerate(
+            zip(self.transfers, substeps, strict=True)
         ):
-            raise TypeError("Collision-aware AMR requires a two-level state.")
-        if not isinstance(transfer, PreparedLatticeBoltzmannAMRTransfer):
-            raise TypeError("transfer must be PreparedLatticeBoltzmannAMRTransfer.")
-        if not isinstance(temporal, LatticeBoltzmannAMRTemporalInterfacePlan):
-            raise TypeError("temporal must be LatticeBoltzmannAMRTemporalInterfacePlan.")
-        if transfer.transfer.transfer_id != self.transfer.transfer_id:
-            raise ValueError("Prepared and scheduled AMR transfers do not match.")
-        coarse_old, fine_old = state.level_populations
-        coarse_active, fine_active = state.active_masks
-        dimension = self.transfer.velocity_set.dimension
-        expected_fine_shape = tuple(2 * size for size in coarse_old.shape[:-1])
-        if fine_old.shape[:-1] != expected_fine_shape:
-            raise ValueError("Fine AMR level must refine every coarse extent by two.")
-        reshape = []
-        for size in coarse_old.shape[:-1]:
-            reshape.extend((size, 2))
-        blocked_mask = fine_active.reshape(tuple(reshape))
-        reduction_axes = tuple(range(1, 2 * dimension, 2))
-        any_fine = jnp.any(blocked_mask, axis=reduction_axes)
-        covered = jnp.all(blocked_mask, axis=reduction_axes)
-        fine_active = eqx.error_if(
-            fine_active,
-            jnp.any(any_fine != covered),
-            "Fine AMR activity must cover complete ratio-two child blocks.",
-        )
-        coarse_active = eqx.error_if(
-            coarse_active,
-            jnp.any(covered & ~coarse_active),
-            "Every refined coarse cell must be active.",
-        )
-        prolonged_old, prolong_evidence = transfer.prolong(
-            coarse_old,
-            coarse_relaxation_rate,
-            fine_relaxation_rate,
-        )
-        fine_candidate = jnp.where(fine_active[..., None], fine_old, prolonged_old)
-        coarse_candidate = coarse_step(coarse_old, args)
-        coarse_candidate = jnp.where(
-            coarse_active[..., None], coarse_candidate, coarse_old
-        )
-        half_coarse = temporal.interpolate(coarse_old, coarse_candidate)
-        first_fine = fine_step(fine_candidate, half_coarse, args)
-        fine_candidate = jnp.where(fine_active[..., None], first_fine, fine_candidate)
-        second_fine = fine_step(fine_candidate, coarse_candidate, args)
-        fine_candidate = jnp.where(fine_active[..., None], second_fine, fine_candidate)
-        prolonged_candidate, _ = transfer.prolong(
-            coarse_candidate,
-            coarse_relaxation_rate,
-            fine_relaxation_rate,
-        )
-        fine_for_restriction = jnp.where(
-            fine_active[..., None], fine_candidate, prolonged_candidate
-        )
-        restricted, restriction_evidence = transfer.restrict(
-            fine_for_restriction,
-            coarse_relaxation_rate,
-            fine_relaxation_rate,
-        )
-        evidence = LatticeBoltzmannAMRInterfaceEvidence(
-            restriction_evidence.mass_defect,
-            restriction_evidence.momentum_defect,
-            restriction_evidence.nonequilibrium_mass_defect,
-            restriction_evidence.nonequilibrium_momentum_defect,
-            restriction_evidence.minimum_population,
-            restriction_evidence.nonequilibrium_scale,
-            jnp.asarray(
-                temporal.interpolation_fraction,
-                dtype=restriction_evidence.minimum_population.dtype,
+            coarse_scaling = scalings[index]
+            fine_scaling = scalings[index + 1]
+            time_ratio = float(coarse_scaling.time_step) / float(fine_scaling.time_step)
+            if not np.isclose(time_ratio, float(substep_count)):
+                raise ValueError(
+                    "LBM AMR physical time-step ratios must match the scaling policy."
+                )
+            prepared_transfers.append(
+                PreparedLatticeBoltzmannAMRTransfer(
+                    transfer,
+                    precision,
+                    coarse_scaling,
+                    fine_scaling,
+                )
+            )
+        prepared_transfer_tuple = tuple(prepared_transfers)
+        return PreparedLatticeBoltzmannAMR(
+            prepared_transfer_tuple,
+            self.scaling,
+            self.temporal_trace,
+            substeps,
+            prepared_id=canonical_fingerprint(
+                {
+                    "kind": "prepared-lattice-boltzmann-amr",
+                    "plan": self.plan_id,
+                    "transfers": tuple(
+                        value.prepared_id for value in prepared_transfer_tuple
+                    ),
+                    "substeps": substeps,
+                }
             ),
-            prolong_evidence.successful & restriction_evidence.successful,
-        )
-        corrected_coarse = jnp.where(covered[..., None], restricted, coarse_candidate)
-        successful = (
-            evidence.successful
-            & jnp.all((~coarse_active[..., None]) | jnp.isfinite(corrected_coarse))
-            & jnp.all((~coarse_active[..., None]) | (corrected_coarse >= 0.0))
-            & jnp.all((~fine_active[..., None]) | jnp.isfinite(fine_candidate))
-            & jnp.all((~fine_active[..., None]) | (fine_candidate >= 0.0))
-        )
-        accepted_coarse = jnp.where(successful, corrected_coarse, coarse_old)
-        committed_fine = jnp.where(fine_active[..., None], fine_candidate, fine_old)
-        accepted_fine = jnp.where(successful, committed_fine, fine_old)
-        next_state = LatticeBoltzmannAMRState(
-            (accepted_coarse, accepted_fine),
-            state.active_masks,
-            jnp.asarray(0, dtype=jnp.int32),
-        )
-        return LatticeBoltzmannCollisionAwareAMRAdvanceResult(
-            next_state,
-            evidence,
-            successful,
         )
 
 
 __all__ = [
     "LatticeBoltzmannAMRAdvanceResult",
+    "LatticeBoltzmannAMRDiagnostics",
     "LatticeBoltzmannAMRInterfaceEvidence",
     "LatticeBoltzmannAMRPlan",
+    "LatticeBoltzmannAMRScalingKind",
+    "LatticeBoltzmannAMRScalingPolicy",
     "LatticeBoltzmannAMRState",
-    "LatticeBoltzmannAMRTemporalInterfacePlan",
+    "LatticeBoltzmannAMRTemporalTracePlan",
     "LatticeBoltzmannAMRTransferEvidence",
     "LatticeBoltzmannAMRTransferPlan",
-    "LatticeBoltzmannCollisionAwareAMRAdvanceResult",
+    "PreparedLatticeBoltzmannAMR",
     "PreparedLatticeBoltzmannAMRTransfer",
 ]

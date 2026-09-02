@@ -143,15 +143,6 @@ from ._stochastic_estimators import (
     StochasticOperatorSamples,
     StochasticTracePolicy,
 )
-from ._stochastic_ops import (
-    diffusion_covariance,
-    fokker_planck_operator,
-    GeneratorContraction,
-    kolmogorov_generator,
-    probability_current,
-    StochasticInterpretation,
-    stratonovich_to_ito_drift,
-)
 from ._sub_riemannian_ops import horizontal_grad, sub_laplacian
 from ._surface_ops import (
     ambient_surface_hessian_trace,
@@ -166,6 +157,36 @@ from ._time_fractional_ops import (
     caputo_time_fractional,
     caputo_time_fractional_dw,
 )
+
+
+_STOCHASTIC_OPERATOR_EXPORTS = frozenset(
+    {
+        "diffusion_covariance",
+        "fokker_planck_operator",
+        "GeneratorContraction",
+        "kolmogorov_generator",
+        "probability_current",
+        "StochasticInterpretation",
+        "stratonovich_to_ito_drift",
+    }
+)
+
+
+def __getattr__(name: str):
+    if name in _STOCHASTIC_OPERATOR_EXPORTS:
+        from . import _stochastic_ops as module
+
+        exports = {
+            "diffusion_covariance": module.diffusion_covariance,
+            "fokker_planck_operator": module.fokker_planck_operator,
+            "GeneratorContraction": module.GeneratorContraction,
+            "kolmogorov_generator": module.kolmogorov_generator,
+            "probability_current": module.probability_current,
+            "StochasticInterpretation": module.StochasticInterpretation,
+            "stratonovich_to_ito_drift": module.stratonovich_to_ito_drift,
+        }
+        return exports[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

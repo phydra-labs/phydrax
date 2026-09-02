@@ -198,11 +198,28 @@ def test_channel_stokes_enforces_couette_walls_and_bulk_flux():
     ).prepare(1.0)
     flux_result = fixed_flux.solve(jnp.zeros_like(couette_modal))
 
+    dense = (
+        phx.discretization.ChannelStokesPlan(
+            space,
+            0.1,
+            lower_wall_velocity=(-1.0, 0.0, 0.0),
+            upper_wall_velocity=(1.0, 0.0, 0.0),
+            route="dense_reference",
+        )
+        .prepare(1.0)
+        .solve(couette_modal)
+    )
     assert bool(prescribed_result.successful)
     np.testing.assert_allclose(np.asarray(reconstructed), np.asarray(couette), atol=1e-11)
     assert prescribed_result.diagnostics.divergence_norm < 1e-11
     assert prescribed_result.diagnostics.wall_residual < 1e-11
     assert prescribed_result.diagnostics.pressure_gauge_residual < 1e-11
+    assert prescribed.report.upper_bandwidth == 19
+    assert prescribed.report.lower_bandwidth == 3
+    assert prescribed.blocks is None
+    np.testing.assert_allclose(
+        prescribed_result.velocity, dense.velocity, atol=2e-11, rtol=2e-11
+    )
     assert bool(flux_result.successful)
     np.testing.assert_allclose(
         np.asarray(flux_result.diagnostics.bulk_velocity),

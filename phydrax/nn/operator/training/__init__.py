@@ -4,6 +4,14 @@ from ...._model import (
     OperatorArchitectureCodec,
     register_operator_architecture_codec,
 )
+from ...._training import (
+    DelayedTargetPolicy,
+    ExponentialMovingAverageTargetPolicy,
+    TargetParameterSource,
+    TargetParameterState,
+    TrainingController,
+    TrainingProgress,
+)
 from ._adaptation import (
     adapt_operator_context,
     BoundedResidualAdaptationPolicy,
@@ -34,6 +42,13 @@ from ._classification_losses import (
     OperatorSoftClassificationLoss,
     OperatorSupportReduction,
     OperatorZeroMeasure,
+)
+from ._coreset import (
+    compress_operator_cases,
+    compress_operator_queries,
+    OperatorCaseCoreset,
+    OperatorCoresetMethod,
+    OperatorQueryCoreset,
 )
 from ._dataset import (
     operator_dataset_from_arrays,
@@ -107,6 +122,7 @@ from ._pod import (
     OperatorPODDiagnostics,
     OperatorPODFit,
 )
+from ._pretrained import BundledPretrainedOperator, load_pretrained_operator
 from ._risk import (
     MechanicsCaseReduction,
     MechanicsCaseReductionKind,
@@ -114,7 +130,10 @@ from ._risk import (
 )
 from ._rollout import (
     autoregressive_operator_rollout,
+    autoregressive_operator_rollout_routes,
+    infer_operator_rollout_routes,
     OperatorRollout,
+    OperatorRolloutControlRoute,
     OperatorRolloutPolicy,
     OperatorRolloutRoute,
 )
@@ -162,6 +181,7 @@ from ._streaming import (
     OperatorQuerySchema,
     OperatorQuerySource,
 )
+from ._target_consistency import TargetOperatorConsistencyLoss
 from ._trained_operator import (
     operator_contract_fingerprint,
     operator_normalization_fingerprint,
@@ -179,6 +199,7 @@ __all__ = [
     "OperatorArtifactManifest",
     "OperatorArtifactTrainingState",
     "BoundedResidualAdaptationPolicy",
+    "BundledPretrainedOperator",
     "TestTimeAdaptationResult",
     "adapt_operator_context",
     "MechanicsCaseReduction",
@@ -202,11 +223,14 @@ __all__ = [
     "operator_weak_form_loss",
     "project_operator_conservation",
     "WeakOperatorLoss",
+    "compress_operator_cases",
+    "compress_operator_queries",
     "ComplexDTypeName",
     "DTypeName",
     "MatmulPrecisionName",
     "fit_operator_normalization",
     "fit_operator",
+    "load_pretrained_operator",
     "fit_operator_pod",
     "fit_pod_basis",
     "OperatorPODDiagnostics",
@@ -214,6 +238,9 @@ __all__ = [
     "OperatorBatchLoader",
     "OperatorBatchEpoch",
     "OperatorDataset",
+    "OperatorCaseCoreset",
+    "OperatorCoresetMethod",
+    "OperatorQueryCoreset",
     "OperatorDatasetSplit",
     "OperatorDTypePolicy",
     "OperatorPrecisionEvidence",
@@ -226,7 +253,9 @@ __all__ = [
     "OperatorLossScaleState",
     "OperatorRollout",
     "OperatorRolloutPolicy",
+    "OperatorRolloutControlRoute",
     "OperatorRolloutRoute",
+    "TargetOperatorConsistencyLoss",
     "ResidualOperatorRolloutLoss",
     "SupervisedOperatorRolloutLoss",
     "OperatorSplitPolicy",
@@ -234,6 +263,8 @@ __all__ = [
     "OperatorTrainingBatch",
     "OperatorTrainingCheckpoint",
     "autoregressive_operator_rollout",
+    "autoregressive_operator_rollout_routes",
+    "infer_operator_rollout_routes",
     "conditioned_distributional_semigroup_loss",
     "conditioned_semigroup_consistency_loss",
     "conditioned_sinkhorn_semigroup_loss",
@@ -308,4 +339,10 @@ __all__ = [
     "OperatorQueryChunk",
     "OperatorQuerySchema",
     "OperatorQuerySource",
+    "DelayedTargetPolicy",
+    "ExponentialMovingAverageTargetPolicy",
+    "TargetParameterSource",
+    "TargetParameterState",
+    "TrainingController",
+    "TrainingProgress",
 ]

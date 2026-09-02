@@ -31,11 +31,19 @@ from ..._numerics import (
     axis_level,
     smolyak_axis_data,
     smolyak_terms,
+    smolyak_terms_for_index_set,
     SmolyakAxisRule,
+    SmolyakFrontier,
+    SmolyakIndexSet,
+    SmolyakRefinementEpoch,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._plans import SmolyakInterpolationPlan, SmolyakInterpolationRule
+from ._plans import (
+    AdaptiveSmolyakInterpolationPlan,
+    SmolyakInterpolationPlan,
+    SmolyakInterpolationRule,
+)
 
 
 class _TermTopology(NamedTuple):
@@ -110,14 +118,10 @@ def _resolve_axis_rules(
     for axis, (factor, rule) in enumerate(zip(factors, requested, strict=True)):
         if rule == "auto":
             if isinstance(factor, ProbabilityDomain):
-                if not factor.supports_reference_transform:
-                    raise ValueError(
-                        f"Probability interpolation axis {axis} has no canonical "
-                        "reference transform."
-                    )
+                transport = factor.reference_transport
                 rule_ = (
                     "gauss-hermite"
-                    if factor.reference_measure == "standard-normal"
+                    if transport.reference_measure == "standard-normal"
                     else "leja"
                 )
             else:
@@ -125,13 +129,9 @@ def _resolve_axis_rules(
         else:
             rule_ = rule
         if isinstance(factor, ProbabilityDomain):
-            if not factor.supports_reference_transform:
-                raise ValueError(
-                    f"Probability interpolation axis {axis} has no canonical "
-                    "reference transform."
-                )
+            transport = factor.reference_transport
             expected = "standard-normal" if rule_ == "gauss-hermite" else "uniform"
-            if factor.reference_measure != expected:
+            if transport.reference_measure != expected:
                 raise ValueError(
                     f"Interpolation rule {rule_!r} on probability axis {axis} "
                     f"requires reference measure {expected!r}."
@@ -147,7 +147,7 @@ def _resolve_axis_rules(
 def _from_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
     reference = jnp.asarray(value, dtype=float)
     if isinstance(factor, ProbabilityDomain):
-        return factor.from_reference(reference)
+        return factor.reference_transport.from_reference(reference)
     if rule == "gauss-hermite":
         raise TypeError("Gauss--Hermite interpolation requires a probability factor.")
     lower = factor.fixed("start")
@@ -158,7 +158,7 @@ def _from_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: 
 def _to_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
     physical = jnp.asarray(value, dtype=float)
     if isinstance(factor, ProbabilityDomain):
-        return factor.to_reference(physical)
+        return factor.reference_transport.to_reference(physical)
     if rule == "gauss-hermite":
         raise TypeError("Gauss--Hermite interpolation requires a probability factor.")
     lower = factor.fixed("start")
@@ -172,11 +172,18 @@ def _build_topology(
     anisotropy: tuple[float, ...],
     rules: tuple[SmolyakAxisRule, ...],
     /,
+    *,
+    index_set: SmolyakIndexSet | None = None,
 ) -> tuple[np.ndarray, tuple[_TermTopology, ...]]:
     point_indices: dict[tuple[tuple[str, int, int], ...], int] = {}
     points: list[tuple[float, ...]] = []
     topologies: list[_TermTopology] = []
-    for term in smolyak_terms(dimension, level, anisotropy):
+    terms = (
+        smolyak_terms(dimension, level, anisotropy)
+        if index_set is None
+        else smolyak_terms_for_index_set(index_set)
+    )
+    for term in terms:
         axis_data = tuple(
             smolyak_axis_data(rule, axis_level(term.index, axis))
             for axis, rule in enumerate(rules)
@@ -446,7 +453,365 @@ def interpolate_smolyak(
     )
 
 
+class AdaptiveSmolyakInterpolationDiagnostics(StrictModule, NonTrainableState):
+    status: str = eqx.field(static=True)
+    frontier_indicator: float = eqx.field(static=True)
+    accepted_indices: int = eqx.field(static=True)
+    num_unique_nodes: int = eqx.field(static=True)
+    num_rounds: int = eqx.field(static=True)
+
+
+class AdaptiveSmolyakInterpolationResult(StrictModule, NonTrainableState):
+    function: DomainFunction
+    epochs: tuple[SmolyakRefinementEpoch, ...]
+    diagnostics: AdaptiveSmolyakInterpolationDiagnostics
+
+
+def _interpolate_index_set(
+    function: DomainFunction,
+    plan: AdaptiveSmolyakInterpolationPlan,
+    index_set: SmolyakIndexSet,
+    /,
+    *,
+    key: Key[Array, ""],
+) -> tuple[DomainFunction, np.ndarray]:
+    dependencies = tuple(function.deps)
+    raw_factors = tuple(function.domain.factor(label) for label in dependencies)
+    factors = tuple(_unwrap(factor) for factor in raw_factors)
+    if any(not isinstance(factor, AbstractScalarDomain) for factor in factors):
+        raise TypeError("Adaptive Smolyak interpolation requires scalar factors.")
+    scalar_factors = tuple(factors)
+    rules = _resolve_axis_rules(scalar_factors, plan.axis_rules)
+    canonical_points, topologies = _build_topology(
+        plan.dimension,
+        plan.initial_level,
+        plan.anisotropy,
+        rules,
+        index_set=index_set,
+    )
+    physical_columns = tuple(
+        _from_reference(
+            factor,
+            rule,
+            jnp.asarray(canonical_points[:, axis], dtype=float),
+        )
+        for axis, (factor, rule) in enumerate(zip(scalar_factors, rules, strict=True))
+    )
+    dependency_domain = _dependency_domain(function)
+    structure = SampleLayout((dependencies,)).canonicalize(dependency_domain.labels)
+    sample_axis = structure.axis_for(dependencies[0])
+    if sample_axis is None:
+        raise RuntimeError("Adaptive Smolyak structure has no sample axis.")
+    points = PointBatch(
+        frozendict(
+            {
+                label: cx.Field(column, dims=(sample_axis,))
+                for label, column in zip(dependencies, physical_columns, strict=True)
+            }
+        ),
+        structure,
+    )
+    fitting_function = DomainFunction(
+        domain=dependency_domain,
+        deps=dependencies,
+        func=function.func,
+        metadata={},
+    )
+    values = jnp.asarray(fitting_function(points, key=key).data)
+    if values.ndim < 1 or int(values.shape[0]) != int(canonical_points.shape[0]):
+        raise ValueError(
+            "Adaptive Smolyak source evaluation must preserve the node axis."
+        )
+    if bool(jnp.any(~jnp.isfinite(values))):
+        raise ValueError("Adaptive Smolyak source evaluation produced non-finite values.")
+    blocks = _build_blocks(topologies, values)
+    interpolant = SmolyakInterpolant(
+        blocks=blocks,
+        factors=scalar_factors,
+        axis_labels=dependencies,
+        axis_rules=rules,
+        anisotropy=plan.anisotropy,
+        level=max(sum(index) for index in index_set.indices) + 1,
+        output_shape=tuple(int(size) for size in values.shape[1:]),
+        num_terms=len(topologies),
+        num_evaluations=int(canonical_points.shape[0]),
+        maximum_active_dimension=max(len(topology.axes) for topology in topologies),
+    )
+    return (
+        DomainFunction(
+            domain=function.domain,
+            deps=dependencies,
+            func=interpolant,
+            metadata=function.metadata,
+        ),
+        canonical_points,
+    )
+
+
+def _adaptive_axis_rules(
+    function: DomainFunction,
+    plan: AdaptiveSmolyakInterpolationPlan,
+    /,
+) -> tuple[SmolyakAxisRule, ...]:
+    raw_factors = tuple(function.domain.factor(label) for label in function.deps)
+    factors = tuple(_unwrap(factor) for factor in raw_factors)
+    if any(not isinstance(factor, AbstractScalarDomain) for factor in factors):
+        raise TypeError("Adaptive Smolyak interpolation requires scalar factors.")
+    return _resolve_axis_rules(tuple(factors), plan.axis_rules)
+
+
+def _axis_node_count(rule: SmolyakAxisRule, level: int, /) -> int:
+    if rule == "clenshaw-curtis":
+        return 1 if level == 0 else 2**level + 1
+    if rule in ("leja", "gauss-hermite"):
+        return level + 1
+    raise ValueError(f"Unsupported interpolation axis rule {rule!r}.")
+
+
+def _index_set_node_count(
+    index_set: SmolyakIndexSet,
+    rules: tuple[SmolyakAxisRule, ...],
+    /,
+    *,
+    limit: int,
+) -> int:
+    """Count unique canonical nodes without constructing an interpolant."""
+    identifiers: set[tuple[tuple[str, int, int], ...]] = set()
+    for term in smolyak_terms_for_index_set(index_set):
+        tensor_nodes = 1
+        for axis, rule in enumerate(rules):
+            tensor_nodes *= _axis_node_count(rule, axis_level(term.index, axis))
+            if tensor_nodes > limit:
+                return limit + 1
+        axis_data = tuple(
+            smolyak_axis_data(rule, axis_level(term.index, axis))
+            for axis, rule in enumerate(rules)
+        )
+        node_ranges = tuple(range(data.nodes.shape[0]) for data in axis_data)
+        for position in itertools.product(*node_ranges):
+            identifiers.add(
+                tuple(
+                    axis_data[axis].node_ids[point] for axis, point in enumerate(position)
+                )
+            )
+            if len(identifiers) > limit:
+                return len(identifiers)
+    return len(identifiers)
+
+
+def _adaptive_indicator(values: Array, norm: str, /) -> float:
+    magnitude = np.abs(np.asarray(values))
+    if norm == "max":
+        return float(np.max(magnitude, initial=0.0))
+    return float(np.sqrt(np.mean(magnitude**2)))
+
+
+def interpolate_adaptive_smolyak(
+    function: DomainFunction,
+    plan: AdaptiveSmolyakInterpolationPlan,
+    /,
+    *,
+    key: Key[Array, ""] = DOC_KEY0,
+) -> AdaptiveSmolyakInterpolationResult:
+    """Prepare a dimension-adaptive immutable Smolyak interpolant."""
+    if not isinstance(function, DomainFunction):
+        raise TypeError("interpolate_adaptive_smolyak requires a DomainFunction.")
+    if len(function.deps) != plan.dimension:
+        raise ValueError(
+            "AdaptiveSmolyakInterpolationPlan dimension must match dependencies."
+        )
+    index_set = SmolyakIndexSet.weighted_total_degree(
+        plan.dimension,
+        plan.initial_level,
+        anisotropy=plan.anisotropy,
+    )
+    if len(index_set.indices) > plan.max_indices:
+        raise ValueError("Initial adaptive interpolation index set exceeds max_indices.")
+    rules = _adaptive_axis_rules(function, plan)
+    initial_nodes = _index_set_node_count(index_set, rules, limit=plan.max_nodes)
+    if initial_nodes > plan.max_nodes:
+        raise ValueError("Initial adaptive interpolation grid exceeds max_nodes.")
+    current, current_points = _interpolate_index_set(function, plan, index_set, key=key)
+    epochs: list[SmolyakRefinementEpoch] = []
+    frontier_indicator = float("inf")
+    status = "maximum-rounds"
+    for _ in range(plan.max_rounds):
+        frontier = index_set.frontier(plan.anisotropy)
+        if not frontier.candidates:
+            status = "stagnated"
+            epochs.append(
+                SmolyakRefinementEpoch(
+                    index_set=index_set,
+                    frontier=frontier,
+                    selected=None,
+                    indicators=(),
+                    new_work=(),
+                    status=status,
+                )
+            )
+            break
+        if len(index_set.indices) >= plan.max_indices:
+            status = "maximum-indices"
+            epochs.append(
+                SmolyakRefinementEpoch(
+                    index_set=index_set,
+                    frontier=frontier,
+                    selected=None,
+                    indicators=(),
+                    new_work=(),
+                    status=status,
+                )
+            )
+            break
+        candidates = []
+        indicators = []
+        work_values = []
+        eligible_candidates: list[tuple[int, ...]] = []
+        eligible_costs: list[float] = []
+        node_limited = False
+        for candidate, cost in zip(
+            frontier.candidates,
+            frontier.anisotropic_costs,
+            strict=True,
+        ):
+            proposed = index_set.add(candidate)
+            proposed_nodes = _index_set_node_count(
+                proposed,
+                rules,
+                limit=plan.max_nodes,
+            )
+            work = max(
+                1,
+                proposed_nodes - int(current_points.shape[0]),
+            )
+            if proposed_nodes > plan.max_nodes:
+                node_limited = True
+                continue
+            eligible_candidates.append(candidate)
+            eligible_costs.append(cost)
+            proposed_function, proposed_points = _interpolate_index_set(
+                function, plan, proposed, key=key
+            )
+            factors = proposed_function.func.factors
+            proposed_rules = proposed_function.func.axis_rules
+            physical = tuple(
+                _from_reference(
+                    factor,
+                    rule,
+                    jnp.asarray(proposed_points[:, axis], dtype=float),
+                )
+                for axis, (factor, rule) in enumerate(
+                    zip(factors, proposed_rules, strict=True)
+                )
+            )
+            differences = jnp.stack(
+                tuple(
+                    proposed_function.func(*(column[row] for column in physical))
+                    - current.func(*(column[row] for column in physical))
+                    for row in range(int(proposed_points.shape[0]))
+                )
+            )
+            indicator = _adaptive_indicator(differences, plan.indicator_norm)
+            indicators.append(indicator)
+            work_values.append(work)
+            candidates.append(
+                (
+                    indicator / work,
+                    candidate,
+                    proposed,
+                    proposed_function,
+                    proposed_points,
+                )
+            )
+        eligible_frontier = SmolyakFrontier(
+            candidates=tuple(eligible_candidates),
+            anisotropic_costs=tuple(eligible_costs),
+        )
+        frontier_indicator = float("inf") if node_limited else float(sum(indicators))
+        if not candidates:
+            status = "maximum-nodes"
+            epochs.append(
+                SmolyakRefinementEpoch(
+                    index_set=index_set,
+                    frontier=frontier,
+                    selected=None,
+                    indicators=(),
+                    new_work=(),
+                    status=status,
+                )
+            )
+            break
+        magnitude = _adaptive_indicator(
+            jnp.stack(
+                tuple(
+                    current.func(
+                        *(
+                            _from_reference(
+                                factor,
+                                rule,
+                                jnp.asarray(0.0),
+                            )
+                            for factor, rule in zip(
+                                current.func.factors,
+                                current.func.axis_rules,
+                                strict=True,
+                            )
+                        )
+                    )
+                    for _ in range(1)
+                )
+            ),
+            plan.indicator_norm,
+        )
+        if (
+            frontier_indicator
+            <= plan.absolute_tolerance + plan.relative_tolerance * magnitude
+        ):
+            status = "converged"
+            epochs.append(
+                SmolyakRefinementEpoch(
+                    index_set=index_set,
+                    frontier=eligible_frontier,
+                    selected=None,
+                    indicators=tuple(indicators),
+                    new_work=tuple(work_values),
+                    status=status,
+                )
+            )
+            break
+        candidates.sort(key=lambda value: (-value[0], value[1]))
+        _, selected, proposed, proposed_function, proposed_points = candidates[0]
+        epochs.append(
+            SmolyakRefinementEpoch(
+                index_set=index_set,
+                frontier=eligible_frontier,
+                selected=selected,
+                indicators=tuple(indicators),
+                new_work=tuple(work_values),
+                status="accepted",
+            )
+        )
+        index_set = proposed
+        current = proposed_function
+        current_points = proposed_points
+    diagnostics = AdaptiveSmolyakInterpolationDiagnostics(
+        status=status,
+        frontier_indicator=frontier_indicator,
+        accepted_indices=len(index_set.indices),
+        num_unique_nodes=int(current_points.shape[0]),
+        num_rounds=len(epochs),
+    )
+    return AdaptiveSmolyakInterpolationResult(
+        function=current,
+        epochs=tuple(epochs),
+        diagnostics=diagnostics,
+    )
+
+
 __all__ = [
+    "AdaptiveSmolyakInterpolationDiagnostics",
+    "AdaptiveSmolyakInterpolationResult",
     "SmolyakInterpolant",
+    "interpolate_adaptive_smolyak",
     "interpolate_smolyak",
 ]

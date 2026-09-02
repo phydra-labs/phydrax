@@ -40,6 +40,7 @@ class WeightSpaceRecurrence(StrictModule):
     """Stable diagonal recurrence in a selected root-model parameter subspace."""
 
     raw_retention: Array
+    raw_phase: Array | None
     input_weight: Array
     input_size: int = eqx.field(static=True)
     parameter_size: int = eqx.field(static=True)
@@ -75,30 +76,54 @@ class WeightSpaceRecurrence(StrictModule):
         if not math.isfinite(scale) or scale < 0.0:
             raise ValueError("input_scale must be finite and non-negative.")
         resolved_dtype = jnp.dtype(dtype)
-        if not jnp.issubdtype(resolved_dtype, jnp.floating):
-            raise TypeError("dtype must be a real floating dtype.")
-        retention_key, input_key = jr.split(key)
+        if not (
+            jnp.issubdtype(resolved_dtype, jnp.floating)
+            or jnp.issubdtype(resolved_dtype, jnp.complexfloating)
+        ):
+            raise TypeError("dtype must be a homogeneous real or complex dtype.")
+        retention_key, phase_key, input_key = jr.split(key, 3)
+        real_dtype = jnp.empty((), dtype=resolved_dtype).real.dtype
         initial_retention = jr.uniform(
             retention_key,
             (self.parameter_size,),
             minval=0.5,
             maxval=self.maximum_retention,
-            dtype=resolved_dtype,
+            dtype=real_dtype,
         )
         normalized = initial_retention / self.maximum_retention
         self.raw_retention = jnp.log(normalized) - jnp.log1p(-normalized)
-        self.input_weight = (
-            scale
-            * jr.normal(
+        if jnp.issubdtype(resolved_dtype, jnp.complexfloating):
+            self.raw_phase = jr.uniform(
+                phase_key,
+                (self.parameter_size,),
+                minval=-jnp.pi,
+                maxval=jnp.pi,
+                dtype=real_dtype,
+            )
+            normal = jr.normal(
+                input_key,
+                (2, self.parameter_size, self.input_size),
+                dtype=real_dtype,
+            )
+            weight = (normal[0] + 1j * normal[1]) / jnp.sqrt(2.0)
+        else:
+            self.raw_phase = None
+            weight = jr.normal(
                 input_key,
                 (self.parameter_size, self.input_size),
-                dtype=resolved_dtype,
+                dtype=real_dtype,
             )
-            / jnp.sqrt(float(self.input_size))
+        self.input_weight = (
+            scale * weight.astype(resolved_dtype) / jnp.sqrt(float(self.input_size))
         )
 
     def retention(self, /) -> Array:
-        return self.maximum_retention * jax.nn.sigmoid(self.raw_retention)
+        magnitude = self.maximum_retention * jax.nn.sigmoid(self.raw_retention)
+        return (
+            magnitude
+            if self.raw_phase is None
+            else magnitude * jnp.exp(1j * self.raw_phase)
+        )
 
     def initial_state(
         self,
@@ -167,11 +192,21 @@ class WeightSpaceRecurrence(StrictModule):
         values = jnp.asarray(batch.inputs)
         if values.ndim < 1 or int(values.shape[-1]) != self.input_size:
             raise ValueError(f"Weight-space inputs must end in width {self.input_size}.")
-        if jnp.issubdtype(values.dtype, jnp.complexfloating):
-            raise TypeError("Weight-space recurrence inputs must be real-valued.")
         parameter_center = jnp.asarray(center)
-        if jnp.issubdtype(parameter_center.dtype, jnp.complexfloating):
-            raise TypeError("Initial WARP support requires real selected parameters.")
+        values_complex = jnp.issubdtype(values.dtype, jnp.complexfloating)
+        center_complex = jnp.issubdtype(
+            parameter_center.dtype,
+            jnp.complexfloating,
+        )
+        weight_complex = jnp.issubdtype(
+            self.input_weight.dtype,
+            jnp.complexfloating,
+        )
+        if not (values_complex == center_complex == weight_complex):
+            raise TypeError(
+                "Weight-space recurrence requires homogeneous real or complex inputs, "
+                "selected parameters, and recurrence weights."
+            )
         compute_dtype = jnp.result_type(
             values.dtype,
             parameter_center.dtype,
@@ -203,6 +238,7 @@ class WeightSpaceRecurrence(StrictModule):
                 batch.valid,
                 reset=batch.reset,
                 time=batch.time,
+                time_direction=batch.time_direction,
             ),
             previous_input,
         )
@@ -226,6 +262,7 @@ class WeightSpaceRecurrence(StrictModule):
                 batch.valid,
                 reset=batch.reset,
                 time=batch.time,
+                time_direction=batch.time_direction,
             ),
             initial_state=initial_deviation,
             execution=execution,

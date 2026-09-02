@@ -12,7 +12,8 @@ from typing import Any
 
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
-from ...equations import pde_ir_from_dict, pde_ir_to_dict, PDEProblemIR
+from ...equations._ir import PDEProblemIR
+from ...equations._serialize import pde_ir_from_dict, pde_ir_to_dict
 from ...graph._operator_topology import OperatorTopologySite
 from .capabilities import (
     OperatorGeometryKind,

@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike, Key, PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._training import TrainingProgress
+from .._training import TargetParameterState, TrainingProgress
 from ..domain import DomainFunction
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
@@ -26,6 +26,7 @@ from ..terms import ResidualBlockLayout, ResidualBlockRef
 PseudoTimeFreshness = Literal["every_update", "periodic", "experimental_fixed"]
 BalanceMethod = Literal["gradient_norm", "ntk_trace"]
 CausalGateSignal = Literal["physical", "surrogate"]
+
 
 def _callable_identity(value: Callable[..., Any], /) -> str:
     module = getattr(value, "__module__", type(value).__module__)
@@ -42,8 +43,6 @@ def _callable_identity(value: Callable[..., Any], /) -> str:
         }
     )
     return f"{identity}:{code.co_firstlineno}:{implementation}"
-
-
 
 
 class ResidualRelaxationMap(StrictModule, NonTrainableState):
@@ -256,7 +255,9 @@ class CausalResidualPolicy(StrictModule, NonTrainableState):
         if not isinstance(schedule, CausalTimeSlabSchedule):
             raise TypeError("schedule must be a CausalTimeSlabSchedule.")
         if schedule.overlap_fraction != 0.0:
-            raise ValueError("Causal residual loss initially requires non-overlapping slabs.")
+            raise ValueError(
+                "Causal residual loss initially requires non-overlapping slabs."
+            )
         if gate_signal not in ("physical", "surrogate"):
             raise ValueError("Unknown causal gate signal.")
         self.term_index = index
@@ -305,7 +306,9 @@ class FunctionalTermBalancePolicy(StrictModule, NonTrainableState):
         maximum_relative_standard_error: float = 0.25,
     ):
         blocks_ = tuple(blocks)
-        if not blocks_ or any(not isinstance(block, ResidualBlockRef) for block in blocks_):
+        if not blocks_ or any(
+            not isinstance(block, ResidualBlockRef) for block in blocks_
+        ):
             raise TypeError("blocks must contain ResidualBlockRef values.")
         keys = tuple((block.term_index, block.block_name) for block in blocks_)
         if len(set(keys)) != len(keys):
@@ -336,7 +339,12 @@ class FunctionalTermBalancePolicy(StrictModule, NonTrainableState):
         self.blocks = blocks_
         self.start = start_
         self.every = every_
-        self.momentum, self.minimum, self.maximum, self.maximum_relative_standard_error = scalars
+        (
+            self.momentum,
+            self.minimum,
+            self.maximum,
+            self.maximum_relative_standard_error,
+        ) = scalars
         self.ntk_probes = probes
         self.policy_id = canonical_fingerprint(
             {
@@ -349,9 +357,7 @@ class FunctionalTermBalancePolicy(StrictModule, NonTrainableState):
                 "minimum": self.minimum,
                 "maximum": self.maximum,
                 "ntk_probes": probes,
-                "maximum_relative_standard_error": (
-                    self.maximum_relative_standard_error
-                ),
+                "maximum_relative_standard_error": (self.maximum_relative_standard_error),
             }
         )
 
@@ -564,6 +570,7 @@ class FunctionalTrainingState(StrictModule):
     best_functions: PyTree[Any]
     previous_functions: PyTree[Any] | None
     optimizer_state: PyTree[Any]
+    target_state: TargetParameterState | None
     key: Key[Array, ""]
     pseudo_inverse_steps: tuple[Array, ...]
     term_multipliers: Array
@@ -582,6 +589,7 @@ class FunctionalTrainingState(StrictModule):
         key: Key[Array, ""],
         progress: TrainingProgress,
         run_id: str,
+        target_state: TargetParameterState | None = None,
         previous_functions: PyTree[Any] | None = None,
         pseudo_inverse_steps: Sequence[ArrayLike] = (),
         term_multipliers: ArrayLike = (),
@@ -591,6 +599,10 @@ class FunctionalTrainingState(StrictModule):
     ):
         if not isinstance(progress, TrainingProgress):
             raise TypeError("progress must be a TrainingProgress.")
+        if target_state is not None and not isinstance(
+            target_state, TargetParameterState
+        ):
+            raise TypeError("target_state must be a TargetParameterState or None.")
         identifier = str(run_id)
         seconds = float(training_seconds)
         resumed = int(resumed_from_step)
@@ -600,8 +612,11 @@ class FunctionalTrainingState(StrictModule):
         self.best_functions = best_functions
         self.previous_functions = previous_functions
         self.optimizer_state = optimizer_state
+        self.target_state = target_state
         self.key = key
-        self.pseudo_inverse_steps = tuple(jnp.asarray(value) for value in pseudo_inverse_steps)
+        self.pseudo_inverse_steps = tuple(
+            jnp.asarray(value) for value in pseudo_inverse_steps
+        )
         self.term_multipliers = jnp.asarray(term_multipliers, dtype=float).reshape((-1,))
         self.previous_gradient = previous_gradient
         self.progress = progress

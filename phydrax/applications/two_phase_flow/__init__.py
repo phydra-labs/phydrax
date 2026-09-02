@@ -4,6 +4,13 @@
 
 """Conservative incompressible two-phase VOF hydrodynamics."""
 
+from ._events import (
+    ConservativeTwoPhaseRemeshPlan,
+    TwoPhaseCapabilityEventPlan,
+    TwoPhaseCapabilityEvidence,
+    TwoPhaseRemeshEvidence,
+    TwoPhaseRemeshResult,
+)
 from ._io import (
     read_two_phase_checkpoint,
     two_phase_diagnostic_view,
@@ -32,17 +39,22 @@ from ._vof import (
 
 
 __all__ = [
+    "ConservativeTwoPhaseRemeshPlan",
     "IncompressibleTwoPhaseVOFMethod",
     "IncompressibleTwoPhaseVOFPlan",
     "PLICGeometry",
     "PreparedIncompressibleTwoPhaseVOF",
     "TwoPhaseContinuationState",
+    "TwoPhaseCapabilityEventPlan",
+    "TwoPhaseCapabilityEvidence",
     "TwoPhaseDiagnosticView",
     "TwoPhaseMaterialPlan",
     "TwoPhaseMovingBodyPlan",
     "TwoPhaseStepEvidence",
     "TwoPhaseTopologyEvidence",
     "TwoPhaseVOFLedger",
+    "TwoPhaseRemeshEvidence",
+    "TwoPhaseRemeshResult",
     "TwoPhaseVOFState",
     "TwoPhaseVOFView",
     "read_two_phase_checkpoint",

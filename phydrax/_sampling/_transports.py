@@ -9,8 +9,8 @@ from typing import Any, Protocol
 from jaxtyping import Array
 
 
-class ReferenceTransport(Protocol):
-    """Exact map from unit-cube coordinates to one target-measure factor."""
+class UnitCubeTransport(Protocol):
+    """Exact sampling map from unit-cube coordinates to one target factor."""
 
     @property
     def reference_dimension(self) -> int: ...
@@ -18,4 +18,4 @@ class ReferenceTransport(Protocol):
     def map(self, unit: Array, /) -> Any: ...
 
 
-__all__ = ["ReferenceTransport"]
+__all__ = ["UnitCubeTransport"]

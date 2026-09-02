@@ -7,6 +7,7 @@ from __future__ import annotations
 from math import prod
 from typing import Any, Protocol
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +20,8 @@ from ..linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
-from ..linalg._operators import _validate_action_dtype, _validate_properties
+from ..linalg._operators import _validate_properties
+from ..linalg._spaces import _coordinate_dtype
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._ops import linear_adjoint_apply, linear_apply, linear_transpose_apply
 from ._relation import EdgeRelation, RowRelation, SparseRelation
@@ -207,6 +209,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
 
     relation: SparseRelation
     coefficients: Array
+    accumulation_dtype: Any = eqx.field(static=True)
 
     def __init__(
         self,
@@ -218,6 +221,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         target: AbstractVectorSpace,
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
+        accumulation_dtype: Any | None = None,
     ):
         if not isinstance(relation, (EdgeRelation, RowRelation)):
             raise TypeError("relation must be an EdgeRelation or RowRelation.")
@@ -245,10 +249,11 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
             )
         if not jnp.issubdtype(values.dtype, jnp.inexact):
             values = values.astype(float)
-        _validate_action_dtype(values.dtype, source, target, "sparse coefficients")
-        _validate_action_dtype(
-            values.dtype, target, source, "transposed sparse coefficients"
+        accumulation_dtype_ = jnp.dtype(
+            values.dtype if accumulation_dtype is None else accumulation_dtype
         )
+        if not jnp.issubdtype(accumulation_dtype_, jnp.inexact):
+            raise TypeError("Sparse accumulation dtype must be inexact.")
         properties_ = OperatorProperties() if properties is None else properties
         if not isinstance(properties_, OperatorProperties):
             raise TypeError("properties must be OperatorProperties.")
@@ -270,6 +275,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
             raise ValueError("operator_id must be non-empty.")
         self.relation = relation
         self.coefficients = values
+        self.accumulation_dtype = accumulation_dtype_
         self.source = source
         self.target = target
         self.properties = properties_
@@ -283,22 +289,36 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         self.operator_id = identifier
 
     def mv(self, vector: Any, /) -> Any:
-        coordinates = self.source.flatten(vector)
+        coordinates = self.source.flatten(vector).astype(self.accumulation_dtype)
         relation, coefficients = self._edge_form()
-        return self.target.unflatten(linear_apply(relation, coefficients, coordinates))
+        output = linear_apply(
+            relation,
+            coefficients.astype(self.accumulation_dtype),
+            coordinates,
+        )
+        return self.target.unflatten(output.astype(_coordinate_dtype(self.target)))
 
     def transpose_mv(self, vector: Any, /) -> Any:
-        coordinates = self.target.flatten(vector)
+        coordinates = self.target.flatten(vector).astype(self.accumulation_dtype)
         relation, coefficients = self._edge_form()
-        return self.source.unflatten(
-            linear_transpose_apply(relation, coefficients, coordinates)
+        output = linear_transpose_apply(
+            relation,
+            coefficients.astype(self.accumulation_dtype),
+            coordinates,
         )
+        return self.source.unflatten(output.astype(_coordinate_dtype(self.source)))
 
     def adjoint_mv(self, vector: Any, /) -> Any:
-        target_covector = self.target.flatten(self.target.riesz(vector))
+        target_covector = self.target.flatten(self.target.riesz(vector)).astype(
+            self.accumulation_dtype
+        )
         relation, coefficients = self._edge_form()
         source_covector = self.source.unflatten(
-            linear_adjoint_apply(relation, coefficients, target_covector)
+            linear_adjoint_apply(
+                relation,
+                coefficients.astype(self.accumulation_dtype),
+                target_covector,
+            ).astype(_coordinate_dtype(self.source))
         )
         return self.source.inverse_riesz(source_covector)
 

@@ -36,7 +36,8 @@ residual, and solve evidence.
 ## Persistence
 
 `VortexCheckpointPlan` writes checksum-validated pickle-free array archives,
-including source state, event journal, RNG realization, accepted times, topology,
-and backend IDs. `VortexReplayPlan` joins fixed-topology epochs through exact
-transition callbacks and optional pullbacks. Particle/ring export payloads retain
-stable IDs, lineage, connectivity, circulation, core, volume, and age.
+including source state, event journal, RNG realization, accepted times,
+topology, and backend IDs. Solver `HybridEventTape` replay joins fixed-topology
+epochs through declared reset callbacks and frozen pullbacks. Particle/ring
+export payloads retain stable IDs, lineage, connectivity, circulation, core,
+volume, and age.

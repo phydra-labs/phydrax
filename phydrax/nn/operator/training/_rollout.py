@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -40,6 +40,8 @@ class OperatorRolloutRoute:
     source_name: str
     prediction_name: str
     task_field: str
+    transfer: Callable[[Any, Any, Any], Any] | None = None
+    transfer_id: str | None = None
 
     def __post_init__(self):
         for name, value in (
@@ -52,6 +54,27 @@ class OperatorRolloutRoute:
         object.__setattr__(self, "source_name", str(self.source_name))
         object.__setattr__(self, "prediction_name", str(self.prediction_name))
         object.__setattr__(self, "task_field", str(self.task_field))
+        if self.transfer is not None and (
+            not callable(self.transfer) or not self.transfer_id
+        ):
+            raise ValueError(
+                "Independent-query rollout transfer requires callable and id."
+            )
+
+
+@dataclass(frozen=True)
+class OperatorRolloutControlRoute:
+    """One named state/step-aware control source evaluated once per step."""
+
+    source_name: str
+    policy: Callable[[OperatorBatch, Array, EvalKey], Any]
+    policy_id: str
+
+    def __post_init__(self):
+        if not self.source_name or not self.policy_id or not callable(self.policy):
+            raise ValueError(
+                "Control route requires source, callable policy, and identity."
+            )
 
 
 @dataclass(frozen=True)
@@ -126,8 +149,10 @@ def _validate_rollout_route(
 ) -> None:
     if not isinstance(route, OperatorRolloutRoute):
         raise TypeError("route must be an OperatorRolloutRoute.")
-    if task.problem.source_query_relation != "coincident":
-        raise ValueError("Operator rollout requires a coincident source/query task.")
+    if task.problem.source_query_relation != "coincident" and route.transfer is None:
+        raise ValueError(
+            "Independent-query rollout requires an explicit prepared transfer."
+        )
     if route.task_field not in task.field_by_name:
         raise KeyError(f"Unknown rollout task field {route.task_field!r}.")
     field = task.field_by_name[route.task_field]
@@ -142,9 +167,11 @@ def _validate_rollout_route(
     assert field.query_name is not None
     source = batch.input(route.source_name)
     query = batch.query(field.query_name)
-    if source.support_id != query.support_id or source.sample_shape != query.sample_shape:
+    if (
+        source.support_id != query.support_id or source.sample_shape != query.sample_shape
+    ) and route.transfer is None:
         raise ValueError(
-            "Operator rollout source and target query supports must coincide."
+            "Noncoincident rollout supports require an explicit prepared transfer."
         )
     if source.values is None:
         raise ValueError("Operator rollout state source has no values.")
@@ -181,7 +208,9 @@ def _feedback_physical_batch(
     source = batch.input(route.source_name)
     values = prediction.field(route.task_field).values
     assert source.values is not None
-    values = values.astype(source.values.dtype)
+    if route.transfer is not None:
+        values = route.transfer(values, prediction.field(route.task_field), source)
+    values = jnp.asarray(values).astype(source.values.dtype)
     inputs[route.source_name] = samples_with_values(source, values)
     return OperatorBatch(
         inputs=inputs,
@@ -378,9 +407,133 @@ def autoregressive_operator_rollout(
     )
 
 
+def autoregressive_operator_rollout_routes(
+    trained_operator: TrainedOperator,
+    initial_batch: OperatorBatch,
+    steps: int,
+    routes: Sequence[OperatorRolloutRoute],
+    /,
+    *,
+    control_routes: Sequence[OperatorRolloutControlRoute] = (),
+    key: EvalKey = DOC_KEY0,
+    step_offset: int = 0,
+) -> OperatorRollout:
+    """Deploy atomic multiple feedback routes and independent control sources."""
+    route_values = tuple(routes)
+    control_values = tuple(control_routes)
+    if not route_values:
+        raise ValueError("At least one rollout route is required.")
+    if len({route.source_name for route in route_values}) != len(route_values) or len(
+        {route.prediction_name for route in route_values}
+    ) != len(route_values):
+        raise ValueError("Rollout routes require one-to-one sources and predictions.")
+    if len({route.source_name for route in control_values}) != len(control_values):
+        raise ValueError("Control routes require unique sources.")
+    if {route.source_name for route in route_values} & {
+        route.source_name for route in control_values
+    }:
+        raise ValueError("Control routes may not overwrite recurrent carry routes.")
+    plan = trained_operator.execution_plan
+    for route in route_values:
+        _validate_rollout_route(
+            route,
+            plan.task,
+            plan.output_field_map,
+            initial_batch,
+        )
+    prepared = plan.prepare(initial_batch)
+    physical_batch = prepared.physical_batch
+    predictions = []
+    for local_step in range(int(steps)):
+        step = jnp.asarray(step_offset + local_step, dtype=jnp.int32)
+        inputs = dict(physical_batch.inputs)
+        for index, control in enumerate(control_values):
+            control_key = (
+                None
+                if key is None
+                else jax.random.fold_in(
+                    jax.random.fold_in(key, 200 + index),
+                    step,
+                )
+            )
+            samples = control.policy(physical_batch, step, control_key)
+            if control.source_name not in inputs:
+                raise KeyError(f"Unknown control source {control.source_name!r}.")
+            if samples.support_id != inputs[control.source_name].support_id:
+                raise ValueError("Control policy support does not match its source.")
+            inputs[control.source_name] = samples
+        physical_batch = OperatorBatch(
+            inputs=inputs,
+            queries=physical_batch.queries,
+            case_axes=physical_batch.case_axes,
+            case_shape=physical_batch.case_shape,
+        )
+        execution_batch = _prepare_rollout_execution_batch(
+            physical_batch,
+            plan.task,
+            plan.normalization,
+            plan.dtype_policy,
+            plan.sharding_policy,
+        )
+        _, prediction = _evaluate_operator_step(
+            plan.execution_model,
+            execution_batch,
+            physical_batch,
+            plan.task,
+            plan.output_field_map,
+            plan.output_pipeline,
+            plan.normalization,
+            plan.dtype_policy,
+            (
+                None
+                if key is None
+                else jax.random.fold_in(
+                    jax.random.fold_in(key, _ROLLOUT_MODEL_KEY_DOMAIN),
+                    step,
+                )
+            ),
+            predictor=plan.lowered_callable,
+        )
+        next_batch = physical_batch
+        for route in route_values:
+            next_batch = _feedback_physical_batch(next_batch, prediction, route)
+        physical_batch = next_batch
+        predictions.append(prediction)
+    return OperatorRollout(
+        tuple(predictions),
+        physical_batch,
+        int(step_offset) + int(steps),
+    )
+
+
+def infer_operator_rollout_routes(
+    task: OperatorTask,
+    output_field_map: Mapping[str, str],
+    batch: OperatorBatch,
+    /,
+) -> tuple[OperatorRolloutRoute, ...]:
+    """Infer routes only from an unambiguous semantic source/target bijection."""
+    routes = []
+    by_field = task.field_by_name
+    for prediction, field_name in output_field_map.items():
+        field = by_field[field_name]
+        if not field.is_source or not field.is_target or field.is_classification:
+            continue
+        assert field.source_name is not None
+        routes.append(OperatorRolloutRoute(field.source_name, prediction, field_name))
+    if not routes or len({route.source_name for route in routes}) != len(routes):
+        raise ValueError("Operator rollout semantics are absent or ambiguous.")
+    for route in routes:
+        _validate_rollout_route(route, task, output_field_map, batch)
+    return tuple(routes)
+
+
 __all__ = [
+    "OperatorRolloutControlRoute",
     "OperatorRollout",
     "OperatorRolloutPolicy",
     "OperatorRolloutRoute",
     "autoregressive_operator_rollout",
+    "autoregressive_operator_rollout_routes",
+    "infer_operator_rollout_routes",
 ]

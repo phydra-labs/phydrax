@@ -433,8 +433,8 @@ symmetry under real Wiener coefficients.
 The returned trajectories remain complex modal arrays. Internally, the standard
 Diffrax backend stacks real and imaginary components along one leading size-two axis,
 uses the same real Wiener increment for both, and removes that axis before returning
-the solution. `solution.temporal_evidence.state_packing` records this realized
-representation.
+the solution. `solution.temporal_evidence.state_coordinates` records this realized
+real-coordinate representation.
 
 Uniform periodic finite differences use `periodic_finite_difference`; bounded FD2
 operators can use `diagonalize_fd_laplacian`. `EigenbasisDiscretization` reuses a

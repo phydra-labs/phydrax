@@ -18,36 +18,15 @@ from .._strict import StrictModule
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
-    HermitianPrecisionPolicy,
-    HermitianSpectrum,
+    factorization_inertia,
+    InertiaEvidence,
+    InertiaPolicy,
     LinearSolvePolicy,
     LinearSystem,
     prepare as prepare_linear,
     PreparedLinearSolve,
     solve as solve_linear,
 )
-
-
-def _spectral_precision(
-    precision: NonlinearPrecisionPolicy,
-    /,
-) -> HermitianPrecisionPolicy:
-    compute = (
-        precision.residual_dtype
-        if precision.residual_dtype is not None
-        else precision.state_dtype
-    )
-    accumulation = (
-        precision.accumulation_dtype
-        if precision.accumulation_dtype is not None
-        else compute
-    )
-    return HermitianPrecisionPolicy(
-        compute_dtype=compute,
-        factorization_dtype=accumulation,
-        accumulation_dtype=accumulation,
-        decision_dtype=precision.decision_dtype,
-    )
 
 
 KKTForm: TypeAlias = Literal["dense-augmented"]
@@ -106,17 +85,6 @@ class KKTRegularizationPolicy(StrictModule):
         self.maximum_corrections = corrections
 
 
-class KKTInertia(StrictModule):
-    positive: Array
-    negative: Array
-    zero: Array
-    tolerance: Array
-    certified: Array
-    source: str = eqx.field(static=True)
-    zero_reliable: bool = eqx.field(static=True)
-    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
-
-
 class KKTPlan(StrictModule):
     form: KKTForm = eqx.field(static=True)
     primal_dimension: int = eqx.field(static=True)
@@ -131,7 +99,7 @@ class KKTPlan(StrictModule):
 class KKTSolveResult(StrictModule):
     primal_step: Array
     dual_step: Array
-    inertia: KKTInertia
+    inertia: InertiaEvidence
     primal_regularization: Array
     dual_regularization: Array
     residual_norm: Array
@@ -147,44 +115,12 @@ class KKTFactorization(StrictModule):
     plan: KKTPlan
     matrix: Array
     linear: PreparedLinearSolve
-    inertia: KKTInertia
+    inertia: InertiaEvidence
     primal_regularization: Array
     dual_regularization: Array
     inertia_matches: Array
     finite: Array
     precision: NonlinearPrecisionPolicy
-
-
-def kkt_inertia(
-    matrix: Any,
-    /,
-    *,
-    tolerance: float = 1e-10,
-    precision: NonlinearPrecisionPolicy | None = None,
-) -> KKTInertia:
-    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
-    if not isinstance(precision_, NonlinearPrecisionPolicy):
-        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
-    value = precision_.accumulation(matrix)
-    if value.ndim != 2 or value.shape[0] != value.shape[1]:
-        raise ValueError("KKT inertia requires one square matrix.")
-    spectrum = HermitianSpectrum(
-        value,
-        tolerance=tolerance,
-        precision=_spectral_precision(precision_),
-    )
-    eigenvalues = spectrum.eigenvalues
-    threshold = precision_.decision(tolerance)
-    return KKTInertia(
-        positive=jnp.sum(eigenvalues > threshold, dtype=jnp.int32),
-        negative=jnp.sum(eigenvalues < -threshold, dtype=jnp.int32),
-        zero=jnp.sum(jnp.abs(eigenvalues) <= threshold, dtype=jnp.int32),
-        tolerance=threshold,
-        certified=jnp.all(jnp.isfinite(eigenvalues)),
-        source="dense-hermitian-spectrum",
-        zero_reliable=True,
-        precision_evidence=spectrum.precision_evidence,
-    )
 
 
 def plan_kkt(
@@ -296,11 +232,25 @@ def factor_kkt(
         primal_regularization,
         dual_regularization,
     )
-    inertia = kkt_inertia(matrix, precision=precision_)
+    linear_policy = precision_.bind_linear(LinearSolvePolicy(DenseLU()))
+    inertia_policy = InertiaPolicy(
+        absolute_zero_tolerance=1e-10,
+        source="bounded-dense",
+        maximum_dense_dimension=plan.primal_dimension + plan.constraint_dimension,
+    )
+
+    def prepare_current(value):
+        prepared_linear = prepare_linear(
+            LinearSystem(DenseLinearOperator(value)),
+            linear_policy,
+        )
+        return prepared_linear, factorization_inertia(prepared_linear, inertia_policy)
+
+    linear, inertia = prepare_current(matrix)
     for _ in range(policy.maximum_corrections):
         matches = (
             inertia.certified
-            & inertia.zero_reliable
+            & inertia.zero_count_reliable
             & (inertia.positive == plan.expected_positive)
             & (inertia.negative == plan.expected_negative)
             & (inertia.zero == plan.expected_zero)
@@ -321,18 +271,13 @@ def factor_kkt(
             primal_regularization,
             dual_regularization,
         )
-        inertia = kkt_inertia(matrix, precision=precision_)
+        linear, inertia = prepare_current(matrix)
     matches = (
         inertia.certified
-        & inertia.zero_reliable
+        & inertia.zero_count_reliable
         & (inertia.positive == plan.expected_positive)
         & (inertia.negative == plan.expected_negative)
         & (inertia.zero == plan.expected_zero)
-    )
-    linear_problem = LinearSystem(DenseLinearOperator(matrix))
-    linear = prepare_linear(
-        linear_problem,
-        precision_.bind_linear(LinearSolvePolicy(DenseLU())),
     )
     finite = jnp.all(jnp.isfinite(matrix))
     return KKTFactorization(
@@ -415,12 +360,10 @@ def solve_kkt(
 __all__ = [
     "KKTFactorization",
     "KKTForm",
-    "KKTInertia",
     "KKTPlan",
     "KKTRegularizationPolicy",
     "KKTSolveResult",
     "factor_kkt",
-    "kkt_inertia",
     "plan_kkt",
     "solve_kkt",
     "solve_factored_kkt",

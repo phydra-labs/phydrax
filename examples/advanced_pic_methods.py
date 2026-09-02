@@ -69,7 +69,17 @@ mesh = phx.discretization.CellMesh(
     jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
     (phx.discretization.CellBlock("triangles", "triangle", jnp.asarray(((0, 1, 2),))),),
 )
-locator = phx.discretization.PreparedSimplicialCellLocator(mesh)
+finite_element = phx.discretization.FiniteElementPlan(
+    mesh,
+    phx.discretization.FiniteElementFieldSpec(
+        "u", phx.discretization.lagrange_element("triangle", 1)
+    ),
+).prepare()
+locator = phx.discretization.PreparedSimplicialCellLocator(
+    phx.discretization.fem.prepare_finite_element_cell_map(finite_element, 0),
+    finite_element.default_runtime.coordinates,
+    phx.discretization.SimplicialLocationPolicy(1, 8, 3),
+)
 located = locator.locate(jnp.asarray(((0.2, 0.2), (0.4, 0.1))))
 
 print(

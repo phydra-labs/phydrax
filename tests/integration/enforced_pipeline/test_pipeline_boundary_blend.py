@@ -17,7 +17,6 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.enforcement import (
-    enforce_dirichlet,
     EnforcementProgram,
     EnforcementSpec,
 )
@@ -53,14 +52,10 @@ def test_boundary_subset_blend_matches_pieces():
     full_boundary = geom.component({"x": Boundary()})
 
     left_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", left_component, target=1.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+        phx.conditions.Dirichlet("u", left_component, target=1.0)
     )
     right_constraint = EnforcementSpec(
-        phx.conditions.Dirichlet("u", right_component, target=2.0),
-        kind="custom",
-        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+        phx.conditions.Dirichlet("u", right_component, target=2.0)
     )
 
     pipelines = EnforcementProgram.build(

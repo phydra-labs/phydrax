@@ -31,6 +31,25 @@ def _discretization(shape=(8, 8)):
     ).prepare()
 
 
+def _prepare_amr(plan, *, kinematic_viscosity=0.05):
+    precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
+    scalings = [phx.discretization.LatticeBoltzmannScaling(1.0, 1.0, 1.0)]
+    for index, transfer in enumerate(plan.transfers):
+        coarse = scalings[-1]
+        substeps = plan.scaling.substeps(transfer.refinement_ratio, index)
+        scalings.append(
+            phx.discretization.LatticeBoltzmannScaling(
+                float(coarse.cell_size) / transfer.refinement_ratio,
+                float(coarse.time_step) / substeps,
+                1.0,
+            )
+        )
+    rates = tuple(
+        scaling.relaxation_rate(jnp.asarray(kinematic_viscosity)) for scaling in scalings
+    )
+    return plan.prepare(precision, scalings), rates, tuple(scalings)
+
+
 def test_geometry_epoch_and_population_transfer_are_conservative():
     discretization = _discretization()
     source_snapshot = phx.discretization.LatticeBoltzmannGeometrySnapshot.all_fluid(
@@ -77,56 +96,129 @@ def test_ratio_two_amr_subcycles_only_active_fine_blocks():
     lattice = phx.discretization.D2Q9()
     transfer = LatticeBoltzmannAMRTransferPlan(lattice)
     plan = phx.discretization.LatticeBoltzmannAMRPlan(transfer)
+    prepared, rates, _ = _prepare_amr(plan)
     coarse = jnp.broadcast_to(lattice.weights, (4, 4, 9))
-    fine = jnp.broadcast_to(lattice.weights, (8, 8, 9))
+    fine_equilibrium = jnp.broadcast_to(lattice.weights, (8, 8, 9))
     fine_active = jnp.zeros((8, 8), dtype=bool).at[:4, :4].set(True)
+    dormant_perturbation = (
+        jnp.asarray((0.0, 1.0, 1.0, -1.0, -1.0, 0.5, 0.5, -0.5, -0.5)) * 1.0e-3
+    )
+    fine = jnp.where(
+        fine_active[..., None],
+        fine_equilibrium,
+        fine_equilibrium + dormant_perturbation,
+    )
     state = phx.discretization.LatticeBoltzmannAMRState(
         (coarse, fine),
         (jnp.ones((4, 4), dtype=bool), fine_active),
     )
     increment = jnp.asarray(1.0e-4)
-    result = plan.advance_two_level(
+    weights = jnp.asarray(lattice.weights)
+    result = prepared.advance(
         state,
-        lambda values, amount: values + amount,
-        lambda values, amount: values + amount,
+        (
+            lambda values, boundary, amount: values + amount * weights,
+            lambda values, boundary, amount: values + amount * weights,
+        ),
+        rates,
         args=increment,
     )
 
     assert result.successful
     np.testing.assert_allclose(
-        result.state.level_populations[0][:2, :2],
-        coarse[:2, :2] + 2.0 * increment,
+        result.accepted_state.level_populations[0][:2, :2],
+        coarse[:2, :2] + 2.0 * increment * weights,
         atol=1e-14,
     )
     np.testing.assert_allclose(
-        result.state.level_populations[0][2:, 2:],
-        coarse[2:, 2:] + increment,
+        result.accepted_state.level_populations[0][2:, 2:],
+        coarse[2:, 2:] + increment * weights,
         atol=1e-14,
     )
     np.testing.assert_array_equal(
-        result.state.level_populations[1][~fine_active],
+        result.candidate_state.level_populations[1][~fine_active],
         fine[~fine_active],
     )
+    np.testing.assert_array_equal(
+        result.accepted_state.level_populations[1][~fine_active],
+        fine[~fine_active],
+    )
+
+    failed = prepared.advance(
+        state,
+        (
+            lambda values, boundary, args: values,
+            lambda values, boundary, args: -jnp.ones_like(values),
+        ),
+        rates,
+    )
+    assert not failed.successful
+    np.testing.assert_array_equal(
+        failed.candidate_state.level_populations[1][~fine_active],
+        fine[~fine_active],
+    )
+    np.testing.assert_array_equal(failed.accepted_state.level_populations[1], fine)
+
+
+def test_ratio_three_three_level_amr_recurses_with_static_substeps():
+    lattice = phx.discretization.D2Q9()
+    transfer = LatticeBoltzmannAMRTransferPlan(lattice, refinement_ratio=3)
+    plan = phx.discretization.LatticeBoltzmannAMRPlan(
+        (transfer, transfer),
+        scaling=phx.discretization.LatticeBoltzmannAMRScalingPolicy("acoustic"),
+    )
+    prepared, rates, _ = _prepare_amr(plan)
+    populations = (
+        jnp.broadcast_to(lattice.weights, (2, 2, 9)),
+        jnp.broadcast_to(lattice.weights, (6, 6, 9)),
+        jnp.broadcast_to(lattice.weights, (18, 18, 9)),
+    )
+    state = phx.discretization.LatticeBoltzmannAMRState(
+        populations,
+        tuple(jnp.ones(value.shape[:-1], dtype=bool) for value in populations),
+    )
+    result = prepared.advance(
+        state,
+        (
+            lambda values, boundary, args: values,
+            lambda values, boundary, args: values,
+            lambda values, boundary, args: values,
+        ),
+        rates,
+    )
+
+    assert result.successful
+    assert prepared.substeps == (3, 3)
+    np.testing.assert_allclose(
+        result.diagnostics.temporal_fractions,
+        jnp.ones((2,)),
+    )
+    for actual, expected in zip(
+        result.accepted_state.level_populations, populations, strict=True
+    ):
+        np.testing.assert_allclose(actual, expected, atol=1.0e-14)
 
 
 def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time():
     lattice = phx.discretization.D2Q9()
     transfer = phx.discretization.LatticeBoltzmannAMRTransferPlan(lattice)
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
-    prepared = phx.discretization.PreparedLatticeBoltzmannAMRTransfer(
+    coarse_scaling = phx.discretization.LatticeBoltzmannScaling(0.25, 0.01, 1.0)
+    fine_scaling = phx.discretization.LatticeBoltzmannScaling(0.125, 0.005, 1.0)
+    prepared_transfer = phx.discretization.PreparedLatticeBoltzmannAMRTransfer(
         transfer,
         precision,
-        phx.discretization.LatticeBoltzmannScaling(0.25, 0.01, 1.0),
-        phx.discretization.LatticeBoltzmannScaling(0.125, 0.005, 1.0),
+        coarse_scaling,
+        fine_scaling,
     )
     perturbation = jnp.asarray((0.0, 1.0, 1.0, -1.0, -1.0, 0.5, 0.5, -0.5, -0.5)) * 1.0e-6
     coarse = jnp.broadcast_to(lattice.weights + perturbation, (4, 4, 9))
     coarse_rate = jnp.asarray(1.0)
     fine_rate = jnp.asarray(2.0 / 3.0)
-    fine, prolongation = prepared.prolong(coarse, coarse_rate, fine_rate)
-    recovered, restriction = prepared.restrict(fine, coarse_rate, fine_rate)
-    temporal = phx.discretization.LatticeBoltzmannAMRTemporalInterfacePlan()
-    midpoint = temporal.interpolate(coarse, coarse + 2.0e-4)
+    fine, prolongation = prepared_transfer.prolong(coarse, coarse_rate, fine_rate)
+    recovered, restriction = prepared_transfer.restrict(fine, coarse_rate, fine_rate)
+    temporal = phx.discretization.LatticeBoltzmannAMRTemporalTracePlan()
+    midpoint = temporal.evaluate(jnp.stack((coarse, coarse + 2.0e-4)), jnp.asarray(0.5))
     state = phx.discretization.LatticeBoltzmannAMRState(
         (coarse, fine),
         (
@@ -134,42 +226,87 @@ def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time():
             jnp.ones(fine.shape[:-1], dtype=bool),
         ),
     )
-    advanced = phx.discretization.LatticeBoltzmannAMRPlan(
-        transfer
-    ).advance_two_level_collision_aware(
+    plan = phx.discretization.LatticeBoltzmannAMRPlan(
+        transfer,
+        scaling=phx.discretization.LatticeBoltzmannAMRScalingPolicy("acoustic"),
+    )
+    prepared = plan.prepare(precision, (coarse_scaling, fine_scaling))
+    advanced = prepared.advance(
         state,
-        prepared,
-        temporal,
-        lambda values, args: values,
-        lambda values, boundary, args: values,
-        coarse_rate,
-        fine_rate,
+        (
+            lambda values, boundary, args: values,
+            lambda values, boundary, args: values,
+        ),
+        (coarse_rate, fine_rate),
     )
 
+    velocities = np.asarray(lattice.velocities)
+    coarse_stress = np.einsum(
+        "q,qi,qj->ij",
+        np.asarray(perturbation),
+        velocities,
+        velocities,
+    )
+    fine_nonequilibrium = np.asarray(fine[0, 0] - lattice.weights)
+    fine_stress = np.einsum(
+        "q,qi,qj->ij",
+        fine_nonequilibrium,
+        velocities,
+        velocities,
+    )
     assert prolongation.successful
     assert restriction.successful
     assert advanced.successful
     np.testing.assert_allclose(recovered, coarse, atol=3e-12)
+    np.testing.assert_allclose(
+        advanced.accepted_state.level_populations[0],
+        coarse,
+        atol=3e-12,
+    )
     np.testing.assert_allclose(midpoint, coarse + 1.0e-4, atol=1e-14)
     np.testing.assert_allclose(
-        restriction.nonequilibrium_scale,
-        2.0,
+        fine_stress / (1.0 / float(fine_rate) - 0.5),
+        coarse_stress / (1.0 / float(coarse_rate) - 0.5),
+        atol=3e-12,
+    )
+    np.testing.assert_allclose(
+        advanced.diagnostics.nonequilibrium_scales,
+        jnp.asarray((2.0,)),
         atol=1e-14,
     )
-    failed = phx.discretization.LatticeBoltzmannAMRPlan(
-        transfer
-    ).advance_two_level_collision_aware(
+    np.testing.assert_allclose(
+        advanced.diagnostics.viscosity_defects,
+        jnp.zeros((1,)),
+        atol=1e-14,
+    )
+    mismatched_viscosity = prepared.advance(
         state,
-        prepared,
-        temporal,
-        lambda values, args: values,
-        lambda values, boundary, args: -jnp.ones_like(values),
-        coarse_rate,
-        fine_rate,
+        (
+            lambda values, boundary, args: values,
+            lambda values, boundary, args: values,
+        ),
+        (coarse_rate, coarse_rate),
+    )
+    assert not mismatched_viscosity.successful
+    np.testing.assert_array_equal(
+        mismatched_viscosity.accepted_state.level_populations[0],
+        coarse,
+    )
+    np.testing.assert_array_equal(
+        mismatched_viscosity.accepted_state.level_populations[1],
+        fine,
+    )
+    failed = prepared.advance(
+        state,
+        (
+            lambda values, boundary, args: values,
+            lambda values, boundary, args: -jnp.ones_like(values),
+        ),
+        (coarse_rate, fine_rate),
     )
     assert not failed.successful
-    np.testing.assert_array_equal(failed.state.level_populations[0], coarse)
-    np.testing.assert_array_equal(failed.state.level_populations[1], fine)
+    np.testing.assert_array_equal(failed.accepted_state.level_populations[0], coarse)
+    np.testing.assert_array_equal(failed.accepted_state.level_populations[1], fine)
 
 
 def test_fixed_branch_geometry_jvp_has_explicit_validity():

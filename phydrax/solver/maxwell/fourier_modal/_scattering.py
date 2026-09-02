@@ -5,15 +5,29 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+from opt_einsum import contract
 
 from ...._strict import StrictModule
 from ....discretization.spectral import LatticeHarmonicDiscretization
-from ....linalg import ArraySpace, DenseLinearOperator
+from ....linalg import ArraySpace, DenseLinearOperator, FailurePolicy
+from ....linalg.eigen import (
+    DenseSchurQZ,
+    general_eigensolve,
+    GeneralEigenproblem,
+    GeneralEigenSelection,
+    GeneralEigenSolvePolicy,
+)
 from ._boundary_cascade import BoundaryRelation
-from ._contracts import HomogeneousMaxwellPort
-from ._factorization import _dense_solve
+from ._contracts import (
+    AbstractFourierModalPort,
+    HomogeneousMaxwellPort,
+    PeriodicMaxwellPort,
+)
+from ._factorization import _dense_solve, prepare_fourier_material
+from ._layer import prepare_layer_operator
 
 
 class HomogeneousPortModes(StrictModule):
@@ -26,6 +40,46 @@ class HomogeneousPortModes(StrictModule):
     grazing: Array
     mode_ids: tuple[str, ...] = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
+
+
+class PreparedPeriodicPortModes(StrictModule):
+    """Separated incoming/outgoing invariant bases for a periodic exterior."""
+
+    incoming_electric_matrix: Array
+    incoming_magnetic_matrix: Array
+    outgoing_electric_matrix: Array
+    outgoing_magnetic_matrix: Array
+    incoming_exponents: Array
+    outgoing_exponents: Array
+    outward_flux: Array
+    propagating: Array
+    evanescent: Array
+    grazing: Array
+    spectral_separation: Array
+    conversion_residual: Array
+    passivity_residual: Array
+    reciprocity_residual: Array
+    mode_ids: tuple[str, ...] = eqx.field(static=True)
+    port_id: str = eqx.field(static=True)
+
+    @property
+    def electric_matrix(self) -> Array:
+        return self.outgoing_electric_matrix
+
+    @property
+    def magnetic_matrix(self) -> Array:
+        return self.outgoing_magnetic_matrix
+
+    @property
+    def longitudinal_wavevector(self) -> Array:
+        return -1j * self.outgoing_exponents
+
+    @property
+    def flux_weights(self) -> Array:
+        return self.outward_flux
+
+
+PreparedFourierModalPortModes = HomogeneousPortModes | PreparedPeriodicPortModes
 
 
 class PortScatteringDiagnostics(StrictModule):
@@ -41,8 +95,8 @@ class MaxwellPortScatteringOperator(StrictModule):
     s12: DenseLinearOperator
     s21: DenseLinearOperator
     s22: DenseLinearOperator
-    left_modes: HomogeneousPortModes
-    right_modes: HomogeneousPortModes
+    left_modes: PreparedFourierModalPortModes
+    right_modes: PreparedFourierModalPortModes
     diagnostics: PortScatteringDiagnostics
 
     @property
@@ -85,6 +139,13 @@ def prepare_homogeneous_port_modes(
 ) -> HomogeneousPortModes:
     epsilon = _homogeneous_scalar(port.material.permittivity, "permittivity")
     mu = _homogeneous_scalar(port.material.permeability, "permeability")
+    xi = _homogeneous_scalar(port.material.magnetoelectric_xi, "magnetoelectric_xi")
+    zeta = _homogeneous_scalar(port.material.magnetoelectric_zeta, "magnetoelectric_zeta")
+    epsilon = eqx.error_if(
+        epsilon,
+        (jnp.abs(xi) > grazing_tolerance) | (jnp.abs(zeta) > grazing_tolerance),
+        "Bianisotropic exteriors require PeriodicMaxwellPort.",
+    )
     dtype = jnp.result_type(epsilon, mu, jnp.complex64)
     epsilon = jnp.asarray(epsilon, dtype=dtype)
     mu = jnp.asarray(mu, dtype=dtype)
@@ -163,35 +224,186 @@ def prepare_homogeneous_port_modes(
     )
 
 
+def _modal_flux(vectors: Array, harmonic_count: int, /) -> Array:
+    ex = vectors[:harmonic_count]
+    ey = vectors[harmonic_count : 2 * harmonic_count]
+    hx = vectors[2 * harmonic_count : 3 * harmonic_count]
+    hy = vectors[3 * harmonic_count :]
+    return 0.5 * jnp.real(jnp.sum(jnp.conj(ex) * hy - jnp.conj(ey) * hx, axis=0))
+
+
+def prepare_periodic_port_modes(
+    port: PeriodicMaxwellPort,
+    lattice: LatticeHarmonicDiscretization,
+    angular_frequency: ArrayLike,
+    bloch_wavevector: ArrayLike,
+    /,
+    *,
+    outward_sign: int,
+    separation_tolerance: float = 1.0e-8,
+) -> PreparedPeriodicPortModes:
+    """Prepare flux/decay-separated Schur-QZ exterior invariant bases."""
+
+    if outward_sign not in (-1, 1):
+        raise ValueError("outward_sign must be -1 for left or +1 for right.")
+    material = prepare_fourier_material(port.material, lattice, port.factorization)
+    layer = prepare_layer_operator(
+        material, lattice, jnp.asarray(angular_frequency), jnp.asarray(bloch_wavevector)
+    )
+    matrix = (
+        jax.lax.stop_gradient(layer.matrix)
+        if port.mode_policy == "frozen"
+        else layer.matrix
+    )
+    result = general_eigensolve(
+        GeneralEigenproblem(DenseLinearOperator(matrix)),
+        policy=GeneralEigenSolvePolicy(
+            DenseSchurQZ(),
+            selection=GeneralEigenSelection.all(),
+            failure=FailurePolicy("status"),
+        ),
+    )
+    exponents = result.eigenvalues
+    vectors = result.right_eigenvector_coordinates
+    count = lattice.harmonic_count
+    size = 2 * count
+    flux = _modal_flux(vectors, count)
+    signed_flux = outward_sign * flux
+    decay = jnp.real(outward_sign * exponents)
+    evanescent_all = jnp.abs(jnp.real(exponents)) > separation_tolerance
+    propagating_all = ~evanescent_all & (jnp.abs(signed_flux) > separation_tolerance)
+    outgoing = (evanescent_all & (decay < -separation_tolerance)) | (
+        propagating_all & (signed_flux > separation_tolerance)
+    )
+    exponents = eqx.error_if(
+        exponents,
+        jnp.sum(outgoing, dtype=jnp.int32) != size,
+        "Periodic port Schur subspaces are not dimensionally separated.",
+    )
+    outgoing_indices = jnp.argsort(jnp.where(outgoing, 0, 1))[:size]
+    incoming_indices = jnp.argsort(jnp.where(outgoing, 1, 0))[:size]
+    outgoing_vectors = vectors[:, outgoing_indices]
+    incoming_vectors = vectors[:, incoming_indices]
+    outgoing_flux = signed_flux[outgoing_indices]
+    propagating = propagating_all[outgoing_indices]
+    evanescent = evanescent_all[outgoing_indices]
+    normalization = jnp.where(
+        propagating,
+        jnp.sqrt(jnp.maximum(jnp.abs(outgoing_flux), separation_tolerance)),
+        1.0,
+    )
+    outgoing_vectors = outgoing_vectors / normalization[None, :]
+    outgoing_flux = outgoing_flux / normalization**2
+    incoming_normalization = jnp.where(
+        propagating_all[incoming_indices],
+        jnp.sqrt(
+            jnp.maximum(jnp.abs(signed_flux[incoming_indices]), separation_tolerance)
+        ),
+        1.0,
+    )
+    incoming_vectors = incoming_vectors / incoming_normalization[None, :]
+    separation = jnp.min(
+        jnp.abs(exponents[outgoing_indices, None] - exponents[incoming_indices][None, :])
+    )
+    separation = eqx.error_if(
+        separation,
+        (port.mode_policy == "spectral-subspace") & (separation <= separation_tolerance),
+        "Periodic port spectral-subspace derivative lacks a gap certificate.",
+    )
+    return PreparedPeriodicPortModes(
+        incoming_vectors[:size],
+        incoming_vectors[size:],
+        outgoing_vectors[:size],
+        outgoing_vectors[size:],
+        exponents[incoming_indices],
+        exponents[outgoing_indices],
+        outgoing_flux,
+        propagating,
+        evanescent,
+        ~(propagating | evanescent),
+        separation,
+        jnp.max(result.diagnostics.right_relative_residuals),
+        jnp.maximum(-layer.diagnostics.minimum_loss_diagonal, 0.0),
+        layer.diagnostics.reciprocity_residual,
+        tuple(f"{port.port_id}:mode:{index}" for index in range(size)),
+        port.port_id,
+    )
+
+
+def prepare_fourier_modal_port_modes(
+    port: AbstractFourierModalPort,
+    lattice: LatticeHarmonicDiscretization,
+    angular_frequency: ArrayLike,
+    bloch_wavevector: ArrayLike,
+    /,
+    *,
+    outward_sign: int,
+) -> PreparedFourierModalPortModes:
+    if isinstance(port, HomogeneousMaxwellPort):
+        return prepare_homogeneous_port_modes(
+            port, lattice, angular_frequency, bloch_wavevector
+        )
+    if isinstance(port, PeriodicMaxwellPort):
+        return prepare_periodic_port_modes(
+            port,
+            lattice,
+            angular_frequency,
+            bloch_wavevector,
+            outward_sign=outward_sign,
+        )
+    raise TypeError("Unknown Fourier-modal port type.")
+
+
+def _port_bases(
+    modes: PreparedFourierModalPortModes, side: str, /
+) -> tuple[Array, Array, Array, Array]:
+    if isinstance(modes, PreparedPeriodicPortModes):
+        return (
+            modes.incoming_electric_matrix,
+            modes.incoming_magnetic_matrix,
+            modes.outgoing_electric_matrix,
+            modes.outgoing_magnetic_matrix,
+        )
+    sign = 1.0 if side == "left" else -1.0
+    return (
+        modes.electric_matrix,
+        sign * modes.magnetic_matrix,
+        modes.electric_matrix,
+        -sign * modes.magnetic_matrix,
+    )
+
+
 def _relative_residual(matrix: Array, solution: Array, rhs: Array) -> Array:
-    residual = matrix @ solution - rhs
+    residual = contract("ij,jk->ik", matrix, solution) - rhs
     denominator = jnp.maximum(jnp.sqrt(jnp.sum(jnp.abs(rhs) ** 2)), 1.0)
     return jnp.sqrt(jnp.sum(jnp.abs(residual) ** 2)) / denominator
 
 
 def boundary_to_scattering(
     relation: BoundaryRelation,
-    left_modes: HomogeneousPortModes,
-    right_modes: HomogeneousPortModes,
+    left_modes: PreparedFourierModalPortModes,
+    right_modes: PreparedFourierModalPortModes,
     /,
 ) -> MaxwellPortScatteringOperator:
-    wl = left_modes.electric_matrix
-    vl = left_modes.magnetic_matrix
-    wr = right_modes.electric_matrix
-    vr = right_modes.magnetic_matrix
+    lin_e, lin_h, lout_e, lout_h = _port_bases(left_modes, "left")
+    rin_e, rin_h, rout_e, rout_h = _port_bases(right_modes, "right")
     size = relation.tangential_size
-    if wl.shape != (size, size) or wr.shape != (size, size):
+    if lin_e.shape != (size, size) or rin_e.shape != (size, size):
         raise ValueError("Port modes and boundary relation have incompatible sizes.")
+
+    def mm(left: Array, right: Array) -> Array:
+        return contract("ij,jk->ik", left, right)
+
     left_matrix = jnp.block(
         [
-            [wr - relation.b @ vr, -relation.a @ wl],
-            [-relation.d @ vr, -vl - relation.c @ wl],
+            [rout_e - mm(relation.b, rout_h), -mm(relation.a, lout_e)],
+            [-mm(relation.d, rout_h), lout_h - mm(relation.c, lout_e)],
         ]
     )
     right_matrix = jnp.block(
         [
-            [relation.a @ wl, -wr - relation.b @ vr],
-            [relation.c @ wl - vl, -relation.d @ vr],
+            [mm(relation.a, lin_e), -rin_e + mm(relation.b, rin_h)],
+            [mm(relation.c, lin_e) - lin_h, mm(relation.d, rin_h)],
         ]
     )
     scattering = _dense_solve(left_matrix, right_matrix)
@@ -229,24 +441,44 @@ def boundary_to_scattering(
     )
 
 
+def _reference_phases(
+    modes: PreparedFourierModalPortModes,
+    distance: ArrayLike,
+    side: str,
+    /,
+) -> tuple[Array, Array]:
+    value = jnp.asarray(distance)
+    if isinstance(modes, PreparedPeriodicPortModes):
+        sign = -1.0 if side == "left" else 1.0
+        return (
+            jnp.exp(sign * modes.incoming_exponents * value),
+            jnp.exp(sign * modes.outgoing_exponents * value),
+        )
+    wavevector = jnp.repeat(modes.longitudinal_wavevector, 2)
+    phase = jnp.exp(1j * wavevector * value)
+    return phase, phase
+
+
 def shift_scattering_reference_planes(
     scattering: MaxwellPortScatteringOperator,
     left_distance: ArrayLike,
     right_distance: ArrayLike,
     /,
 ) -> MaxwellPortScatteringOperator:
-    left_kz = jnp.repeat(scattering.left_modes.longitudinal_wavevector, 2)
-    right_kz = jnp.repeat(scattering.right_modes.longitudinal_wavevector, 2)
-    left_phase = jnp.exp(1j * left_kz * jnp.asarray(left_distance))
-    right_phase = jnp.exp(1j * right_kz * jnp.asarray(right_distance))
+    left_in_phase, left_out_phase = _reference_phases(
+        scattering.left_modes, left_distance, "left"
+    )
+    right_in_phase, right_out_phase = _reference_phases(
+        scattering.right_modes, right_distance, "right"
+    )
 
     def phase_block(output_phase: Array, matrix: Array, input_phase: Array) -> Array:
         return output_phase[:, None] * matrix * input_phase[None, :]
 
-    s11 = phase_block(right_phase, scattering.s11.matrix, left_phase)
-    s12 = phase_block(right_phase, scattering.s12.matrix, right_phase)
-    s21 = phase_block(left_phase, scattering.s21.matrix, left_phase)
-    s22 = phase_block(left_phase, scattering.s22.matrix, right_phase)
+    s11 = phase_block(right_out_phase, scattering.s11.matrix, left_in_phase)
+    s12 = phase_block(right_out_phase, scattering.s12.matrix, right_in_phase)
+    s21 = phase_block(left_out_phase, scattering.s21.matrix, left_in_phase)
+    s22 = phase_block(left_out_phase, scattering.s22.matrix, right_in_phase)
     space = scattering.s11.source
     return MaxwellPortScatteringOperator(
         DenseLinearOperator(s11, source=space, target=space),
@@ -308,9 +540,13 @@ def redheffer_star_product(
 __all__ = [
     "HomogeneousPortModes",
     "MaxwellPortScatteringOperator",
+    "PreparedFourierModalPortModes",
+    "PreparedPeriodicPortModes",
     "PortScatteringDiagnostics",
     "boundary_to_scattering",
     "prepare_homogeneous_port_modes",
+    "prepare_fourier_modal_port_modes",
+    "prepare_periodic_port_modes",
     "redheffer_star_product",
     "shift_scattering_reference_planes",
 ]

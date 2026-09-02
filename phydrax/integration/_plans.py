@@ -9,6 +9,9 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax.numpy as jnp
+import numpy as np
+from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
 from .._numerics import normalize_anisotropy, normalize_axis_rules, SmolyakAxisRule
@@ -19,6 +22,7 @@ from .._sampling import (
     RandomizedQMCDesign,
 )
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ._bayesian_quadrature import BayesianQuadraturePlan
 from ._rules import (
     CubatureRule,
@@ -116,6 +120,63 @@ class ControlVariateEstimator(StrictModule):
         self.regularization = regularization_
 
 
+class DiffraxCollocationQuadraturePlan(StrictModule, NonTrainableState):
+    """Fixed-capacity quadrature nodes paired with one Diffrax solve identity."""
+
+    nodes: Array
+    weights: Array
+    active: Array
+    solver_successful: Array
+    solver_id: str = eqx.field(static=True)
+    max_collocation: int = eqx.field(static=True)
+    throw: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        nodes: ArrayLike,
+        weights: ArrayLike,
+        /,
+        *,
+        solver_id: str,
+        active: ArrayLike | None = None,
+        solver_successful: ArrayLike = True,
+        max_collocation: int | None = None,
+        throw: bool = True,
+    ):
+        nodes_ = jnp.asarray(nodes)
+        weights_ = jnp.asarray(weights)
+        if nodes_.ndim != 1 or weights_.shape != nodes_.shape or nodes_.size == 0:
+            raise ValueError("Diffrax collocation nodes and weights must align.")
+        if not jnp.issubdtype(nodes_.dtype, jnp.floating):
+            raise TypeError("Diffrax collocation nodes must be real floating values.")
+        active_ = (
+            jnp.ones(nodes_.shape, dtype=bool)
+            if active is None
+            else jnp.asarray(active, dtype=bool)
+        )
+        if active_.shape != nodes_.shape:
+            raise ValueError("active must match collocation capacity.")
+        capacity = int(nodes_.size) if max_collocation is None else int(max_collocation)
+        if capacity != int(nodes_.size):
+            raise ValueError("nodes must realize max_collocation capacity.")
+        active_host = np.asarray(active_)
+        if not np.any(active_host):
+            raise ValueError("At least one collocation slot must be active.")
+        if not np.all(np.isfinite(np.asarray(nodes_)[active_host])) or not np.all(
+            np.isfinite(np.asarray(weights_)[active_host])
+        ):
+            raise ValueError("Active collocation nodes and weights must be finite.")
+        if not solver_id:
+            raise ValueError("solver_id must be nonempty.")
+        self.nodes = nodes_
+        self.weights = weights_.astype(jnp.result_type(weights_, float))
+        self.active = active_
+        self.solver_successful = jnp.asarray(solver_successful, dtype=bool).reshape(())
+        self.solver_id = str(solver_id)
+        self.max_collocation = capacity
+        self.throw = bool(throw)
+
+
 class FixedQuadraturePlan(StrictModule):
     """Materialize a reusable deterministic quadrature batch."""
 
@@ -127,6 +188,57 @@ class FixedQuadraturePlan(StrictModule):
         self.rule = GaussLegendreRule() if rule is None else rule
 
 
+class BreakpointDiscoveryPlan(StrictModule):
+    """Fixed-budget numerical candidate discovery for interval refinement."""
+
+    pilot_count: int = eqx.field(static=True)
+    max_candidates: int = eqx.field(static=True)
+    refinement_rounds: int = eqx.field(static=True)
+    defect_threshold: float = eqx.field(static=True)
+    jump_threshold: float = eqx.field(static=True)
+    minimum_separation: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        pilot_count: int = 33,
+        max_candidates: int = 8,
+        refinement_rounds: int = 4,
+        *,
+        defect_threshold: float = 8.0,
+        jump_threshold: float = 8.0,
+        minimum_separation: float = 1.0e-6,
+    ):
+        pilots = int(pilot_count)
+        candidates = int(max_candidates)
+        rounds = int(refinement_rounds)
+        if pilots < 5 or candidates < 1 or rounds < 0:
+            raise ValueError(
+                "Breakpoint discovery requires at least five pilots, one candidate, "
+                "and nonnegative refinement rounds."
+            )
+        values = (
+            float(defect_threshold),
+            float(jump_threshold),
+            float(minimum_separation),
+        )
+        if (
+            any(not math.isfinite(value) for value in values)
+            or values[0] <= 0.0
+            or values[1] <= 0.0
+            or values[2] < 0.0
+        ):
+            raise ValueError(
+                "Discovery thresholds must be finite and positive, with "
+                "nonnegative minimum_separation."
+            )
+        self.pilot_count = pilots
+        self.max_candidates = candidates
+        self.refinement_rounds = rounds
+        self.defect_threshold = values[0]
+        self.jump_threshold = values[1]
+        self.minimum_separation = values[2]
+
+
 class AdaptiveQuadraturePlan(StrictModule):
     """Bounded globally adaptive one-dimensional quadrature."""
 
@@ -136,6 +248,7 @@ class AdaptiveQuadraturePlan(StrictModule):
     max_intervals: int = eqx.field(static=True)
     max_evaluations: int | None = eqx.field(static=True)
     breakpoints: tuple[float, ...] = eqx.field(static=True)
+    discovery: BreakpointDiscoveryPlan | None = eqx.field(static=True)
     collect_partition: bool = eqx.field(static=True)
     throw: bool = eqx.field(static=True)
 
@@ -149,6 +262,7 @@ class AdaptiveQuadraturePlan(StrictModule):
         max_intervals: int = 50,
         max_evaluations: int | None = None,
         breakpoints: Sequence[float] = (),
+        discovery: BreakpointDiscoveryPlan | None = None,
         collect_partition: bool = False,
         throw: bool = True,
     ):
@@ -178,6 +292,16 @@ class AdaptiveQuadraturePlan(StrictModule):
         self.max_intervals = intervals
         self.max_evaluations = evaluations
         self.breakpoints = points
+        if discovery is not None and not isinstance(discovery, BreakpointDiscoveryPlan):
+            raise TypeError("discovery must be a BreakpointDiscoveryPlan.")
+        if (
+            discovery is not None
+            and intervals < len(points) + discovery.max_candidates + 1
+        ):
+            raise ValueError(
+                "max_intervals must cover explicit and discovered initial cells."
+            )
+        self.discovery = discovery
         self.collect_partition = bool(collect_partition)
         self.throw = bool(throw)
 
@@ -230,6 +354,70 @@ class AdaptiveTrianglePlan(StrictModule):
             raise ValueError("max_evaluations must be positive.")
         self.low_rule = low
         self.high_rule = high
+        self.absolute_tolerance = _validate_tolerance(
+            absolute_tolerance, "absolute_tolerance"
+        )
+        self.relative_tolerance = _validate_tolerance(
+            relative_tolerance, "relative_tolerance"
+        )
+        self.max_cells = cells
+        self.max_evaluations = evaluations
+        self.collect_partition = bool(collect_partition)
+        self.throw = bool(throw)
+
+
+class AdaptiveCubaturePlan(StrictModule):
+    """Fixed-capacity globally adaptive hyperrectangle cubature."""
+
+    dimension: int = eqx.field(static=True)
+    low_rule: GaussLegendreRule
+    high_rule: GaussLegendreRule
+    anisotropy: tuple[float, ...] = eqx.field(static=True)
+    absolute_tolerance: float | None = eqx.field(static=True)
+    relative_tolerance: float | None = eqx.field(static=True)
+    max_cells: int = eqx.field(static=True)
+    max_evaluations: int | None = eqx.field(static=True)
+    collect_partition: bool = eqx.field(static=True)
+    throw: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        low_rule: GaussLegendreRule | None = None,
+        high_rule: GaussLegendreRule | None = None,
+        /,
+        *,
+        anisotropy: Sequence[float] | None = None,
+        absolute_tolerance: float | None = None,
+        relative_tolerance: float | None = None,
+        max_cells: int = 256,
+        max_evaluations: int | None = None,
+        collect_partition: bool = False,
+        throw: bool = True,
+    ):
+        dimension_ = int(dimension)
+        if dimension_ < 1:
+            raise ValueError("Adaptive cubature dimension must be positive.")
+        low = GaussLegendreRule(3) if low_rule is None else low_rule
+        high = GaussLegendreRule(5) if high_rule is None else high_rule
+        if not isinstance(low, GaussLegendreRule) or not isinstance(
+            high, GaussLegendreRule
+        ):
+            raise TypeError("Adaptive cubature rules must be GaussLegendreRule values.")
+        if high.exact_degree <= low.exact_degree:
+            raise ValueError(
+                "Adaptive cubature high_rule must have greater exact degree."
+            )
+        cells = int(max_cells)
+        if cells < 1:
+            raise ValueError("max_cells must be positive.")
+        evaluations = None if max_evaluations is None else int(max_evaluations)
+        if evaluations is not None and evaluations < 1:
+            raise ValueError("max_evaluations must be positive.")
+        self.dimension = dimension_
+        self.low_rule = low
+        self.high_rule = high
+        self.anisotropy = normalize_anisotropy(dimension_, anisotropy)
         self.absolute_tolerance = _validate_tolerance(
             absolute_tolerance, "absolute_tolerance"
         )
@@ -464,6 +652,69 @@ class SparseGridPlan(StrictModule):
         )
 
 
+class AdaptiveSparseGridPlan(StrictModule):
+    """Eager dimension-adaptive Smolyak topology preparation."""
+
+    dimension: int = eqx.field(static=True)
+    initial_level: int = eqx.field(static=True)
+    anisotropy: tuple[float, ...] = eqx.field(static=True)
+    axis_rules: tuple[SmolyakAxisRule, ...] = eqx.field(static=True)
+    indicator_norm: Literal["max", "weighted-l2"] = eqx.field(static=True)
+    absolute_tolerance: float | None = eqx.field(static=True)
+    relative_tolerance: float | None = eqx.field(static=True)
+    max_indices: int = eqx.field(static=True)
+    max_nodes: int = eqx.field(static=True)
+    max_rounds: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        initial_level: int = 1,
+        /,
+        *,
+        anisotropy: Sequence[float] | None = None,
+        axis_rules: SmolyakAxisRule | Sequence[SmolyakAxisRule] = "clenshaw-curtis",
+        indicator_norm: Literal["max", "weighted-l2"] = "max",
+        absolute_tolerance: float | None = None,
+        relative_tolerance: float | None = None,
+        max_indices: int = 64,
+        max_nodes: int = 100_000,
+        max_rounds: int = 32,
+    ):
+        dimension_ = int(dimension)
+        level = int(initial_level)
+        indices = int(max_indices)
+        nodes = int(max_nodes)
+        rounds = int(max_rounds)
+        if dimension_ < 1 or level < 1:
+            raise ValueError(
+                "Adaptive sparse-grid dimension and initial level must be positive."
+            )
+        if indices < 1 or nodes < 1 or rounds < 1:
+            raise ValueError("Adaptive sparse-grid capacities must be positive.")
+        if indicator_norm not in ("max", "weighted-l2"):
+            raise ValueError("indicator_norm must be 'max' or 'weighted-l2'.")
+        self.dimension = dimension_
+        self.initial_level = level
+        self.anisotropy = normalize_anisotropy(dimension_, anisotropy)
+        self.axis_rules = normalize_axis_rules(
+            dimension_,
+            axis_rules,
+            default="clenshaw-curtis",
+            allowed=("clenshaw-curtis", "gauss-hermite"),
+        )
+        self.indicator_norm = indicator_norm
+        self.absolute_tolerance = _validate_tolerance(
+            absolute_tolerance, "absolute_tolerance"
+        )
+        self.relative_tolerance = _validate_tolerance(
+            relative_tolerance, "relative_tolerance"
+        )
+        self.max_indices = indices
+        self.max_nodes = nodes
+        self.max_rounds = rounds
+
+
 class CellQuadraturePlan(StrictModule):
     """Apply a reference-cell rule through a supplied mapped target."""
 
@@ -502,6 +753,7 @@ class ProductIntegrationPlan(StrictModule):
 IntegrationPlan: TypeAlias = (
     FixedQuadraturePlan
     | AdaptiveQuadraturePlan
+    | AdaptiveCubaturePlan
     | AdaptiveTrianglePlan
     | BayesianQuadraturePlan
     | MonteCarloPlan
@@ -511,13 +763,18 @@ IntegrationPlan: TypeAlias = (
     | MultilevelMonteCarloPlan
     | SparseGridPlan
     | CellQuadraturePlan
+    | DiffraxCollocationQuadraturePlan
+    | AdaptiveSparseGridPlan
     | ProductIntegrationPlan
 )
 
 
 __all__ = [
     "AdaptiveQuadraturePlan",
+    "AdaptiveCubaturePlan",
+    "AdaptiveSparseGridPlan",
     "AdaptiveTrianglePlan",
+    "BreakpointDiscoveryPlan",
     "AntitheticDesign",
     "BayesianQuadraturePlan",
     "CellQuadraturePlan",
@@ -525,6 +782,7 @@ __all__ = [
     "FixedQuadraturePlan",
     "IIDDesign",
     "ImportanceSamplingPlan",
+    "DiffraxCollocationQuadraturePlan",
     "IntegrationPlan",
     "LatinHypercubeDesign",
     "MultilevelMonteCarloPlan",

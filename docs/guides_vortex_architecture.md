@@ -35,13 +35,15 @@ Relaxation is an accepted-stage schedule, never hidden inside a field backend.
 
 Topology changes use `VortexPopulationTransition`: candidate state, accepted
 state, stable IDs, lineage, journal, strength/impulse evidence, and explicit
-failure. Capacity growth starts a new compiled epoch; `VortexReplayPlan` and
-`VortexTransitionPullback` join epochs without pretending event selection is
-smooth. Transversal deterministic events may use `VortexSaltationMap`.
+failure. Capacity growth starts a new compiled epoch. Cross-epoch replay and
+fixed-shape saltation actions use the canonical solver `HybridEventTape` and
+`HybridReplayPolicy`; vortex code does not maintain a parallel replay or
+saltation authority.
 
 ## Valid derivatives
 
 Fixed source/target programs support ordinary JVP/VJP according to backend
 capabilities. Remeshing, split/merge, reconnection, hierarchy rebuild, and
-capacity growth expose transition pullbacks or an explicit
-`UndefinedTopologyDerivative`. No straight-through topology estimator is used.
+capacity growth expose a declared frozen reset transpose or the canonical
+hybrid-event invalid/NaN derivative status. No straight-through topology
+estimator is used.

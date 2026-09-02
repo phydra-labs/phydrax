@@ -82,7 +82,7 @@ def _problem(size: int, moments: int, execution: str, target_kind: str, seed: in
         scale = jnp.full((moments,), 0.2)
         target = phx.weighting.QuadraticMoments(
             achieved + scale**2 * known_dual,
-            scale=scale,
+            covariance=jnp.diag(scale**2),
         )
     return phx.weighting.MomentCalibrationProblem(
         moment_map,
@@ -110,7 +110,7 @@ def _nearby_problem(problem, target_kind: str):
     else:
         target = phx.weighting.QuadraticMoments(
             problem.target.values + perturbation,
-            scale=problem.target.scale,
+            covariance=problem.target.covariance,
         )
     return phx.weighting.MomentCalibrationProblem(
         problem.moment_map,

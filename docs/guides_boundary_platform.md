@@ -158,5 +158,39 @@ Their presence in an API is not a broad support claim, and no provider, formulat
 differentiation mode, accelerator, geometry format, or platform should be inferred
 beyond the explicit envelope returned by that prepared product.
 
+Wave C adds exact prepared-near Laplace DP0 `laplace-fmm-3d`,
+`scalar-h-matrix-3d`, and `scalar-h2-matrix-3d` actions. Their policies bound
+tree depth, blocks, local rank/order, resident bytes, and measured block error;
+transpose/adjoint reverse stored factors, and no global dense matrix is formed.
+
+Scalar closed-surface calculus now pairs DP0 Neumann traces with continuous-P1
+Dirichlet traces. The hypersingular operator is the Maue-regularized P1 map;
+DP0 hypersingular requests remain mathematically invalid and are not projected.
+
+`prepare_periodic_maxwell_boundary_3d` combines the prepared central
+free-space RWG action with explicitly bounded smooth noncentral Bloch images.
+Its evidence states that the finite image sum is not an infinite-lattice/Ewald
+certificate. The same finite-versus-infinite distinction applies to the
+rank-two periodic free-surface Green product.
+
+Dynamic vector coupling uses the existing CQ controller through
+`prepare_dynamic_elasticity_fem_bem_cq_3d` and
+`prepare_dynamic_maxwell_fem_bem_cq_3d`; every complex node must be a prepared
+native FEM--BEM solve with matching forward/transpose/adjoint families, and one
+failed node invalidates the complete history.
+
+Nonmatching scalar and Maxwell couplings consume explicit common-refinement
+cross masses. Preparation requires complete coverage, positive orientation,
+geometric residual evidence, full inf-sup rank, exact trace/load transpose,
+and (for Maxwell) a bounded commuting defect. Screen junctions require a
+declared continuity/flux law and a full-row-rank constraint saddle system.
+
+Open-sheet displacement discontinuity uses continuous vector-P1 jumps and a
+regularized isotropic elastic hypersingular action; constant DP0 jumps remain
+unsupported. `BEMFractureProblem3D` composes that traction operator with
+unilateral, cohesive, and friction-cone projections, and growth requires
+explicit complete parent routes. Active-set and growth transitions are
+nondifferentiable.
+
 Promotion is per tuple and per claim. There is no family-wide promotion from one mesh,
 precision, benchmark, provider, or platform.

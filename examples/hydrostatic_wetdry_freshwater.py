@@ -30,10 +30,12 @@ def run():
         ),
         external_mode="split-explicit",
         wetting_and_drying=True,
-        split_substeps=10,
+        subcycle_policy=phx.applications.ocean.ExternalModeSubcyclePolicy.fixed(10),
     ).prepare()
     state = ocean.initialize_state(jnp.zeros((8, 3)))
-    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(state)
+    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(
+        ocean, state
+    )
     result = phx.applications.ocean.HydrostaticIMEXMidpointMethod(ocean).step(
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0.0),

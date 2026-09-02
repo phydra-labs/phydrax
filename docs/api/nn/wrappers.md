@@ -272,3 +272,15 @@ branch = phx.nn.models.Sequential(
         members:
             - __init__
             - __call__
+
+## Lazy ragged pooling
+
+`MaskedSeriesPoolingModel.step_model` is pointwise: it receives one feature
+vector and returns one latent array. The wrapper uses fixed-bound
+`lax.map`/`lax.scan` with an active `lax.cond`, so inactive padded slots do not
+execute the runtime callback and no dense `(N, Lmax, latent)` intermediate is
+materialized. Tracing still observes the callback to establish its static
+output shape and dtype. Sum, mean, sampled-sum scaling, and readout semantics
+are unchanged. Per-slot keys use stable case/time addresses, so changing a mask
+does not renumber active stochastic sites; inactive inputs and cotangents are
+exactly zero.

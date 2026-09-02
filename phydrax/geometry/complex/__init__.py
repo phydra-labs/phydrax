@@ -2,6 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._divisors import (
+    CartierDivisor,
+    DivisorChart,
+    DivisorClearanceEvidence,
+    DivisorIntersection,
+    MeromorphicSection,
+)
 from ._homogeneous import (
     fermat_polynomial,
     HomogeneousPolynomial,
@@ -19,11 +26,32 @@ from ._line_sampling import (
     ProjectiveLineSamples,
     sample_projective_hypersurface,
 )
+from ._moduli import (
+    CalabiYauCertificate,
+    CalabiYauModuliProblem,
+    CalabiYauModuliResult,
+    HypersurfaceEpochEvidence,
+    PreparedHypersurfaceEpoch,
+    solve_calabi_yau_moduli,
+    TrainableHomogeneousHypersurface,
+)
 from ._projective import ComplexProjectiveAtlas
 from ._references import FlatComplexTorus
 
 
 __all__ = [
+    "CartierDivisor",
+    "DivisorChart",
+    "DivisorClearanceEvidence",
+    "DivisorIntersection",
+    "MeromorphicSection",
+    "CalabiYauCertificate",
+    "CalabiYauModuliProblem",
+    "CalabiYauModuliResult",
+    "HypersurfaceEpochEvidence",
+    "PreparedHypersurfaceEpoch",
+    "TrainableHomogeneousHypersurface",
+    "solve_calabi_yau_moduli",
     "ComplexProjectiveAtlas",
     "FlatComplexTorus",
     "ProjectiveHypersurface",

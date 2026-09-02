@@ -15,6 +15,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import DiscreteStepContext
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 
 
@@ -112,6 +113,8 @@ def _linearize(
     /,
     *,
     args: Any,
+    target_time: ArrayLike | None,
+    step_index: ArrayLike | None,
     output: OutputFunction | None,
     linearization_id: str,
     system_type: ControlSystemType,
@@ -125,12 +128,35 @@ def _linearize(
     times = _inexact(time)
     state_cases = _case_shape(states, state_shape, owner="state")
     control_cases = _case_shape(controls, control_shape, owner="control")
-    case_shape = jnp.broadcast_shapes(state_cases, control_cases, times.shape)
+    if system_type == "discrete":
+        if target_time is None or step_index is None:
+            raise ValueError(
+                "Discrete linearization requires target_time and step_index."
+            )
+        target_times = _inexact(target_time)
+        step_indices = jnp.asarray(step_index, dtype=jnp.int32)
+        case_shape = jnp.broadcast_shapes(
+            state_cases,
+            control_cases,
+            times.shape,
+            target_times.shape,
+            step_indices.shape,
+        )
+    else:
+        if target_time is not None or step_index is not None:
+            raise ValueError(
+                "Differential linearization does not accept discrete step context."
+            )
+        case_shape = jnp.broadcast_shapes(state_cases, control_cases, times.shape)
+        target_times = times
+        step_indices = jnp.zeros(times.shape, dtype=jnp.int32)
     if any(size <= 0 for size in case_shape):
         raise ValueError("Linearization case dimensions must be positive.")
     states = jnp.broadcast_to(states, case_shape + state_shape)
     controls = jnp.broadcast_to(controls, case_shape + control_shape)
     times = jnp.broadcast_to(times, case_shape)
+    target_times = jnp.broadcast_to(target_times, case_shape)
+    step_indices = jnp.broadcast_to(step_indices, case_shape)
 
     state_size = prod(state_shape)
     control_size = prod(control_shape)
@@ -138,14 +164,27 @@ def _linearize(
     flat_states = states.reshape((case_count, state_size))
     flat_controls = controls.reshape((case_count, control_size))
     flat_times = times.reshape((case_count,))
+    flat_target_times = target_times.reshape((case_count,))
+    flat_step_indices = step_indices.reshape((case_count,))
     system = dynamics.system
 
-    def evaluate_dynamics(t, flat_state, flat_control):
-        value = system.evaluate(
-            t,
-            flat_state.reshape(state_shape),
-            args,
-            inputs=flat_control.reshape(control_shape),
+    def evaluate_dynamics(t, target_t, index, flat_state, flat_control):
+        state_value = flat_state.reshape(state_shape)
+        control_value = flat_control.reshape(control_shape)
+        value = (
+            system.evaluate(
+                DiscreteStepContext(t, target_t, index),
+                state_value,
+                args,
+                inputs=control_value,
+            )
+            if system_type == "discrete"
+            else system.evaluate(
+                t,
+                state_value,
+                args,
+                inputs=control_value,
+            )
         )
         array = _inexact(value)
         if array.shape != state_shape:
@@ -154,10 +193,22 @@ def _linearize(
             )
         return array.reshape((state_size,))
 
-    dynamics_value = jax.vmap(evaluate_dynamics)(flat_times, flat_states, flat_controls)
+    dynamics_value = jax.vmap(evaluate_dynamics)(
+        flat_times,
+        flat_target_times,
+        flat_step_indices,
+        flat_states,
+        flat_controls,
+    )
     state_matrix, control_matrix = jax.vmap(
-        jax.jacfwd(evaluate_dynamics, argnums=(1, 2))
-    )(flat_times, flat_states, flat_controls)
+        jax.jacfwd(evaluate_dynamics, argnums=(3, 4))
+    )(
+        flat_times,
+        flat_target_times,
+        flat_step_indices,
+        flat_states,
+        flat_controls,
+    )
     affine_offset = (
         dynamics_value
         - oe.contract("...ij,...j->...i", state_matrix, flat_states)
@@ -265,6 +316,8 @@ def linearize_discrete_dynamics(
     /,
     *,
     args: Any = None,
+    target_time: ArrayLike,
+    step_index: ArrayLike,
     output: OutputFunction | None = None,
     linearization_id: str = "jax-forward-jvp",
 ) -> AffineControlLinearization:
@@ -278,6 +331,8 @@ def linearize_discrete_dynamics(
         state,
         control,
         args=args,
+        target_time=target_time,
+        step_index=step_index,
         output=output,
         linearization_id=linearization_id,
         system_type="discrete",
@@ -305,6 +360,8 @@ def linearize_differential_dynamics(
         state,
         control,
         args=args,
+        target_time=None,
+        step_index=None,
         output=output,
         linearization_id=linearization_id,
         system_type="continuous",
@@ -320,6 +377,8 @@ def linearize_control_dynamics(
     *,
     args: Any = None,
     output: OutputFunction | None = None,
+    target_time: ArrayLike | None = None,
+    step_index: ArrayLike | None = None,
     linearization_id: str = "jax-forward-jvp",
 ) -> AffineControlLinearization:
     """Dispatch to the matching discrete or differential linearization."""
@@ -333,8 +392,14 @@ def linearize_control_dynamics(
             args=args,
             output=output,
             linearization_id=linearization_id,
+            target_time=target_time,
+            step_index=step_index,
         )
     if isinstance(dynamics, DifferentialControlDynamics):
+        if target_time is not None or step_index is not None:
+            raise ValueError(
+                "Differential linearization does not accept discrete step context."
+            )
         return linearize_differential_dynamics(
             dynamics,
             time,

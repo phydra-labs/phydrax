@@ -123,6 +123,7 @@ def transformed_weighted_realization(
     transformation_diagnostics: Any,
     provenance: str,
     indices: Array | None = None,
+    selection_mask: Array | None = None,
 ):
     """Rebuild a weighted realization and append ordered transformation evidence."""
 
@@ -147,6 +148,11 @@ def transformed_weighted_realization(
             else take_samples(measure.ancestry, measure.axis, indices)
         )
         support_valid = measure.support_valid
+    if selection_mask is not None:
+        selection_mask_ = jnp.asarray(selection_mask, dtype=bool)
+        if selection_mask_.shape != log_weights_.shape:
+            raise ValueError("selection_mask must match the transformed output support.")
+        mask = jnp.asarray(mask, dtype=bool) & selection_mask_
     if ancestry is None:
         ancestry = jnp.arange(log_weights_.shape[0], dtype=jnp.int32)
     if isinstance(measure.axis, str):
@@ -357,9 +363,9 @@ def _matrix_leaf(value: Any, axis: str | int, count: int, /) -> Array | None:
             if axis >= value.data.ndim:
                 return None
             position = axis
-        data = jnp.moveaxis(jnp.asarray(value.data, dtype=float), position, 0)
+        data = jnp.moveaxis(jnp.asarray(value.data), position, 0)
     elif isinstance(value, (jax.Array, jax_core.Tracer)):
-        data = jnp.asarray(value, dtype=float)
+        data = jnp.asarray(value)
         position = axis if isinstance(axis, int) else 0
         if data.ndim == 0 or position >= data.ndim or data.shape[position] != count:
             return None

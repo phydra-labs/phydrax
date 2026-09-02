@@ -176,3 +176,36 @@ def test_spectral_seed_and_fixed_step_checkpoint_roundtrip(tmp_path):
     assert restored.extra == {"constraint": "mean-zero"}
     np.testing.assert_allclose(np.asarray(restored.state), np.asarray(state))
     np.testing.assert_allclose(np.asarray(restored.step_size), 0.1)
+
+
+def test_hermitian_spectral_artifact_uses_minimal_real_storage(tmp_path):
+    space = phx.discretization.TensorSpectralPlan(
+        (phx.discretization.FourierBasisPlan(8),)
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
+    state = space.project(jnp.cos(2.0 * jnp.pi * space.axes[0].nodes))
+    coordinates = phx.discretization.HermitianSpectralCoordinates(space)
+    artifact = phx.solver.SpectralStateArtifact(
+        state,
+        0.0,
+        0,
+        discretization_id=space.prepared_id,
+        compilation_id="packed-dns",
+        method_id="fixed-step",
+        source_hash="packed-dns-source",
+    )
+    path = phx.solver.write_spectral_state_artifact(
+        tmp_path / "packed.phx",
+        artifact,
+        state_coordinates=coordinates,
+    )
+    restored = phx.solver.read_spectral_state_artifact(
+        path,
+        state_coordinates=coordinates,
+        expected_discretization_id=space.prepared_id,
+    )
+
+    np.testing.assert_allclose(restored.state, state)
+    assert restored.coordinate_evidence.evidence_id == coordinates.evidence.evidence_id
+    assert restored.stored_state_bytes < restored.full_state_bytes
+    assert restored.fixed_coordinate_count == coordinates.fixed_mode_count
+    assert restored.conjugate_pair_count == coordinates.conjugate_pair_count

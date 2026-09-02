@@ -12,6 +12,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._polynomial import ScaledMonomialBasis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import (
@@ -25,6 +26,7 @@ from ...discretization.vem import (
     stabilize_virtual_element_tensor,
     VirtualElementDirichletConstraint,
     VirtualElementDiscretization,
+    VirtualElementRuntimeData,
 )
 from ...dynamics import DAEStructure, DifferentialAlgebraicSystem
 from ...linalg import (
@@ -88,8 +90,9 @@ def _diffusion_polynomial_matrices(
     context: VirtualElementExecutionContext,
     /,
 ):
-    if action.diffusivity.evaluator is not None:
-        raise ValueError("Callable diffusivity is not supported by qualified VEM.")
+    family = discretization.field.element.family
+    if family == "DiscontinuousL2":
+        raise ValueError("Diffusion is undefined on discontinuous L2 VEM spaces.")
     result = []
     for block_index, (geometry, cubature, projection) in enumerate(
         zip(
@@ -104,36 +107,50 @@ def _diffusion_polynomial_matrices(
             action.diffusivity, cubature.points, indices, discretization, context
         )
         mask = _cell_mask(action, indices)
-        if values.shape == cubature.weights.shape:
-            scalar = values
+        if family == "ConformingH1":
             basis_gradient = projection.basis.gradient(
                 cubature.points,
                 geometry.centroids,
                 geometry.characteristic_lengths,
             )
-            matrix = oe.contract(
-                "cq,cq,cqad,cqbd->cab",
-                cubature.weights,
-                scalar,
-                basis_gradient,
-                basis_gradient,
-            )
-        elif values.shape == cubature.weights.shape + (2, 2):
-            basis_gradient = projection.basis.gradient(
-                cubature.points,
-                geometry.centroids,
-                geometry.characteristic_lengths,
-            )
-            matrix = oe.contract(
-                "cq,cqad,cqde,cqbe->cab",
-                cubature.weights,
-                basis_gradient,
-                values,
-                basis_gradient,
-            )
+            if values.shape == cubature.weights.shape:
+                matrix = oe.contract(
+                    "cq,cq,cqad,cqbd->cab",
+                    cubature.weights,
+                    values,
+                    basis_gradient,
+                    basis_gradient,
+                )
+            elif values.shape == cubature.weights.shape + (2, 2):
+                matrix = oe.contract(
+                    "cq,cqad,cqde,cqbe->cab",
+                    cubature.weights,
+                    basis_gradient,
+                    values,
+                    basis_gradient,
+                )
+            else:
+                raise ValueError(
+                    "H1 VEM diffusivity must be scalar or a 2x2 tensor per cell point."
+                )
         else:
-            raise ValueError(
-                "VEM diffusivity must be scalar or a 2x2 tensor per cell point."
+            if values.shape != cubature.weights.shape:
+                raise ValueError(
+                    f"{discretization.field.element.differential_kind} VEM "
+                    "diffusivity must be scalar at cell points."
+                )
+            differential_basis = ScaledMonomialBasis(2, projection.differential_degree)
+            basis_values = differential_basis.evaluate(
+                cubature.points,
+                geometry.centroids,
+                geometry.characteristic_lengths,
+            )
+            matrix = oe.contract(
+                "cq,cq,cqa,cqb->cab",
+                cubature.weights,
+                values,
+                basis_values,
+                basis_values,
             )
         result.append(jnp.where(mask[:, None, None], matrix, 0.0))
     return tuple(result)
@@ -147,8 +164,6 @@ def _mass_polynomial_matrices(
     *,
     domain=None,
 ):
-    if coefficient.evaluator is not None:
-        raise ValueError("Callable mass coefficients are not supported by qualified VEM.")
     result = []
     for block_index, (geometry, cubature, projection) in enumerate(
         zip(
@@ -169,13 +184,30 @@ def _mass_polynomial_matrices(
             geometry.centroids,
             geometry.characteristic_lengths,
         )
-        matrix = oe.contract(
+        scalar_matrix = oe.contract(
             "cq,cq,cqa,cqb->cab",
             cubature.weights,
             values,
             basis_values,
             basis_values,
         )
+        if projection.polynomial_value_shape == (2,):
+            polynomial_count = projection.basis.feature_count
+            matrix = jnp.zeros(
+                (
+                    scalar_matrix.shape[0],
+                    2 * polynomial_count,
+                    2 * polynomial_count,
+                ),
+                dtype=scalar_matrix.dtype,
+            )
+            for component in range(2):
+                start = component * polynomial_count
+                matrix = matrix.at[
+                    :, start : start + polynomial_count, start : start + polynomial_count
+                ].set(scalar_matrix)
+        else:
+            matrix = scalar_matrix
         if domain is not None:
             selected = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
             mask = jnp.any(indices[:, None] == selected[None, :], axis=1)
@@ -192,32 +224,32 @@ def _factorized_action(
     policy: VirtualElementExecutionPolicy,
     /,
     *,
-    projector: str,
+    kernel_projector: str,
+    stabilization_policy,
     operator_id: str,
 ):
+    oriented_coefficients = []
     stabilization_matrices = []
-    for projection, polynomial in zip(
+    for projection, coefficient, polynomial, orientation in zip(
         projections,
+        coefficient_maps,
         polynomial_matrices,
+        discretization.dof_map.orientations,
         strict=True,
     ):
-        coefficient = (
-            projection.h1_coefficients
-            if projector == "h1"
-            else projection.l2_coefficients
-        )
         consistent = oe.contract("cai,cab,cbj->cij", coefficient, polynomial, coefficient)
         stabilized = stabilize_virtual_element_tensor(
             projection,
             consistent,
-            policy.stiffness_stabilization
-            if projector == "h1"
-            else policy.mass_stabilization,
-            projector=projector,
+            stabilization_policy,
+            projector=kernel_projector,
         )
-        stabilization_matrices.append(stabilized.stabilization)
-    factorized = FactorizedVirtualElementOperator(
-        tuple(coefficient_maps),
+        oriented_coefficients.append(coefficient * orientation[:, None, :])
+        stabilization_matrices.append(
+            stabilized.stabilization * orientation[:, :, None] * orientation[:, None, :]
+        )
+    return FactorizedVirtualElementOperator(
+        tuple(oriented_coefficients),
         tuple(polynomial_matrices),
         tuple(stabilization_matrices),
         discretization.dof_map.cell_dofs,
@@ -233,7 +265,6 @@ def _factorized_action(
         ),
         operator_id=operator_id,
     )
-    return factorized
 
 
 def _merge_sparse(
@@ -348,16 +379,33 @@ def _lagrange_values(nodes: Array, points: Array, /) -> Array:
 
 
 def _edge_routes(discretization: VirtualElementDiscretization, edges: Array, /) -> Array:
+    trace_kind = discretization.field.element.trace_kind
+    if trace_kind == "none":
+        raise ValueError("Discontinuous L2 virtual elements have no boundary trace.")
+    degree = discretization.field.element.degree
+    offset = discretization.dof_map.vertex_dof_count
+    if trace_kind in ("normal", "tangential"):
+        modes = jnp.arange(degree + 1, dtype=jnp.int32)
+        return offset + edges[:, None] * (degree + 1) + modes[None, :]
     endpoints = jnp.asarray(discretization.mesh.connectivity.edges, dtype=jnp.int32)[
         edges
     ]
-    degree = discretization.field.element.degree
     routes = [endpoints[:, 0]]
-    offset = discretization.dof_map.vertex_dof_count
     for interior in range(degree - 1):
         routes.append(offset + edges * (degree - 1) + interior)
     routes.append(endpoints[:, 1])
     return jnp.stack(tuple(routes), axis=1)
+
+
+def _legendre_values(degree: int, points: Array, /) -> Array:
+    values = [jnp.ones_like(points)]
+    if degree:
+        values.append(points)
+    for order in range(2, degree + 1):
+        values.append(
+            ((2 * order - 1) * points * values[-1] - (order - 1) * values[-2]) / order
+        )
+    return jnp.stack(tuple(values), axis=-1)
 
 
 def _boundary_data(
@@ -390,18 +438,40 @@ def _boundary_operator_and_rhs(
         interval_rule_data,
     )
 
+    trace_kind = discretization.field.element.trace_kind
+    if trace_kind == "none":
+        raise ValueError("Discontinuous L2 virtual elements have no boundary trace.")
     domain = (
         discretization.exterior_facet_domain if action.domain is None else action.domain
     )
+    if (
+        domain.support_id != discretization.support.support_id
+        or domain.entity_set_id
+        != discretization.mesh.topology.entity_sets[1].entity_set_id
+    ):
+        raise ValueError("VEM boundary domain belongs to another facet support.")
     edges = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
     routes = _edge_routes(discretization, edges)
     degree = discretization.field.element.degree
-    nodal_data = interval_rule_data(GaussLobattoLegendreRule(degree + 1))
-    nodes = jnp.asarray(nodal_data.nodes)
     quadrature = interval_rule_data(GaussLegendreRule(degree + 2))
     axis = jnp.asarray(quadrature.nodes)
     weights = jnp.asarray(quadrature.weights)
-    basis = _lagrange_values(nodes, axis)
+    if trace_kind == "value":
+        nodes = jnp.asarray(
+            interval_rule_data(GaussLobattoLegendreRule(degree + 1)).nodes
+        )
+        trace_basis = _lagrange_values(nodes, axis)
+        basis = jnp.broadcast_to(trace_basis[None], (edges.size,) + trace_basis.shape)
+    else:
+        trace_basis = _legendre_values(degree, axis)
+        dual = 2 * jnp.arange(degree + 1, dtype=axis.dtype) + 1
+        trace_basis = trace_basis * dual
+        owner = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
+        owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
+        signs = jnp.asarray(discretization.mesh.connectivity.cell_edge_signs)[
+            owner, owner_local
+        ]
+        basis = signs[:, None, None] * trace_basis[None]
     connectivity_edges = jnp.asarray(
         discretization.mesh.connectivity.edges, dtype=jnp.int32
     )[edges]
@@ -418,8 +488,8 @@ def _boundary_operator_and_rhs(
         value = _boundary_data(action.value, points, edges, discretization, context)
         if alpha.shape != weighted.shape or value.shape != weighted.shape:
             raise ValueError("VEM Robin data must be scalar on boundary quadrature.")
-        matrices = oe.contract("eq,eq,qi,qj->eij", weighted, alpha, basis, basis)
-        rhs = oe.contract("eq,eq,qi->ei", weighted, value, basis)
+        matrices = oe.contract("eq,eq,eqi,eqj->eij", weighted, alpha, basis, basis)
+        rhs = oe.contract("eq,eq,eqi->ei", weighted, value, basis)
         operator = SparseCoordinateOperator(
             EdgeRelation(
                 jnp.broadcast_to(routes[:, None, :], matrices.shape).reshape((-1,)),
@@ -432,14 +502,20 @@ def _boundary_operator_and_rhs(
             target=DualSpace(discretization.field_space.vector_space),
             properties=OperatorProperties(),
             operator_id=canonical_fingerprint(
-                {"kind": "virtual-element-robin", "action": action.action_id}
+                {
+                    "kind": "virtual-element-robin",
+                    "action": action.action_id,
+                    "runtime": context.runtime.runtime_id,
+                    "field_space": discretization.field_space.field_space_id,
+                    "trace": trace_kind,
+                }
             ),
         )
         return operator, routes, rhs
     value = _boundary_data(action.load, points, edges, discretization, context)
     if value.shape != weighted.shape:
         raise ValueError("VEM boundary load must be scalar on boundary quadrature.")
-    rhs = oe.contract("eq,eq,qi->ei", weighted, value, basis)
+    rhs = oe.contract("eq,eq,eqi->ei", weighted, value, basis)
     return None, routes, rhs
 
 
@@ -468,6 +544,21 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             raise TypeError("discretization must be VirtualElementDiscretization.")
         if form.field_name != discretization.field.name:
             raise ValueError("VEM form field does not match the discretization.")
+        family = discretization.field.element.family
+        if family == "DiscontinuousL2":
+            for action in form.actions:
+                if isinstance(action, DiffusionAction):
+                    raise ValueError(
+                        "Diffusion is undefined on discontinuous L2 VEM spaces."
+                    )
+                if isinstance(action, (BoundaryLoadAction, VirtualElementRobinAction)):
+                    raise ValueError(
+                        "Discontinuous L2 virtual elements have no boundary trace."
+                    )
+            if constraint is not None:
+                raise ValueError(
+                    "Discontinuous L2 virtual elements have no Dirichlet trace."
+                )
         policy = (
             VirtualElementExecutionPolicy()
             if execution_policy is None
@@ -480,13 +571,21 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         else:
             if not isinstance(constraint, VirtualElementDirichletConstraint):
                 raise TypeError("constraint must be VirtualElementDirichletConstraint.")
+            if constraint.field_space_id != discretization.field_space.field_space_id:
+                raise ValueError("VEM constraint belongs to another field space.")
             if dirichlet_values is None:
                 raise ValueError("VEM constraint requires Dirichlet values.")
             lift = constraint.lift(dirichlet_values)
         for action in form.actions:
-            if isinstance(action, (DiffusionAction, MassAction)) and action.rules:
+            if (
+                isinstance(
+                    action,
+                    (DiffusionAction, MassAction, SourceAction, BoundaryLoadAction),
+                )
+                and action.rules
+            ):
                 raise ValueError(
-                    "Qualified VEM uses its prepared polygon quadrature rules."
+                    "Qualified VEM uses its prepared polygon/edge quadrature rules."
                 )
         self.form = form
         self.discretization = discretization
@@ -555,8 +654,16 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                 lift=self.lift,
                 user_args=args,
             )
-        if context.runtime.topology_id != self.discretization.mesh.topology_id:
-            raise ValueError("VEM execution context has incompatible topology.")
+        runtime = context.runtime
+        family = self.discretization.field.element.family
+        if not isinstance(runtime, VirtualElementRuntimeData):
+            raise TypeError("VEM execution context runtime has the wrong type.")
+        if (
+            runtime.topology_id != self.discretization.mesh.topology_id
+            or runtime.geometry_layout_id != self.discretization.mesh.geometry_layout_id
+            or any(projection.family != family for projection in runtime.projections)
+        ):
+            raise ValueError("VEM execution context is incompatible with the space.")
         return context
 
     def expand(self, state, context=None, /):
@@ -571,16 +678,29 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             polynomial = _diffusion_polynomial_matrices(
                 action, self.discretization, context
             )
+            family = self.discretization.field.element.family
+            if family == "ConformingH1":
+                coefficients = tuple(
+                    value.h1_coefficients for value in context.runtime.projections
+                )
+                kernel_projector = "h1"
+            else:
+                coefficients = tuple(
+                    value.differential_coefficients
+                    for value in context.runtime.projections
+                )
+                kernel_projector = "l2"
             factorized = _factorized_action(
                 context.runtime.projections,
-                tuple(value.h1_coefficients for value in context.runtime.projections),
+                coefficients,
                 polynomial,
                 self.discretization,
                 self.execution_policy,
-                projector="h1",
+                kernel_projector=kernel_projector,
+                stabilization_policy=self.execution_policy.stiffness_stabilization,
                 operator_id=canonical_fingerprint(
                     {
-                        "kind": "VEM-diffusion",
+                        "kind": f"VEM-{self.discretization.field.element.differential_kind}",
                         "action": action.action_id,
                         "runtime": context.runtime.runtime_id,
                     }
@@ -600,7 +720,8 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                 polynomial,
                 self.discretization,
                 self.execution_policy,
-                projector="l2",
+                kernel_projector="l2",
+                stabilization_policy=self.execution_policy.mass_stabilization,
                 operator_id=canonical_fingerprint(
                     {
                         "kind": "VEM-mass",
@@ -670,12 +791,19 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         )
         for action in self.form.actions:
             if isinstance(action, SourceAction):
-                for block_index, (geometry, cubature, projection, gathers) in enumerate(
+                for block_index, (
+                    geometry,
+                    cubature,
+                    projection,
+                    gathers,
+                    orientations,
+                ) in enumerate(
                     zip(
                         context.runtime.geometries,
                         context.runtime.cubatures,
                         context.runtime.projections,
                         self.discretization.dof_map.cell_dofs,
+                        self.discretization.dof_map.orientations,
                         strict=True,
                     )
                 ):
@@ -687,18 +815,37 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                         self.discretization,
                         context,
                     )
-                    if values.shape != cubature.weights.shape:
-                        raise ValueError("VEM source must be scalar at cell quadrature.")
                     basis = projection.basis.evaluate(
                         cubature.points,
                         geometry.centroids,
                         geometry.characteristic_lengths,
                     )
-                    moments = oe.contract(
-                        "cq,cq,cqa->ca", cubature.weights, values, basis
-                    )
+                    if projection.polynomial_value_shape == (2,):
+                        expected = cubature.weights.shape + (2,)
+                        if values.shape != expected:
+                            raise ValueError(
+                                "Vector VEM source must have two components "
+                                "at cell quadrature."
+                            )
+                        component_moments = oe.contract(
+                            "cq,cqd,cqa->cda", cubature.weights, values, basis
+                        )
+                        moments = component_moments.reshape(
+                            (component_moments.shape[0], -1)
+                        )
+                    else:
+                        if values.shape != cubature.weights.shape:
+                            raise ValueError(
+                                "Scalar VEM source must be scalar at cell quadrature."
+                            )
+                        moments = oe.contract(
+                            "cq,cq,cqa->ca", cubature.weights, values, basis
+                        )
                     local = oe.contract("cai,ca->ci", projection.l2_coefficients, moments)
-                    local = jnp.where(_cell_mask(action, indices)[:, None], local, 0.0)
+                    local = (
+                        jnp.where(_cell_mask(action, indices)[:, None], local, 0.0)
+                        * orientations
+                    )
                     result = scatter_local(
                         result,
                         gathers,
@@ -748,7 +895,10 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         )
 
     def _default_nullspace_policy(self, operator) -> NullspacePolicy | None:
-        if self.constraint is not None:
+        if (
+            self.constraint is not None
+            or self.discretization.field.element.family != "ConformingH1"
+        ):
             return None
         has_diffusion = any(
             isinstance(action, DiffusionAction) for action in self.form.actions
@@ -847,7 +997,8 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             polynomial,
             self.discretization,
             self.execution_policy,
-            projector="l2",
+            kernel_projector="l2",
+            stabilization_policy=self.execution_policy.mass_stabilization,
             operator_id=canonical_fingerprint(
                 {
                     "kind": "VEM-unit-mass",

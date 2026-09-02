@@ -22,6 +22,13 @@ class IntegrationStatus(IntEnum):
     MAXIMUM_CELLS_REACHED = 11
     LINEAR_SOLVE_FAILED = 12
     INVALID_POSTERIOR_VARIANCE = 13
+    BREAKPOINT_CANDIDATE_OVERFLOW = 14
+    UNRESOLVED_NONFINITE = 15
+    INVALID_GEOMETRY_MAP = 16
+    MAXIMUM_INDICES_REACHED = 17
+    MAXIMUM_NODES_REACHED = 18
+    MAXIMUM_ROUNDS_REACHED = 19
+    DIFFRAX_SOLVE_FAILED = 20
 
 
 _STATUS_MESSAGES = {
@@ -41,6 +48,15 @@ _STATUS_MESSAGES = {
     IntegrationStatus.INVALID_POSTERIOR_VARIANCE: (
         "bayesian quadrature posterior variance is invalid"
     ),
+    IntegrationStatus.BREAKPOINT_CANDIDATE_OVERFLOW: (
+        "breakpoint candidate capacity exhausted"
+    ),
+    IntegrationStatus.UNRESOLVED_NONFINITE: "nonfinite feature neighborhood unresolved",
+    IntegrationStatus.INVALID_GEOMETRY_MAP: "geometry map evidence is invalid",
+    IntegrationStatus.MAXIMUM_INDICES_REACHED: "maximum sparse indices reached",
+    IntegrationStatus.MAXIMUM_NODES_REACHED: "maximum sparse nodes reached",
+    IntegrationStatus.MAXIMUM_ROUNDS_REACHED: "maximum adaptive rounds reached",
+    IntegrationStatus.DIFFRAX_SOLVE_FAILED: "Diffrax collocation solve failed",
 }
 
 

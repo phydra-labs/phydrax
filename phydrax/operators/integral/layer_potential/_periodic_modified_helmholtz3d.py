@@ -9,7 +9,7 @@ import math
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ....discretization import ParticleCell
+from ....discretization import PeriodicCell
 from ....geometry import MeshRegion
 from ._periodic_core3d import (
     _direct_screened_image_sum_host,
@@ -31,7 +31,7 @@ def _validated_screening(screening: float) -> float:
 
 def periodic_modified_helmholtz_green_3d(
     displacement: ArrayLike,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     screening: float,
@@ -66,7 +66,7 @@ def periodic_modified_helmholtz_green_3d(
 
 def direct_periodic_modified_helmholtz_image_sum_3d(
     displacement: ArrayLike,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     screening: float,
@@ -93,7 +93,7 @@ def direct_periodic_modified_helmholtz_image_sum_3d(
 
 def prepare_periodic_modified_helmholtz_single_layer_dp0_3d(
     region: MeshRegion,
-    cell: ParticleCell,
+    cell: PeriodicCell,
     /,
     *,
     screening: float,

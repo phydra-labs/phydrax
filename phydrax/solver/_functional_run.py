@@ -13,7 +13,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
-from .._training import EvaluationParametersFn
+from .._training import (
+    DelayedTargetPolicy,
+    EvaluationParametersFn,
+    ExponentialMovingAverageTargetPolicy,
+)
 from ._functional_objective import _FunctionalObjective
 from ._functional_precision import FunctionalPrecisionPolicy
 from ._functional_training import FunctionalTrainingPlan
@@ -28,6 +32,7 @@ class FunctionalSolveConfig:
     parameter_paths: tuple[str, ...] | None = None
     parameter_shapes: tuple[tuple[int, ...], ...] = ()
     parameter_dtypes: tuple[str, ...] = ()
+    parameter_alias_groups: tuple[tuple[str, ...], ...] = ()
     seed: int = 0
     jit: bool = True
     keep_best: bool = True
@@ -42,6 +47,10 @@ class FunctionalSolveConfig:
     precision: FunctionalPrecisionPolicy | None = None
     training: FunctionalTrainingPlan | None = None
     resume: bool = False
+    accepted_update_hook: Any = None
+    target_policy: DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy | None = (
+        None
+    )
 
     def __post_init__(self):
         iterations = int(self.num_iter)
@@ -61,15 +70,29 @@ class FunctionalSolveConfig:
             self.training, FunctionalTrainingPlan
         ):
             raise TypeError("training must be a FunctionalTrainingPlan or None.")
-        if self.parameter_paths is None:
-            if self.parameter_shapes or self.parameter_dtypes:
-                raise ValueError(
-                    "Parameter shapes and dtypes require parameter_paths."
-                )
-        elif (
-            len(self.parameter_paths) != len(self.parameter_shapes)
-            or len(self.parameter_paths) != len(self.parameter_dtypes)
+        if self.resume and self.training is None:
+            raise ValueError("resume=True requires a FunctionalTrainingPlan.")
+        if self.accepted_update_hook is not None and not callable(
+            self.accepted_update_hook
         ):
+            raise TypeError("accepted_update_hook must be callable or None.")
+        if self.target_policy is not None and not isinstance(
+            self.target_policy,
+            (DelayedTargetPolicy, ExponentialMovingAverageTargetPolicy),
+        ):
+            raise TypeError("target_policy has an unsupported type.")
+        if self.parameter_paths is None:
+            if (
+                self.parameter_shapes
+                or self.parameter_dtypes
+                or self.parameter_alias_groups
+            ):
+                raise ValueError(
+                    "Parameter shapes, dtypes, and aliases require parameter_paths."
+                )
+        elif len(self.parameter_paths) != len(self.parameter_shapes) or len(
+            self.parameter_paths
+        ) != len(self.parameter_dtypes):
             raise ValueError(
                 "Parameter paths, shapes, and dtypes must have equal lengths."
             )

@@ -11,9 +11,12 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, DiagonalPairing
 from .._axis import broadcasted_grid
 from .._core import DiscretizationCapability, DiscretizationKey, PreparationReport
@@ -141,6 +144,8 @@ def _face_geometry(
     base: FiniteVolumeDiscretization,
     axis: int,
     /,
+    *,
+    include_periodic_endpoint: bool = False,
 ) -> tuple[Array, Array, Array]:
     dimension = len(base.cell_shape)
     tangential = tuple(index for index in range(dimension) if index != axis)
@@ -177,7 +182,7 @@ def _face_geometry(
         area_vector = 0.5 * (first + second)
         if axis == 1:
             area_vector = -area_vector
-    if base.grid.structured_axes[axis].periodic:
+    if base.grid.structured_axes[axis].periodic and not include_periodic_endpoint:
         keep = [slice(None)] * center.ndim
         keep[axis] = slice(0, base.face_layouts[axis].shape[axis])
         center = center[tuple(keep)]
@@ -226,6 +231,150 @@ def evaluate_mapped_finite_volume_geometry(
     )
 
 
+class MappedPeriodicSeam(StrictModule, NonTrainableState):
+    """Prepared, geometry-certified periodic isometry for one mapped axis."""
+
+    axis: int = eqx.field(static=True)
+    rotation: Array
+    translation: Array
+    tolerance: float = eqx.field(static=True)
+    seam_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+
+    def image(self, coordinates: ArrayLike, /, *, inverse: bool = False) -> Array:
+        points = jnp.asarray(coordinates)
+        rotation = self.rotation.T if inverse else self.rotation
+        shifted = points - self.translation if inverse else points
+        mapped = jnp.matmul(shifted, rotation.T)
+        return mapped if inverse else mapped + self.translation
+
+    def transform_conserved(self, state: ArrayLike, /, *, inverse: bool = False) -> Array:
+        """Rotate the momentum block of a density-momentum-energy state."""
+        value = jnp.asarray(state)
+        dimension = self.rotation.shape[0]
+        if value.shape[-1] < dimension + 1:
+            raise ValueError("Conserved state does not contain a momentum block.")
+        rotation = self.rotation.T if inverse else self.rotation
+        momentum = jnp.matmul(value[..., 1 : dimension + 1], rotation.T)
+        return value.at[..., 1 : dimension + 1].set(momentum)
+
+
+class MappedPeriodicSeamPlan(StrictModule, NonTrainableState):
+    """Declared Euclidean isometry pairing the ends of one mapped axis."""
+
+    axis: int = eqx.field(static=True)
+    rotation: Array
+    translation: Array
+    tolerance: float = eqx.field(static=True)
+    seam_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        axis: int,
+        rotation: ArrayLike,
+        translation: ArrayLike,
+        /,
+        *,
+        tolerance: float = 1.0e-10,
+    ):
+        axis_ = int(axis)
+        rotation_ = np.asarray(rotation, dtype=float)
+        translation_ = np.asarray(translation, dtype=float)
+        tolerance_ = float(tolerance)
+        if (
+            rotation_.ndim != 2
+            or rotation_.shape[0] != rotation_.shape[1]
+            or translation_.shape != (rotation_.shape[0],)
+        ):
+            raise ValueError("Seam rotation and translation dimensions must agree.")
+        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
+            raise ValueError("Seam tolerance must be positive and finite.")
+        if not np.all(np.isfinite(rotation_)) or not np.all(np.isfinite(translation_)):
+            raise ValueError("Seam isometry must be finite.")
+        identity = np.eye(rotation_.shape[0])
+        if not np.allclose(rotation_.T @ rotation_, identity, atol=tolerance_, rtol=0.0):
+            raise ValueError("Mapped periodic seam rotation must be orthogonal.")
+        if axis_ < 0 or axis_ >= rotation_.shape[0]:
+            raise ValueError("Mapped periodic seam axis is out of range.")
+        self.axis = axis_
+        self.rotation = jnp.asarray(rotation_)
+        self.translation = jnp.asarray(translation_)
+        self.tolerance = tolerance_
+        self.seam_id = canonical_fingerprint(
+            {
+                "kind": "mapped-periodic-seam",
+                "axis": axis_,
+                "rotation": rotation_.tolist(),
+                "translation": translation_.tolist(),
+                "tolerance": tolerance_,
+            }
+        )
+
+    def prepare(
+        self, discretization: "MappedFiniteVolumeDiscretization", /
+    ) -> MappedPeriodicSeam:
+        if not isinstance(discretization, MappedFiniteVolumeDiscretization):
+            raise TypeError("Mapped periodic seams require prepared mapped geometry.")
+        if self.rotation.shape != (len(discretization.cell_shape),) * 2:
+            raise ValueError("Seam isometry dimension does not match mapped geometry.")
+        axis = self.axis
+        centers, measures, area_vectors = _face_geometry(
+            discretization.mapped_vertices,
+            discretization.reference,
+            axis,
+            include_periodic_endpoint=True,
+        )
+        upper_index = centers.shape[axis] - 1
+        lower_centers = np.asarray(jax.device_get(jnp.take(centers, 0, axis=axis)))
+        upper_centers = np.asarray(
+            jax.device_get(jnp.take(centers, upper_index, axis=axis))
+        )
+        mapped_lower = lower_centers @ np.asarray(self.rotation).T + np.asarray(
+            self.translation
+        )
+        if not np.allclose(mapped_lower, upper_centers, atol=self.tolerance, rtol=0.0):
+            raise ValueError("Mapped periodic seam face coordinates do not match.")
+        lower_measure = np.asarray(jax.device_get(jnp.take(measures, 0, axis=axis)))
+        upper_measure = np.asarray(
+            jax.device_get(jnp.take(measures, upper_index, axis=axis))
+        )
+        if not np.allclose(lower_measure, upper_measure, atol=self.tolerance, rtol=0.0):
+            raise ValueError("Mapped periodic seam face measures do not match.")
+        lower_area = np.asarray(jax.device_get(jnp.take(area_vectors, 0, axis=axis)))
+        upper_area = np.asarray(
+            jax.device_get(jnp.take(area_vectors, upper_index, axis=axis))
+        )
+        lower_normal = -lower_area / lower_measure[..., None]
+        upper_normal = upper_area / upper_measure[..., None]
+        mapped_normal = lower_normal @ np.asarray(self.rotation).T
+        if not np.allclose(mapped_normal, -upper_normal, atol=self.tolerance, rtol=0.0):
+            raise ValueError("Mapped periodic seam normals do not oppose.")
+        lower_cells = np.asarray(
+            jax.device_get(jnp.take(discretization.cell_centers, 0, axis=axis))
+        )
+        upper_cells = np.asarray(
+            jax.device_get(
+                jnp.take(
+                    discretization.cell_centers,
+                    discretization.cell_shape[axis] - 1,
+                    axis=axis,
+                )
+            )
+        )
+        seam_distance = np.sum((mapped_lower - upper_cells) * upper_normal, axis=-1)
+        seam_distance += np.sum((lower_centers - lower_cells) * lower_normal, axis=-1)
+        if np.any(~np.isfinite(seam_distance)) or np.any(seam_distance <= 0.0):
+            raise ValueError("Mapped periodic seam distance must be positive and finite.")
+        return MappedPeriodicSeam(
+            axis=self.axis,
+            rotation=self.rotation,
+            translation=self.translation,
+            tolerance=self.tolerance,
+            seam_id=self.seam_id,
+            geometry_id=discretization.prepared_id,
+        )
+
+
 class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
     """Stationary coordinate map over structured reference control volumes."""
 
@@ -235,6 +384,7 @@ class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
     component_names: tuple[str, ...] = eqx.field(static=True)
     coordinate_map: CoordinateMap = eqx.field(static=True)
     mapping_id: str = eqx.field(static=True)
+    periodic_seams: tuple[MappedPeriodicSeamPlan, ...]
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -246,6 +396,7 @@ class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
         /,
         *,
         mapping_id: str,
+        periodic_seams: tuple[MappedPeriodicSeamPlan, ...] = (),
     ):
         if not isinstance(reference, FiniteVolumeDiscretization) or not callable(
             coordinate_map
@@ -254,12 +405,23 @@ class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
         identifier = str(mapping_id)
         if not identifier:
             raise ValueError("mapping_id must be non-empty.")
+        seams = tuple(periodic_seams)
+        if any(not isinstance(seam, MappedPeriodicSeamPlan) for seam in seams):
+            raise TypeError("periodic_seams must contain MappedPeriodicSeamPlan values.")
+        axes = tuple(seam.axis for seam in seams)
+        if len(set(axes)) != len(axes):
+            raise ValueError("Mapped periodic seam axes must be unique.")
+        if any(seam.rotation.shape[0] != len(reference.cell_shape) for seam in seams):
+            raise ValueError("Mapped periodic seam dimension must match the grid.")
+        if any(not reference.grid.structured_axes[axis].periodic for axis in axes):
+            raise ValueError("Mapped periodic seams may bind only periodic axes.")
         self.reference = reference
         self.grid = reference.grid
         self.field_name = reference.field_name
         self.component_names = reference.component_names
         self.coordinate_map = coordinate_map
         self.mapping_id = identifier
+        self.periodic_seams = seams
         self.key = reference.key
         self.capabilities = reference.capabilities
         self.plan_id = canonical_fingerprint(
@@ -267,6 +429,7 @@ class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
                 "kind": "mapped-finite-volume-plan",
                 "reference": reference.prepared_id,
                 "mapping": identifier,
+                "periodic_seams": tuple(seam.seam_id for seam in seams),
             }
         )
 
@@ -303,6 +466,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     reference: FiniteVolumeDiscretization
     mapped_vertices: Array
     mapping_id: str = eqx.field(static=True)
+    periodic_seams: tuple[MappedPeriodicSeam, ...]
 
     def __init__(
         self,
@@ -433,6 +597,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
                 "plan": plan.plan_id,
                 "mapping": plan.mapping_id,
                 "numeric_version": version,
+                "periodic_seams": tuple(seam.seam_id for seam in plan.periodic_seams),
             }
         )
         self.numeric_version = version
@@ -440,6 +605,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.reference = reference
         self.mapped_vertices = vertices
         self.mapping_id = plan.mapping_id
+        self.periodic_seams = tuple(seam.prepare(self) for seam in plan.periodic_seams)
 
     @property
     def cell_shape(self) -> tuple[int, ...]:
@@ -470,5 +636,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
 __all__ = [
     "MappedFiniteVolumeDiscretization",
     "MappedFiniteVolumePlan",
+    "MappedPeriodicSeam",
+    "MappedPeriodicSeamPlan",
     "evaluate_mapped_finite_volume_geometry",
 ]

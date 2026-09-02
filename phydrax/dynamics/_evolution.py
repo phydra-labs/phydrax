@@ -15,7 +15,12 @@ from jaxtyping import Array, ArrayLike
 from .._strict import AbstractAttribute, StrictModule
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import StateLayout
-from ._system import AbstractInputPolicy, ContinuousSystem, DiscreteSystem
+from ._system import (
+    AbstractInputPolicy,
+    ContinuousSystem,
+    DiscreteStepContext,
+    DiscreteSystem,
+)
 
 
 EVOLUTION_SUCCESS = 0
@@ -186,13 +191,13 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         self.approximation_id = "exact-declared-transition"
         self.tangent_method_id = "jax-jvp:declared-transition"
 
-    def _map(self, coordinate: Array, state: Array, args: Any, /) -> Array:
+    def _map(self, context: DiscreteStepContext, state: Array, args: Any, /) -> Array:
         inputs = (
             None
             if self.input_policy is None
-            else self.input_policy.evaluate(coordinate, state, args)
+            else self.input_policy.evaluate_step(context, state, args)
         )
-        return self.system.evaluate(coordinate, state, args, inputs=inputs)
+        return self.system.evaluate(context, state, args, inputs=inputs)
 
     def advance(
         self,
@@ -207,25 +212,8 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         target = jnp.asarray(target_coordinate)
         if source.shape != () or target.shape != ():
             raise ValueError("Evolution segment coordinates must be scalar.")
-        if self.system.step_size is not None:
-            interval = target - source
-            interval_valid = (
-                jnp.isfinite(source)
-                & jnp.isfinite(target)
-                & jnp.isclose(
-                    interval,
-                    self.system.step_size,
-                    rtol=self.system.step_rtol,
-                    atol=self.system.step_atol,
-                )
-            )
-            source = eqx.error_if(
-                source,
-                ~interval_valid,
-                "Evolution interval must be finite and match the declared "
-                "DiscreteSystem step_size.",
-            )
-        final_state = self._map(source, state_array, args)
+        context = DiscreteStepContext(source, target, jnp.asarray(0, dtype=jnp.int32))
+        final_state = self._map(context, state_array, args)
         finite = jnp.all(jnp.isfinite(final_state))
         membership = jnp.asarray(
             self.state_layout.geometry.contains(final_state), dtype=bool
@@ -278,7 +266,11 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         geometry = self.state_layout.geometry
         if geometry.trivial:
             _, propagated = jax.jvp(
-                lambda point: self._map(source, point, args),
+                lambda point: self._map(
+                    DiscreteStepContext(source, target, jnp.asarray(0, dtype=jnp.int32)),
+                    point,
+                    args,
+                ),
                 (state_array,),
                 (vector,),
             )
@@ -287,7 +279,11 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
 
             def local_map(local):
                 perturbed = geometry.retract(state_array, local)
-                endpoint = self._map(source, perturbed, args)
+                endpoint = self._map(
+                    DiscreteStepContext(source, target, jnp.asarray(0, dtype=jnp.int32)),
+                    perturbed,
+                    args,
+                )
                 return geometry.inverse_retract(primal.final_state, endpoint)
 
             _, propagated = jax.jvp(local_map, (zero,), (vector,))

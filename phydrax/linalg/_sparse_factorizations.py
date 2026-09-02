@@ -123,6 +123,7 @@ class SparseFactorizationPlan(StrictModule):
     lower_analysis: SparseTriangularAnalysis
     upper_analysis: SparseTriangularAnalysis | None
     shape: tuple[int, int] = eqx.field(static=True)
+    batch_shape: tuple[int, ...] = eqx.field(static=True)
     kind: Literal["lu", "cholesky"] = eqx.field(static=True)
     policy: SparseFactorizationPolicy = eqx.field(static=True)
     input_pattern_id: str = eqx.field(static=True)
@@ -165,77 +166,111 @@ class PreparedSparseFactorization(StrictModule):
     diagnostics: SparseFactorizationDiagnostics
     factorization_id: str = eqx.field(static=True)
 
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self.plan.batch_shape
+
     def solve(
         self,
         right_hand_side: ArrayLike,
         /,
     ) -> SparseFactorizationSolveResult:
         rhs = jnp.asarray(right_hand_side)
-        vector_input = rhs.ndim == 1
-        if vector_input:
-            rhs = rhs[:, None]
-        if rhs.ndim != 2 or rhs.shape[0] != self.plan.shape[0]:
-            raise ValueError("right_hand_side must have shape (n,) or (n, k).")
-        permuted_rhs = rhs[self.plan.permutation]
-        lower_values = self.factor_values[self.plan.lower_positions]
-        if self.plan.kind == "lu":
-            lower_values = jnp.where(
-                self.plan.lower_analysis.row_indices == self.plan.lower_analysis.indices,
-                jnp.ones((), dtype=lower_values.dtype),
-                lower_values,
-            )
-        lower = solve_sparse_triangular(
-            self.plan.lower_analysis,
-            lower_values,
-            permuted_rhs,
-            pivot_tolerance=self.plan.policy.pivot_tolerance,
+        size = self.plan.shape[0]
+        shared_vector = rhs.shape == (size,)
+        batched_vector = rhs.shape == self.batch_shape + (size,)
+        shared_matrix = rhs.ndim == 2 and rhs.shape[0] == size
+        batched_matrix = (
+            rhs.ndim == len(self.batch_shape) + 2
+            and rhs.shape[: len(self.batch_shape)] == self.batch_shape
+            and rhs.shape[-2] == size
         )
-        if self.plan.kind == "lu":
-            if self.plan.upper_analysis is None or self.plan.upper_positions is None:
-                raise ValueError("LU plan is missing its upper triangular analysis.")
-            upper_values = self.factor_values[self.plan.upper_positions]
-            upper = solve_sparse_triangular(
-                self.plan.upper_analysis,
-                upper_values,
-                lower.value,
-                pivot_tolerance=self.plan.policy.pivot_tolerance,
-            )
-            permuted_solution = upper.value
-            upper_status = upper.status
+        if shared_vector:
+            rhs = jnp.broadcast_to(rhs, self.batch_shape + (size,))[..., None]
+            vector_input = True
+        elif batched_vector:
+            rhs = rhs[..., None]
+            vector_input = True
+        elif shared_matrix:
+            rhs = jnp.broadcast_to(rhs, self.batch_shape + rhs.shape)
+            vector_input = False
+        elif batched_matrix:
+            vector_input = False
         else:
-            upper = solve_sparse_triangular(
+            raise ValueError(
+                "right_hand_side must have shape (n,), (n, k), "
+                "batch_shape + (n,), or batch_shape + (n, k)."
+            )
+        batch_count = int(np.prod(self.batch_shape)) if self.batch_shape else 1
+        factors = self.factor_values.reshape((batch_count, -1))
+        statuses = self.status.reshape((batch_count,))
+        right_hand_sides = rhs.reshape((batch_count, size, rhs.shape[-1]))
+
+        def solve_one(factor_values, factor_status, value):
+            permuted_rhs = value[self.plan.permutation]
+            lower_values = factor_values[self.plan.lower_positions]
+            if self.plan.kind == "lu":
+                lower_values = jnp.where(
+                    self.plan.lower_analysis.row_indices
+                    == self.plan.lower_analysis.indices,
+                    jnp.ones((), dtype=lower_values.dtype),
+                    lower_values,
+                )
+            lower = solve_sparse_triangular(
                 self.plan.lower_analysis,
                 lower_values,
-                lower.value,
+                permuted_rhs,
                 pivot_tolerance=self.plan.policy.pivot_tolerance,
-                adjoint=True,
             )
-            permuted_solution = upper.value
-            upper_status = upper.status
-        solution = (
-            jnp.zeros_like(permuted_solution)
-            .at[self.plan.permutation]
-            .set(permuted_solution)
+            if self.plan.kind == "lu":
+                if self.plan.upper_analysis is None or self.plan.upper_positions is None:
+                    raise ValueError("LU plan is missing upper triangular analysis.")
+                upper_values = factor_values[self.plan.upper_positions]
+                upper = solve_sparse_triangular(
+                    self.plan.upper_analysis,
+                    upper_values,
+                    lower.value,
+                    pivot_tolerance=self.plan.policy.pivot_tolerance,
+                )
+            else:
+                upper = solve_sparse_triangular(
+                    self.plan.lower_analysis,
+                    lower_values,
+                    lower.value,
+                    pivot_tolerance=self.plan.policy.pivot_tolerance,
+                    adjoint=True,
+                )
+            solution = (
+                jnp.zeros_like(upper.value).at[self.plan.permutation].set(upper.value)
+            )
+            triangular_success = (lower.status == int(SparseTriangularStatus.SUCCESS)) & (
+                upper.status == int(SparseTriangularStatus.SUCCESS)
+            )
+            result_status = jnp.where(
+                factor_status != int(SparseFactorizationStatus.SUCCESS),
+                factor_status,
+                jnp.where(
+                    triangular_success,
+                    int(SparseFactorizationStatus.SUCCESS),
+                    int(SparseFactorizationStatus.ZERO_PIVOT),
+                ),
+            ).astype(jnp.int32)
+            return solution, result_status, lower.status, upper.status
+
+        value, status, lower_status, upper_status = jax.vmap(solve_one)(
+            factors,
+            statuses,
+            right_hand_sides,
         )
-        triangular_success = (lower.status == int(SparseTriangularStatus.SUCCESS)) & (
-            upper_status == int(SparseTriangularStatus.SUCCESS)
-        )
-        status = jnp.where(
-            self.status != int(SparseFactorizationStatus.SUCCESS),
-            self.status,
-            jnp.where(
-                triangular_success,
-                int(SparseFactorizationStatus.SUCCESS),
-                int(SparseFactorizationStatus.ZERO_PIVOT),
-            ),
-        ).astype(jnp.int32)
-        output = solution[:, 0] if vector_input else solution
+        value = value.reshape(self.batch_shape + (size, rhs.shape[-1]))
+        if vector_input:
+            value = value[..., 0]
         return SparseFactorizationSolveResult(
-            value=output,
-            status=status,
+            value=value,
+            status=status.reshape(self.batch_shape),
             factorization_status=self.status,
-            lower_status=lower.status,
-            upper_status=upper_status,
+            lower_status=lower_status.reshape(self.batch_shape),
+            upper_status=upper_status.reshape(self.batch_shape),
         )
 
 
@@ -246,8 +281,6 @@ def _validated_pattern(
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise TypeError("operator must be an AbstractSparseLinearOperator.")
     storage = operator.sparse_storage()
-    if storage.batch_shape:
-        raise ValueError("Sparse factorization requires unbatched CSR values.")
     if storage.shape[0] != storage.shape[1]:
         raise ValueError("Sparse factorization requires a square operator.")
     indices = np.asarray(storage.indices, dtype=np.int64)
@@ -574,6 +607,8 @@ def prepare_sparse_factorization(
             kind.encode(),
             policy_.ordering.encode(),
             str(policy_.fill_level).encode(),
+            str(storage.batch_shape).encode(),
+            str(storage.index_width).encode(),
             factor_indices.tobytes(),
             factor_indptr.tobytes(),
         )
@@ -611,6 +646,7 @@ def prepare_sparse_factorization(
         lower_analysis=lower_analysis,
         upper_analysis=upper_analysis,
         shape=storage.shape,
+        batch_shape=storage.batch_shape,
         kind=kind,
         policy=policy_,
         input_pattern_id=input_pattern_id,
@@ -664,7 +700,7 @@ def refresh_sparse_factorization(
     operator: AbstractSparseLinearOperator,
     /,
 ) -> PreparedSparseFactorization:
-    """Refresh numerical sparse factors under one unchanged symbolic pattern."""
+    """Refresh independent numeric factors under one shared CSR pattern."""
     if not isinstance(plan, SparseFactorizationPlan):
         raise TypeError("plan must be a SparseFactorizationPlan.")
     storage, indices, indptr = _validated_pattern(operator)
@@ -672,141 +708,195 @@ def refresh_sparse_factorization(
         raise ValueError(
             "Sparse factorization refresh requires an unchanged CSR pattern."
         )
-    safe_input = jnp.maximum(plan.input_positions, 0)
-    gathered = storage.values[safe_input]
-    gathered = jnp.where(plan.input_conjugate, jnp.conj(gathered), gathered)
-    values = jnp.where(
-        plan.input_positions >= 0,
-        gathered,
-        jnp.zeros((), dtype=storage.values.dtype),
-    )
-    values = values.at[plan.diagonal_positions].add(plan.policy.diagonal_shift)
-    initial = (
+    if storage.batch_shape != plan.batch_shape:
+        raise ValueError(
+            "Sparse factorization refresh requires an unchanged value batch shape."
+        )
+
+    def factor_one(input_values):
+        safe_input = jnp.maximum(plan.input_positions, 0)
+        gathered = input_values[safe_input]
+        gathered = jnp.where(plan.input_conjugate, jnp.conj(gathered), gathered)
+        values = jnp.where(
+            plan.input_positions >= 0,
+            gathered,
+            jnp.zeros((), dtype=input_values.dtype),
+        )
+        values = values.at[plan.diagonal_positions].add(plan.policy.diagonal_shift)
+        initial = (
+            values,
+            jnp.asarray(int(SparseFactorizationStatus.SUCCESS), dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(jnp.inf, dtype=values.real.dtype),
+        )
+
+        def factor_step(pivot_index, carry):
+            current, status, replaced, dropped, minimum_pivot = carry
+            if (
+                plan.policy.drop_tolerance > 0.0
+                or plan.policy.maximum_fill_per_row is not None
+            ):
+                current, row_dropped = _prune_row(current, plan, pivot_index)
+                dropped = dropped + row_dropped
+            pivot_position = plan.diagonal_positions[pivot_index]
+            pivot = current[pivot_position]
+            finite = jnp.isfinite(pivot)
+            if plan.kind == "cholesky":
+                real_pivot = jnp.real(pivot)
+                real_dtype = real_pivot.dtype
+                hermitian_roundoff = (
+                    64.0
+                    * jnp.finfo(real_dtype).eps
+                    * jnp.maximum(
+                        jnp.ones((), dtype=real_dtype),
+                        jnp.abs(real_pivot),
+                    )
+                )
+                imaginary_tolerance = jnp.maximum(
+                    jnp.asarray(plan.policy.pivot_tolerance, dtype=real_dtype),
+                    hermitian_roundoff,
+                )
+                acceptable = (
+                    finite
+                    & (real_pivot > plan.policy.pivot_tolerance)
+                    & (jnp.abs(jnp.imag(pivot)) <= imaginary_tolerance)
+                )
+                failure_status = int(SparseFactorizationStatus.NONPOSITIVE_PIVOT)
+                replacement = jnp.asarray(
+                    max(
+                        plan.policy.replacement_value,
+                        plan.policy.pivot_tolerance,
+                    ),
+                    dtype=current.dtype,
+                )
+            else:
+                acceptable = finite & (jnp.abs(pivot) > plan.policy.pivot_tolerance)
+                failure_status = int(SparseFactorizationStatus.ZERO_PIVOT)
+                phase = jnp.where(
+                    jnp.abs(pivot) > 0.0,
+                    pivot / jnp.abs(pivot),
+                    jnp.ones((), dtype=current.dtype),
+                )
+                replacement = phase * jnp.asarray(
+                    max(
+                        plan.policy.replacement_value,
+                        plan.policy.pivot_tolerance,
+                    ),
+                    dtype=current.dtype,
+                )
+            bad = ~acceptable
+            status = jnp.where(
+                (status == int(SparseFactorizationStatus.SUCCESS)) & bad,
+                jnp.where(
+                    finite,
+                    failure_status,
+                    int(SparseFactorizationStatus.NONFINITE),
+                ),
+                status,
+            ).astype(jnp.int32)
+            use_replacement = bad & plan.policy.allow_pivot_replacement
+            effective_pivot = jnp.where(
+                acceptable,
+                pivot,
+                jnp.where(
+                    use_replacement,
+                    replacement,
+                    jnp.ones((), dtype=current.dtype),
+                ),
+            )
+            replaced = replaced + use_replacement.astype(jnp.int32)
+            status = jnp.where(
+                use_replacement & (status == failure_status),
+                int(SparseFactorizationStatus.SUCCESS),
+                status,
+            ).astype(jnp.int32)
+            minimum_pivot = jnp.minimum(minimum_pivot, jnp.abs(effective_pivot))
+            if plan.kind == "cholesky":
+                factor_pivot = jnp.sqrt(jnp.real(effective_pivot)).astype(current.dtype)
+                current = current.at[pivot_position].set(factor_pivot)
+                denominator = factor_pivot
+            else:
+                current = current.at[pivot_position].set(effective_pivot)
+                denominator = effective_pivot
+            multiplier_positions = plan.multiplier_positions[pivot_index]
+            multiplier_valid = plan.multiplier_valid[pivot_index]
+            safe_multipliers = jnp.where(
+                multiplier_valid,
+                multiplier_positions,
+                0,
+            )
+            previous = current[safe_multipliers]
+            divided = previous / denominator
+            current = current.at[safe_multipliers].add(
+                jnp.where(multiplier_valid, divided - previous, 0.0)
+            )
+            targets = plan.update_targets[pivot_index]
+            left = plan.update_left[pivot_index]
+            right = plan.update_right[pivot_index]
+            update_valid = plan.update_valid[pivot_index]
+            safe_targets = jnp.where(update_valid, targets, 0)
+            safe_left = jnp.where(update_valid, left, 0)
+            safe_right = jnp.where(update_valid, right, 0)
+            right_values = current[safe_right]
+            if plan.kind == "cholesky":
+                right_values = jnp.conj(right_values)
+            updates = current[safe_left] * right_values
+            current = current.at[safe_targets].add(jnp.where(update_valid, -updates, 0.0))
+            return current, status, replaced, dropped, minimum_pivot
+
+        values, status, replaced, dropped, minimum_pivot = jax.lax.fori_loop(
+            0,
+            plan.shape[0],
+            factor_step,
+            initial,
+        )
+        finite = jnp.all(jnp.isfinite(values))
+        status = jnp.where(
+            (status == int(SparseFactorizationStatus.SUCCESS)) & ~finite,
+            int(SparseFactorizationStatus.NONFINITE),
+            status,
+        ).astype(jnp.int32)
+        factor_nonzeros = jnp.count_nonzero(values).astype(jnp.int32)
+        return (
+            values,
+            status,
+            minimum_pivot,
+            replaced,
+            dropped,
+            factor_nonzeros,
+            finite,
+        )
+
+    batch_count = int(np.prod(plan.batch_shape)) if plan.batch_shape else 1
+    flattened_input = storage.values.reshape((batch_count, storage.nnz))
+    (
         values,
-        jnp.asarray(int(SparseFactorizationStatus.SUCCESS), dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(jnp.inf, dtype=values.real.dtype),
-    )
-
-    def factor_step(pivot_index, carry):
-        current, status, replaced, dropped, minimum_pivot = carry
-        if (
-            plan.policy.drop_tolerance > 0.0
-            or plan.policy.maximum_fill_per_row is not None
-        ):
-            current, row_dropped = _prune_row(current, plan, pivot_index)
-            dropped = dropped + row_dropped
-        pivot_position = plan.diagonal_positions[pivot_index]
-        pivot = current[pivot_position]
-        finite = jnp.isfinite(pivot)
-        if plan.kind == "cholesky":
-            real_pivot = jnp.real(pivot)
-            real_dtype = real_pivot.dtype
-            hermitian_roundoff = (
-                64.0
-                * jnp.finfo(real_dtype).eps
-                * jnp.maximum(jnp.ones((), dtype=real_dtype), jnp.abs(real_pivot))
-            )
-            imaginary_tolerance = jnp.maximum(
-                jnp.asarray(plan.policy.pivot_tolerance, dtype=real_dtype),
-                hermitian_roundoff,
-            )
-            acceptable = (
-                finite
-                & (real_pivot > plan.policy.pivot_tolerance)
-                & (jnp.abs(jnp.imag(pivot)) <= imaginary_tolerance)
-            )
-            failure_status = int(SparseFactorizationStatus.NONPOSITIVE_PIVOT)
-            replacement = jnp.asarray(
-                max(plan.policy.replacement_value, plan.policy.pivot_tolerance),
-                dtype=current.dtype,
-            )
-        else:
-            acceptable = finite & (jnp.abs(pivot) > plan.policy.pivot_tolerance)
-            failure_status = int(SparseFactorizationStatus.ZERO_PIVOT)
-            phase = jnp.where(
-                jnp.abs(pivot) > 0.0,
-                pivot / jnp.abs(pivot),
-                jnp.ones((), dtype=current.dtype),
-            )
-            replacement = phase * jnp.asarray(
-                max(plan.policy.replacement_value, plan.policy.pivot_tolerance),
-                dtype=current.dtype,
-            )
-        bad = ~acceptable
-        status = jnp.where(
-            (status == int(SparseFactorizationStatus.SUCCESS)) & bad,
-            jnp.where(
-                finite,
-                failure_status,
-                int(SparseFactorizationStatus.NONFINITE),
-            ),
-            status,
-        ).astype(jnp.int32)
-        use_replacement = bad & plan.policy.allow_pivot_replacement
-        effective_pivot = jnp.where(
-            acceptable,
-            pivot,
-            jnp.where(
-                use_replacement,
-                replacement,
-                jnp.ones((), dtype=current.dtype),
-            ),
-        )
-        replaced = replaced + use_replacement.astype(jnp.int32)
-        status = jnp.where(
-            use_replacement & (status == failure_status),
-            int(SparseFactorizationStatus.SUCCESS),
-            status,
-        ).astype(jnp.int32)
-        pivot_magnitude = jnp.abs(effective_pivot)
-        minimum_pivot = jnp.minimum(minimum_pivot, pivot_magnitude)
-        if plan.kind == "cholesky":
-            factor_pivot = jnp.sqrt(jnp.real(effective_pivot)).astype(current.dtype)
-            current = current.at[pivot_position].set(factor_pivot)
-            denominator = factor_pivot
-        else:
-            current = current.at[pivot_position].set(effective_pivot)
-            denominator = effective_pivot
-        multiplier_positions = plan.multiplier_positions[pivot_index]
-        multiplier_valid = plan.multiplier_valid[pivot_index]
-        safe_multipliers = jnp.where(multiplier_valid, multiplier_positions, 0)
-        previous = current[safe_multipliers]
-        divided = previous / denominator
-        current = current.at[safe_multipliers].add(
-            jnp.where(multiplier_valid, divided - previous, 0.0)
-        )
-        targets = plan.update_targets[pivot_index]
-        left = plan.update_left[pivot_index]
-        right = plan.update_right[pivot_index]
-        update_valid = plan.update_valid[pivot_index]
-        safe_targets = jnp.where(update_valid, targets, 0)
-        safe_left = jnp.where(update_valid, left, 0)
-        safe_right = jnp.where(update_valid, right, 0)
-        right_values = current[safe_right]
-        if plan.kind == "cholesky":
-            right_values = jnp.conj(right_values)
-        updates = current[safe_left] * right_values
-        current = current.at[safe_targets].add(jnp.where(update_valid, -updates, 0.0))
-        return current, status, replaced, dropped, minimum_pivot
-
-    values, status, replaced, dropped, minimum_pivot = jax.lax.fori_loop(
-        0, plan.shape[0], factor_step, initial
-    )
-    finite = jnp.all(jnp.isfinite(values))
-    status = jnp.where(
-        (status == int(SparseFactorizationStatus.SUCCESS)) & ~finite,
-        int(SparseFactorizationStatus.NONFINITE),
         status,
-    ).astype(jnp.int32)
-    factor_nonzeros = jnp.count_nonzero(values)
+        minimum_pivot,
+        replaced,
+        dropped,
+        factor_nonzeros,
+        finite,
+    ) = jax.vmap(factor_one)(flattened_input)
+    factor_size = int(plan.factor_indices.size)
+    values = values.reshape(plan.batch_shape + (factor_size,))
+    status = status.reshape(plan.batch_shape)
+    minimum_pivot = minimum_pivot.reshape(plan.batch_shape)
+    replaced = replaced.reshape(plan.batch_shape)
+    dropped = dropped.reshape(plan.batch_shape)
+    factor_nonzeros = factor_nonzeros.reshape(plan.batch_shape)
+    finite = finite.reshape(plan.batch_shape)
     diagnostics = SparseFactorizationDiagnostics(
         minimum_pivot=minimum_pivot,
         replaced_pivots=replaced,
         dropped_entries=dropped,
-        input_nonzeros=jnp.asarray(plan.input_nnz, dtype=jnp.int32),
-        factor_nonzeros=factor_nonzeros.astype(jnp.int32),
+        input_nonzeros=jnp.full(
+            plan.batch_shape,
+            plan.input_nnz,
+            dtype=jnp.int32,
+        ),
+        factor_nonzeros=factor_nonzeros,
         fill_ratio=factor_nonzeros / max(plan.input_nnz, 1),
         finite=finite,
     )

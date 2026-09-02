@@ -185,7 +185,7 @@ def test_quadratic_calibration_recovers_known_soft_stationary_point():
     target = achieved + scale**2 * known_dual
     problem = _problem(
         features,
-        phx.weighting.QuadraticMoments(target, scale=scale),
+        phx.weighting.QuadraticMoments(target, covariance=jnp.diag(scale**2)),
         prior,
     )
 
@@ -207,7 +207,9 @@ def test_quadratic_scale_controls_target_fit_and_prior_shrinkage():
     def solve(scale):
         problem = _problem(
             features,
-            phx.weighting.QuadraticMoments(jnp.array([-1.0]), scale=scale),
+            phx.weighting.QuadraticMoments(
+                jnp.array([-1.0]), covariance=jnp.asarray([[scale**2]])
+            ),
             prior,
         )
         return phx.weighting.calibrate_moments(
@@ -383,8 +385,8 @@ def test_problem_validation_precision_and_convergence_guard_contracts():
             jnp.array([[0.0], [jnp.nan]]),
             phx.weighting.ExactMoments(jnp.array([0.0])),
         )
-    with pytest.raises(ValueError, match="strictly positive"):
-        phx.weighting.QuadraticMoments(jnp.array([0.0]), scale=0.0)
+    with pytest.raises(ValueError, match="positive semidefinite"):
+        phx.weighting.QuadraticMoments(jnp.array([0.0]), covariance=jnp.asarray([[-1.0]]))
 
     for dtype in (jnp.float32, jnp.float64):
         features = jnp.array([[0.0], [1.0]], dtype=dtype)
@@ -410,3 +412,53 @@ def test_problem_validation_precision_and_convergence_guard_contracts():
     compiled_guard = eqx.filter_jit(phx.weighting.require_converged)
     with pytest.raises(Exception, match="did not converge"):
         jax.block_until_ready(compiled_guard(failed).weights)
+
+
+def test_full_covariance_and_group_contracts_are_explicit():
+    values = jnp.asarray([0.2, -0.1])
+    covariance = jnp.asarray([[0.4, 0.1], [0.1, 0.3]])
+    target = phx.weighting.QuadraticMoments(values, covariance=covariance)
+    assert jnp.allclose(target.covariance._materialize(), covariance)
+
+    groups = phx.weighting.stratified_group_constraints(
+        jnp.asarray([0, 0, 1, 1]),
+        phx.weighting.ExactMoments(jnp.asarray([0.5, 0.5])),
+    )
+    storage = groups.group_map.sparse_storage()
+    assert storage.shape == (2, 4)
+    assert storage.nnz == 4
+
+    interval = phx.weighting.IntervalMoments(
+        jnp.asarray([-0.2, 0.1]), jnp.asarray([0.3, 0.6])
+    )
+    assert jnp.all(interval.lower <= interval.upper)
+
+
+def test_certified_boundary_face_and_equal_subset_routes():
+    pytest.importorskip("clarabel")
+    boundary_problem = phx.weighting.MomentCalibrationProblem(
+        jnp.asarray([[0.0], [1.0]]),
+        phx.weighting.ExactMoments(jnp.asarray([0.0])),
+        boundary=phx.weighting.BoundaryFacePolicy(),
+    )
+    convex = phx.optim.ConvexSolvePolicy(phx.optim.ClarabelInteriorPoint(presolve=False))
+    boundary = phx.weighting.calibrate_moments(
+        boundary_problem,
+        execution=phx.weighting.MomentCalibrationExecutionPolicy(
+            "canonical-conic", solver=convex
+        ),
+    )
+    assert boundary.successful
+    assert boundary.diagnostics.spectrum.forced_zero[1]
+
+    subset_problem = phx.weighting.MomentCalibrationProblem(
+        jnp.asarray([[0.0], [1.0], [2.0]]),
+        phx.weighting.ExactMoments(jnp.asarray([1.0])),
+        subset=phx.weighting.EqualWeightSubset(1),
+    )
+    subset = phx.weighting.calibrate_moments(
+        subset_problem,
+        execution=phx.weighting.MomentCalibrationExecutionPolicy("mixed-integer"),
+    )
+    assert subset.successful
+    assert jnp.sum(subset.weights > 0.0) == 1

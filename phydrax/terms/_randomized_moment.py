@@ -12,13 +12,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
-from phydrax.conditions import AbstractMomentCondition
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..conditions._base import AbstractMomentCondition
 from ..integration import (
     IntegrationPrecisionPolicy,
     IntegrationRealization,

@@ -48,6 +48,11 @@ def _two_segment_scene(*, envelope=0.0):
     return source, scene, search
 
 
+def _candidate_rows(batch):
+    indices = np.asarray(batch.vertex_indices)
+    return {tuple(row) for row in indices[np.asarray(batch.valid, dtype=bool)].tolist()}
+
+
 def test_per_vertex_separation_and_certified_ccd_guarantee():
     source, scene, search = _two_segment_scene()
     np.testing.assert_allclose(scene.minimum_separation[:2], (0.01, 0.02))
@@ -199,7 +204,8 @@ def test_interface_traction_and_distributed_route_ownership_are_balanced():
 
 def test_compiled_search_matches_host_candidates_for_small_scene():
     source, scene, search = _two_segment_scene()
-    positions = scene.positions(source.zeros())
+    displacement = jnp.broadcast_to(jnp.asarray((0.0, -0.45)), source.shape)
+    positions = scene.positions(displacement)
     host = search.build(scene, positions)
     compiled = phx.discretization.CompiledContactSearchPlan(
         scene,
@@ -208,9 +214,133 @@ def test_compiled_search_matches_host_candidates_for_small_scene():
         face_vertex_capacity=0,
         activation_distance=0.1,
     ).evaluate(positions)
+    lbvh = phx.discretization.LBVHContactSearchPlan(
+        scene,
+        edge_vertex_capacity=16,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.1,
+        morton_bits=10,
+        maximum_tree_depth=16,
+        maximum_traversal_visits=64,
+    ).evaluate(positions)
 
     assert bool(compiled.evidence.complete)
     assert int(compiled.evidence.candidate_count) == int(host.candidate_count)
+    assert bool(lbvh.evidence.complete)
+    assert int(lbvh.evidence.candidate_count) == int(host.candidate_count)
+
+    assert _candidate_rows(lbvh.edge_vertex) == _candidate_rows(compiled.edge_vertex)
+    assert _candidate_rows(lbvh.edge_edge) == _candidate_rows(compiled.edge_edge)
+    assert _candidate_rows(lbvh.face_vertex) == _candidate_rows(compiled.face_vertex)
+    primitive_count = scene.vertex_count + scene.edges.shape[0] + scene.faces.shape[0]
+    assert int(lbvh.evidence.node_count) == 2 * primitive_count - 1
+    assert int(lbvh.evidence.tree_depth) == 4
+    assert 0 < int(lbvh.evidence.traversal_visits) <= 64
+
+
+def test_lbvh_matches_compiled_three_dimensional_candidates():
+    positions = jnp.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.05),
+            (1.0, 0.0, 0.05),
+            (0.0, 1.0, 0.05),
+        )
+    )
+    source = phx.linalg.ArraySpace((6, 3), dtype=np.float64)
+    topology = phx.discretization.CollisionSurfacePlan(
+        jnp.arange(6, dtype=jnp.int64),
+        ambient_dimension=3,
+        faces=jnp.asarray(((0, 1, 2), (3, 4, 5)), dtype=jnp.int32),
+    )
+    surface = phx.discretization.PreparedCollisionSurface(
+        topology,
+        positions,
+        phx.discretization.selection_collision_operator(
+            source, jnp.arange(6, dtype=jnp.int32)
+        ),
+    )
+    scene = phx.discretization.PreparedCollisionScene((surface,))
+    compiled = phx.discretization.CompiledContactSearchPlan(
+        scene,
+        edge_vertex_capacity=0,
+        edge_edge_capacity=64,
+        face_vertex_capacity=32,
+        activation_distance=0.1,
+    ).evaluate(positions)
+    lbvh = phx.discretization.LBVHContactSearchPlan(
+        scene,
+        edge_vertex_capacity=0,
+        edge_edge_capacity=64,
+        face_vertex_capacity=32,
+        activation_distance=0.1,
+        maximum_tree_depth=16,
+        maximum_traversal_visits=196,
+    ).evaluate(positions)
+
+    assert bool(compiled.evidence.complete)
+    assert bool(lbvh.evidence.complete)
+    assert int(lbvh.evidence.candidate_count) > 0
+    assert int(lbvh.evidence.candidate_count) == int(compiled.evidence.candidate_count)
+    assert _candidate_rows(lbvh.edge_edge) == _candidate_rows(compiled.edge_edge)
+    assert _candidate_rows(lbvh.face_vertex) == _candidate_rows(compiled.face_vertex)
+    assert int(lbvh.evidence.node_count) == 27
+    assert int(lbvh.evidence.tree_depth) == 5
+    assert int(lbvh.evidence.traversal_visits) == 196
+
+
+def test_lbvh_tiny_visit_budget_bounds_work_and_fails_closed():
+    vertex_count = 256
+    source = phx.linalg.ArraySpace((vertex_count, 2), dtype=np.float64)
+    edge_start = jnp.arange(vertex_count - 1, dtype=jnp.int32)
+    edges = jnp.stack((edge_start, edge_start + 1), axis=1)
+    topology = phx.discretization.CollisionSurfacePlan(
+        jnp.arange(vertex_count, dtype=jnp.int64),
+        ambient_dimension=2,
+        edges=edges,
+    )
+    positions = jnp.stack(
+        (
+            jnp.arange(vertex_count, dtype=jnp.float64),
+            jnp.zeros((vertex_count,), dtype=jnp.float64),
+        ),
+        axis=1,
+    )
+    surface = phx.discretization.PreparedCollisionSurface(
+        topology,
+        positions,
+        phx.discretization.selection_collision_operator(
+            source, jnp.arange(vertex_count, dtype=jnp.int32)
+        ),
+    )
+    scene = phx.discretization.PreparedCollisionScene((surface,))
+    plan = phx.discretization.LBVHContactSearchPlan(
+        scene,
+        edge_vertex_capacity=1,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.1,
+        maximum_tree_depth=16,
+        maximum_traversal_visits=1,
+    )
+    result = plan.evaluate(positions)
+
+    primitive_count = vertex_count + edges.shape[0]
+    assert plan.tree_left.shape == (primitive_count - 1,)
+    assert plan.tree_right.shape == (primitive_count - 1,)
+    assert plan.node_leaf_count.shape == (2 * primitive_count - 1,)
+    assert int(result.evidence.node_count) == 2 * primitive_count - 1
+    assert int(result.evidence.tree_depth) == 10
+    assert int(result.evidence.traversal_visits) == 1
+    assert bool(result.evidence.visit_overflow)
+    assert not bool(result.evidence.stack_overflow)
+    assert int(result.evidence.candidate_count) == 0
+    assert int(result.evidence.output_overflow) == 0
+    assert bool(result.evidence.finite_bounds)
+    assert not bool(result.evidence.complete)
 
 
 def test_triangle_patch_and_hydroelastic_equal_pressure_extraction():
@@ -231,15 +361,28 @@ def test_triangle_patch_and_hydroelastic_equal_pressure_extraction():
             (0.0, 0.0, 1.0),
         )
     )
-    tetrahedra = jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32)
-    plus = phx.discretization.HydroelasticPressureFieldPlan(
-        vertices, tetrahedra, jnp.asarray((0.0, 1.0, 1.0, 1.0))
+    mesh = phx.discretization.CellMesh(
+        vertices,
+        (
+            phx.discretization.CellBlock(
+                "tetrahedra",
+                "tetrahedron",
+                jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
+            ),
+        ),
     )
-    minus = phx.discretization.HydroelasticPressureFieldPlan(
-        vertices, tetrahedra, 0.5 * jnp.ones((4,))
-    )
-    pressure_patch = phx.discretization.extract_hydroelastic_pressure_patch(
-        plus, minus, capacity=4
+    plus = phx.discretization.HydroelasticPressureFieldPlan(mesh)
+    minus = phx.discretization.HydroelasticPressureFieldPlan(mesh)
+    prepared_patch = phx.discretization.HydroelasticPatchExtractionPlan(
+        maximum_overlap_pairs=1,
+        maximum_polytope_edges=12,
+        patch_capacity=4,
+    ).prepare(plus, minus)
+    pressure_patch = prepared_patch.evaluate(
+        phx.discretization.HydroelasticPressureFieldState(
+            jnp.asarray((0.0, 1.0, 1.0, 1.0))
+        ),
+        phx.discretization.HydroelasticPressureFieldState(0.5 * jnp.ones((4,))),
     )
 
     assert bool(patch.evidence.successful)

@@ -87,7 +87,15 @@ See [Domains and sampling](../../guides_domain.md) for the full conceptual model
 
 ---
 
-::: phydrax.domain.ReferenceDistribution
+::: phydrax.domain.ReferenceTransport
+
+---
+
+::: phydrax.domain.ReferenceTransportEvidence
+
+---
+
+::: phydrax.domain.construct_reference_transport
 
 ## Related APIs
 

@@ -221,10 +221,13 @@ def _ellipj_jvp(
 
 
 def ellipj(u: ArrayLike, m: ArrayLike) -> tuple[Array, Array, Array, Array]:
-    """Return ``sn(u|m)``, ``cn(u|m)``, ``dn(u|m)``, and ``am(u|m)``."""
+    """Return principal Jacobi ``sn``, ``cn``, ``dn``, and amplitude."""
+    if jnp.issubdtype(jnp.result_type(u, m), jnp.complexfloating):
+        from ._continuation import complex_ellipj
+
+        return complex_ellipj(u, m)
     u, m = promote_real("ellipj", u, m)
-    u, m = jnp.broadcast_arrays(u, m)
-    return _ellipj_array(u, m)
+    return _ellipj_array(*jnp.broadcast_arrays(u, m))
 
 
 def ellipam(u: ArrayLike, m: ArrayLike) -> Array:

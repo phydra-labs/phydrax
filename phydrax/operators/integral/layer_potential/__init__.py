@@ -51,6 +51,8 @@ from ._helmholtz3d import (
     HelmholtzLayerKernel3D,
     HelmholtzLayerPotential3D,
 )
+from ._hierarchical3d import *  # noqa: F403
+from ._hierarchical3d import __all__ as _hierarchical3d_all
 from ._laplace2d import (
     double_layer_principal_value_matrix,
     LaplaceLayerKernel2D,
@@ -63,12 +65,18 @@ from ._laplace3d import (
 )
 from ._maxwell3d import *  # noqa: F403
 from ._maxwell3d import __all__ as _maxwell_all
+from ._modified_helmholtz3d import *  # noqa: F403
+from ._modified_helmholtz3d import __all__ as _modified_helmholtz_all
 from ._periodic_core3d import *  # noqa: F403
 from ._periodic_core3d import __all__ as _periodic_core_all
+from ._periodic_free_surface3d import *  # noqa: F403
+from ._periodic_free_surface3d import __all__ as _periodic_free_surface_all
 from ._periodic_helmholtz3d import *  # noqa: F403
 from ._periodic_helmholtz3d import __all__ as _periodic_helmholtz_all
 from ._periodic_laplace3d import *  # noqa: F403
 from ._periodic_laplace3d import __all__ as _periodic_laplace_all
+from ._periodic_maxwell_boundary3d import *  # noqa: F403
+from ._periodic_maxwell_boundary3d import __all__ as _periodic_maxwell_boundary_all
 from ._periodic_modified_helmholtz3d import *  # noqa: F403
 from ._periodic_modified_helmholtz3d import (
     __all__ as _periodic_modified_helmholtz_all,
@@ -92,6 +100,8 @@ from ._qualification import __all__ as _qualification_all
 from ._rcip import RCIPPreconditioner2D
 from ._scalar_calderon3d import *  # noqa: F403
 from ._scalar_calderon3d import __all__ as _scalar_calderon_all
+from ._scalar_conforming3d import *  # noqa: F403
+from ._scalar_conforming3d import __all__ as _scalar_conforming_all
 from ._scalar_formulations3d import *  # noqa: F403
 from ._scalar_formulations3d import __all__ as _scalar_formulations_all
 from ._scalar_interfaces3d import *  # noqa: F403
@@ -166,14 +176,19 @@ __all__ += [
         *_displacement_discontinuity_all,
         *_elasticity_all,
         *_fast_provider_all,
+        *_hierarchical3d_all,
         *_free_surface_green_all,
         *_free_surface_hydrodynamics_all,
         *_maxwell_all,
+        *_modified_helmholtz_all,
         *_periodic_core_all,
+        *_periodic_free_surface_all,
+        *_periodic_maxwell_boundary_all,
         *_periodic_helmholtz_all,
         *_periodic_laplace_all,
         *_periodic_modified_helmholtz_all,
         *_qualification_all,
+        *_scalar_conforming_all,
         *_scalar_calderon_all,
         *_scalar_formulations_all,
         *_scalar_trace_all,

@@ -21,6 +21,7 @@ from ._dealias import (
     PreparedDealiasingPlan,
 )
 from ._space import TensorSpectralDiscretization
+from ._spherical import SphericalSpectralDiscretization
 
 
 SpectralDifferentiabilityPolicy: TypeAlias = Literal[
@@ -77,14 +78,17 @@ class PseudospectralMethodPlan(StrictModule, NonTrainableState):
 
     def prepare(
         self,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
         *,
         required_polynomial_degree: int | None,
         nonlinear: bool,
     ) -> "PreparedPseudospectralMethod":
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
+        if not isinstance(
+            discretization,
+            (TensorSpectralDiscretization, SphericalSpectralDiscretization),
+        ):
+            raise TypeError("discretization must be a prepared spectral space.")
         if nonlinear and self.dealiasing is None:
             raise ValueError(
                 "Nonlinear pseudospectral compilation requires an explicit "
@@ -107,7 +111,7 @@ class PreparedPseudospectralMethod(StrictModule, NonTrainableState):
     """Prepared nonlinear transform schedule for one spectral discretization."""
 
     plan: PseudospectralMethodPlan
-    discretization: TensorSpectralDiscretization
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization
     dealiasing: PreparedDealiasingPlan
     nonlinear: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -115,7 +119,7 @@ class PreparedPseudospectralMethod(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: PseudospectralMethodPlan,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         dealiasing: PreparedDealiasingPlan,
         /,
         *,
@@ -123,8 +127,11 @@ class PreparedPseudospectralMethod(StrictModule, NonTrainableState):
     ):
         if not isinstance(plan, PseudospectralMethodPlan):
             raise TypeError("plan must be a PseudospectralMethodPlan.")
-        if not isinstance(discretization, TensorSpectralDiscretization):
-            raise TypeError("discretization must be a TensorSpectralDiscretization.")
+        if not isinstance(
+            discretization,
+            (TensorSpectralDiscretization, SphericalSpectralDiscretization),
+        ):
+            raise TypeError("discretization must be a prepared spectral space.")
         if not isinstance(dealiasing, PreparedDealiasingPlan):
             raise TypeError("dealiasing must be a PreparedDealiasingPlan.")
         self.plan = plan

@@ -26,10 +26,11 @@ returns `phydrax.operators.LogAmplitude` for
 one configuration or a leading
 batch. Same-spin exchanges are antisymmetric.
 
-The exact continuum-electron path is limited to
-`phydrax.operators.ELECTRONIC_MAX_ELECTRONS == 4`. `FermiNet` rejects larger
-systems; this conservative ceiling bounds the polynomial determinant required for
-honest singular-term derivatives across supported dtypes.
+Finite electron/determinant counts are admitted by
+`ElectronicVMCResourcePlan`, which records pair-stream and determinant work
+against caller limits. This replaces the former global four-electron ceiling
+without claiming unrestricted scaling. `PeriodicFermiNet` is the separately
+named finite reciprocal-feature/twist-covariant amplitude.
 
 ::: phydrax.nn.quantum.FermiNet
     options:
@@ -37,6 +38,20 @@ honest singular-term derivatives across supported dtypes.
             - __init__
             - __call__
             - envelope_decay
+
+::: phydrax.nn.quantum.PeriodicFermiNet
+
+::: phydrax.nn.quantum.JastrowSpinAmplitude
+
+::: phydrax.nn.quantum.RestrictedBoltzmannAmplitude
+
+::: phydrax.nn.quantum.AutoregressiveSpinAmplitude
+
+::: phydrax.nn.quantum.SlaterJastrowAmplitude
+
+::: phydrax.nn.quantum.CircuitAmplitude
+
+::: phydrax.nn.quantum.TensorNetworkAmplitude
 
 ---
 
@@ -1216,13 +1231,15 @@ insufficient support, and unregularized rank deficiency remain distinct.
 regularized result without falsely marking it as identified.
 
 `ProjectionBranchEncoder` turns the projection into a DeepONet branch and may
-apply an ordinary array model in coefficient space. `FunctionFrameReconstructor`
-composes source and target frames with the generalized DeepONet substrate:
-`encode_inputs` projects the source once, while `decode_query` evaluates the
-target frame on any compatible query geometry without another solve.
-`FunctionFrameEncoding` keeps the projection report and frame identity with the
-reusable coefficients. `frozen()` freezes both frames and the optional
-coefficient map for post-training inference.
+apply an ordinary array model in coefficient space. Each `FunctionFrameSource`
+owns its explicit name, frame, policy, and coefficient map.
+`FunctionFrameReconstructor.encode_inputs` projects every ordered source once,
+retains each projection report/frame identity, and applies the declared sum,
+product, or learned-concatenation fusion. `decode_query` evaluates the target
+frame on any compatible query geometry without another solve.
+Topology evaluators consume canonical `OperatorTopology` entity ordering and
+orientation; prepared-manifold evaluators require caller-owned atlas/tangent/
+measure evidence. `frozen()` freezes all frames and coefficient maps.
 
 The architecture is research-tier. Its supported contract is sampled scalar or
 channel-valued functions on tensor grids and point clouds; broad scientific
@@ -2537,6 +2554,12 @@ The `operator.training` package supplies deterministic dataset splits,
 mask-preserving collation, persisted training-only normalization, exact
 model/optimizer/RNG checkpoints, explicit parameter/compute/reduction dtypes,
 scheduled autoregressive rollouts, and prefetching sharded loaders.
+`OperatorDataset` carries `case_log_weights` and `case_mask` as part of the
+canonical finite-case measure. Loader batches retain the active mask and add
+sampling probabilities, so supervised L2 reduces per case with
+inverse-probability-adjusted normalized active weights rather than treating
+sampled cases as uniformly weighted.
+
 
 `OperatorDTypePolicy` makes placement executable. Trainable parameters remain in
 `parameter_dtype`; each forward pass builds a transient `compute_dtype` view;
@@ -2708,16 +2731,20 @@ that choice is recorded in the plan fingerprint guarding prepared inputs.
 
 ### Losses and physical-space output maps
 
-`SupervisedOperatorLoss` supplies a named, measure-aware L2 objective.
-`OperatorLossTerm` adapts a stable custom scalar objective, and
-`WeakOperatorLoss` evaluates residual moments against one or more test
-functions. `CochainResidualLoss` scatters typed prediction/source samples onto
-their canonical cell complex, evaluates a `CochainResidualProgram`, and applies
-a segmented Hodge-aware reduction. `SpectralPDEResidualLoss` projects physical
-predictions onto one fixed tensor spectral trial space and evaluates an
-all-coordinate `CompiledSpectralResidual`; unlike `operator_spectral_loss`, it
-does not require solution targets. Every generic term declares
-`space="physical"` or `"execution"`; physical is the default.
+`SupervisedOperatorLoss` supplies a named, measure-aware L2 objective and
+performs the canonical case-weighted reduction. `OperatorLossTerm` adapts a
+stable custom objective: custom terms must declare
+`case_reduction="per_case"` and return shape `(case,)` when canonical case
+weights are present; scalar custom terms fail closed rather than discarding
+those weights. `WeakOperatorLoss` evaluates residual moments against one or
+more test functions. `CochainResidualLoss` scatters typed prediction/source
+samples onto their canonical cell complex, evaluates a
+`CochainResidualProgram`, and applies a segmented Hodge-aware reduction.
+`SpectralPDEResidualLoss` projects physical predictions onto one fixed tensor
+spectral trial space and evaluates an all-coordinate
+`CompiledSpectralResidual`; unlike `operator_spectral_loss`, it does not
+require solution targets. Every generic term declares `space="physical"` or
+`"execution"`; physical is the default.
 `OperatorLossContext` carries paired predictions, batches, and targets for both
 spaces. `OperatorOutputPipeline` applies exact hard-constraint and conservation
 transforms only after dimensionalization, inside both fitting and
@@ -2860,3 +2887,67 @@ development snapshots when the canonical representation itself changes.
 
 ::: phydrax.nn.operator.training.load_trained_operator
 
+
+### Capability-closure neural operators and structured dynamics
+
+Wavelet operators now separate the finite source reconstruction from its query
+continuation. `WaveletDecodePolicy` declares linear interpolation and fail-closed
+support behavior; WNO and MWT accept independent tensor or point queries without
+claiming a unique continuum DWT. `DirectionalSphericalWaveletPlan` fixes the
+bandlimit, scales, orientations, scattering order, Wigner materialization cap,
+and the existing spectral-modal transfer identity.
+
+`OrthogonalEquivariantPointCNO` applies radial kernels blockwise through
+`TensorFieldLayout`, giving exact finite-dimensional O(2)/O(3) covariance for
+scalar, vector, and rank-two Cartesian blocks. Dense execution and
+`OrthogonalPointTopology` both retain physical weights, masks, and a positive
+cutoff margin. It does not broaden the finite-lattice claim of
+`LatticeEquivariantCNO`.
+
+`FunctionFrameSource` makes each source name, frame, projection policy, and
+coefficient map explicit. `FunctionFrameReconstructor` projects every ordered
+source independently, retains every report and frame identity in
+`FunctionFrameEncoding`, and fuses only by declared sum, product, or learned
+concatenation. `ConditionalFunctionFrameFlowOperator` normalizes only its fixed
+coefficient event; arbitrary-query decoded fields are pushforwards and have no
+sampled-field Lebesgue density without separate injective-map evidence.
+
+`ConvolutionSupportPlan` declares periodic Fourier, bounded sine/Dirichlet,
+cosine/Neumann, or prepared polynomial axes. CNO and UNO no longer infer
+periodicity. Masked UNO transports numerator and observed mass independently at
+every level and zeros only targets below the declared support threshold.
+
+The structured-dynamics additions include declared associative recurrence
+algebras, complex weight-space retention inside the stable disk,
+`DiscreteStepContext`, multiple atomic rollout routes and step-aware controls,
+structured port-Hamiltonian residual closure, fixed weighted subspaces,
+autoencoded latent Onsager dynamics, and prepared causal-coordinate schedules.
+Guarantees under nonlinear decoding remain latent unless a validated pullback
+metric is supplied.
+
+`ConstrainedPolyconvexPotential` is the restricted structurally guaranteed
+constitutive family. Its report distinguishes polyconvexity, objectivity,
+isotropy, coercivity, orientation margin, positive reference determinant, and
+the numerical reference stress/tangent audit. Generic `PolyconvexPotential`
+continues to make only its original lifted-convexity claim.
+
+Pretrained weights are catalog-derived with checksums, license, corpus,
+provenance, dtype, and task semantics. `load_pretrained_operator` performs host
+resource verification once; the returned FNO or DeepONet predictor is pure JAX.
+Bundling does not change architecture tier or recommendation eligibility.
+
+## Trainable and adaptive KAN spline topology
+
+`TrainableBSplineGridBank` is a trainable PyTree leaf bank with one independent
+ordered span allocation per input and one homogeneous coefficient capacity.
+Minimum spans preserve strict knot order without clipping. Polynomial and
+positive-weight rational edge bases accept fixed/trainable single grids and
+banks.
+
+`refine_kan_edges` and `coarsen_kan_edges` are explicit between-epoch
+transitions. Rational refinement transfers homogeneous numerator and
+denominator coefficients, recenters the bounded log-weight gauge, and rejects
+unrepresentable or nonpositive denominators. Coarsening reports conservative
+numerator/denominator projection bounds. The returned model is a new immutable
+PyTree with source/target topology IDs; optimizer state must be recreated, and
+no ordinary derivative is claimed through the transition.

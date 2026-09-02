@@ -24,65 +24,66 @@ def _waveform_capabilities():
     )
 
 
-def test_held_and_linear_waveform_interpolation_are_fixed_grid_and_nonextrapolating():
+def test_barycentric_waveform_interpolation_is_exact_and_capacity_padded():
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="waveform-scalar")
-    source_grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.5, 1.0]), time_id="source-grid"
-    )
-    target_grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.25, 0.75, 1.0]), time_id="target-grid"
-    )
+    source_plan = cpl.CouplingWaveformPlan(4, 2, (0.0, 0.5, 1.0))
+    target_plan = cpl.CouplingWaveformPlan(5, 2, (0.0, 0.25, 0.75, 1.0))
+    source_grid = source_plan.initial_grid()
+    target_grid = target_plan.initial_grid()
     waveform = cpl.CouplingWaveform(
         source_grid,
-        jnp.asarray([[0.0], [0.5], [1.0]], dtype=jnp.float64),
+        jnp.asarray([[0.0], [0.25], [1.0], [0.0]], dtype=jnp.float64),
         space,
     )
 
-    held = cpl.HeldCouplingTemporalTransfer().interpolate(waveform, target_grid, space)
-    linear = cpl.LinearCouplingTemporalTransfer().interpolate(
+    transferred = cpl.BarycentricCouplingTemporalTransfer(2).interpolate(
         waveform, target_grid, space
     )
 
-    assert jnp.allclose(held.values[:, 0], jnp.asarray([0.0, 0.0, 0.5, 1.0]))
-    assert jnp.allclose(linear.values[:, 0], target_grid.times)
-    outside = phx.dynamics.TimeGrid(
-        jnp.asarray([-0.25, 0.0, 1.0]), time_id="outside-grid"
+    assert jnp.allclose(
+        transferred.values[:, 0],
+        jnp.asarray([0.0, 0.0625, 0.5625, 1.0, 0.0]),
     )
-    with pytest.raises(Exception, match="does not extrapolate"):
-        cpl.LinearCouplingTemporalTransfer().interpolate(waveform, outside, space)
+    assert not transferred.grid.active[-1]
+    assert transferred.values[-1, 0] == 0.0
 
 
 def _waveform_graph(*, parameterized=False):
-    grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.5, 1.0]), time_id="canonical-coupling-grid"
+    waveform_plan = cpl.CouplingWaveformPlan(
+        3, 1, (0.0, 0.5, 1.0), plan_id="canonical-coupling-grid"
     )
+    grid = waveform_plan.initial_grid()
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="waveform-interface")
     a_input = cpl.CouplingPort(
         "a-input",
         "input",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     a_output = cpl.CouplingPort(
         "a-output",
         "output",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     b_input = cpl.CouplingPort(
         "b-input",
         "input",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     b_output = cpl.CouplingPort(
         "b-output",
         "output",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
 
@@ -169,20 +170,25 @@ def test_waveform_fixed_point_and_jit_certify_every_canonical_sample():
 
 
 def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
-    grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="subcycle-grid")
+    waveform_plan = cpl.CouplingWaveformPlan(
+        3, 1, (0.0, 0.5, 1.0), plan_id="subcycle-grid"
+    )
+    grid = waveform_plan.initial_grid()
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="subcycle-scalar")
     input_port = cpl.CouplingPort(
         "input",
         "input",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     output_port = cpl.CouplingPort(
         "output",
         "output",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
 
@@ -216,9 +222,10 @@ def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
 
 
 def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep():
-    grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.5, 1.0]), time_id="failing-subcycle-grid"
+    waveform_plan = cpl.CouplingWaveformPlan(
+        3, 1, (0.0, 0.5, 1.0), plan_id="failing-subcycle-grid"
     )
+    grid = waveform_plan.initial_grid()
     space = phx.linalg.ArraySpace(
         (1,), dtype=jnp.float64, space_id="failing-subcycle-scalar"
     )
@@ -226,14 +233,16 @@ def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep():
         "failing-input",
         "input",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     output_port = cpl.CouplingPort(
         "failing-output",
         "output",
         space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
 
@@ -319,9 +328,10 @@ def _waveform_field_space(name):
 
 
 def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
-    grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.5, 1.0]), time_id="field-waveform-grid"
+    waveform_plan = cpl.CouplingWaveformPlan(
+        3, 1, (0.0, 0.5, 1.0), plan_id="field-waveform-grid"
     )
+    grid = waveform_plan.initial_grid()
     source_space = _waveform_field_space("source")
     target_space = _waveform_field_space("target")
     matrix = jnp.asarray([[1.0, 0.25], [0.5, 1.0]])
@@ -345,7 +355,8 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
         "input",
         source_space.vector_space,
         field_space=source_space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     source_output = cpl.CouplingPort(
@@ -353,7 +364,8 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
         "output",
         source_space.vector_space,
         field_space=source_space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     target_input = cpl.CouplingPort(
@@ -361,7 +373,8 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
         "input",
         target_space.vector_space,
         field_space=target_space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     target_output = cpl.CouplingPort(
@@ -369,7 +382,8 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
         "output",
         target_space.vector_space,
         field_space=target_space,
-        sample_grid=grid,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     source_values = jnp.asarray([[1.0, 0.0], [2.0, 1.0], [3.0, 2.0]])
@@ -432,3 +446,114 @@ def test_field_transfer_is_applied_samplewise_to_waveform_exchanges():
     forward_values = result.accepted_state.exchange_values[1].values
     assert jnp.allclose(forward_values, source_values @ matrix.T)
     assert jnp.allclose(adjoint_values, target_values @ matrix)
+
+
+def test_waveform_adaptation_activates_one_candidate_and_requests_growth():
+    adaptation = cpl.CouplingWaveformAdaptationPolicy(
+        (0.25, 0.75), observable_tolerance=0.1
+    )
+    plan = cpl.CouplingWaveformPlan(
+        3, 1, (0.0, 1.0), adaptation=adaptation, plan_id="adaptive-grid"
+    )
+    refined, evidence, request = cpl.adapt_coupling_waveform_grid(
+        plan, plan.initial_grid(), jnp.asarray((0.2, 2.0)), "temperature"
+    )
+    assert evidence.activated
+    assert refined.sample_count == 3
+    assert jnp.allclose(refined.nodes, jnp.asarray((0.0, 0.75, 1.0)))
+    _, exhausted, request = cpl.adapt_coupling_waveform_grid(
+        plan, refined, jnp.asarray((2.0, 2.0)), "temperature"
+    )
+    assert exhausted.capacity_exhausted
+    assert request.required_samples == 4
+
+
+def test_coupling_epoch_transition_is_explicit_and_atomic():
+    graph, states, values = _waveform_graph()
+    prepared = cpl.prepare_coupling(
+        graph, states, values, policy=_waveform_fixed_point_policy()
+    )
+    current_epoch = cpl.PreparedCouplingEpoch(
+        prepared,
+        ("a-epoch-0", "b-epoch-0"),
+        ("waveform-capacity-0",),
+    )
+    target_epoch = cpl.PreparedCouplingEpoch(
+        prepared,
+        ("a-epoch-1", "b-epoch-1"),
+        ("waveform-capacity-1",),
+    )
+    request = cpl.CouplingTopologyRequest(
+        True,
+        jnp.asarray((1, 1), dtype=jnp.int32),
+        jnp.asarray((3, 3), dtype=jnp.int32),
+        1,
+    )
+    identities = (
+        cpl.IdentityCouplingEpochTransfer(),
+        cpl.IdentityCouplingEpochTransfer(),
+    )
+    transition = cpl.CouplingEpochTransitionPlan(
+        identities,
+        identities,
+        (),
+        (),
+        source_subsystem_ids=prepared.reference_state.subsystem_ids,
+        target_subsystem_ids=prepared.reference_state.subsystem_ids,
+        source_exchange_ids=prepared.reference_state.exchange_ids,
+        target_exchange_ids=prepared.reference_state.exchange_ids,
+        transition_id="identity-epoch-transition",
+    )
+    accepted = cpl.transition_coupling_epoch(
+        current_epoch,
+        prepared.reference_state,
+        target_epoch,
+        transition,
+        request,
+        accepted_window=True,
+    )
+
+    assert accepted.successful
+    assert accepted.epoch.epoch_id == target_epoch.epoch_id
+    assert accepted.state.subsystem_ids == prepared.reference_state.subsystem_ids
+    assert accepted.state.exchange_ids == prepared.reference_state.exchange_ids
+
+    failed_transfer = cpl.CallableCouplingEpochTransfer(
+        lambda value, args: cpl.CouplingEpochTransferResult(value, jnp.asarray(False)),
+        transfer_id="failed-retained-state-transfer",
+    )
+    failed_plan = cpl.CouplingEpochTransitionPlan(
+        (failed_transfer, cpl.IdentityCouplingEpochTransfer()),
+        identities,
+        (),
+        (),
+        source_subsystem_ids=prepared.reference_state.subsystem_ids,
+        target_subsystem_ids=prepared.reference_state.subsystem_ids,
+        source_exchange_ids=prepared.reference_state.exchange_ids,
+        target_exchange_ids=prepared.reference_state.exchange_ids,
+        transition_id="failed-epoch-transition",
+    )
+    rejected = cpl.transition_coupling_epoch(
+        current_epoch,
+        prepared.reference_state,
+        target_epoch,
+        failed_plan,
+        request,
+        accepted_window=True,
+    )
+
+    assert not rejected.successful
+    assert rejected.epoch.epoch_id == current_epoch.epoch_id
+    assert rejected.state is prepared.reference_state
+
+    ignored = cpl.transition_coupling_epoch(
+        current_epoch,
+        prepared.reference_state,
+        target_epoch,
+        transition,
+        request,
+        accepted_window=False,
+    )
+    assert not ignored.successful
+    assert ignored.epoch.epoch_id == current_epoch.epoch_id
+    assert ignored.state is prepared.reference_state

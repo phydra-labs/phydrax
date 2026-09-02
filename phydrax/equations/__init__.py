@@ -176,6 +176,17 @@ from ._finite_element_variational import (
     PreparedOperatorAction,
     SIPGFacetAction,
 )
+from ._finite_volume_advanced import (
+    BedloadSedimentPlan,
+    EddyTransportProperties,
+    HydrostaticLayerCoupling,
+    InterfacialPhaseChangeEvaluation,
+    MultilayerShallowWaterSystem,
+    ResolvedGradientState,
+    ShallowWaterExnerSystem,
+    SmagorinskyLESClosure,
+    StefanPhaseChangePlan,
+)
 from ._finite_volume_verification import (
     couette_velocity_profile,
     double_rarefaction_verification_case,
@@ -214,6 +225,11 @@ from ._incompressible import (
     compile_periodic_incompressible_flow,
     CompiledIncompressibleSpectralDynamics,
     IncompressibleFlowProblem,
+)
+from ._integral_rewrite import (
+    IntegralResidualProgram,
+    rewrite_strong_to_integral,
+    StrongToIntegralRewriteSpec,
 )
 from ._ir import (
     as_expression,
@@ -447,10 +463,12 @@ from ._spectral_compile import (
     SpectralStateLayout,
 )
 from ._spectral_residual import (
+    CaseGroupedSpectralResidual,
     compile_spectral_residual,
     CompiledSpectralResidual,
     SpectralConditionHandling,
     SpectralResidualCompilationReport,
+    SpectralResidualDataLayout,
     SpectralResidualScope,
 )
 from ._stencil_compile import (
@@ -717,6 +735,11 @@ __all__ = [
     "SpectralConditionHandling",
     "SpectralResidualCompilationReport",
     "SpectralResidualScope",
+    "SpectralResidualDataLayout",
+    "CaseGroupedSpectralResidual",
+    "StrongToIntegralRewriteSpec",
+    "IntegralResidualProgram",
+    "rewrite_strong_to_integral",
     "FiniteDifferenceCompilationPolicy",
     "CompressibleNavierStokesSystem",
     "ConstantTransport",
@@ -838,6 +861,15 @@ __all__ = [
     "TabulatedCoolingEvaluation",
     "SutherlandTransport",
     "TransportProperties",
+    "BedloadSedimentPlan",
+    "EddyTransportProperties",
+    "HydrostaticLayerCoupling",
+    "InterfacialPhaseChangeEvaluation",
+    "MultilayerShallowWaterSystem",
+    "ResolvedGradientState",
+    "ShallowWaterExnerSystem",
+    "SmagorinskyLESClosure",
+    "StefanPhaseChangePlan",
     "couette_velocity_profile",
     "finite_volume_convergence_result",
     "double_rarefaction_verification_case",

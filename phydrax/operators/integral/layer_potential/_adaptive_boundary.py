@@ -23,7 +23,11 @@ from ....discretization.fem._adaptivity import (
     maximum_mark,
     refine_triangles_local,
 )
-from ....geometry.surface._contracts import SurfaceMetadata
+from ....geometry.surface._contracts import (
+    SurfaceInterface,
+    SurfaceMetadata,
+    SurfaceSelection,
+)
 from ....geometry.surface._model import SurfaceModel
 from ._fast_provider import BEMExecutionEnvelope
 
@@ -496,12 +500,12 @@ def mark_boundary_faces(
 
 def _dp0_parent_routes(
     source: BoundaryMeshEpoch,
-    target: BoundaryMeshEpoch,
+    target_mesh: CellMesh,
     adaptation: FiniteElementAdaptationMap,
     /,
 ) -> np.ndarray:
     source_ids = np.asarray(source.mesh.blocks[0].global_ids, dtype=np.int64)
-    target_ids = np.asarray(target.mesh.blocks[0].global_ids, dtype=np.int64)
+    target_ids = np.asarray(target_mesh.blocks[0].global_ids, dtype=np.int64)
     source_local = {int(value): index for index, value in enumerate(source_ids)}
     target_local = {int(value): index for index, value in enumerate(target_ids)}
     routes = np.full((target_ids.size,), -1, dtype=np.int32)
@@ -533,15 +537,6 @@ def refine_boundary_h(
     marked = np.asarray(marking.marked_face_global_ids, dtype=np.int64)
     if marked.size == 0:
         raise ValueError("Boundary refinement requires at least one positive indicator.")
-    if epoch.surface_model is not None and (
-        epoch.surface_model.selections
-        or epoch.surface_model.interfaces
-        or epoch.surface_model.metadata.cell_tags
-    ):
-        raise ValueError(
-            "Boundary refinement does not implicitly transfer surface selections, "
-            "interfaces, or cell tags."
-        )
     generation = epoch.generation + 1
     target_mesh, adaptation, _ = refine_triangles_local(
         epoch.mesh,
@@ -554,10 +549,20 @@ def refine_boundary_h(
             f"Refined boundary has {target_count} faces, exceeding the declared "
             f"limit {policy.max_target_faces}."
         )
+    routes = _dp0_parent_routes(epoch, target_mesh, adaptation)
     if epoch.surface_model is None:
         target_surface = target_mesh
     else:
-        source_metadata = epoch.surface_model.metadata
+        source_model = epoch.surface_model
+        source_metadata = source_model.metadata
+        target_cell_ids = np.asarray(target_mesh.blocks[0].global_ids, dtype=np.int64)
+        source_cell_ids = np.asarray(epoch.mesh.blocks[0].global_ids, dtype=np.int64)
+        target_cell_set = target_mesh.entity_set(2)
+        target_tags = (
+            ()
+            if not source_metadata.cell_tags
+            else tuple(source_metadata.cell_tags[index] for index in routes)
+        )
         target_metadata = SurfaceMetadata(
             source_id=source_metadata.source_id,
             source_revision=(
@@ -569,14 +574,53 @@ def refine_boundary_h(
                 *source_metadata.provenance,
                 f"deterministic local h-refinement from epoch {epoch.epoch_id}",
             ),
+            cell_tags=target_tags,
         )
-        target_surface = SurfaceModel(target_mesh, target_metadata)
+        selection_by_source_id: dict[str, SurfaceSelection] = {}
+        original_selection_ids = {
+            selection.selection_id for selection in source_model.selections
+        }
+        supports = list(source_model.selections)
+        for interface in source_model.interfaces:
+            if interface.support.selection_id not in {
+                selection.selection_id for selection in supports
+            }:
+                supports.append(interface.support)
+        target_selections = []
+        for selection in supports:
+            selected_parent = np.isin(
+                source_cell_ids[routes],
+                np.asarray(selection.cell_global_ids, dtype=np.int64),
+            )
+            target_selection = SurfaceSelection(
+                selection.name,
+                target_cell_ids[selected_parent],
+                cell_entity_set_id=target_cell_set.entity_set_id,
+                role=selection.role,
+            )
+            if selection.selection_id in original_selection_ids:
+                target_selections.append(target_selection)
+            selection_by_source_id[selection.selection_id] = target_selection
+        target_interfaces = tuple(
+            SurfaceInterface(
+                interface.name,
+                selection_by_source_id[interface.support.selection_id],
+                minus_region=interface.minus_region,
+                plus_region=interface.plus_region,
+            )
+            for interface in source_model.interfaces
+        )
+        target_surface = SurfaceModel(
+            target_mesh,
+            target_metadata,
+            selections=tuple(target_selections),
+            interfaces=target_interfaces,
+        )
     target_epoch = BoundaryMeshEpoch(
         target_surface,
         generation=generation,
         parent_epoch_id=epoch.epoch_id,
     )
-    routes = _dp0_parent_routes(epoch, target_epoch, adaptation)
     transfer = DP0BoundaryTransfer(epoch, target_epoch, routes)
     envelope = _boundary_envelope(
         target_mesh,

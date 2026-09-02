@@ -100,8 +100,7 @@ def _validated_arrays(
     state_ = jnp.asarray(state)
     if state_.ndim < 1 or state_.shape[-1] != pair.component_count:
         raise ValueError(
-            "state must end in the entropy-pair component count; "
-            f"got {state_.shape}."
+            f"state must end in the entropy-pair component count; got {state_.shape}."
         )
     if not jnp.issubdtype(state_.dtype, jnp.floating):
         raise TypeError("state must use real floating-point coordinates.")
@@ -157,14 +156,10 @@ def _evaluate_finite_volume_entropy_diagnostics(
     convective_rate = jnp.sum(
         policy.reduction(volumes_ * policy.reduction(convective_density))
     )
-    source_rate = jnp.sum(
-        policy.reduction(volumes_ * policy.reduction(source_density))
-    )
+    source_rate = jnp.sum(policy.reduction(volumes_ * policy.reduction(source_density)))
     semidiscrete_rate = policy.reduction(convective_rate + source_rate)
     total_entropy = jnp.sum(
-        policy.reduction(
-            volumes_ * policy.reduction(pair.entropy(entropy_state))
-        )
+        policy.reduction(volumes_ * policy.reduction(pair.entropy(entropy_state)))
     )
     return FiniteVolumeEntropyDiagnostics(
         pair_id=pair.pair_id,
@@ -172,6 +167,106 @@ def _evaluate_finite_volume_entropy_diagnostics(
         semidiscrete_entropy_rate=policy.decision(semidiscrete_rate),
         source_entropy_rate=policy.decision(source_rate),
         convective_entropy_rate=policy.decision(convective_rate),
+        admissible=jnp.all(pair.admissible(entropy_state)),
+        precision_evidence=policy.evidence(),
+    )
+
+
+class FiniteVolumeEntropyProductionDiagnostics(StrictModule):
+    """Content-form entropy balance including resolved viscous mechanisms."""
+
+    pair_id: str = eqx.field(static=True)
+    total_entropy: Array
+    semidiscrete_entropy_rate: Array
+    convective_entropy_rate: Array
+    source_entropy_rate: Array
+    geometric_entropy_rate: Array
+    shear_entropy_production: Array
+    bulk_entropy_production: Array
+    thermal_entropy_production: Array
+    admissible: Array
+    precision_evidence: PrecisionEvidenceEnvelope
+
+
+def evaluate_content_form_entropy_diagnostics(
+    pair: "ConvexEntropyPair",
+    state: ArrayLike,
+    effective_volumes: ArrayLike,
+    volume_rate: ArrayLike,
+    convective_content_rate: ArrayLike,
+    source_content_rate: ArrayLike,
+    shear_content_rate: ArrayLike,
+    bulk_content_rate: ArrayLike,
+    thermal_content_rate: ArrayLike,
+    /,
+    *,
+    precision: FiniteVolumePrecisionPolicy | None = None,
+) -> FiniteVolumeEntropyProductionDiagnostics:
+    """Evaluate ALE/cut/overset entropy rates from conservative content rates."""
+    state_, volumes, rates = _validated_arrays(
+        pair,
+        state,
+        effective_volumes,
+        convective_content_rate,
+        source_content_rate,
+        shear_content_rate,
+        bulk_content_rate,
+        thermal_content_rate,
+    )
+    volume_rate_ = jnp.asarray(volume_rate)
+    if volume_rate_.shape != volumes.shape:
+        raise ValueError("volume_rate must match effective_volumes.")
+    policy = _precision_policy(state_, precision)
+    policy.validate_state(state_)
+    entropy_state = policy.flux(state_)
+    variables = policy.reduction(pair.entropy_variables(entropy_state))
+    entropy = policy.reduction(pair.entropy(entropy_state))
+    state_reduction = policy.reduction(entropy_state)
+    volume_reduction = policy.reduction(volumes)
+
+    def integrated(rate: Array, /) -> Array:
+        return jnp.sum(
+            policy.reduction(
+                oe.contract(
+                    "...i,...i->...",
+                    variables,
+                    policy.reduction(rate),
+                    backend="jax",
+                )
+            )
+        )
+
+    convective, source, shear, bulk, thermal = rates
+    convective_rate = integrated(convective)
+    source_rate = integrated(source)
+    shear_rate = integrated(shear)
+    bulk_rate = integrated(bulk)
+    thermal_rate = integrated(thermal)
+    entropy_potential = entropy - oe.contract(
+        "...i,...i->...", variables, state_reduction, backend="jax"
+    )
+    geometric_rate = jnp.sum(
+        policy.reduction(entropy_potential * policy.reduction(volume_rate_))
+    )
+    semidiscrete = (
+        convective_rate
+        + source_rate
+        + geometric_rate
+        + shear_rate
+        + bulk_rate
+        + thermal_rate
+    )
+    total = jnp.sum(policy.reduction(volume_reduction * entropy))
+    return FiniteVolumeEntropyProductionDiagnostics(
+        pair_id=pair.pair_id,
+        total_entropy=policy.decision(total),
+        semidiscrete_entropy_rate=policy.decision(semidiscrete),
+        convective_entropy_rate=policy.decision(convective_rate),
+        source_entropy_rate=policy.decision(source_rate),
+        geometric_entropy_rate=policy.decision(geometric_rate),
+        shear_entropy_production=policy.decision(shear_rate),
+        bulk_entropy_production=policy.decision(bulk_rate),
+        thermal_entropy_production=policy.decision(thermal_rate),
         admissible=jnp.all(pair.admissible(entropy_state)),
         precision_evidence=policy.evidence(),
     )
@@ -201,15 +296,14 @@ def integrated_finite_volume_relative_entropy(
         policy.flux(reference_),
     )
     return policy.decision(
-        jnp.sum(
-            policy.reduction(
-                policy.reduction(volumes) * policy.reduction(relative)
-            )
-        )
+        jnp.sum(policy.reduction(policy.reduction(volumes) * policy.reduction(relative)))
     )
 
 
 __all__ = [
     "FiniteVolumeEntropyDiagnostics",
+    "FiniteVolumeEntropyProductionDiagnostics",
+    "_evaluate_finite_volume_entropy_diagnostics",
+    "evaluate_content_form_entropy_diagnostics",
     "integrated_finite_volume_relative_entropy",
 ]

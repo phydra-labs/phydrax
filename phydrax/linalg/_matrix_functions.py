@@ -14,14 +14,20 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
+from opt_einsum import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 from ._certificates import _operator_numeric_fingerprint
 from ._linear_transform import AbstractLinearTransform, DenseLinearTransform
-from ._operators import AbstractLinearOperator, FunctionLinearOperator
-from ._spaces import PyTreeSpace
+from ._operators import (
+    AbstractLinearOperator,
+    DenseLinearOperator,
+    FunctionLinearOperator,
+)
+from ._policies import DifferentiationPolicy
+from ._spaces import PyTreeSpace, RHSLayout
 from .krylov import (
     arnoldi,
     KrylovBreakdownStatus,
@@ -70,6 +76,7 @@ class MatrixFunctionPolicy(StrictModule):
         static=True
     )
     error_tolerance: float = eqx.field(static=True)
+    differentiation: DifferentiationPolicy
 
     def __init__(
         self,
@@ -81,6 +88,7 @@ class MatrixFunctionPolicy(StrictModule):
             "modified", "double", "selective", "full"
         ] = "selective",
         error_tolerance: float = 1e-8,
+        differentiation: DifferentiationPolicy | None = None,
     ):
         if method not in (
             "auto",
@@ -96,10 +104,18 @@ class MatrixFunctionPolicy(StrictModule):
             raise ValueError("Matrix-function dimension and tolerance must be valid.")
         if orthogonalization not in ("modified", "double", "selective", "full"):
             raise ValueError("Unknown matrix-function orthogonalization policy.")
+        differentiation_ = (
+            DifferentiationPolicy("algorithmic")
+            if differentiation is None
+            else differentiation
+        )
+        if not isinstance(differentiation_, DifferentiationPolicy):
+            raise TypeError("differentiation must be a DifferentiationPolicy or None.")
         self.method = method
         self.max_dimension = dimension
         self.orthogonalization = orthogonalization
         self.error_tolerance = tolerance
+        self.differentiation = differentiation_
 
 
 class TransformDiagonalRepresentation(StrictModule):
@@ -398,6 +414,84 @@ def _zero_scale_action(
     raise ValueError(f"The zero-scale {kind} action is singular.")
 
 
+def _batched_dense_matrix_function_action(
+    operator: DenseLinearOperator,
+    vector: PyTree[Any],
+    scale: ArrayLike,
+    /,
+    *,
+    kind: MatrixFunctionKind,
+    power: float | None,
+    shift: complex | float | None,
+    policy: MatrixFunctionPolicy,
+    rhs_layout: RHSLayout | None,
+) -> MatrixFunctionResult:
+    from ._runtime import _pack_rhs, _unpack_value
+
+    canonical, layout = _pack_rhs(
+        operator.source,
+        operator.batch_shape,
+        vector,
+        rhs_layout,
+    )
+    scale_ = jnp.asarray(scale)
+    if scale_.shape == ():
+        scale_ = jnp.broadcast_to(scale_, operator.batch_shape)
+    elif scale_.shape != operator.batch_shape:
+        raise ValueError("scale must be scalar or have the exact operator batch shape.")
+    matrix = operator.matrix
+    if policy.differentiation.mode in ("rhs-only", "none"):
+        matrix = jax.lax.stop_gradient(matrix)
+    if policy.differentiation.mode == "none":
+        canonical = jax.lax.stop_gradient(canonical)
+        scale_ = jax.lax.stop_gradient(scale_)
+    batch_count = int(np.prod(operator.batch_shape))
+    size = operator.source.size
+    matrices = matrix.reshape((batch_count, size, size))
+    scales = scale_.reshape((batch_count,))
+    right_hand_sides = canonical.reshape((batch_count, size, canonical.shape[-1]))
+
+    def apply_one(matrix_, scale_value, right_hand_side):
+        function_matrix = _small_matrix_function(
+            matrix_,
+            scale_value,
+            kind,
+            power=power,
+            shift=shift,
+            self_adjoint=operator.properties.certifies("self_adjoint"),
+        )
+        return contract(
+            "ij,jk->ik",
+            function_matrix,
+            right_hand_side,
+            backend="jax",
+        )
+
+    result = jax.vmap(apply_one)(matrices, scales, right_hand_sides)
+    result = result.reshape(operator.batch_shape + (size, canonical.shape[-1]))
+    finite = jnp.all(jnp.isfinite(result), axis=(-2, -1))
+    zero = jnp.zeros(operator.batch_shape, dtype=result.real.dtype)
+    dimension = jnp.full(operator.batch_shape, size, dtype=jnp.int32)
+    return MatrixFunctionResult(
+        value=_unpack_value(operator.source, result, layout),
+        error_estimate=zero,
+        residual_estimate=zero,
+        converged=finite,
+        effective_dimension=dimension,
+        matvec_count=jnp.zeros(operator.batch_shape, dtype=jnp.int32),
+        breakdown_status=jnp.full(
+            operator.batch_shape,
+            int(KrylovBreakdownStatus.NONE),
+            dtype=jnp.int32,
+        ),
+        method="batched-dense-exact",
+        kind=kind,
+        provenance=(
+            "exact independent dense matrix functions over a static leading batch"
+        ),
+    )
+
+
 def matrix_function_action(
     operator: AbstractLinearOperator | Callable[[PyTree[Any]], PyTree[Array]],
     vector: PyTree[Any],
@@ -411,11 +505,12 @@ def matrix_function_action(
     spectral: TransformDiagonalRepresentation | None = None,
     spectral_bounds: tuple[float, float] | None = None,
     decomposition: KrylovDecomposition | PreparedKrylovProjection | None = None,
+    rhs_layout: RHSLayout | None = None,
 ) -> MatrixFunctionResult:
     """Apply a matrix function with explicit convergence and provenance."""
     operator = _coerce_matrix_operator(operator, vector)
-    if operator.batch_shape or not operator.source.compatible(operator.target):
-        raise ValueError("Matrix functions require an unbatched endomorphism.")
+    if not operator.source.compatible(operator.target):
+        raise ValueError("Matrix functions require an endomorphism.")
     self_adjoint = operator.properties.certifies("self_adjoint")
     positive_definite = operator.properties.certifies("positive_definite")
     if kind not in (
@@ -446,6 +541,27 @@ def matrix_function_action(
     selected = MatrixFunctionPolicy() if policy is None else policy
     if not isinstance(selected, MatrixFunctionPolicy):
         raise TypeError("policy must be a MatrixFunctionPolicy or None.")
+    if operator.batch_shape:
+        if not isinstance(operator, DenseLinearOperator):
+            raise ValueError(
+                "Batched matrix-function actions currently require an explicit "
+                "DenseLinearOperator; no hidden materialization is performed."
+            )
+        if spectral is not None or decomposition is not None:
+            raise ValueError(
+                "Batched dense actions do not accept unbatched spectral/projection "
+                "artifacts."
+            )
+        return _batched_dense_matrix_function_action(
+            operator,
+            vector,
+            scale,
+            kind=kind,
+            power=power,
+            shift=shift,
+            policy=selected,
+            rhs_layout=rhs_layout,
+        )
     validated_vector = operator.source.validate(vector)
     coordinates = operator.source.flatten(validated_vector)
     scale_ = jnp.asarray(scale)

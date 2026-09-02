@@ -12,6 +12,21 @@ from ._conley import (
     ConleyHomologyIndex,
     ConleyIndexResult,
 )
+from ._dae_structural import (
+    AcausalDAESource,
+    analyze_dae_structure,
+    compile_acausal_dae,
+    DAEComponent,
+    DAEConnection,
+    DAEDerivativeIncidence,
+    DAEEquationBlock,
+    DAEJet,
+    DAEPort,
+    DAEStructuralAnalysis,
+    DAEStructuralPolicy,
+    DAEVariableBlock,
+    ReducedDAECompilation,
+)
 from ._differential_algebraic import (
     AutonomousDifferentialAlgebraicResidual,
     DAERole,
@@ -54,6 +69,7 @@ from ._system import (
     AutonomousDiscreteTransition,
     CallableInputPolicy,
     ContinuousSystem,
+    DiscreteStepContext,
     DiscreteSystem,
     HeldInputPolicy,
     InputContinuousVectorField,
@@ -66,6 +82,11 @@ from ._trajectory import (
     InputAlignment,
     TrajectoryData,
     TrajectoryTransitions,
+)
+from .identification import (
+    LearnedMarginalTransition,
+    LearnedPathwiseTransition,
+    TargetDiscreteModelObjective,
 )
 
 
@@ -125,4 +146,21 @@ __all__ = [
     "continuous_model_system",
     "discrete_model_system",
     "evolve",
+    "AcausalDAESource",
+    "analyze_dae_structure",
+    "compile_acausal_dae",
+    "DAEComponent",
+    "DAEConnection",
+    "DAEDerivativeIncidence",
+    "DAEEquationBlock",
+    "DAEJet",
+    "DAEPort",
+    "DAEStructuralAnalysis",
+    "DAEStructuralPolicy",
+    "DAEVariableBlock",
+    "ReducedDAECompilation",
+    "DiscreteStepContext",
+    "LearnedMarginalTransition",
+    "LearnedPathwiseTransition",
+    "TargetDiscreteModelObjective",
 ]

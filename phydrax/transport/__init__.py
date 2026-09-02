@@ -3,6 +3,7 @@
 #
 
 from . import continuous, diffusion, discrete, dynamic
+from ._assignment import AssignmentResult, solve_multidimensional_assignment
 from ._barycenters import (
     BarycenterDiagnostics,
     BarycenterProblemProvenance,
@@ -26,7 +27,37 @@ from ._costs import (
     WeightedSquaredEuclideanCost,
 )
 from ._divergence import sinkhorn_divergence, SinkhornDivergenceResult
-from ._fast_order import fast_soft_rank, fast_soft_sort
+from ._fast_order import (
+    fast_soft_rank,
+    fast_soft_sort,
+    fast_weighted_soft_rank,
+    fast_weighted_soft_sort,
+)
+from ._gaussian_mixture import (
+    gaussian_mixture_transport_problem,
+    GaussianMixtureTransportProblem,
+    GaussianMixtureTransportResult,
+    solve_gaussian_mixture_transport,
+)
+from ._gromov import (
+    gromov_wasserstein_problem,
+    GromovWasserstein,
+    GromovWassersteinProblem,
+    GromovWassersteinResult,
+)
+from ._ordering import (
+    HardOrdering,
+    ordered_ranks,
+    ordered_values,
+    OrderingMethod,
+    OrderingSurrogate,
+    PAVOrdering,
+    SinkhornOrdering,
+    straight_through_rank,
+    straight_through_sort,
+    StraightThroughOrdering,
+    WeightedPAVOrdering,
+)
 from ._problem import (
     discrete_problem,
     DiscreteTransportProblem,
@@ -69,6 +100,8 @@ from ._semidiscrete import (
 from ._sinkhorn import Sinkhorn
 from ._sliced import sliced_wasserstein_distance, SlicedWassersteinResult
 from ._soft import (
+    inverse_sigmoid_order_reconstruction,
+    InverseSigmoidOrderReconstruction,
     soft_order_transport,
     soft_quantile,
     soft_quantile_normalize,
@@ -99,6 +132,8 @@ from ._unbalanced_sinkhorn import UnbalancedSinkhorn
 from ._univariate import wasserstein_distance_1d
 from .continuous import (
     AbstractEndpointInterpolant,
+    ConditionalContinuousFlowLaw,
+    ConditionalFiniteFieldFlowLaw,
     ContinuousFlowDensityResult,
     ContinuousFlowLaw,
     ContinuousTransport,
@@ -106,10 +141,23 @@ from .continuous import (
     EndpointCouplingSample,
     EndpointInterpolantEvaluation,
     estimate_continuous_flow_log_prob,
+    FiniteFieldFlowLaw,
+    FiniteFieldSample,
     GeodesicEndpointInterpolant,
+    HybridFlowLaw,
+    HybridFlowSample,
     independent_endpoint_coupling,
+    InjectiveContinuousFlowLaw,
+    InjectiveDensityResult,
     LinearEndpointInterpolant,
     ManifoldTransportGeometry,
+    PiecewiseContinuousFlowLaw,
+    PiecewiseFlowDensityResult,
+    prepare_field_query,
+    PreparedFieldQuery,
+    RiemannianContinuousFlowLaw,
+    RiemannianFlowDensityResult,
+    TrajectoryFlowLaw,
     transport_plan_endpoint_coupling,
 )
 from .diffusion import (
@@ -150,16 +198,24 @@ from .dynamic import (
     BridgeProblemProvenance,
     BridgeProvenance,
     ControlledTransitionKernel,
+    DiffusionBridgeDiagnostics,
+    DiffusionBridgePlan,
+    DiffusionBridgeProblem,
+    DiffusionBridgeResult,
     FiniteBridgeTarget,
+    prepare_diffusion_bridge,
+    PreparedDiffusionBridge,
     reference_path_log_prob,
     require_converged_bridge,
     sample_bridge,
     sample_bridge_paths,
     sample_bridge_state_indices,
+    sample_diffusion_bridge,
     SchrodingerBridgeDiagnostics,
     SchrodingerBridgeProblem,
     SchrodingerBridgeResult,
     SchrodingerBridgeSolver,
+    solve_diffusion_bridge,
     solve_schrodinger_bridge,
     TerminalDistributionControlAdapter,
 )
@@ -305,4 +361,52 @@ __all__ = [
     "transport_plan_endpoint_coupling",
     "status_message",
     "wasserstein_distance_1d",
+    "AssignmentResult",
+    "solve_multidimensional_assignment",
+    "GromovWasserstein",
+    "GromovWassersteinProblem",
+    "GromovWassersteinResult",
+    "gromov_wasserstein_problem",
+    "GaussianMixtureTransportProblem",
+    "GaussianMixtureTransportResult",
+    "gaussian_mixture_transport_problem",
+    "solve_gaussian_mixture_transport",
+    "ConditionalContinuousFlowLaw",
+    "ConditionalFiniteFieldFlowLaw",
+    "FiniteFieldFlowLaw",
+    "FiniteFieldSample",
+    "HybridFlowLaw",
+    "HybridFlowSample",
+    "InjectiveContinuousFlowLaw",
+    "InjectiveDensityResult",
+    "PiecewiseContinuousFlowLaw",
+    "PiecewiseFlowDensityResult",
+    "PreparedFieldQuery",
+    "RiemannianContinuousFlowLaw",
+    "RiemannianFlowDensityResult",
+    "TrajectoryFlowLaw",
+    "prepare_field_query",
+    "DiffusionBridgeDiagnostics",
+    "DiffusionBridgePlan",
+    "DiffusionBridgeProblem",
+    "DiffusionBridgeResult",
+    "PreparedDiffusionBridge",
+    "prepare_diffusion_bridge",
+    "sample_diffusion_bridge",
+    "solve_diffusion_bridge",
+    "fast_weighted_soft_rank",
+    "fast_weighted_soft_sort",
+    "HardOrdering",
+    "OrderingMethod",
+    "OrderingSurrogate",
+    "PAVOrdering",
+    "SinkhornOrdering",
+    "StraightThroughOrdering",
+    "WeightedPAVOrdering",
+    "ordered_ranks",
+    "ordered_values",
+    "straight_through_rank",
+    "straight_through_sort",
+    "InverseSigmoidOrderReconstruction",
+    "inverse_sigmoid_order_reconstruction",
 ]

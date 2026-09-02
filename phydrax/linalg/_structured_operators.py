@@ -355,11 +355,11 @@ class TridiagonalLinearOperator(AbstractLinearOperator):
 
 
 class BandedLinearOperator(AbstractLinearOperator):
-    """General fixed-bandwidth matrix in SciPy diagonal-ordered storage."""
+    """General fixed-bandwidth matrix with optional operator batches."""
 
     bands: Array
-    lower_bandwidth: int
-    upper_bandwidth: int
+    lower_bandwidth: int = eqx.field(static=True)
+    upper_bandwidth: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -376,12 +376,17 @@ class BandedLinearOperator(AbstractLinearOperator):
         upper_ = int(upper_bandwidth)
         if lower_ < 0 or upper_ < 0:
             raise ValueError("bandwidths must be non-negative.")
-        if bands_.ndim != 2 or bands_.shape[0] != lower_ + upper_ + 1:
-            raise ValueError("bands must have shape (lower + upper + 1, n).")
+        if bands_.ndim < 2 or bands_.shape[-2] != lower_ + upper_ + 1:
+            raise ValueError(
+                "bands must have shape batch_shape + (lower + upper + 1, n)."
+            )
         if not jnp.issubdtype(bands_.dtype, jnp.inexact):
             bands_ = bands_.astype(float)
-        size = int(bands_.shape[1])
+        size = int(bands_.shape[-1])
         space_ = _space(size, bands_.dtype, space)
+        batch = tuple(int(value) for value in bands_.shape[:-2])
+        if batch and not isinstance(space_, ArraySpace):
+            raise ValueError("Batched banded operators require ArraySpace values.")
         self.source = space_
         self.target = space_
         self.bands = bands_
@@ -400,7 +405,7 @@ class BandedLinearOperator(AbstractLinearOperator):
             materialize=True,
             diagonal_assembly=True,
         )
-        self.batch_shape = ()
+        self.batch_shape = batch
         self.operator_id = _id(
             operator_id,
             {
@@ -408,6 +413,7 @@ class BandedLinearOperator(AbstractLinearOperator):
                 "space": space_.space_id,
                 "lower": lower_,
                 "upper": upper_,
+                "batch_shape": list(batch),
             },
         )
 
@@ -420,55 +426,90 @@ class BandedLinearOperator(AbstractLinearOperator):
         conjugate: bool,
     ) -> Array:
         size = self.source.size
-        result = jnp.zeros((size,), dtype=coordinates.dtype)
+        result = jnp.zeros_like(coordinates)
         for offset in range(-self.upper_bandwidth, self.lower_bandwidth + 1):
             column_start = max(0, -offset)
             column_stop = min(size, size - offset)
             row_start = column_start + offset
             row_stop = column_stop + offset
             values = self.bands[
+                ...,
                 self.upper_bandwidth + offset,
                 column_start:column_stop,
             ]
             if conjugate:
                 values = jnp.conj(values)
             if transpose:
-                result = result.at[column_start:column_stop].add(
-                    values * coordinates[row_start:row_stop]
+                result = result.at[..., column_start:column_stop, :].add(
+                    values[..., :, None] * coordinates[..., row_start:row_stop, :]
                 )
             else:
-                result = result.at[row_start:row_stop].add(
-                    values * coordinates[column_start:column_stop]
+                result = result.at[..., row_start:row_stop, :].add(
+                    values[..., :, None] * coordinates[..., column_start:column_stop, :]
                 )
         return result
 
-    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        coordinates = self.source.flatten(vector)
-        return self.target.unflatten(
-            self._apply_bands(coordinates, transpose=False, conjugate=False)
+    def _array_action(
+        self,
+        vector: ArrayLike,
+        /,
+        *,
+        transpose: bool,
+        conjugate: bool,
+    ) -> Array:
+        source = self.target if transpose else self.source
+        target = self.source if transpose else self.target
+        if not isinstance(source, ArraySpace) or not isinstance(target, ArraySpace):
+            coordinates = source.flatten(vector)
+            result = self._apply_bands(
+                coordinates[..., None],
+                transpose=transpose,
+                conjugate=conjugate,
+            )[..., 0]
+            return target.unflatten(result)
+        value, rhs_shape = _array_value(source, self.batch_shape, vector, "vector")
+        rhs_size = prod(rhs_shape) if rhs_shape else 1
+        coordinates = value.reshape(self.batch_shape + (source.size, rhs_size))
+        result = self._apply_bands(
+            coordinates,
+            transpose=transpose,
+            conjugate=conjugate,
         )
+        return result.reshape(self.batch_shape + target.shape + rhs_shape)
+
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return self._array_action(vector, transpose=False, conjugate=False)
 
     def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        coordinates = self.target.flatten(vector)
-        return self.source.unflatten(
-            self._apply_bands(coordinates, transpose=True, conjugate=False)
-        )
+        return self._array_action(vector, transpose=True, conjugate=False)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        if _has_euclidean_pairing(self.source):
+            return self._array_action(vector, transpose=True, conjugate=True)
         return _generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        n = self.source.size
-        rows = jnp.arange(n)[:, None]
-        columns = jnp.arange(n)[None, :]
-        band_rows = self.upper_bandwidth + rows - columns
-        valid = (band_rows >= 0) & (band_rows < self.bands.shape[0])
-        clipped = jnp.clip(band_rows, 0, self.bands.shape[0] - 1)
-        values = self.bands[clipped, columns]
-        return jnp.where(valid, values, 0)
+        size = self.source.size
+        matrix = jnp.zeros(
+            self.batch_shape + (size, size),
+            dtype=self.bands.dtype,
+        )
+        for offset in range(-self.upper_bandwidth, self.lower_bandwidth + 1):
+            column_start = max(0, -offset)
+            column_stop = min(size, size - offset)
+            columns = jnp.arange(column_start, column_stop)
+            rows = columns + offset
+            matrix = matrix.at[..., rows, columns].set(
+                self.bands[
+                    ...,
+                    self.upper_bandwidth + offset,
+                    column_start:column_stop,
+                ]
+            )
+        return matrix
 
     def _assemble_diagonal(self, /) -> Array:
-        return self.bands[self.upper_bandwidth]
+        return self.bands[..., self.upper_bandwidth, :]
 
 
 class LocalBlockDiagonalLinearOperator(AbstractLinearOperator):
@@ -1649,6 +1690,8 @@ def _is_structured_exact(operator: AbstractLinearOperator, /) -> bool:
         )
     if isinstance(operator, LocalBlockDiagonalLinearOperator):
         return operator.input_block_size == operator.output_block_size
+    if isinstance(operator, BandedLinearOperator):
+        return True
     if isinstance(
         operator,
         (
@@ -1657,7 +1700,6 @@ def _is_structured_exact(operator: AbstractLinearOperator, /) -> bool:
             PermutationLinearOperator,
             TriangularLinearOperator,
             TridiagonalLinearOperator,
-            BandedLinearOperator,
             DiagonalPlusLowRankLinearOperator,
             TransformDiagonalLinearOperator,
         ),

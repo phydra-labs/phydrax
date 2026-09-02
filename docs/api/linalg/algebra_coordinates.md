@@ -60,11 +60,11 @@
 
 ---
 
-::: phydrax.solver.DiffraxAlgebraStatePolicy
+::: phydrax.linalg.PreparedRealCoordinateTree
 
 ---
 
-::: phydrax.solver.AlgebraStatePackingEvidence
+::: phydrax.linalg.RealCoordinateEvidence
 
 ## Continuation
 

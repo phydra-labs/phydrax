@@ -4,6 +4,30 @@
 
 """Optimal-control problems, dynamics, parameterizations, and diagnostics."""
 
+from ._advanced_collocation import (
+    audit_complementarity,
+    audit_multiphase_links,
+    ComplementarityConstraint,
+    ComplementarityEvidence,
+    ComplementarityHomotopyPolicy,
+    DirectCollocationLink,
+    DirectCollocationPhase,
+    manifold_radau_stages,
+    ManifoldCollocationStages,
+    MultiphaseDirectCollocationEvidence,
+    MultiphaseDirectCollocationProblem,
+    radau_collocation_defects,
+    RadauCollocationDefects,
+    StochasticDirectCollocationEvidence,
+    StochasticDirectTranscription,
+)
+from ._batched_trajectory import (
+    ILQRPlan,
+    plan_ilqr,
+    prepare_ilqr,
+    PreparedILQR,
+    solve_prepared_ilqr,
+)
 from ._candidate_search import (
     ControlCandidateSearchResult,
     search_control_candidates,
@@ -21,6 +45,16 @@ from ._constraints import (
     PathConstraint,
     SampledControlFeasibility,
     TerminalConstraint,
+)
+from ._continuous_certification import (
+    AbstractPathConstraintEnvelope,
+    AffineBernsteinPathEnvelope,
+    CertifiedPathConstraint,
+    certify_continuous_path_constraints,
+    ContinuousPathConstraintCertificate,
+    ControlSegmentInterpolant,
+    direct_collocation_interpolant,
+    LipschitzPathEnvelope,
 )
 from ._cost import (
     evaluate_sampled_cost,
@@ -106,6 +140,15 @@ from ._frequency import (
     FrequencySystemType,
     input_to_output_response,
     input_to_state_response,
+)
+from ._global_certificate import (
+    AbstractControlRelaxation,
+    BoundedControlCertificatePlan,
+    BoundedControlOptimalityCertificate,
+    certify_bounded_control_optimum,
+    ControlRelaxationBound,
+    ConvexTranscriptionRelaxation,
+    LipschitzBoxControlRelaxation,
 )
 from ._global_search import CoefficientBounds, ControlSearchResult, search_control
 from ._gramian import (
@@ -449,4 +492,39 @@ __all__ = [
     "DirectCollocationReplayFailureMode",
     "DirectCollocationReplayPolicy",
     "replay_direct_collocation",
+    "ILQRPlan",
+    "PreparedILQR",
+    "plan_ilqr",
+    "prepare_ilqr",
+    "solve_prepared_ilqr",
+    "ComplementarityConstraint",
+    "ComplementarityEvidence",
+    "ComplementarityHomotopyPolicy",
+    "DirectCollocationLink",
+    "DirectCollocationPhase",
+    "ManifoldCollocationStages",
+    "MultiphaseDirectCollocationEvidence",
+    "MultiphaseDirectCollocationProblem",
+    "RadauCollocationDefects",
+    "StochasticDirectCollocationEvidence",
+    "StochasticDirectTranscription",
+    "audit_complementarity",
+    "audit_multiphase_links",
+    "manifold_radau_stages",
+    "radau_collocation_defects",
+    "AbstractPathConstraintEnvelope",
+    "AffineBernsteinPathEnvelope",
+    "CertifiedPathConstraint",
+    "ContinuousPathConstraintCertificate",
+    "ControlSegmentInterpolant",
+    "LipschitzPathEnvelope",
+    "certify_continuous_path_constraints",
+    "direct_collocation_interpolant",
+    "AbstractControlRelaxation",
+    "BoundedControlCertificatePlan",
+    "BoundedControlOptimalityCertificate",
+    "ControlRelaxationBound",
+    "ConvexTranscriptionRelaxation",
+    "LipschitzBoxControlRelaxation",
+    "certify_bounded_control_optimum",
 ]

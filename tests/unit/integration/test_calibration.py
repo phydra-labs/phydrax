@@ -184,7 +184,9 @@ def test_soft_calibration_returns_a_finite_measure_for_unreachable_targets():
 
     calibrated = phx.integration.calibrate(
         source,
-        phx.weighting.QuadraticMoments(jnp.array([-3.0]), scale=0.5),
+        phx.weighting.QuadraticMoments(
+            jnp.array([-3.0]), covariance=jnp.asarray([[0.25]])
+        ),
         features=samples,
         termination=TERMINATION,
     )

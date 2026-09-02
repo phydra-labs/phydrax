@@ -722,6 +722,46 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def pencil_pseudospectrum_capacity_metrics(
+    dimension: int,
+    shift_count: int,
+    /,
+) -> dict[str, int | float]:
+    """Prepared QZ and fixed-shift workspace counters for one dense pencil."""
+    size = int(dimension)
+    count = int(shift_count)
+    diagonal = jnp.linspace(1.0, 2.0, size, dtype=jnp.complex128)
+    operator = la.DenseLinearOperator(jnp.diag(diagonal))
+    mass = la.DenseLinearOperator(jnp.eye(size, dtype=jnp.complex128))
+    shifts = jnp.stack(
+        (
+            jnp.linspace(-1.0, 1.0, count, dtype=jnp.float64),
+            jnp.ones((count,), dtype=jnp.float64),
+        ),
+        axis=-1,
+    )
+    prepared = eig.prepare_pencil_pseudospectrum(
+        eig.PencilPseudospectrumProblem(
+            eig.GeneralEigenproblem(operator, mass),
+            shifts,
+            eig.PencilPerturbationNorm(1.0, 1.0),
+        )
+    )
+    result = eig.pencil_pseudospectrum(prepared)
+    return {
+        "dimension": size,
+        "shift_count": count,
+        "workspace_bytes": prepared.plan.workspace_bytes,
+        "decomposition_count": int(result.diagnostics.decomposition_count),
+        "maximum_qz_reconstruction_residual": float(
+            jnp.maximum(
+                result.diagnostics.operator_reconstruction_residual,
+                result.diagnostics.mass_reconstruction_residual,
+            )
+        ),
+    }
+
+
 def main() -> None:
     arguments = _parser().parse_args()
     report = run_benchmarks(

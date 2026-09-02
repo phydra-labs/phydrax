@@ -9,7 +9,6 @@ from typing import Literal
 
 from jaxtyping import ArrayLike
 
-from phydrax.conditions import Observation
 from phydrax.domain import DomainComponent, DomainFunction, PointSampling
 from phydrax.domain.graph import (
     graph_component_kind,
@@ -18,6 +17,7 @@ from phydrax.domain.graph import (
     GraphTrajectoryDatasetDomain,
 )
 
+from ..conditions._base import Observation
 from ..domain.graph._observation import GraphTarget, GraphTrajectorySignal
 from ..integration import mean_over, over, per_step
 from ._observation import ObservationPenalty

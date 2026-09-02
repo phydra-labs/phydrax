@@ -22,6 +22,10 @@ from ..operators.quantum import (
     OpenSystemApproximationEvidence,
     OpenSystemPhysicalityEvidence,
 )
+from ..operators.quantum._channels import (
+    finite_cptp_from_superoperator,
+    FiniteCPTPMap,
+)
 
 
 class QuantumMemoryKernel(StrictModule):
@@ -294,6 +298,7 @@ class OpenSystemHistorySolution(StrictModule):
 
 class DynamicalMapPhysicality(StrictModule):
     choi_matrix: Array
+    finite_map: FiniteCPTPMap
     cp_margin: Array
     trace_preservation_residual: Array
     choi_hermiticity_residual: Array
@@ -332,43 +337,38 @@ class DynamicalMapPhysicality(StrictModule):
         size = int(dimension)
         if matrix.shape != (size * size, size * size):
             raise ValueError("Superoperator shape is invalid.")
-        choi = jnp.zeros((size, size, size, size), dtype=matrix.dtype)
-        for row in range(size):
-            for column in range(size):
-                basis = (
-                    jnp.zeros((size, size), dtype=matrix.dtype).at[row, column].set(1.0)
-                )
-                output = (matrix @ basis.reshape(-1)).reshape((size, size))
-                choi = choi.at[row, :, column, :].set(output)
-        flat_choi = choi.reshape((size * size, size * size))
+        canonical = finite_cptp_from_superoperator(
+            matrix,
+            size,
+            size,
+            tolerance=1e-8,
+        )
+        flat_choi = canonical.choi_matrix
         hermiticity_residual = geometry_.decision(
-            jnp.max(jnp.abs(flat_choi - jnp.conj(flat_choi.T)))
+            canonical.evidence.choi_hermiticity_residual
         )
         hermitian_choi = 0.5 * (flat_choi + jnp.conj(flat_choi.T))
         spectrum = HermitianSpectrum(hermitian_choi, precision=hermitian_)
-        partial_trace = geometry_.accumulation(jnp.trace(choi, axis1=1, axis2=3))
-        cp_margin = geometry_.decision(spectrum.minimum_eigenvalue)
+        cp_margin = geometry_.decision(canonical.evidence.minimum_choi_eigenvalue)
         trace_residual = geometry_.decision(
-            jnp.max(jnp.abs(partial_trace - jnp.eye(size, dtype=matrix.dtype)))
+            canonical.evidence.trace_preservation_residual
         )
+        self.finite_map = canonical
         self.choi_matrix = geometry_.output(flat_choi)
         self.cp_margin = cp_margin
         self.choi_hermiticity_residual = hermiticity_residual
         self.trace_preservation_residual = trace_residual
-        self.valid = (
-            jnp.all(jnp.isfinite(matrix))
-            & jnp.isfinite(hermiticity_residual)
-            & (hermiticity_residual <= 1e-8)
-            & spectrum.valid
-            & (cp_margin >= -1e-8)
-            & (trace_residual <= 1e-8)
-        )
+        self.valid = canonical.valid & spectrum.valid
         self.geometry_precision = geometry_
         self.hermitian_precision = hermitian_
         self.precision_evidence = geometry_.evidence_for(
             matrix,
             children={"choi-spectrum": spectrum.precision_evidence},
         )
+
+    def to_finite_cptp_map(self, /) -> FiniteCPTPMap:
+        """Return the canonical finite-node map retained by this history adapter."""
+        return self.finite_map
 
 
 def solve_memory_kernel(

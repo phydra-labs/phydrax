@@ -13,13 +13,25 @@ pressure field. `evaluate_hydroelastic_contact` integrates normal and frictional
 traction over `ContactInterfacePlan` quadrature and reports patch area,
 resultant force/moment, pressure positivity, dissipation, and action-reaction.
 
-`HydroelasticPressureFieldPlan` represents nodal pressure on a common
-tetrahedral partition; `extract_hydroelastic_pressure_patch` deterministically
-marches the pressure-difference zero set into fixed-capacity patch quadrature
-and fails closed on overflow.
+`HydroelasticPressureFieldPlan` binds a canonical affine tetrahedral
+`CellMesh`; pressure is supplied separately by
+`HydroelasticPressureFieldState`. `HydroelasticPatchExtractionPlan.prepare`
+uses certified host tetrahedron intersections to fix nonmatching overlap
+polytopes. Pure-JAX evaluation cuts the affine pressure difference, returns
+plus/minus cell IDs and interpolation weights, and reports predicate, tie, area,
+pressure-balance, capacity, and derivative evidence.
 
 Rigid-rigid hydroelastic contact is unsupported rather than replaced by point
 contact. At least one side must provide a compliant pressure field.
+
+## Device broad phase
+
+`LBVHContactSearchPlan` builds Morton ordering from swept point/edge/face AABBs
+and deterministically packs the existing candidate batches. Node, depth, visit,
+duplicate-code, stack, visit, and output budgets are explicit evidence.
+Exhaustion fails closed; dense search remains the candidate-equivalence
+authority. “LBVH” is a bounded algorithm/resource contract, not a universal
+device-optimality claim.
 
 ## Rough contact
 
@@ -56,14 +68,18 @@ parent interpolation while preserving the maximum inherited damage and wear.
 
 ## Lubricated contact
 
-`LubricationContactPlan` combines squeeze-film pressure, cavitation, viscous
-shear, and an asperity-contact blend across a minimum-film and transition
-thickness. `evaluate_lubrication_contact` reports film, fluid pressure, asperity
-fraction, normal/tangential traction, dissipation, and cavitation state.
+`LubricationContactPlan` remains the local squeeze/shear/asperity closure.
+`ReynoldsFilmPlan` adds a connected P1 surface-film owner with declared pressure
+references and a fixed-iteration projected Reynolds cavitation solve. It
+assembles variable `h³/(12 μ)` diffusion, squeeze and tangential transport,
+interpolates pressure to `ContactInterfacePlan`, and uses the canonical
+equal/opposite traction assembly.
 
-This local closure is not a global Reynolds PDE solver. It is the resolved-route
-constitutive layer that a future film-pressure discretization can drive.
-
+`ReynoldsFilmEvidence` reports PDE residual, complementarity, flux balance,
+load, dissipation, minimum film, active-set margin, and solver status. A
+nonpositive film, unreferenced component, active-set tie, or failed solve is
+never replaced by pointwise squeeze pressure. This is a Reynolds variational
+inequality, not an Elrod–Adams mass-fraction model.
 ## Distributed ownership
 
 `DistributedContactPartitionPlan` assigns stable vertex and route ownership,

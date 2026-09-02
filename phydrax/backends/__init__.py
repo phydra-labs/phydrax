@@ -49,6 +49,7 @@ from .clarabel import (
     prepare_clarabel,
     PreparedClarabel,
 )
+from .cvxpy import cvxpy_availability, CVXPY_CAPABILITIES
 from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
 from .mpax import (
     mpax_availability,
@@ -56,6 +57,7 @@ from .mpax import (
     MPAXAlgorithm,
     MPAXBackend,
     MPAXPlan,
+    MPAXRepresentation,
     prepare_mpax,
     PreparedMPAX,
     refresh_mpax,
@@ -119,11 +121,14 @@ __all__ = [
     "PreparedClarabel",
     "clarabel_availability",
     "prepare_clarabel",
+    "CVXPY_CAPABILITIES",
+    "cvxpy_availability",
     "IREE_CAPABILITIES",
     "IREEBackend",
     "import_iree",
     "iree_availability",
     "MPAXAlgorithm",
+    "MPAXRepresentation",
     "MPAXBackend",
     "MPAXPlan",
     "MPAX_CAPABILITIES",

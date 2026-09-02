@@ -41,14 +41,43 @@ def _face_neighbor_average(value: Array, axis: int, periodic: bool, /) -> Array:
     return jnp.moveaxis(faces, 0, axis)
 
 
-def _face_difference(value: Array, axis: int, periodic: bool, /) -> Array:
+def _cell_neighbor_average(value: Array, axis: int, periodic: bool, /) -> Array:
+    moved = jnp.moveaxis(value, axis, 0)
+    if periodic:
+        centered = 0.5 * (moved + jnp.roll(moved, -1, axis=0))
+    else:
+        centered = 0.5 * (moved[:-1] + moved[1:])
+    return jnp.moveaxis(centered, 0, axis)
+
+
+def _face_difference(
+    value: Array,
+    axis: int,
+    periodic: bool,
+    /,
+    *,
+    boundary_values: tuple[Array | None, Array | None] | None = None,
+) -> Array:
     moved = jnp.moveaxis(value, axis, 0)
     if periodic:
         difference = moved - jnp.roll(moved, 1, axis=0)
     else:
         interior = moved[1:] - moved[:-1]
-        zero = jnp.zeros_like(moved[:1])
-        difference = jnp.concatenate((zero, interior, zero), axis=0)
+        if boundary_values is None:
+            lower = upper = jnp.zeros_like(moved[:1])
+        else:
+            lower_value, upper_value = boundary_values
+            lower = (
+                jnp.zeros_like(moved[:1])
+                if lower_value is None
+                else moved[:1] - jnp.asarray(lower_value)[None, ...]
+            )
+            upper = (
+                jnp.zeros_like(moved[:1])
+                if upper_value is None
+                else jnp.asarray(upper_value)[None, ...] - moved[-1:]
+            )
+        difference = jnp.concatenate((lower, interior, upper), axis=0)
     return jnp.moveaxis(difference, 0, axis)
 
 
@@ -92,6 +121,9 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
     y_edge_length: Array
     x_center_distance: Array
     y_center_distance: Array
+    covariant_metric: Array
+    contravariant_metric: Array
+    horizontal_jacobian: Array
     reference_vertical_faces: Array
     reference_layer_fraction: Array
     rest_depth: Array
@@ -210,24 +242,69 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
             y, 1, self.periodic[1]
         )
 
-    def surface_gradient(self, potential: ArrayLike, /) -> tuple[Array, Array]:
+    def _normal_gradient(
+        self,
+        potential: Array,
+        /,
+        *,
+        boundary_values=None,
+    ) -> tuple[Array, Array]:
+        boundaries = (
+            ((None, None), (None, None))
+            if boundary_values is None
+            else boundary_values
+        )
+        x_directional = _face_difference(
+            potential,
+            0,
+            self.periodic[0],
+            boundary_values=boundaries[0],
+        ) / self.x_center_distance[(...,) + (None,) * (potential.ndim - 2)]
+        y_directional = _face_difference(
+            potential,
+            1,
+            self.periodic[1],
+            boundary_values=boundaries[1],
+        ) / self.y_center_distance[(...,) + (None,) * (potential.ndim - 2)]
+        x_cell = _cell_neighbor_average(x_directional, 0, self.periodic[0])
+        y_cell = _cell_neighbor_average(y_directional, 1, self.periodic[1])
+        cross = self.covariant_metric[..., 0, 1] / jnp.sqrt(
+            self.covariant_metric[..., 0, 0]
+            * self.covariant_metric[..., 1, 1]
+        )
+        cross_x = _face_neighbor_average(cross, 0, self.periodic[0])
+        cross_y = _face_neighbor_average(cross, 1, self.periodic[1])
+        trailing = (None,) * (potential.ndim - 2)
+        cross_x = cross_x[(...,) + trailing]
+        cross_y = cross_y[(...,) + trailing]
+        y_at_x = _face_neighbor_average(y_cell, 0, self.periodic[0])
+        x_at_y = _face_neighbor_average(x_cell, 1, self.periodic[1])
+        x_scale = jnp.sqrt(jnp.maximum(1.0 - cross_x**2, 0.0))
+        y_scale = jnp.sqrt(jnp.maximum(1.0 - cross_y**2, 0.0))
+        return (
+            (x_directional - cross_x * y_at_x) / x_scale,
+            (y_directional - cross_y * x_at_y) / y_scale,
+        )
+
+    def surface_gradient(
+        self, potential: ArrayLike, /, *, boundary_values=None
+    ) -> tuple[Array, Array]:
         value = jnp.asarray(potential, dtype=self.cell_area.dtype)
         if value.shape != self.horizontal_shape:
             raise ValueError("Surface potential shape is invalid.")
-        x_difference = _face_difference(value, 0, self.periodic[0])
-        y_difference = _face_difference(value, 1, self.periodic[1])
-        return (
-            x_difference / self.x_center_distance,
-            y_difference / self.y_center_distance,
-        )
+        return self._normal_gradient(value, boundary_values=boundary_values)
 
     def layer_pressure_transport_force(
         self,
         potential: ArrayLike,
         epoch: HydrostaticMetricEpoch,
         /,
+        *,
+        boundary_values=None,
     ) -> tuple[Array, Array]:
-        gx, gy = self.surface_gradient(potential)
+        gx, gy = self.surface_gradient(
+            potential, boundary_values=boundary_values
+        )
         return (
             -epoch.x_face_area * gx[..., None],
             -epoch.y_face_area * gy[..., None],
@@ -257,26 +334,118 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         value_ = jnp.asarray(value, dtype=self.cell_area.dtype)
         return _face_neighbor_average(value_, axis, self.periodic[axis])
 
-    def layer_gradient(self, potential: ArrayLike, /) -> tuple[Array, Array]:
+    def layer_gradient(
+        self, potential: ArrayLike, /, *, boundary_values=None
+    ) -> tuple[Array, Array]:
         value = jnp.asarray(potential, dtype=self.cell_area.dtype)
         if value.shape != self.cell_shape:
             raise ValueError("Layer potential shape is invalid.")
-        x_difference = _face_difference(value, 0, self.periodic[0])
-        y_difference = _face_difference(value, 1, self.periodic[1])
-        return (
-            x_difference / self.x_center_distance[..., None],
-            y_difference / self.y_center_distance[..., None],
-        )
+        return self._normal_gradient(value, boundary_values=boundary_values)
 
     def layer_potential_transport_force(
         self,
         potential: ArrayLike,
         epoch: HydrostaticMetricEpoch,
         /,
+        *,
+        boundary_values=None,
     ) -> tuple[Array, Array]:
-        gx, gy = self.layer_gradient(potential)
+        gx, gy = self.layer_gradient(
+            potential, boundary_values=boundary_values
+        )
         return -epoch.x_face_area * gx, -epoch.y_face_area * gy
 
+    def normal_velocity_inner_product(
+        self,
+        left: tuple[ArrayLike, ArrayLike],
+        right: tuple[ArrayLike, ArrayLike],
+        /,
+    ) -> Array:
+        """Physical tangent inner product from two face-normal component pairs."""
+        u_left, v_left = (jnp.asarray(value) for value in left)
+        u_right, v_right = (jnp.asarray(value) for value in right)
+        values = (u_left, v_left, u_right, v_right)
+        if (
+            u_left.ndim not in (2, 3)
+            or u_left.shape[:2] != self.horizontal_shape
+            or any(value.shape != u_left.shape for value in values)
+        ):
+            raise ValueError("Normal velocity components must have equal cell shapes.")
+        cross = self.covariant_metric[..., 0, 1] / jnp.sqrt(
+            self.covariant_metric[..., 0, 0]
+            * self.covariant_metric[..., 1, 1]
+        )
+        if u_left.ndim == 3:
+            cross = cross[..., None]
+        denominator = 1.0 - cross**2
+        return (
+            u_left * u_right
+            + v_left * v_right
+            + cross * (u_left * v_right + v_left * u_right)
+        ) / denominator
+
+    def rotate_normal_velocity(
+        self,
+        velocity: tuple[ArrayLike, ArrayLike],
+        coriolis: ArrayLike,
+        /,
+    ) -> tuple[Array, Array]:
+        """Rotate physical velocity and return its two face-normal projections."""
+        u, v = (jnp.asarray(value) for value in velocity)
+        expected = self.cell_shape if u.ndim == 3 else self.horizontal_shape
+        if u.shape != expected or v.shape != expected:
+            raise ValueError("Normal velocity components must have equal cell shapes.")
+        cross = self.covariant_metric[..., 0, 1] / jnp.sqrt(
+            self.covariant_metric[..., 0, 0]
+            * self.covariant_metric[..., 1, 1]
+        )
+        f = jnp.asarray(coriolis, dtype=u.dtype)
+        if u.ndim == 3:
+            cross = cross[..., None]
+            f = f[..., None]
+        scale = jnp.sqrt(jnp.maximum(1.0 - cross**2, 0.0))
+        return f * (v + cross * u) / scale, -f * (u + cross * v) / scale
+
+    def contravariant_to_normal_velocity(
+        self, velocity: tuple[ArrayLike, ArrayLike], /
+    ) -> tuple[Array, Array]:
+        """Map coordinate-basis velocity components to physical face normals."""
+        first, second = (jnp.asarray(value) for value in velocity)
+        expected = self.cell_shape if first.ndim == 3 else self.horizontal_shape
+        if first.shape != expected or second.shape != expected:
+            raise ValueError(
+                "Contravariant velocity components must have equal cell shapes."
+            )
+        first_scale = self.horizontal_jacobian / jnp.sqrt(
+            self.covariant_metric[..., 1, 1]
+        )
+        second_scale = self.horizontal_jacobian / jnp.sqrt(
+            self.covariant_metric[..., 0, 0]
+        )
+        if first.ndim == 3:
+            first_scale = first_scale[..., None]
+            second_scale = second_scale[..., None]
+        return first_scale * first, second_scale * second
+
+
+    def contravariant_transport(
+        self,
+        velocity: tuple[ArrayLike, ArrayLike],
+        epoch: HydrostaticMetricEpoch,
+        /,
+    ) -> tuple[Array, Array]:
+        """Integrate contravariant layer velocity through physical coordinate faces."""
+        if not isinstance(epoch, HydrostaticMetricEpoch):
+            raise TypeError("epoch must be a HydrostaticMetricEpoch.")
+        normal = self.contravariant_to_normal_velocity(velocity)
+        if normal[0].shape != self.cell_shape:
+            raise ValueError("Layer transport requires cell-shaped velocity components.")
+        return (
+            epoch.x_face_area
+            * _face_neighbor_average(normal[0], 0, self.periodic[0]),
+            epoch.y_face_area
+            * _face_neighbor_average(normal[1], 1, self.periodic[1]),
+        )
 
 class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
     """Prepare Cartesian tensor-z hydrostatic metrics from an FV grid."""
@@ -363,6 +532,13 @@ class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
             y_edge_length=y_edge,
             x_center_distance=x_distance,
             y_center_distance=y_distance,
+            covariant_metric=jnp.broadcast_to(
+                jnp.eye(2, dtype=area.dtype), (nx, ny, 2, 2)
+            ),
+            contravariant_metric=jnp.broadcast_to(
+                jnp.eye(2, dtype=area.dtype), (nx, ny, 2, 2)
+            ),
+            horizontal_jacobian=jnp.ones((nx, ny), dtype=area.dtype),
             reference_vertical_faces=vertical_faces,
             reference_layer_fraction=fraction,
             rest_depth=self.rest_depth,
@@ -482,6 +658,54 @@ class LatitudeLongitudeHydrostaticGridPlan(StrictModule, NonTrainableState):
             y_edge_length=y_edge,
             x_center_distance=x_distance,
             y_center_distance=y_center_distance,
+            covariant_metric=jnp.stack(
+                (
+                    jnp.stack(
+                        (
+                            jnp.broadcast_to(
+                                (self.radius * jnp.cos(lat))[None, :] ** 2,
+                                (nx, ny),
+                            ),
+                            jnp.zeros((nx, ny), dtype=area.dtype),
+                        ),
+                        axis=-1,
+                    ),
+                    jnp.stack(
+                        (
+                            jnp.zeros((nx, ny), dtype=area.dtype),
+                            jnp.full((nx, ny), self.radius**2, dtype=area.dtype),
+                        ),
+                        axis=-1,
+                    ),
+                ),
+                axis=-2,
+            ),
+            contravariant_metric=jnp.stack(
+                (
+                    jnp.stack(
+                        (
+                            jnp.broadcast_to(
+                                1.0 / (self.radius * jnp.cos(lat))[None, :] ** 2,
+                                (nx, ny),
+                            ),
+                            jnp.zeros((nx, ny), dtype=area.dtype),
+                        ),
+                        axis=-1,
+                    ),
+                    jnp.stack(
+                        (
+                            jnp.zeros((nx, ny), dtype=area.dtype),
+                            jnp.full(
+                                (nx, ny), 1.0 / self.radius**2, dtype=area.dtype
+                            ),
+                        ),
+                        axis=-1,
+                    ),
+                ),
+                axis=-2,
+            ),
+            horizontal_jacobian=self.radius**2
+            * jnp.broadcast_to(jnp.cos(lat)[None, :], (nx, ny)),
             reference_vertical_faces=z_f,
             reference_layer_fraction=z_width / jnp.sum(z_width),
             rest_depth=self.rest_depth,

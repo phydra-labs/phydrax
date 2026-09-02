@@ -8,9 +8,12 @@ import math
 from functools import lru_cache
 from typing import cast, Literal, NamedTuple, Sequence, TypeAlias
 
+import equinox as eqx
 import numpy as np
 
 from .._polynomial._orthogonal import standard_normal_hermite_rule_data
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ._quadrature_rules import clenshaw_curtis_data
 
 
@@ -121,6 +124,164 @@ def dense_index(index: SparseIndex, dimension: int, /) -> tuple[int, ...]:
     return tuple(dense)
 
 
+def sparse_index(index: Sequence[int], /) -> SparseIndex:
+    """Compress a dense nonnegative multi-index."""
+    return tuple(
+        (axis, int(level)) for axis, level in enumerate(index) if int(level) != 0
+    )
+
+
+class SmolyakFrontier(StrictModule, NonTrainableState):
+    """Deterministically ordered admissible forward neighbors."""
+
+    candidates: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    anisotropic_costs: tuple[float, ...] = eqx.field(static=True)
+
+
+class SmolyakIndexSet(StrictModule, NonTrainableState):
+    """Validated immutable downward-closed sparse multi-index set."""
+
+    dimension: int = eqx.field(static=True)
+    indices: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        indices: Sequence[Sequence[int]],
+        /,
+    ):
+        dimension_ = int(dimension)
+        if dimension_ < 1:
+            raise ValueError("Smolyak index-set dimension must be positive.")
+        normalized = tuple(tuple(int(level) for level in index) for index in indices)
+        if not normalized:
+            raise ValueError("Smolyak index sets cannot be empty.")
+        if any(
+            len(index) != dimension_ or any(level < 0 for level in index)
+            for index in normalized
+        ):
+            raise ValueError(
+                "Every Smolyak multi-index must be nonnegative with matching dimension."
+            )
+        unique = frozenset(normalized)
+        if len(unique) != len(normalized):
+            raise ValueError("Smolyak index sets cannot contain duplicates.")
+        zero = (0,) * dimension_
+        if zero not in unique:
+            raise ValueError("A downward-closed Smolyak set must contain the zero index.")
+        for index in unique:
+            for axis, level in enumerate(index):
+                if level == 0:
+                    continue
+                predecessor = list(index)
+                predecessor[axis] -= 1
+                if tuple(predecessor) not in unique:
+                    raise ValueError(
+                        "Smolyak index set is not downward closed; "
+                        f"missing predecessor {tuple(predecessor)!r}."
+                    )
+        self.dimension = dimension_
+        self.indices = tuple(sorted(unique, key=lambda index: (sum(index), index)))
+
+    @classmethod
+    def weighted_total_degree(
+        cls,
+        dimension: int,
+        level: int,
+        /,
+        *,
+        anisotropy: Sequence[float] | None = None,
+    ) -> SmolyakIndexSet:
+        return cls(
+            dimension,
+            tuple(
+                dense_index(index, dimension)
+                for index in weighted_total_degree_indices(dimension, level, anisotropy)
+            ),
+        )
+
+    def frontier(
+        self,
+        anisotropy: Sequence[float] | None = None,
+        /,
+    ) -> SmolyakFrontier:
+        weights = normalize_anisotropy(self.dimension, anisotropy)
+        accepted = frozenset(self.indices)
+        candidates: set[tuple[int, ...]] = set()
+        for index in self.indices:
+            for axis in range(self.dimension):
+                candidate = list(index)
+                candidate[axis] += 1
+                candidate_ = tuple(candidate)
+                if candidate_ in accepted:
+                    continue
+                admissible = True
+                for predecessor_axis, level in enumerate(candidate_):
+                    if level == 0:
+                        continue
+                    predecessor = list(candidate_)
+                    predecessor[predecessor_axis] -= 1
+                    if tuple(predecessor) not in accepted:
+                        admissible = False
+                        break
+                if admissible:
+                    candidates.add(candidate_)
+        ordered = tuple(
+            sorted(
+                candidates,
+                key=lambda index: (
+                    math.fsum(level * weights[axis] for axis, level in enumerate(index)),
+                    index,
+                ),
+            )
+        )
+        return SmolyakFrontier(
+            candidates=ordered,
+            anisotropic_costs=tuple(
+                math.fsum(level * weights[axis] for axis, level in enumerate(index))
+                for index in ordered
+            ),
+        )
+
+    def add(self, index: Sequence[int], /) -> SmolyakIndexSet:
+        candidate = tuple(int(level) for level in index)
+        if candidate not in self.frontier().candidates:
+            raise ValueError("Only admissible Smolyak frontier indices may be added.")
+        return SmolyakIndexSet(self.dimension, (*self.indices, candidate))
+
+
+class SmolyakRefinementEpoch(StrictModule, NonTrainableState):
+    """One accepted topology and its proposed deterministic refinement."""
+
+    index_set: SmolyakIndexSet
+    frontier: SmolyakFrontier
+    selected: tuple[int, ...] | None = eqx.field(static=True)
+    indicators: tuple[float, ...] = eqx.field(static=True)
+    new_work: tuple[int, ...] = eqx.field(static=True)
+    status: str = eqx.field(static=True)
+
+
+def smolyak_terms_for_index_set(index_set: SmolyakIndexSet, /) -> tuple[SmolyakTerm, ...]:
+    """Return combination terms for an arbitrary downward-closed index set."""
+    if not isinstance(index_set, SmolyakIndexSet):
+        raise TypeError("index_set must be a SmolyakIndexSet.")
+    sparse = tuple(sparse_index(index) for index in index_set.indices)
+    coefficients = {index: 1 for index in sparse}
+    for axis in range(index_set.dimension):
+        updates = tuple(
+            (_decrement(index, axis), -coefficients[index])
+            for index in sparse
+            if axis_level(index, axis) > 0
+        )
+        for lower, delta in updates:
+            coefficients[lower] += delta
+    return tuple(
+        SmolyakTerm(index, coefficients[index])
+        for index in sparse
+        if coefficients[index] != 0
+    )
+
+
 def _maximum_level(
     products: tuple[float, ...],
     budget: float,
@@ -186,22 +347,16 @@ def _smolyak_terms_cached(
     level: int,
     anisotropy: tuple[float, ...],
 ) -> tuple[SmolyakTerm, ...]:
-    indices = _weighted_total_degree_indices_cached(dimension, level, anisotropy)
-    coefficients = {index: 1 for index in indices}
-    by_axis: list[list[SparseIndex]] = [[] for _ in range(dimension)]
-    for index in indices:
-        for axis, _ in index:
-            by_axis[axis].append(index)
-    for axis, members in enumerate(by_axis):
-        updates = tuple(
-            (_decrement(index, axis), -coefficients[index]) for index in members
+    return smolyak_terms_for_index_set(
+        SmolyakIndexSet(
+            dimension,
+            tuple(
+                dense_index(index, dimension)
+                for index in _weighted_total_degree_indices_cached(
+                    dimension, level, anisotropy
+                )
+            ),
         )
-        for lower, delta in updates:
-            coefficients[lower] += delta
-    return tuple(
-        SmolyakTerm(index, coefficients[index])
-        for index in indices
-        if coefficients[index] != 0
     )
 
 
@@ -330,6 +485,9 @@ __all__ = [
     "SmolyakAxisData",
     "SmolyakAxisRule",
     "SmolyakTerm",
+    "SmolyakFrontier",
+    "SmolyakIndexSet",
+    "SmolyakRefinementEpoch",
     "SparseIndex",
     "axis_level",
     "dense_index",
@@ -337,5 +495,7 @@ __all__ = [
     "normalize_axis_rules",
     "smolyak_axis_data",
     "smolyak_terms",
+    "smolyak_terms_for_index_set",
+    "sparse_index",
     "weighted_total_degree_indices",
 ]

@@ -9,11 +9,13 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...linalg import AbstractSparseLinearOperator, ArraySpace
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 
 
@@ -83,12 +85,47 @@ def _conic_bound_indices(
     )
 
 
+def _conic_matrix_mv(
+    matrix: Array | AbstractSparseLinearOperator, vector: Array, /
+) -> Array:
+    if isinstance(matrix, AbstractSparseLinearOperator):
+        return jnp.asarray(matrix.mv(vector))
+    return oe.contract("...ij,...j->...i", matrix, vector)
+
+
+def _conic_matrix_transpose_mv(
+    matrix: Array | AbstractSparseLinearOperator, vector: Array, /
+) -> Array:
+    if isinstance(matrix, AbstractSparseLinearOperator):
+        return jnp.asarray(matrix.transpose_mv(vector))
+    return oe.contract("...ji,...j->...i", matrix, vector)
+
+
+def _conic_quadratic_mv(
+    quadratic: Array | AbstractSparseLinearOperator | None,
+    vector: Array,
+    /,
+) -> Array:
+    if quadratic is None:
+        return jnp.zeros_like(vector)
+    return _conic_matrix_mv(quadratic, vector)
+
+
+def _conic_operator_arrays(
+    operator: Array | AbstractSparseLinearOperator, /
+) -> tuple[Array, ...]:
+    if isinstance(operator, AbstractSparseLinearOperator):
+        storage = operator.sparse_storage()
+        return (storage.values, storage.indices, storage.indptr)
+    return (operator,)
+
+
 class ConicProgram(StrictModule):
     """Quadratic-conic program ``min 1/2 xᵀPx + qᵀx`` with ``Ax+s=b, s in K``."""
 
-    quadratic: Array | None
+    quadratic: Array | AbstractSparseLinearOperator | None
     linear: Array
-    constraint_matrix: Array
+    constraint_matrix: Array | AbstractSparseLinearOperator
     constraint_rhs: Array
     lower_bounds: Array
     upper_bounds: Array
@@ -97,15 +134,20 @@ class ConicProgram(StrictModule):
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     num_variables: int = eqx.field(static=True)
     num_constraints: int = eqx.field(static=True)
+    constraint_is_sparse: bool = eqx.field(static=True)
+    quadratic_is_sparse: bool = eqx.field(static=True)
+    fixed_bound_indices: tuple[int, ...] = eqx.field(static=True)
+    lower_bound_indices: tuple[int, ...] = eqx.field(static=True)
+    upper_bound_indices: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
     convexity_evidence: str = eqx.field(static=True)
 
     def __init__(
         self,
-        quadratic: ArrayLike | None,
+        quadratic: ArrayLike | AbstractSparseLinearOperator | None,
         linear: ArrayLike,
-        constraint_matrix: ArrayLike,
+        constraint_matrix: ArrayLike | AbstractSparseLinearOperator,
         constraint_rhs: ArrayLike,
         cone: AbstractConvexCone,
         /,
@@ -115,18 +157,40 @@ class ConicProgram(StrictModule):
         convexity_evidence: str = "asserted",
     ):
         linear_ = jnp.asarray(linear)
-        matrix = jnp.asarray(constraint_matrix)
         rhs = jnp.asarray(constraint_rhs)
         if linear_.ndim < 1:
             raise ValueError("linear must have at least one dimension.")
         variables = int(linear_.shape[-1])
         if variables < 1:
             raise ValueError("ConicProgram requires at least one decision variable.")
-        if matrix.ndim < 2 or int(matrix.shape[-1]) != variables:
-            raise ValueError(
-                "constraint_matrix must end in shape (constraints, variables)."
-            )
-        constraints = int(matrix.shape[-2])
+        matrix_sparse = isinstance(constraint_matrix, AbstractSparseLinearOperator)
+        if matrix_sparse:
+            matrix = constraint_matrix
+            if (
+                not isinstance(matrix.source, ArraySpace)
+                or not isinstance(matrix.target, ArraySpace)
+                or matrix.source.shape != (variables,)
+                or len(matrix.target.shape) != 1
+                or not matrix.capabilities.transpose
+            ):
+                raise ValueError(
+                    "Sparse constraint_matrix must map the variable vector to "
+                    "one constraint vector and provide transpose action."
+                )
+            constraints = int(matrix.target.shape[0])
+            matrix_dtype = matrix.source.dtype
+            matrix_batch = matrix.batch_shape
+            matrix_topology = matrix.operator_id
+        else:
+            matrix = jnp.asarray(constraint_matrix)
+            if matrix.ndim < 2 or int(matrix.shape[-1]) != variables:
+                raise ValueError(
+                    "constraint_matrix must end in shape (constraints, variables)."
+                )
+            constraints = int(matrix.shape[-2])
+            matrix_dtype = matrix.dtype
+            matrix_batch = matrix.shape[:-2]
+            matrix_topology = "dense"
         if rhs.ndim < 1 or int(rhs.shape[-1]) != constraints:
             raise ValueError(
                 f"constraint_rhs must end in shape ({constraints},); got {rhs.shape}."
@@ -137,35 +201,65 @@ class ConicProgram(StrictModule):
             raise ValueError(
                 f"cone dimension {cone.dimension} does not match {constraints} constraints."
             )
-        quadratic_ = None if quadratic is None else jnp.asarray(quadratic)
-        if quadratic_ is not None and (
-            quadratic_.ndim < 2 or tuple(quadratic_.shape[-2:]) != (variables, variables)
-        ):
-            raise ValueError(
-                f"quadratic must end in shape ({variables}, {variables}) or be None."
-            )
-        arrays = (linear_, matrix, rhs) + (() if quadratic_ is None else (quadratic_,))
-        if any(jnp.issubdtype(value.dtype, jnp.complexfloating) for value in arrays):
+        quadratic_sparse = isinstance(quadratic, AbstractSparseLinearOperator)
+        if quadratic_sparse:
+            quadratic_ = quadratic
+            if (
+                not isinstance(quadratic_.source, ArraySpace)
+                or not quadratic_.source.compatible(quadratic_.target)
+                or quadratic_.source.shape != (variables,)
+                or not quadratic_.properties.self_adjoint
+                or not quadratic_.properties.positive_semidefinite
+                or quadratic_.properties.evidence_for("positive_semidefinite")
+                not in ("construction", "transformed", "verified")
+            ):
+                raise ValueError(
+                    "Sparse quadratic must be a constructively or verifiably PSD "
+                    "self-adjoint endomorphism on the variable vector."
+                )
+            quadratic_dtype = quadratic_.source.dtype
+            quadratic_batch = quadratic_.batch_shape
+            quadratic_topology = quadratic_.operator_id
+        else:
+            quadratic_ = None if quadratic is None else jnp.asarray(quadratic)
+            if quadratic_ is not None and (
+                quadratic_.ndim < 2
+                or tuple(quadratic_.shape[-2:]) != (variables, variables)
+            ):
+                raise ValueError(
+                    f"quadratic must end in shape ({variables}, {variables}) or be None."
+                )
+            quadratic_dtype = linear_.dtype if quadratic_ is None else quadratic_.dtype
+            quadratic_batch = () if quadratic_ is None else quadratic_.shape[:-2]
+            quadratic_topology = "none" if quadratic_ is None else "dense"
+        dtypes = (linear_.dtype, rhs.dtype, matrix_dtype, quadratic_dtype)
+        if any(jnp.issubdtype(dtype, jnp.complexfloating) for dtype in dtypes):
             raise TypeError("ConicProgram data must be real-valued.")
-        dtype = jnp.result_type(*(value.dtype for value in arrays), jnp.float32)
+        dtype = jnp.result_type(*dtypes, jnp.float32)
+        if matrix_sparse and np.dtype(matrix_dtype) != np.dtype(dtype):
+            raise TypeError("Sparse constraint dtype must match canonical program dtype.")
+        if quadratic_sparse and np.dtype(quadratic_dtype) != np.dtype(dtype):
+            raise TypeError("Sparse quadratic dtype must match canonical program dtype.")
         linear_ = linear_.astype(dtype)
-        matrix = matrix.astype(dtype)
         rhs = rhs.astype(dtype)
-        if quadratic_ is not None:
+        if not matrix_sparse:
+            matrix = matrix.astype(dtype)
+        if quadratic_ is not None and not quadratic_sparse:
             quadratic_ = quadratic_.astype(dtype)
             quadratic_ = 0.5 * quadratic_ + 0.5 * jnp.swapaxes(quadratic_, -1, -2)
         batch = _broadcast_shape(
             (
                 linear_.shape[:-1],
-                matrix.shape[:-2],
+                tuple(matrix_batch),
                 rhs.shape[:-1],
-                () if quadratic_ is None else quadratic_.shape[:-2],
+                tuple(quadratic_batch),
             )
         )
         linear_ = jnp.broadcast_to(linear_, batch + (variables,))
-        matrix = jnp.broadcast_to(matrix, batch + (constraints, variables))
+        if not matrix_sparse:
+            matrix = jnp.broadcast_to(matrix, batch + (constraints, variables))
         rhs = jnp.broadcast_to(rhs, batch + (constraints,))
-        if quadratic_ is not None:
+        if quadratic_ is not None and not quadratic_sparse:
             quadratic_ = jnp.broadcast_to(quadratic_, batch + (variables, variables))
         bounds_ = Bounds() if bounds is None else bounds
         if not isinstance(bounds_, Bounds):
@@ -174,10 +268,7 @@ class ConicProgram(StrictModule):
         lower = jnp.asarray(lower, dtype=dtype)
         upper = jnp.asarray(upper, dtype=dtype)
         fixed_indices, lower_indices, upper_indices = _conic_bound_indices(
-            bounds_,
-            batch,
-            variables,
-            dtype,
+            bounds_, batch, variables, dtype
         )
         identifier = str(problem_id)
         evidence = str(convexity_evidence)
@@ -194,6 +285,11 @@ class ConicProgram(StrictModule):
         self.batch_shape = batch
         self.num_variables = variables
         self.num_constraints = constraints
+        self.constraint_is_sparse = matrix_sparse
+        self.quadratic_is_sparse = quadratic_sparse
+        self.fixed_bound_indices = tuple(int(index) for index in fixed_indices)
+        self.lower_bound_indices = tuple(int(index) for index in lower_indices)
+        self.upper_bound_indices = tuple(int(index) for index in upper_indices)
         self.problem_id = identifier
         self.convexity_evidence = evidence
         self.structure_id = canonical_fingerprint(
@@ -204,6 +300,8 @@ class ConicProgram(StrictModule):
                 "variables": variables,
                 "constraints": constraints,
                 "quadratic": quadratic_ is not None,
+                "quadratic_topology": quadratic_topology,
+                "constraint_topology": matrix_topology,
                 "bound_roles": {
                     "fixed": fixed_indices.tolist(),
                     "lower": lower_indices.tolist(),

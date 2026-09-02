@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -16,6 +15,7 @@ from .._strict import StrictModule
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
 from ._proposals import AbstractProposal
+from ._targets import FullMarkovTarget, IncrementalMarkovTarget, MarkovTargetState
 
 
 _PROPOSAL_ADDRESS = SampleAddress(
@@ -30,6 +30,25 @@ _ACCEPTANCE_ADDRESS = SampleAddress(
     target="acceptance",
     role="transition",
 )
+
+_RAW_TARGET_ID = "raw-callable"
+
+
+def _resolve_target(target, /):
+    if isinstance(target, (FullMarkovTarget, IncrementalMarkovTarget)):
+        return target
+    if callable(target):
+        return FullMarkovTarget(target, target_id=_RAW_TARGET_ID)
+    raise TypeError(
+        "target must be callable, FullMarkovTarget, or IncrementalMarkovTarget."
+    )
+
+
+def _bool_scalar(value: Any, /, *, role: str) -> Array:
+    array = jnp.asarray(value, dtype=bool)
+    if array.shape != ():
+        raise ValueError(f"{role} must return one scalar; got shape {array.shape}.")
+    return array
 
 
 def _tree_all_finite(tree: PyTree[Any], /) -> Array:
@@ -65,25 +84,19 @@ def _real_scalar(value: Any, /, *, role: str) -> Array:
     return array.astype(jnp.result_type(array, float))
 
 
-def _tree_select(predicate: Array, accepted: PyTree[Any], rejected: PyTree[Any]):
-    return jax.tree_util.tree_map(
-        lambda proposed, current: jnp.where(predicate, proposed, current),
-        accepted,
-        rejected,
-    )
-
-
 def _swap_draw_chain(tree: PyTree[Array], /) -> PyTree[Array]:
     return jax.tree_util.tree_map(lambda value: jnp.swapaxes(value, 0, 1), tree)
 
 
 class MarkovState(StrictModule):
-    """Persistent chain positions and their current target values."""
+    """Persistent chain positions and their current target caches."""
 
     position: PyTree[Array]
     log_target: Array
+    cache: PyTree[Array]
     valid: Array
     step_index: Array
+    target_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -91,8 +104,10 @@ class MarkovState(StrictModule):
         log_target: Array,
         /,
         *,
+        cache: PyTree[Any] = (),
         valid: Array | None = None,
         step_index: Array | int = 0,
+        target_id: str = _RAW_TARGET_ID,
     ):
         count = _chain_count(position)
         positions = jax.tree_util.tree_map(jnp.asarray, position)
@@ -103,18 +118,41 @@ class MarkovState(StrictModule):
             )
         if jnp.iscomplexobj(values):
             raise TypeError("Markov log targets must be real-valued.")
-        validity = (
-            jnp.isfinite(values) if valid is None else jnp.asarray(valid, dtype=bool)
+        caches = jax.tree_util.tree_map(jnp.asarray, cache)
+        cache_leaves = jax.tree_util.tree_leaves(caches)
+        if any(leaf.ndim < 1 or int(leaf.shape[0]) != count for leaf in cache_leaves):
+            raise ValueError("Every target-cache leaf must share the chain axis.")
+        declared_valid = (
+            jnp.ones((count,), dtype=bool)
+            if valid is None
+            else jnp.asarray(valid, dtype=bool)
         )
-        if validity.shape != (count,):
-            raise ValueError(f"valid must have shape ({count},); got {validity.shape}.")
+        if declared_valid.shape != (count,):
+            raise ValueError(
+                f"valid must have shape ({count},); got {declared_valid.shape}."
+            )
+        cache_finite = jnp.ones((count,), dtype=bool)
+        for leaf in cache_leaves:
+            axes = tuple(range(1, leaf.ndim))
+            finite = jnp.isfinite(leaf)
+            cache_finite = cache_finite & (jnp.all(finite, axis=axes) if axes else finite)
+        validity = (
+            declared_valid
+            & jnp.isfinite(values)
+            & jax.vmap(_tree_all_finite)(positions)
+            & cache_finite
+        )
         index = jnp.asarray(step_index, dtype=jnp.uint32)
         if index.shape != ():
             raise ValueError("step_index must be scalar.")
+        if not isinstance(target_id, str) or not target_id:
+            raise ValueError("target_id must be non-empty.")
         self.position = positions
         self.log_target = values
+        self.cache = caches
         self.valid = validity
         self.step_index = index
+        self.target_id = target_id
 
     @property
     def num_chains(self) -> int:
@@ -143,6 +181,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
     root_key: Array
     kernel_id: str = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
+    target_id: str = eqx.field(static=True)
     warmup_steps: int = eqx.field(static=True)
     steps_per_draw: int = eqx.field(static=True)
 
@@ -159,6 +198,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         root_key: Array,
         kernel_id: str,
         proposal_id: str,
+        target_id: str,
         warmup_steps: int,
         steps_per_draw: int,
     ):
@@ -190,6 +230,8 @@ class MarkovSampleResult(AbstractChainSampleResult):
             raise ValueError("kernel_id must be non-empty.")
         if not isinstance(proposal_id, str) or not proposal_id:
             raise ValueError("proposal_id must be non-empty.")
+        if not isinstance(target_id, str) or not target_id:
+            raise ValueError("target_id must be non-empty.")
         self.samples = samples
         self.log_target = values
         self.accepted = jnp.asarray(accepted, dtype=bool)
@@ -200,6 +242,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         self.root_key = jnp.asarray(root_key)
         self.kernel_id = kernel_id
         self.proposal_id = proposal_id
+        self.target_id = target_id
         self.warmup_steps = int(warmup_steps)
         self.steps_per_draw = int(steps_per_draw)
 
@@ -213,7 +256,10 @@ class MarkovSampleResult(AbstractChainSampleResult):
 
     @property
     def chain_provenance(self) -> str:
-        return f"markov:{self.kernel_id}:{self.proposal_id}"
+        provenance = f"markov:{self.kernel_id}:{self.proposal_id}"
+        if self.target_id == _RAW_TARGET_ID:
+            return provenance
+        return f"{provenance}:{self.target_id}"
 
     @property
     def acceptance_rate(self) -> Array:
@@ -242,58 +288,77 @@ class MetropolisHastings(StrictModule):
 
     def initialize(
         self,
-        log_target: Callable[[PyTree[Any]], Any],
+        target,
         initial_positions: PyTree[Any],
         /,
     ) -> MarkovState:
-        if not callable(log_target):
-            raise TypeError("log_target must be callable.")
+        resolved = _resolve_target(target)
         _chain_count(initial_positions)
         positions = jax.tree_util.tree_map(jnp.asarray, initial_positions)
-        values = jax.vmap(
-            lambda position: _real_scalar(log_target(position), role="log_target")
-        )(positions)
-        valid = jnp.isfinite(values) & jax.vmap(_tree_all_finite)(positions)
+        target_states = jax.vmap(resolved.initialize)(positions)
+        valid = target_states.valid & jax.vmap(_tree_all_finite)(positions)
         values = eqx.error_if(
-            values,
+            target_states.log_target,
             ~jnp.all(valid),
             "Initial Markov positions must have finite positions and log targets.",
         )
-        return MarkovState(positions, values, valid=valid)
+        return MarkovState(
+            positions,
+            values,
+            cache=target_states.cache,
+            valid=valid,
+            target_id=resolved.target_id,
+        )
 
     def refresh(
         self,
-        log_target: Callable[[PyTree[Any]], Any],
+        target,
         state: MarkovState,
         /,
     ) -> MarkovState:
+        resolved = _resolve_target(target)
         if not isinstance(state, MarkovState):
             raise TypeError("state must be a MarkovState.")
-        values = jax.vmap(
-            lambda position: _real_scalar(log_target(position), role="log_target")
-        )(state.position)
-        valid = jnp.isfinite(values) & jax.vmap(_tree_all_finite)(state.position)
-        values = eqx.error_if(
-            values,
-            ~jnp.all(valid),
-            "Refreshed Markov positions must have finite log targets.",
+        if state.target_id != resolved.target_id:
+            raise ValueError("Target identity does not match the Markov state.")
+        current = MarkovTargetState(
+            position=state.position,
+            log_target=state.log_target,
+            cache=state.cache,
+            valid=state.valid,
         )
+        if isinstance(resolved, IncrementalMarkovTarget):
+            refreshed = jax.vmap(resolved.refresh)(current)
+            values = refreshed.log_target
+        else:
+            refreshed = jax.vmap(resolved.initialize)(state.position)
+            values = eqx.error_if(
+                refreshed.log_target,
+                ~jnp.all(refreshed.valid),
+                "Refreshed Markov positions must have finite log targets.",
+            )
+        valid = refreshed.valid & jax.vmap(_tree_all_finite)(state.position)
         return MarkovState(
             state.position,
             values,
+            cache=refreshed.cache,
             valid=valid,
             step_index=state.step_index,
+            target_id=resolved.target_id,
         )
 
     def step(
         self,
-        log_target: Callable[[PyTree[Any]], Any],
+        target,
         state: MarkovState,
         key: Key[Array, ""],
         /,
     ) -> tuple[MarkovState, MarkovTransitionInfo]:
+        resolved = _resolve_target(target)
         if not isinstance(state, MarkovState):
             raise TypeError("state must be a MarkovState.")
+        if state.target_id != resolved.target_id:
+            raise ValueError("Target identity does not match the Markov state.")
         chain_indices = jnp.arange(state.num_chains, dtype=jnp.uint32)
         proposal_keys = jax.vmap(
             lambda chain: derive_key(key, _PROPOSAL_ADDRESS, chain, state.step_index)
@@ -302,59 +367,86 @@ class MetropolisHastings(StrictModule):
             lambda chain: derive_key(key, _ACCEPTANCE_ADDRESS, chain, state.step_index)
         )(chain_indices)
 
-        def one_step(current, current_log_target, proposal_key, acceptance_key):
-            proposed = self.proposal.sample(proposal_key, current)
-            proposed_log_target = _real_scalar(log_target(proposed), role="log_target")
-            forward = _real_scalar(
-                self.proposal.log_prob(proposed, current),
-                role="proposal.log_prob",
+        def one_step(
+            current,
+            current_log_target,
+            current_cache,
+            current_valid,
+            proposal_key,
+            acceptance_key,
+        ):
+            current_target = MarkovTargetState(
+                position=current,
+                log_target=current_log_target,
+                cache=current_cache,
+                valid=current_valid,
             )
-            reverse = _real_scalar(
-                self.proposal.log_prob(current, proposed),
-                role="proposal.log_prob",
-            )
-            position_valid = _tree_all_finite(proposed)
-            target_valid = ~jnp.isnan(proposed_log_target) & ~jnp.isposinf(
-                proposed_log_target
-            )
+            move = self.proposal.propose(proposal_key, current)
+            forward = _real_scalar(move.log_forward, role="proposal.log_forward")
+            reverse = _real_scalar(move.log_reverse, role="proposal.log_reverse")
             proposal_valid = (
-                position_valid & jnp.isfinite(forward) & jnp.isfinite(reverse)
+                _bool_scalar(move.valid, role="proposal validity")
+                & _tree_all_finite(move.position)
+                & jnp.isfinite(forward)
+                & jnp.isfinite(reverse)
+            )
+            target_proposal = resolved.propose(
+                current_target, move.position, move.payload
+            )
+            target_valid = current_valid & _bool_scalar(
+                target_proposal.valid, role="target proposal validity"
             )
             valid = target_valid & proposal_valid
-            raw_ratio = proposed_log_target - current_log_target + reverse - forward
-            log_ratio = jnp.where(valid, raw_ratio, -jnp.inf)
+            raw_ratio = target_proposal.log_ratio + reverse - forward
+            log_ratio = jnp.where(valid & jnp.isfinite(raw_ratio), raw_ratio, -jnp.inf)
             log_uniform = jnp.log(jax.random.uniform(acceptance_key))
             accepted = valid & (log_uniform < jnp.minimum(log_ratio, 0.0))
-            next_position = _tree_select(accepted, proposed, current)
-            next_log_target = jnp.where(accepted, proposed_log_target, current_log_target)
-            return (
-                next_position,
-                next_log_target,
-                MarkovTransitionInfo(
-                    accepted=accepted,
-                    log_acceptance_ratio=log_ratio,
-                    proposal_valid=proposal_valid,
-                    target_valid=target_valid,
-                ),
+            committed = resolved.commit(
+                current_target, move.position, target_proposal, accepted
+            )
+            return committed, MarkovTransitionInfo(
+                accepted=accepted,
+                log_acceptance_ratio=log_ratio,
+                proposal_valid=proposal_valid,
+                target_valid=target_valid,
             )
 
-        positions, values, info = jax.vmap(one_step)(
+        target_states, info = jax.vmap(one_step)(
             state.position,
             state.log_target,
+            state.cache,
+            state.valid,
             proposal_keys,
             acceptance_keys,
         )
+        next_index = state.step_index + jnp.asarray(1, dtype=jnp.uint32)
+        if isinstance(resolved, IncrementalMarkovTarget):
+            refresh_due = (next_index % resolved.refresh_cadence) == 0
+            target_states = jax.lax.cond(
+                refresh_due,
+                lambda values: jax.vmap(resolved.refresh)(values),
+                lambda values: values,
+                target_states,
+            )
+            info = MarkovTransitionInfo(
+                accepted=info.accepted,
+                log_acceptance_ratio=info.log_acceptance_ratio,
+                proposal_valid=info.proposal_valid,
+                target_valid=info.target_valid & target_states.valid,
+            )
         next_state = MarkovState(
-            positions,
-            values,
-            valid=jnp.isfinite(values),
-            step_index=state.step_index + jnp.asarray(1, dtype=jnp.uint32),
+            target_states.position,
+            target_states.log_target,
+            cache=target_states.cache,
+            valid=target_states.valid,
+            step_index=next_index,
+            target_id=resolved.target_id,
         )
         return next_state, info
 
 
 def sample_markov(
-    log_target: Callable[[PyTree[Any]], Any],
+    target,
     kernel: MetropolisHastings,
     state: MarkovState,
     /,
@@ -365,8 +457,7 @@ def sample_markov(
     warmup_steps: int = 0,
 ) -> MarkovSampleResult:
     """Advance persistent chains and retain chain-by-draw samples."""
-    if not callable(log_target):
-        raise TypeError("log_target must be callable.")
+    resolved = _resolve_target(target)
     if not isinstance(kernel, MetropolisHastings):
         raise TypeError("kernel must be a MetropolisHastings instance.")
     if not isinstance(state, MarkovState):
@@ -382,14 +473,14 @@ def sample_markov(
         raise ValueError("warmup_steps must be non-negative.")
 
     def discard_step(carry, _):
-        next_state, _info = kernel.step(log_target, carry, key)
+        next_state, _info = kernel.step(resolved, carry, key)
         return next_state, None
 
     warmed, _ = jax.lax.scan(discard_step, state, xs=None, length=warmup)
 
     def collect_draw(carry, _):
         def transition_step(inner, __):
-            next_state, info = kernel.step(log_target, inner, key)
+            next_state, info = kernel.step(resolved, inner, key)
             return next_state, info
 
         next_state, infos = jax.lax.scan(
@@ -426,6 +517,7 @@ def sample_markov(
         root_key=key,
         kernel_id=kernel.kernel_id,
         proposal_id=kernel.proposal.proposal_id,
+        target_id=resolved.target_id,
         warmup_steps=warmup,
         steps_per_draw=transitions,
     )

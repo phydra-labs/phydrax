@@ -2502,18 +2502,22 @@ def compile_semidiscrete_pde(
         PseudospectralMethodPlan,
         TensorSpectralDiscretization,
     )
+    from ..discretization.spectral import SphericalSpectralDiscretization
     from ..solver._semilinear_drift import SemilinearDrift
 
     if method not in ("auto", "direct", "semilinear"):
         raise ValueError("method must be 'auto', 'direct', or 'semilinear'.")
     if (
-        isinstance(discretization, TensorSpectralDiscretization)
+        isinstance(
+            discretization,
+            (TensorSpectralDiscretization, SphericalSpectralDiscretization),
+        )
         and spatial_method is not None
     ):
         if not isinstance(spatial_method, PseudospectralMethodPlan):
             raise TypeError(
-                "Tensor spectral compilation requires a PseudospectralMethodPlan "
-                "as its third positional argument."
+                "Spectral compilation requires a PseudospectralMethodPlan as "
+                "its third positional argument."
             )
         from ._spectral_compile import compile_spectral_pde
 

@@ -566,3 +566,19 @@ and factor-versus-explicit storage evidence before using it downstream.
 - Need a numerical result to drive branch switching, sensitivities, or control:
   inspect its status and certificate/evidence first; do not consume a value solely
   because it is finite.
+
+## Preparing a structural DAE epoch
+
+Build `DAEComponent` values from finite shaped variable jets and residual blocks
+whose `DAEDerivativeIncidence` lists are authoritative. Connect compatible
+`DAEPort` values with signed `DAEConnection` flow orientations, then call
+`analyze_dae_structure` with explicit differentiation and tear capacities. Stop on
+any unmatched name or exhausted capacity. A successful analysis reports a
+conditional structural index; it is not a global analytic-index theorem.
+
+`compile_acausal_dae` verifies undeclared sample JVP actions, lowers the fixed
+matching/differentiation selection into the ordinary DAE runtime, and retains an
+original-equation audit. Construct `DifferentialAlgebraicProblem` with
+`initialization="structural"` only when those derived masks are intentionally the
+initialization contract. Rebuild the epoch after connector topology, incidence,
+matching, tear choice, sparse pattern, or event order changes.

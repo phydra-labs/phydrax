@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
@@ -31,6 +32,62 @@ from phydrax.nn.operator.engine import AbstractOperatorModel
 
 
 CNOActivation = Literal["gelu", "silu", "tanh"]
+ConvolutionAxisPolicy = Literal[
+    "periodic_fourier",
+    "dirichlet_sine",
+    "neumann_cosine",
+    "polynomial",
+]
+
+
+class ConvolutionSupportPlan(StrictModule):
+    """Explicit per-axis boundary/basis contract for CNO and UNO."""
+
+    axis_policies: tuple[ConvolutionAxisPolicy, ...] = eqx.field(static=True)
+    basis_identities: tuple[str, ...] = eqx.field(static=True)
+    minimum_observed_mass: float = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        axis_policies: Sequence[ConvolutionAxisPolicy],
+        /,
+        *,
+        basis_identities: Sequence[str] = (),
+        minimum_observed_mass: float = 1.0e-8,
+    ):
+        policies = tuple(axis_policies)
+        valid = {
+            "periodic_fourier",
+            "dirichlet_sine",
+            "neumann_cosine",
+            "polynomial",
+        }
+        if not policies or any(policy not in valid for policy in policies):
+            raise ValueError("Convolution support plan has an invalid axis policy.")
+        identities = tuple(str(value) for value in basis_identities)
+        if identities and len(identities) != len(policies):
+            raise ValueError("basis_identities must align with axis policies.")
+        threshold = float(minimum_observed_mass)
+        if not np.isfinite(threshold) or threshold <= 0.0:
+            raise ValueError("minimum_observed_mass must be finite and positive.")
+        self.axis_policies = policies
+        self.basis_identities = identities
+        self.minimum_observed_mass = threshold
+        self.plan_id = f"convolution-support:{policies}:{identities}:{threshold}"
+
+    @property
+    def periodic(self) -> bool:
+        return all(policy == "periodic_fourier" for policy in self.axis_policies)
+
+    def validate_axes(self, axes: Sequence[OperatorAxis], /) -> None:
+        if len(axes) != len(self.axis_policies):
+            raise ValueError("Convolution support plan dimension does not match axes.")
+        for axis, policy in zip(axes, self.axis_policies, strict=True):
+            if policy == "periodic_fourier" and not axis.periodic:
+                raise ValueError("Periodic Fourier convolution requires periodic axes.")
+            if policy != "periodic_fourier" and axis.periodic:
+                raise ValueError("Bounded convolution policies require nonperiodic axes.")
 
 
 def _activate(name: CNOActivation, values: Array, /) -> Array:
@@ -152,6 +209,41 @@ def _validate_coincident_axes(
     return checked
 
 
+def _validate_support_coincident_axes(
+    token: Array,
+    source_axes: tuple[OperatorAxis, ...],
+    query_axes: tuple[OperatorAxis, ...],
+    plan: ConvolutionSupportPlan,
+    /,
+    *,
+    owner: str,
+) -> Array:
+    if plan.periodic:
+        return _validate_coincident_axes(
+            token,
+            source_axes,
+            query_axes,
+            len(plan.axis_policies),
+            owner=owner,
+        )
+    plan.validate_axes(source_axes)
+    plan.validate_axes(query_axes)
+    checked = token
+    for source, query in zip(source_axes, query_axes, strict=True):
+        if (
+            source.name != query.name
+            or source.periodic != query.periodic
+            or source.nodes.shape != query.nodes.shape
+        ):
+            raise ValueError(f"{owner} requires coincident prepared support axes.")
+        checked = _error_if_invalid(
+            checked,
+            jnp.logical_not(jnp.array_equal(source.nodes, query.nodes)),
+            f"{owner} requires coincident source/query nodes.",
+        )
+    return checked
+
+
 def _coordinate_features(
     axes: tuple[OperatorAxis, ...],
     case_shape: tuple[int, ...],
@@ -201,6 +293,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
 
     activation: CNOActivation | None
     oversample_factor: int
+    extension_modes: tuple[ConvolutionAxisPolicy, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -211,6 +304,8 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         kernel_size: int | Sequence[int] = 3,
         activation: CNOActivation | None = "gelu",
         oversample_factor: int = 2,
+        circular: bool = True,
+        extension_modes: Sequence[ConvolutionAxisPolicy] | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         super().__init__(
@@ -219,12 +314,19 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             out_channels=out_channels,
             kernel_size=kernel_size,
             padding="SAME",
-            circular=True,
+            circular=bool(circular),
             use_bias=True,
             key=key,
         )
         self.activation = activation
         self.oversample_factor = int(oversample_factor)
+        self.extension_modes = (
+            ("periodic_fourier",) * int(spatial_ndim)
+            if extension_modes is None
+            else tuple(extension_modes)
+        )
+        if len(self.extension_modes) != int(spatial_ndim):
+            raise ValueError("extension_modes must match spatial_ndim.")
         if self.oversample_factor < 1:
             raise ValueError("oversample_factor must be at least one.")
 
@@ -249,6 +351,8 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
                 self.spatial_ndim,
                 evidence="exact",
             )
+        if not self.circular:
+            return support
         return _dependency_on_periodic_fourier_axes(
             support,
             axes,
@@ -264,20 +368,84 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         target_mask: ArrayLike | None = None,
         quadrature: ArrayLike | None = None,
     ) -> Array:
-        output = super().__call__(
-            values,
-            source_mask=source_mask,
-            target_mask=target_mask,
-            quadrature=quadrature,
+        original_shape = tuple(
+            int(size) for size in jnp.asarray(values).shape[-self.spatial_ndim - 1 : -1]
         )
+        halos = tuple(size // 2 for size in self.kernel_size)
+
+        def extend(array, *, channels: bool):
+            result = jnp.asarray(array)
+            start = result.ndim - self.spatial_ndim - (1 if channels else 0)
+            for local_axis, (width, mode) in enumerate(
+                zip(halos, self.extension_modes, strict=True)
+            ):
+                if self.circular or width == 0:
+                    continue
+                pads = [(0, 0)] * result.ndim
+                pads[start + local_axis] = (width, width)
+                if mode in ("neumann_cosine", "dirichlet_sine"):
+                    result = jnp.pad(result, pads, mode="reflect")
+                    if mode == "dirichlet_sine":
+                        sign = jnp.ones(
+                            (result.shape[start + local_axis],),
+                            dtype=result.dtype,
+                        )
+                        sign = sign.at[:width].set(-1)
+                        sign = sign.at[-width:].set(-1)
+                        shape = [1] * result.ndim
+                        shape[start + local_axis] = sign.size
+                        result = result * sign.reshape(tuple(shape))
+                else:
+                    result = jnp.pad(result, pads, mode="constant")
+            return result
+
+        extended_values = extend(values, channels=True)
+        extended_mask = (
+            None
+            if source_mask is None
+            else extend(jnp.asarray(source_mask, dtype=bool), channels=False)
+        )
+        extended_quadrature = (
+            None if quadrature is None else extend(quadrature, channels=False)
+        )
+        output = super().__call__(
+            extended_values,
+            source_mask=extended_mask,
+            target_mask=None,
+            quadrature=extended_quadrature,
+        )
+        if not self.circular:
+            start = output.ndim - self.spatial_ndim - 1
+            slices = [slice(None)] * output.ndim
+            for local_axis, (width, size) in enumerate(
+                zip(halos, original_shape, strict=True)
+            ):
+                slices[start + local_axis] = slice(width, width + size)
+            output = output[tuple(slices)]
         if self.activation is not None:
             shape = tuple(int(size) for size in output.shape[-self.spatial_ndim - 1 : -1])
             if self.oversample_factor == 1:
                 output = _activate(self.activation, output)
             else:
                 fine_shape = tuple(self.oversample_factor * size for size in shape)
-                fine = spectral_resample(output, fine_shape)
-                output = spectral_resample(_activate(self.activation, fine), shape)
+                if self.circular:
+                    fine = spectral_resample(output, fine_shape)
+                    output = spectral_resample(_activate(self.activation, fine), shape)
+                else:
+                    fine_full = (
+                        output.shape[: -self.spatial_ndim - 1]
+                        + fine_shape
+                        + (output.shape[-1],)
+                    )
+                    fine = jax.image.resize(output, fine_full, method="linear")
+                    coarse_full = (
+                        fine.shape[: -self.spatial_ndim - 1] + shape + (fine.shape[-1],)
+                    )
+                    output = jax.image.resize(
+                        _activate(self.activation, fine),
+                        coarse_full,
+                        method="linear",
+                    )
         if target_mask is not None:
             output = jnp.where(
                 jnp.asarray(target_mask, dtype=bool)[..., None],
@@ -301,6 +469,8 @@ class _CNOBlock(StrictModule):
         kernel_size: int | Sequence[int],
         activation: CNOActivation,
         oversample_factor: int,
+        circular: bool,
+        extension_modes: Sequence[ConvolutionAxisPolicy],
         key: Key[Array, ""],
     ):
         first_key, second_key, skip_key = jr.split(key, 3)
@@ -311,7 +481,9 @@ class _CNOBlock(StrictModule):
             kernel_size=kernel_size,
             activation=activation,
             oversample_factor=oversample_factor,
+            circular=circular,
             key=first_key,
+            extension_modes=extension_modes,
         )
         self.second = AntiAliasedConvND(
             spatial_ndim=spatial_ndim,
@@ -320,7 +492,9 @@ class _CNOBlock(StrictModule):
             kernel_size=kernel_size,
             activation=None,
             oversample_factor=oversample_factor,
+            circular=circular,
             key=second_key,
+            extension_modes=extension_modes,
         )
         self.skip = (
             None
@@ -374,7 +548,7 @@ class _CNOBlock(StrictModule):
 
 
 class CNO(AbstractOperatorModel):
-    """Periodic-Fourier anti-aliased Convolutional Neural Operator."""
+    """Boundary-declared anti-aliased Convolutional Neural Operator."""
 
     operator_architecture = "CNO"
 
@@ -387,6 +561,7 @@ class CNO(AbstractOperatorModel):
     lift: Linear
     blocks: tuple[_CNOBlock, ...]
     projection: Linear
+    support_plan: ConvolutionSupportPlan
 
     def __init__(
         self,
@@ -401,6 +576,7 @@ class CNO(AbstractOperatorModel):
         oversample_factor: int = 2,
         coordinate_embedding: bool = True,
         source_key: str | None = None,
+        support_plan: ConvolutionSupportPlan | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         self.in_size = in_channels
@@ -409,6 +585,16 @@ class CNO(AbstractOperatorModel):
         self.width = int(width)
         self.coordinate_embedding = bool(coordinate_embedding)
         self.source_key = source_key
+        self.support_plan = (
+            ConvolutionSupportPlan(("periodic_fourier",) * self.spatial_ndim)
+            if support_plan is None
+            else support_plan
+        )
+        if (
+            not isinstance(self.support_plan, ConvolutionSupportPlan)
+            or len(self.support_plan.axis_policies) != self.spatial_ndim
+        ):
+            raise ValueError("support_plan must match CNO spatial_ndim.")
         if self.spatial_ndim not in (1, 2, 3) or self.width <= 0 or int(depth) <= 0:
             raise ValueError("spatial_ndim must be 1-3 and width/depth must be positive.")
         keys = jr.split(key, int(depth) + 2)
@@ -426,6 +612,8 @@ class CNO(AbstractOperatorModel):
                 kernel_size=kernel_size,
                 activation=activation,
                 oversample_factor=oversample_factor,
+                circular=self.support_plan.periodic,
+                extension_modes=self.support_plan.axis_policies,
                 key=block_key,
             )
             for block_key in keys[1:-1]
@@ -445,6 +633,10 @@ class CNO(AbstractOperatorModel):
         support = OperatorDependencySupport.pointwise(self.spatial_ndim)
         for block in self.blocks:
             support = support.sequential(block.dependency_support())
+        if not self.support_plan.periodic:
+            if axes is not None:
+                self.support_plan.validate_axes(axes)
+            return support
         return _dependency_on_periodic_fourier_axes(
             support,
             axes,
@@ -465,12 +657,7 @@ class CNO(AbstractOperatorModel):
         if len(axes) != self.spatial_ndim:
             raise ValueError(f"CNO expects {self.spatial_ndim} spatial axes.")
         array, case_shape = _prepare_grid_values(values, axes, _get_size(self.in_size))
-        array = _validate_periodic_fourier_axes(
-            array,
-            axes,
-            self.spatial_ndim,
-            owner="CNO",
-        )
+        self.support_plan.validate_axes(axes)
         if source_mask is not None:
             array = jnp.where(
                 jnp.asarray(source_mask, dtype=bool)[..., None],
@@ -527,11 +714,11 @@ class CNO(AbstractOperatorModel):
             )
         if not source.has_physical_quadrature:
             raise ValueError("CNO requires physical source quadrature weights.")
-        values = _validate_coincident_axes(
+        values = _validate_support_coincident_axes(
             jnp.asarray(source.values),
             source.axes,
             query.axes,
-            self.spatial_ndim,
+            self.support_plan,
             owner="CNO",
         )
         return self._evaluate(
@@ -559,16 +746,23 @@ class CNO(AbstractOperatorModel):
             OperatorAxis(
                 f"axis_{index}",
                 nodes,
-                basis="fourier",
-                periodic=True,
+                basis={
+                    "periodic_fourier": "fourier",
+                    "dirichlet_sine": "sine",
+                    "neumann_cosine": "cosine",
+                    "polynomial": "legendre",
+                }[policy],
+                periodic=policy == "periodic_fourier",
             )
-            for index, nodes in enumerate(x[1:])
+            for index, (nodes, policy) in enumerate(
+                zip(x[1:], self.support_plan.axis_policies, strict=True)
+            )
         )
         return self._evaluate(jnp.asarray(x[0]), axes)
 
 
 class UNO(AbstractOperatorModel):
-    """Periodic-Fourier U-shaped operator with band-limited resampling."""
+    """Boundary-declared U-shaped operator with measure-aware resampling."""
 
     operator_architecture = "UNO"
 
@@ -583,6 +777,7 @@ class UNO(AbstractOperatorModel):
     mergers: tuple[Linear, ...]
     decoders: tuple[_CNOBlock, ...]
     projection: Linear
+    support_plan: ConvolutionSupportPlan
 
     def __init__(
         self,
@@ -596,6 +791,7 @@ class UNO(AbstractOperatorModel):
         oversample_factor: int = 2,
         coordinate_embedding: bool = True,
         source_key: str | None = None,
+        support_plan: ConvolutionSupportPlan | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         self.in_size = in_channels
@@ -604,6 +800,16 @@ class UNO(AbstractOperatorModel):
         self.widths = tuple(int(width) for width in widths)
         self.source_key = source_key
         self.coordinate_embedding = bool(coordinate_embedding)
+        self.support_plan = (
+            ConvolutionSupportPlan(("periodic_fourier",) * self.spatial_ndim)
+            if support_plan is None
+            else support_plan
+        )
+        if (
+            not isinstance(self.support_plan, ConvolutionSupportPlan)
+            or len(self.support_plan.axis_policies) != self.spatial_ndim
+        ):
+            raise ValueError("support_plan must match UNO spatial_ndim.")
         if self.spatial_ndim not in (1, 2, 3):
             raise ValueError("UNO supports one, two, or three spatial dimensions.")
         if len(self.widths) < 2 or any(width <= 0 for width in self.widths):
@@ -629,6 +835,8 @@ class UNO(AbstractOperatorModel):
                     kernel_size=kernel_size,
                     activation=activation,
                     oversample_factor=oversample_factor,
+                    circular=self.support_plan.periodic,
+                    extension_modes=self.support_plan.axis_policies,
                     key=keys[1 + index],
                 )
             )
@@ -656,6 +864,8 @@ class UNO(AbstractOperatorModel):
                     kernel_size=kernel_size,
                     activation=activation,
                     oversample_factor=oversample_factor,
+                    circular=self.support_plan.periodic,
+                    extension_modes=self.support_plan.axis_policies,
                     key=keys[key_offset + 2 * index + 1],
                 )
             )
@@ -678,51 +888,120 @@ class UNO(AbstractOperatorModel):
             self.spatial_ndim,
             evidence="conservative",
         )
+        if not self.support_plan.periodic:
+            if axes is not None:
+                self.support_plan.validate_axes(axes)
+            return support
         return _dependency_on_periodic_fourier_axes(
             support,
             axes,
             owner="UNO",
         )
 
-    def _evaluate(self, values: Array, axes: tuple[OperatorAxis, ...], /) -> Array:
+    def _evaluate(
+        self,
+        values: Array,
+        axes: tuple[OperatorAxis, ...],
+        /,
+        *,
+        source_mask: Array | None = None,
+        target_mask: Array | None = None,
+        source_quadrature: Array | None = None,
+    ) -> Array:
         if len(axes) != self.spatial_ndim:
             raise ValueError(f"UNO expects {self.spatial_ndim} spatial axes.")
         array, case_shape = _prepare_grid_values(values, axes, _get_size(self.in_size))
-        array = _validate_periodic_fourier_axes(
-            array,
-            axes,
-            self.spatial_ndim,
-            owner="UNO",
+        self.support_plan.validate_axes(axes)
+        mask = (
+            jnp.ones(array.shape[:-1], dtype=bool)
+            if source_mask is None
+            else jnp.asarray(source_mask, dtype=bool)
         )
+        quadrature = (
+            jnp.ones(array.shape[:-1], dtype=array.real.dtype)
+            if source_quadrature is None
+            else jnp.asarray(source_quadrature, dtype=array.real.dtype)
+        )
+        if quadrature.shape != mask.shape:
+            raise ValueError("UNO quadrature must match the source spatial shape.")
+        mass = jnp.where(mask, quadrature, 0.0)
+        array = jnp.where(mask[..., None], array, jnp.zeros_like(array))
         if self.coordinate_embedding:
             array = jnp.concatenate(
                 (array, _coordinate_features(axes, case_shape)), axis=-1
             )
         hidden = self.lift(array)
+        hidden = jnp.where(mask[..., None], hidden, jnp.zeros_like(hidden))
+
+        def resize_masked(payload: Array, observed_mass: Array, shape: tuple[int, ...]):
+            target = payload.shape[: -self.spatial_ndim - 1] + shape
+            resized_mass = jax.image.resize(
+                observed_mass.astype(payload.real.dtype),
+                target,
+                method="linear",
+            )
+            numerator = jax.image.resize(
+                payload * observed_mass[..., None],
+                target + (payload.shape[-1],),
+                method="linear",
+            )
+            valid = resized_mass > self.support_plan.minimum_observed_mass
+            result = numerator / jnp.where(valid, resized_mass, 1.0)[..., None]
+            return (
+                jnp.where(valid[..., None], result, 0.0),
+                resized_mass,
+                valid,
+            )
+
         skips = []
+        masks = []
+        masses = []
         shapes = []
         for index, encoder in enumerate(self.encoders):
-            hidden = encoder(hidden)
+            hidden = encoder(
+                hidden,
+                source_mask=mask,
+                target_mask=mask,
+                source_quadrature=mass,
+                target_quadrature=mass,
+            )
             skips.append(hidden)
+            masks.append(mask)
+            masses.append(mass)
             shape = tuple(int(size) for size in hidden.shape[-self.spatial_ndim - 1 : -1])
             shapes.append(shape)
             if index < len(self.encoders) - 1:
-                hidden = spectral_resample(
+                hidden, mass, mask = resize_masked(
                     hidden,
+                    mass,
                     tuple(max(2, (size + 1) // 2) for size in shape),
                 )
 
-        for decoder, merger, skip, shape in zip(
+        for decoder, merger, skip, skip_mask, skip_mass, shape in zip(
             self.decoders,
             self.mergers,
             reversed(skips[:-1]),
+            reversed(masks[:-1]),
+            reversed(masses[:-1]),
             reversed(shapes[:-1]),
             strict=True,
         ):
-            hidden = spectral_resample(hidden, shape)
+            hidden, mass, mask = resize_masked(hidden, mass, shape)
+            combined_mask = mask & skip_mask
+            mass = jnp.where(combined_mask, jnp.minimum(mass, skip_mass), 0.0)
             hidden = merger(jnp.concatenate((hidden, skip), axis=-1))
-            hidden = decoder(hidden)
+            hidden = decoder(
+                hidden,
+                source_mask=combined_mask,
+                target_mask=combined_mask,
+                source_quadrature=mass,
+                target_quadrature=mass,
+            )
+            mask = combined_mask
         output = self.projection(hidden)
+        if target_mask is not None:
+            mask = mask & jnp.asarray(target_mask, dtype=bool)
+        output = jnp.where(mask[..., None], output, jnp.zeros_like(output))
         if self.out_size == "scalar":
             return output[..., 0]
         return output
@@ -741,20 +1020,22 @@ class UNO(AbstractOperatorModel):
             raise ValueError(
                 "UNO requires tensor-grid source values and explicit source/query axes."
             )
-        values = _validate_coincident_axes(
+        if not source.has_physical_quadrature:
+            raise ValueError("Masked UNO requires physical source quadrature weights.")
+        values = _validate_support_coincident_axes(
             jnp.asarray(source.values),
             source.axes,
             query.axes,
-            self.spatial_ndim,
+            self.support_plan,
             owner="UNO",
         )
-        values = _error_if_invalid(
+        return self._evaluate(
             values,
-            jnp.any(~source.mask_array(case_shape=batch.case_shape))
-            | jnp.any(~query.mask_array(case_shape=batch.case_shape)),
-            "UNO does not support masked source or query sites.",
+            source.axes,
+            source_mask=source.mask_array(case_shape=batch.case_shape),
+            target_mask=query.mask_array(case_shape=batch.case_shape),
+            source_quadrature=source.quadrature(case_shape=batch.case_shape),
         )
-        return self._evaluate(values, source.axes)
 
     def __call__(
         self,
@@ -772,12 +1053,25 @@ class UNO(AbstractOperatorModel):
             OperatorAxis(
                 f"axis_{index}",
                 nodes,
-                basis="fourier",
-                periodic=True,
+                basis={
+                    "periodic_fourier": "fourier",
+                    "dirichlet_sine": "sine",
+                    "neumann_cosine": "cosine",
+                    "polynomial": "legendre",
+                }[policy],
+                periodic=policy == "periodic_fourier",
             )
-            for index, nodes in enumerate(x[1:])
+            for index, (nodes, policy) in enumerate(
+                zip(x[1:], self.support_plan.axis_policies, strict=True)
+            )
         )
         return self._evaluate(jnp.asarray(x[0]), axes)
 
 
-__all__ = ["AntiAliasedConvND", "CNO", "UNO"]
+__all__ = [
+    "AntiAliasedConvND",
+    "CNO",
+    "ConvolutionAxisPolicy",
+    "ConvolutionSupportPlan",
+    "UNO",
+]

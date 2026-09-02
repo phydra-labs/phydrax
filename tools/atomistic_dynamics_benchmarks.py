@@ -45,7 +45,7 @@ def _runtime(arguments):
         )
     positions, length = _positions(arguments.atoms)
     units = phx.atomistic.AtomisticUnitSystem.reduced()
-    cell = phx.discretization.ParticleCell(length * np.eye(3))
+    cell = phx.discretization.PeriodicCell(length * np.eye(3))
     system = phx.atomistic.AtomisticSystemPlan(
         np.arange(arguments.atoms),
         np.ones((arguments.atoms,), dtype=np.int32),

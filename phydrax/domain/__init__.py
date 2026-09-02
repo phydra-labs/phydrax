@@ -85,9 +85,14 @@ from ._measure import (
 )
 from ._model_function import ConcatenatedModelEvaluator
 from ._probability import (
+    construct_reference_transport,
+    ContinuousScalarQuantileLaw,
     open_unit_interval,
     ProbabilityDomain,
-    ReferenceDistribution,
+    ReferenceMeasure,
+    ReferenceTransport,
+    ReferenceTransportEvidence,
+    ReferenceTransportProvider,
 )
 from ._product_domain import ProductDomain
 from ._ragged_series_dataset import (
@@ -112,6 +117,7 @@ from ._selection import (
     Selection,
     SelectionSpec,
 )
+from ._separated_density import SeparatedLogDensityField
 from ._structure import (
     AxisSampling,
     GridBatch,
@@ -159,6 +165,30 @@ from .graph import (
 )
 
 
+_NORMALIZED_DENSITY_EXPORTS = frozenset(
+    {
+        "density_normalization_evidence",
+        "DensityNormalizationEvidence",
+        "normalize_density_field",
+        "NormalizedDensityField",
+    }
+)
+
+
+def __getattr__(name: str):
+    if name in _NORMALIZED_DENSITY_EXPORTS:
+        from . import _normalized_density as module
+
+        exports = {
+            "density_normalization_evidence": module.density_normalization_evidence,
+            "DensityNormalizationEvidence": module.DensityNormalizationEvidence,
+            "normalize_density_field": module.normalize_density_field,
+            "NormalizedDensityField": module.NormalizedDensityField,
+        }
+        return exports[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     # subpackages
     "graph",
@@ -175,7 +205,12 @@ __all__ = [
     "JointFactor",
     # product domains / structure
     "ProbabilityDomain",
-    "ReferenceDistribution",
+    "ReferenceMeasure",
+    "ReferenceTransport",
+    "ReferenceTransportEvidence",
+    "ReferenceTransportProvider",
+    "ContinuousScalarQuantileLaw",
+    "construct_reference_transport",
     "open_unit_interval",
     "ProductDomain",
     "FactorComponent",
@@ -246,6 +281,11 @@ __all__ = [
     "CochainCellRegion",
     "DensityReference",
     "ReferencedDensityField",
+    "DensityNormalizationEvidence",
+    "NormalizedDensityField",
+    "density_normalization_evidence",
+    "normalize_density_field",
+    "SeparatedLogDensityField",
     "with_riemannian_measure",
     "with_volume_density",
     "with_weighted_riemannian_measure",

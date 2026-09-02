@@ -193,17 +193,20 @@ print(electronic_result.final_estimate.local.method_id)
 print(electronic_result.final_estimate.local.work_count)
 ```
 
-Both kinetic methods are exact coordinate traces and perform one second-derivative
-action per electron coordinate. `chunked-exact` changes peak derivative batching,
-not asymptotic coordinate cost. Coincident Coulomb configurations are invalid rather
-than regularized. Periodic, relativistic, and stochastic-trace Hamiltonians are
-unsupported. A finite correlated-chain energy is not automatically reported as a
-variational upper bound.
+Deterministic kinetic methods evaluate exact coordinate traces;
+`chunked-exact` changes peak derivative batching, not asymptotic coordinate
+cost. `StochasticElectronicKineticPolicy` instead uses a finite semantic-key
+probe population and reports within-configuration variance and exhaustion.
+Coincident Coulomb configurations remain invalid rather than regularized.
 
-The current end-to-end exact electronic contract supports one through four
-electrons (`phx.operators.ELECTRONIC_MAX_ELECTRONS`). Larger systems are rejected
-rather than routed through an unqualified determinant implementation; this H/He/H₂
-campaign is a small-system capability, not an unrestricted molecular claim.
+`ElectronicVMCResourcePlan` admits finite systems beyond four electrons when
+their pair storage and determinant work fit caller limits. Periodic Coulomb
+uses a separately named finite Ewald-resolution route, and
+`ElectronicIntegralHamiltonian` supports declared finite spin-orbital
+integrals. Its four-component label is explicitly no-pair and requires a
+projector identity; none of these routes claims unrestricted scaling, QED, or
+continuum exactness. A finite correlated-chain energy is not automatically a
+variational upper bound.
 
 `tools/electronic_vmc_benchmarks.py` defines the fixed multi-seed H/He/H₂ campaign,
 including predeclared statistical and chemical gates, ESS/R-hat, timing, parameter

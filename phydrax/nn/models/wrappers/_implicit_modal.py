@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from math import prod
 from operator import index
 from typing import Any, Literal
 
@@ -25,6 +26,7 @@ from ....discretization.spectral import (
     HermitianSpectralCoordinates,
     TensorSpectralDiscretization,
 )
+from ....discretization.spectral._modal_discovery import PreparedModalSupport
 from ....domain import Domain, DomainFunction
 from ..._keys import EvalKey
 from ...parameters import PositiveTransform, TransformedParameter
@@ -197,9 +199,7 @@ class ExponentialSpectralEnvelope(StrictModule):
     def __call__(self, mode_numbers: ArrayLike, /) -> Array:
         modes = jnp.asarray(mode_numbers, dtype=self.rates.dtype)
         if modes.ndim != 2 or modes.shape[-1] != self.dimension:
-            raise ValueError(
-                "mode_numbers must have shape (points, envelope dimension)."
-            )
+            raise ValueError("mode_numbers must have shape (points, envelope dimension).")
         exponent = contract("pd,d->p", jnp.abs(modes), self.rates)
         if self.aggregation == "mean":
             exponent = exponent / float(self.dimension)
@@ -443,7 +443,9 @@ class ImplicitModalField(StrictModule):
             raise ValueError(
                 f"Coefficient model must return batched shape {expected}; got {raw.shape}."
             )
-        coefficient_dtype = jnp.dtype(self.discretization.plan.precision.coefficient_dtype)
+        coefficient_dtype = jnp.dtype(
+            self.discretization.plan.precision.coefficient_dtype
+        )
         state = raw.reshape(self.state_shape).astype(coefficient_dtype)
         if self.basis_modulation is not None:
             modulation_key = None if key is None else jr.fold_in(key, 1_000_000_007)
@@ -471,7 +473,9 @@ class ImplicitModalField(StrictModule):
         indices = jnp.asarray(flat_indices)
         if indices.ndim != 1 or not jnp.issubdtype(indices.dtype, jnp.integer):
             raise TypeError("flat_indices must be a rank-one integer array.")
-        flat = self(time, key=key).reshape((self.grid.point_count,) + self.component_shape)
+        flat = self(time, key=key).reshape(
+            (self.grid.point_count,) + self.component_shape
+        )
         return flat[indices]
 
     def time_tangent(
@@ -516,7 +520,9 @@ class ImplicitModalField(StrictModule):
         label = (
             domain.labels[0]
             if time_label is None and len(domain.labels) == 1
-            else None if time_label is None else str(time_label)
+            else None
+            if time_label is None
+            else str(time_label)
         )
         if label is None or label not in domain.labels:
             raise ValueError("time_label must identify one factor of domain.")
@@ -536,9 +542,62 @@ class ImplicitModalField(StrictModule):
         )
 
 
+class SparseImplicitModalField(StrictModule):
+    """Fixed-capacity discovered modal support with explicit dense scatter."""
+
+    support: PreparedModalSupport
+    modal_shape: tuple[int, ...] = eqx.field(static=True)
+    support_epoch_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        support: PreparedModalSupport,
+        modal_shape: Sequence[int],
+        /,
+    ):
+        if not isinstance(support, PreparedModalSupport):
+            raise TypeError("support must be PreparedModalSupport.")
+        shape = tuple(int(value) for value in modal_shape)
+        if not shape or any(value <= 0 for value in shape):
+            raise ValueError("modal_shape must be positive.")
+        if support.multi_indices.shape[-1] != len(shape):
+            raise ValueError("Sparse modal indices do not match modal_shape rank.")
+        self.support = support
+        self.modal_shape = shape
+        self.support_epoch_id = support.support_id
+
+    def sparse_coefficients(self) -> Array:
+        mask = self.support.active.reshape(
+            (1,) * (self.support.coefficients.ndim - 2)
+            + (self.support.active.shape[0], 1)
+        )
+        return jnp.where(mask, self.support.coefficients, 0.0)
+
+    def __call__(self, /, *, support_epoch_id: str | None = None) -> Array:
+        if support_epoch_id is not None and support_epoch_id != self.support_epoch_id:
+            raise ValueError("Sparse modal support epoch is stale.")
+        coefficients = self.sparse_coefficients()
+        flat_indices = jnp.ravel_multi_index(
+            tuple(
+                self.support.multi_indices[:, axis]
+                for axis in range(len(self.modal_shape))
+            ),
+            self.modal_shape,
+        )
+        leading = coefficients.shape[:-2]
+        channels = coefficients.shape[-1]
+        dense = jnp.zeros(
+            leading + (prod(self.modal_shape), channels),
+            dtype=coefficients.dtype,
+        )
+        dense = dense.at[..., flat_indices, :].add(coefficients)
+        return dense.reshape(leading + self.modal_shape + (channels,))
+
+
 __all__ = [
     "DecayAggregation",
     "ExponentialSpectralEnvelope",
     "ImplicitModalField",
+    "SparseImplicitModalField",
     "SpectralBasisModulation",
 ]

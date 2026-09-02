@@ -49,6 +49,10 @@ class _CouplingEvaluation(StrictModule):
     residuals: tuple[Any, ...]
     participant_statuses: Array
     participant_residual_norms: Array
+    participant_error_norms: Array
+    participant_error_reference_norms: Array
+    participant_error_orders: Array
+    participant_error_reliable: Array
     participant_iterations: Array
     participant_work: Array
     successful: Array
@@ -96,10 +100,13 @@ def _participant_finite(result, /) -> Array:
     outputs_finite = jnp.asarray(True)
     for output in result.outputs:
         outputs_finite = outputs_finite & coupling_signal_finite(output)
+    estimate = result.error_estimate
     return (
         tree_allfinite(result.candidate_state)
         & outputs_finite
         & jnp.isfinite(result.residual_norm)
+        & jnp.isfinite(estimate.error_norm)
+        & jnp.isfinite(estimate.reference_norm)
     )
 
 
@@ -160,6 +167,7 @@ def _empty_evidence(prepared: PreparedCoupling, start_state: CouplingState, /):
         [jnp.asarray(0, dtype=jnp.int32) for _ in range(count)],
         [jnp.asarray(False) for _ in range(count)],
         [jnp.asarray(False) for _ in range(count)],
+        [None for _ in range(count)],
         [() for _ in range(count)],
     )
 
@@ -172,6 +180,7 @@ def _record_result(
     residual_norms,
     iterations,
     work,
+    error_estimates,
     successful,
     finite,
     outputs,
@@ -182,6 +191,7 @@ def _record_result(
     residual_norms[subsystem_index] = result.residual_norm
     iterations[subsystem_index] = result.iterations
     work[subsystem_index] = result.work
+    error_estimates[subsystem_index] = result.error_estimate
     successful[subsystem_index] = result.successful
     finite[subsystem_index] = _participant_finite(result)
     outputs[subsystem_index] = result.outputs
@@ -210,6 +220,7 @@ def _finalize_evaluation(
     residual_norms: list[Array],
     iterations: list[Array],
     work: list[Array],
+    error_estimates: list[Any],
     successful: list[Array],
     finite: list[Array],
     /,
@@ -235,6 +246,18 @@ def _finalize_evaluation(
         residuals=residuals,
         participant_statuses=jnp.stack(statuses),
         participant_residual_norms=jnp.stack(residual_norms),
+        participant_error_norms=jnp.stack(
+            tuple(value.error_norm for value in error_estimates)
+        ),
+        participant_error_reference_norms=jnp.stack(
+            tuple(value.reference_norm for value in error_estimates)
+        ),
+        participant_error_orders=jnp.stack(
+            tuple(value.order for value in error_estimates)
+        ),
+        participant_error_reliable=jnp.stack(
+            tuple(value.reliable for value in error_estimates)
+        ),
         participant_iterations=jnp.stack(iterations),
         participant_work=jnp.stack(work),
         successful=participant_success,
@@ -258,6 +281,7 @@ def _global_jacobi_evaluation(
         residual_norms,
         iterations,
         work,
+        error_estimates,
         successful,
         finite,
         outputs,
@@ -278,6 +302,7 @@ def _global_jacobi_evaluation(
             residual_norms,
             iterations,
             work,
+            error_estimates,
             successful,
             finite,
             outputs,
@@ -295,6 +320,7 @@ def _global_jacobi_evaluation(
         residual_norms,
         iterations,
         work,
+        error_estimates,
         successful,
         finite,
     )
@@ -317,6 +343,7 @@ def _global_gauss_seidel_evaluation(
         residual_norms,
         iterations,
         work,
+        error_estimates,
         successful,
         finite,
         outputs,
@@ -342,6 +369,7 @@ def _global_gauss_seidel_evaluation(
             residual_norms,
             iterations,
             work,
+            error_estimates,
             successful,
             finite,
             outputs,
@@ -358,6 +386,7 @@ def _global_gauss_seidel_evaluation(
         residual_norms,
         iterations,
         work,
+        error_estimates,
         successful,
         finite,
     )
@@ -381,6 +410,7 @@ def _stagewise_evaluation(
         residual_norms,
         iterations,
         work,
+        error_estimates,
         successful,
         finite,
         outputs,
@@ -420,6 +450,7 @@ def _stagewise_evaluation(
                     residual_norms,
                     iterations,
                     work,
+                    error_estimates,
                     successful,
                     finite,
                     outputs,
@@ -446,6 +477,7 @@ def _stagewise_evaluation(
                 residual_norms,
                 iterations,
                 work,
+                error_estimates,
                 successful,
                 finite,
                 outputs,
@@ -463,6 +495,7 @@ def _stagewise_evaluation(
         residual_norms,
         iterations,
         work,
+        error_estimates,
         successful,
         finite,
     )
@@ -717,6 +750,10 @@ def _window_result(
         exchange_certified=exchange_certified,
         participant_statuses=evaluation.participant_statuses,
         participant_residual_norms=evaluation.participant_residual_norms,
+        participant_error_norms=evaluation.participant_error_norms,
+        participant_error_reference_norms=(evaluation.participant_error_reference_norms),
+        participant_error_orders=evaluation.participant_error_orders,
+        participant_error_reliable=evaluation.participant_error_reliable,
         participant_iterations=evaluation.participant_iterations,
         participant_work=evaluation.participant_work,
         participant_evaluations=participant_evaluations,
@@ -780,20 +817,6 @@ def advance_coupling_window(
         size,
         ~jnp.isfinite(size) | (size <= 0.0),
         "Coupling window_size must be finite and positive.",
-    )
-    grid_mismatch = jnp.asarray(False)
-    for subsystem in prepared.subsystems:
-        for port in (*subsystem.input_ports, *subsystem.output_ports):
-            if port.sample_grid is not None:
-                endpoint = jnp.asarray(port.sample_grid.times[-1], dtype=size.dtype)
-                tolerance = (
-                    32.0 * jnp.finfo(size.dtype).eps * jnp.maximum(jnp.abs(endpoint), 1.0)
-                )
-                grid_mismatch = grid_mismatch | (jnp.abs(size - endpoint) > tolerance)
-    size = eqx.error_if(
-        size,
-        grid_mismatch,
-        "Coupling window_size must equal every waveform grid endpoint.",
     )
     window = CouplingWindow(
         state.window_index,

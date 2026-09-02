@@ -103,6 +103,67 @@ result contracts are Phydrax-owned.
 
 ::: phydrax.optim.FiniteExhaustiveSearch
 
+
+## Finite reducers, mixed search, and Pareto evolution
+
+`search_finite` is the public reducer engine. `FiniteMinimum`, `FiniteTopK`, and
+`FinitePareto` stream deterministic flat indices without materializing the product.
+`FiniteLandscapePolicy` is the only route to full index-aligned retention and checks
+entry and byte budgets first. Pareto archives have fixed capacity and report
+`FRONTIER_CAPACITY_EXCEEDED` rather than claiming a truncated front is complete.
+`FiniteAdaptiveSearch` delegates certified index-box pruning to the shared
+branch-and-bound engine; without a `FiniteCertifiedLowerBound`, exhaustive evaluation
+is the only exact route. Host callbacks run only between compiled batches.
+
+`DifferentialEvolutionSpace` composes bounded continuous, integer, and categorical
+leaves. Integer mutation uses explicit-key stochastic rounding, categorical mutation
+uses equality and parent choices rather than label arithmetic, and Pareto selection
+uses nondominated rank plus deterministic crowding. A pure `validity` predicate is
+evaluated before guarded objectives; invalid callbacks are not executed and an
+all-invalid population reports `NO_VALID_CANDIDATES`.
+
+`MixedIntegerProgram` wraps one bounded canonical convex relaxation with immutable
+integer/binary coordinates. `solve_mixed_integer_program` accepts lower bounds only
+from audited optimal node relaxations, never rounds an incumbent silently, and makes
+no MINLP or unbounded-global claim.
+
+## Canonical conic programming and interoperability
+
+`ConicProgram` accepts dense arrays or fixed-topology
+`AbstractSparseLinearOperator` values for `A` and a verified PSD sparse operator for
+`P`. Sparse coefficient refresh preserves its exact relation and no method silently
+densifies. `NativeHomogeneousConic` is the accelerator-resident JAX route over the
+same built-in cone coordinates and independent result audit as host
+`ClarabelInteriorPoint`.
+Its unbatched execution uses the monotone homogeneous `(x, z, s, tau, kappa)`
+embedding with the quadratic perspective term, affine and centered Newton directions,
+cone-local barrier Hessians, and independent recovery/ray audits. Dense native bounds
+are lowered into the same product cone; fixed-topology sparse actions remain sparse.
+
+The host-only `import_cvxpy_problem` and `export_cvxpy_program` boundary is limited to
+real continuous CVXPY problems that canonicalize to the supported LP/QP/product-cone
+surface. `CVXPYProgramBinding` retains variable slices and parameter topology;
+unsupported complex, custom, or integer graphs fail before execution.
+
+`prepare_conic_sensitivity(..., representation="matrix-free")` constructs a reusable
+`JacobianLinearOperator` and requires a caller-provided matching constructive or
+verified `StabilityLowerBound`; asserted, stale, or mismatched evidence fails closed.
+JVP and VJP solve the undamped operator and adjoint systems without basis
+materialization. `ConicGeneralizedDerivativePolicy` fixes an orthant zero selection
+and an optional approach direction for selected SOC/rotated-SOC/PSD strata during
+preparation. Exponential and power boundary strata remain explicitly unsupported.
+
+## Local optimizer-state compression
+
+`OptimizerStateCompressionPolicy` and `OptimizerStateCompressionPlan` prepare local
+resident/checkpoint compression through `prepare_optimizer_state_compression`,
+`compress_optimizer_state`, and `decompress_optimizer_state`.
+`PreparedCompressedOptimizer` composes the same boundary with an optimizer.
+Only moment/trace inexact leaves compress through canonical FP16, BF16, FP8, or MX
+formats; counters, schedules, keys, and booleans remain exact. Conversion uses
+deterministic round-to-nearest-even and is a stopped derivative boundary. The evidence
+is a resident/checkpoint storage claim, not a peak-memory, communication, or collective
+claim.
 ## Mirror descent
 
 `ParameterMirrorGeometry` binds selected real PyTree leaves to explicit

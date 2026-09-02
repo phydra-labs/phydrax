@@ -93,6 +93,19 @@ def test_lossless_film_conserves_power_and_reconstructs_fields() -> None:
     farfield = fm.diffraction_order_far_field(prepared, result)
     assert farfield.power.shape == (1, 2, 1)
     assert bool(jnp.all(farfield.propagating))
+    aperture_plan = fm.FiniteApertureFarFieldPlan(
+        jnp.asarray(((0.0, 0.0, 1.0),)),
+        fm.RectangularFiniteAperture((4.0, 3.0)),
+        2,
+    )
+    aperture_field = fm.finite_aperture_far_field(prepared, result, aperture_plan)
+    assert aperture_field.electric_amplitudes.shape == (2, 3, 1)
+    assert aperture_field.finite
+    np.testing.assert_array_equal(aperture_field.active, (True, False))
+    np.testing.assert_array_equal(
+        aperture_field.power_density[1],
+        jnp.zeros_like(aperture_field.power_density[1]),
+    )
 
 
 def test_full_tensor_layer_operator_matches_finite_contract() -> None:
@@ -119,6 +132,132 @@ def test_full_tensor_layer_operator_matches_finite_contract() -> None:
     assert operator.matrix.shape == (4, 4)
     assert bool(operator.diagnostics.finite)
     assert float(operator.diagnostics.constitutive_residual) < 1e-10
+
+
+def test_bianisotropic_zero_coupling_parity_and_chiral_operator_are_finite() -> None:
+    harmonics = _harmonics()
+    factorization = fm.DirectFourierFactorizationPlan()
+    baseline = fm.prepare_layer_operator(
+        fm.prepare_fourier_material(
+            fm.FrequencyMaxwellMaterial(2.0, material_id="baseline"),
+            harmonics,
+            factorization,
+        ),
+        harmonics,
+        jnp.asarray(2.0 * jnp.pi),
+        jnp.asarray((0.1, 0.0)),
+    )
+    zeros = jnp.zeros((3, 3))
+    explicit = fm.prepare_layer_operator(
+        fm.prepare_fourier_material(
+            fm.FrequencyMaxwellMaterial(
+                2.0,
+                magnetoelectric_xi=zeros,
+                magnetoelectric_zeta=zeros,
+                material_id="explicit-zero",
+            ),
+            harmonics,
+            factorization,
+        ),
+        harmonics,
+        jnp.asarray(2.0 * jnp.pi),
+        jnp.asarray((0.1, 0.0)),
+    )
+    np.testing.assert_allclose(explicit.matrix, baseline.matrix, atol=1e-12)
+    coupling = 0.02j * jnp.eye(3)
+    chiral = fm.prepare_layer_operator(
+        fm.prepare_fourier_material(
+            fm.FrequencyMaxwellMaterial(
+                2.0,
+                magnetoelectric_xi=coupling,
+                magnetoelectric_zeta=-coupling.T,
+                material_id="chiral",
+            ),
+            harmonics,
+            factorization,
+        ),
+        harmonics,
+        jnp.asarray(2.0 * jnp.pi),
+        jnp.asarray((0.1, 0.0)),
+    )
+    assert bool(chiral.diagnostics.finite)
+    assert float(chiral.diagnostics.reciprocity_residual) < 1e-10
+
+
+def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() -> None:
+    harmonics = _harmonics()
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="continuous-constant")
+    factorization = fm.DirectFourierFactorizationPlan()
+    port = fm.HomogeneousMaxwellPort(material, port_id="continuous-port")
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.asarray((0.0, 0.0)),
+        port,
+        (),
+        port,
+    )
+    continuous = fm.ContinuousFourierModalLayer(
+        lambda coordinate: material,
+        0.15,
+        factorization,
+        fm.ContinuousZIntegrationPolicy(
+            absolute_tolerance=1.0e-9,
+            relative_tolerance=1.0e-7,
+            maximum_segments=4,
+        ),
+        layer_id="constant-profile",
+    )
+    prepared_continuous = fm.prepare_continuous_fourier_modal_layer(
+        problem,
+        continuous,
+        _boundary_policy(),
+    )
+    operator = fm.prepare_layer_operator(
+        fm.prepare_fourier_material(material, harmonics, factorization),
+        harmonics,
+        problem.angular_frequency,
+        problem.bloch_wavevector,
+    )
+    constant_boundary = fm.prepare_layer_boundary(
+        operator, continuous.thickness, _boundary_policy()
+    )
+
+    assert prepared_continuous.successful
+    assert int(jnp.sum(prepared_continuous.segment_active)) == 1
+    for actual, expected in zip(
+        (
+            prepared_continuous.boundary.a,
+            prepared_continuous.boundary.b,
+            prepared_continuous.boundary.c,
+            prepared_continuous.boundary.d,
+        ),
+        (
+            constant_boundary.a,
+            constant_boundary.b,
+            constant_boundary.c,
+            constant_boundary.d,
+        ),
+        strict=True,
+    ):
+        np.testing.assert_allclose(actual, expected, rtol=1.0e-6, atol=1.0e-8)
+
+    zero_pml = fm.LateralTransformationOpticsPMLPlan(
+        jnp.ones(harmonics.sample_shape + (3,), dtype=jnp.complex128),
+        jnp.zeros(harmonics.sample_shape, dtype=bool),
+        pml_id="zero-pml",
+    )
+    transformed = fm.transform_fourier_modal_material(material, harmonics, zero_pml)
+    expected = jnp.broadcast_to(
+        2.0 * jnp.eye(3, dtype=jnp.complex128),
+        harmonics.sample_shape + (3, 3),
+    )
+    assert transformed.evidence.successful
+    np.testing.assert_allclose(transformed.material.permittivity, expected)
+    np.testing.assert_allclose(
+        transformed.material.magnetoelectric_xi,
+        jnp.zeros_like(expected),
+    )
 
 
 def test_zero_thickness_boundary_is_identity() -> None:

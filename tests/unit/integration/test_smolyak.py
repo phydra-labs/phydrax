@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.integration import _sparse_grid as sparse_grid_module
 
 
 def _product_intervals(dimension):
@@ -189,9 +190,10 @@ def test_builtin_probability_reference_transforms_round_trip():
         zip(distributions, references, strict=True)
     ):
         domain = phx.domain.ProbabilityDomain(distribution, label=f"z{index}")
-        assert domain.supports_reference_transform
         assert jnp.allclose(
-            domain.to_reference(domain.from_reference(reference)),
+            domain.reference_transport.to_reference(
+                domain.reference_transport.from_reference(reference)
+            ),
             reference,
             atol=1e-12,
         )
@@ -200,6 +202,77 @@ def test_builtin_probability_reference_transforms_round_trip():
         phx.uq.EmpiricalDistribution(jnp.asarray([0.0, 1.0])),
         label="e",
     )
-    assert not empirical.supports_reference_transform
-    with pytest.raises(ValueError, match="no canonical reference transform"):
-        empirical.to_reference(0.0)
+    with pytest.raises(ValueError, match="no declared exact reference transport"):
+        _ = empirical.reference_transport
+
+
+@pytest.mark.parametrize(
+    ("capacity", "expected_status"),
+    (
+        ({"max_indices": 1, "max_nodes": 100}, "maximum-indices"),
+        ({"max_indices": 100, "max_nodes": 1}, "maximum-nodes"),
+    ),
+)
+def test_adaptive_sparse_grid_rejects_frontier_before_materialization(
+    monkeypatch,
+    capacity,
+    expected_status,
+):
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    function = interval.Function("x")(lambda x: x**2)
+    materialized_index_counts = []
+    original = sparse_grid_module._materialize_level
+
+    def instrumented(target, plan, level, /, *, index_set=None):
+        materialized_index_counts.append(len(index_set.indices))
+        return original(target, plan, level, index_set=index_set)
+
+    monkeypatch.setattr(sparse_grid_module, "_materialize_level", instrumented)
+    result = phx.integration.prepare_adaptive_sparse_grid(
+        function,
+        phx.integration.over(interval.component()),
+        phx.integration.AdaptiveSparseGridPlan(
+            1,
+            max_rounds=2,
+            absolute_tolerance=0.0,
+            relative_tolerance=0.0,
+            **capacity,
+        ),
+    )
+
+    assert materialized_index_counts == [1]
+    assert result.epochs[-1].status == expected_status
+    assert result.epochs[-1].selected is None
+    assert result.diagnostics.accepted_indices == 1
+    assert result.diagnostics.num_unique_nodes == 1
+
+
+def test_adaptive_sparse_grid_accepts_an_exactly_in_cap_refinement(monkeypatch):
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    function = interval.Function("x")(lambda x: x**2)
+    materialized_node_counts = []
+    original = sparse_grid_module._materialize_level
+
+    def instrumented(target, plan, level, /, *, index_set=None):
+        batch = original(target, plan, level, index_set=index_set)
+        materialized_node_counts.append(int(batch.weights.data.size))
+        return batch
+
+    monkeypatch.setattr(sparse_grid_module, "_materialize_level", instrumented)
+    result = phx.integration.prepare_adaptive_sparse_grid(
+        function,
+        phx.integration.over(interval.component()),
+        phx.integration.AdaptiveSparseGridPlan(
+            1,
+            max_indices=3,
+            max_nodes=3,
+            max_rounds=2,
+            absolute_tolerance=0.0,
+            relative_tolerance=0.0,
+        ),
+    )
+
+    assert materialized_node_counts == [1, 3]
+    assert result.epochs[0].status == "accepted"
+    assert result.epochs[-1].status == "maximum-nodes"
+    assert result.estimate.value.data == pytest.approx(2.0 / 3.0, abs=1e-12)

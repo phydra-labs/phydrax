@@ -21,6 +21,7 @@ from ..dynamics import (
     EvolutionTangentStep,
     StateLayout,
 )
+from ..dynamics._system import DiscreteStepContext
 
 
 HERMITIAN_COORDINATE_INVALID = -1
@@ -40,9 +41,14 @@ class _HermitianDiscreteTransition(StrictModule):
     system: DiscreteSystem
     coordinates: HermitianSpectralCoordinates
 
-    def __call__(self, coordinate: Array, values: Array, args: Any) -> Array:
+    def __call__(
+        self,
+        context: DiscreteStepContext,
+        values: Array,
+        args: Any,
+    ) -> Array:
         state = self.coordinates.from_real_coordinates(values)
-        following = self.system.evaluate(coordinate, state, args)
+        following = self.system.evaluate(context, state, args)
         return self.coordinates.to_real_coordinates(following)
 
 
@@ -91,6 +97,11 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
                 _HermitianDiscreteTransition(evolution.system, coordinates),
                 state_layout=layout,
                 system_id=f"{evolution.system.system_id}:hermitian-coordinates",
+                step_size=evolution.system.step_size,
+                step_rtol=evolution.system.step_rtol,
+                step_atol=evolution.system.step_atol,
+                minimum_step_size=evolution.system.minimum_step_size,
+                maximum_step_size=evolution.system.maximum_step_size,
             )
         identifier = canonical_fingerprint(
             {

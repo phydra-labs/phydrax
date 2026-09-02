@@ -166,6 +166,11 @@ def diagnose_minibatch_posterior(
         raise ValueError("source epochs must contain at least one batch.")
     if any(batch.capacity != int(source.batch_capacity) for batch in batches):
         raise ValueError("source emitted a batch with incompatible capacity.")
+    audit_batches = tuple(source.audit_epoch())
+    if not audit_batches:
+        raise ValueError("source audit epochs must contain at least one batch.")
+    if any(batch.capacity != int(source.batch_capacity) for batch in audit_batches):
+        raise ValueError("source audit emitted a batch with incompatible capacity.")
 
     position = problem.initial_position
     first_batch = batches[0]
@@ -183,7 +188,7 @@ def diagnose_minibatch_posterior(
         likelihood = sum(
             (
                 jnp.sum(problem.log_likelihood_factors(physical, batch))
-                for batch in batches
+                for batch in audit_batches
             ),
             jnp.zeros((), dtype=float),
         )
@@ -194,7 +199,7 @@ def diagnose_minibatch_posterior(
         )
 
     epoch_value, epoch_gradient = jax.value_and_grad(epoch_log_density)(position)
-    active_count = sum(int(batch.factor_count) for batch in batches)
+    active_count = sum(int(batch.factor_count) for batch in audit_batches)
     repeated_matches = bool(jnp.array_equal(initial_value, repeated_value)) and (
         _tree_allclose(stochastic_gradient, repeated_gradient, rtol=0.0, atol=0.0)
     )

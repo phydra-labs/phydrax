@@ -4,17 +4,23 @@
 
 from __future__ import annotations
 
+import hashlib
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._fingerprint import array_tree_fingerprint
 from .._frozendict import frozendict
-from .._likelihoods import AbstractLikelihood
+from .._likelihoods import (
+    AbstractLikelihood,
+    CircularComplexGaussianLikelihood,
+    GaussianLikelihood,
+)
 from .._strict import StrictModule
 
 
@@ -97,9 +103,9 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
         )
         likelihood_parameters = _likelihood_parameters(self.parameters_fn, parameters)
         values = jnp.asarray(
-            self.likelihood.log_prob(prediction, target, **likelihood_parameters),
-            dtype=float,
+            self.likelihood.log_prob(prediction, target, **likelihood_parameters)
         )
+        _require_real_log_density(values, label=self.label)
         return _reduce_cases(values, int(target.shape[0]), label=self.label)
 
 
@@ -130,7 +136,7 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
             raise TypeError("likelihood must implement AbstractLikelihood.")
         if parameters is not None and not callable(parameters):
             raise TypeError("parameters must be callable or None.")
-        target_array = jnp.asarray(target, dtype=float)
+        target_array = jnp.asarray(target)
         if not bool(jnp.all(jnp.isfinite(target_array))):
             raise ValueError("Residual targets must be finite.")
         self.residual_fn = residual
@@ -146,10 +152,172 @@ class FixedResidualLikelihood(AbstractPosteriorTerm):
         target = jnp.broadcast_to(self.target, residual.shape)
         likelihood_parameters = _likelihood_parameters(self.parameters_fn, parameters)
         values = jnp.asarray(
-            self.likelihood.log_prob(residual, target, **likelihood_parameters),
-            dtype=float,
+            self.likelihood.log_prob(residual, target, **likelihood_parameters)
         )
+        _require_real_log_density(values, label=self.label)
         return _reduce_cases(values, int(residual.shape[0]), label=self.label)
+
+
+class _ActiveResidual(StrictModule):
+    residual_fn: Callable[[PyTree[Any]], Any] = eqx.field(static=True)
+    active_indices: Array
+
+    def __init__(
+        self,
+        residual: Callable[[PyTree[Any]], Any],
+        active_indices: ArrayLike,
+        /,
+    ):
+        self.residual_fn = residual
+        self.active_indices = jnp.asarray(active_indices, dtype=jnp.int32)
+
+    def __call__(self, parameters: PyTree[Any], /) -> Array:
+        value = self.residual_fn(parameters)
+        values = value if isinstance(value, tuple) else (value,)
+        flattened = tuple(_field_data(item).reshape((-1,)) for item in values)
+        return jnp.take(jnp.concatenate(flattened), self.active_indices)
+
+
+class ResidualPenaltyNoiseModel(StrictModule):
+    """Audited normalized noise interpretation of one frozen quadratic penalty."""
+
+    coefficients: Array
+    active_indices: Array
+    variance: Array
+    scale: Array
+    penalty_scale: Array
+    field: Literal["real", "proper_complex"] = eqx.field(static=True)
+    base_measure: str = eqx.field(static=True)
+    interpretation_id: str = eqx.field(static=True)
+    realization_fingerprint: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        coefficients: ArrayLike,
+        penalty_scale: ArrayLike,
+        field: Literal["real", "proper_complex"],
+        interpretation_id: str,
+    ):
+        coefficient_array = jnp.asarray(coefficients, dtype=float).reshape((-1,))
+        scale_array = jnp.asarray(penalty_scale, dtype=float).reshape(())
+        if (
+            coefficient_array.size == 0
+            or bool(jnp.any(~jnp.isfinite(coefficient_array)))
+            or bool(jnp.any(coefficient_array < 0.0))
+        ):
+            raise ValueError(
+                "Quadratic reduction coefficients must be finite and nonnegative."
+            )
+        if not bool(jnp.isfinite(scale_array)) or not bool(scale_array > 0.0):
+            raise ValueError("Residual penalty scale must be finite and positive.")
+        if field not in ("real", "proper_complex"):
+            raise ValueError("field must be 'real' or 'proper_complex'.")
+        identity = str(interpretation_id)
+        if not identity:
+            raise ValueError("interpretation_id must be non-empty.")
+        active = jnp.flatnonzero(coefficient_array > 0.0, size=None)
+        if int(active.size) == 0:
+            raise ValueError(
+                "Residual likelihood interpretation needs a positive coefficient."
+            )
+        active_coefficients = coefficient_array[active]
+        divisor = (
+            2.0 * scale_array * active_coefficients
+            if field == "real"
+            else scale_array * active_coefficients
+        )
+        variance = 1.0 / divisor
+        realization_fingerprint = hashlib.sha256(
+            (
+                identity
+                + ":"
+                + field
+                + ":"
+                + array_tree_fingerprint(
+                    {
+                        "coefficients": coefficient_array,
+                        "penalty_scale": scale_array,
+                    }
+                )["sha256"]
+            ).encode("utf-8")
+        ).hexdigest()
+        self.coefficients = coefficient_array
+        self.active_indices = active.astype(jnp.int32)
+        self.variance = variance
+        self.scale = jnp.sqrt(variance)
+        self.penalty_scale = scale_array
+        self.field = field
+        self.base_measure = (
+            "real_lebesgue" if field == "real" else "real_imaginary_product_lebesgue"
+        )
+        self.interpretation_id = identity
+        self.realization_fingerprint = realization_fingerprint
+
+    @classmethod
+    def from_penalty(
+        cls,
+        term: Any,
+        realization: Any,
+        /,
+        *,
+        field: Literal["real", "proper_complex"],
+        interpretation_id: str,
+    ) -> ResidualPenaltyNoiseModel:
+        """Freeze exact integration coefficients without reinterpreting term weights."""
+        from ..integration import IntegrationRealization
+        from ..terms import ResidualPenalty
+
+        if not isinstance(term, ResidualPenalty):
+            raise TypeError("term must be a ResidualPenalty.")
+        if not isinstance(realization, IntegrationRealization):
+            raise TypeError("realization must be an IntegrationRealization.")
+        coefficient_fields = term.quadratic_reduction_coefficients(realization)
+        coefficients = jnp.concatenate(
+            tuple(jnp.asarray(item.data).reshape((-1,)) for item in coefficient_fields)
+        )
+        return cls(
+            coefficients=coefficients,
+            penalty_scale=term.scale,
+            field=field,
+            interpretation_id=interpretation_id,
+        )
+
+    def posterior_term(
+        self,
+        residual_callable: Callable[[PyTree[Any]], Any],
+        /,
+        *,
+        target: ArrayLike = 0.0,
+        label: str | None = None,
+    ) -> FixedResidualLikelihood:
+        """Build the existing fixed residual adapter on active frozen slots."""
+        if not callable(residual_callable):
+            raise TypeError("residual_callable must be callable.")
+        target_array = jnp.asarray(target)
+        if target_array.ndim == 0:
+            active_target = jnp.broadcast_to(target_array, self.scale.shape)
+        else:
+            flat_target = target_array.reshape((-1,))
+            if flat_target.shape == self.coefficients.shape:
+                active_target = jnp.take(flat_target, self.active_indices)
+            elif flat_target.shape == self.scale.shape:
+                active_target = flat_target
+            else:
+                raise ValueError(
+                    "Residual target must be scalar, full-capacity, or active-capacity."
+                )
+        likelihood: AbstractLikelihood = (
+            GaussianLikelihood(self.scale)
+            if self.field == "real"
+            else CircularComplexGaussianLikelihood(self.scale)
+        )
+        return FixedResidualLikelihood(
+            _ActiveResidual(residual_callable, self.active_indices),
+            likelihood,
+            target=active_target,
+            label=label or self.interpretation_id,
+        )
 
 
 class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
@@ -375,7 +543,7 @@ class CompositePosteriorLikelihood(StrictModule):
 
 
 def _field_data(value: ArrayLike | cx.Field) -> Array:
-    return jnp.asarray(value.data if isinstance(value, cx.Field) else value, dtype=float)
+    return jnp.asarray(value.data if isinstance(value, cx.Field) else value)
 
 
 def _label(value: str) -> str:
@@ -397,6 +565,13 @@ def _likelihood_parameters(
     return {str(name): _field_data(value) for name, value in values.items()}
 
 
+def _require_real_log_density(values: Array, /, *, label: str) -> None:
+    if not jnp.issubdtype(values.dtype, jnp.floating):
+        raise TypeError(
+            f"Posterior term {label!r} must return a real floating log density."
+        )
+
+
 def _reduce_cases(values: Array, case_count: int, /, *, label: str) -> Array:
     if values.ndim == 0 or int(values.shape[0]) != case_count:
         raise ValueError(
@@ -411,6 +586,7 @@ __all__ = [
     "FixedSupervisedLikelihood",
     "FixedObservationLikelihood",
     "FixedResidualLikelihood",
+    "ResidualPenaltyNoiseModel",
     "ComputationAwareGaussianProcessELBO",
     "GaussianProcessMarginalLikelihood",
 ]

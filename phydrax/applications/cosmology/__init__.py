@@ -2,7 +2,6 @@
 # ruff: noqa: F401
 
 from ._background import FLRWBackground
-from ._boltzmann_native import EinsteinBoltzmannPlan, NativeBoltzmannResult
 from ._closure import (
     CoordinateLayout,
     CorrelatedGaussianPlan,
@@ -162,7 +161,11 @@ from ._native_boltzmann import (
     LineOfSightSpectraResult,
     NativeThermodynamicsPlan,
     NativeThermodynamicsResult,
+    PreparedScalarEinsteinBoltzmann,
     RestrictedScalarTransferPlan,
+    ScalarEinsteinBoltzmannEvidence,
+    ScalarEinsteinBoltzmannPlan,
+    ScalarEinsteinBoltzmannResult,
     ScalarEvolutionOperatorTable,
     ScalarHierarchyLayout,
     ScalarTransferResult,

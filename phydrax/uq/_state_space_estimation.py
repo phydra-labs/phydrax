@@ -16,6 +16,7 @@ from jaxtyping import Array, Key, PyTree
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..stochastic._state_space import StateSpaceProblem
+from ._bayesian_optimization import GaussianProcessBayesianOptimization
 from ._bellman import BellmanFilterResult
 from ._ensemble_filter import EnsembleFilterResult
 from ._guided_particle import GuidedParticleFilterResult
@@ -23,9 +24,8 @@ from ._kalman import KalmanExecutionMethod
 from ._laplace import fit_laplace, LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
 from ._map import find_map, MAPResult
-from ._map_gp_search import GaussianProcessMAPSearch
 from ._map_search import (
-    GaussianProcessMAPSearchResult,
+    BayesianOptimizationMAPResult,
     MAPSearchResult,
     PositionBounds,
     search_map,
@@ -510,7 +510,7 @@ class StateSpaceMAPWorkflowResult(StrictModule):
     """Existing global/local MAP records plus diagnostics at the selected mode."""
 
     likelihood: MultiExperimentStateSpaceLikelihoodResult
-    global_search: MAPSearchResult | GaussianProcessMAPSearchResult | None
+    global_search: MAPSearchResult | BayesianOptimizationMAPResult | None
     local_map: MAPResult | None
     workflow: Literal["global", "local", "global-local"] = eqx.field(static=True)
 
@@ -632,7 +632,7 @@ class StateSpaceEstimation(StrictModule):
 
     def global_map(
         self,
-        search: DifferentialEvolutionSearch | GaussianProcessMAPSearch,
+        search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
         /,
         *,
         key: Key[Array, ""],
@@ -657,7 +657,7 @@ class StateSpaceEstimation(StrictModule):
 
     def global_then_local_map(
         self,
-        search: DifferentialEvolutionSearch | GaussianProcessMAPSearch,
+        search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
         /,
         *,
         key: Key[Array, ""],
@@ -702,7 +702,7 @@ class StateSpaceEstimation(StrictModule):
         source_map: StateSpaceMAPWorkflowResult
         | MAPResult
         | MAPSearchResult
-        | GaussianProcessMAPSearchResult
+        | BayesianOptimizationMAPResult
         | None = None,
         /,
         *,
@@ -735,7 +735,7 @@ class StateSpaceEstimation(StrictModule):
             workflow_map = None
         elif isinstance(
             source_map,
-            (MAPSearchResult, GaussianProcessMAPSearchResult),
+            (MAPSearchResult, BayesianOptimizationMAPResult),
         ):
             if not source_map.valid:
                 raise RuntimeError("Global MAP search produced no finite candidate.")
@@ -744,7 +744,7 @@ class StateSpaceEstimation(StrictModule):
         else:
             raise TypeError(
                 "source_map must be a state-space workflow, MAPResult, "
-                "MAPSearchResult, GaussianProcessMAPSearchResult, or None."
+                "MAPSearchResult, BayesianOptimizationMAPResult, or None."
             )
         self._require_transform_safe_likelihoods("laplace")
         approximation = fit_laplace(

@@ -302,9 +302,18 @@ def test_inactive_huge_coefficient_does_not_hide_tiny_active_product():
     assert jnp.allclose(gradient[1], 1.0)
 
 
-def test_polynomial_determinant_ceiling_parity_and_above_ceiling_rejection():
-    size = phx.operators.ELECTRONIC_MAX_ELECTRONS
-    assert size == 4
+def test_polynomial_determinant_resource_admission_and_limit_rejection():
+    resource_plan = phx.operators.ElectronicVMCResourcePlan(
+        4,
+        determinant_count=1,
+        maximum_pair_elements=48,
+        maximum_determinant_work=64,
+    )
+    size = resource_plan.electron_count
+    assert resource_plan.pair_stream_elements == 48
+    assert resource_plan.determinant_work == 64
+    assert bool(resource_plan.valid)
+    assert resource_plan.claim == "finite-resource-admission-not-unrestricted-scaling"
     perturbation_values = [
         [0.0, 1.0, -0.5, 0.25],
         [-0.75, 0.0, 0.5, -0.25],
@@ -326,11 +335,30 @@ def test_polynomial_determinant_ceiling_parity_and_above_ceiling_rejection():
             atol=tolerance,
         )
 
-    nuclei = _structure([[0.0, 0.0, 0.0]], name="electron-ceiling")
-    with pytest.raises(ValueError, match="between one and 4"):
-        phx.nn.quantum.FermiNet(nuclei, size + 1, 3, key=jr.key(90))
-    with pytest.raises(ValueError, match="between one and 4"):
-        phx.operators.ElectronicCoulombHamiltonian(nuclei, size + 1)
+    with pytest.raises(ValueError, match="exceeds caller limits"):
+        phx.operators.ElectronicVMCResourcePlan(
+            size + 1,
+            determinant_count=1,
+            maximum_pair_elements=resource_plan.admitted_pair_elements,
+            maximum_determinant_work=resource_plan.admitted_determinant_work,
+        )
+
+    nuclei = _structure([[0.0, 0.0, 0.0]], name="resource-admission")
+    with pytest.raises(ValueError, match="counts must match resource_plan"):
+        phx.nn.quantum.FermiNet(
+            nuclei,
+            size + 1,
+            3,
+            determinant_count=1,
+            resource_plan=resource_plan,
+            key=jr.key(90),
+        )
+    with pytest.raises(ValueError, match="must match resource_plan"):
+        phx.operators.ElectronicCoulombHamiltonian(
+            nuclei,
+            size + 1,
+            resource_plan=resource_plan,
+        )
 
 
 def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():

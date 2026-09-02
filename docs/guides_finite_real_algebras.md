@@ -106,11 +106,11 @@ proof.
 
 ## Differential solvers
 
-`DiffraxAlgebraStatePolicy` binds prepared algebra coordinates to ordinary Diffrax
-execution. Public callbacks receive the declared algebra layout; the backend integrates
-the canonical real coordinates. Real-coordinate quaternion and octonion states also
-work directly with delay, jump, and rough solvers because those backends already
-operate on real arrays.
+Pass prepared algebra coordinates directly as `state_coordinates` to the ordinary
+Diffrax solve APIs. Public callbacks receive the declared algebra layout; the backend
+integrates the canonical real coordinates and records the common
+`RealCoordinateEvidence`. No algebra-specific solver policy or packing evidence is
+maintained.
 
 Continuation uses the same maps through
 `phydrax.continuation.ContinuationRepresentationPolicy`. Native-complex and explicit

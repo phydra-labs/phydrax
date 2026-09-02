@@ -268,7 +268,7 @@ class MACAcceptedGridTrace(StrictModule):
     times: Array
     step_sizes: Array
     valid_steps: Array
-    accepted_count: Array
+    accepted_step_count: Array
     reached_final_time: Array
     finite: Array
     source_plan_id: str = eqx.field(static=True)
@@ -294,6 +294,30 @@ class MACAdaptiveAttemptJournal(StrictModule):
     accepted_count: Array
     rate_names: tuple[str, ...] = eqx.field(static=True)
     source_plan_id: str = eqx.field(static=True)
+
+
+class MACAdaptiveRuntimeState(StrictModule):
+    """Complete immutable continuation state for adaptive MAC execution."""
+
+    state: Array
+    time: Array
+    accepted_step_count: Array
+    requested_next_step: Array
+    status: Array
+    retry_count: Array
+    grid_times: Array
+    grid_step_sizes: Array
+    grid_valid_steps: Array
+    output_cursor: Array
+    forcing_state: Array
+    dynamics_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    controller_id: str = eqx.field(static=True)
+
+
+class MACAdaptiveAdvanceResult(StrictModule):
+    rollout: "MACAdaptiveRolloutResult"
+    runtime_state: MACAdaptiveRuntimeState
 
 
 class MACAdaptiveRolloutResult(StrictModule):
@@ -360,7 +384,156 @@ class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
             }
         )
 
+    def initialize(
+        self,
+        initial_time: Array,
+        initial_state: Array,
+        /,
+        *,
+        forcing_state: Array | None = None,
+    ) -> MACAdaptiveRuntimeState:
+        state = self.dynamics.validate_state(initial_state)
+        time = jnp.asarray(initial_time, dtype=state.dtype).reshape(())
+        first_step = jnp.minimum(
+            jnp.asarray(self.initial_step_size, dtype=state.dtype),
+            jnp.asarray(self.policy.maximum_step_size, dtype=state.dtype),
+        )
+        forcing = (
+            jnp.zeros((0,), dtype=state.dtype)
+            if forcing_state is None
+            else jnp.asarray(forcing_state)
+        )
+        times = jnp.full((self.policy.maximum_steps + 1,), time, dtype=state.dtype)
+        return MACAdaptiveRuntimeState(
+            state=state,
+            time=time,
+            accepted_step_count=jnp.asarray(0, dtype=jnp.int32),
+            requested_next_step=first_step,
+            status=jnp.asarray(
+                int(MACAdaptiveStatus.ATTEMPT_CAPACITY_REACHED), dtype=jnp.int32
+            ),
+            retry_count=jnp.asarray(0, dtype=jnp.int32),
+            grid_times=times,
+            grid_step_sizes=jnp.zeros((self.policy.maximum_steps,), dtype=state.dtype),
+            grid_valid_steps=jnp.zeros((self.policy.maximum_steps,), dtype=bool),
+            output_cursor=jnp.asarray(0, dtype=jnp.int32),
+            forcing_state=forcing,
+            dynamics_id=self.dynamics.compilation_id,
+            method_id=self.method.method_id,
+            controller_id=self.controller.controller_id,
+        )
+
+    def advance(
+        self,
+        runtime_state: MACAdaptiveRuntimeState,
+        final_time: Array,
+        args: Any = None,
+        /,
+    ) -> MACAdaptiveAdvanceResult:
+        """Continue from an explicit state without regenerating controller history."""
+        if not isinstance(runtime_state, MACAdaptiveRuntimeState):
+            raise TypeError("runtime_state must be MACAdaptiveRuntimeState.")
+        if (
+            runtime_state.dynamics_id != self.dynamics.compilation_id
+            or runtime_state.method_id != self.method.method_id
+            or runtime_state.controller_id != self.controller.controller_id
+        ):
+            raise ValueError("MAC runtime continuation identities do not match the plan.")
+        target = float(np.asarray(final_time))
+        requested = float(np.asarray(runtime_state.requested_next_step))
+        segment_plan = MACAdaptiveRolloutPlan(
+            self.dynamics,
+            self.method,
+            self.controller,
+            self.policy,
+            final_time=target,
+            initial_step_size=requested,
+        )
+        result = segment_plan._rollout_segment(
+            runtime_state.time, runtime_state.state, args
+        )
+        segment_count = result.grid.accepted_step_count
+        capacity_left = self.policy.maximum_steps - runtime_state.accepted_step_count
+        count = jnp.minimum(segment_count, capacity_left)
+
+        def merge(index, buffers):
+            times, steps, valid = buffers
+            destination = runtime_state.accepted_step_count + index
+            active = index < count
+            times = jax.lax.cond(
+                active,
+                lambda value: value.at[destination + 1].set(result.grid.times[index + 1]),
+                lambda value: value,
+                times,
+            )
+            steps = jax.lax.cond(
+                active,
+                lambda value: value.at[destination].set(result.grid.step_sizes[index]),
+                lambda value: value,
+                steps,
+            )
+            valid = jax.lax.cond(
+                active,
+                lambda value: value.at[destination].set(True),
+                lambda value: value,
+                valid,
+            )
+            return times, steps, valid
+
+        times, steps, valid = jax.lax.fori_loop(
+            0,
+            self.policy.maximum_steps,
+            merge,
+            (
+                runtime_state.grid_times,
+                runtime_state.grid_step_sizes,
+                runtime_state.grid_valid_steps,
+            ),
+        )
+        last_attempt = jnp.maximum(result.journal.attempt_count - 1, 0)
+        last_requested = result.journal.requested_step_sizes[last_attempt]
+        last_stable = result.journal.stable_step_limits[last_attempt]
+        last_accepted = result.journal.accepted[last_attempt]
+        minimum = jnp.asarray(self.policy.minimum_step_size, dtype=steps.dtype)
+        safe_stable = jnp.where(jnp.isfinite(last_stable), last_stable, jnp.inf)
+        grown = jnp.maximum(
+            minimum,
+            jnp.minimum(last_requested * self.policy.growth_factor, safe_stable),
+        )
+        reduced = jnp.maximum(
+            minimum,
+            jnp.minimum(last_requested * self.policy.reduction_factor, safe_stable),
+        )
+        next_step = jnp.where(last_accepted, grown, reduced)
+        final_runtime = MACAdaptiveRuntimeState(
+            state=result.final_state,
+            time=result.grid.times[segment_count],
+            accepted_step_count=runtime_state.accepted_step_count + count,
+            requested_next_step=next_step,
+            status=result.status,
+            retry_count=jnp.where(
+                last_accepted,
+                0,
+                result.journal.retry_numbers[last_attempt] + 1,
+            ).astype(jnp.int32),
+            grid_times=times,
+            grid_step_sizes=steps,
+            grid_valid_steps=valid,
+            output_cursor=runtime_state.output_cursor + count,
+            forcing_state=runtime_state.forcing_state,
+            dynamics_id=runtime_state.dynamics_id,
+            method_id=runtime_state.method_id,
+            controller_id=runtime_state.controller_id,
+        )
+        return MACAdaptiveAdvanceResult(result, final_runtime)
+
     def rollout(
+        self, initial_time: Array, initial_state: Array, args: Any = None, /
+    ) -> MACAdaptiveRolloutResult:
+        runtime = self.initialize(initial_time, initial_state)
+        return self.advance(runtime, self.final_time, args).rollout
+
+    def _rollout_segment(
         self, initial_time: Array, initial_state: Array, args: Any = None, /
     ) -> MACAdaptiveRolloutResult:
         state0 = self.dynamics.validate_state(initial_state)
@@ -750,12 +923,12 @@ class MACFrozenGridReplayPlan(StrictModule, NonTrainableState):
         )
         states, step_success = outputs
         all_states = jnp.concatenate((state0[None, :], states), axis=0)
-        expected_valid = indices < grid.accepted_count
+        expected_valid = indices < grid.accepted_step_count
         grid_valid = (
             grid.finite
             & grid.reached_final_time
-            & (grid.accepted_count >= 0)
-            & (grid.accepted_count <= count)
+            & (grid.accepted_step_count >= 0)
+            & (grid.accepted_step_count <= count)
             & jnp.all(valid == expected_valid)
             & jnp.all(jnp.where(valid, steps > 0.0, steps == 0.0))
             & jnp.all(jnp.where(valid, grid.times[1:] > grid.times[:-1], True))
@@ -782,9 +955,11 @@ class MACFrozenGridReplayPlan(StrictModule, NonTrainableState):
 __all__ = [
     "MACAcceptedGridTrace",
     "MACAdaptiveAttemptJournal",
+    "MACAdaptiveAdvanceResult",
     "MACAdaptivePolicy",
     "MACAdaptiveRolloutPlan",
     "MACAdaptiveRolloutResult",
+    "MACAdaptiveRuntimeState",
     "MACAdaptiveStatus",
     "MACCompositeStepController",
     "MACCompositeStepRestriction",

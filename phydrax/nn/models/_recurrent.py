@@ -17,7 +17,13 @@ from ..._callable import _ensure_special_kwonly_args
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from .._keys import EvalKey, split_eval_key
-from ..layers import AbstractRecurrentCell, RecurrentBatch, RecurrentResult, run_recurrent
+from ..layers import (
+    AbstractRecurrentCell,
+    RecurrentBatch,
+    RecurrentResult,
+    RecurrentTimeContext,
+    run_recurrent,
+)
 from ..layers._recurrent_cells import _recurrent_cell_output_width
 
 
@@ -135,7 +141,15 @@ def _reverse_recurrent_batch(batch: RecurrentBatch, /) -> tuple[RecurrentBatch, 
         else _take_sequence_indices(batch.time, indices, sequence_axis=sequence_axis)
     )
     return (
-        RecurrentBatch(inputs, batch.valid, reset=segment_starts, time=time),
+        RecurrentBatch(
+            inputs,
+            batch.valid,
+            reset=segment_starts,
+            time=time,
+            time_direction=(
+                "backward" if batch.time_direction == "forward" else "forward"
+            ),
+        ),
         indices,
     )
 
@@ -171,10 +185,17 @@ class RecurrentSequenceModel(StrictModule):
         /,
         *,
         initial_state: Any | None = None,
+        initial_context: RecurrentTimeContext | None = None,
         key: EvalKey = DOC_KEY0,
     ) -> RecurrentResult:
         """Return the complete recurrent trajectory before applying the readout."""
-        return run_recurrent(self.cell, batch, initial_state=initial_state, key=key)
+        return run_recurrent(
+            self.cell,
+            batch,
+            initial_state=initial_state,
+            initial_context=initial_context,
+            key=key,
+        )
 
     def __call__(
         self,
@@ -182,12 +203,14 @@ class RecurrentSequenceModel(StrictModule):
         /,
         *,
         initial_state: Any | None = None,
+        initial_context: RecurrentTimeContext | None = None,
         key: EvalKey = DOC_KEY0,
     ) -> Any:
         recurrent_key, readout_key = split_eval_key(key, 2)
         result = self.evaluate_with_state(
             batch,
             initial_state=initial_state,
+            initial_context=initial_context,
             key=recurrent_key,
         )
         values = result.outputs if self.return_mode == "sequence" else result.final_output

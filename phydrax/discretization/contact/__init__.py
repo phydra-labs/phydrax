@@ -19,6 +19,9 @@ from ._compiled_search import (
     CompiledContactSearchEvidence,
     CompiledContactSearchPlan,
     CompiledContactSearchResult,
+    LBVHContactSearchEvidence,
+    LBVHContactSearchPlan,
+    LBVHContactSearchResult,
 )
 from ._distance import (
     contact_tangent_basis,
@@ -101,11 +104,13 @@ from ._patch_builder import (
 )
 from ._precision import ContactPrecisionPolicy
 from ._pressure_patch import (
-    extract_hydroelastic_pressure_patch,
     HydroelasticPatchEvidence,
     HydroelasticPatchExtraction,
+    HydroelasticPatchExtractionPlan,
     HydroelasticPressureFieldPlan,
+    HydroelasticPressureFieldState,
     HydroelasticPressurePatch,
+    PreparedHydroelasticPatchExtraction,
 )
 from ._proxy import (
     ContactProxyEvidence,
@@ -159,6 +164,9 @@ __all__ = [
     "CompiledContactSearchEvidence",
     "CompiledContactSearchPlan",
     "CompiledContactSearchResult",
+    "LBVHContactSearchEvidence",
+    "LBVHContactSearchPlan",
+    "LBVHContactSearchResult",
     "ContactHaloExchangeEvidence",
     "ContactHaloExchangePlan",
     "ContactHaloPayload",
@@ -170,11 +178,13 @@ __all__ = [
     "GeometricContactFilterResult",
     "HydroelasticPatchEvidence",
     "HydroelasticPatchExtraction",
+    "HydroelasticPatchExtractionPlan",
     "HydroelasticPressureFieldPlan",
+    "HydroelasticPressureFieldState",
     "HydroelasticPressurePatch",
+    "PreparedHydroelasticPatchExtraction",
     "build_triangle_mortar_interface",
     "certify_closed_oriented_surface",
-    "extract_hydroelastic_pressure_patch",
     "filter_geometric_contacts",
     "pack_contact_halo",
     "reduce_contact_halo",

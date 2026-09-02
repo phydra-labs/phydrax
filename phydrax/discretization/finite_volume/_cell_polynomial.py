@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._total_degree import TotalDegreePolynomialFeatures
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
@@ -446,6 +447,107 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
             self.factors.astype(value.dtype),
             jnp.where(mask, difference, 0.0),
         )
+
+    def stage_coefficients(
+        self,
+        state: Array,
+        metrics: FiniteVolumeStageMetrics,
+        /,
+    ) -> tuple[Array, Array]:
+        """Refresh degree-one WLSQ factors from fixed-topology stage centers."""
+        if not isinstance(metrics, FiniteVolumeStageMetrics):
+            raise TypeError("metrics must be FiniteVolumeStageMetrics.")
+        if self.basis.degree not in (1, 2):
+            raise ValueError(
+                "Moving reconstruction certifies degree one generally and "
+                "degree two for rigid translations."
+            )
+        value = jnp.asarray(state)
+        centers = jnp.asarray(metrics.cell_centers, dtype=value.dtype)
+        if centers.shape != self.discretization.cell_centers.shape:
+            raise ValueError("Stage centers do not match reconstruction topology.")
+        lengths = jnp.asarray(metrics.effective_cell_volumes, dtype=value.dtype) ** (
+            1.0 / self.basis.dimension
+        )
+        if self.basis.degree == 2:
+            reference_centers = self.discretization.cell_centers.astype(value.dtype)
+            translation = centers - reference_centers
+            tolerance = (
+                128.0
+                * jnp.finfo(value.dtype).eps
+                * jnp.maximum(jnp.max(jnp.abs(reference_centers)), 1.0)
+            )
+            rigid = jnp.all(
+                jnp.abs(translation - translation[:1]) <= tolerance
+            ) & jnp.all(
+                jnp.abs(metrics.effective_cell_volumes - self.discretization.cell_volumes)
+                <= tolerance
+            )
+            value = eqx.error_if(
+                value,
+                ~rigid,
+                "Moving degree-two reconstruction requires rigid translation.",
+            )
+            return self.coefficients(value), self.characteristic_lengths
+        neighbour_centers = centers[self.stencil_cells]
+        design = _jax_monomials(
+            (neighbour_centers - centers[:, None, :]) / lengths[:, None, None],
+            self.basis.exponents,
+        )
+        mask = self.stencil_valid
+        distance = jnp.sqrt(jnp.sum(design * design, axis=-1))
+        weight = jnp.where(
+            mask,
+            1.0 / jnp.maximum(distance, 1.0e-14) ** 2,
+            0.0,
+        )
+        gram = oe.contract("cs,csi,csj->cij", weight, design, design, backend="jax")
+        right = oe.contract(
+            "cs,csi,cs...->ci...",
+            weight,
+            design,
+            jnp.where(
+                mask.reshape(mask.shape + (1,) * (value.ndim - 1)),
+                value[self.stencil_cells] - value[:, None, ...],
+                0.0,
+            ),
+            backend="jax",
+        )
+        coefficients = jnp.linalg.solve(
+            gram,
+            right.reshape((right.shape[0], right.shape[1], -1)),
+        )
+        coefficients = jnp.moveaxis(coefficients, 1, -1).reshape(
+            value.shape + (self.basis.feature_count,)
+        )
+        return coefficients, lengths
+
+    def evaluate_stage_coefficients(
+        self,
+        state: Array,
+        coefficients: Array,
+        lengths: Array,
+        metrics: FiniteVolumeStageMetrics,
+        cell_routes: Array,
+        points: Array,
+        /,
+    ) -> Array:
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        evaluation_points = jnp.asarray(points)
+        normalized = (
+            evaluation_points - metrics.cell_centers[routes, None, :]
+        ) / lengths[routes, None, None]
+        basis = (
+            _jax_monomials(normalized, self.basis.exponents)
+            - self.moments[routes, None, :]
+        )
+        delta = oe.contract(
+            "r...f,rqf->rq...",
+            coefficients[routes],
+            basis,
+            backend="jax",
+        )
+        return jnp.asarray(state)[routes, None, ...] + delta
 
     def basis_values(self, cell_routes: Array, points: Array, /) -> Array:
         routes = jnp.asarray(cell_routes, dtype=jnp.int32)

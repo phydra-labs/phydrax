@@ -92,6 +92,14 @@
 
 ::: phydrax.applications.contact.LubricationContactPlan
 
+---
+
+::: phydrax.applications.contact.ReynoldsFilmPlan
+
+---
+
+::: phydrax.applications.contact.ReynoldsPressureBoundaryConditions
+
 ## Solvers, coupling, and derivatives
 
 ::: phydrax.applications.contact.ContactSolvePolicy

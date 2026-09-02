@@ -210,27 +210,34 @@ non-Newton primal method must supply tangent and adjoint linear policies through
 Algorithmic differentiation through a convergence-dependent implicit loop is not
 exposed. A failed root remains failed and has no valid implicit derivative.
 
-## Fixed-grid waveform coupling
+## Fixed-capacity higher-order waveform coupling
 
-A port may attach a relative `TimeGrid`. Its values are then a `CouplingWaveform` with
-one exact vector-space sample at every grid node. Every waveform grid begins at zero,
-and its endpoint must equal the physical coupling-window size.
+A waveform port declares `CouplingWaveformPlan`: normalized nodes, sample
+capacity, polynomial degree zero through three, metric order, and optional finite
+adaptation reservoir. `CouplingWaveformGrid` keeps a sorted active prefix with
+exact endpoints zero/one. Values always retain capacity rows; inactive rows are
+canonical zero and contribute no callback work, residual coordinate, or norm.
 
-Direct and field exchanges apply spatial operators samplewise. If source and target
-grids differ, the target port selects explicit left-held or piecewise-linear temporal
-interpolation. Temporal transfer never extrapolates.
+`BarycentricCouplingTemporalTransfer` selects deterministic local nonuniform
+stencils and never extrapolates. The physical waveform norm integrates the
+piecewise polynomial pairing with an exact declared Gauss order; degree-one
+all-active data recovers the fixed linear behavior. Adaptive defects activate a
+deterministic candidate and restart every participant from the unchanged window
+checkpoint. Exhausted capacity returns `CouplingWaveformCapacityRequest`; growth
+occurs only in a host-prepared epoch.
 
-Waveform residuals include every canonical time sample. Their physical norm uses
-normalized trapezoidal time weights and the port's physical pairing. Fixed-grid
-waveform roots therefore reuse the same implicit solver and derivative machinery as
-endpoint coupling without dynamic sample shapes.
+`AdaptiveCouplingWindowPolicy` accepts only physically certified windows with
+reliable participant `CouplingWindowErrorEstimate` ratios at most one. Its bounded
+PI controller retries only declared statuses, saturates at explicit minimum and
+maximum sizes, and reaches final time exactly through the canonical fixed-segment
+runner. Every rejected attempt restarts the same checkpoint.
 
-`FixedGridSubcyclingSubsystem` adapts a pure substep callback and observation callback.
-It advances on the shared waveform grid, samples every endpoint, and aggregates
-participant status, residual, iterations, and work.
-
-Higher-order temporal splines, adaptive output grids, arbitrary remeshing, and dynamic
-sample capacities are not implemented.
+`PreparedCouplingEpoch` and `CouplingEpochTransitionPlan` apply topology or
+source-owned remesh requests only after an accepted window. Retained values need
+an explicit transfer; added and removed participants need an initializer or
+finalizer. Missing routes, coverage, or conservation retain the complete old
+graph/state epoch. Frozen event replay is required across node, window, and
+topology decisions.
 
 ## Statuses
 
@@ -249,9 +256,10 @@ There is no success alias for an exhausted or uncertified implicit solve.
 
 The native substrate does not provide process communication, MPI/socket routing,
 external mutable participants, XML configuration, automatic mapping selection,
-dynamic topology, adaptive coupling windows, hidden iterate clipping, or fallback
-solvers. An external participant backend is a separate host-only concern and is not a
-native JIT or differentiation path.
+hidden iterate clipping, or fallback solvers. Topology changes are accepted-boundary
+host transitions over explicitly prepared graphs and source-owned transfers, never
+an in-trace graph mutation. An external participant backend remains a separate
+host-only concern and is not a native JIT or differentiation path.
 
 See `examples/partitioned_coupled_oscillators.py` for an implicit differentiable
 example and `tools/partitioned_coupling_qualification.py` for executed convergence,

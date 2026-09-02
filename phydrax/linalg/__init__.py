@@ -50,6 +50,7 @@ from ._block_preconditioning import (
     BlockFactorizationPreconditioner,
     BlockFactorizationPreconditionerBuilder,
 )
+from ._block_scaled import contract_block_scaled
 from ._certificates import (
     CertificateEvidence,
     CertificateScope,
@@ -113,6 +114,7 @@ from ._incomplete_factorizations import (
     SparseFactorizationPreconditioner,
     SparseFactorizationPreconditionerBuilder,
 )
+from ._inertia import factorization_inertia, InertiaEvidence, InertiaPolicy
 from ._initial_guess import (
     HistoryLinearSolveResult,
     LinearInitialGuessDiagnostics,
@@ -345,6 +347,8 @@ from ._rational_functions import (
 from ._real_coordinates import (
     AbstractRealCoordinateMap,
     ComplexCartesianCoordinates,
+    prepare_real_coordinate_tree,
+    PreparedRealCoordinateTree,
     RealCoordinateDomainKind,
     RealCoordinateEvidence,
     RealCoordinateNormRelation,
@@ -1027,4 +1031,10 @@ __all__ = [
     "StabilityLowerBound",
     "solve_adjoint_checked",
     "solve_checked",
+    "InertiaEvidence",
+    "InertiaPolicy",
+    "PreparedRealCoordinateTree",
+    "contract_block_scaled",
+    "factorization_inertia",
+    "prepare_real_coordinate_tree",
 ]

@@ -300,8 +300,11 @@ def test_dynamic_operator_likelihood_matches_fixed_full_batch_and_is_jittable():
     likelihood_batch = phx.uq.LikelihoodBatch(
         data,
         jnp.asarray([True, True, True, True, False]),
+        factor_ids=jnp.asarray([0, 1, 2, 3, 3]),
+        sampling_probabilities=jnp.full((5,), 0.25),
+        estimator_weights=jnp.asarray([1.0, 1.0, 1.0, 1.0, 0.0]),
     )
-    compiled = eqx.filter_jit(lambda value, batch: dynamic(value, batch))(
+    compiled = eqx.filter_jit(lambda value, batch: dynamic.log_factors(value, batch))(
         parameter, likelihood_batch
     )
     assert compiled.shape == (5,)

@@ -24,6 +24,7 @@ from ..discretization import (
     TensorDofLayout,
     TensorSpectralDiscretization,
 )
+from ..discretization.spectral import SphericalSpectralDiscretization
 from ..linalg import (
     ArraySpace,
     DiagonalLinearOperator,
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 
 
 class SpectralStateLayout(StrictModule):
-    """Static modal packing for PDE fields sharing one tensor spectral space."""
+    """Static modal packing for PDE fields sharing one spectral space."""
 
     field_names: tuple[str, ...] = eqx.field(static=True)
     field_spaces: tuple[DiscreteFieldSpace, ...]
@@ -56,7 +57,7 @@ class SpectralStateLayout(StrictModule):
     def __init__(
         self,
         fields: Sequence[PDEField],
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
     ):
         field_values = tuple(fields)
@@ -71,6 +72,11 @@ class SpectralStateLayout(StrictModule):
         scalar = tuple(
             field.representation in ("scalar", "pseudoscalar") for field in field_values
         )
+        axis_names = (
+            discretization.plan.axis_names
+            if isinstance(discretization, TensorSpectralDiscretization)
+            else ("ell", "m")
+        )
         spaces = []
         for field, count, is_scalar in zip(
             field_values,
@@ -80,7 +86,7 @@ class SpectralStateLayout(StrictModule):
         ):
             component_shape = () if count == 1 and is_scalar else (count,)
             layout = TensorDofLayout(
-                discretization.plan.axis_names,
+                axis_names,
                 discretization.modal_shape,
                 component_shape=component_shape,
             )
@@ -195,7 +201,7 @@ class SpectralStateLayout(StrictModule):
 
 class _SpectralEvaluator(StrictModule):
     layout: SpectralStateLayout
-    discretization: TensorSpectralDiscretization
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization
     method: Any
     parameter_defaults: tuple[Any | None, ...]
     rhs_expressions: tuple[PDEExpression, ...] = eqx.field(static=True)
@@ -207,6 +213,12 @@ class _SpectralEvaluator(StrictModule):
     coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
     time_coordinate: str | None = eqx.field(static=True)
     region_axes: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
+    field_coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(
+        static=True
+    )
+    parameter_coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(
+        static=True
+    )
 
     def __init__(
         self,
@@ -215,13 +227,16 @@ class _SpectralEvaluator(StrictModule):
         output_names: Sequence[str],
         output_components: Sequence[int],
         layout: SpectralStateLayout,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         method: Any,
         parameter_defaults: Sequence[Any | None],
         coordinate_axes: Sequence[tuple[str, tuple[int, ...]]],
         time_coordinate: str | None,
         region_axes: Sequence[tuple[str, tuple[int, ...]]],
         /,
+        *,
+        field_coordinate_axes: Sequence[tuple[str, tuple[int, ...]]] = (),
+        parameter_coordinate_axes: Sequence[tuple[str, tuple[int, ...]]] = (),
     ):
         self.layout = layout
         self.discretization = discretization
@@ -254,9 +269,13 @@ class _SpectralEvaluator(StrictModule):
         self.coordinate_axes = tuple(coordinate_axes)
         self.time_coordinate = None if time_coordinate is None else str(time_coordinate)
         self.region_axes = tuple(region_axes)
+        self.field_coordinate_axes = tuple(field_coordinate_axes)
+        self.parameter_coordinate_axes = tuple(parameter_coordinate_axes)
 
     @property
-    def evaluation(self) -> TensorSpectralDiscretization:
+    def evaluation(
+        self,
+    ) -> TensorSpectralDiscretization | SphericalSpectralDiscretization:
         return self.method.dealiasing.evaluation
 
     def _axes(self, coordinate: str, /) -> tuple[int, ...]:
@@ -272,6 +291,40 @@ class _SpectralEvaluator(StrictModule):
             if region == name:
                 return axes
         raise ValueError(f"Region {name!r} is not a compiled spectral region.")
+
+    def _field_axes(self, name: str, /) -> tuple[int, ...]:
+        for field, axes in self.field_coordinate_axes:
+            if field == name:
+                return axes
+        return tuple(range(len(self.discretization.physical_shape)))
+
+    def _parameter_axes(self, name: str, /) -> tuple[int, ...]:
+        for parameter, axes in self.parameter_coordinate_axes:
+            if parameter == name:
+                return axes
+        return tuple(range(len(self.discretization.physical_shape)))
+
+    def _broadcast_subset(
+        self,
+        value: Array,
+        axes: tuple[int, ...],
+        components: int,
+        /,
+    ) -> Array:
+        component_shape = () if components == 1 else (components,)
+        subset_shape = tuple(self.discretization.physical_shape[axis] for axis in axes)
+        expected = subset_shape + component_shape
+        if value.shape != expected:
+            raise ValueError(
+                f"Subset spectral value must have shape {expected}; got {value.shape}."
+            )
+        reshape = [1] * len(self.discretization.physical_shape)
+        for position, axis in enumerate(axes):
+            reshape[axis] = subset_shape[position]
+        return jnp.broadcast_to(
+            value.reshape(tuple(reshape) + component_shape),
+            self.discretization.physical_shape + component_shape,
+        )
 
     def _parameter(self, name: str, args: Any, /) -> Array:
         if args is not None and not isinstance(args, Mapping):
@@ -294,17 +347,21 @@ class _SpectralEvaluator(StrictModule):
             if array.shape not in (expected, (1,)):
                 raise ValueError(f"PDE parameter {name!r} must have shape {expected}.")
             return array[0] if components == 1 and array.shape == (1,) else array
-        base = self.discretization.physical_shape + (
-            () if components == 1 else (components,)
-        )
-        target = self.evaluation.physical_shape + (
-            () if components == 1 else (components,)
-        )
+        axes = self._parameter_axes(name)
+        component_shape = () if components == 1 else (components,)
+        subset = tuple(self.discretization.physical_shape[axis] for axis in axes)
+        base = self.discretization.physical_shape + component_shape
+        target = self.evaluation.physical_shape + component_shape
         if array.shape == target:
             return array
+        if array.shape == subset + component_shape and axes != tuple(
+            range(len(self.discretization.physical_shape))
+        ):
+            array = self._broadcast_subset(array, axes, components)
         if array.shape != base:
             raise ValueError(
-                f"Functional PDE parameter {name!r} must have shape {base} or {target}."
+                f"Functional PDE parameter {name!r} must have subset shape "
+                f"{subset + component_shape}, base {base}, or target {target}."
             )
         return self.method.dealiasing.reconstruct(self.discretization.project(array))
 
@@ -312,6 +369,15 @@ class _SpectralEvaluator(StrictModule):
         if self.time_coordinate is not None and name == self.time_coordinate:
             return jnp.asarray(time)
         axes = self._axes(name)
+        if isinstance(self.evaluation, SphericalSpectralDiscretization):
+            theta, phi = jnp.meshgrid(
+                self.evaluation.transform.theta,
+                self.evaluation.transform.phi,
+                indexing="ij",
+            )
+            spherical_components = (theta, phi)
+            selected = tuple(spherical_components[axis] for axis in axes)
+            return selected[0] if len(selected) == 1 else jnp.stack(selected, axis=-1)
         components = []
         for axis in axes:
             nodes = self.evaluation.axes[axis].nodes
@@ -387,7 +453,25 @@ class _SpectralEvaluator(StrictModule):
         axis: int,
         order: int,
     ) -> Array:
+        if axis not in self._field_axes(field_name):
+            reconstructed = self.method.dealiasing.reconstruct(fields[field_name])
+            return jnp.zeros_like(reconstructed)
         embedded = self.method.dealiasing.embed(fields[field_name])
+        if isinstance(self.evaluation, SphericalSpectralDiscretization):
+            coordinate = "theta" if axis == 0 else "phi"
+            coefficients = embedded
+            result = None
+            for derivative_order in range(order):
+                result = self.evaluation.coordinate_derivative(
+                    coefficients,
+                    coordinate=coordinate,
+                    representation="physical",
+                    require_all_valid=False,
+                ).values
+                if derivative_order + 1 < order:
+                    coefficients = self.evaluation.project(result)
+            assert result is not None
+            return result
         return self.evaluation.derivative_values(embedded, axis=axis, order=order)
 
     def _derivative(
@@ -409,9 +493,34 @@ class _SpectralEvaluator(StrictModule):
                 order=order,
             )
         coefficients = self.evaluation.project(value)
+        if isinstance(self.evaluation, SphericalSpectralDiscretization):
+            coordinate = "theta" if axis == 0 else "phi"
+            result = None
+            for derivative_order in range(order):
+                result = self.evaluation.coordinate_derivative(
+                    coefficients,
+                    coordinate=coordinate,
+                    representation="physical",
+                    require_all_valid=False,
+                ).values
+                if derivative_order + 1 < order:
+                    coefficients = self.evaluation.project(result)
+            assert result is not None
+            return result
         return self.evaluation.derivative_values(coefficients, axis=axis, order=order)
 
     def _integrate_values(self, values: Array, axes: tuple[int, ...], /) -> Array:
+        if isinstance(self.evaluation, SphericalSpectralDiscretization):
+            if axes != (0, 1):
+                raise ValueError(
+                    "Closed spherical integration requires both intrinsic axes."
+                )
+            integrated = self.evaluation.integral(values)
+            trailing = values.shape[2:]
+            return jnp.broadcast_to(
+                integrated,
+                self.evaluation.physical_shape + trailing,
+            )
         result = values
         for axis in sorted(axes, reverse=True):
             result = jnp.tensordot(
@@ -511,6 +620,33 @@ class _SpectralEvaluator(StrictModule):
                 assert node.coordinate is not None
                 axes = self._axes(node.coordinate)
                 expression = node.args[0]
+                if isinstance(
+                    self.evaluation, SphericalSpectralDiscretization
+                ) and node.op in ("gradient", "divergence", "curl"):
+                    raise ValueError(
+                        "Spherical global-frame gradient/divergence/curl are not "
+                        "defined; use explicit spin or coordinate operators."
+                    )
+                if (
+                    isinstance(self.evaluation, SphericalSpectralDiscretization)
+                    and node.op == "laplacian"
+                ):
+                    if axes != (0, 1):
+                        raise ValueError(
+                            "Spherical Laplace-Beltrami requires both intrinsic axes."
+                        )
+                    if expression.op == "field":
+                        assert expression.symbol is not None
+                        modal_value = self.method.dealiasing.embed(
+                            fields[expression.symbol]
+                        )
+                    else:
+                        modal_value = self.evaluation.project(values[0])
+                    result = self.evaluation.reconstruct(
+                        self.evaluation.modal_laplacian(modal_value)
+                    )
+                    cache[node] = result
+                    return result
                 if node.op == "derivative":
                     if node.axis is None:
                         if len(axes) != 1:
@@ -683,7 +819,7 @@ class CompiledSpectralDynamics(StrictModule):
 
     drift: Any
     layout: SpectralStateLayout
-    discretization: TensorSpectralDiscretization
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization
     spatial_method: Any
     semilinear_drift: SemilinearDrift | None
     evaluator: _SpectralEvaluator
@@ -696,7 +832,7 @@ class CompiledSpectralDynamics(StrictModule):
         self,
         drift: Any,
         layout: SpectralStateLayout,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         spatial_method: Any,
         evaluator: _SpectralEvaluator,
         /,
@@ -817,7 +953,7 @@ def _field_degree(expression: PDEExpression, /) -> int | None:
 def _linear_symbol(
     expression: PDEExpression,
     field_name: str,
-    discretization: TensorSpectralDiscretization,
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
     coordinate_axes: Mapping[str, tuple[int, ...]],
     parameter_values: Mapping[str, Any],
     /,
@@ -935,6 +1071,8 @@ def _linear_symbol(
             axis = axes[0]
         else:
             axis = axes[expression.axis]
+        if isinstance(discretization, SphericalSpectralDiscretization):
+            return None
         prepared = discretization.axes[axis]
         if (
             prepared.derivative_matrix is not None
@@ -953,6 +1091,13 @@ def _linear_symbol(
         child = children[0]
         if child is None or expression.coordinate not in coordinate_axes:
             return None
+        if isinstance(discretization, SphericalSpectralDiscretization):
+            if coordinate_axes[expression.coordinate] != (0, 1):
+                return None
+            return (
+                jnp.asarray(0.0, dtype=dtype),
+                child[1] * discretization.laplacian_multiplier().astype(dtype),
+            )
         symbol = zero
         for axis in coordinate_axes[expression.coordinate]:
             prepared = discretization.axes[axis]
@@ -972,7 +1117,7 @@ def _linear_symbol(
 
 def _coordinate_axes(
     problem: PDEProblemIR,
-    discretization: TensorSpectralDiscretization,
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
     /,
 ) -> tuple[str, tuple[tuple[str, tuple[int, ...]], ...]]:
     temporal = tuple(
@@ -985,6 +1130,16 @@ def _coordinate_axes(
         raise ValueError(
             "Spectral PDE compilation requires one time and spatial coordinates."
         )
+    if isinstance(discretization, SphericalSpectralDiscretization):
+        if sum(coordinate.size for coordinate in spatial) != 2:
+            raise ValueError("Spherical PDE spatial coordinate size must equal two.")
+        output = []
+        offset = 0
+        for coordinate in spatial:
+            axes = tuple(range(offset, offset + coordinate.size))
+            output.append((coordinate.name, axes))
+            offset += coordinate.size
+        return temporal[0].name, tuple(output)
     if sum(coordinate.size for coordinate in spatial) != len(discretization.axes):
         raise ValueError("PDE spatial coordinate size must match spectral tensor rank.")
     output = []
@@ -1037,7 +1192,7 @@ def _region_axes(
 
 def compile_spectral_pde(
     problem: PDEProblemIR,
-    discretization: TensorSpectralDiscretization,
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
     method: PseudospectralMethodPlan,
     /,
     *,
@@ -1048,18 +1203,27 @@ def compile_spectral_pde(
     """Lower PDE IR to coefficient-resident global pseudospectral dynamics."""
     if not isinstance(problem, PDEProblemIR):
         raise TypeError("problem must be a PDEProblemIR.")
-    if not isinstance(discretization, TensorSpectralDiscretization):
-        raise TypeError("discretization must be a TensorSpectralDiscretization.")
+    if not isinstance(
+        discretization,
+        (TensorSpectralDiscretization, SphericalSpectralDiscretization),
+    ):
+        raise TypeError("discretization must be a prepared spectral space.")
     if not isinstance(method, PseudospectralMethodPlan):
         raise TypeError("method must be a PseudospectralMethodPlan.")
     if boundary_lifts:
         raise ValueError(
-            "Tensor spectral boundary lifts require the bounded constrained-basis "
-            "compiler and are not accepted by the initial pseudospectral path."
+            "Spectral boundary lifts require a bounded basis and are not accepted "
+            "by the closed/global pseudospectral path."
         )
     if splitting not in ("auto", "direct", "semilinear"):
         raise ValueError("splitting must be 'auto', 'direct', or 'semilinear'.")
     validate_pde_ir(problem)
+    if isinstance(discretization, SphericalSpectralDiscretization) and any(
+        condition.kind in ("boundary", "interface") for condition in problem.conditions
+    ):
+        raise ValueError(
+            "Closed spherical spectral spaces reject boundary/interface conditions."
+        )
     from ._semidiscrete import _evolution_rhs
 
     time_coordinate, coordinate_axes = _coordinate_axes(problem, discretization)

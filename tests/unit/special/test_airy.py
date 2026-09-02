@@ -169,5 +169,6 @@ def test_airy_boundary_and_dtype_contracts():
 
     for function in (phx.special.airy, phx.special.airye):
         assert function(jnp.asarray(0.5, dtype=jnp.float16))[0].dtype == jnp.float32
-        with pytest.raises(TypeError, match="does not support complex-valued inputs"):
-            function(0.5 + 0.2j)
+        complex_value = function(0.5 + 0.2j)
+        assert all(jnp.iscomplexobj(component) for component in complex_value)
+        assert all(jnp.all(jnp.isfinite(component)) for component in complex_value)

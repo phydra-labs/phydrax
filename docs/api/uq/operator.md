@@ -296,8 +296,17 @@ case, and returns exactly one factor per case.
 
 `OperatorMinibatchSource` adapts deterministic `OperatorBatchLoader` epochs to
 `LikelihoodBatch`. The loader must be shuffled, retain its final padded batch, and
-keep a fixed batch capacity. Case subsampling is supported; query-anchor subsampling,
-nonuniform factor weights, and stochastic geometry mutation within a case are not.
+keep a fixed batch capacity. Case factors always carry explicit IDs, probabilities,
+and outer estimator weights. `OperatorFactorSamplingPlan` can additionally declare
+complete, IID nonuniform-with-replacement, or exact-inclusion unequal query designs.
+Those query weights are applied inside each physical-case likelihood. Fixed/farthest
+subsets are labeled approximations rather than unbiased estimators.
+
+Anchor or geometry mutation changes the forward function and therefore requires
+`OperatorStochasticGeometryPlan(target="expected_log_likelihood", ...)`. It defines
+a finite/law expected-log objective, not the original fixed-anchor likelihood and
+not a log-marginal likelihood. Geometry epoch and topology are immutable inside a
+compiled epoch; changing them changes the source fingerprint.
 
 ::: phydrax.uq.OperatorLikelihoodData
 
@@ -307,8 +316,7 @@ nonuniform factor weights, and stochastic geometry mutation within a case are no
     options:
         members:
             - __init__
-            - per_case_log_prob
-            - __call__
+            - log_factors
 
 ---
 
@@ -322,6 +330,15 @@ nonuniform factor weights, and stochastic geometry mutation within a case are no
             - fingerprint
             - configuration
             - epoch
+            - audit_epoch
+
+---
+
+::: phydrax.uq.OperatorFactorSamplingPlan
+
+---
+
+::: phydrax.uq.OperatorStochasticGeometryPlan
 
 ## Whole-function conformal calibration
 

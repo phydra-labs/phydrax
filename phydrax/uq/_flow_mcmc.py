@@ -53,6 +53,7 @@ from ._flow_proposal import (
     _update_replay,
 )
 from ._mcmc import _adapt_mcmc, MCMCChainWarmup, MCMCResult
+from ._mcmc_kinetic import MCMCMassAdaptationPlan
 from ._posterior import PosteriorProblem
 
 
@@ -420,7 +421,7 @@ def sample_flow_nuts(
     initial_positions: PyTree[Any] | None = None,
     target_acceptance_rate: float = 0.8,
     initial_step_size: float = 1.0,
-    is_mass_matrix_diagonal: bool = True,
+    kinetic: MCMCMassAdaptationPlan | None = None,
     max_num_doublings: int = 10,
     config: FlowNUTSConfig | None = None,
     chain_method: ChainMethod = "sequential",
@@ -433,6 +434,9 @@ def sample_flow_nuts(
     if not isinstance(problem, PosteriorProblem):
         raise TypeError("problem must be a PosteriorProblem.")
     flow_config = FlowNUTSConfig() if config is None else config
+    kinetic_plan = MCMCMassAdaptationPlan.diagonal() if kinetic is None else kinetic
+    if not isinstance(kinetic_plan, MCMCMassAdaptationPlan):
+        raise TypeError("kinetic must be MCMCMassAdaptationPlan or None.")
     if not isinstance(flow_config, FlowNUTSConfig):
         raise TypeError("config must be a FlowNUTSConfig or None.")
     chains = int(num_chains)
@@ -498,7 +502,7 @@ def sample_flow_nuts(
         "num_warmup": warmup_steps,
         "target_acceptance_rate": target,
         "initial_step_size": initial_step,
-        "is_mass_matrix_diagonal": bool(is_mass_matrix_diagonal),
+        "kinetic_kind": kinetic_plan.kind,
         "max_num_doublings": doublings,
         "chain_method": method,
         "dimension": dimension,
@@ -568,7 +572,7 @@ def sample_flow_nuts(
             warmup_steps=warmup_steps,
             target_acceptance_rate=target,
             initial_step_size=initial_step,
-            is_mass_matrix_diagonal=bool(is_mass_matrix_diagonal),
+            is_mass_matrix_diagonal=kinetic_plan.kind == "diagonal",
             extra_parameters={"max_num_doublings": doublings},
             chain_method=method,
         )

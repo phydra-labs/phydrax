@@ -566,3 +566,53 @@ requested and only over the archived solved interval.
 ---
 
 ::: phydrax.solver.solve_functional_differential
+
+## Bounded stochastic adaptation, adjoints, and long memory
+
+Stochastic-delay interpolation is capability typed.
+`ItoEulerDelayInterpolation`, `StratonovichEulerHeunDelayInterpolation`, and
+`SRKMKDelayInterpolation` declare interpretation, strong order, causal replay,
+Levy-area, geometry, and noise-structure requirements. Untyped arbitrary Diffrax
+interpolation remains unsupported. `adaptive_stochastic_delay_step_doubling`
+compares one full step with two half steps on the identical Brownian increments,
+accepts only the two-half history, and records fixed-capacity attempt/accept
+evidence. Rejection never resamples or enters causal history.
+
+`BacksolveDelayAdjoint` is not `diffrax.BacksolveAdjoint`. It integrates the
+continuous advanced adjoint only for smooth deterministic retarded constant point
+delays (and statically represented quadrature terms) from a matching
+`DelayPrimalTape`. It is a convergent continuous-adjoint approximation, not the
+exact checkpointed discrete gradient and not constant-memory. Unsupported neutral,
+state-dependent, functional, stochastic, manifold, or hybrid terms fail
+preparation.
+
+Bounded infinite memory has two truthful forms.
+`ExponentialConvolutionDelay` carries an exact finite-dimensional declared
+sum-of-exponentials realization. `CertifiedTruncatedFunctionalDelay` evaluates a
+finite retained window only while its conservative omitted-tail bound is finite,
+nonnegative, and below tolerance. Arbitrary `FunctionalDelay(..., upper=inf)`
+without either representation still requires full history.
+
+An explicit `FixedCapacitySegmentPolicy` on
+`solve_diffrax_delay_segmented` selects the whole-solve fixed-shape route and
+emits `FixedCapacitySegmentEvidence`. Unknown unbounded segment counts retain the
+host-streaming route. Reaching a segment/step/event cap is failure, never partial
+success.
+
+::: phydrax.solver.AdaptiveStochasticDelayPolicy
+
+---
+
+::: phydrax.solver.BacksolveDelayAdjoint
+
+---
+
+::: phydrax.solver.ExponentialConvolutionDelay
+
+---
+
+::: phydrax.solver.CertifiedTruncatedFunctionalDelay
+
+---
+
+::: phydrax.solver.FixedCapacitySegmentPolicy

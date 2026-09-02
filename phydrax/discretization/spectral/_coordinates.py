@@ -38,6 +38,10 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
     coordinate_size: int = eqx.field(static=True)
     maximum_coordinate_size: int = eqx.field(static=True)
     reality_tolerance: float = eqx.field(static=True)
+    full_state_bytes: int = eqx.field(static=True)
+    coordinate_state_bytes: int = eqx.field(static=True)
+    fixed_mode_count: int = eqx.field(static=True)
+    conjugate_pair_count: int = eqx.field(static=True)
     coordinate_id: str = eqx.field(static=True)
 
     def __init__(
@@ -141,6 +145,10 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
         self.coordinate_size = coordinate_size
         self.maximum_coordinate_size = maximum
         self.reality_tolerance = tolerance
+        self.full_state_bytes = modal_size * component_count * coefficient_dtype.itemsize
+        self.coordinate_state_bytes = coordinate_size * coordinate_dtype.itemsize
+        self.fixed_mode_count = int(fixed.size)
+        self.conjugate_pair_count = int(representatives.size)
         self.coordinate_id = identifier
 
     def validate_state(self, state: ArrayLike, /) -> Array:

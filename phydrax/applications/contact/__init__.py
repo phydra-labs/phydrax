@@ -115,6 +115,12 @@ from ._lubrication import (
     evaluate_lubrication_contact,
     LubricationContactPlan,
     LubricationContactResponse,
+    PreparedReynoldsFilm,
+    ReynoldsFilmEvidence,
+    ReynoldsFilmPlan,
+    ReynoldsFilmResult,
+    ReynoldsFilmState,
+    ReynoldsPressureBoundaryConditions,
 )
 from ._materials import ContactMaterialPairTable, ContactPairParameters
 from ._mechanics import FixedEpochContactOperator
@@ -348,6 +354,12 @@ __all__ = [
     "LaggedCoulombFrictionPlan",
     "LubricationContactPlan",
     "LubricationContactResponse",
+    "PreparedReynoldsFilm",
+    "ReynoldsFilmEvidence",
+    "ReynoldsFilmPlan",
+    "ReynoldsFilmResult",
+    "ReynoldsFilmState",
+    "ReynoldsPressureBoundaryConditions",
     "MeshTiePlan",
     "MortarContactEvidence",
     "MortarContactPlan",

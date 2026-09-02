@@ -168,12 +168,26 @@ def test_modified_bessel_zero_argument_derivatives_compose():
         assert np.isposinf(jax.grad(jax.grad(lambda x: function(0.0, x)))(0.0))
 
 
-def test_modified_bessel_order_derivatives_are_explicitly_unsupported():
-    for function in (phx.special.iv, phx.special.ive, phx.special.kv, phx.special.kve):
-        with pytest.raises(
-            TypeError, match="not differentiable with respect to the order"
-        ):
-            jax.grad(lambda order: function(order, 2.0))(jnp.asarray(0.3))
+def test_modified_bessel_order_derivatives_match_scipy():
+    order = 0.3
+    argument = 2.0
+    step = np.cbrt(np.finfo(np.float64).eps) * (1.0 + abs(order))
+    cases = (
+        (phx.special.iv, phx.special.iv_order_derivative, scipy.special.iv),
+        (phx.special.ive, phx.special.ive_order_derivative, scipy.special.ive),
+        (phx.special.kv, phx.special.kv_order_derivative, scipy.special.kv),
+        (phx.special.kve, phx.special.kve_order_derivative, scipy.special.kve),
+    )
+    for function, explicit_derivative, reference in cases:
+        actual = jax.grad(lambda value: function(value, argument))(jnp.asarray(order))
+        explicit = jnp.real(explicit_derivative(order, argument))
+        expected = (
+            reference(order + step, argument) - reference(order - step, argument)
+        ) / (2.0 * step)
+        np.testing.assert_allclose(
+            np.asarray(actual), np.asarray(explicit), rtol=2e-12, atol=2e-13
+        )
+        np.testing.assert_allclose(np.asarray(actual), expected, rtol=2e-7, atol=2e-9)
 
 
 def test_modified_bessel_boundaries_domains_and_broadcasting():
@@ -192,8 +206,9 @@ def test_modified_bessel_boundaries_domains_and_broadcasting():
     for function in (phx.special.iv, phx.special.ive, phx.special.kv, phx.special.kve):
         invalid = np.asarray(function(jnp.asarray([-1.0, 0.0]), jnp.asarray([1.0, -1.0])))
         assert np.isnan(invalid).all()
-        with pytest.raises(TypeError, match="does not support complex-valued inputs"):
-            function(0.0, 1.0 + 0.2j)
+        complex_value = function(0.0, 1.0 + 0.2j)
+        assert jnp.iscomplexobj(complex_value)
+        assert jnp.all(jnp.isfinite(complex_value))
 
     assert np.isposinf(phx.special.iv(0.0, jnp.inf))
     assert phx.special.ive(0.0, jnp.inf) == 0.0

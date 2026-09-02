@@ -20,9 +20,24 @@ For holomorphic complex coordinates these are respectively `−S⁻¹F` and
 imaginary covariance projections. The metric, damping, nullspace handling, solve
 policy, and failure evidence are the same Phydrax linalg contracts used by SR.
 
-The initial implementation is fixed-step Euler at the stochastic parameter level.
-`step_size` is therefore an explicit approximation choice; the solver does not claim
-adaptive time-discretization error or exact energy/unitarity preservation.
+The established VMC-coupled API remains fixed-step Euler.
+`AdaptiveTDVPPlan` adds a separate fixed-attempt Euler/Heun or symmetric
+midpoint epoch. It reports temporal defect and sampling uncertainty separately;
+noise-dominated attempts do not repeatedly shrink a step or commit state.
+Generic midpoint is symmetric, not an exact energy/unitarity claim.
+
+::: phydrax.solver.AdaptiveTDVPPlan
+
+::: phydrax.solver.solve_adaptive_tdvp
+
+`FiniteVariationalSubspaceTDVPProblem` is the only route permitted to claim
+norm/energy preservation. Its Cayley update requires a positive-definite
+finite overlap and a Hermitian time-independent finite Hamiltonian, and retains
+linear residual and reversibility evidence.
+
+::: phydrax.solver.FiniteVariationalSubspaceTDVPProblem
+
+::: phydrax.solver.solve_finite_subspace_tdvp
 
 ## Result and solve
 

@@ -16,9 +16,14 @@ import numpy as np
 from jaxtyping import Array
 
 from .._strict import StrictModule
-from ._operators import AbstractLinearOperator, estimate_operator_action_cost
+from ._operators import (
+    AbstractLinearOperator,
+    DenseLinearOperator,
+    estimate_operator_action_cost,
+)
 from ._spaces import _coordinate_dtype
 from ._spectral import (
+    _batched_dense_stochastic,
     _coordinate_action,
     _coordinate_inner,
     _effective_lanczos_quadrature,
@@ -156,6 +161,119 @@ def adaptive_stochastic_trace(
     )
 
 
+def _adaptive_batched_dense(
+    operator: DenseLinearOperator,
+    scalar_function: Callable[[Array], Array],
+    key: Array,
+    selected: AdaptiveStochasticPolicy,
+    quantity: str,
+    /,
+) -> AdaptiveStochasticEstimate:
+    full = _batched_dense_stochastic(
+        operator,
+        key,
+        selected.max_probes,
+        quantity="trace",
+        scalar_function=scalar_function,
+    )
+    batch_shape = operator.batch_shape
+    maximum = selected.max_probes
+    chosen = jnp.full(batch_shape, maximum, dtype=jnp.int32)
+    selected_estimate = full.estimate
+    selected_standard_error = full.standard_error
+    selected_converged = jnp.zeros(batch_shape, dtype=bool)
+    for count in range(selected.min_probes, maximum + 1, selected.batch_size):
+        prefix = full.samples[:count]
+        estimate = jnp.mean(prefix, axis=0)
+        variance = jnp.sum(jnp.abs(prefix - estimate) ** 2, axis=0) / max(
+            count - 1,
+            1,
+        )
+        standard_error = jnp.sqrt(variance / count)
+        confidence = selected.confidence_multiplier * standard_error
+        tolerance = selected.absolute_tolerance + selected.relative_tolerance * jnp.abs(
+            estimate
+        )
+        converged = (
+            jnp.all(jnp.isfinite(prefix), axis=0)
+            & jnp.isfinite(standard_error)
+            & (confidence <= tolerance)
+        )
+        take = (~selected_converged) & converged
+        chosen = jnp.where(take, count, chosen)
+        selected_estimate = jnp.where(take, estimate, selected_estimate)
+        selected_standard_error = jnp.where(
+            take,
+            standard_error,
+            selected_standard_error,
+        )
+        selected_converged = selected_converged | converged
+    confidence_radius = selected.confidence_multiplier * selected_standard_error
+    tolerance = selected.absolute_tolerance + selected.relative_tolerance * jnp.abs(
+        selected_estimate
+    )
+    active = jnp.arange(maximum).reshape((maximum,) + (1,) * len(batch_shape)) < chosen
+    nan = jnp.asarray(jnp.nan, dtype=full.samples.dtype)
+    statuses = jnp.where(
+        active,
+        full.probe_statuses,
+        int(StochasticProbeStatus.NOT_EVALUATED),
+    )
+    diagnostics = StochasticProbeDiagnostics(
+        source_statuses=statuses,
+        iterations=jnp.where(active, full.diagnostics.iterations, 0),
+        residual_norm=jnp.where(active, full.diagnostics.residual_norm, nan),
+        relative_residual=jnp.where(
+            active,
+            full.diagnostics.relative_residual,
+            nan,
+        ),
+        finite=jnp.where(active, full.diagnostics.finite, False),
+        converged=jnp.where(active, full.diagnostics.converged, False),
+        matvec_count=jnp.where(active, full.diagnostics.matvec_count, 0),
+        adjoint_matvec_count=jnp.where(
+            active,
+            full.diagnostics.adjoint_matvec_count,
+            0,
+        ),
+    )
+    cost = _adaptive_cost(
+        operator,
+        selected,
+        operator.source.size,
+        full.samples.dtype,
+    )
+    return AdaptiveStochasticEstimate(
+        estimate=selected_estimate,
+        standard_error=selected_standard_error,
+        confidence_radius=confidence_radius,
+        numerical_error_estimate=jnp.zeros_like(confidence_radius),
+        total_error_estimate=confidence_radius,
+        tolerance=tolerance,
+        samples=jnp.where(active, full.samples, nan),
+        finite=jnp.isfinite(selected_estimate),
+        converged=selected_converged,
+        stopped_early=chosen < maximum,
+        probe_converged=jnp.where(active, full.probe_converged, False),
+        probe_statuses=statuses,
+        probe_error_estimates=jnp.where(
+            active,
+            full.probe_error_estimates,
+            nan,
+        ),
+        num_probes=chosen,
+        iterations=jnp.zeros(batch_shape, dtype=jnp.int32),
+        matvec_count=chosen,
+        adjoint_matvec_count=jnp.zeros(batch_shape, dtype=jnp.int32),
+        diagnostics=diagnostics,
+        policy=selected,
+        cost=cost,
+        method="adaptive-batched-dense-exact-probe-action",
+        quantity=quantity,
+        confidence_model="two-sided normal approximation with exact dense actions",
+    )
+
+
 def _adaptive_stochastic_trace(
     operator: AbstractLinearOperator,
     scalar_function: Callable[[Array], Array],
@@ -165,15 +283,31 @@ def _adaptive_stochastic_trace(
     policy: AdaptiveStochasticPolicy | None,
     quantity: str,
 ) -> AdaptiveStochasticEstimate:
-    _validate_endomorphism(operator)
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be an AbstractLinearOperator.")
+    if not operator.source.compatible(operator.target):
+        raise ValueError("Adaptive stochastic estimation requires an endomorphism.")
     if not operator.properties.certifies("self_adjoint"):
         raise ValueError("Adaptive SLQ requires certified self-adjoint structure.")
     if not callable(scalar_function):
         raise TypeError("scalar_function must be callable.")
-    _require_square_root_pairing(operator.source)
     selected = AdaptiveStochasticPolicy() if policy is None else policy
     if not isinstance(selected, AdaptiveStochasticPolicy):
         raise TypeError("policy must be an AdaptiveStochasticPolicy or None.")
+    if operator.batch_shape:
+        if not isinstance(operator, DenseLinearOperator):
+            raise ValueError(
+                "Batched adaptive spectral estimation requires DenseLinearOperator."
+            )
+        return _adaptive_batched_dense(
+            operator,
+            scalar_function,
+            key,
+            selected,
+            quantity,
+        )
+    _validate_endomorphism(operator)
+    _require_square_root_pairing(operator.source)
     dimension = min(selected.max_dimension, operator.source.size)
     coordinate_dtype = _coordinate_dtype(operator.source)
     probes = jax.vmap(lambda probe: _whiten_coordinates(operator.source, probe))(

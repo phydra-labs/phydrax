@@ -3,7 +3,21 @@
 from ..._model import ModelBinding
 from .._loss import add_model_loss, ModelWithLoss
 from . import wrappers
+from ._algebra_analytic import (
+    AlgebraAnalyticLayer,
+    AlgebraAnalyticNetwork,
+    AnalyticityEvidence,
+    AnalyticityKind,
+    AnalyticityOperator,
+)
 from ._constitutive import DeformationGradientMinors, PolyconvexPotential
+from ._constrained_constitutive import (
+    CoercivePolyconvexEnvelope,
+    ConstrainedPolyconvexPotential,
+    MaterialConstraintReport,
+    PolyconvexMaterialConstraints,
+    ReferenceConfiguration,
+)
 from ._feynmann import FeynmaNN
 from ._flowjax_process import (
     conditional_coupling_flow_process,
@@ -29,6 +43,7 @@ from ._kan_basis import (
     RationalBSplineEdgeBasis,
     RationalBSplineEdgeParameters,
     TrainableBSplineGrid,
+    TrainableBSplineGridBank,
 )
 from ._kan_capacity import (
     coarsen_kan_edges,
@@ -38,6 +53,7 @@ from ._kan_capacity import (
 from ._linear_recurrent import LinearRecurrentModel
 from ._mlp import MLP
 from ._modified_mlp import ModifiedMLP
+from ._ordinal import OrdinalCumulativeLinkHead
 from ._piratenet import PirateNet
 from ._port_hamiltonian import (
     DissipationStructure,
@@ -60,6 +76,11 @@ from ._weight_space_recurrent import (
     WeightSpaceRecurrentModel,
 )
 from .wrappers import (
+    AutoencodedOnsagerDiagnostics,
+    AutoencodedOnsagerModel,
+    CausalCoordinateNetwork,
+    CausalCoordinatePlan,
+    CausalCoordinateResult,
     ComplexOutputModel,
     ConcatenatedModel,
     DecayAggregation,
@@ -68,28 +89,44 @@ from .wrappers import (
     EquinoxModel,
     EquinoxStructuredModel,
     ExponentialSpectralEnvelope,
+    FixedSubspaceOnsagerModel,
+    FixedSubspaceProjectionReport,
     ImplicitModalField,
     LatentContractionModel,
     LatentExecutionPolicy,
     LinearDifferentialTransform,
     MagnitudeDirectionModel,
     MaskedSeriesPoolingModel,
+    PortHamiltonianResidualClosure,
     RaggedSeriesBatchInput,
     RaggedSeriesModel,
     Separable,
     Sequential,
+    SparseImplicitModalField,
     SpectralBasisModulation,
 )
 
 
 __all__ = [
+    "AlgebraAnalyticLayer",
+    "AlgebraAnalyticNetwork",
+    "AnalyticityEvidence",
+    "AnalyticityKind",
+    "AnalyticityOperator",
     "ProjectiveInvariantPotential",
     "AbstractEdgeBasis",
     "BSplineEdgeBasis",
     "BSplineGrid",
     "BSplineGridBank",
     "BidirectionalRecurrentSequenceModel",
+    "AutoencodedOnsagerDiagnostics",
+    "AutoencodedOnsagerModel",
+    "CausalCoordinateNetwork",
+    "CausalCoordinatePlan",
+    "CausalCoordinateResult",
     "ComplexOutputModel",
+    "CoercivePolyconvexEnvelope",
+    "ConstrainedPolyconvexPotential",
     "DeformationGradientMinors",
     "ConcatenatedModel",
     "DecayAggregation",
@@ -103,11 +140,15 @@ __all__ = [
     "FeatureNormPotential",
     "ExponentialSpectralEnvelope",
     "FunctionalStateDecoder",
+    "FixedSubspaceOnsagerModel",
+    "FixedSubspaceProjectionReport",
     "IdentityCoefficientTransition",
     "InputConvexNetwork",
     "KAN",
     "HolomorphicMLP",
     "ImplicitModalField",
+    "SparseImplicitModalField",
+    "OrdinalCumulativeLinkHead",
     "KANCapacityAdaptationReport",
     "KANEdgeBlock",
     "KANGridAdaptationPlan",
@@ -121,14 +162,18 @@ __all__ = [
     "MagnitudeDirectionModel",
     "MaskedSeriesPoolingModel",
     "ModelWithLoss",
+    "MaterialConstraintReport",
     "ModifiedMLP",
     "ModelBinding",
     "PirateNet",
     "PartiallyInputConvexNetwork",
     "PolyconvexPotential",
+    "PolyconvexMaterialConstraints",
     "PortHamiltonianVectorField",
+    "PortHamiltonianResidualClosure",
     "OrthogonalPolynomialEdgeBasis",
     "RaggedSeriesBatchInput",
+    "ReferenceConfiguration",
     "RaggedSeriesModel",
     "RationalBSplineEdgeBasis",
     "RationalBSplineEdgeParameters",
@@ -144,6 +189,7 @@ __all__ = [
     "Sequential",
     "StateTimeProcessConditioner",
     "TrainableBSplineGrid",
+    "TrainableBSplineGridBank",
     "WeightSpaceRecurrentModel",
     "adapt_kan_grids",
     "add_model_loss",

@@ -97,6 +97,12 @@ class ComputationAwareGaussianProcessDiagnostics(StrictModule):
     status: Array
     projected_noise_condition: Array
     projected_covariance_condition: Array
+    action_active_mask: Array
+    action_residual_history: Array
+    action_breakdown_mask: Array
+    action_convergence_mask: Array
+    action_selected_indices: Array
+    active_action_count: Array
     action_kind: GaussianProcessActionKind = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
     num_observations: int = eqx.field(static=True)
@@ -159,6 +165,12 @@ class ComputationAwareGaussianProcessDiagnostics(StrictModule):
         self.status = status
         self.projected_noise_condition = noise_condition
         self.projected_covariance_condition = covariance_condition
+        self.action_active_mask = actions.active_mask
+        self.action_residual_history = actions.residual_history
+        self.action_breakdown_mask = actions.breakdown_mask
+        self.action_convergence_mask = actions.convergence_mask
+        self.action_selected_indices = actions.selected_indices
+        self.active_action_count = jnp.sum(actions.active_mask, dtype=jnp.int32)
         self.action_kind = actions.kind
         self.action_id = actions.action_id
         self.num_observations = actions.num_observations
@@ -190,6 +202,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
         state: GaussianProcessLikelihoodState,
         actions: AbstractGaussianProcessActionPolicy,
         computation: GaussianProcessComputationPolicy | None = None,
+        residual: ArrayLike | None = None,
     ):
         points = _validated_factor_points(observation_points)
         _require_state(state)
@@ -200,7 +213,13 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
         )
         if not isinstance(policy, GaussianProcessComputationPolicy):
             raise TypeError("computation must be a GaussianProcessComputationPolicy.")
-        resolved = actions.resolve(points, state=state)
+        resolved = actions.resolve(
+            points,
+            state=state,
+            residual=None
+            if residual is None
+            else _as_vector(residual, name="GP residual"),
+        )
         if resolved.num_observations != int(points.shape[0]):
             raise ValueError("Resolved GP actions must align with observation points.")
         projected = _build_projected_state(
@@ -209,6 +228,7 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
             noise_scale=state.noise_scale,
             jitter=state.jitter,
             actions=resolved.operator,
+            active_mask=resolved.active_mask,
             max_workspace_bytes=policy.max_workspace_bytes,
             max_factorization_bytes=policy.max_factor_storage_bytes,
             checkpoint=policy.checkpoint_kernel_blocks,
@@ -460,8 +480,15 @@ class ComputationAwareGaussianProcessDiscrepancy(StrictModule):
         actions: AbstractGaussianProcessActionPolicy,
         computation: GaussianProcessComputationPolicy | None = None,
     ) -> Array:
-        factor = self.factor(state=state, actions=actions, computation=computation)
-        return factor.elbo(self.residual(physical_mean))
+        residual = self.residual(physical_mean)
+        factor = ComputationAwareGaussianProcessFactor(
+            self.observation_points,
+            state=state,
+            actions=actions,
+            computation=computation,
+            residual=residual,
+        )
+        return factor.elbo(residual)
 
     def condition(
         self,
@@ -474,9 +501,16 @@ class ComputationAwareGaussianProcessDiscrepancy(StrictModule):
         computation: GaussianProcessComputationPolicy | None = None,
         output_dim: str | None = "point",
     ) -> GaussianProcessCondition:
-        factor = self.factor(state=state, actions=actions, computation=computation)
+        residual = self.residual(physical_mean)
+        factor = ComputationAwareGaussianProcessFactor(
+            self.observation_points,
+            state=state,
+            actions=actions,
+            computation=computation,
+            residual=residual,
+        )
         return factor.condition(
-            self.residual(physical_mean),
+            residual,
             query_points,
             output_dim=output_dim,
         )

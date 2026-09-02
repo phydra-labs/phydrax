@@ -41,6 +41,7 @@ class _PositiveFactor(NamedTuple):
 
 class _ProjectedGaussianProcessState(NamedTuple):
     kernel_action: Array
+    active_mask: Array
     prior_diagonal: Array
     effective_observation_variance: Array
     projected_noise: Array
@@ -70,6 +71,7 @@ def _build_projected_state(
     noise_scale: Array,
     jitter: Array,
     actions: AbstractLinearOperator,
+    active_mask: Array,
     max_workspace_bytes: int,
     max_factorization_bytes: int,
     checkpoint: bool,
@@ -90,9 +92,18 @@ def _build_projected_state(
         max_workspace_bytes=max_workspace_bytes,
         checkpoint=checkpoint,
     )
+    mask = jnp.asarray(active_mask, dtype=bool)
+    if mask.shape != (actions.source.size,):
+        raise ValueError("Action active_mask must align with action capacity.")
+    active_float = mask.astype(effective_variance.dtype)
     projected_noise = _weighted_action_gram(actions, effective_variance)
     projected_kernel = _transpose_action_columns(actions, kernel_action)
-    projected_covariance = projected_kernel + projected_noise
+    projected_noise = projected_noise * active_float[:, None] * active_float[
+        None, :
+    ] + jnp.diag(1.0 - active_float)
+    projected_covariance = (
+        projected_kernel * active_float[:, None] * active_float[None, :] + projected_noise
+    )
     projected_noise = _symmetrize(projected_noise)
     projected_covariance = _symmetrize(projected_covariance)
     noise_factor = _factorize_positive(
@@ -106,6 +117,7 @@ def _build_projected_state(
         max_factorization_bytes=max_factorization_bytes,
     )
     return _ProjectedGaussianProcessState(
+        active_mask=mask,
         kernel_action=kernel_action,
         prior_diagonal=kernel.diagonal(observation_points),
         effective_observation_variance=effective_variance,
@@ -277,7 +289,7 @@ def _computation_aware_elbo(
     )
     logdet_covariance = _positive_logdet(projected.covariance_factor)
     logdet_noise = _positive_logdet(projected.noise_factor)
-    action_count = actions.source.size
+    action_count = jnp.sum(projected.active_mask, dtype=projected_residual.dtype)
     kl = 0.5 * (
         trace_term
         + quadratic

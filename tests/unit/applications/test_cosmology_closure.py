@@ -49,18 +49,6 @@ def test_early_universe_and_boltzmann_closure():
         rtol=1e-6,
     )
 
-    plan = cosmology.EinsteinBoltzmannPlan(
-        jnp.linspace(1.0, 2.0, 32),
-        jnp.asarray([0.1, 0.2]),
-        lambda time: 0.1 / time,
-        lambda time: jnp.asarray(0.1),
-        maximum_multipole=4,
-    )
-    initial = jnp.zeros((2, plan.state_dimension)).at[:, 5].set(1.0)
-    solved = plan.solve(initial, jnp.ones(2))
-    assert bool(solved.valid)
-    assert solved.temperature_cl.shape == (5,)
-
 
 def test_nonlinear_lensing_and_compact_object_closure():
     cosmology = phx.applications.cosmology

@@ -15,7 +15,12 @@ import numpy as np
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
-from .._numerics._checkpointed_scan import checkpointed_scan
+from .._numerics._checkpointed_scan import (
+    AdaptiveReplayPreparationPolicy,
+    checkpointed_scan,
+    prepare_replay_schedule,
+    PreparedReplaySchedule,
+)
 from .._numerics._ssp_runge_kutta import (
     AbstractSSPRKStageTransform,
     ssprk33_step_with_evidence,
@@ -628,14 +633,15 @@ class FixedStepSolution(StrictModule, NonTrainableState):
 
 
 FixedStepRetentionPolicy: TypeAlias = Literal["final", "checkpoints", "trajectory"]
-FixedStepReplayMode: TypeAlias = Literal["full", "step", "block"]
+FixedStepReplayMode: TypeAlias = Literal["full", "step", "block", "scheduled"]
 
 
 class FixedStepReplayPolicy(StrictModule, NonTrainableState):
-    """Reverse-mode storage and deterministic recomputation for fixed-step scans."""
+    """Reverse-mode storage and immutable recomputation for fixed-step scans."""
 
     mode: FixedStepReplayMode = eqx.field(static=True)
     block_size: int | None = eqx.field(static=True)
+    schedule: PreparedReplaySchedule | None
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -644,19 +650,33 @@ class FixedStepReplayPolicy(StrictModule, NonTrainableState):
         /,
         *,
         block_size: int | None = None,
+        schedule: PreparedReplaySchedule | None = None,
     ):
-        if mode not in ("full", "step", "block"):
+        if mode not in ("full", "step", "block", "scheduled"):
             raise ValueError("Unknown fixed-step replay mode.")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
                 raise ValueError("Block replay requires a positive block_size.")
-        elif size is not None:
-            raise ValueError("block_size is valid only for block replay.")
+            if schedule is not None:
+                raise ValueError("Block replay does not accept a prepared schedule.")
+        elif mode == "scheduled":
+            if size is not None:
+                raise ValueError("Scheduled replay does not accept block_size.")
+            if not isinstance(schedule, PreparedReplaySchedule):
+                raise TypeError("Scheduled replay requires PreparedReplaySchedule.")
+        elif size is not None or schedule is not None:
+            raise ValueError("Replay block/schedule is incompatible with selected mode.")
         self.mode = mode
         self.block_size = size
+        self.schedule = schedule
         self.policy_id = canonical_fingerprint(
-            {"kind": "fixed-step-replay", "mode": mode, "block_size": size}
+            {
+                "kind": "fixed-step-replay",
+                "mode": mode,
+                "block_size": size,
+                "schedule": None if schedule is None else schedule.schedule_id,
+            }
         )
 
 
@@ -828,6 +848,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 length=problem.step_count,
                 mode=self.replay.mode,
                 block_size=self.replay.block_size,
+                schedule=self.replay.schedule,
             )
             (
                 states,
@@ -852,6 +873,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 length=problem.step_count,
                 mode=self.replay.mode,
                 block_size=self.replay.block_size,
+                schedule=self.replay.schedule,
             )
             valid, residuals, iterations, work, transformed, correction, observed = (
                 payload
@@ -915,6 +937,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 length=problem.step_count,
                 mode=self.replay.mode,
                 block_size=self.replay.block_size,
+                schedule=self.replay.schedule,
             )
             (final_state, final_success), retained_states, retained_valid, _ = (
                 result_carry
@@ -983,6 +1006,7 @@ def solve_fixed_step(
         length=problem.step_count,
         mode=replay_.mode,
         block_size=replay_.block_size,
+        schedule=replay_.schedule,
     )
     states, valid, residuals, iterations, work, transformed, correction = payload
     all_states = _prepend_initial_state(problem.initial_state, states)
@@ -1018,6 +1042,7 @@ def solve_fixed_step(
 
 
 __all__ = [
+    "AdaptiveReplayPreparationPolicy",
     "AbstractAcceptedStepTransform",
     "AbstractSSPRKStageTransform",
     "CallableFixedStepMethod",
@@ -1028,6 +1053,8 @@ __all__ = [
     "FixedStepProblem",
     "FixedStepReplayMode",
     "FixedStepReplayPolicy",
+    "PreparedReplaySchedule",
+    "prepare_replay_schedule",
     "FixedStepRetentionPolicy",
     "FixedStepRolloutPlan",
     "FixedStepRolloutResult",

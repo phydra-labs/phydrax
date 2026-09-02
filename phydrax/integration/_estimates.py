@@ -40,6 +40,37 @@ class AdaptivePartition(StrictModule):
     active: Array
 
 
+class DiscoveredBreakpoints(StrictModule):
+    """Fixed-capacity numerical breakpoint candidates and non-proof evidence."""
+
+    points: Array
+    active: Array
+    scores: Array
+    kinds: Array
+    status: Array
+
+
+class AdaptiveCubaturePartition(StrictModule):
+    """Static-capacity hyperrectangle partition."""
+
+    count: Array
+    lower_bounds: Array
+    upper_bounds: Array
+    integral_estimates: Array
+    estimated_errors: Array
+    active: Array
+
+
+class AdaptiveCubatureDiagnostics(StrictModule):
+    status: Array
+    num_evaluations: Array
+    estimated_error: Array
+    partition: AdaptiveCubaturePartition | None
+    dimension: int = eqx.field(static=True)
+    low_rule: str = eqx.field(static=True)
+    high_rule: str = eqx.field(static=True)
+
+
 class AdaptiveTrianglePartition(StrictModule):
     """Static-capacity adaptive triangle diagnostics with an active count."""
 
@@ -87,7 +118,31 @@ class AdaptiveQuadratureDiagnostics(StrictModule):
     num_evaluations: Array
     estimated_error: Array
     partition: AdaptivePartition | None
+    discovery: DiscoveredBreakpoints | None
+    discovery_count: Array
+    discovery_overflow: Array
     rule: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        status: Array,
+        num_evaluations: Array,
+        estimated_error: Array,
+        partition: AdaptivePartition | None,
+        rule: str,
+        discovery: DiscoveredBreakpoints | None = None,
+        discovery_count: Array | int = 0,
+        discovery_overflow: Array | bool = False,
+    ):
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.num_evaluations = jnp.asarray(num_evaluations, dtype=jnp.int32)
+        self.estimated_error = jnp.asarray(estimated_error)
+        self.partition = partition
+        self.discovery = discovery
+        self.discovery_count = jnp.asarray(discovery_count, dtype=jnp.int32)
+        self.discovery_overflow = jnp.asarray(discovery_overflow, dtype=bool)
+        self.rule = str(rule)
 
 
 class MonteCarloDiagnostics(StrictModule):
@@ -214,9 +269,12 @@ class IntegrationEstimate(StrictModule):
 
 __all__ = [
     "AdaptivePartition",
+    "AdaptiveCubatureDiagnostics",
+    "AdaptiveCubaturePartition",
     "AdaptiveTriangleDiagnostics",
     "AdaptiveTrianglePartition",
     "AdaptiveQuadratureDiagnostics",
+    "DiscoveredBreakpoints",
     "AntitheticDiagnostics",
     "BayesianQuadratureDiagnostics",
     "FixedQuadratureDiagnostics",

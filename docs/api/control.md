@@ -695,3 +695,54 @@ global optimality.
 ::: phydrax.control.ControlSearchResult
 
 ::: phydrax.control.search_control
+
+## Batched local solves, advanced transcription, and certificates
+
+Homogeneous iLQR case axes use `plan_ilqr`, `prepare_ilqr`, and
+`solve_prepared_ilqr`. The prepared kernel flattens case axes only internally,
+uses fixed iteration and line-search capacities, and restores every physical case
+axis in trajectories, policies, histories, and statuses. A failed case does not
+deactivate its siblings. Unsupported host-only backends fail preparation rather
+than falling back.
+
+`RadauIIAMethod(s)` constructs the right-Radau tableau of order `2s-1`.
+`radau_collocation_defects` evaluates explicit or DAE stage and endpoint defects.
+Fixed `DirectCollocationPhase`/`DirectCollocationLink` graphs, event links,
+complementarity audits, finite weighted stochastic scenarios, and declared
+manifold retractions are bounded transcriptions: phase/event/scenario/chart
+topology is immutable inside one epoch.
+
+Continuous path certification is distinct from the existing off-grid audit.
+`AffineBernsteinPathEnvelope` bounds affine residuals over the represented segment
+by Bernstein convex hulls. `LipschitzPathEnvelope` combines declared total-time
+derivative bounds with a covering radius. Unsupported sampled callbacks remain
+non-certifying. `BoundedControlCertificatePlan` can certify only a finite
+coefficient box with a valid convex or Lipschitz/interval relaxation and a
+continuously feasible incumbent. Work-limit results and differential-evolution
+searches remain non-certificates.
+
+::: phydrax.control.plan_ilqr
+
+---
+
+::: phydrax.control.RadauCollocationDefects
+
+---
+
+::: phydrax.control.MultiphaseDirectCollocationProblem
+
+---
+
+::: phydrax.control.CertifiedPathConstraint
+
+---
+
+::: phydrax.control.certify_continuous_path_constraints
+
+---
+
+::: phydrax.control.BoundedControlCertificatePlan
+
+---
+
+::: phydrax.control.certify_bounded_control_optimum

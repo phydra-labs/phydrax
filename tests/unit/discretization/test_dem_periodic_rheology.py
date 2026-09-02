@@ -31,7 +31,7 @@ def _compile_periodic(control, radii):
     problem = phx.equations.DiscreteElementProblemIR(
         "periodic-rheology", materials, gravity=jnp.zeros((2,))
     )
-    cell = phx.discretization.ParticleCell(
+    cell = phx.discretization.PeriodicCell(
         jnp.eye(2),
         periodic_axes=(True, True),
         maximum_condition_number=control.maximum_condition_number,
@@ -153,3 +153,113 @@ def test_cell_control_failure_rolls_back_atomically():
     assert jnp.array_equal(
         detail.accepted_state.periodic_cell.vectors, state.periodic_cell.vectors
     )
+
+
+def test_periodic_envelope_and_explicit_bulk_stress_terms_are_auditable():
+    envelope = phx.discretization.PeriodicNeighborhoodEnvelope(
+        jnp.eye(2),
+        minimum_singular_value=0.8,
+        minimum_lattice_height=0.8,
+        maximum_deformation_norm=0.5,
+    )
+    evidence = envelope.evaluate(jnp.asarray(((1.0, 0.2), (0.0, 1.0))))
+    assert bool(evidence.complete)
+
+    stress = phx.discretization.DEMBulkStressPlan(
+        jnp.zeros((2,)),
+        include_barrier_virial=True,
+        include_body_force_moment=True,
+    ).evaluate(
+        volume=jnp.asarray(1.0),
+        contact_force=jnp.asarray(((1.0, 0.0),)),
+        contact_displacement=jnp.asarray(((0.5, 0.0),)),
+        particle_mass=jnp.asarray((1.0,)),
+        particle_velocity=jnp.zeros((1, 2)),
+        particle_active=jnp.asarray((True,)),
+        barrier_force=jnp.asarray(((-1.0, 0.0),)),
+        barrier_point=jnp.asarray(((0.5, 0.0),)),
+        body_force=jnp.zeros((1, 2)),
+        particle_position=jnp.zeros((1, 2)),
+    )
+    assert bool(stress.successful)
+    assert jnp.all(jnp.isfinite(stress.total_stress))
+
+
+@pytest.mark.parametrize("inactive_mass", [jnp.nan, jnp.inf])
+def test_bulk_stress_ignores_nonfinite_inactive_particle_slots(inactive_mass):
+    plan = phx.discretization.DEMBulkStressPlan(
+        jnp.asarray((0.25, -0.5)),
+        include_contact=False,
+        include_kinetic=True,
+        include_body_force_moment=True,
+    )
+    arguments = {
+        "volume": jnp.asarray(2.0),
+        "contact_force": jnp.zeros((1, 2)),
+        "contact_displacement": jnp.zeros((1, 2)),
+        "particle_active": jnp.asarray((True, True, False)),
+    }
+    reference = plan.evaluate(
+        **arguments,
+        particle_mass=jnp.asarray((2.0, 3.0, 9.0)),
+        particle_velocity=jnp.asarray(((1.0, 2.0), (-1.0, 0.5), (0.0, 0.0))),
+        body_force=jnp.asarray(((3.0, -2.0), (-1.0, 4.0), (0.0, 0.0))),
+        particle_position=jnp.asarray(((1.5, 0.75), (-0.25, 1.25), (0.0, 0.0))),
+    )
+    stale = plan.evaluate(
+        **arguments,
+        particle_mass=jnp.asarray((2.0, 3.0, inactive_mass)),
+        particle_velocity=jnp.asarray(((1.0, 2.0), (-1.0, 0.5), (jnp.nan, jnp.inf))),
+        body_force=jnp.asarray(((3.0, -2.0), (-1.0, 4.0), (jnp.nan, jnp.inf))),
+        particle_position=jnp.asarray(((1.5, 0.75), (-0.25, 1.25), (jnp.inf, jnp.nan))),
+    )
+
+    stale_evidence = (
+        stale.contact_stress,
+        stale.kinetic_stress,
+        stale.barrier_stress,
+        stale.body_force_stress,
+        stale.total_stress,
+        stale.pressure,
+        stale.volume,
+        stale.symmetry_defect,
+        stale.origin,
+        stale.successful,
+    )
+    reference_evidence = (
+        reference.contact_stress,
+        reference.kinetic_stress,
+        reference.barrier_stress,
+        reference.body_force_stress,
+        reference.total_stress,
+        reference.pressure,
+        reference.volume,
+        reference.symmetry_defect,
+        reference.origin,
+        reference.successful,
+    )
+    for stale_value, reference_value in zip(
+        stale_evidence, reference_evidence, strict=True
+    ):
+        assert jnp.array_equal(stale_value, reference_value)
+    assert bool(reference.successful)
+    assert bool(stale.successful)
+
+
+@pytest.mark.parametrize("active_mass", [jnp.nan, jnp.inf])
+def test_bulk_stress_fails_closed_for_nonfinite_active_mass(active_mass):
+    stress = phx.discretization.DEMBulkStressPlan(
+        jnp.zeros((2,)),
+        include_contact=False,
+        include_kinetic=True,
+    ).evaluate(
+        volume=jnp.asarray(1.0),
+        contact_force=jnp.zeros((1, 2)),
+        contact_displacement=jnp.zeros((1, 2)),
+        particle_mass=jnp.asarray((active_mass, 2.0)),
+        particle_velocity=jnp.asarray(((1.0, -1.0), (0.5, 0.25))),
+        particle_active=jnp.asarray((True, True)),
+    )
+
+    assert not bool(stress.successful)
+    assert not bool(jnp.all(jnp.isfinite(stress.total_stress)))

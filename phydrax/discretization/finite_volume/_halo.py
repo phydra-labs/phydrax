@@ -215,6 +215,18 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
             upper_coordinates = centers[:depth] + extent
             lower_physical = center_values[-depth:]
             upper_physical = center_values[:depth]
+            if isinstance(self.plan.discretization, MappedFiniteVolumeDiscretization):
+                matching = tuple(
+                    seam
+                    for seam in self.plan.discretization.periodic_seams
+                    if seam.axis == axis_
+                )
+                if matching:
+                    seam = matching[0]
+                    lower = seam.transform_conserved(lower, inverse=True)
+                    upper = seam.transform_conserved(upper)
+                    lower_physical = seam.image(lower_physical, inverse=True)
+                    upper_physical = seam.image(upper_physical)
         else:
             pair = self.plan.boundaries.pairs[axis_]
             if pair is None:

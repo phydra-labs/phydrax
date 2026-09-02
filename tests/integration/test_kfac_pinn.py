@@ -7,7 +7,6 @@ import jax.random as jr
 
 import phydrax as phx
 from phydrax.domain import Boundary, PointSampling, SampleLayout
-from phydrax.enforcement import enforce_dirichlet
 from phydrax.operators.differential import laplacian, partial_n
 
 
@@ -102,14 +101,7 @@ def test_kfac_trains_hard_dirichlet_poisson_pinn():
     raw = _model(domain, 1, jr.key(4))
     boundary_component = domain.component({"x": Boundary()})
     spec = phx.enforcement.EnforcementSpec(
-        phx.conditions.Dirichlet("u", boundary_component, target=0.0),
-        kind="custom",
-        transform=lambda field, _get_field: enforce_dirichlet(
-            field,
-            boundary_component,
-            var="x",
-            target=0.0,
-        ),
+        phx.conditions.Dirichlet("u", boundary_component, target=0.0)
     )
     interior = _residual_term(
         domain.component(),

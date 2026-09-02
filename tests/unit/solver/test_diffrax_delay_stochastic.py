@@ -579,3 +579,35 @@ def test_coupled_fine_step_reduces_strong_error_on_the_same_global_paths():
     fine_error = jnp.sqrt(jnp.mean((fine - reference) ** 2))
 
     assert fine_error < coarse_error
+
+
+def test_complex_stochastic_delay_uses_real_coordinates_pathwise():
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: jnp.conj(memory[0]),
+        lambda time, args: jnp.asarray([1.0 + 0.25j]),
+        (phx.solver.ConstantDelay("past", 0.5),),
+        t0=0.0,
+        t1=0.1,
+        wiener_terms=(
+            phx.solver.DelayWienerTerm(
+                "driver",
+                lambda time, state, memory, args: jnp.asarray([[0.2 + 0.1j]]),
+                (1,),
+                structure="additive",
+                basis_id="complex-delay-basis",
+            ),
+        ),
+    )
+    realization = _realization(problem, seed=27, support=(0.0, 0.1))
+    solution = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=jnp.asarray([0.0, 0.1]),
+        realization=realization,
+        solver=dfx.Euler(),
+        dt0=0.05,
+        dense=True,
+    )
+
+    assert solution.states.dtype == jnp.complex128
+    assert jnp.all(jnp.isfinite(solution.states))
+    assert jnp.all(jnp.isfinite(solution.evaluate(jnp.asarray([0.05]))))

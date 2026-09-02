@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
+from ._spherical import SphericalSpectralDiscretization, SphericalSpectralPlan
 from ._transfer import (
     prepare_spectral_modal_transfer,
     PreparedSpectralModalTransfer,
@@ -33,6 +34,10 @@ class DealiasingReport(StrictModule, NonTrainableState):
     evaluation_shape: tuple[int, ...] = eqx.field(static=True)
     maximum_polynomial_degree: int | None = eqx.field(static=True)
     exact: bool = eqx.field(static=True)
+    input_bandlimit: int | None = eqx.field(static=True)
+    evaluation_bandlimit: int | None = eqx.field(static=True)
+    output_bandlimit: int | None = eqx.field(static=True)
+    spin: int | None = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
     def __init__(
@@ -43,6 +48,10 @@ class DealiasingReport(StrictModule, NonTrainableState):
         evaluation_shape: tuple[int, ...],
         maximum_polynomial_degree: int | None,
         exact: bool,
+        input_bandlimit: int | None = None,
+        evaluation_bandlimit: int | None = None,
+        output_bandlimit: int | None = None,
+        spin: int | None = None,
     ):
         retained = tuple(int(value) for value in retained_shape)
         evaluation = tuple(int(value) for value in evaluation_shape)
@@ -61,11 +70,26 @@ class DealiasingReport(StrictModule, NonTrainableState):
         )
         if degree is not None and degree < 1:
             raise ValueError("maximum_polynomial_degree must be positive or None.")
+        input_limit = None if input_bandlimit is None else int(input_bandlimit)
+        evaluation_limit = (
+            None if evaluation_bandlimit is None else int(evaluation_bandlimit)
+        )
+        output_limit = None if output_bandlimit is None else int(output_bandlimit)
+        spin_ = None if spin is None else int(spin)
+        if any(
+            value is not None and value <= 0
+            for value in (input_limit, evaluation_limit, output_limit)
+        ):
+            raise ValueError("Spherical dealiasing bandlimits must be positive.")
         self.kind = kind
         self.retained_shape = retained
         self.evaluation_shape = evaluation
         self.maximum_polynomial_degree = degree
         self.exact = bool(exact)
+        self.input_bandlimit = input_limit
+        self.evaluation_bandlimit = evaluation_limit
+        self.output_bandlimit = output_limit
+        self.spin = spin_
         self.report_id = canonical_fingerprint(
             {
                 "kind": "spectral-dealiasing-report",
@@ -74,6 +98,10 @@ class DealiasingReport(StrictModule, NonTrainableState):
                 "evaluation_shape": list(evaluation),
                 "maximum_polynomial_degree": degree,
                 "exact": bool(exact),
+                "input_bandlimit": input_limit,
+                "evaluation_bandlimit": evaluation_limit,
+                "output_bandlimit": output_limit,
+                "spin": spin_,
             }
         )
 
@@ -87,7 +115,7 @@ class AbstractDealiasingPlan(StrictModule, NonTrainableState):
     @abc.abstractmethod
     def prepare(
         self,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
         *,
         required_polynomial_degree: int | None,
@@ -104,7 +132,7 @@ class NoDealiasingPlan(AbstractDealiasingPlan):
 
     def prepare(
         self,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
         *,
         required_polynomial_degree: int | None,
@@ -116,8 +144,8 @@ class NoDealiasingPlan(AbstractDealiasingPlan):
             discretization,
             report=DealiasingReport(
                 kind="none",
-                retained_shape=discretization.modal_shape,
-                evaluation_shape=discretization.modal_shape,
+                retained_shape=_modal_shape(discretization),
+                evaluation_shape=_modal_shape(discretization),
                 maximum_polynomial_degree=degree,
                 exact=degree is not None and degree <= 1,
             ),
@@ -146,7 +174,7 @@ class PaddingDealiasingPlan(AbstractDealiasingPlan):
 
     def prepare(
         self,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
         *,
         required_polynomial_degree: int | None,
@@ -161,36 +189,80 @@ class PaddingDealiasingPlan(AbstractDealiasingPlan):
             raise ValueError(
                 "Compiled polynomial degree exceeds the padding dealiasing contract."
             )
-        factor = 0.5 * float(self.maximum_polynomial_degree + 1)
-        target = tuple(
-            max(size, int(ceil(factor * size))) for size in discretization.modal_shape
-        )
-        basis_plans = tuple(
-            axis.plan.resized(count)
-            for axis, count in zip(discretization.axes, target, strict=True)
-        )
-        padded_plan = TensorSpectralPlan(
-            basis_plans,
-            axis_names=discretization.plan.axis_names,
-            field_name=discretization.plan.field_name,
-            precision=discretization.plan.precision,
-        )
-        domains = tuple(axis.domain for axis in discretization.axes)
-        padded = padded_plan.prepare(
-            domains,
-            numeric_version=discretization.numeric_version,
-        )
-        exact = all(axis.family != "sine" for axis in discretization.axes)
+        if isinstance(discretization, SphericalSpectralDiscretization):
+            evaluation_limit = (
+                self.maximum_polynomial_degree * (discretization.layout.bandlimit - 1) + 1
+            )
+            padded = SphericalSpectralPlan(
+                evaluation_limit,
+                sampling=discretization.plan.sampling,
+                spin=discretization.plan.spin,
+                reality=discretization.plan.reality,
+                execution=discretization.plan.execution,
+                field_name=discretization.plan.field_name,
+                precision=discretization.plan.precision,
+                max_precompute_bytes=discretization.plan.max_precompute_bytes,
+                max_explicit_eigenbasis_bytes=(
+                    discretization.plan.max_explicit_eigenbasis_bytes
+                ),
+                max_dense_operator_bytes=(discretization.plan.max_dense_operator_bytes),
+            ).prepare(
+                radius=discretization.radius,
+                numeric_version=discretization.numeric_version,
+            )
+            target = padded.coefficient_shape
+            exact = True
+        else:
+            factor = 0.5 * float(self.maximum_polynomial_degree + 1)
+            target = tuple(
+                max(size, int(ceil(factor * size))) for size in discretization.modal_shape
+            )
+            basis_plans = tuple(
+                axis.plan.resized(count)
+                for axis, count in zip(discretization.axes, target, strict=True)
+            )
+            padded_plan = TensorSpectralPlan(
+                basis_plans,
+                axis_names=discretization.plan.axis_names,
+                field_name=discretization.plan.field_name,
+                precision=discretization.plan.precision,
+            )
+            domains = tuple(axis.domain for axis in discretization.axes)
+            padded = padded_plan.prepare(
+                domains,
+                numeric_version=discretization.numeric_version,
+            )
+            exact = all(axis.family != "sine" for axis in discretization.axes)
         return PreparedDealiasingPlan(
             self,
             discretization,
             padded,
             report=DealiasingReport(
                 kind="padding",
-                retained_shape=discretization.modal_shape,
+                retained_shape=_modal_shape(discretization),
                 evaluation_shape=target,
                 maximum_polynomial_degree=self.maximum_polynomial_degree,
                 exact=exact,
+                input_bandlimit=(
+                    discretization.layout.bandlimit
+                    if isinstance(discretization, SphericalSpectralDiscretization)
+                    else None
+                ),
+                evaluation_bandlimit=(
+                    padded.layout.bandlimit
+                    if isinstance(padded, SphericalSpectralDiscretization)
+                    else None
+                ),
+                output_bandlimit=(
+                    discretization.layout.bandlimit
+                    if isinstance(discretization, SphericalSpectralDiscretization)
+                    else None
+                ),
+                spin=(
+                    discretization.layout.spin
+                    if isinstance(discretization, SphericalSpectralDiscretization)
+                    else None
+                ),
             ),
         )
 
@@ -310,27 +382,55 @@ class ModalFilterPlan(AbstractDealiasingPlan):
 
     def prepare(
         self,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
         *,
         required_polynomial_degree: int | None,
     ) -> "PreparedDealiasingPlan":
-        masks = []
-        for axis in discretization.axes:
-            numbers = jnp.abs(axis.modes.mode_numbers)
-            maximum = jnp.max(numbers)
-            masks.append(numbers <= self.cutoff_fraction * maximum)
+        if isinstance(discretization, SphericalSpectralDiscretization):
+            maximum = discretization.layout.bandlimit - 1
+            mask = discretization.layout.valid_mask & (
+                discretization.layout.degrees <= self.cutoff_fraction * maximum
+            )
+            masks = (mask,)
+        else:
+            tensor_masks = []
+            for axis in discretization.axes:
+                numbers = jnp.abs(axis.modes.mode_numbers)
+                maximum = jnp.max(numbers)
+                tensor_masks.append(numbers <= self.cutoff_fraction * maximum)
+            masks = tuple(tensor_masks)
         return PreparedDealiasingPlan(
             self,
             discretization,
             discretization,
-            modal_masks=tuple(masks),
+            modal_masks=masks,
             report=DealiasingReport(
                 kind="filter",
-                retained_shape=discretization.modal_shape,
-                evaluation_shape=discretization.modal_shape,
+                retained_shape=_modal_shape(discretization),
+                evaluation_shape=_modal_shape(discretization),
                 maximum_polynomial_degree=required_polynomial_degree,
                 exact=False,
+                input_bandlimit=(
+                    discretization.layout.bandlimit
+                    if isinstance(discretization, SphericalSpectralDiscretization)
+                    else None
+                ),
+                evaluation_bandlimit=(
+                    discretization.layout.bandlimit
+                    if isinstance(discretization, SphericalSpectralDiscretization)
+                    else None
+                ),
+                output_bandlimit=(
+                    discretization.layout.bandlimit
+                    if isinstance(discretization, SphericalSpectralDiscretization)
+                    else None
+                ),
+                spin=(
+                    discretization.layout.spin
+                    if isinstance(discretization, SphericalSpectralDiscretization)
+                    else None
+                ),
             ),
         )
 
@@ -339,8 +439,8 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
     """Prepared modal embedding, evaluation, projection, and filtering actions."""
 
     plan: AbstractDealiasingPlan
-    retained: TensorSpectralDiscretization
-    evaluation: TensorSpectralDiscretization
+    retained: TensorSpectralDiscretization | SphericalSpectralDiscretization
+    evaluation: TensorSpectralDiscretization | SphericalSpectralDiscretization
     embedding: PreparedSpectralModalTransfer
     restriction: PreparedSpectralModalTransfer
     modal_masks: tuple[Array, ...]
@@ -350,8 +450,8 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: AbstractDealiasingPlan,
-        retained: TensorSpectralDiscretization,
-        evaluation: TensorSpectralDiscretization,
+        retained: TensorSpectralDiscretization | SphericalSpectralDiscretization,
+        evaluation: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
         *,
         modal_masks: tuple[Array, ...] = (),
@@ -359,21 +459,34 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(plan, AbstractDealiasingPlan):
             raise TypeError("plan must be an AbstractDealiasingPlan.")
-        if not isinstance(retained, TensorSpectralDiscretization) or not isinstance(
+        tensor_pair = isinstance(retained, TensorSpectralDiscretization) and isinstance(
             evaluation, TensorSpectralDiscretization
-        ):
-            raise TypeError("retained and evaluation must be tensor spectral spaces.")
-        masks = tuple(
-            jnp.asarray(mask, dtype=bool).reshape((-1,)) for mask in modal_masks
         )
-        if masks and (
-            len(masks) != len(retained.axes)
-            or any(
-                mask.shape != (size,)
-                for mask, size in zip(masks, retained.modal_shape, strict=True)
+        spherical_pair = isinstance(
+            retained, SphericalSpectralDiscretization
+        ) and isinstance(evaluation, SphericalSpectralDiscretization)
+        if not tensor_pair and not spherical_pair:
+            raise TypeError("retained and evaluation must use one spectral family.")
+        if spherical_pair:
+            masks = tuple(jnp.asarray(mask, dtype=bool) for mask in modal_masks)
+            if masks and (
+                len(masks) != 1 or masks[0].shape != retained.coefficient_shape
+            ):
+                raise ValueError(
+                    "Spherical modal filtering requires one coefficient-shape mask."
+                )
+        else:
+            masks = tuple(
+                jnp.asarray(mask, dtype=bool).reshape((-1,)) for mask in modal_masks
             )
-        ):
-            raise ValueError("modal_masks must align with retained modal axes.")
+            if masks and (
+                len(masks) != len(retained.axes)
+                or any(
+                    mask.shape != (size,)
+                    for mask, size in zip(masks, retained.modal_shape, strict=True)
+                )
+            ):
+                raise ValueError("modal_masks must align with retained modal axes.")
         if not isinstance(report, DealiasingReport):
             raise TypeError("report must be a DealiasingReport.")
         embedding = prepare_spectral_modal_transfer(retained, evaluation)
@@ -398,11 +511,19 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
         )
 
     def filter(self, coefficients: ArrayLike, /) -> Array:
-        result = self.retained._validate_leading(
+        result = _validate_modal(
+            self.retained,
             coefficients,
-            self.retained.modal_shape,
             "Filtered modal coefficients",
         )
+        if isinstance(self.retained, SphericalSpectralDiscretization):
+            if self.modal_masks:
+                mask = self.modal_masks[0].reshape(
+                    self.retained.coefficient_shape
+                    + (1,) * (result.ndim - len(self.retained.coefficient_shape))
+                )
+                result = result * mask
+            return self.retained.layout.mask_invalid(result)
         for axis, mask in enumerate(self.modal_masks):
             shape = [1] * result.ndim
             shape[axis] = mask.size
@@ -413,9 +534,9 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
         return self.embedding(self.filter(coefficients))
 
     def restrict(self, coefficients: ArrayLike, /) -> Array:
-        result = self.evaluation._validate_leading(
+        result = _validate_modal(
+            self.evaluation,
             coefficients,
-            self.evaluation.modal_shape,
             "Evaluation modal coefficients",
         )
         return self.filter(self.restriction(result))
@@ -425,6 +546,30 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
 
     def project(self, values: ArrayLike, /) -> Array:
         return self.restrict(self.evaluation.project(values))
+
+
+def _modal_shape(
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
+    /,
+) -> tuple[int, ...]:
+    if isinstance(discretization, TensorSpectralDiscretization):
+        return discretization.modal_shape
+    return discretization.coefficient_shape
+
+
+def _validate_modal(
+    discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
+    coefficients: ArrayLike,
+    name: str,
+    /,
+) -> Array:
+    shape = _modal_shape(discretization)
+    if isinstance(discretization, TensorSpectralDiscretization):
+        return discretization._validate_leading(coefficients, shape, name)
+    values = jnp.asarray(coefficients)
+    if values.ndim < len(shape) or tuple(values.shape[: len(shape)]) != shape:
+        raise ValueError(f"{name} must begin with shape {shape}; got {values.shape}.")
+    return discretization.layout.mask_invalid(values)
 
 
 __all__ = [

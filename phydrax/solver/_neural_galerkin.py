@@ -14,6 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import ComponentSum, DomainFunction
@@ -55,6 +56,7 @@ from ..linalg import (
 from ..nn.parameters import ParameterSubspace
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
+from ._hybrid_event import HybridReplayPolicy
 from ._temporal_precision import TemporalPrecisionPolicy
 
 
@@ -67,6 +69,22 @@ RateFunction: TypeAlias = Callable[
 def _norm(value: Array, /) -> Array:
     array = jnp.asarray(value)
     return jnp.sqrt(jnp.maximum(jnp.real(jnp.vdot(array, array)), 0.0))
+
+
+def _require_matching_domain_support(
+    rate_function: DomainFunction,
+    current_function: DomainFunction,
+    /,
+) -> None:
+    rate_domain = rate_function.domain
+    current_domain = current_function.domain
+    if rate_domain.labels != current_domain.labels:
+        raise ValueError("Neural Galerkin rate and field domains must agree.")
+    leaves = jax.tree_util.tree_leaves((rate_domain, current_domain))
+    if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
+        return
+    if not rate_domain.same_support(current_domain):
+        raise ValueError("Neural Galerkin rate and field domains must agree.")
 
 
 def _qualified_type_name(value: Any, /) -> str:
@@ -232,6 +250,107 @@ class NeuralTangentSolvePolicy(StrictModule):
         self.preconditioner = preconditioner
         self.damping = damping_
         self.maximum_relative_defect = defect_limit
+
+
+class NeuralGalerkinAdjointPolicy(StrictModule):
+    """Explicit recursive-checkpoint or certified implicit-backsolve contract."""
+
+    mode: Literal["recursive_checkpoint", "certified_backsolve"] = eqx.field(static=True)
+    maximum_primal_residual: float = eqx.field(static=True)
+    maximum_adjoint_residual: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mode: Literal[
+            "recursive_checkpoint", "certified_backsolve"
+        ] = "recursive_checkpoint",
+        *,
+        maximum_primal_residual: float = 1.0e-6,
+        maximum_adjoint_residual: float = 1.0e-6,
+    ):
+        if mode not in ("recursive_checkpoint", "certified_backsolve"):
+            raise ValueError("Unknown neural Galerkin adjoint policy.")
+        primal = float(maximum_primal_residual)
+        adjoint = float(maximum_adjoint_residual)
+        if min(primal, adjoint) <= 0.0 or not all(
+            isfinite(value) for value in (primal, adjoint)
+        ):
+            raise ValueError("Adjoint residual tolerances must be finite and positive.")
+        self.mode = mode
+        self.maximum_primal_residual = primal
+        self.maximum_adjoint_residual = adjoint
+
+
+class NeuralGalerkinEpoch(StrictModule):
+    """One fixed-population neural Galerkin execution epoch."""
+
+    problem: NeuralGalerkinProblem
+    grid: TimeGrid
+    population_id: str = eqx.field(static=True)
+
+    def __init__(
+        self, problem: NeuralGalerkinProblem, grid: TimeGrid, /, *, population_id: str
+    ):
+        if not isinstance(problem, NeuralGalerkinProblem) or not isinstance(
+            grid, TimeGrid
+        ):
+            raise TypeError("Epoch requires NeuralGalerkinProblem and TimeGrid.")
+        if not population_id:
+            raise ValueError("population_id must be nonempty.")
+        self.problem = problem
+        self.grid = grid
+        self.population_id = str(population_id)
+
+
+class NeuralGalerkinEpochPlan(StrictModule):
+    """Ordered fixed epochs with frozen population identities for replay."""
+
+    epochs: tuple[NeuralGalerkinEpoch, ...]
+    replay_id: str = eqx.field(static=True)
+
+    def __init__(self, epochs: Sequence[NeuralGalerkinEpoch], /):
+        values = tuple(epochs)
+        if not values or any(
+            not isinstance(value, NeuralGalerkinEpoch) for value in values
+        ):
+            raise TypeError("epochs must contain NeuralGalerkinEpoch values.")
+        paths = values[0].problem.parameter_subspace.leaf_paths
+        for left, right in zip(values, values[1:], strict=False):
+            if not bool(jnp.isclose(left.grid.t1, right.grid.t0)):
+                raise ValueError("Neural Galerkin epochs must be contiguous.")
+            if right.problem.parameter_subspace.leaf_paths != paths:
+                raise ValueError("Neural Galerkin epoch parameter subspaces must match.")
+        self.epochs = values
+        self.replay_id = canonical_fingerprint(
+            {
+                "kind": "neural-galerkin-epochs",
+                "epochs": tuple(
+                    (value.population_id, value.grid.time_id) for value in values
+                ),
+                "parameter_paths": paths,
+            }
+        )
+
+
+class NeuralGalerkinReplayJournal(StrictModule):
+    """Frozen DCD-capacity population sequence and segment-boundary states."""
+
+    boundary_parameters: Array
+    population_ids: tuple[str, ...] = eqx.field(static=True)
+    replay_id: str = eqx.field(static=True)
+    replay_policy_id: str = eqx.field(static=True)
+    selection_stopped: bool = eqx.field(static=True, default=True)
+
+
+class NeuralGalerkinEpochResult(StrictModule):
+    segments: tuple[NeuralFieldEvolutionResult, ...]
+    population_ids: tuple[str, ...] = eqx.field(static=True)
+    replay_id: str = eqx.field(static=True)
+    replay_journal: NeuralGalerkinReplayJournal
+
+    @property
+    def successful(self) -> Array:
+        return jnp.all(jnp.stack(tuple(segment.successful for segment in self.segments)))
 
 
 class NeuralGalerkinProblem(StrictModule):
@@ -422,6 +541,7 @@ def _metric_vector(
 class _NeuralGalerkinVectorField(StrictModule):
     problem: NeuralGalerkinProblem
     policy: NeuralTangentSolvePolicy
+    implicit_adjoint: bool = eqx.field(static=True, default=False)
 
     def _sampled_fields(self, parameters: Array, /) -> Array:
         functions = self.problem.ansatz(parameters)
@@ -431,7 +551,7 @@ class _NeuralGalerkinVectorField(StrictModule):
         )
         return pieces[0] if len(pieces) == 1 else jnp.concatenate(pieces)
 
-    def evaluate(self, time: Array, parameters: Array, /) -> _TangentEvaluation:
+    def _target(self, time: Array, parameters: Array, /) -> Array:
         current = self.problem.ansatz(parameters)
         rates = frozendict(self.problem.rate(time, current, self.problem.args))
         if set(rates) != set(self.problem.evolved_fields):
@@ -441,12 +561,14 @@ class _NeuralGalerkinVectorField(StrictModule):
         for name in self.problem.evolved_fields:
             if not isinstance(rates[name], DomainFunction):
                 raise TypeError("Neural Galerkin rates must be DomainFunction values.")
-            if not rates[name].domain.same_support(current[name].domain):
-                raise ValueError("Neural Galerkin rate and field domains must agree.")
+            _require_matching_domain_support(rates[name], current[name])
         targets = tuple(
             _metric_vector(rates[metric.field], metric) for metric in self.problem.metrics
         )
-        target = targets[0] if len(targets) == 1 else jnp.concatenate(targets)
+        return targets[0] if len(targets) == 1 else jnp.concatenate(targets)
+
+    def evaluate(self, time: Array, parameters: Array, /) -> _TangentEvaluation:
+        target = self._target(time, parameters)
         source = ArraySpace(parameters.shape, dtype=parameters.dtype)
         target_space = ArraySpace(target.shape, dtype=target.dtype)
         linearization = prepare_linearization(
@@ -563,7 +685,108 @@ class _NeuralGalerkinVectorField(StrictModule):
 
     def __call__(self, time: Array, parameters: Array, args: Any) -> Array:
         del args
+        if self.implicit_adjoint:
+            return _implicit_tangent_rate((time, parameters), self)
         return self.evaluate(time, parameters).rate
+
+
+@eqx.filter_custom_vjp
+def _implicit_tangent_rate(
+    inputs: tuple[Array, Array],
+    field: _NeuralGalerkinVectorField,
+    /,
+) -> Array:
+    time, parameters = inputs
+    return field.evaluate(time, parameters).rate
+
+
+@_implicit_tangent_rate.def_fwd
+def _implicit_tangent_rate_fwd(
+    perturbed,
+    inputs: tuple[Array, Array],
+    field: _NeuralGalerkinVectorField,
+):
+    del perturbed
+    time, parameters = inputs
+    rate = field.evaluate(time, parameters).rate
+    return rate, (time, parameters, rate)
+
+
+@_implicit_tangent_rate.def_bwd
+def _implicit_tangent_rate_bwd(
+    residual,
+    rate_cotangent: Array,
+    perturbed,
+    inputs: tuple[Array, Array],
+    field: _NeuralGalerkinVectorField,
+):
+    del perturbed, inputs
+    time, parameters, rate = residual
+    damping = jnp.asarray(field.policy.damping, dtype=parameters.real.dtype)
+
+    def sampled(candidate):
+        return field._sampled_fields(candidate)
+
+    _, pullback = jax.vjp(sampled, parameters)
+
+    def normal_action(vector):
+        tangent = jax.jvp(sampled, (parameters,), (vector,))[1]
+        return pullback(tangent)[0] + damping * vector
+
+    source = ArraySpace(parameters.shape, dtype=parameters.dtype)
+    properties = OperatorProperties(
+        self_adjoint=True,
+        positive_semidefinite=True,
+        positive_definite=field.policy.damping > 0.0,
+        evidence={
+            "self_adjoint": "implicit-normal-equation",
+            "positive_semidefinite": "construction",
+        },
+    )
+    normal = FunctionLinearOperator(
+        normal_action,
+        source=source,
+        target=source,
+        properties=properties,
+        operator_id=f"{field.problem.problem_id}:implicit-adjoint-normal",
+    )
+    adjoint_result = solve(
+        LinearSystem(
+            normal,
+            problem_id=f"{field.problem.problem_id}:implicit-adjoint",
+        ),
+        rate_cotangent,
+        policy=field.policy.linear_policy,
+    )
+    multiplier = eqx.error_if(
+        adjoint_result.value,
+        ~adjoint_result.successful | (adjoint_result.diagnostics.residual_norm > 1.0e-6),
+        "Neural Galerkin implicit adjoint solve failed its residual audit.",
+    )
+
+    def stationarity(t, candidate):
+        target = field._target(t, candidate)
+
+        def sampled_candidate(value):
+            return field._sampled_fields(value)
+
+        sampled_value, sampled_pullback = jax.vjp(
+            sampled_candidate,
+            candidate,
+        )
+        del sampled_value
+        tangent = jax.jvp(
+            sampled_candidate,
+            (candidate,),
+            (jax.lax.stop_gradient(rate),),
+        )[1]
+        return sampled_pullback(tangent - target)[0] + damping * jax.lax.stop_gradient(
+            rate
+        )
+
+    _, stationarity_pullback = jax.vjp(stationarity, time, parameters)
+    time_gradient, parameter_gradient = stationarity_pullback(-multiplier)
+    return time_gradient, parameter_gradient
 
 
 class NeuralFieldEvolutionResult(StrictModule):
@@ -662,6 +885,7 @@ def solve_neural_galerkin(
     solver: Any | None = None,
     stepsize_controller: Any | None = None,
     adjoint: Any | None = None,
+    adjoint_policy: NeuralGalerkinAdjointPolicy | None = None,
     dt0: ArrayLike | None = None,
     rtol: float = 1e-6,
     atol: float = 1e-8,
@@ -678,12 +902,24 @@ def solve_neural_galerkin(
     selected_tangent = NeuralTangentSolvePolicy() if tangent is None else tangent
     if not isinstance(selected_tangent, NeuralTangentSolvePolicy):
         raise TypeError("tangent must be a NeuralTangentSolvePolicy or None.")
-    if isinstance(adjoint, dfx.BacksolveAdjoint):
-        raise NotImplementedError(
-            "BacksolveAdjoint is unqualified for neural tangent vector fields."
+    selected_adjoint_policy = (
+        NeuralGalerkinAdjointPolicy() if adjoint_policy is None else adjoint_policy
+    )
+    if not isinstance(selected_adjoint_policy, NeuralGalerkinAdjointPolicy):
+        raise TypeError("adjoint_policy must be NeuralGalerkinAdjointPolicy or None.")
+    if isinstance(adjoint, dfx.BacksolveAdjoint) and (
+        selected_adjoint_policy.mode != "certified_backsolve"
+    ):
+        raise ValueError(
+            "BacksolveAdjoint requires certified_backsolve policy and audited tangent solves."
         )
-    vector_field = _NeuralGalerkinVectorField(problem, selected_tangent)
+    vector_field = _NeuralGalerkinVectorField(
+        problem,
+        selected_tangent,
+        selected_adjoint_policy.mode == "certified_backsolve",
+    )
     initial = problem.parameter_subspace.pack()
+    vector_field._target(time_grid.t0, initial)
     differential = DifferentialProblem(
         vector_field,
         initial,
@@ -728,13 +964,95 @@ def solve_neural_galerkin(
     )
 
 
+def solve_neural_galerkin_epochs(
+    plan: NeuralGalerkinEpochPlan,
+    /,
+    **solve_options: Any,
+) -> NeuralGalerkinEpochResult:
+    """Execute fixed populations segment by segment and freeze their replay identity."""
+    if not isinstance(plan, NeuralGalerkinEpochPlan):
+        raise TypeError("plan must be NeuralGalerkinEpochPlan.")
+    segments: list[NeuralFieldEvolutionResult] = []
+    previous: NeuralFieldEvolutionResult | None = None
+    paths = plan.epochs[0].problem.parameter_subspace.leaf_paths
+    for epoch in plan.epochs:
+        problem = epoch.problem
+        if previous is not None:
+            functions = previous.problem.ansatz(previous.parameter_solution.states[-1])
+            subspace = ParameterSubspace.from_leaf_paths(functions, paths)
+            problem = NeuralGalerkinProblem(
+                functions,
+                epoch.problem.rate,
+                epoch.problem.metrics,
+                parameter_subspace=subspace,
+                enforcement=epoch.problem.enforcement,
+                args=epoch.problem.args,
+                evaluation_key=epoch.problem.evaluation_key,
+                problem_id=epoch.problem.problem_id,
+            )
+        result = solve_neural_galerkin(
+            problem,
+            epoch.grid,
+            **solve_options,
+        )
+        segments.append(result)
+        previous = result
+    population_ids = tuple(epoch.population_id for epoch in plan.epochs)
+    replay_policy = HybridReplayPolicy(max(1, len(plan.epochs) - 1))
+    journal = NeuralGalerkinReplayJournal(
+        jax.lax.stop_gradient(
+            jnp.stack(
+                tuple(segment.parameter_solution.states[-1] for segment in segments)
+            )
+        ),
+        population_ids,
+        plan.replay_id,
+        replay_policy.policy_id,
+        True,
+    )
+    return NeuralGalerkinEpochResult(
+        tuple(segments),
+        population_ids,
+        plan.replay_id,
+        journal,
+    )
+
+
+def replay_neural_galerkin_epochs(
+    plan: NeuralGalerkinEpochPlan,
+    journal: NeuralGalerkinReplayJournal,
+    /,
+    **solve_options: Any,
+) -> NeuralGalerkinEpochResult:
+    """Replay an identical frozen population journal; selection remains stopped."""
+    if not isinstance(journal, NeuralGalerkinReplayJournal):
+        raise TypeError("journal must be NeuralGalerkinReplayJournal.")
+    expected = tuple(epoch.population_id for epoch in plan.epochs)
+    policy = HybridReplayPolicy(max(1, len(plan.epochs) - 1))
+    if (
+        journal.replay_id != plan.replay_id
+        or journal.population_ids != expected
+        or journal.replay_policy_id != policy.policy_id
+    ):
+        raise ValueError("Neural Galerkin replay journal identity does not match.")
+    replayed = solve_neural_galerkin_epochs(plan, **solve_options)
+    return replayed
+
+
 __all__ = [
     "FieldProjectionMetric",
     "NeuralFieldEvolutionResult",
     "NeuralGalerkinAudit",
+    "NeuralGalerkinAdjointPolicy",
+    "NeuralGalerkinEpoch",
+    "NeuralGalerkinEpochPlan",
+    "NeuralGalerkinReplayJournal",
+    "NeuralGalerkinEpochResult",
     "NeuralGalerkinProblem",
     "NeuralTangentSolvePolicy",
     "RateFunction",
     "TangentFormulation",
     "solve_neural_galerkin",
+    "replay_neural_galerkin_epochs",
+    "solve_neural_galerkin_epochs",
 ]

@@ -17,7 +17,6 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.enforcement import (
-    enforce_dirichlet,
     EnforcementProgram,
     EnforcementSpec,
     InteriorAnchors,
@@ -76,20 +75,8 @@ def test_xp_steady_state_explicit_anchors():
     full_boundary = domain.component({"x": Boundary()})
 
     specs = [
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", left, target=1.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=1.0
-            ),
-        ),
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", right, target=2.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=2.0
-            ),
-        ),
+        EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0)),
+        EnforcementSpec(phx.conditions.Dirichlet("u", right, target=2.0)),
     ]
 
     anchors = {
@@ -163,20 +150,8 @@ def test_xpt_transient_explicit_anchors():
     full_boundary = domain.component({"x": Boundary()})
 
     specs = [
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", left, target=1.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=1.0
-            ),
-        ),
-        EnforcementSpec(
-            phx.conditions.Dirichlet("u", right, target=2.0),
-            kind="custom",
-            transform=lambda f, _: enforce_dirichlet(
-                f, full_boundary, var="x", target=2.0
-            ),
-        ),
+        EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0)),
+        EnforcementSpec(phx.conditions.Dirichlet("u", right, target=2.0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=3.0, order=0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=1)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),

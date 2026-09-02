@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 from opt_einsum import contract
@@ -613,10 +614,11 @@ class SupervisedFocalClassificationTerm(_AbstractSupervisedDatasetObservationTer
 
 
 class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
-    """Train a scalar ordered-logistic location against hard ordinal labels."""
+    """Train fixed- or learned-cutpoint ordinal models on hard or soft targets."""
 
     target_schema: TargetSchema
     class_count: int = eqx.field(static=True)
+    target_encoding: Literal["hard", "soft"] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -626,7 +628,9 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         target_schema: TargetSchema,
         /,
         *,
-        thresholds: ArrayLike,
+        thresholds: ArrayLike | None = None,
+        prediction_mode: Literal["location", "cumulative_logits"] = "location",
+        target_encoding: Literal["hard", "soft"] = "hard",
         sampling: PointSampling,
         observation_operator: Callable[[DomainFunction], DomainFunction] | None = None,
         sample_mask: ArrayLike | None = None,
@@ -639,15 +643,29 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
     ):
         if not isinstance(target_schema, TargetSchema) or target_schema.kind != "ordinal":
             raise ValueError("Ordinal classification requires an ordinal TargetSchema.")
+        if target_encoding not in ("hard", "soft"):
+            raise ValueError("target_encoding must be 'hard' or 'soft'.")
         class_count = target_schema.num_classes
-        likelihood = OrdinalCumulativeLinkLikelihood(thresholds)
-        if likelihood.class_count != class_count:
-            raise ValueError("Ordinal threshold count must match the ordered vocabulary.")
-        encoded = _canonical_hard_targets(
-            targets,
-            kind="ordinal",
-            width=class_count,
+        likelihood = OrdinalCumulativeLinkLikelihood(
+            thresholds,
+            class_count=class_count,
+            prediction_mode=prediction_mode,
         )
+        if target_encoding == "hard":
+            encoded = _canonical_hard_targets(
+                targets,
+                kind="ordinal",
+                width=class_count,
+            )
+        else:
+            encoded = jnp.asarray(targets)
+            if (
+                encoded.ndim != 2
+                or int(encoded.shape[-1]) != class_count
+                or not jnp.issubdtype(encoded.dtype, jnp.inexact)
+                or jnp.issubdtype(encoded.dtype, jnp.complexfloating)
+            ):
+                raise ValueError("Soft ordinal targets must be real class-mass arrays.")
         sample_mask, target_mask = _fold_case_target_mask(
             encoded,
             target_mask,
@@ -669,14 +687,31 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
             indices=indices,
             label=label,
         )
-        _validate_active_hard_targets(
-            self.values,
-            _configured(self),
-            upper=class_count,
-            target_mask=self.target_mask,
-        )
+        configured = _configured(self)
+        if target_encoding == "hard":
+            _validate_active_hard_targets(
+                self.values,
+                configured,
+                upper=class_count,
+                target_mask=self.target_mask,
+            )
+        else:
+            probe = jnp.zeros(
+                self.values[configured].shape[:-1] + (class_count - 1,),
+                dtype=float,
+            )
+            losses = pointwise_classification_loss(
+                probe,
+                self.values[configured],
+                kind="ordinal",
+                objective="soft_cross_entropy",
+                thresholds=None,
+            )
+            if bool(jnp.any(~jnp.isfinite(losses))):
+                raise ValueError("Configured soft ordinal targets are invalid.")
         self.target_schema = target_schema
         self.class_count = class_count
+        self.target_encoding = target_encoding
 
     def data_metrics(
         self,
@@ -688,24 +723,35 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         **kwargs: Any,
     ) -> dict[str, Array]:
         batch_value = self.sample(key=key) if batch is None else batch
-        location, target = self.likelihood.align_observations(
+        prediction_values, target = self.likelihood.align_observations(
             self._location(functions, batch_value, key=key, **kwargs),
             batch_value.target,
         )
-        labels = jnp.asarray(target, dtype=jnp.int32)
-        probabilities = self.likelihood.class_probabilities(location)
-        selected = jnp.take_along_axis(probabilities, labels[..., None], axis=-1)[..., 0]
-        per_case_nll = -self.likelihood.log_prob(location, labels)
+        probabilities = self.likelihood.class_probabilities(prediction_values)
+        if self.target_encoding == "hard":
+            target_masses = jax.nn.one_hot(
+                jnp.asarray(target, dtype=jnp.int32),
+                self.class_count,
+                dtype=probabilities.dtype,
+            )
+        else:
+            target_masses = jnp.asarray(target, dtype=probabilities.dtype)
+        labels = jnp.argmax(target_masses, axis=-1)
+        per_case_nll = -self.likelihood.log_prob(prediction_values, target)
         prediction = jnp.argmax(probabilities, axis=-1)
         levels = jnp.arange(self.class_count, dtype=probabilities.dtype)
         expected_rank = contract("...k,k->...", probabilities, levels)
-        per_case_brier = jnp.sum(probabilities**2, axis=-1) - 2.0 * selected + 1.0
+        target_rank = contract("...k,k->...", target_masses, levels)
+        per_case_brier = jnp.sum(
+            (probabilities - target_masses) ** 2,
+            axis=-1,
+        )
         weights = _weights(batch_value)
         nll = _weighted_mean(per_case_nll, weights)
         accuracy = _weighted_mean((prediction == labels).astype(float), weights)
         brier = _weighted_mean(per_case_brier, weights)
         mean_expected_rank = _weighted_mean(expected_rank, weights)
-        rank_mae = _weighted_mean(jnp.abs(expected_rank - labels), weights)
+        rank_mae = _weighted_mean(jnp.abs(expected_rank - target_rank), weights)
         valid, status = _metric_state(per_case_nll, accuracy, brier, rank_mae)
         return {
             "data_negative_log_likelihood": nll.reshape(()),

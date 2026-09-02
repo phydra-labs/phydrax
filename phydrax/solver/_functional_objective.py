@@ -17,9 +17,11 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm, evaluate
 from ..enforcement import EnforcementProgram
 from ..integration import AdaptiveIntegration
+from ..integration._adaptive_signed import AdaptiveSignedEstimator
 from ..integration._execution import resolve_integration
 from ..operators.differential._runtime import derivative_runtime_context
 from ..sampling.collocation import ControlledCollocationPolicy
+from ..terms._integral_functional import IntegralFunctional
 from ..terms._integrated import prepare_term_realization
 from ..terms._moment import MomentPenalty
 from ..terms._residual import ResidualPenalty
@@ -38,7 +40,7 @@ class _SupportsDataMetrics(Protocol):
     ) -> dict[str, Any]: ...
 
 
-_ObjectiveTermMode = Literal["plain", "sampled", "adaptive_residual"]
+_ObjectiveTermMode = Literal["plain", "sampled", "adaptive_population"]
 
 
 def _terms_tuple(
@@ -58,19 +60,25 @@ def _terms_tuple(
 
 
 def _adaptive_policy(term: AbstractScalarTerm, /):
-    if not isinstance(term, ResidualPenalty) or not isinstance(
+    if not isinstance(term, (ResidualPenalty, IntegralFunctional)) or not isinstance(
         term.source, AdaptiveIntegration
     ):
         raise TypeError(
-            "Adaptive collocation requires ResidualPenalty with an "
-            "AdaptiveIntegration source."
+            "Adaptive objective populations require ResidualPenalty or "
+            "IntegralFunctional with AdaptiveIntegration."
         )
-    return term.policy
+    if isinstance(term, IntegralFunctional) and not isinstance(
+        term.source.policy, AdaptiveSignedEstimator
+    ):
+        raise TypeError("Adaptive integral terms require AdaptiveSignedEstimator.")
+    return term.source.policy
 
 
 def _term_mode(term: AbstractScalarTerm, /) -> _ObjectiveTermMode:
-    if isinstance(term, ResidualPenalty) and isinstance(term.source, AdaptiveIntegration):
-        return "adaptive_residual"
+    if isinstance(term, (ResidualPenalty, IntegralFunctional)) and isinstance(
+        term.source, AdaptiveIntegration
+    ):
+        return "adaptive_population"
     if isinstance(term, AbstractSamplingTerm):
         return "sampled"
     return "plain"
@@ -94,9 +102,9 @@ class _ObjectiveTerm(StrictModule):
         index: int,
     ):
         mode = _term_mode(term)
-        if (mode == "adaptive_residual") != (population is not None):
+        if (mode == "adaptive_population") != (population is not None):
             raise ValueError(
-                "Adaptive objective terms must own one collocation population and "
+                "Adaptive objective terms must own one population and "
                 "non-adaptive terms must not own one."
             )
         self.term = term
@@ -106,8 +114,8 @@ class _ObjectiveTerm(StrictModule):
         self.mode = mode
 
     def with_population(self, population: Any, /) -> "_ObjectiveTerm":
-        if self.mode != "adaptive_residual":
-            raise ValueError("Only adaptive residual terms own collocation populations.")
+        if self.mode != "adaptive_population":
+            raise ValueError("Only adaptive objective terms own populations.")
         return eqx.tree_at(lambda slot: slot.population, self, population)
 
 
@@ -232,18 +240,17 @@ def _prepare_slots(
         sampling_keys,
         strict=True,
     ):
-        if slot.mode == "adaptive_residual":
-            if not isinstance(slot.term, ResidualPenalty):
-                raise RuntimeError(
-                    "Adaptive objective slot does not contain a residual penalty."
-                )
+        if slot.mode == "adaptive_population":
             policy = _adaptive_policy(slot.term)
-            batch, local_weight = policy.loss_batch_and_weight(slot.population)
-            payload = slot.term._adaptive_realization(
-                batch,
-                local_weight,
-                key=term_key,
-            )
+            if isinstance(slot.term, IntegralFunctional):
+                payload = policy.loss_realization(slot.population)
+            else:
+                batch, local_weight = policy.loss_batch_and_weight(slot.population)
+                payload = slot.term._adaptive_realization(
+                    batch,
+                    local_weight,
+                    key=term_key,
+                )
             payload_kind: _PreparedPayloadKind = "realization"
         elif isinstance(slot.term, AbstractSamplingTerm) and (
             evaluation_kwargs is None or "batch" not in evaluation_kwargs
@@ -407,7 +414,7 @@ class _FunctionalObjective(StrictModule):
     ):
         training_terms = _terms_tuple(terms, name="terms")
         diagnostic_terms = _terms_tuple(evaluation_terms, name="evaluation_terms")
-        if any(_term_mode(term) == "adaptive_residual" for term in diagnostic_terms):
+        if any(_term_mode(term) == "adaptive_population" for term in diagnostic_terms):
             raise ValueError(
                 "AdaptiveIntegration sources are only supported in training terms, "
                 "which own solver-managed collocation populations."
@@ -421,7 +428,7 @@ class _FunctionalObjective(StrictModule):
                 term,
                 (
                     _adaptive_policy(term).initialize(term, key=term_key)
-                    if _term_mode(term) == "adaptive_residual"
+                    if _term_mode(term) == "adaptive_population"
                     else None
                 ),
                 index=index,
@@ -501,7 +508,7 @@ class _FunctionalObjective(StrictModule):
             )
         updated = []
         for slot, population in zip(self.training, populations, strict=True):
-            if slot.mode == "adaptive_residual":
+            if slot.mode == "adaptive_population":
                 if population is None:
                     raise ValueError("Adaptive objective populations cannot be None.")
                 slot = slot.with_population(population)
@@ -525,7 +532,7 @@ class _FunctionalObjective(StrictModule):
                 term,
                 (
                     _adaptive_policy(term).initialize(term, key=term_key)
-                    if _term_mode(term) == "adaptive_residual"
+                    if _term_mode(term) == "adaptive_population"
                     else None
                 ),
                 index=start + offset,
@@ -564,7 +571,7 @@ class _FunctionalObjective(StrictModule):
         keys = jr.split(key, len(self.training))
         updated = []
         for slot, term_key in zip(self.training, keys, strict=True):
-            if slot.mode != "adaptive_residual":
+            if slot.mode != "adaptive_population":
                 updated.append(slot)
                 continue
             policy = _adaptive_policy(slot.term)
@@ -595,7 +602,7 @@ class _FunctionalObjective(StrictModule):
         keys = jr.split(key, len(self.training))
         updated = []
         for slot, term_key in zip(self.training, keys, strict=True):
-            if slot.mode != "adaptive_residual":
+            if slot.mode != "adaptive_population":
                 updated.append(slot)
                 continue
             policy = _adaptive_policy(slot.term)
@@ -625,13 +632,13 @@ class _FunctionalObjective(StrictModule):
         )
         updated = []
         for slot in self.training:
-            if slot.mode != "adaptive_residual" or (
+            if slot.mode != "adaptive_population" or (
                 selected is not None and slot.index not in selected
             ):
                 updated.append(slot)
                 continue
             policy = _adaptive_policy(slot.term)
-            if isinstance(policy, ControlledCollocationPolicy):
+            if isinstance(policy, (ControlledCollocationPolicy, AdaptiveSignedEstimator)):
                 population = policy.record_training_evaluation(
                     slot.population,
                     multiplier=multiplier,
@@ -643,7 +650,7 @@ class _FunctionalObjective(StrictModule):
     def collocation_data_metrics(self) -> tuple[dict[str, jax.Array], ...]:
         metrics: list[dict[str, jax.Array]] = []
         for slot in self.training:
-            if slot.mode != "adaptive_residual":
+            if slot.mode != "adaptive_population":
                 metrics.append({})
                 continue
             metrics.append(_adaptive_policy(slot.term).data_metrics(slot.population))

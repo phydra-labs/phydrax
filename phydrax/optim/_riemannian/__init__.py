@@ -24,9 +24,17 @@ from ._first_order import (
 )
 from ._line_search import armijo_backtracking, ArmijoLineSearch, ArmijoResult
 from ._parameter_geometry import ParameterGeometry
+from ._private import (
+    PrivateRiemannianSGD,
+    PrivateRiemannianSGDState,
+    PrivateRiemannianStepEvidence,
+)
 
 
 __all__ = [
+    "PrivateRiemannianSGD",
+    "PrivateRiemannianSGDState",
+    "PrivateRiemannianStepEvidence",
     "AbstractRiemannianLineSearchOptimizer",
     "ArmijoLineSearch",
     "ArmijoResult",

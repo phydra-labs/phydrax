@@ -71,9 +71,21 @@ transpose, fully submerged normal constraints, rigid mass/inertia response, moda
 response, drag evidence, and action/reaction work.
 
 `RigidHydroelasticALEMethod` couples the free-surface step to the marker/body Schur
-response and records body work and structural energy. Initial scope is fully submerged,
-fixed marker topology, no contact, no surface piercing, and no route refresh inside one
-nonlinear solve.
+response and records body work and structural energy. Its graph epoch remains fully
+submerged with fixed marker topology. `GraphShorelineEventPlan` hands surface piercing,
+contact, breaking, overturning, or multivalued geometry to the canonical two-phase VOF
+product rather than extending graph eta past its mathematical domain.
+
+## Canonical topology-changing product
+
+`IncompressibleTwoPhaseVOFPlan` owns variable-density projection, two- and
+three-dimensional PLIC/CLSVOF, contact angle, surface tension, wetting/drying, moving
+bodies, and topology-changing interfaces. `TwoPhaseCapabilityEventPlan` names the
+surface-piercing, moving-contact, body-contact, wet/dry, breaking, and overturning
+routes with explicit derivative boundaries. `ConservativeTwoPhaseRemeshPlan` transfers
+extensive phase/scalar content and face momentum between preflighted mesh epochs. This
+is one canonical product boundary: the graph ALE solver is not duplicated into a
+second interface-capturing implementation.
 
 ## Work ledger and restart
 
@@ -94,9 +106,9 @@ fingerprint the complete bottom array.
 
 ## Limits
 
-- graph topology remains fixed;
-- vertical rezone only;
-- general wetting/drying is a handoff event;
+- graph topology remains fixed within a graph ALE epoch;
+- graph rezoning changes only the vertical reference distribution;
+- general wetting/drying, surface piercing, contact, breaking, and overturning use an
+  explicit handoff to the two-phase product;
 - moving wavemakers require lateral ALE map support;
-- surface-piercing/contacting bodies require the two-phase product;
-- active absorption and remesh events are not differentiable.
+- event routing, remeshing, and topology changes are not ordinarily differentiable.

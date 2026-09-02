@@ -48,6 +48,7 @@ from ._posterior_predictive import (
     sample_observations_from_position_samples,
 )
 from ._predictive import PredictiveField
+from ._sgmcmc_advanced import SGMCMCStepSchedule
 from ._sgmcmc_diagnostics import (
     sgmcmc_diagnostics,
     SGMCMCDiagnostics,
@@ -165,6 +166,7 @@ class SGMCMCResult(StrictModule):
         chain_keys: Array,
         control_variate: SGMCMCControlVariate | None,
         algorithm: SGMCMCAlgorithm,
+        approximation: str,
         step_size: float,
         diffusion: float | None,
         initial_thermostat: float | None,
@@ -212,7 +214,7 @@ class SGMCMCResult(StrictModule):
         self.chain_keys = jnp.asarray(chain_keys)
         self.control_variate = control_variate
         self.algorithm = algorithm
-        self.approximation = _APPROXIMATION
+        self.approximation = str(approximation)
         self.step_size = float(step_size)
         self.diffusion = None if diffusion is None else float(diffusion)
         self.initial_thermostat = (
@@ -346,8 +348,11 @@ def build_sgmcmc_control_variate(
     /,
 ) -> SGMCMCControlVariate:
     """Build an exact full-gradient reference from one complete source epoch."""
-    source_configuration_json, batches = _validate_problem_source(problem, source)
+    source_configuration_json, _ = _validate_problem_source(problem, source)
     del source_configuration_json
+    audit_batches = tuple(source.audit_epoch())
+    if not audit_batches:
+        raise ValueError("Minibatch source audit epoch must not be empty.")
     center_position, _ = _prepare_chain_positions(
         problem.initial_position,
         num_chains=1,
@@ -369,7 +374,7 @@ def build_sgmcmc_control_variate(
             current, current_batch
         )
     )
-    for batch in batches:
+    for batch in audit_batches:
         batch_gradient = gradient_fn(center_position, batch)
         likelihood_gradient = jax.tree_util.tree_map(
             lambda total, value: total + value,
@@ -383,14 +388,14 @@ def build_sgmcmc_control_variate(
     )
     jax.block_until_ready(full_gradient)
     duration = time.perf_counter() - started
-    problem_fingerprint = _problem_fingerprint(problem, batches[0])
+    problem_fingerprint = _problem_fingerprint(problem, audit_batches[0])
     return SGMCMCControlVariate(
         center=center_position,
         full_gradient=full_gradient,
         problem_fingerprint=problem_fingerprint,
         source_fingerprint=source.fingerprint,
         construction_duration_seconds=duration,
-        construction_gradient_evaluations=len(batches) + 2,
+        construction_gradient_evaluations=len(audit_batches) + 2,
     )
 
 
@@ -400,7 +405,7 @@ def sample_sgld(
     /,
     *,
     key: Array,
-    step_size: float,
+    step_size: float | SGMCMCStepSchedule,
     num_chains: int = 4,
     num_burnin: int = 1000,
     num_samples: int = 1000,
@@ -446,7 +451,7 @@ def sample_sgnht(
     /,
     *,
     key: Array,
-    step_size: float,
+    step_size: float | SGMCMCStepSchedule,
     diffusion: float = 0.01,
     initial_thermostat: float | None = None,
     num_chains: int = 4,
@@ -499,7 +504,7 @@ def _sample_sgmcmc(
     *,
     key: Array,
     algorithm: SGMCMCAlgorithm,
-    step_size: float,
+    step_size: float | SGMCMCStepSchedule,
     diffusion: float | None,
     initial_thermostat: float | None,
     num_chains: int,
@@ -529,9 +534,12 @@ def _sample_sgmcmc(
         raise ValueError("num_samples must be at least four.")
     if thinning <= 0:
         raise ValueError("steps_per_sample must be positive.")
-    step = float(step_size)
-    if not jnp.isfinite(step) or step <= 0.0:
-        raise ValueError("step_size must be positive and finite.")
+    schedule = (
+        step_size
+        if isinstance(step_size, SGMCMCStepSchedule)
+        else SGMCMCStepSchedule.constant(float(step_size))
+    )
+    step = float(schedule(0))
     if algorithm == "sgnht":
         if diffusion is None or not jnp.isfinite(diffusion) or diffusion <= 0.0:
             raise ValueError("diffusion must be positive and finite.")
@@ -603,7 +611,7 @@ def _sample_sgmcmc(
         "algorithm": algorithm,
         "num_chains": chains,
         "num_burnin": burnin,
-        "step_size": step,
+        "schedule_id": schedule.schedule_id,
         "steps_per_sample": thinning,
         "chain_method": method,
         "diffusion": diffusion,
@@ -756,7 +764,10 @@ def _sample_sgmcmc(
         transition_keys = _transition_keys(chain_keys, update)
         update_started = time.perf_counter()
         new_states, gradient_norm, gradient_valid = advance(
-            current_states, transition_keys, batch
+            current_states,
+            transition_keys,
+            batch,
+            schedule(update),
         )
         jax.block_until_ready(new_states)
         update_duration = time.perf_counter() - update_started
@@ -885,7 +896,12 @@ def _sample_sgmcmc(
         chain_keys=chain_keys,
         control_variate=control_variate,
         algorithm=algorithm,
-        step_size=step,
+        approximation=(
+            "decreasing_step_stochastic_approximation"
+            if schedule.kind == "polynomial"
+            else _APPROXIMATION
+        ),
+        step_size=float(schedule(total_updates - 1)),
         diffusion=diffusion,
         initial_thermostat=initial_thermostat,
         num_burnin=burnin,
@@ -985,7 +1001,7 @@ def _compile_transition(
     if algorithm == "sgld":
         integrator = diffusions.overdamped_langevin()
 
-        def one_step(step_key, state, minibatch):
+        def one_step(step_key, state, minibatch, current_step_size):
             estimator_key = jr.fold_in(step_key, 0x65726164)
             estimate = gradient_fn(state, minibatch, estimator_key)
             return (
@@ -993,7 +1009,7 @@ def _compile_transition(
                     step_key,
                     state,
                     estimate.gradient,
-                    step_size,
+                    current_step_size,
                     1.0,
                 ),
                 estimate.gradient_norm,
@@ -1005,7 +1021,7 @@ def _compile_transition(
             raise ValueError("diffusion is required for SGNHT transitions.")
         integrator = diffusions.sgnht(float(diffusion), 0.0)
 
-        def one_step(step_key, state, minibatch):
+        def one_step(step_key, state, minibatch, current_step_size):
             estimator_key = jr.fold_in(step_key, 0x65726164)
             estimate = gradient_fn(state.position, minibatch, estimator_key)
             position, momentum, xi = integrator(
@@ -1014,7 +1030,7 @@ def _compile_transition(
                 state.momentum,
                 state.xi,
                 estimate.gradient,
-                step_size,
+                current_step_size,
                 1.0,
             )
             return (
@@ -1028,31 +1044,35 @@ def _compile_transition(
         vectorized_transition = cast(
             Any,
             eqx.filter_jit(
-                lambda current_states, keys, minibatch: jax.vmap(
-                    lambda state, step_key: one_step(step_key, state, minibatch)
+                lambda current_states, keys, minibatch, current_step_size: jax.vmap(
+                    lambda state, step_key: one_step(
+                        step_key, state, minibatch, current_step_size
+                    )
                 )(current_states, keys)
             ),
         )
-        compiled = vectorized_transition.lower(states, chain_keys, batch).compile()
+        compiled = vectorized_transition.lower(
+            states, chain_keys, batch, jnp.asarray(step_size)
+        ).compile()
 
-        def advance(current_states, keys, minibatch):
-            return compiled(current_states, keys, minibatch)
+        def advance(current_states, keys, minibatch, current_step_size):
+            return compiled(current_states, keys, minibatch, current_step_size)
 
     else:
         state_values = _unstack_tree(states, int(chain_keys.shape[0]))
         sequential_transition = cast(Any, eqx.filter_jit(one_step))
         compiled = sequential_transition.lower(
-            chain_keys[0], state_values[0], batch
+            chain_keys[0], state_values[0], batch, jnp.asarray(step_size)
         ).compile()
 
-        def advance(current_states, keys, minibatch):
+        def advance(current_states, keys, minibatch, current_step_size):
             current_values = _unstack_tree(current_states, int(keys.shape[0]))
             next_states = []
             gradient_norms = []
             gradient_validity = []
             for state, step_key in zip(current_values, keys, strict=True):
                 next_state, gradient_norm, gradient_valid = compiled(
-                    step_key, state, minibatch
+                    step_key, state, minibatch, current_step_size
                 )
                 next_states.append(next_state)
                 gradient_norms.append(gradient_norm)

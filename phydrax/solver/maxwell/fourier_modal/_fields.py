@@ -4,12 +4,19 @@
 
 from __future__ import annotations
 
+from typing import Literal, TypeAlias
+
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
+from opt_einsum import contract
 
+from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
+from ...._trainable import NonTrainableState
 from ._boundary_cascade import prepare_layer_boundary
+from ._continuous import PreparedContinuousFourierModalLayer
 from ._factorization import _dense_solve
 from ._layer import recover_longitudinal_fields
 from ._runtime import (
@@ -17,6 +24,7 @@ from ._runtime import (
     PreparedFourierModalLayer,
     PreparedFourierModalMaxwell,
 )
+from ._scattering import HomogeneousPortModes, PreparedPeriodicPortModes
 
 
 class FourierModalFieldResult(StrictModule):
@@ -42,11 +50,14 @@ def _prepared_layer_location(
     prepared: PreparedFourierModalMaxwell,
     layer_index: int,
     /,
-) -> tuple[int, PreparedFourierModalLayer]:
+) -> tuple[int, PreparedFourierModalLayer | PreparedContinuousFourierModalLayer]:
     requested = int(layer_index)
     current = 0
     for element_index, element in enumerate(prepared.elements):
-        if not isinstance(element, PreparedFourierModalLayer):
+        if not isinstance(
+            element,
+            PreparedFourierModalLayer | PreparedContinuousFourierModalLayer,
+        ):
             continue
         if current == requested:
             return element_index, element
@@ -149,6 +160,10 @@ def diffraction_order_far_field(
     if side not in ("left", "right"):
         raise ValueError("side must be 'left' or 'right'.")
     modes = prepared.right_modes if side == "right" else prepared.left_modes
+    if not isinstance(modes, HomogeneousPortModes):
+        raise TypeError(
+            "diffraction_order_far_field is the discrete homogeneous-port API."
+        )
     amplitudes = result.right_outgoing if side == "right" else result.left_outgoing
     transverse = prepared.problem.harmonics.in_plane_wavevectors(
         prepared.problem.bloch_wavevector
@@ -181,10 +196,266 @@ def diffraction_order_far_field(
     )
 
 
+class RectangularFiniteAperture(StrictModule, NonTrainableState):
+    """Analytic rectangular top-hat aperture."""
+
+    widths: Array
+    aperture_id: str = eqx.field(static=True)
+
+    def __init__(self, widths: ArrayLike, /, *, aperture_id: str | None = None):
+        value = np.asarray(widths, dtype=float)
+        if value.shape != (2,) or np.any(~np.isfinite(value)) or np.any(value <= 0.0):
+            raise ValueError("Rectangular aperture widths must be positive shape (2,).")
+        identifier = (
+            canonical_fingerprint(
+                {"kind": "rectangular-finite-aperture", "widths": value.tolist()}
+            )
+            if aperture_id is None
+            else str(aperture_id)
+        )
+        self.widths = jnp.asarray(value)
+        self.aperture_id = identifier
+
+
+class SampledFiniteAperture(StrictModule, NonTrainableState):
+    """Bounded direct-quadrature aperture; no generic NUFFT is implied."""
+
+    points: Array
+    weights: Array
+    aperture_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        points: ArrayLike,
+        weights: ArrayLike,
+        /,
+        *,
+        aperture_id: str | None = None,
+    ):
+        points_ = np.asarray(points, dtype=float)
+        weights_ = np.asarray(weights, dtype=float)
+        if (
+            points_.ndim != 2
+            or points_.shape[1] != 2
+            or weights_.shape != (points_.shape[0],)
+            or np.any(~np.isfinite(points_))
+            or np.any(~np.isfinite(weights_))
+            or np.any(weights_ < 0.0)
+            or np.sum(weights_) <= 0.0
+        ):
+            raise ValueError("Sampled aperture points/weights are invalid.")
+        identifier = (
+            canonical_fingerprint(
+                {
+                    "kind": "sampled-finite-aperture",
+                    "point_count": points_.shape[0],
+                    "measure": float(np.sum(weights_)),
+                }
+            )
+            if aperture_id is None
+            else str(aperture_id)
+        )
+        self.points = jnp.asarray(points_)
+        self.weights = jnp.asarray(weights_)
+        self.aperture_id = identifier
+
+
+FiniteAperture: TypeAlias = RectangularFiniteAperture | SampledFiniteAperture
+FiniteApertureNormalization: TypeAlias = Literal["none", "aperture-area"]
+
+
+class FiniteApertureFarFieldPlan(StrictModule, NonTrainableState):
+    directions: Array
+    active: Array
+    aperture: FiniteAperture
+    query_capacity: int = eqx.field(static=True)
+    normalization: FiniteApertureNormalization = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        directions: ArrayLike,
+        aperture: FiniteAperture,
+        query_capacity: int,
+        normalization: FiniteApertureNormalization = "aperture-area",
+        /,
+    ):
+        values = np.asarray(directions, dtype=float)
+        capacity = int(query_capacity)
+        if (
+            values.ndim != 2
+            or values.shape[1] != 3
+            or values.shape[0] < 1
+            or values.shape[0] > capacity
+            or np.any(~np.isfinite(values))
+        ):
+            raise ValueError(
+                "Far-field directions must fit query_capacity with shape (*,3)."
+            )
+        norms = np.linalg.norm(values, axis=1)
+        if np.any(norms <= 0.0):
+            raise ValueError("Far-field directions must be nonzero.")
+        if not isinstance(aperture, RectangularFiniteAperture | SampledFiniteAperture):
+            raise TypeError("Unknown finite aperture plan.")
+        if normalization not in ("none", "aperture-area"):
+            raise ValueError("Unknown finite-aperture normalization.")
+        padded = np.zeros((capacity, 3), dtype=float)
+        padded[:, 2] = 1.0
+        padded[: values.shape[0]] = values / norms[:, None]
+        active = np.arange(capacity) < values.shape[0]
+        self.directions = jnp.asarray(padded)
+        self.active = jnp.asarray(active)
+        self.aperture = aperture
+        self.query_capacity = capacity
+        self.normalization = normalization
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "finite-aperture-far-field",
+                "directions": padded.tolist(),
+                "active": active.tolist(),
+                "aperture": aperture.aperture_id,
+                "normalization": normalization,
+            }
+        )
+
+
+class FiniteApertureFarField(StrictModule):
+    electric_amplitudes: Array
+    magnetic_amplitudes: Array
+    power_density: Array
+    active: Array
+    aperture_power: Array
+    aperture_power_defect: Array
+    finite: Array
+    side: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+
+def _aperture_transform(aperture: FiniteAperture, mismatch: Array, /) -> Array:
+    if isinstance(aperture, RectangularFiniteAperture):
+        widths = aperture.widths.astype(mismatch.dtype)
+        factors = jnp.sinc(mismatch * widths[None, None, :] / (2.0 * jnp.pi))
+        return widths[0] * widths[1] * factors[..., 0] * factors[..., 1]
+    phase = jnp.exp(-1j * contract("qhd,pd->qhp", mismatch, aperture.points))
+    return contract("qhp,p->qh", phase, aperture.weights)
+
+
+def finite_aperture_far_field(
+    prepared: PreparedFourierModalMaxwell,
+    result: FourierModalSolveResult,
+    plan: FiniteApertureFarFieldPlan,
+    /,
+    *,
+    side: str = "right",
+) -> FiniteApertureFarField:
+    """Evaluate continuous angles only for a declared finite aperture."""
+
+    if side not in ("left", "right"):
+        raise ValueError("side must be 'left' or 'right'.")
+    modes = prepared.right_modes if side == "right" else prepared.left_modes
+    amplitudes = result.right_outgoing if side == "right" else result.left_outgoing
+    if isinstance(modes, PreparedPeriodicPortModes):
+        electric_matrix = modes.outgoing_electric_matrix
+        magnetic_matrix = modes.outgoing_magnetic_matrix
+    else:
+        electric_matrix = modes.electric_matrix
+        magnetic_matrix = modes.magnetic_matrix
+    tangential_electric = contract("ij,jr->ir", electric_matrix, amplitudes)
+    tangential_magnetic = contract("ij,jr->ir", magnetic_matrix, amplitudes)
+    count = prepared.problem.harmonics.harmonic_count
+    rhs_count = amplitudes.shape[1]
+    zeros = jnp.zeros((count, rhs_count), dtype=tangential_electric.dtype)
+    electric_coefficients = jnp.stack(
+        (
+            tangential_electric[:count],
+            tangential_electric[count:],
+            zeros,
+        ),
+        axis=1,
+    )
+    magnetic_coefficients = jnp.stack(
+        (
+            tangential_magnetic[:count],
+            tangential_magnetic[count:],
+            zeros,
+        ),
+        axis=1,
+    )
+    harmonic_wavevectors = prepared.problem.harmonics.in_plane_wavevectors(
+        prepared.problem.bloch_wavevector
+    )
+    query_wavevectors = (
+        jnp.abs(prepared.problem.angular_frequency) * plan.directions[:, :2]
+    )
+    mismatch = query_wavevectors[:, None, :] - harmonic_wavevectors[None, :, :]
+    aperture_transform = _aperture_transform(plan.aperture, mismatch)
+    electric = contract("qh,hcr->qcr", aperture_transform, electric_coefficients)
+    magnetic = contract("qh,hcr->qcr", aperture_transform, magnetic_coefficients)
+    directions = plan.directions.astype(electric.real.dtype)
+    electric = (
+        electric
+        - directions[..., None] * contract("qc,qcr->qr", directions, electric)[:, None, :]
+    )
+    magnetic = (
+        magnetic
+        - directions[..., None] * contract("qc,qcr->qr", directions, magnetic)[:, None, :]
+    )
+    poynting = jnp.cross(
+        jnp.moveaxis(electric, 1, -1),
+        jnp.conj(jnp.moveaxis(magnetic, 1, -1)),
+    )
+    power = 0.5 * jnp.real(contract("qc,qrc->qr", directions, poynting))
+    if isinstance(plan.aperture, RectangularFiniteAperture):
+        aperture_measure = jnp.prod(plan.aperture.widths)
+    else:
+        aperture_measure = jnp.sum(plan.aperture.weights)
+    if plan.normalization == "aperture-area":
+        electric = electric / aperture_measure
+        magnetic = magnetic / aperture_measure
+        power = power / aperture_measure**2
+    mask = plan.active[:, None]
+    electric = jnp.where(mask[:, :, None], electric, 0.0)
+    magnetic = jnp.where(mask[:, :, None], magnetic, 0.0)
+    power = jnp.where(mask, power, 0.0)
+    aperture_power = aperture_measure * jnp.sum(
+        jnp.where(
+            modes.propagating[:, None],
+            jnp.abs(modes.flux_weights)[:, None] * jnp.abs(amplitudes) ** 2,
+            0.0,
+        ),
+        axis=0,
+    )
+    angular_power = jnp.sum(power, axis=0) / jnp.maximum(jnp.sum(plan.active), 1)
+    defect = jnp.abs(angular_power - aperture_power) / jnp.maximum(
+        jnp.abs(aperture_power), 1.0
+    )
+    finite = (
+        jnp.all(jnp.isfinite(electric))
+        & jnp.all(jnp.isfinite(magnetic))
+        & jnp.all(jnp.isfinite(power))
+    )
+    return FiniteApertureFarField(
+        electric,
+        magnetic,
+        power,
+        plan.active,
+        aperture_power,
+        defect,
+        finite,
+        side,
+        plan.plan_id,
+    )
+
+
 __all__ = [
+    "FiniteApertureFarField",
+    "FiniteApertureFarFieldPlan",
+    "RectangularFiniteAperture",
+    "SampledFiniteAperture",
     "DiffractionOrderFarField",
     "FourierModalFieldResult",
     "cell_integrated_poynting_flux",
+    "finite_aperture_far_field",
     "diffraction_order_far_field",
     "fields_in_layer",
     "poynting_flux",

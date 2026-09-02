@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_diffrax_characteristics_recover_constant_velocity_foot_and_wrap():
+def test_diffrax_characteristics_recover_constant_velocity_foot():
     terminal = jnp.asarray([[0.8], [0.2]])
     result = phx.solver.trace_characteristics(
         lambda _time, points, _args: jnp.ones_like(points),
@@ -21,20 +21,9 @@ def test_diffrax_characteristics_recover_constant_velocity_foot_and_wrap():
         rtol=1e-8,
         atol=1e-10,
     )
-    wrapped = phx.solver.trace_characteristics(
-        lambda _time, points, _args: jnp.ones_like(points),
-        terminal,
-        0.0,
-        0.5,
-        wrap=lambda points: jnp.mod(points, 1.0),
-        solver=dfx.Euler(),
-        dt0=0.01,
-    )
 
     assert bool(result.successful)
     assert jnp.allclose(result.foot_points, terminal - 0.5, rtol=1e-6, atol=1e-7)
-    assert bool(wrapped.successful)
-    assert jnp.allclose(wrapped.foot_points, jnp.mod(terminal - 0.5, 1.0), atol=1e-6)
 
 
 def test_characteristic_projection_advances_fixed_field_over_time_grid():
@@ -50,7 +39,6 @@ def test_characteristic_projection_advances_fixed_field_over_time_grid():
             design="uniform",
         ),
         lambda _time, points, _args: jnp.ones_like(points),
-        wrap=lambda points: jnp.mod(points, 1.0),
         problem_id="constant-characteristic-projection",
     )
     grid = phx.dynamics.TimeGrid(

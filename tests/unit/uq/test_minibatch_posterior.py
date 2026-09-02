@@ -118,11 +118,29 @@ def test_array_minibatch_source_rejects_invalid_contracts(data, batch_size, mess
 
 def test_likelihood_batch_requires_a_nonempty_boolean_factor_mask():
     with pytest.raises(ValueError, match="one-dimensional"):
-        phx.uq.LikelihoodBatch(jnp.ones((2,)), jnp.ones((1, 2), dtype=bool))
+        phx.uq.LikelihoodBatch(
+            jnp.ones((2,)),
+            jnp.ones((1, 2), dtype=bool),
+            factor_ids=jnp.zeros((2,), dtype=jnp.int32),
+            sampling_probabilities=jnp.ones((2,)),
+            estimator_weights=jnp.ones((2,)),
+        )
     with pytest.raises(TypeError, match="boolean"):
-        phx.uq.LikelihoodBatch(jnp.ones((2,)), jnp.ones((2,)))
+        phx.uq.LikelihoodBatch(
+            jnp.ones((2,)),
+            jnp.ones((2,)),
+            factor_ids=jnp.arange(2),
+            sampling_probabilities=jnp.ones((2,)),
+            estimator_weights=jnp.ones((2,)),
+        )
     with pytest.raises(ValueError, match="active factor"):
-        phx.uq.LikelihoodBatch(jnp.ones((2,)), jnp.zeros((2,), dtype=bool))
+        phx.uq.LikelihoodBatch(
+            jnp.ones((2,)),
+            jnp.zeros((2,), dtype=bool),
+            factor_ids=jnp.arange(2),
+            sampling_probabilities=jnp.ones((2,)),
+            estimator_weights=jnp.ones((2,)),
+        )
 
 
 def test_minibatch_posterior_scales_only_active_likelihood_factors():
@@ -131,6 +149,9 @@ def test_minibatch_posterior_scales_only_active_likelihood_factors():
     batch = phx.uq.LikelihoodBatch(
         jnp.asarray([0.5, 2.0, 1.0e20]),
         jnp.asarray([True, True, False]),
+        factor_ids=jnp.asarray([0, 2, 2]),
+        sampling_probabilities=jnp.full((3,), 0.2),
+        estimator_weights=jnp.asarray([2.5, 2.5, 0.0]),
     )
     position = problem.initial_position
     physical = problem.parameter_space.constrain(position)
@@ -153,7 +174,13 @@ def test_minibatch_posterior_scales_only_active_likelihood_factors():
 
 def test_minibatch_posterior_rejects_wrong_factor_shapes():
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
-    batch = phx.uq.LikelihoodBatch(jnp.ones((3,)), jnp.ones((3,), dtype=bool))
+    batch = phx.uq.LikelihoodBatch(
+        jnp.ones((3,)),
+        jnp.ones((3,), dtype=bool),
+        factor_ids=jnp.arange(3),
+        sampling_probabilities=jnp.full((3,), 1.0 / 3.0),
+        estimator_weights=jnp.ones((3,)),
+    )
     scalar_problem = phx.uq.MinibatchPosteriorProblem(
         space, lambda parameter, current: jnp.asarray(0.0), num_factors=3
     )

@@ -19,6 +19,7 @@ from ...linalg import ArraySpace, DiagonalPairing
 from .._cell_complex import (
     polygonal_connectivity,
     PolygonalConnectivity,
+    PolyhedralConnectivity,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
@@ -42,7 +43,7 @@ from ._geometry_protocol import FiniteVolumeFaceBlock
 from ._structured import _component_names
 
 
-Connectivity = PolygonalConnectivity | TetrahedralConnectivity
+Connectivity = PolygonalConnectivity | TetrahedralConnectivity | PolyhedralConnectivity
 
 _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC = (
     (0.445948490915965, 0.445948490915965, 0.108103018168070),
@@ -335,11 +336,16 @@ def _owner_neighbour(connectivity: Connectivity, cell_count: int, /):
         cell_signs = np.asarray(connectivity.cell_edge_signs)
         valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
         face_count = int(connectivity.edges.shape[0])
-    else:
+    elif isinstance(connectivity, TetrahedralConnectivity):
         cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
         cell_signs = np.asarray(connectivity.cell_face_signs)
         valid = np.ones(cell_faces.shape, dtype=bool)
         face_count = int(connectivity.faces.shape[0])
+    else:
+        cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
+        cell_signs = np.asarray(connectivity.cell_face_signs)
+        valid = np.asarray(connectivity.cell_face_valid, dtype=bool)
+        face_count = int(connectivity.face_owner.size)
     owner = np.full((face_count,), -1, dtype=np.int32)
     neighbour = np.full((face_count,), -1, dtype=np.int32)
     owner_sign = np.zeros((face_count,), dtype=float)
@@ -794,6 +800,91 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             }
         )
 
+    @classmethod
+    def from_cell_mesh(
+        cls,
+        mesh: CellMesh,
+        /,
+        *,
+        field_name: str = "state",
+        component_names: Sequence[str] = ("value",),
+    ) -> "UnstructuredFiniteVolumePlan":
+        """Construct directly from canonical polyhedral CellMesh."""
+        if not isinstance(mesh, CellMesh):
+            raise TypeError("mesh must be CellMesh.")
+        if not isinstance(mesh.connectivity, PolyhedralConnectivity):
+            raise ValueError(
+                "CellMesh FV cutover currently targets polyhedral connectivity; "
+                "legacy tetrahedral callers use the direct constructor."
+            )
+        field = str(field_name)
+        if not field:
+            raise ValueError("field_name must be non-empty.")
+        components = _component_names(component_names)
+        connectivity = mesh.connectivity
+        cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
+        vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        face_owner = np.asarray(connectivity.face_owner, dtype=np.int32)
+        face_neighbour = np.asarray(connectivity.face_neighbour, dtype=np.int32)
+        boundary_faces = np.flatnonzero(face_neighbour < 0).astype(np.int32)
+        topology_id = canonical_fingerprint(
+            {
+                "kind": "unstructured-finite-volume-topology",
+                "mesh": mesh.topology_id,
+                "field": field,
+                "components": list(components),
+            }
+        )
+        geometry_id = canonical_fingerprint(
+            {
+                "kind": "unstructured-finite-volume-geometry",
+                "topology": topology_id,
+                "mesh_geometry": mesh.geometry_id,
+            }
+        )
+        capabilities = (
+            DiscretizationCapability.RECONSTRUCTION,
+            DiscretizationCapability.TRACE,
+            DiscretizationCapability.CONSERVATIVE_FLUX,
+            DiscretizationCapability.BOUNDARY_INTEGRAL,
+            DiscretizationCapability.MATRIX_FREE,
+            DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
+        )
+        result = object.__new__(cls)
+        object.__setattr__(result, "mesh", mesh)
+        object.__setattr__(result, "vertices", mesh.coordinates)
+        object.__setattr__(result, "triangles", jnp.empty((0, 3), dtype=jnp.int32))
+        object.__setattr__(result, "quadrilaterals", jnp.empty((0, 4), dtype=jnp.int32))
+        tetrahedra = jnp.empty((0, 4), dtype=jnp.int32)
+        object.__setattr__(result, "tetrahedra", tetrahedra)
+        object.__setattr__(result, "vertex_global_ids", jnp.asarray(vertex_ids))
+        object.__setattr__(result, "cell_global_ids", jnp.asarray(cell_ids))
+        object.__setattr__(result, "cell_dimension", 3)
+        object.__setattr__(result, "patch_names", ("boundary",))
+        object.__setattr__(result, "patch_faces", (jnp.asarray(boundary_faces),))
+        object.__setattr__(result, "field_name", field)
+        object.__setattr__(result, "component_names", components)
+        object.__setattr__(result, "topology_id", topology_id)
+        object.__setattr__(result, "geometry_id", geometry_id)
+        object.__setattr__(
+            result,
+            "key",
+            DiscretizationKey("unstructured_finite_volume", DiscretizationRole.PHYSICAL),
+        )
+        object.__setattr__(result, "capabilities", capabilities)
+        object.__setattr__(
+            result,
+            "plan_id",
+            canonical_fingerprint(
+                {
+                    "kind": "unstructured-finite-volume-plan",
+                    "topology": topology_id,
+                    "geometry": geometry_id,
+                }
+            ),
+        )
+        return result
+
     def prepare(self, /, *, numeric_version: str = "0"):
         return UnstructuredFiniteVolumeDiscretization(
             self, numeric_version=numeric_version
@@ -855,45 +946,68 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         connectivity = mesh.connectivity
         topology = mesh.topology
         cell_count = connectivity.cell_count
-        if plan.cell_dimension == 2:
-            face_count = int(connectivity.edges.shape[0])
+        if isinstance(connectivity, PolyhedralConnectivity):
+            from ._polyhedral import prepare_polyhedral_finite_volume_geometry
+
+            polyhedral = prepare_polyhedral_finite_volume_geometry(mesh)
+            face_count = int(connectivity.face_owner.size)
+            owner, neighbour, owner_sign = _owner_neighbour(connectivity, cell_count)
+            cell_volumes = polyhedral.cell_volumes
+            cell_centers = polyhedral.cell_centers
+            face_centers = polyhedral.face_centers
+            area_vectors = (
+                jnp.asarray(owner_sign, dtype=polyhedral.face_area_vectors.dtype)[:, None]
+                * polyhedral.face_area_vectors
+            )
+            face_measures = polyhedral.face_measures
+            closure = (
+                jnp.zeros_like(cell_centers).at[:, 0].set(polyhedral.closure_residual)
+            )
+            quadrature_points = polyhedral.face_quadrature_points
+            quadrature_weights = polyhedral.face_quadrature_weights
+            cell_quadrature_points = polyhedral.cell_quadrature_points
+            cell_quadrature_weights = polyhedral.cell_quadrature_weights
+            cell_quadrature_valid = polyhedral.cell_quadrature_valid
         else:
-            face_count = int(connectivity.faces.shape[0])
-        owner, neighbour, owner_sign = _owner_neighbour(connectivity, cell_count)
-        (
-            cell_volumes,
-            cell_centers,
-            face_centers,
-            area_vectors,
-            face_measures,
-            closure,
-            quadrature_points,
-            quadrature_weights,
-        ) = evaluate_unstructured_fv_geometry(
-            plan.vertices,
-            plan.triangles,
-            plan.quadrilaterals,
-            plan.tetrahedra,
-            connectivity,
-            owner,
-            owner_sign,
-        )
-        (
-            cell_quadrature_points,
-            cell_quadrature_weights,
-            cell_quadrature_valid,
-        ) = _cell_volume_quadrature(plan, connectivity)
-        quadrature_mass = jnp.sum(cell_quadrature_weights, axis=1)
-        quadrature_tolerance = (
-            256.0
-            * jnp.finfo(cell_quadrature_weights.dtype).eps
-            * jnp.maximum(jnp.abs(cell_volumes), 1.0)
-        )
-        cell_quadrature_weights = eqx.error_if(
-            cell_quadrature_weights,
-            jnp.any(jnp.abs(quadrature_mass - cell_volumes) > quadrature_tolerance),
-            "Unstructured cell quadrature must reproduce every cell measure.",
-        )
+            if plan.cell_dimension == 2:
+                face_count = int(connectivity.edges.shape[0])
+            else:
+                face_count = int(connectivity.faces.shape[0])
+            owner, neighbour, owner_sign = _owner_neighbour(connectivity, cell_count)
+            (
+                cell_volumes,
+                cell_centers,
+                face_centers,
+                area_vectors,
+                face_measures,
+                closure,
+                quadrature_points,
+                quadrature_weights,
+            ) = evaluate_unstructured_fv_geometry(
+                plan.vertices,
+                plan.triangles,
+                plan.quadrilaterals,
+                plan.tetrahedra,
+                connectivity,
+                owner,
+                owner_sign,
+            )
+            (
+                cell_quadrature_points,
+                cell_quadrature_weights,
+                cell_quadrature_valid,
+            ) = _cell_volume_quadrature(plan, connectivity)
+            quadrature_mass = jnp.sum(cell_quadrature_weights, axis=1)
+            quadrature_tolerance = (
+                256.0
+                * jnp.finfo(cell_quadrature_weights.dtype).eps
+                * jnp.maximum(jnp.abs(cell_volumes), 1.0)
+            )
+            cell_quadrature_weights = eqx.error_if(
+                cell_quadrature_weights,
+                jnp.any(jnp.abs(quadrature_mass - cell_volumes) > quadrature_tolerance),
+                "Unstructured cell quadrature must reproduce every cell measure.",
+            )
         boundary_patch_ids = np.full((face_count,), -1, dtype=np.int32)
         for patch_id, face_indices in enumerate(plan.patch_faces):
             boundary_patch_ids[np.asarray(face_indices, dtype=np.int32)] = patch_id
@@ -1030,7 +1144,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.cell_quadrature_points = cell_quadrature_points
         self.cell_quadrature_weights = cell_quadrature_weights
         self.cell_quadrature_valid = cell_quadrature_valid
-        self.cell_quadrature_degree = 5
+        self.cell_quadrature_degree = (
+            1 if isinstance(connectivity, PolyhedralConnectivity) else 5
+        )
         self.face_centers = face_centers
         self.area_vectors = area_vectors
         self.face_measures = face_measures
@@ -1098,7 +1214,11 @@ def _quality_report(
         denominator > 0.0, denominator, 1.0
     )
     maximum_nonorthogonality = jnp.max(
-        jnp.where(interior, jnp.degrees(jnp.arccos(jnp.clip(cosine, 0.0, 1.0))), 0.0)
+        jnp.where(
+            interior,
+            jnp.degrees(jnp.arccos(jnp.clip(cosine, 0.0, 1.0))),
+            0.0,
+        )
     )
     points = jnp.asarray(plan.vertices)
     if isinstance(connectivity, PolygonalConnectivity):
@@ -1111,7 +1231,7 @@ def _quality_report(
         )
         cell_maximum = jnp.max(jnp.where(valid, lengths[cell_edges], 0.0), axis=1)
         aspect = cell_maximum**2 / cell_volumes
-    else:
+    elif isinstance(connectivity, TetrahedralConnectivity):
         cells = jnp.asarray(plan.tetrahedra, dtype=jnp.int32)
         cell_points = points[cells]
         pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
@@ -1126,6 +1246,18 @@ def _quality_report(
         maximum_face = jnp.max(face_measures[cell_faces], axis=1)
         minimum_altitude = 3.0 * cell_volumes / maximum_face
         aspect = jnp.max(edge_lengths, axis=1) / minimum_altitude
+    else:
+        cell_faces = jnp.asarray(connectivity.cell_faces, dtype=jnp.int32)
+        valid_faces = jnp.asarray(connectivity.cell_face_valid)
+        maximum_face_scale = jnp.max(
+            jnp.where(
+                valid_faces,
+                jnp.sqrt(face_measures[cell_faces]),
+                0.0,
+            ),
+            axis=1,
+        )
+        aspect = maximum_face_scale / jnp.cbrt(cell_volumes)
     return UnstructuredFiniteVolumeQualityReport(
         minimum_cell_measure=jnp.min(cell_volumes),
         maximum_cell_measure=jnp.max(cell_volumes),

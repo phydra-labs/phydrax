@@ -33,7 +33,12 @@ from .._contracts import (
     GeometryKind,
     GeometrySource,
 )
-from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureComponent
+from .._cubature import (
+    AbstractCubatureMap,
+    CubatureAtlas,
+    CubatureComponent,
+    CubatureMapEvaluation,
+)
 from .._sampling import (
     bounded_rejection_sample,
     RejectionSamplingPlan,
@@ -170,19 +175,16 @@ class _AffineCubatureMap(AbstractCubatureMap):
     base: AbstractCubatureMap
     linear: Array
     offset: Array
-    measure_scale: Array
 
     def __init__(
         self,
         base: AbstractCubatureMap,
         linear: Array,
         offset: Array,
-        measure_scale: Array,
     ):
         self.base = base
         self.linear = jnp.asarray(linear, dtype=float)
         self.offset = jnp.asarray(offset, dtype=float)
-        self.measure_scale = jnp.asarray(measure_scale, dtype=float).reshape(())
 
     @property
     def num_charts(self) -> int:
@@ -200,10 +202,74 @@ class _AffineCubatureMap(AbstractCubatureMap):
         return self.base.map(chart_indices, reference) @ self.linear.T + self.offset
 
     def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
-        return self.base.jacobian(chart_indices, reference) * self.measure_scale
+        return self.evaluate(chart_indices, reference).measure_scale
 
     def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
         return self.base.reference_mask(chart_indices, reference)
+
+    def evaluate(
+        self,
+        chart_indices: Array,
+        reference: Array,
+        /,
+    ) -> CubatureMapEvaluation:
+        indices = jnp.asarray(chart_indices, dtype=jnp.int32)
+        reference_ = jnp.asarray(reference, dtype=float)
+        leading = reference_.shape[:-1]
+        flat_indices = indices.reshape((-1,))
+        flat_reference = reference_.reshape((-1, self.reference_dimension))
+        base_evaluation = self.base.evaluate(indices, reference_)
+
+        base_normal = base_evaluation.normal
+        if base_normal is None and self.reference_domain in ("circle", "sphere"):
+            normal_norm = jnp.linalg.norm(reference_, axis=-1, keepdims=True)
+            base_normal = reference_ / normal_norm
+
+        normal = None
+        if base_normal is not None:
+            flat_normal = base_normal.reshape((-1, self.ambient_dimension))
+            nanson = jax.vmap(lambda value: jnp.linalg.solve(self.linear.T, value))(
+                flat_normal
+            )
+            nanson_norm = jnp.linalg.norm(nanson, axis=-1)
+            determinant = jnp.abs(jnp.linalg.det(self.linear))
+            measure_scale = (
+                base_evaluation.measure_scale * determinant * nanson_norm.reshape(leading)
+            )
+            normal = (nanson / nanson_norm[:, None]).reshape(base_normal.shape)
+        else:
+            base_differential = jax.vmap(
+                lambda index, coordinate: jax.jacfwd(
+                    lambda value: self.base.map(index, value)
+                )(coordinate)
+            )(flat_indices, flat_reference)
+            transformed = oe.contract("ij,njk->nik", self.linear, base_differential)
+            gram = oe.contract("nji,njk->nik", jnp.conj(transformed), transformed)
+            sign, logdet = jnp.linalg.slogdet(gram)
+            measure_scale = jnp.where(
+                sign > 0,
+                jnp.exp(0.5 * jnp.real(logdet)),
+                jnp.asarray(jnp.nan, dtype=jnp.real(logdet).dtype),
+            ).reshape(leading)
+        points = base_evaluation.points @ self.linear.T + self.offset
+        orientation = base_evaluation.orientation
+        if self.ambient_dimension == self.reference_dimension:
+            orientation = orientation * jnp.sign(jnp.real(jnp.linalg.det(self.linear)))
+        finite_points = jnp.all(jnp.isfinite(points), axis=-1)
+        admissible = (
+            base_evaluation.admissible
+            & finite_points
+            & jnp.isfinite(measure_scale)
+            & (measure_scale > 0)
+            & (orientation != 0)
+        )
+        return CubatureMapEvaluation(
+            points,
+            measure_scale,
+            admissible,
+            orientation,
+            normal,
+        )
 
 
 class RigidTransform(GeometrySource):
@@ -404,7 +470,6 @@ class _RigidTransformKernel(GeometryKernel):
                 atlas.mapping,
                 rotation,
                 translation,
-                jnp.asarray(1.0),
             ),
             source_entity_ids=atlas.source_entity_ids,
             source_id=atlas.source_id,
@@ -510,11 +575,7 @@ class _ScalingKernel(GeometryKernel):
 
     @property
     def capabilities(self):
-        capabilities = set(self.child.capabilities)
-        if not self.uniform:
-            capabilities.discard(GeometryCapability.SIGNED_DISTANCE)
-            capabilities.discard(GeometryCapability.CUBATURE_ATLAS)
-        return frozenset(capabilities)
+        return self.child.capabilities
 
     @property
     def field_certificate(self):
@@ -639,24 +700,14 @@ class _ScalingKernel(GeometryKernel):
         )
 
     def cubature_atlas(self, state, component: CubatureComponent, /) -> CubatureAtlas:
-        if not self.uniform:
-            raise NotImplementedError(
-                "Native cubature does not support nonuniform geometry scaling."
-            )
         scale, center = self._parameters(state)
         atlas = self.child.cubature_atlas(state, component)
         offset = center - scale * center
-        measure_dimension = (
-            self.intrinsic_dimension
-            if component == "interior"
-            else self.intrinsic_dimension - 1
-        )
         return CubatureAtlas(
             _AffineCubatureMap(
                 atlas.mapping,
                 jnp.diag(scale),
                 offset,
-                jnp.abs(scale[0]) ** measure_dimension,
             ),
             source_entity_ids=atlas.source_entity_ids,
             source_id=atlas.source_id,

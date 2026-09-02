@@ -37,10 +37,13 @@ class LocalOperatorEstimate(StrictModule):
     valid: Array
     status: Array
     work_count: Array
+    estimator_variance: Array
+    estimator_count: Array
     configuration_shape: tuple[int, ...] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     compute_dtype: str = eqx.field(static=True)
+    estimator_method: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -54,31 +57,63 @@ class LocalOperatorEstimate(StrictModule):
         operator_id: str,
         method_id: str,
         compute_dtype: str,
+        estimator_variance: ArrayLike | None = None,
+        estimator_count: ArrayLike | None = None,
+        estimator_method: str = "deterministic",
     ):
         values = jnp.asarray(value)
         validity = jnp.asarray(valid, dtype=bool)
         statuses = jnp.asarray(status, dtype=jnp.int32)
         work = jnp.asarray(work_count, dtype=jnp.int32)
+        variance = (
+            jnp.zeros_like(jnp.real(values))
+            if estimator_variance is None
+            else jnp.asarray(estimator_variance)
+        )
+        estimator_work = (
+            jnp.zeros_like(work)
+            if estimator_count is None
+            else jnp.asarray(estimator_count, dtype=jnp.int32)
+        )
         if validity.shape != values.shape:
             raise ValueError("valid must match the local value shape.")
         if statuses.shape != values.shape:
             raise ValueError("status must match the local value shape.")
         if work.shape != values.shape:
             raise ValueError("work_count must match the local value shape.")
+        if variance.shape != values.shape or estimator_work.shape != values.shape:
+            raise ValueError(
+                "estimator_variance and estimator_count must match local values."
+            )
+        if jnp.iscomplexobj(variance):
+            raise TypeError("estimator_variance must be real-valued.")
         shape = tuple(int(size) for size in configuration_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("configuration_shape must contain positive dimensions.")
-        identifiers = (str(operator_id), str(method_id), str(compute_dtype))
+        identifiers = (
+            str(operator_id),
+            str(method_id),
+            str(compute_dtype),
+            str(estimator_method),
+        )
         if any(not value for value in identifiers):
             raise ValueError(
-                "operator_id, method_id, and compute_dtype must be non-empty."
+                "operator_id, method_id, compute_dtype, and estimator_method "
+                "must be non-empty."
             )
         self.value = values
         self.valid = validity
         self.status = statuses
         self.work_count = work
+        self.estimator_variance = variance
+        self.estimator_count = estimator_work
         self.configuration_shape = shape
-        self.operator_id, self.method_id, self.compute_dtype = identifiers
+        (
+            self.operator_id,
+            self.method_id,
+            self.compute_dtype,
+            self.estimator_method,
+        ) = identifiers
 
     @property
     def successful(self) -> Array:

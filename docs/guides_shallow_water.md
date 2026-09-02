@@ -1,7 +1,7 @@
 # Shallow water
 
-Phydrax implements one- and two-dimensional Saint-Venant flow with static,
-upward-positive bathymetry on Cartesian structured finite volumes. The authoritative
+Phydrax implements one- and two-dimensional Saint-Venant flow with
+upward-positive bathymetry on structured and mapped finite volumes. The authoritative
 cell state is `(h, hu[, hv])`: water depth and horizontal discharge. Bed elevation
 `b` is a prepared auxiliary field, and free-surface elevation is `eta = h + b`.
 
@@ -37,10 +37,12 @@ The corrections have zero depth component. They are face-owned contributions, no
 cell-centered approximation to `-g h grad(b)`. This pairing preserves wet and partially
 dry lakes at rest over discontinuous cellwise beds.
 
-Bathymetry is required when this interface is selected and rejected with ordinary
-numerical fluxes. The initial execution contract supports static Cartesian structured
-finite volumes only. Mapped, triangle, unstructured, moving, SBP, spectral, and DGSEM
-bathymetric execution fail before JIT.
+`ShallowWaterBathymetryPlan` requires exactly one explicit representation:
+`cell_values=` or a static-physical-bed `evaluator=` sampled on stage coordinates.
+Prepared beds are bound to geometry and precision identities. The hydrostatic HLL
+operator supports Cartesian axes and arbitrary unit normals; its ALE route uses
+`F·n - w_n U` and the same one-sided hydrostatic corrections. Missing/stale bed,
+metric, or seam evidence fails before execution.
 
 ## Reconstruction
 
@@ -50,9 +52,11 @@ touching a dry cell fall back to the piecewise-constant equilibrium representati
 This preserves dry lake states and gives second-order accuracy for smooth fully wet
 solutions on a flat or cellwise bed.
 
-WENO and characteristic reconstruction are not currently supported by the balanced
-method. `ShallowWaterSystem` intentionally does not advertise a Roe eigensystem, so a
-generic Roe method is not a dry-safe shallow-water route.
+`ShallowWaterEquilibriumWENOZPlan` reconstructs free surface and discharge with
+fifth-order WENO-Z weights while carrying bed traces separately. The optional normal
+characteristic route records `characteristic_used`, eigenbasis conditioning, and the
+explicit `equilibrium-componentwise` fallback for dry stencils. `ShallowWaterSystem`
+still does not advertise a generic Roe capability.
 
 ## Stage positivity and time stepping
 
@@ -74,9 +78,15 @@ two-dimensional shallow water. It is passed through `ConservationProblemIR` with
 canonical `source_id`. The source contributes no mass, and its SSPRK stability bound is
 included in stable-step selection.
 
-This is transient rotating-flow support, not a geostrophically well-balanced spatial
-scheme. Exact preservation of pressure--Coriolis equilibria is outside the current
-contract.
+`GeostrophicBalancePlan` validates a user-declared reference with the same discrete
+residual used by execution and stores its geometry-bound residual. The prepared
+deviation operator evaluates `R(U) - R(U_eq)`, so a certified f-/beta-plane reference
+is preserved exactly; it does not discover arbitrary equilibria.
+
+`ShallowWaterNormalDischargeBoundary` supplies a complete hydrostatic trace and one
+accepted outward mass flux. `ShallowWaterCharacteristicOpenBoundary` combines outgoing
+interior and incoming exterior Riemann invariants, distinguishes sub/supercritical
+flow, and rejects the near-critical ambiguous route.
 
 ## Minimal construction
 
@@ -102,7 +112,9 @@ boundaries = phx.discretization.FiniteVolumeBoundarySet.periodic(("x",))
 problem = phx.equations.ConservationProblemIR(
     "wet-dry", "state", system, boundaries
 )
-bed = jnp.zeros(shape)
+bed = phx.discretization.ShallowWaterBathymetryPlan(
+    cell_values=jnp.zeros(shape), field_id="flat-bed"
+)
 compiled = phx.equations.compile_conservation_problem(
     problem, discretization, method, bathymetry=bed
 )
@@ -119,19 +131,34 @@ can store these fields beside the ordinary finite-volume checkpoint data.
 
 ## Supported capability
 
-- one- and two-dimensional Cartesian structured finite volumes;
-- periodic and ordinary state-producing physical boundaries;
-- piecewise-constant and equilibrium-aware MUSCL reconstruction;
-- wet and exactly dry cells;
-- static discontinuous bathymetry;
-- SSPRK3 stage positivity and retry;
-- f-plane and beta-plane Coriolis sources;
-- branchwise JAX JVP/VJP away from wet/dry and limiter switching surfaces.
+- one- and two-dimensional structured and mapped finite volumes;
+- explicit cell-value or static-physical evaluator bathymetry;
+- axis and arbitrary-normal/ALE hydrostatic HLL balance;
+- piecewise-constant, equilibrium MUSCL, and equilibrium WENO-Z reconstruction;
+- prescribed-normal-discharge and characteristic open trace policies;
+- declared geostrophic reference preservation;
+- wet and exactly dry cells with SSPRK stage positivity/retry;
+- fixed-capacity multilayer hydrostatics and single-fraction MPM/Exner bedload physics;
+- fixed-mask derivatives plus isolated shoreline saltation evidence;
+- LPP-resolved float16/bfloat16 storage with float32-or-higher decisions/reductions;
+- branchwise JAX JVP/VJP away from wet/dry, limiter, threshold, and event switches.
+`PreparedBalancedShallowWaterLowering` supplies the common equilibrium split
+`-div(m)` and `-div(m tensor u) - g h grad(eta)` to triangle/unstructured, SBP,
+global-spectral, and DGSEM derivative owners. The four named lowering functions bind
+the same prepared bathymetry/geometry identity, so constant surface and zero discharge
+annihilate under each backend's own discrete derivative.
 
-Not supported: moving or mapped beds, unstructured bathymetry, prescribed-normal-flux
-boundaries for the balanced method, WENO balance, geostrophic well-balancing,
-characteristic open boundaries, reduced precision below float32, sediment, multilayer
-systems, or differentiability at shoreline topology changes.
+
+`HydrostaticLayerCoupling` certifies stable density ordering and a positive-semidefinite
+hydrostatic energy Hessian. `MultilayerShallowWaterSystem` uses fixed layer capacity.
+`BedloadSedimentPlan` and `ShallowWaterExnerSystem` implement the named noncohesive,
+single-fraction Meyer--Peter--Muller/Exner route; suspended, cohesive, and multigrain
+transport are not claimed.
+
+Sub-float32 finite-volume storage requires an exact provider `PrecisionResolution`.
+Flux/decision/reduction roles default to float32, and `quantize_and_validate` rechecks
+finite/admissible/wet-mask evidence after the storage round trip. FP8/MX remains
+fail-closed unless the LPP provider certifies the requested operations and format.
 
 ## Qualification and benchmarks
 

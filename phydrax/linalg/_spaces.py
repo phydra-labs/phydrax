@@ -208,6 +208,7 @@ class PyTreeSpace(AbstractVectorSpace):
         *,
         pairing: AbstractPairing | None = None,
         space_id: str | None = None,
+        _allow_mixed_dtypes: bool = False,
     ):
         leaves, treedef = jax.tree.flatten(structure)
         if not leaves:
@@ -222,7 +223,7 @@ class PyTreeSpace(AbstractVectorSpace):
                 shape = tuple(int(size) for size in array.shape)
                 dtype = _dtype(array.dtype)
             specs.append(jax.ShapeDtypeStruct(shape, dtype))
-        if len({np.dtype(spec.dtype) for spec in specs}) != 1:
+        if len({np.dtype(spec.dtype) for spec in specs}) != 1 and not _allow_mixed_dtypes:
             raise TypeError(
                 "PyTreeSpace leaves must share one canonical coordinate dtype."
             )

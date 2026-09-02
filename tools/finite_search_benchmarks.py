@@ -16,7 +16,6 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax.optim._finite import _exhaustive_minimum
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -152,8 +151,13 @@ def run_benchmark(arguments: argparse.Namespace) -> dict[str, object]:
     estimated_dense_bytes = dense_candidate_bytes + dense_objective_bytes
 
     def streaming_search():
-        evidence = _exhaustive_minimum(evaluator, space, search)
-        return evidence.minimum, evidence.flat_index
+        evidence = phx.optim.search_finite(
+            evaluator,
+            space,
+            phx.optim.FiniteMinimum(),
+            search=search,
+        )
+        return evidence.scores[0], evidence.flat_indices[0]
 
     streaming_executable, streaming_output, streaming_compile, streaming_samples = (
         _compile_and_time(streaming_search, arguments.repeat)

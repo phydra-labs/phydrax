@@ -9,7 +9,9 @@ from math import sqrt
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.nn as jnn
+import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import opt_einsum as oe
@@ -26,6 +28,7 @@ from phydrax._spectral._multiwavelet import AlpertMultiwaveletTransform
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
+from phydrax.nn.layers import sample_rectilinear_grid
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
@@ -153,6 +156,136 @@ class _MultiwaveletSubbandMixer1D(StrictModule):
         return coefficients.with_bands(scaling, details)
 
 
+class WaveletDecodePolicy(StrictModule):
+    """Auditable continuation policy for a finite wavelet reconstruction."""
+
+    interpolation: Literal["linear"] = eqx.field(static=True)
+    interpolation_order: int = eqx.field(static=True)
+    out_of_support: Literal["error"] = eqx.field(static=True)
+    multiwavelet_evaluation: Literal["cell_polynomial"] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        interpolation: Literal["linear"] = "linear",
+        interpolation_order: int = 1,
+        out_of_support: Literal["error"] = "error",
+        multiwavelet_evaluation: Literal["cell_polynomial"] = "cell_polynomial",
+    ):
+        if interpolation != "linear" or int(interpolation_order) != 1:
+            raise ValueError(
+                "The finite WNO decoder currently supports linear order one."
+            )
+        if out_of_support != "error":
+            raise ValueError("Wavelet decoding currently rejects out-of-support queries.")
+        if multiwavelet_evaluation != "cell_polynomial":
+            raise ValueError("MWT decoding requires finite cell-polynomial semantics.")
+        self.interpolation = interpolation
+        self.interpolation_order = 1
+        self.out_of_support = out_of_support
+        self.multiwavelet_evaluation = multiwavelet_evaluation
+
+
+def _decode_wavelet_queries(
+    values: Array,
+    source: FunctionSamples,
+    query: FunctionSamples,
+    case_shape: tuple[int, ...],
+    boundaries: Sequence[WaveletBoundary],
+    /,
+) -> Array:
+    coordinates = query.coordinates_array(case_shape=case_shape)
+    axis_nodes = tuple(axis.nodes for axis in source.axes)
+    usable = query.mask_array(case_shape=case_shape)
+    inside = jnp.ones(usable.shape, dtype=bool)
+    for dimension, nodes in enumerate(axis_nodes):
+        inside = inside & (coordinates[..., dimension] >= nodes[0])
+        inside = inside & (coordinates[..., dimension] <= nodes[-1])
+    coordinates = eqx.error_if(
+        coordinates,
+        jnp.any(usable & ~inside),
+        "Wavelet query lies outside the represented source support.",
+    )
+    boundary = tuple(
+        "periodic"
+        if value == "periodization"
+        else "reflect"
+        if value == "symmetric"
+        else "constant"
+        for value in boundaries
+    )
+    decoded = sample_rectilinear_grid(
+        values,
+        coordinates,
+        spatial_ndim=len(axis_nodes),
+        boundary=boundary,
+        axis_nodes=axis_nodes,
+        source_mask=source.mask_array(case_shape=case_shape),
+        mask_mode="renormalize",
+    )
+    return jnp.where(usable[..., None], decoded, jnp.zeros_like(decoded))
+
+
+def _decode_multiwavelet_queries(
+    values: Array,
+    source: FunctionSamples,
+    query: FunctionSamples,
+    case_shape: tuple[int, ...],
+    order: int,
+    /,
+) -> Array:
+    coordinates = query.coordinates_array(case_shape=case_shape)[..., 0]
+    nodes = source.axes[0].nodes
+    usable = query.mask_array(case_shape=case_shape)
+    inside = (coordinates >= nodes[0]) & (coordinates <= nodes[-1])
+    coordinates = eqx.error_if(
+        coordinates,
+        jnp.any(usable & ~inside),
+        "Multiwavelet query lies outside the represented source support.",
+    )
+    point_count = int(values.shape[-2])
+    query_shape = query.sample_shape
+    cases = int(np.prod(case_shape)) if case_shape else 1
+    flat_values = values.reshape((cases, point_count, values.shape[-1]))
+    flat_coordinates = coordinates.reshape((cases, -1))
+    reference_nodes = (jnp.arange(order, dtype=coordinates.dtype) + 0.5) / float(order)
+
+    def one(case_values, case_coordinates):
+        continuous_index = (
+            (case_coordinates - nodes[0])
+            / (nodes[-1] - nodes[0])
+            * float(point_count - 1)
+        )
+        cell = jnp.floor(continuous_index / float(order)).astype(jnp.int32)
+        maximum_cell = max((point_count - 1) // order, 0)
+        cell = jnp.clip(cell, 0, maximum_cell)
+        local = (
+            continuous_index - cell.astype(continuous_index.dtype) * order + 0.5
+        ) / float(order)
+        indices = cell[:, None] * order + jnp.arange(order)[None, :]
+        indices = jnp.clip(indices, 0, point_count - 1)
+        samples = case_values[indices]
+        basis = []
+        for basis_index in range(order):
+            weight = jnp.ones_like(local)
+            for node_index in range(order):
+                if node_index != basis_index:
+                    weight = weight * (
+                        (local - reference_nodes[node_index])
+                        / (reference_nodes[basis_index] - reference_nodes[node_index])
+                    )
+            basis.append(weight)
+        return oe.contract(
+            "qp,qpc->qc",
+            jnp.stack(tuple(basis), axis=-1),
+            samples,
+        )
+
+    decoded = jax.vmap(one)(flat_values, flat_coordinates)
+    decoded = decoded.reshape(case_shape + query_shape + (values.shape[-1],))
+    return jnp.where(usable[..., None], decoded, jnp.zeros_like(decoded))
+
+
 def _grid_values(
     samples: FunctionSamples,
     case_shape: tuple[int, ...],
@@ -191,36 +324,28 @@ def _validate_tensor_grid(
     boundaries: Sequence[WaveletBoundary],
     /,
 ) -> tuple[int, ...]:
-    if not source.axes or not query.axes:
-        raise ValueError(
-            "Wavelet operators require tensor-product source and query axes."
-        )
-    if len(source.axes) != spatial_ndim or len(query.axes) != spatial_ndim:
-        raise ValueError(f"Wavelet operators require {spatial_ndim} spatial axes.")
+    if not source.axes:
+        raise ValueError("Wavelet operators require a tensor-product source grid.")
+    if len(source.axes) != spatial_ndim:
+        raise ValueError(f"Wavelet operators require {spatial_ndim} source axes.")
+    if query.coordinates is None and not query.axes:
+        raise ValueError("Wavelet queries require tensor axes or point coordinates.")
+    if source.axis_names and query.axis_names and source.axis_names != query.axis_names:
+        raise ValueError("Wavelet source and tensor-query axis names must match.")
     spatial_shape = tuple(int(size) for size in source.sample_shape)
-    if query.sample_shape != spatial_shape:
-        raise ValueError("Wavelet source and query grids must have the same shape.")
-    if source.axis_names != query.axis_names:
-        raise ValueError("Wavelet source and query axis names must match.")
-    for source_axis, query_axis, boundary in zip(
-        source.axes, query.axes, boundaries, strict=True
-    ):
+    for source_axis, boundary in zip(source.axes, boundaries, strict=True):
         _validate_uniform_axis(source_axis.nodes)
-        _validate_uniform_axis(query_axis.nodes)
-        if source_axis.nodes.shape != query_axis.nodes.shape:
-            raise ValueError("Wavelet source and query axis nodes must align.")
-        if (
-            not isinstance(source_axis.nodes, jax_core.Tracer)
-            and not isinstance(query_axis.nodes, jax_core.Tracer)
-            and not np.array_equal(
-                np.asarray(source_axis.nodes), np.asarray(query_axis.nodes)
-            )
-        ):
-            raise ValueError("Wavelet source and query grids must use identical nodes.")
-        if boundary == "periodization" and not (
-            source_axis.periodic and query_axis.periodic
-        ):
-            raise ValueError("Periodization requires periodic source and query axes.")
+        if boundary == "periodization" and not source_axis.periodic:
+            raise ValueError("Periodization requires periodic source axes.")
+    if query.axes:
+        if len(query.axes) != spatial_ndim:
+            raise ValueError(f"Wavelet tensor queries require {spatial_ndim} axes.")
+        for query_axis in query.axes:
+            _validate_uniform_axis(query_axis.nodes)
+    elif (
+        query.coordinates is not None and int(query.coordinates.shape[-1]) != spatial_ndim
+    ):
+        raise ValueError("Wavelet point-query coordinate dimension is incompatible.")
     return spatial_shape
 
 
@@ -243,6 +368,7 @@ class WaveletNeuralOperator(AbstractOperatorModel):
     depth: int
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
+    decode_policy: WaveletDecodePolicy
 
     def __init__(
         self,
@@ -259,6 +385,7 @@ class WaveletNeuralOperator(AbstractOperatorModel):
         source_key: str | None = None,
         activation: Callable[[Array], Array] = jnn.gelu,
         key: Key[Array, ""] = DOC_KEY0,
+        decode_policy: WaveletDecodePolicy | None = None,
     ):
         dimension = int(spatial_ndim)
         if dimension not in (1, 2, 3):
@@ -278,6 +405,11 @@ class WaveletNeuralOperator(AbstractOperatorModel):
         self.activation = activation
         self.in_size = in_channels
         self.out_size = out_channels
+        self.decode_policy = (
+            WaveletDecodePolicy() if decode_policy is None else decode_policy
+        )
+        if not isinstance(self.decode_policy, WaveletDecodePolicy):
+            raise TypeError("decode_policy must be WaveletDecodePolicy.")
         if min(self.in_channels, self.out_channels, self.width, self.depth) <= 0:
             raise ValueError("Wavelet operator dimensions must be positive.")
         keys = jr.split(key, 2 * self.depth + 2)
@@ -348,9 +480,17 @@ class WaveletNeuralOperator(AbstractOperatorModel):
                 hidden, key=fold_in_eval_key(key, 2 * index + 1)
             )
             hidden = self.activation(hidden + update)
-        output = self.projection(hidden, key=fold_in_eval_key(key, 2 * self.depth + 1))
-        query_mask = query.mask_array(case_shape=batch.case_shape)
-        output = output * query_mask[..., None]
+        source_output = self.projection(
+            hidden,
+            key=fold_in_eval_key(key, 2 * self.depth + 1),
+        )
+        output = _decode_wavelet_queries(
+            source_output,
+            source,
+            query,
+            batch.case_shape,
+            self.transform.boundaries,
+        )
         return output[..., 0] if self.out_size == "scalar" else output
 
     def __call__(
@@ -383,6 +523,7 @@ class MultiwaveletOperator(AbstractOperatorModel):
     depth: int
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
+    decode_policy: WaveletDecodePolicy
 
     def __init__(
         self,
@@ -397,6 +538,7 @@ class MultiwaveletOperator(AbstractOperatorModel):
         source_key: str | None = None,
         activation: Callable[[Array], Array] = jnn.gelu,
         key: Key[Array, ""] = DOC_KEY0,
+        decode_policy: WaveletDecodePolicy | None = None,
     ):
         self.transform = AlpertMultiwaveletTransform(
             order=order, levels=levels, boundary=boundary
@@ -409,6 +551,11 @@ class MultiwaveletOperator(AbstractOperatorModel):
         self.activation = activation
         self.in_size = in_channels
         self.out_size = out_channels
+        self.decode_policy = (
+            WaveletDecodePolicy() if decode_policy is None else decode_policy
+        )
+        if not isinstance(self.decode_policy, WaveletDecodePolicy):
+            raise TypeError("decode_policy must be WaveletDecodePolicy.")
         if min(self.in_channels, self.out_channels, self.width, self.depth) <= 0:
             raise ValueError("Multiwavelet operator dimensions must be positive.")
         keys = jr.split(key, 2 * self.depth + 2)
@@ -479,9 +626,17 @@ class MultiwaveletOperator(AbstractOperatorModel):
                 hidden, key=fold_in_eval_key(key, 2 * index + 1)
             )
             hidden = self.activation(hidden + update)
-        output = self.projection(hidden, key=fold_in_eval_key(key, 2 * self.depth + 1))
-        query_mask = query.mask_array(case_shape=batch.case_shape)
-        output = output * query_mask[..., None]
+        source_output = self.projection(
+            hidden,
+            key=fold_in_eval_key(key, 2 * self.depth + 1),
+        )
+        output = _decode_multiwavelet_queries(
+            source_output,
+            source,
+            query,
+            batch.case_shape,
+            self.transform.order,
+        )
         return output[..., 0] if self.out_size == "scalar" else output
 
     def __call__(
@@ -496,4 +651,8 @@ class MultiwaveletOperator(AbstractOperatorModel):
         return self.__call_operator_batch__(x, key=key)
 
 
-__all__ = ["MultiwaveletOperator", "WaveletNeuralOperator"]
+__all__ = [
+    "MultiwaveletOperator",
+    "WaveletDecodePolicy",
+    "WaveletNeuralOperator",
+]

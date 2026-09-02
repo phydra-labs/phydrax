@@ -58,11 +58,16 @@ class EncounterEvaluation(StrictModule):
     pair: Array
     encountered: Array
     collided: Array
+    regularization_prepared: Array
     status: Array
 
 
 def detect_close_encounter(
-    positions: ArrayLike, policy: CloseEncounterPolicy, /
+    positions: ArrayLike,
+    policy: CloseEncounterPolicy,
+    /,
+    *,
+    regularization_prepared: ArrayLike = False,
 ) -> EncounterEvaluation:
     values = jnp.asarray(positions)
     count = values.shape[0]
@@ -74,16 +79,21 @@ def detect_close_encounter(
     minimum = jnp.min(distance)
     collided = minimum <= policy.collision_distance
     encountered = minimum <= policy.encounter_distance
+    regularized = (
+        encountered
+        & ~collided
+        & jnp.asarray(regularization_prepared, dtype=bool).reshape(())
+    )
     status = jnp.where(
         collided,
         int(AstrodynamicsStatus.COLLISION),
         jnp.where(
-            encountered,
+            encountered & ~regularized,
             int(AstrodynamicsStatus.UNSUPPORTED_REGIME),
             int(AstrodynamicsStatus.SUCCESS),
         ),
     ).astype(jnp.int32)
-    return EncounterEvaluation(minimum, pair, encountered, collided, status)
+    return EncounterEvaluation(minimum, pair, encountered, collided, regularized, status)
 
 
 class PreparedOctree3D(StrictModule, NonTrainableState):

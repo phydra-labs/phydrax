@@ -129,6 +129,23 @@ configurations exactly on a cell boundary, kernel cutoff, or half-box tie.
 `RecursiveCheckpointAdjoint` remains available through the standard temporal
 solver interface.
 
+## Runtime population and inflow emission
+
+`SPHParticleSourcePlan` prepares finite source sites, normals, quadrature areas,
+deterministic offsets, per-site masses, clearances, and event capacity.
+`emit_sph_particles` integrates positive mass flux, carries exact
+unmaterialized remainder, allocates through `ParticlePopulationPlan`, and
+atomically initializes position, velocity, and continuity density. Mass,
+momentum, and barotropic reset-energy ledgers accompany a solver
+`HybridEventTape`. Capacity shortage returns an explicit
+`ParticleCapacityRequest`; epoch growth and neighborhood/splat rebuilding occur
+only between accepted compiled epochs.
+
+Allocation count, slot choice, clearance, and activity topology are discrete.
+Frozen successful resets may differentiate continuous flux/velocity/density
+leaves; threshold ties, changed allocation, or growth have invalid event
+derivatives.
+
 ## Current limits
 
 This method has one barotropic material, one particle set, fixed h, summation
@@ -136,6 +153,6 @@ density, no viscosity, and no walls or free-surface correction. Neighborhoods
 are rebuilt for every evaluation; cached Verlet lists and fused cell traversal
 are not yet implemented. First-order summation/continuity density and Morris
 physical viscosity are provided by the distinct
-[weakly compressible SPH](guides_wcsph.md) contract. Neither method yet claims
-delta-SPH, adaptive h, compressible-energy SPH, IISPH/DFSPH, rigid coupling, wall
-particles, or particle emission.
+[weakly compressible SPH](guides_wcsph.md) contract. Neither method claims
+delta-SPH, adaptive h, compressible-energy SPH, IISPH/DFSPH, or an implicit
+negative-flux sink policy.

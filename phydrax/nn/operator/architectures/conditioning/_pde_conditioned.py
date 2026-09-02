@@ -10,7 +10,7 @@ from typing import Literal
 from jaxtyping import Array
 
 from phydrax._strict import StrictModule
-from phydrax.equations import PDETokenBatch
+from phydrax.equations._tokens import PDETokenBatch
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.operator.architectures.conditioning._equation_conditioning import (
     attach_pde_condition,

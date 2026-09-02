@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import PyTree
 
@@ -79,19 +80,27 @@ def build_kfac_plan(
 
 
 def _validate_affine_block(block: KFACAffineBlock, /, *, name: str) -> None:
-    if block.parameterization == "rwf":
+    if block.parameterization != "direct" and not callable(block.coordinate_pullback):
         raise ValueError(
-            f"KFAC requires direct affine parameters; disable rwf for {name}."
+            f"KFAC transformed block {name} requires an exact coordinate_pullback."
         )
-    if block.parameterization != "direct":
-        raise ValueError(
-            "KFAC supports only direct affine parameters; "
-            f"{name} uses {block.parameterization!r} parameterization."
-        )
-    if jnp.iscomplexobj(block.weight) or (
+    complex_block = jnp.iscomplexobj(block.weight) or (
         block.bias is not None and jnp.iscomplexobj(block.bias)
+    )
+    if complex_block and block.coordinate_mode != "complex-cartesian":
+        raise ValueError(
+            f"KFAC complex block {name} requires coordinate_mode='complex-cartesian'."
+        )
+    if not complex_block and block.coordinate_mode != "real":
+        raise ValueError(f"KFAC real block {name} must use coordinate_mode='real'.")
+    if block.sharing_group is not None and not block.sharing_group:
+        raise ValueError("KFAC sharing_group must be nonempty when supplied.")
+    axes = (*block.output_axes, *block.input_axes)
+    if axes and (
+        len(set(axes)) != len(axes)
+        or any(axis < 0 or axis >= jnp.asarray(block.weight).ndim for axis in axes)
     ):
-        raise ValueError(f"KFAC requires real affine parameters; {name} is complex.")
+        raise ValueError(f"KFAC block {name} declares invalid logical axes.")
 
 
 def validate_model_coverage(
@@ -106,11 +115,6 @@ def validate_model_coverage(
         evaluator = function.func
         trainable_function, _ = partition_trainable(function)
         trainable_leaves = tuple(jax.tree_util.tree_leaves(trainable_function))
-        if any(jnp.iscomplexobj(leaf) for leaf in trainable_leaves):
-            raise ValueError(
-                f"KFAC requires real trainable parameters; field {field_name!r} "
-                "contains complex state."
-            )
         if not isinstance(evaluator, ConcatenatedModelEvaluator):
             if trainable_leaves and any(
                 jnp.asarray(leaf).ndim != 0 for leaf in trainable_leaves
@@ -121,11 +125,6 @@ def validate_model_coverage(
                 )
             continue
         binding = evaluator.binding
-        if binding.input_mode != "flat" or binding.batch_mode != "pointwise":
-            raise ValueError(
-                f"KFAC field {field_name!r} requires input_mode='flat' and "
-                "batch_mode='pointwise'."
-            )
         model = evaluator.raw_model
         if not isinstance(model, KFACLayoutProvider):
             if trainable_leaves:
@@ -144,6 +143,12 @@ def validate_model_coverage(
             raise ValueError(
                 f"KFAC field {field_name!r} declared no affine parameter blocks."
             )
+        if (binding.input_mode != "flat" or binding.batch_mode != "pointwise") and any(
+            not block.output_axes for block in affine_blocks
+        ):
+            raise ValueError(
+                "Structured/axis KFAC bindings require declared logical block axes."
+            )
         named_blocks = tuple(
             (f"{field_name}/{block.name}", block) for block in affine_blocks
         )
@@ -154,9 +159,9 @@ def validate_model_coverage(
             )
             for parameter in parameter_arrays:
                 parameter_id = id(parameter)
-                if parameter_id in seen_parameter_ids:
+                if parameter_id in seen_parameter_ids and block.sharing_group is None:
                     raise ValueError(
-                        "KFAC does not support shared or reused affine parameters; "
+                        "Shared KFAC parameters require one explicit sharing_group; "
                         f"duplicate ownership detected at {block_name}."
                     )
                 seen_parameter_ids.add(parameter_id)
@@ -202,16 +207,37 @@ def discover_parameter_layout(
             block_name = f"{field_name}/{block.name}"
             weight_indices = leaf_slices[id(block.weight)]
             bias_indices = () if block.bias is None else leaf_slices[id(block.bias)]
-            out_size, in_size = (int(value) for value in block.weight.shape)
+            weight_shape = tuple(int(value) for value in block.weight.shape)
+            output_axes = block.output_axes or (0,)
+            input_axes = block.input_axes or tuple(
+                axis for axis in range(len(weight_shape)) if axis not in output_axes
+            )
+            if set((*output_axes, *input_axes)) != set(range(len(weight_shape))):
+                raise ValueError(
+                    f"KFAC block {block_name} axes must partition its weight shape."
+                )
+            out_size = int(np.prod([weight_shape[axis] for axis in output_axes]))
+            in_size = int(np.prod([weight_shape[axis] for axis in input_axes]))
+            index_grid = np.asarray(weight_indices).reshape(weight_shape)
+            ordered_indices = np.transpose(
+                index_grid, (*output_axes, *input_axes)
+            ).reshape((out_size, in_size))
+            if block.bias is not None and len(bias_indices) != out_size:
+                raise ValueError(
+                    f"KFAC block {block_name} bias does not match logical outputs."
+                )
             augmented_indices: list[int] = []
             for output_index in range(out_size):
-                row_start = output_index * in_size
-                augmented_indices.extend(weight_indices[row_start : row_start + in_size])
+                augmented_indices.extend(
+                    int(value) for value in ordered_indices[output_index]
+                )
                 if block.bias is not None:
                     augmented_indices.append(bias_indices[output_index])
             block_indices = tuple(augmented_indices)
             overlap = covered.intersection(block_indices)
             if overlap:
+                if block.sharing_group is not None and overlap == set(block_indices):
+                    continue
                 raise ValueError(
                     f"KFAC affine block {block_name} overlaps another parameter block."
                 )
@@ -223,6 +249,13 @@ def discover_parameter_layout(
                     output_size=out_size,
                     input_size=in_size + int(block.bias is not None),
                     has_bias=block.bias is not None,
+                    block_kind=block.block_kind,
+                    input_axes=input_axes,
+                    output_axes=output_axes,
+                    coordinate_mode=block.coordinate_mode,
+                    sharing_group=block.sharing_group,
+                    reshape=block.reshape,
+                    permutation=block.permutation,
                 )
             )
 

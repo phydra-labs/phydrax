@@ -21,6 +21,14 @@ from . import (
     two_phase_flow,
     vortex_flow,
 )
+from .contact import (
+    PreparedReynoldsFilm,
+    ReynoldsFilmEvidence,
+    ReynoldsFilmPlan,
+    ReynoldsFilmResult,
+    ReynoldsFilmState,
+    ReynoldsPressureBoundaryConditions,
+)
 
 
 __all__ = [
@@ -39,4 +47,10 @@ __all__ = [
     "solid_mechanics",
     "two_phase_flow",
     "vortex_flow",
+    "PreparedReynoldsFilm",
+    "ReynoldsFilmEvidence",
+    "ReynoldsFilmPlan",
+    "ReynoldsFilmResult",
+    "ReynoldsFilmState",
+    "ReynoldsPressureBoundaryConditions",
 ]

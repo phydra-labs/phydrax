@@ -25,6 +25,11 @@ from ._bsde import (
     evaluate_bsde,
     semilinear_pde_residual,
 )
+from ._calculus import (
+    stratonovich_correction,
+    stratonovich_to_ito_problem,
+    StratonovichCorrectionResult,
+)
 from ._categorical_diffusion import (
     categorical_denoising_loss,
     CategoricalDiffusionSample,
@@ -38,7 +43,11 @@ from ._complex_diffusion import (
     ComplexScoreConvention,
     ComplexVariancePreservingDiffusion,
 )
-from ._cubature_path import straight_wiener_cubature_path, WienerCubaturePathData
+from ._cubature_path import (
+    fit_wiener_cubature_path,
+    straight_wiener_cubature_path,
+    WienerCubaturePathData,
+)
 from ._discrete_diffusion import (
     AncestralGaussianDiffusion,
     DDIMTransport,
@@ -199,6 +208,17 @@ from ._path_diffusion import (
     PathScoreDependency,
     TrajectoryEventLayout,
 )
+from ._path_ensemble import (
+    PATH_ENSEMBLE_BACKEND_FAILURE,
+    PATH_ENSEMBLE_NONFINITE,
+    PATH_ENSEMBLE_SUCCESS,
+    PathEnsembleStatus,
+    prepare_stochastic_path_ensemble,
+    PreparedStochasticPathEnsemble,
+    solve_stochastic_path_ensemble,
+    StochasticPathEnsemblePlan,
+    StochasticPathEnsembleResult,
+)
 from ._process import (
     AbstractMarginalTransitionLaw,
     AbstractPathwiseTransition,
@@ -344,6 +364,14 @@ from ._trajectory import (
     StochasticTransitionView,
     TransitionWeighting,
 )
+from ._trajectory_coreset import (
+    compress_trajectory_blocks,
+    StochasticTrajectoryBlockView,
+    trajectory_block_coreset_to_operator_dataset,
+    trajectory_blocks,
+    TrajectoryBlockCoreset,
+    TrajectoryBlockWeighting,
+)
 from ._wiener import LevyAreaKind, WienerAlgorithm, WienerRealization
 
 
@@ -385,6 +413,7 @@ __all__ = [
     "sample_manifold_reverse_diffusion",
     "WienerCubaturePathData",
     "straight_wiener_cubature_path",
+    "fit_wiener_cubature_path",
     "AccumulatedPathEvent",
     "AbstractLevyProcess",
     "AbstractJumpProcess",
@@ -617,4 +646,22 @@ __all__ = [
     "evaluate_bsde",
     "semilinear_pde_residual",
     "validate_spde_formulation",
+    "PATH_ENSEMBLE_BACKEND_FAILURE",
+    "PATH_ENSEMBLE_NONFINITE",
+    "PATH_ENSEMBLE_SUCCESS",
+    "PathEnsembleStatus",
+    "PreparedStochasticPathEnsemble",
+    "StochasticPathEnsemblePlan",
+    "StochasticPathEnsembleResult",
+    "prepare_stochastic_path_ensemble",
+    "solve_stochastic_path_ensemble",
+    "StratonovichCorrectionResult",
+    "stratonovich_correction",
+    "stratonovich_to_ito_problem",
+    "StochasticTrajectoryBlockView",
+    "TrajectoryBlockCoreset",
+    "TrajectoryBlockWeighting",
+    "trajectory_blocks",
+    "compress_trajectory_blocks",
+    "trajectory_block_coreset_to_operator_dataset",
 ]

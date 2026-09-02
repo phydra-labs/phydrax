@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
@@ -44,6 +45,14 @@ class _LUState(StrictModule):
     factor: Array
     pivots: Array
     singular: Array
+
+
+class _BandedLUState(StrictModule):
+    factor: Array
+    pivots: Array
+    singular: Array
+    pivot_margin: Array
+    diagonal_index: int = eqx.field(static=True)
 
 
 class _TridiagonalState(StrictModule):
@@ -100,8 +109,12 @@ def prepare_structured(problem: Any, plan: LinearSolvePlan, /) -> StructuredStat
     del plan
     if not is_structured_exact(problem.operator):
         raise ValueError("Operator has no native exact structured solve.")
-    if problem.operator.batch_shape:
-        raise ValueError("Structured exact solves do not accept operator batches.")
+    if problem.operator.batch_shape and not isinstance(
+        problem.operator, BandedLinearOperator
+    ):
+        raise ValueError(
+            "Only canonical banded structured solves accept operator batches."
+        )
     return StructuredState(problem.operator, _prepare_operator(problem.operator))
 
 
@@ -111,21 +124,31 @@ def solve_structured(
     plan: LinearSolvePlan,
     /,
 ) -> StructuredBackendOutput:
-    del plan
-    if rhs.ndim != 2:
-        raise ValueError("Structured canonical right-hand sides must have shape (n, k).")
+    expected_rank = len(state.operator.batch_shape) + 2
+    if rhs.ndim != expected_rank:
+        raise ValueError(
+            "Structured canonical right-hand sides must have batch_shape + (n, k)."
+        )
     value, failed = _solve_operator(state.operator, state.prepared, rhs)
-    count = rhs.shape[1]
-    status = jnp.full((count,), int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
+    count = rhs.shape[-1]
+    status_shape = state.operator.batch_shape + (count,)
+    status = jnp.full(status_shape, int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
     status = jnp.where(failed, int(LinearSolveStatus.SINGULAR), status)
     rank = _certified_rank(state.operator)
     rank_value = -1 if rank is None else rank
+    rank_array = jnp.full(
+        state.operator.batch_shape,
+        rank_value,
+        dtype=jnp.int32,
+    )
     return StructuredBackendOutput(
         value=value,
         status=status,
-        iterations=jnp.zeros((count,), dtype=jnp.int32),
-        rank=jnp.asarray(rank_value, dtype=jnp.int32),
-        condition_estimate=jnp.full((count,), jnp.nan, dtype=rhs.real.dtype),
+        iterations=jnp.zeros(status_shape, dtype=jnp.int32),
+        rank=rank_array,
+        condition_estimate=jnp.full(
+            state.operator.batch_shape, jnp.nan, dtype=rhs.real.dtype
+        ),
         singular_values=None,
     )
 
@@ -146,6 +169,128 @@ def _prepare_lu(matrix: Array, /) -> _LUState:
 def _solve_lu(state: _LUState, rhs: Array, /) -> tuple[Array, Array]:
     value = jsp.linalg.lu_solve((state.factor, state.pivots), rhs)
     return value, state.singular | jnp.any(~jnp.isfinite(value))
+
+
+def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
+    lower = operator.lower_bandwidth
+    upper = operator.upper_bandwidth
+    size = operator.source.size
+    diagonal = upper + lower
+    factor_width = 2 * lower + upper + 1
+    flattened_bands = operator.bands.reshape((-1, lower + upper + 1, size))
+
+    def factor_one(bands):
+        factor = jnp.zeros((factor_width, size), dtype=bands.dtype)
+        factor = factor.at[lower : lower + lower + upper + 1].set(bands)
+        scale = jnp.maximum(jnp.max(jnp.abs(bands)), 1.0)
+        threshold = jnp.finfo(bands.real.dtype).eps * float(size) * scale
+        singular = jnp.any(~jnp.isfinite(bands))
+        minimum_margin = jnp.asarray(jnp.inf, dtype=scale.dtype)
+        pivots = jnp.arange(size, dtype=jnp.int32)
+        for column in range(size):
+            candidate_count = min(lower + 1, size - column)
+            candidates = jnp.abs(
+                factor[
+                    diagonal : diagonal + candidate_count,
+                    column,
+                ]
+            )
+            pivot_row = column + jnp.argmax(candidates).astype(jnp.int32)
+            pivots = pivots.at[column].set(pivot_row)
+            for target_column in range(size):
+                first_index = diagonal + column - target_column
+                second_index = diagonal + pivot_row - target_column
+                first_valid = (first_index >= 0) & (first_index < factor_width)
+                second_valid = (second_index >= 0) & (second_index < factor_width)
+                first_clipped = jnp.clip(first_index, 0, factor_width - 1)
+                second_clipped = jnp.clip(second_index, 0, factor_width - 1)
+                first_value = jnp.where(
+                    first_valid, factor[first_clipped, target_column], 0
+                )
+                second_value = jnp.where(
+                    second_valid, factor[second_clipped, target_column], 0
+                )
+                factor = jax.lax.cond(
+                    first_valid,
+                    lambda current: current.at[first_clipped, target_column].set(
+                        second_value
+                    ),
+                    lambda current: current,
+                    factor,
+                )
+                factor = jax.lax.cond(
+                    second_valid,
+                    lambda current: current.at[second_clipped, target_column].set(
+                        first_value
+                    ),
+                    lambda current: current,
+                    factor,
+                )
+            pivot = factor[diagonal, column]
+            minimum_margin = jnp.minimum(minimum_margin, jnp.abs(pivot) / scale)
+            singular = singular | (jnp.abs(pivot) <= threshold)
+            safe_pivot = jnp.where(jnp.abs(pivot) <= threshold, 1.0, pivot)
+            for row_offset in range(1, min(lower, size - column - 1) + 1):
+                lower_index = diagonal + row_offset
+                multiplier = factor[lower_index, column] / safe_pivot
+                factor = factor.at[lower_index, column].set(multiplier)
+                for column_offset in range(1, min(upper + lower, size - column - 1) + 1):
+                    band_index = diagonal + row_offset - column_offset
+                    if 0 <= band_index < factor_width:
+                        target = column + column_offset
+                        factor = factor.at[band_index, target].add(
+                            -multiplier * factor[diagonal - column_offset, target]
+                        )
+        return factor, pivots, singular, minimum_margin
+
+    factors, pivots, singular, margins = jax.vmap(factor_one)(flattened_bands)
+    return _BandedLUState(
+        factor=factors.reshape(operator.batch_shape + (factor_width, size)),
+        pivots=pivots.reshape(operator.batch_shape + (size,)),
+        singular=singular.reshape(operator.batch_shape),
+        pivot_margin=margins.reshape(operator.batch_shape),
+        diagonal_index=diagonal,
+    )
+
+
+def _solve_banded_lu(
+    operator: BandedLinearOperator,
+    state: _BandedLUState,
+    rhs: Array,
+    /,
+) -> tuple[Array, Array]:
+    lower = operator.lower_bandwidth
+    upper_factor = operator.upper_bandwidth + lower
+    size = operator.source.size
+    diagonal = state.diagonal_index
+    factors = state.factor.reshape((-1, state.factor.shape[-2], size))
+    pivots = state.pivots.reshape((-1, size))
+    flattened_rhs = rhs.reshape((-1, size, rhs.shape[-1]))
+
+    def solve_one(factor, pivot_rows, value):
+        for row in range(size):
+            pivot_row = pivot_rows[row]
+            first = value[row]
+            second = value[pivot_row]
+            value = value.at[row].set(second)
+            value = value.at[pivot_row].set(first)
+        for row in range(size):
+            for offset in range(1, min(lower, row) + 1):
+                value = value.at[row].add(
+                    -factor[diagonal + offset, row - offset] * value[row - offset]
+                )
+        for row in range(size - 1, -1, -1):
+            for offset in range(1, min(upper_factor, size - row - 1) + 1):
+                value = value.at[row].add(
+                    -factor[diagonal - offset, row + offset] * value[row + offset]
+                )
+            pivot = factor[diagonal, row]
+            value = value.at[row].set(value[row] / jnp.where(pivot == 0, 1.0, pivot))
+        return value
+
+    value = jax.vmap(solve_one)(factors, pivots, flattened_rhs).reshape(rhs.shape)
+    failed = state.singular[..., None] | jnp.any(~jnp.isfinite(value), axis=-2)
+    return value, failed
 
 
 def _prepare_woodbury(operator: DiagonalPlusLowRankLinearOperator, /):
@@ -289,7 +434,7 @@ def _prepare_operator(operator: Any, /) -> Any:
     if isinstance(operator, DenseLinearOperator):
         return _prepare_lu(operator.matrix)
     if isinstance(operator, BandedLinearOperator):
-        return _prepare_lu(operator._materialize())
+        return _prepare_banded_lu(operator)
     if isinstance(operator, TridiagonalLinearOperator):
         return _prepare_tridiagonal(operator)
     if isinstance(operator, DiagonalPlusLowRankLinearOperator):
@@ -360,7 +505,7 @@ def _solve_operator(
     if isinstance(operator, TridiagonalLinearOperator):
         return _solve_tridiagonal(prepared, rhs)
     if isinstance(operator, BandedLinearOperator):
-        return _solve_lu(prepared, rhs)
+        return _solve_banded_lu(operator, prepared, rhs)
     if isinstance(operator, LocalBlockDiagonalLinearOperator):
         grouped_rhs = rhs.reshape(
             (operator.num_blocks, operator.output_block_size, rhs.shape[1])

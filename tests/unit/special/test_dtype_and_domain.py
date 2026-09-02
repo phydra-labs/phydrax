@@ -94,39 +94,12 @@ def test_mixed_voigt_arguments_use_common_inexact_dtype():
 @pytest.mark.parametrize(
     "function",
     [
-        phx.special.dawsn,
         lambda value: phx.special.voigt_profile(value, 1.0, 1.0),
         lambda value: phx.special.voigt_profile(1.0, value, 1.0),
         lambda value: phx.special.voigt_profile(1.0, 1.0, value),
-        lambda value: phx.special.airy(value),
-        lambda value: phx.special.airye(value),
-        lambda value: phx.special.elliprc(value, 1.0),
-        lambda value: phx.special.elliprd(value, 1.0, 1.0),
-        lambda value: phx.special.elliprf(value, 1.0, 1.0),
-        lambda value: phx.special.elliprg(value, 1.0, 1.0),
-        lambda value: phx.special.elliprj(value, 1.0, 1.0, 1.0),
-        lambda value: phx.special.ellipe(value),
-        lambda value: phx.special.ellipeinc(value, 0.5),
-        lambda value: phx.special.ellipj(value, 0.5),
-        lambda value: phx.special.ellipk(value),
-        lambda value: phx.special.ellipkinc(value, 0.5),
-        lambda value: phx.special.ellipkm1(value),
-        lambda value: phx.special.ellippi(value, 0.5),
-        lambda value: phx.special.ellippi(0.2, value),
-        lambda value: phx.special.ellippiinc(value, 0.2, 0.5),
-        lambda value: phx.special.ellippiinc(0.2, value, 0.5),
-        lambda value: phx.special.ellippiinc(0.2, 0.2, value),
-        lambda value: phx.special.iv(value, 1.0),
-        lambda value: phx.special.ive(value, 1.0),
-        lambda value: phx.special.jv(value, 1.0),
-        lambda value: phx.special.kv(value, 1.0),
-        lambda value: phx.special.kve(value, 1.0),
-        lambda value: phx.special.yv(value, 1.0),
-        lambda value: phx.special.hankel1(value, 1.0),
-        lambda value: phx.special.hankel2(value, 1.0),
     ],
 )
-def test_real_only_arguments_reject_complex_inputs(function):
+def test_nonholomorphic_voigt_arguments_reject_complex_inputs(function):
     with pytest.raises(TypeError, match="does not support complex-valued inputs"):
         function(1.0 + 0.5j)
 

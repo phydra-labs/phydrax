@@ -190,23 +190,27 @@
 
 ---
 
+::: phydrax.discretization.PreparedLatticeBoltzmannAMR
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannAMRScalingPolicy
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannAMRTemporalTracePlan
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannAMRDiagnostics
+
+---
+
 ::: phydrax.discretization.LatticeBoltzmannAMRTransferPlan
 
 ---
 
 ::: phydrax.discretization.PreparedLatticeBoltzmannAMRTransfer
-
----
-
-::: phydrax.discretization.LatticeBoltzmannAMRTemporalInterfacePlan
-
----
-
-::: phydrax.discretization.LatticeBoltzmannAMRInterfaceEvidence
-
----
-
-::: phydrax.discretization.LatticeBoltzmannCollisionAwareAMRAdvanceResult
 
 ---
 
@@ -390,4 +394,8 @@
 
 ---
 
-::: phydrax.export.LatticeBoltzmannIREEForwardContract
+::: phydrax.export.LatticeBoltzmannIREEContract
+
+---
+
+::: phydrax.export.LatticeBoltzmannIREEExportBundle

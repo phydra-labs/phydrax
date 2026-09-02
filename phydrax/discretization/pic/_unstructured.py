@@ -81,13 +81,15 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(locator, PreparedSimplicialCellLocator):
             raise TypeError("locator must be PreparedSimplicialCellLocator.")
+        if locator.cell_map.coordinate_element.degree != 1:
+            raise ValueError("Whitney electrostatic PIC requires an order-one cell map.")
         if not isinstance(charge_model, PICChargeModelPlan):
             raise TypeError("charge_model must be PICChargeModelPlan.")
         epsilon = float(permittivity)
         if epsilon <= 0.0 or not np.isfinite(epsilon):
             raise ValueError("permittivity must be positive and finite.")
         cells = np.asarray(locator.cells, dtype=np.int32)
-        coordinates = np.asarray(locator.mesh.coordinates, dtype=float)
+        coordinates = np.asarray(locator.coordinates, dtype=float)
         dimension = locator.dimension
         gradients = []
         measures = []
@@ -126,7 +128,10 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
                 },
             ),
             operator_id=canonical_fingerprint(
-                {"kind": "unstructured-pic-poisson", "mesh": locator.mesh.mesh_id}
+                {
+                    "kind": "unstructured-pic-poisson",
+                    "topology": locator.cell_map.topology_id,
+                }
             ),
         )
         policy = LinearSolvePolicy(
@@ -169,7 +174,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         safe_cell = jnp.maximum(location.cell_ids, 0)
         cell_vertices = self.locator.cells[safe_cell]
         valid = active & location.inside
-        nodal = jnp.zeros((self.locator.mesh.coordinates.shape[0],), dtype=charge.dtype)
+        nodal = jnp.zeros((self.locator.coordinate_count,), dtype=charge.dtype)
         for local in range(self.locator.cells.shape[1]):
             nodal = nodal.at[cell_vertices[:, local]].add(
                 jnp.where(valid, charge * location.barycentric[:, local], 0.0)

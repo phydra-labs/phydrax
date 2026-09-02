@@ -35,7 +35,7 @@ def _plan():
     )
 
 
-def test_lbm_iree_contract_is_static_forward_only_and_trailing_q():
+def test_lbm_iree_contract_has_explicit_forward_and_vjp_abis():
     plan = _plan()
     initial = jnp.ones((3, 4, plan.velocity_set.population_count), dtype=jnp.float64)
 
@@ -45,20 +45,23 @@ def test_lbm_iree_contract_is_static_forward_only_and_trailing_q():
         step_count=5,
         step_size=0.25,
         t0=1.0,
+        mode="forward-vjp",
     )
 
-    assert contract.execution_mode == "forward-only"
-    assert not contract.supports_reverse_mode
+    assert contract.execution_mode == "forward-vjp"
+    assert contract.supports_reverse_mode
     assert contract.execution_plan_id == plan.plan_id
     assert contract.lattice_id == plan.velocity_set.lattice_id
-    assert contract.input_shape == initial.shape
+    assert contract.input_shapes == (initial.shape,)
     assert contract.step_count == 5
     assert contract.input_names == ("populations",)
     assert contract.output_names == ("final_populations",)
+    assert contract.differentiable_input_names == ("populations",)
     assert contract.pack_inputs(initial)[0] is initial
-    assert contract.unpack_outputs(initial)[0] is initial
+    packed_vjp = contract.pack_vjp_inputs((initial,), jnp.ones_like(initial))
+    assert len(packed_vjp) == 2
     assert contract.contract_id
-    with pytest.raises(ValueError, match="explicitly forward-only"):
+    with pytest.raises(ValueError, match="Unknown LBM IREE export mode"):
         lbm_iree.prepare_lattice_boltzmann_iree_contract(
             plan,
             initial,

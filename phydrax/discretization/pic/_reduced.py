@@ -15,12 +15,35 @@ from ..._trainable import NonTrainableState
 from .._tensor_support import PreparedTensorGrid
 
 
-def _forward(value, axis, spacing):
-    return (jnp.roll(value, -1, axis=axis) - value) / spacing
+def _forward(value, axis, spacing, periodic):
+    shifted = (
+        jnp.roll(value, -1, axis=axis)
+        if periodic
+        else jnp.concatenate(
+            (
+                jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis),
+                jnp.take(value, jnp.asarray([value.shape[axis] - 1]), axis=axis),
+            ),
+            axis=axis,
+        )
+    )
+    return (shifted - value) / spacing
 
 
-def _backward(value, axis, spacing):
-    return (value - jnp.roll(value, 1, axis=axis)) / spacing
+def _backward(value, axis, spacing, periodic):
+    if periodic:
+        previous = jnp.roll(value, 1, axis=axis)
+    else:
+        pad_shape = list(value.shape)
+        pad_shape[axis] = 1
+        previous = jnp.concatenate(
+            (
+                jnp.zeros(tuple(pad_shape), dtype=value.dtype),
+                jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis),
+            ),
+            axis=axis,
+        )
+    return (value - previous) / spacing
 
 
 class ReducedPICCurrentResult(StrictModule):
@@ -30,27 +53,40 @@ class ReducedPICCurrentResult(StrictModule):
     continuity_residual: Array
     maximum_continuity_defect: Array
     finite: Array
+    boundary_flux: Array
+    global_charge_defect: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
 
 
 class ReducedPICTransferPlan(StrictModule, NonTrainableState):
-    """Periodic dD3V CIC transfer with a compatible continuity projection."""
+    """dD3V CIC transfer with conservative physical-boundary assignment."""
 
     grid: PreparedTensorGrid
     dimension: int = eqx.field(static=True)
     shape: tuple[int, ...] = eqx.field(static=True)
     lower: tuple[float, ...] = eqx.field(static=True)
     spacing: tuple[float, ...] = eqx.field(static=True)
+    upper: tuple[float, ...] = eqx.field(static=True)
+    periodic: tuple[bool, ...] = eqx.field(static=True)
+    maximum_path_segments: int = eqx.field(static=True)
     cell_volume: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, grid: PreparedTensorGrid, /, *, tolerance: float = 1.0e-9):
+    def __init__(
+        self,
+        grid: PreparedTensorGrid,
+        /,
+        *,
+        tolerance: float = 1.0e-9,
+        maximum_path_segments: int = 16,
+    ):
         if not isinstance(grid, PreparedTensorGrid) or len(grid.shape) not in (1, 2):
             raise TypeError("ReducedPICTransferPlan requires a prepared 1-D or 2-D grid.")
-        if any(not axis.periodic for axis in grid.structured_axes):
-            raise ValueError("Reduced PIC currently requires periodic axes.")
+        segments = int(maximum_path_segments)
+        if segments < 1:
+            raise ValueError("maximum_path_segments must be positive.")
         widths = tuple(np.asarray(axis.interval_widths) for axis in grid.structured_axes)
         if any(not np.allclose(value, value[0]) for value in widths):
             raise ValueError("Reduced PIC currently requires uniform axes.")
@@ -63,6 +99,9 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
             int(axis.interval_centers.size) for axis in grid.structured_axes
         )
         self.lower = tuple(float(axis.bounds[0]) for axis in grid.structured_axes)
+        self.upper = tuple(float(axis.bounds[1]) for axis in grid.structured_axes)
+        self.periodic = tuple(bool(axis.periodic) for axis in grid.structured_axes)
+        self.maximum_path_segments = segments
         self.spacing = tuple(float(value[0]) for value in widths)
         self.cell_volume = float(np.prod(self.spacing))
         self.tolerance = tolerance_
@@ -71,6 +110,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
                 "kind": "reduced-pic-transfer",
                 "grid": grid.prepared_id,
                 "tolerance": tolerance_,
+                "maximum_path_segments": segments,
             }
         )
 
@@ -86,10 +126,15 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         weights = []
         for route in range(route_count):
             bits = tuple((route >> axis) & 1 for axis in range(self.dimension))
-            component = tuple(
-                jnp.mod(base[:, axis] + bits[axis], self.shape[axis])
-                for axis in range(self.dimension)
-            )
+            component = []
+            for axis in range(self.dimension):
+                raw = base[:, axis] + bits[axis]
+                if self.periodic[axis]:
+                    index = jnp.mod(raw, self.shape[axis])
+                else:
+                    # Merge the exterior half-stencil into the boundary cell.
+                    index = jnp.clip(raw, 0, self.shape[axis] - 1)
+                component.append(index)
             if self.dimension == 1:
                 flat = component[0]
             else:
@@ -154,6 +199,8 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         active_mask: ArrayLike,
         step_size: ArrayLike,
         /,
+        *,
+        boundary_result=None,
     ) -> ReducedPICCurrentResult:
         start = jnp.asarray(start_position)
         end = jnp.asarray(end_position, dtype=start.dtype)
@@ -165,6 +212,9 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
             raise ValueError("Reduced PIC current positions are incompatible.")
         if charge.shape != active.shape or velocity_.shape != (start.shape[0], 3):
             raise ValueError("Reduced PIC current payloads preserve particle capacity.")
+        displacement = jnp.abs(end - start) / jnp.asarray(self.spacing, dtype=start.dtype)
+        required_segments = jnp.max(jnp.ceil(displacement), initial=1.0).astype(jnp.int32)
+        path_capacity_exceeded = required_segments > self.maximum_path_segments
         rho_start = self.deposit(start, charge, active)
         rho_end = self.deposit(end, charge, active)
         midpoint = 0.5 * (start + end)
@@ -176,34 +226,57 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         divergence = jnp.sum(
             jnp.stack(
                 tuple(
-                    _backward(raw[axis], axis, self.spacing[axis])
+                    _backward(raw[axis], axis, self.spacing[axis], self.periodic[axis])
                     for axis in range(self.dimension)
                 )
             ),
             axis=0,
         )
         residual = (rho_end - rho_start) / dt + divergence
-        transformed = jnp.fft.fftn(residual)
-        eigenvalue = jnp.zeros(self.shape, dtype=start.dtype)
-        for axis in range(self.dimension):
-            frequency = 2.0 * jnp.pi * jnp.fft.fftfreq(self.shape[axis])
-            axis_shape = [1] * self.dimension
-            axis_shape[axis] = self.shape[axis]
-            eigenvalue = (
-                eigenvalue
-                + (2.0 - 2.0 * jnp.cos(frequency)).reshape(axis_shape)
-                / self.spacing[axis] ** 2
-            )
-        safe = jnp.where(eigenvalue > 0.0, eigenvalue, 1.0)
-        potential_hat = jnp.where(eigenvalue > 0.0, -transformed / safe, 0.0)
-        potential = jnp.real(jnp.fft.ifftn(potential_hat))
         corrected = list(raw)
-        for axis in range(self.dimension):
-            corrected[axis] = raw[axis] - _forward(potential, axis, self.spacing[axis])
+        boundary_flux = jnp.zeros((self.dimension, 2), dtype=start.dtype)
+        if all(self.periodic):
+            transformed = jnp.fft.fftn(residual)
+            eigenvalue = jnp.zeros(self.shape, dtype=start.dtype)
+            for axis in range(self.dimension):
+                frequency = 2.0 * jnp.pi * jnp.fft.fftfreq(self.shape[axis])
+                axis_shape = [1] * self.dimension
+                axis_shape[axis] = self.shape[axis]
+                eigenvalue = (
+                    eigenvalue
+                    + (2.0 - 2.0 * jnp.cos(frequency)).reshape(axis_shape)
+                    / self.spacing[axis] ** 2
+                )
+            safe = jnp.where(eigenvalue > 0.0, eigenvalue, 1.0)
+            potential_hat = jnp.where(eigenvalue > 0.0, -transformed / safe, 0.0)
+            potential = jnp.real(jnp.fft.ifftn(potential_hat))
+            for axis in range(self.dimension):
+                corrected[axis] = raw[axis] - _forward(
+                    potential, axis, self.spacing[axis], True
+                )
+        else:
+            correction_axis = self.periodic.index(False)
+            correction = -self.spacing[correction_axis] * jnp.cumsum(
+                residual, axis=correction_axis
+            )
+            corrected[correction_axis] = corrected[correction_axis] + correction
+            upper_flux = jnp.take(
+                correction,
+                jnp.asarray([self.shape[correction_axis] - 1]),
+                axis=correction_axis,
+            )
+            boundary_flux = boundary_flux.at[correction_axis, 1].set(
+                jnp.sum(upper_flux) * self.cell_volume / self.spacing[correction_axis]
+            )
         final_residual = (rho_end - rho_start) / dt + jnp.sum(
             jnp.stack(
                 tuple(
-                    _backward(corrected[axis], axis, self.spacing[axis])
+                    _backward(
+                        corrected[axis],
+                        axis,
+                        self.spacing[axis],
+                        self.periodic[axis],
+                    )
                     for axis in range(self.dimension)
                 )
             ),
@@ -216,7 +289,26 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         finite = jnp.all(
             jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in corrected))
         ) & jnp.all(jnp.isfinite(final_residual))
-        successful = finite & (maximum <= self.tolerance * scale)
+        supplied_boundary_flux = (
+            jnp.asarray(0.0, dtype=start.dtype)
+            if boundary_result is None
+            else jnp.sum(jnp.asarray(boundary_result.boundary_charge_flux)) / dt
+        )
+        global_defect = (
+            jnp.sum(rho_end - rho_start) * self.cell_volume / dt
+            + jnp.sum(boundary_flux)
+            + supplied_boundary_flux
+        )
+        global_scale = jnp.maximum(
+            jnp.sum(jnp.abs(rho_end - rho_start)) * self.cell_volume / dt,
+            1.0,
+        )
+        successful = (
+            finite
+            & ~path_capacity_exceeded
+            & (maximum <= self.tolerance * scale)
+            & (jnp.abs(global_defect) <= self.tolerance * global_scale)
+        )
         return ReducedPICCurrentResult(
             rho_start,
             rho_end,
@@ -224,6 +316,8 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
             final_residual,
             maximum,
             finite,
+            boundary_flux,
+            global_defect,
             successful,
             self.plan_id,
         )

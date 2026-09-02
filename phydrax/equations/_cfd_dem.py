@@ -16,9 +16,11 @@ from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle import (
     DEMRuntimeState,
-    ParticleGridRelation,
-    PreparedParticleGridTransfer,
     PreparedSoftSphereDEMDynamics,
+)
+from ..discretization.splatting import (
+    MeshSplatRoutes,
+    PreparedMeshParticleGridSplat,
 )
 
 
@@ -128,7 +130,7 @@ class StokesDragPlan(AbstractHydrodynamicClosurePlan):
 
 class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
     dynamics: PreparedSoftSphereDEMDynamics
-    transfer: PreparedParticleGridTransfer
+    transfer: PreparedMeshParticleGridSplat
     closure: AbstractHydrodynamicClosurePlan
     minimum_porosity: float = eqx.field(static=True)
     maximum_porosity: float = eqx.field(static=True)
@@ -137,7 +139,7 @@ class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         dynamics: PreparedSoftSphereDEMDynamics,
-        transfer: PreparedParticleGridTransfer,
+        transfer: PreparedMeshParticleGridSplat,
         closure: AbstractHydrodynamicClosurePlan,
         /,
         *,
@@ -146,13 +148,14 @@ class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
             raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
-        if not isinstance(transfer, PreparedParticleGridTransfer):
-            raise TypeError("transfer must be PreparedParticleGridTransfer.")
-        if not isinstance(closure, AbstractHydrodynamicClosurePlan):
-            raise TypeError("closure must be AbstractHydrodynamicClosurePlan.")
-        if transfer.particles.prepared_id != dynamics.bodies.particles.prepared_id:
+        if not isinstance(transfer, PreparedMeshParticleGridSplat):
+            raise TypeError("transfer must be PreparedMeshParticleGridSplat.")
+        particle_ids = dynamics.bodies.particles.particle_ids
+        if transfer.particle_capacity != dynamics.bodies.capacity or not bool(
+            jnp.all(transfer.stable_source_ids == particle_ids)
+        ):
             raise ValueError(
-                "CFD-DEM transfer and dynamics use different particle supports."
+                "CFD-DEM transfer and dynamics use different particle identities."
             )
         minimum = float(minimum_porosity)
         maximum = float(maximum_porosity)
@@ -175,7 +178,7 @@ class UnresolvedCFDEMCouplingPlan(StrictModule, NonTrainableState):
 
 
 class CFDEMCouplingEvaluation(StrictModule):
-    relation: ParticleGridRelation
+    relation: MeshSplatRoutes
     particle_force: Array
     particle_torque: Array
     fluid_momentum_source_rate: Array
@@ -202,13 +205,14 @@ def evaluate_unresolved_cfd_dem(
     if not isinstance(plan, UnresolvedCFDEMCouplingPlan):
         raise TypeError("plan must be an UnresolvedCFDEMCouplingPlan.")
     transfer = plan.transfer
-    relation = transfer.relation(dem_state.kinematics.position)
+    active = dem_state.body_properties.active
+    relation = transfer.routes(dem_state.kinematics.position, active)
     velocity = jnp.asarray(fluid_velocity)
     density = jnp.asarray(fluid_density)
     viscosity = jnp.asarray(dynamic_viscosity)
     pressure = jnp.asarray(pressure_gradient)
     volume = jnp.asarray(particle_volume, dtype=velocity.dtype)
-    cell_count = transfer.cell_count
+    cell_count = transfer.target.entity_count
     dimension = plan.dynamics.bodies.ambient_dimension
     if velocity.shape != (cell_count, dimension) or pressure.shape != velocity.shape:
         raise ValueError("Fluid velocity/pressure-gradient shape is invalid.")
@@ -216,19 +220,29 @@ def evaluate_unresolved_cfd_dem(
         raise ValueError("Fluid density/viscosity shape is invalid.")
     if volume.shape != (plan.dynamics.bodies.capacity,):
         raise ValueError("particle_volume shape is invalid.")
-    solid_volume = transfer.deposit_particle_content(relation, volume)
-    porosity = 1.0 - solid_volume / transfer.plan.cell_volumes
-    momentum = transfer.deposit_particle_content(
-        relation, volume[:, None] * dem_state.kinematics.velocity
+    solid_volume_result = transfer.deposit(dem_state.kinematics.position, active, volume)
+    solid_volume = solid_volume_result.content
+    porosity = 1.0 - solid_volume / transfer.target.measure.weights.astype(
+        solid_volume.dtype
     )
+    momentum_result = transfer.deposit(
+        dem_state.kinematics.position,
+        active,
+        volume[:, None] * dem_state.kinematics.velocity,
+    )
+    momentum = momentum_result.content
     solid_velocity = momentum / jnp.where(solid_volume > 0.0, solid_volume, 1.0)[:, None]
-    particle_porosity = transfer.gather(relation, porosity)
+    porosity_result = transfer.gather(dem_state.kinematics.position, active, porosity)
+    velocity_result = transfer.gather(dem_state.kinematics.position, active, velocity)
+    density_result = transfer.gather(dem_state.kinematics.position, active, density)
+    viscosity_result = transfer.gather(dem_state.kinematics.position, active, viscosity)
+    pressure_result = transfer.gather(dem_state.kinematics.position, active, pressure)
     sample = FluidParticleSample(
-        transfer.gather(relation, velocity),
-        transfer.gather(relation, density),
-        transfer.gather(relation, viscosity),
-        transfer.gather(relation, pressure),
-        particle_porosity,
+        velocity_result.values,
+        density_result.values,
+        viscosity_result.values,
+        pressure_result.values,
+        porosity_result.values,
     )
     closure = plan.closure.evaluate(
         sample,
@@ -236,7 +250,10 @@ def evaluate_unresolved_cfd_dem(
         plan.dynamics.bodies.radii,
         volume,
     )
-    fluid_source = transfer.deposit_particle_content(relation, -closure.particle_force)
+    fluid_source_result = transfer.deposit(
+        dem_state.kinematics.position, active, -closure.particle_force
+    )
+    fluid_source = fluid_source_result.content
     dt = jnp.asarray(step_size, dtype=velocity.dtype)
     particle_impulse = dt * closure.particle_force
     fluid_impulse = dt * fluid_source
@@ -247,7 +264,15 @@ def evaluate_unresolved_cfd_dem(
         & (porosity <= plan.maximum_porosity)
     )
     successful = (
-        relation.successful
+        jnp.all(relation.evidence.complete)
+        & solid_volume_result.successful
+        & momentum_result.successful
+        & porosity_result.successful
+        & velocity_result.successful
+        & density_result.successful
+        & viscosity_result.successful
+        & pressure_result.successful
+        & fluid_source_result.successful
         & closure.successful
         & porosity_valid
         & jnp.all(jnp.isfinite(solid_velocity))

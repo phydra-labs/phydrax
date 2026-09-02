@@ -6,11 +6,15 @@ import pytest
 
 from phydrax.nn.layers import (
     AbstractRecurrentCell,
+    AbstractTimeAwareAssociativeRecurrence,
+    AbstractTimeAwareRecurrentCell,
     AffineRecurrence,
     RecurrentBatch,
     run_affine_recurrence,
+    run_associative_recurrence,
     run_recurrent,
 )
+from phydrax.nn.models import CausalCoordinateNetwork, CausalCoordinatePlan
 
 
 class _RandomAccumulator(AbstractRecurrentCell):
@@ -26,6 +30,84 @@ class _RandomAccumulator(AbstractRecurrentCell):
         noise = jnp.zeros_like(inputs) if key is None else jr.normal(key, inputs.shape)
         next_state = state + inputs + noise
         return next_state, 2.0 * next_state
+
+
+class _PhysicalAccumulator(AbstractTimeAwareRecurrentCell):
+    def initial_state(self, case_shape, /, *, dtype):
+        return jnp.zeros(case_shape, dtype=dtype)
+
+    def step(self, state, inputs, /, *, key=None):
+        del key
+        next_state = state + inputs
+        return next_state, next_state
+
+    def step_with_context(
+        self,
+        state,
+        inputs,
+        /,
+        *,
+        time,
+        interval,
+        key=None,
+    ):
+        del key
+        next_state = state + inputs * (time + interval)
+        return next_state, next_state
+
+
+class _PhysicalVectorAccumulator(AbstractTimeAwareRecurrentCell):
+    def initial_state(self, case_shape, /, *, dtype):
+        return jnp.zeros(case_shape + (1,), dtype=dtype)
+
+    def step(self, state, inputs, /, *, key=None):
+        del key
+        next_state = state + inputs
+        return next_state, next_state
+
+    def step_with_context(
+        self,
+        state,
+        inputs,
+        /,
+        *,
+        time,
+        interval,
+        key=None,
+    ):
+        del key
+        next_state = state + inputs * (time + interval)[..., None]
+        return next_state, next_state
+
+
+class _PhysicalAdditiveRecurrence(AbstractTimeAwareAssociativeRecurrence):
+    def initial_state(self, case_shape, /, *, dtype):
+        return jnp.zeros(case_shape, dtype=dtype)
+
+    def identity(self, case_shape, /, *, dtype):
+        return jnp.zeros(case_shape, dtype=dtype)
+
+    def encode_step(self, inputs, /, *, key=None):
+        del key
+        return inputs
+
+    def encode_step_with_context(
+        self,
+        inputs,
+        /,
+        *,
+        time,
+        interval,
+        key=None,
+    ):
+        del key
+        return inputs * (time + interval)
+
+    def combine(self, left, right, /):
+        return left + right
+
+    def apply_prefix(self, state, summary, /):
+        return state + summary
 
 
 def _packed_affine_batch():
@@ -194,3 +276,104 @@ def test_generic_recurrent_cell_masks_outputs_and_propagates_keys_deterministica
     assert jnp.array_equal(result.outputs[2:], jnp.zeros((2, 3)))
     assert jnp.array_equal(result.states[2], result.states[1])
     assert jnp.array_equal(result.final_state, result.states[-1])
+
+
+def test_physical_time_and_intervals_reach_serial_and_associative_dispatch():
+    inputs = jnp.ones((3,))
+    valid = jnp.ones((3,), dtype=bool)
+
+    def evaluate(times):
+        batch = RecurrentBatch(inputs, valid, time=times)
+        serial = run_recurrent(_PhysicalAccumulator(), batch)
+        associative = run_associative_recurrence(
+            _PhysicalAdditiveRecurrence(),
+            batch,
+        )
+        return serial.outputs, associative.outputs
+
+    serial, associative = jax.jit(evaluate)(jnp.asarray((1.0, 2.0, 5.0)))
+    changed_serial, changed_associative = jax.jit(evaluate)(jnp.asarray((1.0, 4.0, 5.0)))
+    network = CausalCoordinateNetwork(_PhysicalVectorAccumulator())
+    causal = network(
+        CausalCoordinatePlan(jnp.asarray((1.0, 2.0, 5.0))),
+        jnp.ones((3, 1)),
+    )
+    changed_causal = network(
+        CausalCoordinatePlan(jnp.asarray((1.0, 4.0, 5.0))),
+        jnp.ones((3, 1)),
+    )
+
+    assert jnp.allclose(serial, jnp.asarray((1.0, 4.0, 12.0)))
+    assert jnp.allclose(associative, serial)
+    assert not jnp.allclose(changed_serial, serial)
+    assert jnp.allclose(changed_associative, changed_serial)
+    assert jnp.allclose(causal.ordered_outputs[..., 0], serial)
+    assert jnp.allclose(changed_causal.ordered_outputs[..., 0], changed_serial)
+
+
+def test_time_aware_streaming_context_preserves_the_boundary_interval_exactly():
+    inputs = jnp.ones((5,))
+    valid = jnp.ones((5,), dtype=bool)
+    times = jnp.asarray((0.0, 1.0, 3.0, 6.0, 10.0))
+    split = 2
+
+    def evaluate(executor, recurrence):
+        whole = executor(
+            recurrence,
+            RecurrentBatch(inputs, valid, time=times),
+        )
+        first = executor(
+            recurrence,
+            RecurrentBatch(inputs[:split], valid[:split], time=times[:split]),
+        )
+        second = executor(
+            recurrence,
+            RecurrentBatch(inputs[split:], valid[split:], time=times[split:]),
+            initial_state=first.final_state,
+            initial_context=first.final_context,
+        )
+        return whole, first, second
+
+    serial, first_serial, second_serial = evaluate(
+        run_recurrent,
+        _PhysicalAccumulator(),
+    )
+    associative, first_associative, second_associative = evaluate(
+        run_associative_recurrence,
+        _PhysicalAdditiveRecurrence(),
+    )
+
+    assert jnp.array_equal(
+        jnp.concatenate((first_serial.outputs, second_serial.outputs)),
+        serial.outputs,
+    )
+    assert jnp.array_equal(
+        jnp.concatenate((first_associative.outputs, second_associative.outputs)),
+        associative.outputs,
+    )
+    assert jnp.array_equal(second_serial.outputs, second_associative.outputs)
+    assert jnp.array_equal(second_serial.final_context.time, times[-1])
+    assert bool(second_serial.final_context.has_time)
+
+
+def test_causal_coordinate_streaming_preserves_physical_boundary_context():
+    network = CausalCoordinateNetwork(_PhysicalVectorAccumulator())
+    times = jnp.asarray((0.0, 1.0, 3.0, 6.0, 10.0))
+    inputs = jnp.ones((5, 1))
+    split = 2
+
+    whole = network(CausalCoordinatePlan(times), inputs)
+    first = network(CausalCoordinatePlan(times[:split]), inputs[:split])
+    second = network(
+        CausalCoordinatePlan(times[split:]),
+        inputs[split:],
+        initial_carry=first.final_carry,
+        initial_context=first.final_context,
+    )
+
+    assert jnp.array_equal(
+        jnp.concatenate((first.ordered_outputs, second.ordered_outputs)),
+        whole.ordered_outputs,
+    )
+    assert second.final_context is second.recurrent.final_context
+    assert jnp.array_equal(second.final_context.time, times[-1])

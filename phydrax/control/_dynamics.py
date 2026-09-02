@@ -13,8 +13,9 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..dynamics import ContinuousSystem, DiscreteSystem, TimeGrid
-from ..solver import DifferentialProblem, solve_diffrax
+from ..dynamics import ContinuousSystem, DiscreteStepContext, DiscreteSystem, TimeGrid
+from ..solver._differential import DifferentialProblem
+from ..solver._diffrax_backend import solve_diffrax
 from ._parameterization import AbstractControlParameterization
 from ._problem import _identifier
 from ._trajectory import CONTROL_DYNAMICS_FAILED, CONTROL_SUCCESS, ControlTrajectory
@@ -60,7 +61,7 @@ def _event_where(
 
 def _batched_transition(
     system: DiscreteSystem,
-    time: Array,
+    context: DiscreteStepContext,
     states: Array,
     controls: Array,
     args: Any,
@@ -76,7 +77,7 @@ def _batched_transition(
     flat_controls = controls.reshape((count,) + control_shape)
 
     def apply(state: Array, control: Array) -> Array:
-        return system.evaluate(time, state, args, inputs=control)
+        return system.evaluate(context, state, args, inputs=control)
 
     return jax.vmap(apply)(flat_states, flat_controls).reshape(case_shape + state_shape)
 
@@ -143,8 +144,14 @@ class DiscreteControlDynamics(StrictModule):
         )
 
         def step(
-            carry: tuple[Array, Array], time: Array
+            carry: tuple[Array, Array], index: Array
         ) -> tuple[tuple[Array, Array], tuple[Array, Array, Array]]:
+            time = time_grid.times[index]
+            context = DiscreteStepContext(
+                time,
+                time_grid.times[index + 1],
+                index,
+            )
             current, current_valid = carry
             safe_current = _event_where(
                 current_valid,
@@ -172,7 +179,7 @@ class DiscreteControlDynamics(StrictModule):
             )
             candidate_state = _batched_transition(
                 self.system,
-                time,
+                context,
                 safe_current,
                 safe_control,
                 args,
@@ -198,7 +205,7 @@ class DiscreteControlDynamics(StrictModule):
         (_, _), (next_states, applied_controls, next_valid) = jax.lax.scan(
             step,
             (state, initial_valid),
-            time_grid.times[:-1],
+            jnp.arange(time_grid.num_steps, dtype=jnp.int32),
         )
         state_time_axis = len(cases)
         states = jnp.concatenate(

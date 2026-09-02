@@ -94,4 +94,12 @@ See [Vortex methods](../../guides_vortex_methods.md) for state, unit, and differ
 
 ---
 
-::: phydrax.discretization.VortexReplayPlan
+::: phydrax.discretization.EquilibriumWallVortexClosurePlan
+
+---
+
+::: phydrax.discretization.VortexLoadRecoveryPlan
+
+---
+
+::: phydrax.discretization.CompressibleVortexAugmentationPlan

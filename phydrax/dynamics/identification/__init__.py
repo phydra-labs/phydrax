@@ -55,6 +55,7 @@ from ._neural import (
     ReferenceBranchDiscreteModelObjective,
     ResidualDiscreteModelObjective,
     SupervisedDiscreteModelObjective,
+    TargetDiscreteModelObjective,
 )
 from ._pde import (
     AbstractPDEDerivative,
@@ -109,6 +110,10 @@ from ._status import (
     IDENTIFICATION_NOT_CONVERGED,
     IDENTIFICATION_RANK_DEFICIENT,
     IDENTIFICATION_SUCCESS,
+)
+from ._stochastic_transition import (
+    LearnedMarginalTransition,
+    LearnedPathwiseTransition,
 )
 from ._structured import (
     CoefficientIndex,
@@ -173,6 +178,8 @@ __all__ = [
     "PDEIdentificationResult",
     "PDELibraryTerm",
     "PolynomialImplicitFeatureLibrary",
+    "LearnedMarginalTransition",
+    "LearnedPathwiseTransition",
     "ReferenceBranchDiscreteModelObjective",
     "ResidualDiscreteModelObjective",
     "PolynomialPDELibrary",
@@ -195,6 +202,7 @@ __all__ = [
     "StructuredSequentialThresholdedLeastSquares",
     "SymmetryAveragedFeatureLibrary",
     "SupervisedDiscreteModelObjective",
+    "TargetDiscreteModelObjective",
     "WeakSINDyFormulation",
     "WindowBoundary",
     "WindowQuadrature",

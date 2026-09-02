@@ -34,7 +34,7 @@ def test_direct_coulomb_matches_two_charge_reference():
 
 
 def test_pme_is_finite_and_tracks_direct_ewald_reference():
-    cell = phx.discretization.ParticleCell(6.0 * jnp.eye(3))
+    cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
         system.particles
@@ -56,7 +56,7 @@ def test_pme_is_finite_and_tracks_direct_ewald_reference():
 
 
 def test_isotropic_barostat_produces_typed_detailed_balance_move():
-    cell = phx.discretization.ParticleCell(5.0 * jnp.eye(3))
+    cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
@@ -87,7 +87,7 @@ def test_isotropic_barostat_produces_typed_detailed_balance_move():
 
 
 def test_pme_supports_isotropic_npt_energy_re_evaluation():
-    cell = phx.discretization.ParticleCell(6.0 * jnp.eye(3))
+    cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles

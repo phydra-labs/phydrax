@@ -14,9 +14,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, PyTree
+from opt_einsum import contract
 
 from .._strict import StrictModule
-from ._operators import AbstractLinearOperator
+from ._operators import AbstractLinearOperator, DenseLinearOperator
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._policies import LinearSolvePolicy
 from ._problems import LinearSystem
@@ -410,6 +411,162 @@ def estimate_numerical_range(
     )
 
 
+def _batched_probe_statistics(
+    raw_samples: Array,
+    valid: Array,
+    /,
+) -> tuple[Array, Array, Array]:
+    quantity_rank = raw_samples.ndim - valid.ndim
+    mask = valid.reshape(valid.shape + (1,) * quantity_rank)
+    count = jnp.sum(valid, axis=0, dtype=jnp.int32)
+    safe = jnp.maximum(count, 1)
+    zero = jnp.zeros((), dtype=raw_samples.dtype)
+    nan = jnp.asarray(jnp.nan, dtype=raw_samples.dtype)
+    samples = jnp.where(mask, raw_samples, nan)
+    estimate = jnp.sum(jnp.where(mask, raw_samples, zero), axis=0) / safe.reshape(
+        safe.shape + (1,) * quantity_rank
+    )
+    estimate = jnp.where(
+        (count > 0).reshape(count.shape + (1,) * quantity_rank),
+        estimate,
+        nan,
+    )
+    centered = jnp.where(mask, raw_samples - estimate, zero)
+    variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / jnp.maximum(
+        count - 1,
+        1,
+    ).reshape(count.shape + (1,) * quantity_rank)
+    standard_error = jnp.sqrt(variance / safe.reshape(safe.shape + (1,) * quantity_rank))
+    standard_error = jnp.where(
+        (count > 1).reshape(count.shape + (1,) * quantity_rank),
+        standard_error,
+        jnp.where(
+            (count == 1).reshape(count.shape + (1,) * quantity_rank),
+            jnp.zeros_like(standard_error),
+            nan,
+        ),
+    )
+    return samples, estimate, standard_error
+
+
+def _batched_dense_probes(
+    operator: DenseLinearOperator,
+    key: Array,
+    count: int,
+    /,
+) -> Array:
+    batch_count = int(np.prod(operator.batch_shape))
+    keys = jr.split(key, batch_count * count)
+    flattened = jax.vmap(
+        lambda probe_key: jr.rademacher(
+            probe_key,
+            (operator.source.size,),
+            dtype=_coordinate_dtype(operator.source),
+        )
+    )(keys)
+    batched = flattened.reshape(operator.batch_shape + (count, operator.source.size))
+    probe_axis = len(operator.batch_shape)
+    return jnp.moveaxis(batched, probe_axis, 0)
+
+
+def _batched_dense_stochastic(
+    operator: DenseLinearOperator,
+    key: Array,
+    count: int,
+    /,
+    *,
+    quantity: str,
+    scalar_function: Callable[[Array], Array] | None = None,
+) -> StochasticEstimate:
+    if not isinstance(operator.source, (ArraySpace, PyTreeSpace)) or not isinstance(
+        operator.source.pairing,
+        EuclideanPairing,
+    ):
+        raise ValueError(
+            "Batched exact probe actions currently require a Euclidean coordinate "
+            "pairing; no implicit similarity transform is performed."
+        )
+    probes = _batched_dense_probes(operator, key, count)
+    matrix = operator.matrix
+    if quantity == "trace":
+        eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
+        if scalar_function is None:
+            raise ValueError("Trace estimation requires a scalar function.")
+        multipliers = scalar_function(eigenvalues)
+        action_matrix = contract(
+            "...ik,...k,...jk->...ij",
+            eigenvectors,
+            multipliers,
+            jnp.conj(eigenvectors),
+            backend="jax",
+        )
+    elif quantity == "diagonal":
+        action_matrix = matrix
+    elif quantity == "inverse-diagonal":
+        identity = jnp.eye(operator.source.size, dtype=matrix.dtype)
+        action_matrix = jnp.linalg.solve(matrix, identity)
+    else:
+        raise ValueError("Unknown batched stochastic quantity.")
+    images = contract(
+        "...ij,p...j->p...i",
+        action_matrix,
+        probes,
+        backend="jax",
+    )
+    element_samples = jnp.conj(probes) * images
+    raw_samples = (
+        jnp.sum(element_samples, axis=-1) if quantity == "trace" else element_samples
+    )
+    probe_finite = (
+        jnp.all(jnp.isfinite(raw_samples), axis=-1)
+        if raw_samples.ndim > probes.ndim - 1
+        else jnp.isfinite(raw_samples)
+    )
+    samples, estimate, standard_error = _batched_probe_statistics(
+        raw_samples,
+        probe_finite,
+    )
+    statuses = jnp.where(
+        probe_finite,
+        int(StochasticProbeStatus.SUCCESS),
+        int(StochasticProbeStatus.NONFINITE),
+    ).astype(jnp.int32)
+    zeros = jnp.zeros_like(statuses, dtype=raw_samples.real.dtype)
+    int_zeros = jnp.zeros_like(statuses, dtype=jnp.int32)
+    ones = jnp.ones_like(statuses, dtype=jnp.int32)
+    finite = jnp.all(probe_finite, axis=0) & jnp.all(
+        jnp.isfinite(estimate),
+        axis=-1 if estimate.ndim > len(operator.batch_shape) else (),
+    )
+    diagnostics = StochasticProbeDiagnostics(
+        source_statuses=statuses,
+        iterations=int_zeros,
+        residual_norm=zeros,
+        relative_residual=zeros,
+        finite=probe_finite,
+        converged=probe_finite,
+        matvec_count=ones,
+        adjoint_matvec_count=int_zeros,
+    )
+    return StochasticEstimate(
+        estimate=estimate,
+        standard_error=standard_error,
+        samples=samples,
+        finite=finite,
+        converged=finite,
+        probe_converged=probe_finite,
+        probe_statuses=statuses,
+        probe_error_estimates=zeros,
+        iterations=jnp.zeros(operator.batch_shape, dtype=jnp.int32),
+        num_probes=count,
+        matvec_count=jnp.full(operator.batch_shape, count, dtype=jnp.int32),
+        adjoint_matvec_count=jnp.zeros(operator.batch_shape, dtype=jnp.int32),
+        diagnostics=diagnostics,
+        method="batched-dense-exact-probe-action",
+        quantity=quantity,
+    )
+
+
 def stochastic_trace(
     operator: AbstractLinearOperator,
     scalar_function: Callable[[Array], Array] = lambda value: value,
@@ -420,7 +577,10 @@ def stochastic_trace(
     max_dimension: int = 32,
 ) -> StochasticEstimate:
     """Stochastic Lanczos quadrature for the algebraic trace of ``f(A)``."""
-    _validate_endomorphism(operator)
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be an AbstractLinearOperator.")
+    if not operator.source.compatible(operator.target):
+        raise ValueError("Stochastic trace estimation requires an endomorphism.")
     if not operator.properties.certifies("self_adjoint"):
         raise ValueError("Stochastic Lanczos quadrature requires self-adjoint structure.")
     if not callable(scalar_function):
@@ -428,6 +588,18 @@ def stochastic_trace(
     _require_square_root_pairing(operator.source)
     count = _positive_int(num_probes, "num_probes")
     dimension = min(_positive_int(max_dimension, "max_dimension"), operator.source.size)
+    if operator.batch_shape:
+        if not isinstance(operator, DenseLinearOperator):
+            raise ValueError(
+                "Batched stochastic trace currently requires DenseLinearOperator."
+            )
+        return _batched_dense_stochastic(
+            operator,
+            key,
+            count,
+            quantity="trace",
+            scalar_function=scalar_function,
+        )
     probes = jax.vmap(lambda probe: _whiten_coordinates(operator.source, probe))(
         _rademacher_probes(
             key,
@@ -600,11 +772,22 @@ def estimate_diagonal(
     num_probes: int = 32,
 ) -> StochasticEstimate:
     """Hutchinson diagonal estimate in canonical coordinates."""
-    if not isinstance(operator, AbstractLinearOperator) or operator.batch_shape:
-        raise TypeError("operator must be an unbatched AbstractLinearOperator.")
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be an AbstractLinearOperator.")
     if not operator.source.compatible(operator.target):
         raise ValueError("Diagonal estimation requires an endomorphism.")
     count = _positive_int(num_probes, "num_probes")
+    if operator.batch_shape:
+        if not isinstance(operator, DenseLinearOperator):
+            raise ValueError(
+                "Batched diagonal estimation currently requires DenseLinearOperator."
+            )
+        return _batched_dense_stochastic(
+            operator,
+            key,
+            count,
+            quantity="diagonal",
+        )
     probes = _rademacher_probes(
         key,
         count,
@@ -666,8 +849,22 @@ def estimate_inverse_diagonal(
     solve_policy: LinearSolvePolicy | None = None,
 ) -> StochasticEstimate:
     """Hutchinson estimate of diag(A⁻¹) with solve-status evidence."""
-    _validate_endomorphism(operator)
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be an AbstractLinearOperator.")
+    if not operator.source.compatible(operator.target):
+        raise ValueError("Inverse diagonal estimation requires an endomorphism.")
     count = _positive_int(num_probes, "num_probes")
+    if operator.batch_shape:
+        if not isinstance(operator, DenseLinearOperator):
+            raise ValueError(
+                "Batched inverse diagonal estimation requires DenseLinearOperator."
+            )
+        return _batched_dense_stochastic(
+            operator,
+            key,
+            count,
+            quantity="inverse-diagonal",
+        )
     probes = _rademacher_probes(
         key,
         count,

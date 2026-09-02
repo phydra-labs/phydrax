@@ -384,3 +384,38 @@ without adding SmolyAX as a dependency.
 ---
 
 ::: phydrax.operators.interpolate_smolyak
+
+## Scattered Fourier fitting
+
+`FourierScatteredFitPlan` defines the current Fourier mode, period, origin,
+Nyquist, weighting, and regularization conventions. `fit_fourier_scattered`
+solves the weighted problem through a matrix-free PhydraX
+`FunctionLinearOperator`/`LeastSquaresProblem` and LSMR. Direct Type-1/Type-2
+actions are the reference in any finite dimension; `method="nufft"` is explicit
+for one through three dimensions and records its tolerance. A raw Type-1 action
+is an adjoint/transpose result, not an arbitrary scattered interpolant.
+
+## Mixed tensor reconstruction
+
+`MixedTensorReconstructionPlan` consumes prepared
+`FourierBasisPlan`, `ChebyshevBasisPlan`, and `LegendreBasisPlan` axes from the
+spectral discretization owner. `fit_mixed_tensor` analyzes one axis at a time,
+and `MixedTensorInterpolant` synthesizes paired queries with sequential
+`opt_einsum` contractions rather than a query-by-full-tensor basis. Polynomial
+out-of-support behavior is explicit; basis choice and mode count are fixed
+preparation topology.
+
+## Adaptive Smolyak interpolation
+
+`interpolate_adaptive_smolyak` uses the shared downward-closed
+`SmolyakIndexSet`/frontier epoch substrate and returns an immutable prepared
+function plus diagnostics. Node/index selection is nondifferentiable, while
+query and coefficient derivatives remain available after preparation.
+
+## Trainable B-spline banks
+
+`TrainableBSplineGridBank` gives each KAN input an independent ordered knot
+allocation with homogeneous fixed capacity. Minimum spans prevent crossing
+without clipping. Rational and polynomial KAN refinement/coarsening happens
+only between optimizer epochs and reports topology identities, homogeneous
+numerator/denominator bounds, denominator positivity, and rejected reasons.

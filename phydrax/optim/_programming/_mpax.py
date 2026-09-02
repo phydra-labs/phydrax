@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
+from jax.experimental import sparse as jsparse
 from jaxtyping import Array
 
 from ...backends import (
@@ -18,8 +19,16 @@ from ...backends import (
     MPAXPlan,
     prepare_mpax,
 )
+from ._clarabel import _audit_result
+from ._cones import NonnegativeCone, ProductCone, ZeroCone
 from ._policy import ConvexSolvePolicy, MPAXr2HPDHG, MPAXraPDHG
-from ._problem import LinearProgram
+from ._problem import (
+    _conic_matrix_mv,
+    _conic_matrix_transpose_mv,
+    _conic_quadratic_mv,
+    ConicProgram,
+    LinearProgram,
+)
 from ._quadratic import (
     _diagnostics,
     ConvexProgramResult,
@@ -49,6 +58,7 @@ def _provider_plan(policy: ConvexSolvePolicy, /) -> MPAXPlan:
     source = method.plan
     return MPAXPlan(
         algorithm,
+        representation=source.representation,
         eps_abs=max(policy.termination.absolute, 1e-12),
         eps_rel=max(policy.termination.relative, 1e-12),
         eps_primal_infeasible=max(policy.termination.primal_infeasible, 1e-12),
@@ -254,7 +264,7 @@ def solve_mpax_program(
                 -h,
                 lo,
                 hi,
-                use_sparse_matrix=False,
+                use_sparse_matrix=plan.representation == "sparse",
             )
         else:
             model = replace(
@@ -267,7 +277,7 @@ def solve_mpax_program(
                     -h,
                     lo,
                     hi,
-                    use_sparse_matrix=False,
+                    use_sparse_matrix=plan.representation == "sparse",
                 ),
                 is_lp=False,
             )
@@ -339,4 +349,183 @@ def solve_mpax_program(
     )
 
 
-__all__ = ["prepare_mpax_policy", "solve_mpax_program"]
+def _storage_bcoo(operator, selected_rows, /):
+    storage = operator.sparse_storage()
+    if storage.batch_shape:
+        raise ValueError("Sparse MPAX ConicProgram currently requires unbatched values.")
+    indptr = np.asarray(storage.indptr)
+    rows = np.repeat(np.arange(storage.shape[0]), np.diff(indptr))
+    selected = np.asarray(selected_rows, dtype=np.int64)
+    row_map = np.full((storage.shape[0],), -1, dtype=np.int32)
+    row_map[selected] = np.arange(selected.size, dtype=np.int32)
+    keep = row_map[rows] >= 0
+    indices = jnp.stack(
+        (
+            jnp.asarray(row_map[rows[keep]], dtype=jnp.int32),
+            storage.indices[keep].astype(jnp.int32),
+        ),
+        axis=-1,
+    )
+    return jsparse.BCOO(
+        (storage.values[keep], indices),
+        shape=(selected.size, storage.shape[1]),
+        indices_sorted=False,
+        unique_indices=storage.canonical,
+    )
+
+
+def _quadratic_bcoo(program):
+    if program.quadratic is None:
+        indices = jnp.empty((0, 2), dtype=jnp.int32)
+        return jsparse.BCOO(
+            (jnp.empty((0,), dtype=program.linear.dtype), indices),
+            shape=(program.num_variables, program.num_variables),
+        )
+    if program.quadratic_is_sparse:
+        return _storage_bcoo(program.quadratic, np.arange(program.num_variables))
+    return jsparse.BCOO.fromdense(program.quadratic)
+
+
+def solve_mpax_conic_program(
+    program: ConicProgram,
+    policy: ConvexSolvePolicy,
+    /,
+    *,
+    prepared_backend=None,
+) -> ConvexProgramResult:
+    """Solve an unbatched sparse LP/QP with zero/nonnegative cone rows."""
+    if program.batch_shape or not program.constraint_is_sparse:
+        raise ValueError("Sparse MPAX ConicProgram must be unbatched and sparse.")
+    blocks = (
+        program.cone.cones if isinstance(program.cone, ProductCone) else (program.cone,)
+    )
+    slices = (
+        program.cone.slices
+        if isinstance(program.cone, ProductCone)
+        else (slice(0, program.num_constraints),)
+    )
+    equality_rows = (
+        np.concatenate(
+            [
+                np.arange(item.start, item.stop)
+                for block, item in zip(blocks, slices, strict=True)
+                if isinstance(block, ZeroCone)
+            ]
+        )
+        if any(isinstance(block, ZeroCone) for block in blocks)
+        else np.empty((0,), dtype=np.int64)
+    )
+    inequality_rows = (
+        np.concatenate(
+            [
+                np.arange(item.start, item.stop)
+                for block, item in zip(blocks, slices, strict=True)
+                if isinstance(block, NonnegativeCone)
+            ]
+        )
+        if any(isinstance(block, NonnegativeCone) for block in blocks)
+        else np.empty((0,), dtype=np.int64)
+    )
+    plan = _provider_plan(policy)
+    module = import_backend_module(
+        mpax_availability(), "optimization.linear-program", "mpax"
+    )
+    status_module = import_backend_module(
+        mpax_availability(), "optimization.linear-program", "mpax.utils"
+    )
+    prepared = prepare_mpax(plan) if prepared_backend is None else prepared_backend
+    a = _storage_bcoo(program.constraint_matrix, equality_rows)
+    g = _storage_bcoo(program.constraint_matrix, inequality_rows)
+    b = program.constraint_rhs[jnp.asarray(equality_rows)]
+    h = program.constraint_rhs[jnp.asarray(inequality_rows)]
+    q = _quadratic_bcoo(program)
+    if policy.regularization:
+        diagonal = jnp.arange(program.num_variables, dtype=jnp.int32)
+        regularizer = jsparse.BCOO(
+            (
+                jnp.full(
+                    (program.num_variables,),
+                    policy.regularization,
+                    dtype=program.linear.dtype,
+                ),
+                jnp.stack((diagonal, diagonal), axis=-1),
+            ),
+            shape=(program.num_variables, program.num_variables),
+            indices_sorted=True,
+            unique_indices=True,
+        )
+        q = q + regularizer
+    linear_execution = program.quadratic is None and policy.regularization == 0.0
+    model = (
+        module.create_lp(
+            program.linear,
+            a,
+            b,
+            -g,
+            -h,
+            program.lower_bounds,
+            program.upper_bounds,
+            use_sparse_matrix=True,
+        )
+        if linear_execution
+        else replace(
+            module.create_qp(
+                q,
+                program.linear,
+                a,
+                b,
+                -g,
+                -h,
+                program.lower_bounds,
+                program.upper_bounds,
+                use_sparse_matrix=True,
+            ),
+            is_lp=False,
+        )
+    )
+    output = prepared.solver.optimize(model)
+    primal = output.primal_solution
+    provider_dual = output.dual_solution
+    equality_dual = -provider_dual[: equality_rows.size]
+    inequality_dual = provider_dual[equality_rows.size :]
+    cone_dual = jnp.zeros((program.num_constraints,), dtype=primal.dtype)
+    cone_dual = cone_dual.at[jnp.asarray(equality_rows)].set(equality_dual)
+    cone_dual = cone_dual.at[jnp.asarray(inequality_rows)].set(inequality_dual)
+    slack = program.constraint_rhs - _conic_matrix_mv(program.constraint_matrix, primal)
+    gradient = (
+        _conic_quadratic_mv(program.quadratic, primal)
+        + program.linear
+        + _conic_matrix_transpose_mv(program.constraint_matrix, cone_dual)
+    )
+    tolerance = max(policy.termination.absolute, 1e-8)
+    lower_active = jnp.isfinite(program.lower_bounds) & (
+        primal - program.lower_bounds <= tolerance
+    )
+    upper_active = jnp.isfinite(program.upper_bounds) & (
+        program.upper_bounds - primal <= tolerance
+    )
+    lower_dual = jnp.where(lower_active, jnp.maximum(gradient, 0.0), 0.0)
+    upper_dual = jnp.where(upper_active, jnp.maximum(-gradient, 0.0), 0.0)
+    backend_converged = output.termination_status == int(
+        status_module.TerminationStatus.OPTIMAL
+    )
+    return _audit_result(
+        program,
+        primal,
+        slack,
+        cone_dual,
+        lower_dual,
+        upper_dual,
+        backend_converged,
+        output.iteration_count,
+        policy,
+        prepared.backend_version,
+        backend="mpax",
+    )
+
+
+__all__ = [
+    "prepare_mpax_policy",
+    "solve_mpax_conic_program",
+    "solve_mpax_program",
+]

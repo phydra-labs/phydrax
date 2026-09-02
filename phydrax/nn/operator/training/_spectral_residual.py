@@ -18,7 +18,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from ...._frozendict import frozendict
-from ....equations import CompiledSpectralResidual
+from ....equations._spectral_residual import CompiledSpectralResidual
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ._losses import AbstractOperatorLossTerm, OperatorLossContext
 

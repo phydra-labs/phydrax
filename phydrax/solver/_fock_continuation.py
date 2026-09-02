@@ -102,6 +102,128 @@ class FockContinuationResult(StrictModule):
         self.exhausted = jnp.asarray(exhausted, dtype=bool)
 
 
+class PreparedFockRefinementPlan(StrictModule):
+    """Explicit nested cutoff epochs; topology changes only between solves."""
+
+    spaces: tuple[BosonicFockSpace, ...]
+    observable_tolerance: float
+    boundary_tolerance: float
+    plan_id: str
+
+    def __init__(
+        self,
+        cutoff_sequence: Sequence[Sequence[int]],
+        /,
+        *,
+        observable_tolerance: float,
+        boundary_tolerance: float,
+        plan_id: str,
+    ):
+        spaces = tuple(BosonicFockSpace(cutoffs) for cutoffs in cutoff_sequence)
+        if len(spaces) < 2:
+            raise ValueError("Prepared Fock refinement requires at least two epochs.")
+        for coarse, fine in zip(spaces[:-1], spaces[1:], strict=True):
+            if len(coarse.cutoffs) != len(fine.cutoffs) or any(
+                right <= left
+                for left, right in zip(coarse.cutoffs, fine.cutoffs, strict=True)
+            ):
+                raise ValueError(
+                    "Fock cutoff epochs must be strictly nested in every mode."
+                )
+        if (
+            observable_tolerance < 0.0
+            or boundary_tolerance < 0.0
+            or not isinstance(plan_id, str)
+            or not plan_id
+        ):
+            raise ValueError("Prepared Fock tolerances/plan_id are invalid.")
+        self.spaces = spaces
+        self.observable_tolerance = float(observable_tolerance)
+        self.boundary_tolerance = float(boundary_tolerance)
+        self.plan_id = plan_id
+
+
+class FockRefinementCertificate(StrictModule):
+    stages: tuple[FockContinuationStage, ...]
+    observable_differences: Array
+    boundary_probabilities: Array
+    remainder: Array
+    stabilized: Array
+    exhausted: Array
+    valid: Array
+    estimate_kind: str
+    plan_id: str
+    claim: str
+
+
+def solve_prepared_fock_refinement(
+    initial_state: ArrayLike,
+    solve_stage: Callable[[BosonicFockSpace, Array], tuple[Array, Array]],
+    plan: PreparedFockRefinementPlan,
+    /,
+    *,
+    certified_tail_bound: Callable[[BosonicFockSpace, Array], Array] | None = None,
+) -> FockRefinementCertificate:
+    """Execute declared topology epochs and separate boundary/observable evidence."""
+    if not isinstance(plan, PreparedFockRefinementPlan):
+        raise TypeError("plan must be PreparedFockRefinementPlan.")
+    if not callable(solve_stage):
+        raise TypeError("solve_stage must be callable.")
+    if certified_tail_bound is not None and not callable(certified_tail_bound):
+        raise TypeError("certified_tail_bound must be callable or None.")
+    state = jnp.asarray(initial_state)
+    stages = []
+    differences = []
+    previous_observable = None
+    remainder = jnp.asarray(jnp.nan)
+    for index, space in enumerate(plan.spaces):
+        if index:
+            state = plan.spaces[index - 1].embed(state, space)
+        state, observable = solve_stage(space, state)
+        evidence = space.cutoff_evidence(state)
+        difference = (
+            jnp.asarray(jnp.inf)
+            if previous_observable is None
+            else jnp.sqrt(
+                jnp.sum(jnp.abs(jnp.asarray(observable) - previous_observable) ** 2)
+            )
+        )
+        stages.append(
+            FockContinuationStage(
+                state,
+                observable,
+                evidence.top_level_probability,
+                difference,
+                cutoffs=space.cutoffs,
+                evidence_valid=evidence.valid,
+            )
+        )
+        differences.append(difference)
+        previous_observable = jnp.asarray(observable)
+        if certified_tail_bound is not None:
+            remainder = jnp.asarray(certified_tail_bound(space, state))
+    boundary = jnp.stack([jnp.max(stage.top_probabilities) for stage in stages])
+    differences_ = jnp.stack(differences)
+    stabilized = (differences_[-1] <= plan.observable_tolerance) & (
+        boundary[-1] <= plan.boundary_tolerance
+    )
+    valid = jnp.all(jnp.stack([stage.valid for stage in stages])) & (
+        jnp.isfinite(remainder) if certified_tail_bound is not None else True
+    )
+    return FockRefinementCertificate(
+        stages=tuple(stages),
+        observable_differences=differences_,
+        boundary_probabilities=boundary,
+        remainder=remainder,
+        stabilized=stabilized,
+        exhausted=~stabilized,
+        valid=valid,
+        estimate_kind="bound" if certified_tail_bound is not None else "difference",
+        plan_id=plan.plan_id,
+        claim="stabilized-over-declared-fock-cutoffs-not-unbounded-exactness",
+    )
+
+
 def solve_fock_continuation(
     initial_space: BosonicFockSpace,
     initial_state: ArrayLike,
@@ -197,8 +319,11 @@ def solve_fock_continuation(
 
 
 __all__ = [
+    "FockRefinementCertificate",
+    "PreparedFockRefinementPlan",
     "FockContinuationPolicy",
     "FockContinuationResult",
     "FockContinuationStage",
+    "solve_prepared_fock_refinement",
     "solve_fock_continuation",
 ]

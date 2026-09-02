@@ -156,10 +156,10 @@ def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events(
 
 def test_generic_hybrid_event_localizes_transverse_phase_exhaustion():
     plan = phx.solver.HybridEventPlan(
-        lambda state, args: state[0],
-        lambda state, args: jnp.zeros_like(state),
-        lambda state, args: jnp.asarray([-1.0]),
-        lambda state, args: jnp.asarray([0.0]),
+        lambda time, state, args: state[0],
+        lambda time, state, args: jnp.zeros_like(state),
+        lambda time, state, args: jnp.asarray([-1.0]),
+        lambda time, state, args: jnp.asarray([0.0]),
         event_kind="phase_exhaustion",
         plan_id="phase-exhaustion",
     )

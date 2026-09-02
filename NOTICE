@@ -2,6 +2,12 @@ PHYDRAX
 Copyright © 2026 PHYDRA, Inc. All rights reserved.
 Licensed by PHYDRA, Inc. under the Phydra Non-Production License (PNPL).
 
+Bundled astronomy demonstration assets (`leap_seconds.json`,
+`eop_cip_2024.json`, `earth_gravity_degree4.json`,
+`sun_earth_moon_chebyshev.json`, and `iau_precession_nutation.json`) are curated
+bounded numerical examples distributed under CC0-1.0. Their manifests record
+source, checksum, coverage, and non-operational intended scope.
+
 This distribution includes adapted numerical methods and implementation ideas
 from the following open-source projects:
 

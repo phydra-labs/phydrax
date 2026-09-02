@@ -18,9 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.fem import SumFactorizationPlan
 from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
-from ...sparse import ElementTensorOperator
-
-
+from ...sparse import ElementTensorOperator, SparseCoordinateOperator
 
 
 class PartialAssemblyOperator(StrictModule, NonTrainableState):

@@ -5,12 +5,15 @@ from ._low_rank import (
     contains_low_rank_updates,
     low_rank_parameter_subspace,
     low_rank_sites,
+    LowRankAdaptationPlan,
     LowRankAdaptationReport,
     LowRankAdaptationSite,
     LowRankScaling,
+    LowRankSiteHandler,
     LowRankSpec,
     LowRankUpdate,
     merge_low_rank,
+    prepare_low_rank_adaptation,
 )
 from ._low_rank_artifact import (
     LowRankAdapterArtifact,
@@ -18,6 +21,7 @@ from ._low_rank_artifact import (
     read_low_rank_adapter,
     save_low_rank_adapter,
 )
+from ._ordinal import OrderedOrdinalCutpoints, OrdinalCutpointAnchor
 from ._parameter import TransformedParameter
 from ._selection import ParameterSubspace
 from ._transforms import (
@@ -43,11 +47,15 @@ __all__ = [
     "IdentityTransform",
     "IntervalTransform",
     "LowRankAdaptationReport",
+    "LowRankAdaptationPlan",
     "LowRankAdaptationSite",
     "LowRankAdapterArtifact",
     "LowRankAdapterManifest",
     "LowRankSpec",
     "LowRankScaling",
+    "LowRankSiteHandler",
+    "OrderedOrdinalCutpoints",
+    "OrdinalCutpointAnchor",
     "LowRankUpdate",
     "PackedSkewSymmetricTransform",
     "ParameterSubspace",
@@ -64,6 +72,7 @@ __all__ = [
     "contains_low_rank_updates",
     "low_rank_parameter_subspace",
     "low_rank_sites",
+    "prepare_low_rank_adaptation",
     "merge_low_rank",
     "read_low_rank_adapter",
     "save_low_rank_adapter",

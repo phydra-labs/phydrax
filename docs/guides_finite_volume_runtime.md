@@ -141,6 +141,13 @@ precision policy. Checkpoints are pickle-free ZIP containers with:
 - per-array SHA-256 checksums;
 - complete payload identity;
 - atomic temporary-write replacement.
+MAC continuation uses `MACAdaptiveRuntimeState` as the sole restart payload: canonical
+velocity coordinates, time, accepted count, requested next step, controller counters,
+fixed-capacity accepted-grid history, forcing state, and output cursor.
+`MACFiniteVolumeCheckpointPlan` binds the exact dynamics, method, controller, grid,
+precision dtype, and leaf shape/dtype template. Checksum, identity, unknown/missing
+leaf, truncation, or dtype mismatches fail before `advance` can step.
+
 
 Visualization output is separate. `FiniteVolumeOutputPlan` writes Cartesian snapshots
 to HDF5 and a temporal XDMF collection when the optional `hdf5` extra is installed:

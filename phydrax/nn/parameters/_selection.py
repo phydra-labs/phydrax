@@ -24,8 +24,15 @@ class ParameterSubspace(StrictModule):
     leaf_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     leaf_dtypes: tuple[str, ...] = eqx.field(static=True)
     total_dimension: int = eqx.field(static=True)
+    alias_groups: tuple[tuple[str, ...], ...] = eqx.field(static=True)
 
-    def __init__(self, tree: PyTree[Any], filter_spec: PyTree[bool] | Callable):
+    def __init__(
+        self,
+        tree: PyTree[Any],
+        filter_spec: PyTree[bool] | Callable,
+        *,
+        alias_groups: Sequence[Sequence[str]] = (),
+    ):
         selected, frozen = eqx.partition(tree, filter_spec)
         path_leaves = jax.tree_util.tree_flatten_with_path(selected)[0]
         selected_paths: list[str] = []
@@ -49,6 +56,33 @@ class ParameterSubspace(StrictModule):
         self.total_dimension = sum(
             int(jnp.size(leaf)) for leaf in jax.tree_util.tree_leaves(selected)
         )
+        groups = tuple(tuple(str(path) for path in group) for group in alias_groups)
+        available = self.array_leaf_paths(tree)
+        used: set[str] = set()
+        for group in groups:
+            if (
+                len(group) < 2
+                or len(set(group)) != len(group)
+                or group[0] not in self.leaf_paths
+                or any(path not in available for path in group)
+                or any(path in used for path in group)
+            ):
+                raise ValueError("Parameter alias groups are invalid or overlapping.")
+            canonical = dict(
+                (jax.tree_util.keystr(path), leaf)
+                for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]
+            )[group[0]]
+            for alias in group[1:]:
+                value = dict(
+                    (jax.tree_util.keystr(path), leaf)
+                    for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]
+                )[alias]
+                if value.shape != canonical.shape or value.dtype != canonical.dtype:
+                    raise ValueError(
+                        "Aliased parameter leaves must match shape and dtype."
+                    )
+            used.update(group)
+        self.alias_groups = groups
 
     @staticmethod
     def array_leaf_paths(tree: PyTree[Any], /) -> tuple[str, ...]:
@@ -65,21 +99,29 @@ class ParameterSubspace(StrictModule):
         tree: PyTree[Any],
         leaf_paths: Sequence[str],
         /,
+        alias_groups: Sequence[Sequence[str]] = (),
     ) -> ParameterSubspace:
         """Select exact named array leaves, rejecting missing or duplicate paths."""
         requested = tuple(str(path) for path in leaf_paths)
         if not requested or len(set(requested)) != len(requested):
             raise ValueError("leaf_paths must contain distinct named paths.")
+        groups = tuple(tuple(str(path) for path in group) for group in alias_groups)
+        alias_paths = frozenset(path for group in groups for path in group[1:])
+        canonical_requested = tuple(path for path in requested if path not in alias_paths)
         available = cls.array_leaf_paths(tree)
-        missing = tuple(path for path in requested if path not in available)
+        missing = tuple(
+            path
+            for path in requested + tuple(path for group in groups for path in group)
+            if path not in available
+        )
         if missing:
             raise ValueError(f"Unknown parameter leaf paths: {missing!r}.")
-        selected = frozenset(requested)
+        selected = frozenset(canonical_requested)
         filter_spec = jax.tree_util.tree_map_with_path(
             lambda path, _: jax.tree_util.keystr(path) in selected,
             tree,
         )
-        return cls(tree, filter_spec)
+        return cls(tree, filter_spec, alias_groups=groups)
 
     @classmethod
     def from_subtree_paths(
@@ -144,13 +186,16 @@ class ParameterSubspace(StrictModule):
         exact_dtype: bool = True,
     ) -> ParameterSubspace:
         """Apply the same exact leaf paths to a compatible updated root tree."""
-        rebased = type(self).from_leaf_paths(tree, self.leaf_paths)
+        rebased = type(self).from_leaf_paths(
+            tree,
+            self.leaf_paths,
+            alias_groups=self.alias_groups,
+        )
         if rebased.leaf_shapes != self.leaf_shapes:
             raise ValueError("Rebased parameter leaves changed shape.")
         if exact_dtype and rebased.leaf_dtypes != self.leaf_dtypes:
             raise ValueError("Rebased parameter leaves changed dtype.")
         return rebased
-
 
     def pack(self, selected: PyTree[Any] | None = None, /) -> Array:
         """Flatten a selected parameter position in deterministic leaf order."""
@@ -202,12 +247,29 @@ class ParameterSubspace(StrictModule):
         return self.reconstruct(self.unpack(vector))
 
     def reconstruct(self, selected: PyTree[Any], /) -> PyTree[Any]:
-        """Recombine a selected position with the frozen complement."""
+        """Recombine selected parameters and copy canonical values to aliases."""
         if jax.tree_util.tree_structure(selected) != jax.tree_util.tree_structure(
             self.initial
         ):
             raise ValueError("Selected position has incompatible PyTree structure.")
-        return eqx.combine(selected, self.frozen)
+        combined = eqx.combine(selected, self.frozen)
+        if not self.alias_groups:
+            return combined
+        leaves = {
+            jax.tree_util.keystr(path): leaf
+            for path, leaf in jax.tree_util.tree_flatten_with_path(combined)[0]
+        }
+        alias_to_canonical = {
+            alias: group[0] for group in self.alias_groups for alias in group[1:]
+        }
+        return jax.tree_util.tree_map_with_path(
+            lambda path, value: (
+                leaves[alias_to_canonical[jax.tree_util.keystr(path)]]
+                if jax.tree_util.keystr(path) in alias_to_canonical
+                else value
+            ),
+            combined,
+        )
 
 
 __all__ = ["ParameterSubspace"]

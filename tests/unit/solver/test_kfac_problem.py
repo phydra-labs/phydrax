@@ -10,7 +10,6 @@ import pytest
 
 import phydrax as phx
 from phydrax.domain import Boundary
-from phydrax.enforcement import enforce_dirichlet
 from phydrax.optim._kfac._blocks import (
     initialize_block_state,
     update_block_state,
@@ -158,14 +157,7 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
     raw = domain.Model("x")(model)
     boundary = domain.component({"x": Boundary()})
     spec = phx.enforcement.EnforcementSpec(
-        phx.conditions.Dirichlet("u", boundary, target=0.0),
-        kind="custom",
-        transform=lambda field, _get_field: enforce_dirichlet(
-            field,
-            boundary,
-            var="x",
-            target=0.0,
-        ),
+        phx.conditions.Dirichlet("u", boundary, target=0.0)
     )
     term = _residual_term(domain, "u", lambda field: field, samples=6)
     enforcement = phx.enforcement.compile(

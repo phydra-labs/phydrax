@@ -20,8 +20,9 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import real_precision_dtype_name
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...atomistic import AtomicStructure
-from ...operators.quantum import ELECTRONIC_MAX_ELECTRONS, LogAmplitude
+from ...atomistic._types import AtomicStructure
+from ...operators.quantum._amplitude import LogAmplitude
+from ...operators.quantum._electronic_advanced import ElectronicVMCResourcePlan
 from ..parameters import PositiveTransform
 
 
@@ -484,6 +485,7 @@ class FermiNet(StrictModule):
     determinant_coefficients: Array
     nuclei: AtomicStructure
     configuration: _FermiNetConfiguration
+    resource_plan: ElectronicVMCResourcePlan
     network_id: str = eqx.field(static=True)
 
     def __init__(
@@ -498,6 +500,7 @@ class FermiNet(StrictModule):
         layer_count: int = 4,
         determinant_count: int = 16,
         compute_dtype: Any = "float64",
+        resource_plan: ElectronicVMCResourcePlan | None = None,
         minimum_envelope_decay: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
     ):
@@ -512,10 +515,22 @@ class FermiNet(StrictModule):
         layers = int(layer_count)
         determinants = int(determinant_count)
         minimum_decay = float(minimum_envelope_decay)
-        if electrons <= 0 or electrons > ELECTRONIC_MAX_ELECTRONS:
+        resource = (
+            ElectronicVMCResourcePlan(
+                electrons,
+                determinant_count=determinants,
+            )
+            if resource_plan is None
+            else resource_plan
+        )
+        if not isinstance(resource, ElectronicVMCResourcePlan):
+            raise TypeError("resource_plan must be ElectronicVMCResourcePlan or None.")
+        if (
+            resource.electron_count != electrons
+            or resource.determinant_count != determinants
+        ):
             raise ValueError(
-                "FermiNet electron_count must be between one and "
-                f"{ELECTRONIC_MAX_ELECTRONS}."
+                "FermiNet electron/determinant counts must match resource_plan."
             )
         if spin_up < 0 or spin_up > electrons:
             raise ValueError("spin_up_count must lie between zero and electron_count.")
@@ -582,6 +597,7 @@ class FermiNet(StrictModule):
         self.envelope_logits = envelope_logits
         self.determinant_coefficients = determinant_coefficients
         self.nuclei = nuclei
+        self.resource_plan = resource
         self.configuration = _FermiNetConfiguration(
             spin_labels=spin_labels,
             electron_count=electrons,

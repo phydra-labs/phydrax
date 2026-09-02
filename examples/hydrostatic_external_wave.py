@@ -29,7 +29,9 @@ def run():
     x = jnp.arange(8)[:, None]
     eta = jnp.broadcast_to(1.0e-3 * jnp.sin(2.0 * jnp.pi * x / 8), (8, 4))
     state = ocean.initialize_state(eta)
-    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(state)
+    continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(
+        ocean, state
+    )
     result = phx.applications.ocean.HydrostaticIMEXMidpointMethod(ocean).step(
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0.0),

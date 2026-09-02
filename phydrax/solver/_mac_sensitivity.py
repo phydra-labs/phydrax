@@ -865,7 +865,7 @@ class MACSegmentedShadowingPlan(StrictModule, NonTrainableState):
         residual_converged = jnp.isfinite(continuity_residual_norm) & (
             continuity_residual_norm <= self.residual_tolerance
         )
-        full_grid = grid.accepted_count == capacity
+        full_grid = grid.accepted_step_count == capacity
         finite = (
             replay.finite
             & jnp.isfinite(sensitivity)

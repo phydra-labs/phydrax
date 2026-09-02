@@ -168,3 +168,39 @@ def test_nonlinear_vortex_step_closure_solves_polar_circulation_root():
     assert result.residual_norm < 1e-6
     assert jnp.all(jnp.isfinite(result.panel_force))
     assert bool(result.successful)
+
+
+def test_equilibrium_wall_closure_and_bounded_load_recovery_report_evidence():
+    wall = phx.discretization.EquilibriumWallVortexClosurePlan(
+        1.0,
+        1.0e-3,
+        jnp.asarray((0.1,)),
+        jnp.asarray((1.0,)),
+        y_plus_envelope=(0.0, 1.0e5),
+    )
+    wall_result = wall.evaluate(
+        jnp.zeros((1, 2)),
+        jnp.zeros((1, 2)),
+        jnp.asarray(((0.0, 1.0),)),
+        jnp.asarray(0.1),
+    )
+    assert bool(wall_result.evidence.successful[0])
+    assert jnp.allclose(wall_result.traction, 0.0)
+    assert jnp.allclose(wall_result.vortex_strength_increment, 0.0)
+
+    recovery = phx.discretization.VortexLoadRecoveryPlan(
+        jnp.asarray((4.0, 2.0, 1.0)), 2.0
+    )
+    errors = 0.01 * jnp.asarray((16.0, 4.0, 1.0))
+    loads = jnp.stack((1.0 + errors, 2.0 - errors), axis=-1)
+    recovered = recovery.evaluate(
+        loads,
+        loads,
+        topology_correspondence=jnp.asarray(True),
+        circulation_defect=jnp.asarray(0.0),
+        impulse_defect=jnp.asarray(0.0),
+        time_stencil_defect=jnp.asarray(0.0),
+        panel_residual=jnp.asarray(0.0),
+    )
+    assert bool(recovered.recoverable)
+    assert jnp.allclose(recovered.estimate, jnp.asarray((1.0, 2.0)))

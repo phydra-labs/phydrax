@@ -199,8 +199,25 @@ transitions.
 No derivative is claimed through particle creation/deletion, active-topology changes, rejected
 boundaries, or capacity changes.
 
-## Current scope
+## Cell-mesh targets and epochs
 
-The substrate supports structured multilinear and uniform tensor B-spline transfer. SPH footprints,
-Gaussian footprints, anisotropic support, irregular targets, detector projection, and ordered
-optical compositing remain separately qualified extensions over this reference contract.
+`MeshSplatTarget` binds a canonical `CellMesh`, an entity dimension, and a
+positive `DiscreteMeasure`. `SimplicialBarycentricSplatAssignment` deposits to
+triangle/tetrahedron vertices with affine reproduction and stable global-cell
+facet ownership. `MeshCompactKernelSplatAssignment` deposits to cells with a
+declared support radius and route capacity; normalized Wendland partitioning is
+an explicit mathematical policy, while `boundary="drop"` never renormalizes a
+truncated physical route.
+
+Both assignments report raw partition sums, normalization factors, tie margins,
+query counts, route overflow, and derivative validity. A fixed route is
+piecewise differentiable; a facet or support-boundary tie is not assigned an
+ordinary topology gradient.
+
+`ParticleGridSplatEpoch` combines one prepared target, runtime
+`ParticlePopulationState`, particle positions, and target extensive state.
+`prepare_particle_grid_splat_transition` matches stable particle
+ID/incarnation pairs and requires a caller-prepared conservative target transfer
+for a topology change. Coverage or balance failure retains the old epoch
+atomically. The local contract covers finite `CellMesh` geometry only; it does
+not claim curved/high-order point location or distributed routing.

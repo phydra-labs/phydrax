@@ -660,12 +660,11 @@ def test_complex_ode_packing_matches_explicit_real_system_dense_and_gradient():
     evidence = complex_solution.temporal_evidence
 
     assert evidence is not None
-    assert evidence.state_packing is not None
-    assert evidence.state_packing.strategy == "real_imag"
-    assert evidence.state_packing.public_shape == (1,)
-    assert evidence.state_packing.backend_shape == (2, 1)
-    assert evidence.state_packing.public_dtype == "complex128"
-    assert evidence.state_packing.backend_dtype == "float64"
+    assert evidence.state_coordinates is not None
+    assert evidence.state_coordinates.source_shape == (1,)
+    assert evidence.state_coordinates.coordinate_shape == (2, 1)
+    assert evidence.state_coordinates.source_dtype == "complex128"
+    assert evidence.state_coordinates.coordinate_dtype == "float64"
     assert complex_solution.states.shape == (7, 1)
     assert complex_solution.states.dtype == jnp.complex128
     assert jnp.allclose(complex_solution.states, expected, rtol=2e-8, atol=2e-9)
@@ -771,10 +770,9 @@ def test_complex_sde_packing_matches_real_system_pathwise_and_in_ensemble():
     assert complex_ensemble.states.shape == (2, 3, 3, 1)
     assert jnp.array_equal(complex_ensemble.states, expected_ensemble)
     assert jnp.array_equal(complex_ensemble.evaluate(queries), expected_dense)
-    assert complex_ensemble.temporal_evidence.state_packing is not None
+    assert complex_ensemble.temporal_evidence.state_coordinates is not None
     assert (
-        complex_ensemble.temporal_evidence.state_packing.tolerance_geometry
-        == "componentwise_real"
+        complex_ensemble.temporal_evidence.state_coordinates.norm_relation == "isometry"
     )
 
 
@@ -812,7 +810,7 @@ def test_complex_packing_wraps_events_and_split_dynamics():
     assert event_solution.event_terminated
     assert jnp.isfinite(event_solution.states[:2]).all()
     assert jnp.isinf(event_solution.states[-1]).all()
-    assert split_solution.temporal_evidence.state_packing is not None
+    assert split_solution.temporal_evidence.state_coordinates is not None
     assert split_solution.temporal_evidence.equation_form == "additive-ode"
     assert jnp.allclose(
         split_solution.states[-1, 0],
@@ -851,7 +849,7 @@ def test_complex_state_policy_precision_and_real_bypass_are_explicit():
         t1=0.1,
         state_geometry=geometry,
     )
-    with pytest.raises(ValueError, match="trivial Euclidean"):
+    with pytest.raises(ValueError, match="Nontrivial state geometry"):
         phx.solver.solve_diffrax(
             geometric_problem,
             save_times=jnp.asarray([0.1]),
@@ -867,8 +865,7 @@ def test_complex_state_policy_precision_and_real_bypass_are_explicit():
             save_times=jnp.asarray([0.1]),
             complex_state_policy=phx.solver.DiffraxComplexStatePolicy("native"),
         )
-    assert native.temporal_evidence.state_packing is not None
-    assert native.temporal_evidence.state_packing.strategy == "native"
+    assert native.temporal_evidence.state_coordinates is None
 
     real_problem = _geometric_problem()
     implicit_default = phx.solver.solve_diffrax(
@@ -880,8 +877,8 @@ def test_complex_state_policy_precision_and_real_bypass_are_explicit():
         save_times=jnp.asarray([1.0]),
         complex_state_policy=phx.solver.DiffraxComplexStatePolicy(),
     )
-    assert implicit_default.temporal_evidence.state_packing is None
-    assert explicit_default.temporal_evidence.state_packing is None
+    assert implicit_default.temporal_evidence.state_coordinates is None
+    assert explicit_default.temporal_evidence.state_coordinates is None
     assert (
         implicit_default.temporal_evidence.configuration_id
         == explicit_default.temporal_evidence.configuration_id
@@ -958,3 +955,40 @@ def test_diagonal_wiener_ensemble_preserves_distinct_initial_states():
             initial_states=jnp.zeros((2, dimension)),
             dt0=0.01,
         )
+
+
+def test_prepared_real_coordinate_tree_keeps_pytree_callbacks_public_and_backend_real():
+    initial = {
+        "z": jnp.asarray([1.0 + 0.5j], dtype=jnp.complex128),
+        "x": jnp.asarray([2.0], dtype=jnp.float64),
+    }
+    complex_map = phx.linalg.ComplexCartesianCoordinates(
+        phx.linalg.ArraySpace((1,), dtype=jnp.complex128)
+    )
+    coordinates = phx.linalg.prepare_real_coordinate_tree(
+        initial,
+        {"z": complex_map, "x": None},
+    )
+    problem = phx.solver.DifferentialProblem(
+        lambda time, state, args: {
+            "z": jnp.conj(state["z"]),
+            "x": -state["x"],
+        },
+        initial,
+        t0=0.0,
+        t1=0.2,
+    )
+    solution = phx.solver.solve_diffrax(
+        problem,
+        save_times=jnp.asarray([0.0, 0.2]),
+        state_coordinates=coordinates,
+        dense=True,
+    )
+    dense = solution.evaluate(jnp.asarray([0.1]))
+
+    assert solution.states["z"].dtype == jnp.complex128
+    assert solution.states["x"].dtype == jnp.float64
+    assert dense["z"].shape == (1, 1)
+    assert solution.temporal_evidence.state_coordinates.evidence_id == (
+        coordinates.evidence.evidence_id
+    )

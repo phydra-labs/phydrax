@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._strict import StrictModule
 from ._costs import SquaredEuclideanCost
 from ._measure import _FiniteTransportMeasure
 from ._problem import DiscreteTransportProblem
@@ -742,7 +743,76 @@ def _vector(values: ArrayLike, /, *, name: str) -> Array:
     )
 
 
+class InverseSigmoidOrderReconstruction(StrictModule):
+    """Canonical inverse-logit reconstruction and non-equivalence evidence."""
+
+    values: Array
+    canonical_locations: Array
+    canonical_margin: Array
+    payload_barycenter: Array
+    discrepancy: Array
+    valid: Array
+    margin: float = eqx.field(static=True)
+
+
+def inverse_sigmoid_order_reconstruction(
+    plan: AbstractBalancedTransportPlan,
+    source_values: ArrayLike,
+    weights: ArrayLike | None = None,
+    /,
+    *,
+    margin: float = 1e-6,
+    failure: str = "error",
+) -> InverseSigmoidOrderReconstruction:
+    """Invert canonical sigmoid locations without claiming a physical barycenter."""
+    if not isinstance(plan, AbstractBalancedTransportPlan):
+        raise TypeError("plan must be an AbstractBalancedTransportPlan.")
+    source = _vector(source_values, name="source_values")
+    if source.shape[0] != plan.problem.shape[0]:
+        raise ValueError("source_values must match the plan source atom count.")
+    margin_ = float(margin)
+    if not math.isfinite(margin_) or not 0.0 < margin_ < 0.5:
+        raise ValueError("margin must be finite and lie in (0, 0.5).")
+    if failure not in ("error", "status"):
+        raise ValueError("failure must be 'error' or 'status'.")
+    probabilities = _probabilities(
+        weights,
+        source.shape[0],
+        name="weights",
+        dtype=source.dtype,
+    )
+    center = jnp.sum(probabilities * source)
+    centered = source - center
+    variance = jnp.sum(probabilities * centered**2)
+    scale = jnp.where(variance > 0.0, jnp.sqrt(variance), 1.0)
+    canonical_source = jax.nn.sigmoid(centered / scale)
+    locations = plan.barycentric_source_to_target(canonical_source)
+    canonical_margin = jnp.minimum(locations, 1.0 - locations)
+    valid = jnp.all(
+        jnp.isfinite(locations) & (locations >= margin_) & (locations <= 1.0 - margin_)
+    )
+    if failure == "error":
+        locations = eqx.error_if(
+            locations,
+            ~valid,
+            "Canonical target locations violate the inverse-logit margin.",
+        )
+    reconstructed = center + scale * (jnp.log(locations) - jnp.log1p(-locations))
+    payload = plan.barycentric_source_to_target(source)
+    return InverseSigmoidOrderReconstruction(
+        reconstructed,
+        locations,
+        canonical_margin,
+        payload,
+        reconstructed - payload,
+        valid,
+        margin_,
+    )
+
+
 __all__ = [
+    "InverseSigmoidOrderReconstruction",
+    "inverse_sigmoid_order_reconstruction",
     "soft_order_transport",
     "soft_quantile",
     "soft_quantile_normalize",

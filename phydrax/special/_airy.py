@@ -511,13 +511,26 @@ def _airye_jvp(
 
 
 def airy(x: ArrayLike) -> tuple[Array, Array, Array, Array]:
-    """Return ``Ai(x)``, ``Ai'(x)``, ``Bi(x)``, and ``Bi'(x)`` for real ``x``."""
+    """Return principal-continuation Airy functions and derivatives."""
+    if jnp.issubdtype(jnp.asarray(x).dtype, jnp.complexfloating):
+        from ._continuation import complex_airy
+
+        return complex_airy(x)
     (promoted_x,) = promote_real("airy", x)
     return _airy_array(promoted_x)
 
 
 def airye(x: ArrayLike) -> tuple[Array, Array, Array, Array]:
-    """Return exponentially scaled real Airy functions and derivatives."""
+    """Return exponentially scaled principal-continuation Airy functions."""
+    if jnp.issubdtype(jnp.asarray(x).dtype, jnp.complexfloating):
+        from ._continuation import complex_airy, promote_principal
+
+        (z,) = promote_principal(x)
+        ai, aip, bi, bip = complex_airy(z)
+        zeta = (2.0 / 3.0) * z * jnp.sqrt(z)
+        ai_scale = jnp.exp(zeta)
+        bi_scale = jnp.exp(-jnp.abs(jnp.real(zeta)))
+        return ai * ai_scale, aip * ai_scale, bi * bi_scale, bip * bi_scale
     (promoted_x,) = promote_real("airye", x)
     return _airye_array(promoted_x)
 

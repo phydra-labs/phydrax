@@ -147,6 +147,11 @@ from ._dem_inverse import (
 )
 from ._dem_liquid import (
     ConservedLiquidBridgeProcessPlan,
+    DEMBarrierCapillaryLaw,
+    DEMBarrierCapillaryPlan,
+    DEMBarrierGeometryPolicy,
+    DEMBarrierLiquidAllocation,
+    DEMBarrierLiquidEvaluation,
     DEMLiquidAllocation,
     DEMLiquidEvaluation,
     DEMLiquidState,
@@ -159,9 +164,13 @@ from ._dem_multicontact import (
 from ._dem_periodic import (
     dem_bulk_stress,
     DEMBulkStress,
+    DEMBulkStressFrame,
+    DEMBulkStressPlan,
     DEMPeriodicCellControlPlan,
     DEMPeriodicCellState,
     DEMPeriodicCellUpdate,
+    PeriodicNeighborhoodEnvelope,
+    PeriodicNeighborhoodEnvelopeEvidence,
 )
 from ._dem_process_events import (
     fragment_particle_with_growth,
@@ -307,11 +316,6 @@ from ._particle_epoch import (
     ParticleEpochTransition,
     ParticleExecutionEpoch,
 )
-from ._particle_grid_transfer import (
-    ConservativeParticleGridTransferPlan,
-    ParticleGridRelation,
-    PreparedParticleGridTransfer,
-)
 from ._particle_internal_amr import (
     adapt_particle_internal_mesh,
     apply_particle_internal_flux_correction,
@@ -374,7 +378,6 @@ from ._particle_surface_exchange import (
     ParticleContactExchangeEvaluation,
     ParticleContactExchangePlan,
 )
-from ._periodic_cell import ParticleCell
 from ._population import (
     ParticleAllocationRequest,
     ParticleAllocationResult,
@@ -602,6 +605,16 @@ from ._sph_density import (
     AbstractSPHDensityPlan,
     ContinuityDensityPlan,
     SummationDensityPlan,
+)
+from ._sph_source import (
+    emit_sph_particles,
+    SPHDensityInitialization,
+    SPHEmissionEvidence,
+    SPHEmissionRequest,
+    SPHEmissionResult,
+    SPHParticleSourcePlan,
+    SPHParticleSourceState,
+    SPHRuntimeState,
 )
 from ._sph_state import WeaklyCompressibleSPHStateLayout
 from ._sph_viscosity import MorrisViscosityPlan
@@ -871,7 +884,6 @@ __all__ = [
     "DenseParticleNeighborhoodPlan",
     "ContinuityDensityPlan",
     "ParticleBox",
-    "ParticleCell",
     "ParticleDiscretization",
     "ChargedParticlePlan",
     "PreparedChargedParticles",
@@ -887,6 +899,14 @@ __all__ = [
     "ParticlePopulationStatus",
     "ParticleSlotReusePolicy",
     "update_particle_population",
+    "emit_sph_particles",
+    "SPHDensityInitialization",
+    "SPHEmissionEvidence",
+    "SPHEmissionRequest",
+    "SPHEmissionResult",
+    "SPHParticleSourcePlan",
+    "SPHParticleSourceState",
+    "SPHRuntimeState",
     "MorrisViscosityPlan",
     "ParticleSetPlan",
     "ParticleNeighborhoodState",
@@ -926,15 +946,24 @@ __all__ = [
     "DEMStepEvaluation",
     "DEMStepEnergyLedger",
     "DEMStepRestriction",
+    "DEMBarrierCapillaryLaw",
+    "DEMBarrierCapillaryPlan",
+    "DEMBarrierGeometryPolicy",
+    "DEMBarrierLiquidAllocation",
+    "DEMBarrierLiquidEvaluation",
     "ConservedLiquidBridgeProcessPlan",
     "DEMLiquidAllocation",
     "DEMLiquidEvaluation",
     "DEMLiquidState",
     "dem_bulk_stress",
     "DEMBulkStress",
+    "DEMBulkStressFrame",
+    "DEMBulkStressPlan",
     "DEMPeriodicCellControlPlan",
     "DEMPeriodicCellState",
     "DEMPeriodicCellUpdate",
+    "PeriodicNeighborhoodEnvelope",
+    "PeriodicNeighborhoodEnvelopeEvidence",
     "HertzNormalContactPlan",
     "ImplicitDEMBarrier",
     "LinearSpringDashpotNormalPlan",
@@ -990,7 +1019,6 @@ __all__ = [
     "AbstractDEMRotationalContactPlan",
     "ClumpComponentKinematics",
     "ClumpComponentPairBatch",
-    "ConservativeParticleGridTransferPlan",
     "ConstantRollingResistancePlan",
     "CompositeDEMCohesionPlan",
     "ConvexContactResult",
@@ -1028,11 +1056,9 @@ __all__ = [
     "ImplicitContactResult",
     "ImplicitRigidShapePlan",
     "MixedModeBondDamagePlan",
-    "ParticleGridRelation",
     "PreparedConvexShape",
     "PreparedFixedBondGraph",
     "PreparedHierarchicalRadiusParticleNeighborhood",
-    "PreparedParticleGridTransfer",
     "BallJointSetPlan",
     "DistanceJointSetPlan",
     "FixedJointSetPlan",

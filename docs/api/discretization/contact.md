@@ -94,6 +94,10 @@
 
 ---
 
+::: phydrax.discretization.LBVHContactSearchPlan
+
+---
+
 ::: phydrax.discretization.GeometricContactFilterPlan
 
 ---
@@ -106,7 +110,11 @@
 
 ---
 
-::: phydrax.discretization.extract_hydroelastic_pressure_patch
+::: phydrax.discretization.HydroelasticPressureFieldState
+
+---
+
+::: phydrax.discretization.HydroelasticPatchExtractionPlan
 
 ---
 

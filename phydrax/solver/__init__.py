@@ -1,6 +1,8 @@
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+# ruff: noqa: F405
+
 
 """
 # Solver
@@ -46,6 +48,19 @@ term evaluation.
 
 from .._hybrid_sensitivity import HybridSensitivityMode
 from . import advanced, coupling, maxwell
+from ._adaptive_tdvp import (
+    AdaptiveTDVPPlan,
+    AdaptiveTDVPResult,
+    solve_adaptive_tdvp,
+)
+from ._advanced_potential_flow3d import (
+    NonlinearPotentialFlowPolicy3D,
+    NonlinearPotentialFlowState3D,
+    NonlinearPotentialFlowStep3D,
+    prepare_nonlinear_potential_flow_3d,
+    PreparedNonlinearPotentialFlow3D,
+    SecondOrderPotentialFlowPlan3D,
+)
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -80,6 +95,14 @@ from ._balance_law_transport import (
     PreparedFiniteVolumeBalanceLawTransport,
 )
 from ._bdf_method import BDFMethod
+from ._bem_fracture3d import (
+    advance_bem_fracture_3d,
+    BEMFractureEpochTransition3D,
+    BEMFractureProblem3D,
+    BEMFractureResult3D,
+    prepare_bem_fracture_3d,
+    PreparedBEMFracture3D,
+)
 from ._boundary_integral import (
     InteriorLaplaceDirichletResult,
     solve_interior_laplace_dirichlet_2d,
@@ -113,15 +136,6 @@ from ._channel_flow import (
     ChannelFlowSolution,
     ChannelSBDF2Method,
     solve_channel_sbdf2,
-)
-from ._characteristic_projection import (
-    CharacteristicProjectionProblem,
-    CharacteristicProjectionResult,
-    CharacteristicTraceResult,
-    CharacteristicVelocity,
-    CharacteristicWrap,
-    solve_characteristic_projection,
-    trace_characteristics,
 )
 from ._chemical_reactor import (
     ChemicalReactorKind,
@@ -213,6 +227,22 @@ from ._coupled_field_checkpoint import (
     read_coupled_field_checkpoint,
     write_coupled_field_checkpoint,
 )
+from ._dae_events import (
+    apply_dae_event,
+    certify_dae_regularity,
+    dae_consistency_candidate,
+    DAEConsistencyCandidate,
+    DAEConsistencyPolicy,
+    DAEEventEvidence,
+    DAEEventPlan,
+    DAERegularityCertificate,
+    DAERegularityCertificatePlan,
+    DAERegularityDomain,
+    DAEResetMap,
+    manifold_bdf_stage,
+    ManifoldBDFMethod,
+    ManifoldBDFStage,
+)
 from ._dae_initialization import (
     DAEInitializationMode,
     DAEInitializationResult,
@@ -261,6 +291,25 @@ from ._delay import (
     StateDependentLag,
 )
 from ._delay_adjoint import CheckpointedDelayAdjoint, SegmentedDelayAdjoint
+from ._delay_capabilities import (
+    AbstractStochasticDelayInterpolation,
+    AcceptedStochasticDelayInterpolation,
+    adaptive_stochastic_delay_step_doubling,
+    AdaptiveStochasticDelayPolicy,
+    backsolve_delay_adjoint,
+    BacksolveDelayAdjoint,
+    CertifiedTruncatedFunctionalDelay,
+    DelayBacksolveEvidence,
+    DelayPrimalTape,
+    evaluate_certified_truncated_delay,
+    ExponentialConvolutionDelay,
+    InfiniteMemoryEvidence,
+    ItoEulerDelayInterpolation,
+    SRKMKDelayInterpolation,
+    StochasticDelayControllerEvidence,
+    StochasticDelayInterpolationCapabilities,
+    StratonovichEulerHeunDelayInterpolation,
+)
 from ._delay_segmented import (
     DelaySegmentArchive,
     DelaySegmentContinuation,
@@ -310,9 +359,6 @@ from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._diffrax_cde import ControlledDifferentialSolution, solve_diffrax_cde
 from ._diffrax_delay_backend import solve_diffrax_delay
 from ._diffrax_state_packing import (
-    AlgebraStatePackingEvidence,
-    ComplexStatePackingEvidence,
-    DiffraxAlgebraStatePolicy,
     DiffraxComplexStatePolicy,
     DiffraxComplexStateStrategy,
 )
@@ -343,6 +389,13 @@ from ._driving_path import (
     FixedBSplineDrivingPath,
     OfflineCubicDrivingPath,
     PiecewiseLinearDrivingPath,
+)
+from ._dynamic_vector_cq import (
+    prepare_dynamic_elasticity_fem_bem_cq_3d,
+    prepare_dynamic_maxwell_fem_bem_cq_3d,
+    PreparedDynamicElasticityFEMBEM3D,
+    PreparedDynamicMaxwellFEMBEM3D,
+    PreparedDynamicVectorFEMBEM3D,
 )
 from ._dynamics_evolution import DiffraxEvolution
 from ._elasticity_boundary import *  # noqa: F403
@@ -413,6 +466,11 @@ from ._field_equilibrium import (
     prepare_virtual_work_equilibrium,
     PreparedFieldEquilibrium,
 )
+from ._finite_cptp import (
+    FiniteCPTPIntegrationResult,
+    FiniteLindbladChannelPlan,
+    integrate_finite_cptp,
+)
 from ._finite_element_adaptivity import (
     FiniteElementHPTopologyResult,
     FiniteElementTopologyResult,
@@ -442,6 +500,13 @@ from ._finite_element_schedule import (
     FiniteElementStepPolicy,
     read_finite_element_restart,
     write_finite_element_restart,
+)
+from ._finite_subspace_tdvp import (
+    FiniteSubspaceTDVPPlan,
+    FiniteSubspaceTDVPResult,
+    FiniteVariationalSubspaceTDVPProblem,
+    prepare_finite_subspace_tdvp,
+    solve_finite_subspace_tdvp,
 )
 from ._finite_volume import (
     DirectionalSplitFiniteVolumePlan,
@@ -513,6 +578,7 @@ from ._fixed_step import (
     AbstractFixedStepMethod,
     AbstractSSPRKStageTransform,
     AcceptedStepTransformResult,
+    AdaptiveReplayPreparationPolicy,
     CallableFixedStepMethod,
     CallableSSPRKStageTransform,
     CompositeAcceptedStepTransform,
@@ -527,6 +593,8 @@ from ._fixed_step import (
     FixedStepSolution,
     IdentityAcceptedStepTransform,
     IdentitySSPRKStageTransform,
+    prepare_replay_schedule,
+    PreparedReplaySchedule,
     RetriedFixedStepResult,
     retry_fixed_step,
     RobustRetryPolicy,
@@ -539,7 +607,19 @@ from ._fock_continuation import (
     FockContinuationPolicy,
     FockContinuationResult,
     FockContinuationStage,
+    FockRefinementCertificate,
+    PreparedFockRefinementPlan,
     solve_fock_continuation,
+    solve_prepared_fock_refinement,
+)
+from ._fokker_planck_approximation import (
+    DensityFokkerPlanckResult,
+    ParticleFokkerPlanckPlan,
+    ParticleFokkerPlanckResult,
+    solve_particle_fokker_planck,
+    solve_sparse_grid_fokker_planck,
+    SparseGridFokkerPlanckPlan,
+    WeakObservable,
 )
 from ._fractional_memory import (
     CaputoFractionalProblem,
@@ -646,21 +726,37 @@ from ._heom_production import (
     HEOMContinuationResult,
     HEOMContinuationStage,
     HEOMGridContinuationResult,
+    HEOMRefinementCertificate,
+    PreparedHEOMRefinementPlan,
     solve_heom_continuation,
     solve_heom_continuation_grid,
+    solve_prepared_heom_refinement,
 )
 from ._heom_scaled import (
     prepare_scaled_heom_topology,
     ScaledHEOMTopology,
 )
 from ._hybrid_event import (
+    empty_hybrid_event_tape,
+    hybrid_event_jvp,
+    hybrid_event_vjp,
+    HybridEventActionResult,
     HybridEventPlan,
     HybridEventSensitivityResult,
+    HybridEventTape,
+    HybridReplayPolicy,
+    HybridReplayResult,
     localize_hybrid_event,
+    record_hybrid_event,
+    replay_hybrid_events,
 )
 from ._hybrid_schedule import (
+    execute_hybrid_schedule,
     HybridSchedulePlan,
     HybridScheduleResult,
+    prepare_hybrid_schedule,
+    PreparedHybridSchedule,
+    replay_hybrid_schedule,
     ScheduledHybridEvent,
 )
 from ._hydrodynamic_response import *  # noqa: F403
@@ -695,8 +791,16 @@ from ._jump_delay import (
 )
 from ._kdk import KDKCoefficients, KDKCompletion, KDKProposal, KDKTransactionPlan
 from ._laplace_capacitance import (
+    advance_laplace_capacitance_3d,
+    differentiate_laplace_capacitance_coordinates_3d,
+    LaplaceCapacitanceCoordinateJVP3D,
+    LaplaceCapacitanceEpochTransition3D,
+    LaplaceCapacitancePlan3D,
     LaplaceCapacitanceResult3D,
-    solve_laplace_capacitance_3d,
+    LaplaceCapacitanceSensitivityEvidence3D,
+    prepare_laplace_stable_dual_calderon_3d,
+    PreparedLaplaceCapacitance3D,
+    PreparedLaplaceStableDualCalderon3D,
 )
 from ._lattice_boltzmann import LatticeBoltzmannFixedStepMethod
 from ._levy import (
@@ -735,10 +839,12 @@ from ._lpdo_quantum_program import (
 )
 from ._mac_adaptive import (
     MACAcceptedGridTrace,
+    MACAdaptiveAdvanceResult,
     MACAdaptiveAttemptJournal,
     MACAdaptivePolicy,
     MACAdaptiveRolloutPlan,
     MACAdaptiveRolloutResult,
+    MACAdaptiveRuntimeState,
     MACAdaptiveStatus,
     MACCompositeStepController,
     MACCompositeStepRestriction,
@@ -774,6 +880,12 @@ from ._mac_distributed_projection import (
     MACCollectiveAdapter,
     MACDistributedProjectionPlan,
     MACDistributedProjectionResult,
+)
+from ._mac_finite_volume_checkpoint import (
+    MACFiniteVolumeCheckpoint,
+    MACFiniteVolumeCheckpointPlan,
+    read_mac_finite_volume_checkpoint,
+    write_mac_finite_volume_checkpoint,
 )
 from ._mac_free_surface import (
     MACFreeSurfaceProjectionPlan,
@@ -956,6 +1068,13 @@ from ._markov_cubature import (
     PolynomialRecombination,
     solve_markov_cubature,
 )
+from ._markov_cubature_error import (
+    markov_cubature_error_evidence,
+    MarkovCubatureErrorEvidence,
+    MarkovCubatureRefinementPolicy,
+    refine_markov_cubature,
+    WeakObservableEnvelope,
+)
 from ._material_point_adaptive import (
     AdaptiveMPMRolloutPlan,
     AdaptiveMPMRolloutResult,
@@ -1029,6 +1148,8 @@ from ._maxwell_reduced import (
     CompatibleMaxwell1DState,
     CompatibleMaxwell2DPlan,
     CompatibleMaxwell2DState,
+    PreparedReducedMaxwellCPML,
+    PreparedReducedMaxwellCPMLTerm,
     ReducedMaxwellDiagnostics,
 )
 from ._memory import (
@@ -1110,11 +1231,18 @@ from ._neural_cde import (
 from ._neural_galerkin import (
     FieldProjectionMetric,
     NeuralFieldEvolutionResult,
+    NeuralGalerkinAdjointPolicy,
     NeuralGalerkinAudit,
+    NeuralGalerkinEpoch,
+    NeuralGalerkinEpochPlan,
+    NeuralGalerkinEpochResult,
     NeuralGalerkinProblem,
+    NeuralGalerkinReplayJournal,
     NeuralTangentSolvePolicy,
     RateFunction,
+    replay_neural_galerkin_epochs,
     solve_neural_galerkin,
+    solve_neural_galerkin_epochs,
     TangentFormulation,
 )
 from ._neural_quantum_jump import (
@@ -1139,6 +1267,20 @@ from ._nonmarkov_campaign import (
     NonMarkovianComparisonResult,
     spin_boson_dephasing_comparison,
     SpinBosonComparisonResult,
+)
+from ._nonmatching_fem_bem3d import (
+    CoupledFEMBEMResult3D,
+    prepare_maxwell_fem_bem_3d,
+    prepare_scalar_nonmatching_fem_bem_3d,
+    PreparedNonmatchingFEMBEM3D,
+)
+from ._open_certificates import (
+    certify_finite_lindblad_steady_state,
+    certify_finite_refinement,
+    certify_process_identifiability,
+    FiniteRefinementCertificate,
+    FiniteSteadyStateCertificate,
+    ProcessIdentifiabilityCertificate,
 )
 from ._panel_complete import *  # noqa: F403
 from ._panel_complete import __all__ as _panel_complete_all
@@ -1310,6 +1452,14 @@ from ._quantum_jump_generic import (
     quantum_jump_differential_problem,
     solve_quantum_jump_generic,
 )
+from ._quantum_measurement import (
+    execute_mid_circuit_quantum_plan,
+    measure_dense_quantum_program,
+    MidCircuitQuantumPlan,
+    MidCircuitQuantumResult,
+    QuantumMeasurementPlan,
+    QuantumMeasurementResult,
+)
 from ._quantum_program import (
     DenseQuantumOperationEvidence,
     DenseQuantumProgramCostEstimate,
@@ -1346,6 +1496,7 @@ from ._quantum_trajectory_contract import (
     QuantumTrajectoryPlan,
     QuantumTrajectoryStatus,
 )
+from ._radau_iia import RadauIIAMethod
 from ._radiative_cooling import (
     PreparedRadiativeCoolingProcess,
     RadiativeCoolingDiagnostics,
@@ -1444,6 +1595,12 @@ from ._rough_delay import (
 )
 from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 from ._rough_logode import LinearLogODE, LogODE
+from ._rough_prepare import (
+    prepare_rough_evolution,
+    PreparedRoughEvolution,
+    RoughEvolutionPolicy,
+    solve_prepared_rough,
+)
 from ._runtime_lifecycle import (
     AcceptedStepTrigger,
     AcceptedStepTriggerGraph,
@@ -1464,7 +1621,19 @@ from ._scalar_boundary3d import *  # noqa: F403
 from ._scalar_boundary3d import __all__ as _scalar_boundary_all
 from ._scalar_interfaces3d import *  # noqa: F403
 from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
+from ._scalar_screen_junction3d import (
+    prepare_scalar_screen_junction_solve_3d,
+    PreparedScalarScreenJunctionSolve3D,
+    ScalarScreenJunctionCondition3D,
+    ScalarScreenJunctionResult3D,
+)
 from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
+from ._segmented_execution import (
+    FixedCapacitySegmentEvidence,
+    FixedCapacitySegmentPolicy,
+    FixedCapacitySegmentStep,
+    run_fixed_capacity_segments,
+)
 from ._self_gravity import (
     NewtonianGravityDiagnostics,
     NewtonianSelfGravityPlan,
@@ -1485,11 +1654,23 @@ from ._semilinear import (
     solve_semilinear_spde,
 )
 from ._semilinear_drift import SemilinearDrift
+from ._separated_fokker_planck import (
+    SeparatedFokkerPlanckPlan,
+    solve_separated_fokker_planck,
+)
 from ._spde import (
     SemidiscreteSPDE,
     semidiscretize_reaction_diffusion,
     semidiscretize_semilinear_spde,
     semidiscretize_spde,
+)
+from ._spde_truncation import (
+    prepare_spde_approximation,
+    PreparedSPDEApproximation,
+    solve_spde_approximation,
+    SPDEApproximationFamily,
+    SPDEApproximationLevel,
+    SPDEApproximationResult,
 )
 from ._spectral_artifacts import (
     read_spectral_state_artifact,
@@ -1577,6 +1758,12 @@ from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
+from ._unstructured_stage_runtime import (
+    PreparedUnstructuredSSPRK3Runtime,
+    StageEpochExecutor,
+    UnstructuredSSPRK3EpochResult,
+    UnstructuredSSPRK3EpochStageResult,
+)
 from ._uvlm import *  # noqa: F403  # noqa: F403
 from ._uvlm import __all__ as _uvlm_all
 from ._variational_monte_carlo import (
@@ -1645,6 +1832,46 @@ from .maxwell import (
     CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
 )
+
+
+_CHARACTERISTIC_PROJECTION_EXPORTS = frozenset(
+    {
+        "CharacteristicProjectionProblem",
+        "CharacteristicProjectionResult",
+        "CharacteristicTraceResult",
+        "CharacteristicVelocity",
+        "CharacteristicWrap",
+        "solve_characteristic_projection",
+        "trace_characteristics",
+        "CharacteristicBoundaryAction",
+        "CharacteristicBoundaryPolicy",
+        "DiffusiveCharacteristicPlan",
+        "DiffusiveCharacteristicResult",
+        "trace_diffusive_characteristics",
+    }
+)
+
+
+def __getattr__(name: str):
+    if name in _CHARACTERISTIC_PROJECTION_EXPORTS:
+        from . import _characteristic_projection as module
+
+        exports = {
+            "CharacteristicProjectionProblem": module.CharacteristicProjectionProblem,
+            "CharacteristicProjectionResult": module.CharacteristicProjectionResult,
+            "CharacteristicTraceResult": module.CharacteristicTraceResult,
+            "CharacteristicVelocity": module.CharacteristicVelocity,
+            "CharacteristicWrap": module.CharacteristicWrap,
+            "solve_characteristic_projection": module.solve_characteristic_projection,
+            "trace_characteristics": module.trace_characteristics,
+            "CharacteristicBoundaryAction": module.CharacteristicBoundaryAction,
+            "CharacteristicBoundaryPolicy": module.CharacteristicBoundaryPolicy,
+            "DiffusiveCharacteristicPlan": module.DiffusiveCharacteristicPlan,
+            "DiffusiveCharacteristicResult": module.DiffusiveCharacteristicResult,
+            "trace_diffusive_characteristics": module.trace_diffusive_characteristics,
+        }
+        return exports[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
@@ -2274,9 +2501,6 @@ __all__ = [
     "TemporalEquationForm",
     "TemporalMethodCapabilities",
     "TemporalMethodClass",
-    "AlgebraStatePackingEvidence",
-    "DiffraxAlgebraStatePolicy",
-    "ComplexStatePackingEvidence",
     "DiffraxComplexStatePolicy",
     "DiffraxComplexStateStrategy",
     "TemporalSolveEvidence",
@@ -2454,7 +2678,6 @@ __all__ = [
     "ResidualRelaxationMap",
     "InteriorLaplaceDirichletResult",
     "LaplaceCapacitanceResult3D",
-    "solve_laplace_capacitance_3d",
     "LinearTrialSpaceResult",
     "solve_linear_trial_space",
     "solve_interior_laplace_dirichlet_2d",
@@ -2710,6 +2933,16 @@ __all__ = [
     "solve_characteristic_projection",
     "solve_neural_galerkin",
     "trace_characteristics",
+    "CharacteristicBoundaryAction",
+    "CharacteristicBoundaryPolicy",
+    "DiffusiveCharacteristicPlan",
+    "DiffusiveCharacteristicResult",
+    "trace_diffusive_characteristics",
+    "NeuralGalerkinAdjointPolicy",
+    "NeuralGalerkinEpoch",
+    "NeuralGalerkinEpochPlan",
+    "NeuralGalerkinEpochResult",
+    "solve_neural_galerkin_epochs",
     "ParticleEpochSegmentRecord",
     "ParticleEpochTrajectory",
     "PreparedReactiveMonolithicStep",
@@ -2901,4 +3134,160 @@ __all__ += [
     "ParticleMarginalLikelihoodPlan",
     "SimulationSensitivityReport",
     "WhitenedFieldInferencePlan",
+]
+
+__all__ += [
+    "AdaptiveReplayPreparationPolicy",
+    "PreparedReplaySchedule",
+    "prepare_replay_schedule",
+    "AdaptiveTDVPPlan",
+    "AdaptiveTDVPResult",
+    "solve_adaptive_tdvp",
+    "NonlinearPotentialFlowPolicy3D",
+    "NonlinearPotentialFlowState3D",
+    "NonlinearPotentialFlowStep3D",
+    "PreparedNonlinearPotentialFlow3D",
+    "SecondOrderPotentialFlowPlan3D",
+    "prepare_nonlinear_potential_flow_3d",
+    "BEMFractureEpochTransition3D",
+    "BEMFractureProblem3D",
+    "BEMFractureResult3D",
+    "PreparedBEMFracture3D",
+    "advance_bem_fracture_3d",
+    "prepare_bem_fracture_3d",
+    "DAEConsistencyCandidate",
+    "DAEConsistencyPolicy",
+    "DAEEventEvidence",
+    "DAEEventPlan",
+    "DAERegularityCertificate",
+    "DAERegularityDomain",
+    "DAERegularityCertificatePlan",
+    "DAEResetMap",
+    "ManifoldBDFMethod",
+    "ManifoldBDFStage",
+    "apply_dae_event",
+    "certify_dae_regularity",
+    "dae_consistency_candidate",
+    "manifold_bdf_stage",
+    "AbstractStochasticDelayInterpolation",
+    "AcceptedStochasticDelayInterpolation",
+    "AdaptiveStochasticDelayPolicy",
+    "BacksolveDelayAdjoint",
+    "CertifiedTruncatedFunctionalDelay",
+    "DelayBacksolveEvidence",
+    "DelayPrimalTape",
+    "ExponentialConvolutionDelay",
+    "InfiniteMemoryEvidence",
+    "ItoEulerDelayInterpolation",
+    "SRKMKDelayInterpolation",
+    "StochasticDelayControllerEvidence",
+    "StochasticDelayInterpolationCapabilities",
+    "StratonovichEulerHeunDelayInterpolation",
+    "adaptive_stochastic_delay_step_doubling",
+    "backsolve_delay_adjoint",
+    "evaluate_certified_truncated_delay",
+    "PreparedDynamicElasticityFEMBEM3D",
+    "PreparedDynamicMaxwellFEMBEM3D",
+    "PreparedDynamicVectorFEMBEM3D",
+    "prepare_dynamic_elasticity_fem_bem_cq_3d",
+    "prepare_dynamic_maxwell_fem_bem_cq_3d",
+    "FiniteCPTPIntegrationResult",
+    "FiniteLindbladChannelPlan",
+    "integrate_finite_cptp",
+    "FiniteSubspaceTDVPPlan",
+    "FiniteSubspaceTDVPResult",
+    "FiniteVariationalSubspaceTDVPProblem",
+    "prepare_finite_subspace_tdvp",
+    "solve_finite_subspace_tdvp",
+    "DensityFokkerPlanckResult",
+    "ParticleFokkerPlanckPlan",
+    "ParticleFokkerPlanckResult",
+    "SparseGridFokkerPlanckPlan",
+    "WeakObservable",
+    "solve_particle_fokker_planck",
+    "solve_sparse_grid_fokker_planck",
+    "FockRefinementCertificate",
+    "PreparedFockRefinementPlan",
+    "solve_prepared_fock_refinement",
+    "HEOMRefinementCertificate",
+    "PreparedHEOMRefinementPlan",
+    "solve_prepared_heom_refinement",
+    "HybridEventActionResult",
+    "HybridEventTape",
+    "HybridReplayPolicy",
+    "HybridReplayResult",
+    "empty_hybrid_event_tape",
+    "hybrid_event_jvp",
+    "hybrid_event_vjp",
+    "record_hybrid_event",
+    "replay_hybrid_events",
+    "PreparedHybridSchedule",
+    "execute_hybrid_schedule",
+    "prepare_hybrid_schedule",
+    "replay_hybrid_schedule",
+    "LaplaceCapacitanceCoordinateJVP3D",
+    "LaplaceCapacitanceEpochTransition3D",
+    "LaplaceCapacitancePlan3D",
+    "LaplaceCapacitanceSensitivityEvidence3D",
+    "PreparedLaplaceCapacitance3D",
+    "PreparedLaplaceStableDualCalderon3D",
+    "advance_laplace_capacitance_3d",
+    "differentiate_laplace_capacitance_coordinates_3d",
+    "prepare_laplace_stable_dual_calderon_3d",
+    "MACAdaptiveAdvanceResult",
+    "MACAdaptiveRuntimeState",
+    "MACFiniteVolumeCheckpoint",
+    "MACFiniteVolumeCheckpointPlan",
+    "read_mac_finite_volume_checkpoint",
+    "write_mac_finite_volume_checkpoint",
+    "MarkovCubatureErrorEvidence",
+    "MarkovCubatureRefinementPolicy",
+    "WeakObservableEnvelope",
+    "markov_cubature_error_evidence",
+    "refine_markov_cubature",
+    "CoupledFEMBEMResult3D",
+    "PreparedNonmatchingFEMBEM3D",
+    "prepare_maxwell_fem_bem_3d",
+    "prepare_scalar_nonmatching_fem_bem_3d",
+    "FiniteRefinementCertificate",
+    "FiniteSteadyStateCertificate",
+    "ProcessIdentifiabilityCertificate",
+    "certify_finite_lindblad_steady_state",
+    "certify_finite_refinement",
+    "certify_process_identifiability",
+    "MidCircuitQuantumPlan",
+    "MidCircuitQuantumResult",
+    "QuantumMeasurementPlan",
+    "QuantumMeasurementResult",
+    "execute_mid_circuit_quantum_plan",
+    "measure_dense_quantum_program",
+    "RadauIIAMethod",
+    "PreparedRoughEvolution",
+    "RoughEvolutionPolicy",
+    "prepare_rough_evolution",
+    "solve_prepared_rough",
+    "PreparedScalarScreenJunctionSolve3D",
+    "ScalarScreenJunctionCondition3D",
+    "ScalarScreenJunctionResult3D",
+    "prepare_scalar_screen_junction_solve_3d",
+    "FixedCapacitySegmentEvidence",
+    "FixedCapacitySegmentPolicy",
+    "FixedCapacitySegmentStep",
+    "run_fixed_capacity_segments",
+    "SeparatedFokkerPlanckPlan",
+    "solve_separated_fokker_planck",
+    "PreparedSPDEApproximation",
+    "SPDEApproximationFamily",
+    "SPDEApproximationLevel",
+    "SPDEApproximationResult",
+    "prepare_spde_approximation",
+    "solve_spde_approximation",
+    "PreparedReducedMaxwellCPML",
+    "PreparedReducedMaxwellCPMLTerm",
+    "NeuralGalerkinReplayJournal",
+    "replay_neural_galerkin_epochs",
+    "PreparedUnstructuredSSPRK3Runtime",
+    "StageEpochExecutor",
+    "UnstructuredSSPRK3EpochResult",
+    "UnstructuredSSPRK3EpochStageResult",
 ]

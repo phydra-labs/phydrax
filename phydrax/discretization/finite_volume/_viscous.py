@@ -250,9 +250,17 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         args: Any,
         /,
     ) -> tuple[Array, ...]:
-        if any(axis.periodic for axis in discretization.grid.structured_axes):
+        periodic_axes = tuple(
+            axis
+            for axis, structured_axis in enumerate(discretization.grid.structured_axes)
+            if structured_axis.periodic
+        )
+        seam_axes = frozenset(seam.axis for seam in discretization.periodic_seams)
+        missing = tuple(axis for axis in periodic_axes if axis not in seam_axes)
+        if missing:
             raise ValueError(
-                "Mapped viscous flux currently requires bounded structured axes."
+                "Mapped periodic viscous flux requires prepared isometry evidence "
+                f"for axes {missing!r}."
             )
         primitive = system.conserved_to_primitive(value)
         velocity = primitive[..., 1:-1]

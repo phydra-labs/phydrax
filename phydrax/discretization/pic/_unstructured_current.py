@@ -49,6 +49,8 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
         maximum_segments: int = 8,
         tolerance: float = 1.0e-9,
     ):
+        if locator.cell_map.coordinate_element.degree != 1:
+            raise ValueError("Whitney current requires an order-one cell map.")
         cells = np.asarray(locator.cells, dtype=np.int32)
         local_pairs = tuple(itertools.combinations(range(cells.shape[1]), 2))
         edge_map: dict[tuple[int, int], int] = {}
@@ -65,7 +67,7 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
                 cell_edges[cell_index, local_index] = edge_map[canonical]
                 signs[cell_index, local_index] = 1 if (a, b) == canonical else -1
         edge_array = np.asarray(edges, dtype=np.int32)
-        incidence = np.zeros((edge_array.shape[0], locator.mesh.coordinates.shape[0]))
+        incidence = np.zeros((edge_array.shape[0], locator.coordinate_count))
         incidence[np.arange(edge_array.shape[0]), edge_array[:, 0]] = -1.0
         incidence[np.arange(edge_array.shape[0]), edge_array[:, 1]] = 1.0
         segments = int(maximum_segments)
@@ -109,9 +111,7 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
             raise ValueError("Unstructured current particle arrays disagree.")
         start_location = self.locator.locate(start)
         end_location = self.locator.locate(end)
-        start_charge = jnp.zeros(
-            (self.locator.mesh.coordinates.shape[0],), dtype=start.dtype
-        )
+        start_charge = jnp.zeros((self.locator.coordinate_count,), dtype=start.dtype)
         end_charge = jnp.zeros_like(start_charge)
         safe_start = jnp.maximum(start_location.cell_ids, 0)
         safe_end = jnp.maximum(end_location.cell_ids, 0)

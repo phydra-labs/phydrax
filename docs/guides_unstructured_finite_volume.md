@@ -275,6 +275,43 @@ CSR artifact records helper statuses, predicate evidence, source/target coverage
 pair IDs, resource limits, and conservation evidence. Uncertain predicates, unsupported
 cell types, incomplete coverage, or resource exhaustion produce a typed failure and no
 usable remap plan.
+For a frozen route graph, `apply_fixed_combinatorics` accepts dynamic intersection
+measures and source/target volumes. JVP/VJP therefore cover smooth coordinate changes
+that preserve every intersection route. A changed intersection graph, remesh choice,
+or failed coverage certificate is a discrete event and has no fabricated ordinary
+gradient.
+
+`FiniteVolumeStageEpochTransition` is the FV-owned physical payload for DCD segmented
+execution after SSPRK stages 1 or 2. `PreparedUnstructuredSSPRK3Runtime` transfers
+every live Shu--Osher step-start/stage register and accepted-ledger accumulator,
+switches to the prepared successor dynamics, and rolls back the original content
+atomically when a stage or transfer fails. Scheduling, bounded event tapes, replay,
+and saltation remain owned by the solver hybrid-event APIs.
+
+## Polyhedral geometry and moving reconstruction
+
+`prepare_polyhedral_finite_volume_geometry(CellMesh.from_polyhedra(...))` consumes the
+canonical root `PolyhedralConnectivity`. Planar outward face loops are certified with
+Newell area vectors, divergence-theorem volume/centroid identities, positive
+star-tetrahedron quadrature, manifold owner/neighbour routes, and per-cell closure
+residuals. Padded face/cell quadrature capacities remain fixed.
+`UnstructuredFiniteVolumePlan.from_cell_mesh(mesh)` wires this certified geometry into
+the ordinary owner/neighbour face block, spaces, quality report, reconstruction, and
+dynamics path without a private polyhedral topology.
+
+
+Moving fixed-connectivity execution admits stage-refreshed degree-one WLSQ.
+Degree-two polynomial and CWENO-Z reconstruction are additionally certified for rigid
+translations, where normalized moments and smoothness grams remain invariant; other
+degree-two motion fails explicitly. The stencil graph stays fixed and rank/condition
+failure rejects the stage.
+
+`SmagorinskyLESClosure` returns typed eddy viscosity, conductivity, and resolved shear
+dissipation from `ResolvedGradientState`. `StefanPhaseChangePlan` returns a single
+bounded interfacial mass-transfer factor and explicit mass/energy defects.
+`VariableSurfaceTensionPolicy` evaluates nonnegative sigma and the wall/interface
+tangential Marangoni gradient without duck-typed field extraction.
+
 
 `FiniteVolumeTopologyEventScheduler` coalesces remesh, AMR, and overset requests at
 accepted-step boundaries. Transactions require typed candidate epoch, remap coverage,
@@ -283,9 +320,10 @@ success. A committed event advances the epoch journal atomically.
 
 ## Scope
 
-The current implementation is single-device. It does not provide graph partitioning,
-distributed halos, hexahedra, arbitrary polyhedra, topology changes inside Runge--Kutta
-stages, turbulence models, phase change, variable surface tension, three-dimensional
-PLIC/contact lines, or differentiable remeshing. Geometry intersections, remap,
-overset face artifacts, AMR interface routes, embedded metrics, and PLIC data are
-explicit certified artifacts; they do not silently invent missing evidence.
+The runtime remains single-device: graph partitioning and distributed FV halos are
+not claimed. Bounded planar-faced polyhedra mean finite orientable manifold convex or
+star-shaped cells within declared face/vertex/quadrature capacities, not arbitrary
+nonmanifold or curved cells. Moving degree one supports general fixed-connectivity
+metrics; moving degree two/WENO is restricted to certified rigid translation. Remap
+derivatives are valid only for fixed intersection combinatorics. Topology selection is
+differentiated only through the DCD event/replay contract.

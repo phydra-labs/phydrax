@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -6,6 +7,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._trainable import partition_trainable
+from phydrax._training import DelayedTargetPolicy, TargetParameterState
 from phydrax.solver._functional_checkpoint import load_functional_training_checkpoint
 from phydrax.solver._functional_residual import prepare_functional_residual
 from phydrax.solver._functional_surrogate import (
@@ -42,6 +44,93 @@ def _fixed_interval_solver(*, blocks=None, evaluation=False):
     )
 
 
+def _rejected_update_solver():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    field = domain.Parameter(jnp.asarray([0.0]))
+    component = domain.component()
+    condition = phx.conditions.Residual(
+        "u",
+        component,
+        lambda value: domain.Parameter(
+            jnp.where(value.func() <= 0.0, value.func() - 1.0, jnp.nan)
+        ),
+    )
+    batch = component.points({"x": jnp.asarray([[0.25], [0.75]])})
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(component),
+        batch,
+    )
+    term = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(realization),
+    )
+    return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
+
+
+@pytest.mark.parametrize(
+    "optimizer",
+    (
+        phx.optim.GaussNewton(line_search=phx.optim.ArmijoLineSearch(maximum_steps=2)),
+        phx.optim.NewtonKrylov(line_search=phx.optim.ArmijoLineSearch(maximum_steps=2)),
+        optax.chain(
+            optax.sgd(1.0),
+            optax.scale_by_backtracking_linesearch(max_backtracking_steps=1),
+        ),
+    ),
+    ids=("least-squares", "iterative", "optax-linesearch"),
+)
+def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
+    optimizer,
+    tmp_path,
+):
+    solver = _rejected_update_solver()
+    policy = DelayedTargetPolicy(2)
+    initial_target = TargetParameterState.initialize(
+        partition_trainable(solver.functions)[0],
+        policy,
+    )
+    plan = phx.solver.FunctionalTrainingPlan(
+        checkpoint=phx.solver.FunctionalCheckpointPolicy(
+            tmp_path / "rejected",
+            every=1,
+        )
+    )
+    accepted_steps = []
+
+    trained = solver.solve(
+        num_iter=1,
+        optim=optimizer,
+        keep_best=False,
+        log_every=0,
+        jit=False,
+        training=plan,
+        target_policy=policy,
+        _accepted_update_hook=lambda step, _parameters: accepted_steps.append(step),
+    )
+
+    assert trained.training_state is not None
+    state = trained.training_state
+    assert state.progress.epoch == 1
+    assert state.progress.update_step == 0
+    assert state.target_state is not None
+    assert int(state.target_state.update_count) == 0
+    assert eqx.tree_equal(state.target_state, initial_target)
+    assert accepted_steps == []
+    assert jnp.array_equal(
+        state.current_functions["u"].func(),
+        jnp.asarray([0.0]),
+    )
+    restored = load_functional_training_checkpoint(
+        tmp_path / "rejected",
+        trained,
+        state,
+        plan,
+    )
+    assert restored.state.progress.epoch == 1
+    assert restored.state.progress.update_step == 0
+    assert eqx.tree_equal(restored.state.target_state, initial_target)
+
+
 def test_residual_block_layout_preserves_authored_loss_and_root_partition():
     layout = phx.terms.ResidualBlockLayout(("first", "second"))
     solver = _fixed_interval_solver(blocks=layout)
@@ -53,9 +142,7 @@ def test_residual_block_layout_preserves_authored_loss_and_root_partition():
         sampling_key=jr.key(2),
         iteration=1,
     )
-    residual = prepare_functional_residual(
-        prepared, params, fixed, solver.enforcement
-    )
+    residual = prepare_functional_residual(prepared, params, fixed, solver.enforcement)
 
     assert residual.layout.logical_blocks == ((0, "first"), (0, "second"))
     assert jnp.allclose(residual.loss(params), solver.loss(key=jr.key(3)))
@@ -74,9 +161,7 @@ def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
         sampling_key=jr.key(5),
         iteration=1,
     )
-    update = prepare_functional_update(
-        prepared, params, fixed, solver.enforcement
-    )
+    update = prepare_functional_update(prepared, params, fixed, solver.enforcement)
 
     assert isinstance(update, PreparedFunctionalUpdate)
     physical = update.physical_values(solver.functions).total
@@ -85,10 +170,9 @@ def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
 
 def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
     plan = phx.solver.FunctionalTrainingPlan(
-        checkpoint=phx.solver.FunctionalCheckpointPolicy(
-            tmp_path / "functional", every=1
-        )
+        checkpoint=phx.solver.FunctionalCheckpointPolicy(tmp_path / "functional", every=1)
     )
+    target_policy = DelayedTargetPolicy(1)
     solver = _fixed_interval_solver()
     interrupted = solver.solve(
         num_iter=1,
@@ -96,15 +180,19 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         keep_best=False,
         log_every=0,
         training=plan,
+        target_policy=target_policy,
     )
     assert interrupted.training_state is not None
     assert interrupted.training_state.progress.update_step == 1
+    assert interrupted.training_state.target_state is not None
+    assert int(interrupted.training_state.target_state.update_count) == 1
 
     template = interrupted.training_state
     restored = load_functional_training_checkpoint(
         tmp_path / "functional", interrupted, template, plan
     )
     assert restored.state.progress.update_step == 1
+    assert eqx.tree_equal(restored.state.target_state, template.target_state)
     incompatible_plan = phx.solver.FunctionalTrainingPlan(
         checkpoint=phx.solver.FunctionalCheckpointPolicy(
             tmp_path / "functional",
@@ -118,6 +206,21 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
             template,
             incompatible_plan,
         )
+    mismatched_template = eqx.tree_at(
+        lambda state: state.target_state,
+        template,
+        TargetParameterState.initialize(
+            partition_trainable(interrupted.functions)[0],
+            DelayedTargetPolicy(2),
+        ),
+    )
+    with pytest.raises(ValueError, match="target-policy identity"):
+        load_functional_training_checkpoint(
+            tmp_path / "functional",
+            interrupted,
+            mismatched_template,
+            plan,
+        )
     with pytest.raises(ValueError, match="In-memory functional training-plan"):
         interrupted.solve(
             num_iter=2,
@@ -125,6 +228,17 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
             keep_best=False,
             log_every=0,
             training=incompatible_plan,
+            target_policy=target_policy,
+            resume=True,
+        )
+    with pytest.raises(ValueError, match="target-policy identity"):
+        interrupted.solve(
+            num_iter=2,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=plan,
+            target_policy=DelayedTargetPolicy(2),
             resume=True,
         )
 
@@ -134,6 +248,7 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         keep_best=False,
         log_every=0,
         training=plan,
+        target_policy=target_policy,
         resume=True,
     )
 
@@ -143,6 +258,7 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         keep_best=False,
         log_every=0,
         training=plan,
+        target_policy=target_policy,
         resume=True,
     )
     uninterrupted = solver.solve(
@@ -151,8 +267,18 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         keep_best=False,
         log_every=0,
         training=phx.solver.FunctionalTrainingPlan(),
+        target_policy=target_policy,
     )
     assert resumed.training_state.progress.update_step == 2
+    assert int(resumed.training_state.target_state.update_count) == 2
+    assert eqx.tree_equal(
+        resumed.training_state.target_state,
+        uninterrupted.training_state.target_state,
+    )
+    assert eqx.tree_equal(
+        disk_resumed.training_state.target_state,
+        uninterrupted.training_state.target_state,
+    )
     assert jnp.allclose(
         resumed.training_state.current_functions["u"].func(),
         uninterrupted.training_state.current_functions["u"].func(),
@@ -297,6 +423,80 @@ def test_kfac_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
     )
 
 
+def test_target_policy_keep_best_requires_fixed_selection_and_resumes_exactly(
+    tmp_path,
+):
+    solver = _fixed_interval_solver(evaluation=True)
+    target_policy = DelayedTargetPolicy(1)
+    with pytest.raises(ValueError, match="fixed FunctionalSelectionPolicy"):
+        solver.solve(
+            num_iter=1,
+            optim=optax.sgd(0.05),
+            log_every=0,
+            target_policy=target_policy,
+        )
+
+    plan = phx.solver.FunctionalTrainingPlan(
+        selection=phx.solver.FunctionalSelectionPolicy(every=1),
+        checkpoint=phx.solver.FunctionalCheckpointPolicy(
+            tmp_path / "target-selection",
+            every=1,
+        ),
+    )
+    interrupted = solver.solve(
+        num_iter=1,
+        optim=optax.sgd(0.05),
+        log_every=0,
+        training=plan,
+        target_policy=target_policy,
+    )
+    disk_resumed = solver.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        log_every=0,
+        training=plan,
+        target_policy=target_policy,
+        resume=True,
+    )
+    resumed = interrupted.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        log_every=0,
+        training=plan,
+        target_policy=target_policy,
+        resume=True,
+    )
+    uninterrupted = solver.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        log_every=0,
+        training=plan,
+        target_policy=target_policy,
+    )
+
+    assert uninterrupted.training_state is not None
+    reference = uninterrupted.training_state
+    assert reference.progress.best_value is not None
+    for candidate_solver in (resumed, disk_resumed):
+        assert candidate_solver.training_state is not None
+        candidate = candidate_solver.training_state
+        assert candidate.progress == reference.progress
+        assert eqx.tree_equal(
+            candidate.current_functions,
+            reference.current_functions,
+        )
+        assert eqx.tree_equal(candidate.best_functions, reference.best_functions)
+        assert eqx.tree_equal(
+            candidate.optimizer_state,
+            reference.optimizer_state,
+        )
+        assert eqx.tree_equal(candidate.target_state, reference.target_state)
+        assert jnp.array_equal(
+            jr.key_data(candidate.key),
+            jr.key_data(reference.key),
+        )
+
+
 def test_fixed_evaluation_selection_is_recorded():
     solver = _fixed_interval_solver(evaluation=True)
     plan = phx.solver.FunctionalTrainingPlan(
@@ -360,9 +560,7 @@ def test_training_policy_publishes_finite_ntk_diagnostics():
 def test_frozen_correction_field_preserves_explicit_derivative_rules():
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(2.0).with_derivative_rule(
-        phx.domain.CallbackDerivativeRule(
-            lambda **kwargs: domain.Parameter(7.0)
-        )
+        phx.domain.CallbackDerivativeRule(lambda **kwargs: domain.Parameter(7.0))
     )
     frozen = phx.solver.freeze_domain_function(field)
     derivative = phx.operators.partial_n(frozen, var="x", order=1)

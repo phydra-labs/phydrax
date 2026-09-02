@@ -38,7 +38,7 @@ from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
 from ._map import MAPResult
 from ._map_candidate_search import MAPCandidateSearchResult
-from ._map_search import GaussianProcessMAPSearchResult, MAPSearchResult
+from ._map_search import BayesianOptimizationMAPResult, MAPSearchResult
 from ._mcmc import MCMCResult
 from ._nested import nested_sampling_status_name, NestedSamplingResult
 from ._particle import (
@@ -419,12 +419,15 @@ def _adapt_result(result, arrays, fields, trees):
             _put_field(fields, arrays, name, value)
         metadata = {
             "state_dimension": result.state_dimension,
+            "spatial_rank": result.spatial_rank,
             "kernel_id": result.kernel_id,
             "kernel_content_id": result.kernel_content_id,
             "prepared_kernel_content_id": result.prepared_kernel_content_id,
             "schedule_id": result.schedule_id,
             "method_id": result.method_id,
             "repeated_time_policy": result.repeated_time_policy,
+            "temporal_method": result.temporal_method,
+            "covariance_form": result.covariance_form,
             "precision_evidence": result.precision_evidence.to_dict(),
         }
         return (
@@ -1295,72 +1298,38 @@ def _adapt_result(result, arrays, fields, trees):
         }
         return "map_candidate_search", metadata, ("problem", "search")
 
-    if isinstance(result, GaussianProcessMAPSearchResult):
+    if isinstance(result, BayesianOptimizationMAPResult):
         _put_tree(trees, arrays, "position", result.position)
         _put_tree(trees, arrays, "parameters", result.parameters)
-        _put_tree(
-            trees,
-            arrays,
-            "evaluated_positions",
-            result.evaluated_positions,
-        )
+        _put_tree(trees, arrays, "evaluated_positions", result.evaluated_positions)
         _put_tree(trees, arrays, "lower_bounds", result.lower_bounds)
         _put_tree(trees, arrays, "upper_bounds", result.upper_bounds)
-        _put_tree(
-            trees,
-            arrays,
-            "search_kernel",
-            result.search.surrogate.kernel,
-        )
-        for name in (
-            "objective",
-            "log_density",
-            "raw_objectives",
-            "valid_evaluations",
-            "proposal_kinds",
-            "best_objective_history",
-            "best_history_valid",
+        for name, value in (
+            ("objective", result.objective),
+            ("log_density", result.log_density),
+            ("raw_objectives", result.evidence.objectives),
+            ("valid_evaluations", result.evidence.valid),
+            ("proposal_kinds", result.evidence.proposal_kinds),
+            ("best_objective_history", result.evidence.incumbent_history),
+            ("acquisition_estimates", result.evidence.acquisition_estimates),
+            (
+                "acquisition_standard_errors",
+                result.evidence.acquisition_standard_errors,
+            ),
         ):
-            _put_field(fields, arrays, name, getattr(result, name))
-        _put_field(
-            fields,
-            arrays,
-            "search_noise_scale",
-            result.search.surrogate.noise_scale,
-        )
-        _put_field(
-            fields,
-            arrays,
-            "search_jitter",
-            result.search.surrogate.jitter,
-        )
+            _put_field(fields, arrays, name, value)
         metadata = {
             "valid": result.valid,
             "termination_reason": result.termination_reason,
             "objective_evaluations": result.objective_evaluations,
-            "invalid_evaluations": result.invalid_evaluations,
-            "fallback_count": result.fallback_count,
-            "surrogate_failure_count": result.surrogate_failure_count,
-            "design_signature": result.design_signature,
-            "method_id": result.method_id,
-            "proposal_seconds": result.proposal_seconds,
-            "objective_seconds": result.objective_seconds,
-            "search": {
-                "max_evaluations": result.search.max_evaluations,
-                "initial_evaluations": result.search.initial_evaluations,
-                "candidate_count": result.search.candidate_count,
-                "improvement_margin": result.search.improvement_margin,
-                "minimum_separation": result.search.minimum_separation,
-                "kernel": type(result.search.surrogate.kernel).__name__,
-                "noise_scale_units": "raw_negative_log_density",
-                "noise_standardization": "noise_scale / objective_scale",
-                "jitter_units": "standardized_covariance",
-            },
+            "invalid_evaluations": result.evidence.invalid_evaluation_count,
+            "method_id": "bayesian-optimization-map-consumer",
+            "globally_optimal": result.evidence.globally_optimal,
         }
         return (
-            "gaussian_process_map_search",
+            "bayesian_optimization_map_search",
             metadata,
-            ("problem", "search", "key"),
+            ("problem", "evidence"),
         )
 
     if isinstance(result, MAPSearchResult):

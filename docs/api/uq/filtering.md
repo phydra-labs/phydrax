@@ -318,87 +318,61 @@ assert square_root_smoothed.execution_method == "sequential"
 
 ::: phydrax.uq.kalman_innovation_diagnostics
 
-## Exact temporal Matérn Gaussian processes
+## Bounded rational and separable state-space Gaussian processes
 
-`compile_state_space_kernel` prepares a scalar one-dimensional `Matern32Kernel` or
-`Matern52Kernel`, directly or inside one `ScaleKernel`, on fixed training and query
-times. Preparation resolves the exact continuous drift, stationary covariance and
-factor, process-noise covariance and factor, observation map, state dimension, and
-content ID. It verifies the stationary Lyapunov residual before constructing a
-canonical `StateSpaceProblem`.
+`StateSpaceGaussianProcessDesign` declares training/query times, masks, time
+derivative orders, and optional spatial `FunctionalDesign` values. Host preparation
+sorts one schedule, packs repeated-time observations into the declared
+`max_observations_per_time`, factors the finite joint spatial-functional covariance,
+and rejects a spatial-rank × temporal-state product above `max_state_dimension`.
+Changing schedule topology, spatial sites, or numerical rank starts a new epoch.
 
-Training and query times may arrive in any order. Preparation makes one strictly
-increasing schedule and retains stable sort indices, inverse permutations, and
-original-order schedule indices. Training times must be unique. Repeated query
-times and train-query overlaps share one latent schedule state and are repeated in
-the returned original query order. Query-only and explicitly missing training
-positions are represented by `ObservationSequence.observation_mask`; no large-noise
-sentinel is used. `max_schedule_size` is a preparation-time resource guard.
+Temporal compilation accepts Matérn-3/2, Matérn-5/2, `SHOKernel`, stable finite-order
+`CARMAKernel`, nonnegative scale/amplitude wrappers, and finite sums. It is not a
+universal covariance-to-SDE compiler: products and unknown transformed kernels fail
+at preparation. Time derivative order d uses H Aᵈ only when lower derivatives have
+no direct white-noise feedthrough. Spatial values and derivatives reuse the
+functional-GP regularity certificate.
 
 ```python
-kernel = phx.kernels.ScaleKernel(
-    phx.kernels.Matern52Kernel(length_scale=0.4),
-    1.5,
+kernel = (
+    phx.kernels.Matern52Kernel(length_scale=0.4)
+    + phx.kernels.SHOKernel(
+        frequency=1.2,
+        quality_factor=0.8,
+        variance=0.3,
+    )
+)
+design = phx.uq.StateSpaceGaussianProcessDesign(
+    jnp.asarray([0.8, 0.0, 0.0]),
+    jnp.asarray([1.2, -0.2, 0.35]),
+    train_mask=jnp.asarray([True, True, False]),
 )
 plan = phx.uq.compile_state_space_kernel(
     kernel,
-    jnp.asarray([0.8, 0.0, 0.35]),
-    jnp.asarray([1.2, -0.2, 0.35]),
-    train_mask=jnp.asarray([True, True, False]),
+    design,
+    max_observations_per_time=2,
 )
 gp = phx.uq.fit_state_space_gaussian_process(
     plan,
     jnp.asarray([0.1, -0.3, 0.0]),
-    noise_scale=0.02,
+    noise_scale=jnp.asarray([0.02, 0.03, 0.02]),
 )
 ```
 
-`noise_scale` is an observation standard deviation. Kernel coefficients and schedule
-times must use one identical compute dtype; mixed plans are rejected rather than
-silently rounded. Execution is always the canonical sequential square-root Kalman
-filter and matching square-root RTS smoother with zero covariance regularization.
-External timestamps and schedule identity are preserved, while internal inference
-subtracts the earliest schedule time. The stationary prior therefore begins at
-internal time `-length_scale`, avoiding both a zero-process-root derivative and
-large-origin subtraction loss. Matérn derivative coordinates are normalized by the
-kernel decay rate; closed-form dimensionless Jordan transitions therefore remain
-finite even for tiny length scales and long gaps. Interval process covariance uses
-bounded Van Loan evaluation only for normalized short gaps and the stationary
-identity `P∞ - Φ P∞ Φᵀ` for long gaps, so large extrapolation intervals do not
-evaluate the exponentially growing auxiliary block. The RTS recursion is one reverse
-`jax.lax.scan`, not a schedule-sized unrolled graph. Its algebraically positive
-semidefinite joint block uses a scale-aware floating-point assembly bound only to
-classify backward-error-sized negative eigenvalues as numerical null directions.
-The covariance is not modified and no regularization is added.
+Gaussian execution accepts `temporal_method="sequential"|"parallel"|"auto"`.
+The associative parallel covariance filter is exact for the same model; parallel
+square-root execution is rejected rather than silently downgraded. Missing rows use
+an explicit mask, and no large-noise sentinel, covariance repair, pseudoinverse,
+implicit jitter, or method fallback is introduced. Results retain packed masks,
+query order, child filter/smoother evidence, resolved execution/covariance form,
+kernel/schedule identities, state/spatial rank, and precision evidence.
 
-`posterior_mean` and `posterior_variance` are latent query marginals;
-`predictive_variance` adds the declared observation variance. The result also
-retains the exact active-observation log marginal likelihood, active count, masks,
-filter/smoother histories, validity/status, kernel/schedule/method IDs, and precision
-evidence. A concrete transformed fit records both prepared and evaluated kernel
-content IDs. Under JAX tracing, where a host content hash is unavailable, the
-evaluated ID is `None` and the exact evaluated length scale and covariance scale
-remain exported arrays. Invalidity at a requested query has its own non-success GP
-status; invalid unrequested smoother states do not redefine the query result.
-The complete result exports through `export_result`.
-
-The returned query contract is marginal and therefore remains linear in schedule
-storage; it does not materialize a dense query-by-query posterior covariance.
-Unsupported regimes are rejected during preparation: kernel sums/products,
-amplitude wrappers, vector length scales, multidimensional inputs, derivative
-observations, SHO/CARMA models, non-Gaussian likelihoods, and parallel square-root
-execution. Dynamically evaluated positive parameters that cannot produce finite
-representable decay, drift, covariance, and process-factor coefficients fail
-explicitly rather than saturating a transition. Covariances are not projected,
-clipped, repaired, or given implicit
-jitter. A degenerate zero-signal, zero-noise active observation consequently reports
-the canonical filtering failure instead of manufacturing a posterior.
-
-`tools/state_space_gp_benchmarks.py` compares this path with independent dense GP
-algebra over increasing schedules. Its report retains per-size accuracy, complete
-unique retained-array storage for both returned results, compilation and steady
-execution times, scaling summaries, an admission gate, environment details, and
-source provenance. Repeated PyTree aliases count once.
+`StateSpaceGaussianProcessLaplace` provides fixed-iteration damped sites only for
+certified scalar Bernoulli and Poisson natural-parameter likelihoods. It returns
+positive-curvature, residual, iteration, damping, child-Gaussian, and typed failure
+evidence. This route is explicitly approximate; non-log-concave, coupled
+categorical, and arbitrary callable likelihoods are unsupported.
 
 ::: phydrax.uq.StateSpaceGaussianProcessPlan
 

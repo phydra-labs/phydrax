@@ -42,7 +42,6 @@ from ..geometry import BoundaryAtlasProvider, CubatureAtlasProvider
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan
 from ._rules import (
-    ClenshawCurtisRule,
     CubatureRule,
     CubatureRuleData,
     GaussHermiteRule,
@@ -52,7 +51,6 @@ from ._rules import (
     OrthogonalRuleData,
     probability_rule_data,
     ProbabilityRule,
-    TanhSinhRule,
 )
 from ._targets import ComponentTarget
 
@@ -415,27 +413,23 @@ def _scalar_interior_rule_data(
             if not isinstance(data, OrthogonalRuleData):
                 raise RuntimeError("GaussHermiteRule resolved non-orthogonal rule data.")
             nodes = data.nodes
-        if (
-            not factor.supports_reference_transform
-            or factor.reference_measure != data.integration_measure
-        ):
+        transport = factor.reference_transport
+        if transport.reference_measure != data.integration_measure:
             raise ValueError(
                 f"{owner} requires a probability factor with a "
-                "standard-normal reference transform."
+                "standard-normal reference transport."
             )
-        return factor.from_reference(nodes), data.weights
+        return transport.from_reference(nodes), data.weights
 
     data = interval_rule_data(rule)
     if isinstance(factor, ProbabilityDomain):
-        if isinstance(rule, (ClenshawCurtisRule, TanhSinhRule)) and (
-            factor.distribution.support is None
-        ):
+        transport = factor.reference_transport
+        if transport.reference_measure != "uniform":
             raise ValueError(
-                "Endpoint-inclusive quadrature cannot map an unbounded probability "
-                "component; use GaussLegendreRule or stochastic integration."
+                "Interval quadrature on a probability factor requires a uniform "
+                "reference transport."
             )
-        unit = 0.5 * (data.nodes + 1.0)
-        return jnp.asarray(factor.distribution.icdf(unit)), 0.5 * data.weights
+        return transport.from_reference(data.nodes), 0.5 * data.weights
     lower = jnp.asarray(factor.fixed("start"))
     upper = jnp.asarray(factor.fixed("end"))
     half = 0.5 * (upper - lower)
@@ -708,16 +702,14 @@ def _cubature_factor_data(
         jnp.arange(charts, dtype=jnp.int32)[:, None],
         (charts, count),
     )
-    physical = atlas.map(chart_indices, reference)
-    jacobian = atlas.jacobian(chart_indices, reference)
-    active = atlas.reference_mask(chart_indices, reference)
+    evaluation = atlas.evaluate(chart_indices, reference)
     weights = jnp.where(
-        active,
-        jacobian * reference_data.weights[None, :],
-        0.0,
+        evaluation.admissible,
+        evaluation.measure_scale * reference_data.weights[None, :],
+        jnp.asarray(jnp.nan, dtype=evaluation.measure_scale.dtype),
     )
     return (
-        physical.reshape((-1, factor.spatial_dim)),
+        evaluation.points.reshape((-1, factor.spatial_dim)),
         weights.reshape((-1,)),
     )
 

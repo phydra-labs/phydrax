@@ -18,7 +18,6 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import DiscreteFieldSpace, FieldTransfer
-from ..dynamics import TimeGrid
 from ..linalg import AbstractVectorSpace
 from ..nonlinear import (
     AbstractNonlinearMethod,
@@ -127,14 +126,14 @@ class CouplingSubsystemCapabilities(StrictModule):
 
 
 class CouplingPort(StrictModule, NonTrainableState):
-    """One exact participant input or output space."""
+    """One exact endpoint or fixed-capacity waveform participant space."""
 
     space: AbstractVectorSpace
     field_space: DiscreteFieldSpace | None
-    sample_grid: TimeGrid | None
+    waveform_plan: Any | None
+    temporal_transfer: Any | None
     reference_scale: float = eqx.field(static=True)
     direction: CouplingDirection = eqx.field(static=True)
-    temporal_interpolation: Literal["held", "linear"] = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
 
     def __init__(
@@ -145,8 +144,8 @@ class CouplingPort(StrictModule, NonTrainableState):
         /,
         *,
         field_space: DiscreteFieldSpace | None = None,
-        sample_grid: TimeGrid | None = None,
-        temporal_interpolation: Literal["held", "linear"] = "linear",
+        waveform_plan: Any | None = None,
+        temporal_transfer: Any | None = None,
         reference_scale: float,
     ):
         if direction not in ("input", "output"):
@@ -162,27 +161,30 @@ class CouplingPort(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Coupling field_space vector space must equal the declared port space."
                 )
-        if sample_grid is not None:
-            if not isinstance(sample_grid, TimeGrid):
-                raise TypeError("Coupling port sample_grid must be a TimeGrid or None.")
-            if float(sample_grid.times[0]) != 0.0 or float(sample_grid.times[-1]) <= 0.0:
-                raise ValueError(
-                    "Coupling port sample_grid must span relative time zero to a "
-                    "positive endpoint."
+        from ._partitioned_coupling_waveform import (
+            AbstractCouplingTemporalTransfer,
+            CouplingWaveformPlan,
+        )
+
+        if waveform_plan is None:
+            if temporal_transfer is not None:
+                raise ValueError("Endpoint ports do not accept a temporal transfer.")
+        else:
+            if not isinstance(waveform_plan, CouplingWaveformPlan):
+                raise TypeError("waveform_plan must be CouplingWaveformPlan or None.")
+            if not isinstance(temporal_transfer, AbstractCouplingTemporalTransfer):
+                raise TypeError(
+                    "Waveform ports require an explicit coupling temporal transfer."
                 )
-        if temporal_interpolation not in ("held", "linear"):
-            raise ValueError(
-                "Coupling temporal_interpolation must be 'held' or 'linear'."
-            )
         scale = float(reference_scale)
         if not isfinite(scale) or scale <= 0.0:
             raise ValueError("Coupling port reference_scale must be finite and positive.")
         self.space = space
         self.field_space = field_space
-        self.sample_grid = sample_grid
+        self.waveform_plan = waveform_plan
+        self.temporal_transfer = temporal_transfer
         self.reference_scale = scale
         self.direction = direction
-        self.temporal_interpolation = temporal_interpolation
         self.port_id = _identifier(port_id, "Coupling port_id")
 
 
@@ -506,6 +508,46 @@ class CouplingWindow(StrictModule, NonTrainableState):
         return self.end - self.start
 
 
+class CouplingWindowErrorEstimate(StrictModule):
+    """Participant-owned local error for adaptive window acceptance."""
+
+    error_norm: Array
+    reference_norm: Array
+    order: Array
+    reliable: Array
+
+    def __init__(
+        self,
+        error_norm: Any,
+        reference_norm: Any,
+        order: Any,
+        reliable: Any,
+        /,
+    ):
+        error = _scalar(error_norm, "coupling error_norm")
+        reference = _scalar(reference_norm, "coupling reference_norm", dtype=error.dtype)
+        order_ = _scalar(order, "coupling error order", dtype=jnp.int32)
+        reliable_ = _scalar(reliable, "coupling error reliability", dtype=bool)
+        error = eqx.error_if(
+            error,
+            ~jnp.isfinite(error)
+            | ~jnp.isfinite(reference)
+            | (error < 0.0)
+            | (reference < 0.0)
+            | (order_ < 1),
+            "Coupling window error estimate is invalid.",
+        )
+        self.error_norm = error
+        self.reference_norm = reference
+        self.order = order_
+        self.reliable = reliable_
+
+    @property
+    def ratio(self) -> Array:
+        scale = jnp.maximum(self.reference_norm, jnp.finfo(self.error_norm.dtype).tiny)
+        return self.error_norm / scale
+
+
 class CouplingSubsystemResult(StrictModule):
     """One participant candidate and endpoint outputs for a frozen window."""
 
@@ -515,6 +557,7 @@ class CouplingSubsystemResult(StrictModule):
     status: Array
     residual_norm: Array
     iterations: Array
+    error_estimate: CouplingWindowErrorEstimate
     work: Array
     auxiliary: Any
 
@@ -528,6 +571,7 @@ class CouplingSubsystemResult(StrictModule):
         status: Any,
         residual_norm: Any = 0.0,
         iterations: Any = 0,
+        error_estimate: CouplingWindowErrorEstimate | None = None,
         work: Any = 0,
         auxiliary: Any = None,
     ):
@@ -537,6 +581,13 @@ class CouplingSubsystemResult(StrictModule):
         self.status = _scalar(status, "participant status", dtype=jnp.int32)
         self.residual_norm = _scalar(residual_norm, "participant residual_norm")
         self.iterations = _scalar(iterations, "participant iterations", dtype=jnp.int32)
+        self.error_estimate = (
+            CouplingWindowErrorEstimate(0.0, 1.0, 1, False)
+            if error_estimate is None
+            else error_estimate
+        )
+        if not isinstance(self.error_estimate, CouplingWindowErrorEstimate):
+            raise TypeError("error_estimate must be CouplingWindowErrorEstimate or None.")
         self.work = _scalar(work, "participant work", dtype=jnp.int32)
         self.auxiliary = auxiliary
 
@@ -684,6 +735,10 @@ class CouplingWindowDiagnostics(StrictModule):
     participant_work: Array
     participant_evaluations: Array
     transfer_applications: Array
+    participant_error_norms: Array
+    participant_error_reference_norms: Array
+    participant_error_orders: Array
+    participant_error_reliable: Array
     coupling_iterations: Array
     nonlinear_residual_evaluations: Array
     counts_complete: bool = eqx.field(static=True)
@@ -733,6 +788,7 @@ __all__ = [
     "CouplingWindow",
     "CouplingWindowDiagnostics",
     "CouplingWindowResult",
+    "CouplingWindowErrorEstimate",
     "ExplicitCouplingPolicy",
     "ImplicitCouplingPolicy",
     "coupling_status_message",

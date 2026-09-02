@@ -1688,6 +1688,41 @@ def _dense_host_eigensolve(
     return alpha, beta, np.asarray(right), np.asarray(left), alpha.size, True, 0
 
 
+def _dense_generalized_schur(
+    matrix: np.ndarray,
+    mass: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return one complex generalized Schur decomposition on the host.
+
+    The returned factors satisfy ``Qᴴ A Z = S`` and ``Qᴴ B Z = T``.  This
+    helper is deliberately preparation-only: QZ branch selection is not
+    assigned a differentiable execution contract.
+    """
+    matrix_ = np.asarray(matrix)
+    mass_ = np.asarray(mass)
+    if matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
+        raise ValueError("Generalized Schur preparation requires a square matrix.")
+    if mass_.shape != matrix_.shape:
+        raise ValueError("Generalized Schur pencil members must have one shape.")
+    if not np.all(np.isfinite(matrix_)) or not np.all(np.isfinite(mass_)):
+        raise ValueError("Generalized Schur pencil members must be finite.")
+    dtype = np.result_type(matrix_.dtype, mass_.dtype, np.complex64)
+    output = "complex"
+    schur_a, schur_b, left, right = scipy_linalg.qz(
+        matrix_.astype(dtype, copy=False),
+        mass_.astype(dtype, copy=False),
+        output=output,
+        check_finite=False,
+    )
+    return (
+        np.asarray(schur_a),
+        np.asarray(schur_b),
+        np.asarray(left),
+        np.asarray(right),
+    )
+
+
 def _arnoldi_host_eigensolve(
     prepared: PreparedGeneralEigenSolve,
     /,

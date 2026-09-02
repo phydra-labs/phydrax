@@ -65,20 +65,21 @@ def stabilize_virtual_element_tensor(
         raise TypeError("projection must be VirtualElementProjectionData.")
     if not isinstance(policy, VirtualElementStabilizationPolicy):
         raise TypeError("policy must be VirtualElementStabilizationPolicy.")
+    if projector == "h1" and projection.family != "ConformingH1":
+        raise ValueError("The H1 projector is undefined for this VEM family.")
+    if projector not in ("h1", "l2"):
+        raise ValueError("projector must be h1 or l2.")
     matrix = jnp.asarray(consistent)
     dof_projector = (
         projection.h1_dof_projector
         if projector == "h1"
         else projection.l2_dof_projector
-        if projector == "l2"
-        else None
     )
-    if dof_projector is None:
-        raise ValueError("projector must be h1 or l2.")
     local = dof_projector.shape[-1]
     residual = jnp.eye(local, dtype=matrix.dtype)[None] - dof_projector
     trace = jnp.trace(matrix, axis1=-2, axis2=-1)
-    rank = max(projection.basis.feature_count - (1 if projector == "h1" else 0), 1)
+    polynomial_rank = projection.dof_matrix.shape[-1]
+    rank = max(polynomial_rank - (1 if projector == "h1" else 0), 1)
     scale = jnp.maximum(jnp.abs(trace) / rank, policy.minimum_scale)
     if policy.kind == "dofi_dofi":
         stabilization = scale[:, None, None] * oe.contract(

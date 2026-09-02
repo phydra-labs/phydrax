@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
-from phydrax.discretization import ParticleCell
+from phydrax.discretization import PeriodicCell
 from phydrax.operators.integral.layer_potential._periodic_core3d import (
     periodic_bloch_phase_3d,
     periodic_lattice_translation_3d,
@@ -40,7 +40,7 @@ _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int
 
 
 def _cell():
-    return ParticleCell(3.0 * jnp.eye(3))
+    return PeriodicCell(3.0 * jnp.eye(3))
 
 
 def _region():
@@ -66,7 +66,7 @@ def _small_policy(**overrides):
 
 def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent():
     lattice = jnp.asarray([[2.0, 0.2, 0.0], [0.0, 1.7, 0.1], [0.0, 0.0, 1.4]])
-    cell = ParticleCell(lattice, origin=jnp.asarray([-0.1, 0.2, 0.3]))
+    cell = PeriodicCell(lattice, origin=jnp.asarray([-0.1, 0.2, 0.3]))
     assert cell.ambient_dimension == 3
     assert jnp.allclose(
         cell.vectors @ periodic_reciprocal_vectors_3d(cell).T,
@@ -80,13 +80,13 @@ def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent():
         periodic_bloch_phase_3d(cell, index, alpha),
         jnp.exp(1j * alpha @ (index @ lattice)),
     )
-    partially_periodic = ParticleCell(jnp.eye(3), periodic_axes=(True, True, False))
+    partially_periodic = PeriodicCell(jnp.eye(3), periodic_axes=(True, True, False))
     with pytest.raises(ValueError, match="fully periodic 3D"):
         periodic_reciprocal_vectors_3d(partially_periodic)
 
 
 def test_absolutely_convergent_yukawa_matches_direct_images_and_bloch_character():
-    cell = ParticleCell(2.0 * jnp.eye(3))
+    cell = PeriodicCell(2.0 * jnp.eye(3))
     alpha = jnp.asarray([0.19, -0.11, 0.07])
     displacement = jnp.asarray([0.31, -0.27, 0.22])
     policy = PeriodicEwaldPolicy3D(
@@ -134,7 +134,7 @@ def test_absolutely_convergent_yukawa_matches_direct_images_and_bloch_character(
 
 
 def test_modified_helmholtz_ewald_split_is_invariant_at_fixed_convergence():
-    cell = ParticleCell(2.0 * jnp.eye(3))
+    cell = PeriodicCell(2.0 * jnp.eye(3))
     displacement = jnp.asarray([0.29, 0.18, -0.24])
     alpha = jnp.asarray([0.13, 0.09, -0.05])
     broad_real = PeriodicEwaldPolicy3D(

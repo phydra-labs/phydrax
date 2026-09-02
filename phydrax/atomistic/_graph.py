@@ -14,8 +14,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import ParticleNeighborhoodState
-from ..discretization.particle._periodic_cell import ParticleCell
+from ..discretization import ParticleNeighborhoodState, PeriodicCell
 from ..graph import GraphIR
 from ._system import PreparedAtomisticSystem
 from ._types import AtomisticBatch
@@ -101,7 +100,7 @@ def _edge_geometry(
     senders: Array,
     receivers: Array,
     endpoint_mask: Array,
-    cell: ParticleCell | None,
+    cell: PeriodicCell | None,
     /,
 ) -> tuple[Array, Array, Array]:
     raw = positions[receivers] - positions[senders]
@@ -132,7 +131,7 @@ def _assemble_graph(
     cutoff: float,
     topology_id: str,
     execution: AtomisticGraphExecutionPlan,
-    cell: ParticleCell | None,
+    cell: PeriodicCell | None,
 ) -> AtomisticGraph:
     displacement, distance, direction = _edge_geometry(
         positions, senders, receivers, candidate_valid, cell
@@ -269,7 +268,7 @@ def realize_particle_atomistic_graph(
     /,
     *,
     cutoff: float,
-    cell: ParticleCell | None = None,
+    cell: PeriodicCell | None = None,
 ) -> AtomisticGraph:
     """Expand one pair-once particle relation into a directed atomistic graph."""
 
