@@ -41,19 +41,18 @@
       "maximum_bond_dimension": 2,
       "maximum_window_elements": 4,
       "logical_input_bytes": 207,
-      "lowering_seconds": 0.029993,
-      "compilation_seconds": 0.040189416,
+      "lowering_seconds": 0.02233425,
+      "compilation_seconds": 0.036483042,
       "execution": {
-        "count": 2,
+        "count": 1,
         "samples_ms": [
-          0.23866600000000002,
-          0.226792
+          0.25858400000000004
         ],
-        "min_ms": 0.226792,
-        "median_ms": 0.23272900000000002,
-        "mean_ms": 0.23272900000000002,
-        "std_ms": 0.005937000000000012,
-        "max_ms": 0.23866600000000002
+        "min_ms": 0.25858400000000004,
+        "median_ms": 0.25858400000000004,
+        "mean_ms": 0.25858400000000004,
+        "std_ms": 0.0,
+        "max_ms": 0.25858400000000004
       },
       "status": 0,
       "norm_residual": 0.0,

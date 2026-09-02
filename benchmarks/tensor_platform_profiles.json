@@ -1,0 +1,130 @@
+{
+  "environment": {
+    "fingerprint": "d5b7935cb843f83dcabe8397ee6bdc6bb79dff8c6aa8ee03b149bb548d29df54",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.4.6",
+    "jaxlib_version": "0.9.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "e67a33f71eba046d56e53da208c0164e3209c5acffa049964b62c8e5071c44ee",
+    "jax": {
+      "version": "0.9.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "finite_chain": {
+    "execution": {
+      "count": 1,
+      "samples_ms": [
+        464.736541
+      ],
+      "min_ms": 464.736541,
+      "median_ms": 464.736541,
+      "mean_ms": 464.736541,
+      "std_ms": 0.0,
+      "max_ms": 464.736541
+    },
+    "input_bytes": 320,
+    "energy": -2.0,
+    "status": 0,
+    "projected_residual": 0.0,
+    "variance": 0.0
+  },
+  "tensor_train": {
+    "execution": {
+      "count": 1,
+      "samples_ms": [
+        1.1604160000000001
+      ],
+      "min_ms": 1.1604160000000001,
+      "median_ms": 1.1604160000000001,
+      "mean_ms": 1.1604160000000001,
+      "std_ms": 0.0,
+      "max_ms": 1.1604160000000001
+    },
+    "input_bytes": 512,
+    "output_bytes": 768,
+    "frobenius_bound": 0.0,
+    "dense_residual": 1.8108542200644502e-13
+  },
+  "arbitrary_network": {
+    "execution": {
+      "count": 1,
+      "samples_ms": [
+        0.928833
+      ],
+      "min_ms": 0.928833,
+      "median_ms": 0.928833,
+      "mean_ms": 0.928833,
+      "std_ms": 0.0,
+      "max_ms": 0.928833
+    },
+    "input_bytes": 96,
+    "value": 210.0,
+    "exact": true,
+    "replay_id": "482952879a068824cedf767860514d0fdde7e4fe27dec9c7dbf1ac1c83027083"
+  },
+  "symmetry": {
+    "execution": {
+      "count": 1,
+      "samples_ms": [
+        18.068
+      ],
+      "min_ms": 18.068,
+      "median_ms": 18.068,
+      "mean_ms": 18.068,
+      "std_ms": 0.0,
+      "max_ms": 18.068
+    },
+    "unitarity_residual": 7.03111307710856e-16,
+    "pentagon_residual": 4.458294656602981e-16
+  },
+  "quantum_instrument": {
+    "execution": {
+      "count": 1,
+      "samples_ms": [
+        1.207584
+      ],
+      "min_ms": 1.207584,
+      "median_ms": 1.207584,
+      "mean_ms": 1.207584,
+      "std_ms": 0.0,
+      "max_ms": 1.207584
+    },
+    "probabilities": [
+      0.4999999701976776,
+      0.4999999701976776
+    ],
+    "probability_sum_residual": 0.0,
+    "valid": true
+  },
+  "platform_admission": {
+    "forecast_id": "d006975c1908acde6c8e3d38252aee4b67a7c9aefe4ce15adbb3a2b8b930e514",
+    "storage_bytes": 16,
+    "admitted": true,
+    "failure": "none"
+  }
+}

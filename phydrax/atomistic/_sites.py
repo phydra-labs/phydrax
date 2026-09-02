@@ -284,7 +284,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
             physical_mask=active,
             output_mask=active,
         )
-        indices = np.where(active, np.arange(ids.size), 0)
+        indices = np.where(active, np.arange(ids.size), -1)
         return cls(ids, sites, indices)
 
     def prepare(

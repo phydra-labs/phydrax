@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added native advanced-biophysics capability families: exact fixed-capacity
+  path-space sampling and rare-event analysis; differentiable cable
+  electrophysiology; dynamic particle relations and active biopolymers;
+  Helfrich membranes and vertex tissues with transactional topology epochs;
+  residual-gated polarizable and alchemical atomistics; compartmental systems
+  biology with assertion provenance; and experiment-facing biophysical
+  observation and qualification models.
 - Added fixed-capacity open-boundary tensor-network completion with shared
   precision-aware SVD evidence, canonical QR sweeps, MPO construction/algebra,
   MPS action and compression, reusable bra–MPO–ket environments, network-native
@@ -11,9 +18,9 @@
   one-site projector-splitting matrix-product TDVP.
 - Added representation-specific MPS and locally purified `QuantumProgram`
   plan/prepare/refresh execution with template-state structure contracts,
-  explicit enclosing-interval routing for ordered nonlocal targets, fixed bond
-  and purification capacities, CP/PSD construction evidence, and observable
-  norm, trace, and truncation loss without hidden SWAPs or normalization.
+  explicit nearest-neighbor routes, fixed bond and purification capacities,
+  CP/PSD construction evidence, and observable norm, trace, and truncation
+  loss without hidden SWAPs or normalization.
 - Added immutable ordinary labelled-contraction structures with explicit output
   ordering, host-side `opt_einsum` path/resource planning, fixed-signature
   prepare/refresh execution, precision provenance, and concrete prepared MPS
@@ -23,6 +30,32 @@
   representations, blockwise environments and canonicalization,
   symmetry-preserving TEBD, and deterministic global cross-sector truncation
   evidence without fermionic or non-Abelian overclaims.
+- Added the production tensor-network envelope: exact support tuples, conservative
+  resource admission, execution manifests, bounded pickle-free archives,
+  accepted-boundary checkpoint/replay, cancellation supervision, redacted
+  telemetry, release qualification, and strict interchange/provenance records.
+- Added production finite-chain methods with prepared environments, local/string
+  MPO construction, variational compression, reduced/correlation/entanglement
+  observables, projected-residual and variance-qualified finite DMRG, prepared
+  one-/two-site finite TDVP, thermal purification, excited-state/response
+  workflows, injective uniform states, VUMPS, and uniform tangent response.
+- Added domain-neutral tensor trains with TT-SVD/rounding error bounds, tensorized
+  grids and quantics, bounded deterministic TT-cross, structured Cartesian
+  operators, ALS/AMEn solves, weighted completion, block eigenproblems, and an
+  explicit tensor-train neural linear layer.
+- Added canonical quantum instruments and experiments with exact branches,
+  addressed replayable shots and feed-forward, route/decomposition ledgers,
+  fixed-grid controls, MPO/LPDO Lindbladian workflows, Stinespring process
+  learning/digital twins, and bounded service/interchange records.
+- Added arbitrary-incidence tensor-network topology with traces, hyperedges and
+  scalar nodes; inspectable deterministic schedules, full live-memory admission,
+  exact slicing/checkpoints/reverse execution, placement and multi-device slice
+  execution, finite PEPS/PEPO, boundary-MPS, CTMRG, simple/full updates, exact
+  tree messages, loopy BP, circuit topology, and binary MERA.
+- Added production Abelian block planning/algebra/solvers/open systems, explicit
+  fermion grading and mode-order/Jordan-Wigner routes, and a separate SU(2)
+  representation-category layer with deterministic CG/6j/F moves,
+  multiplet-complete truncation, reduced MPS/MPO, DMRG, and TDVP.
 - Added certified exact/bounded sharp-geometry realization with compatible
   MAC/FLIP/VOF coupling, explicit fixed-step and host-inspection adapters, and
   bounded nonconservative MacCormack transport for periodic passive tracers.

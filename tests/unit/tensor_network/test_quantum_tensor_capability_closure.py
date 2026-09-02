@@ -8,14 +8,21 @@ from phydrax.operators.quantum import (
     LocalUnitaryOperation,
     QuantumProgram,
 )
+from phydrax.solver import (
+    execute_lpdo_quantum_program,
+    execute_mps_quantum_program,
+    LPDOQuantumProgramPolicy,
+    MPSQuantumProgramPolicy,
+    plan_lpdo_quantum_program,
+    plan_mps_quantum_program,
+    prepare_lpdo_quantum_program,
+    prepare_mps_quantum_program,
+)
 from phydrax.tensor_network import (
     compress_lpdo,
-    execute_tensor_network_quantum_program,
     LocallyPurifiedDensity,
     LPDOCompressionPlan,
-    prepare_tensor_network_quantum_program,
     product_mps,
-    TensorNetworkQuantumProgramPolicy,
 )
 
 
@@ -34,28 +41,18 @@ def test_canonical_quantum_program_executes_on_mps_without_densification():
         ),
         state_kind="state-vector",
     )
-    prepared = prepare_tensor_network_quantum_program(
-        program,
-        TensorNetworkQuantumProgramPolicy(
-            maximum_operations=4,
-            maximum_bond_dimension=4,
-            maximum_purification_dimension=4,
-        ),
-    )
     initial = product_mps(jnp.array([[1, 0], [1, 0]], dtype=jnp.complex64))
-    result = execute_tensor_network_quantum_program(prepared, initial)
-    assert bool(result.valid)
-    assert jnp.allclose(result.state.to_dense(), jnp.array([0, 0, 0, 1]))
+    policy = MPSQuantumProgramPolicy(maximum_bond_dimension=4)
+    plan = plan_mps_quantum_program(program, initial, policy)
+    prepared = prepare_mps_quantum_program(program, plan)
+    result = execute_mps_quantum_program(prepared, initial)
+    assert bool(result.diagnostics.successful)
+    assert jnp.allclose(result.final_state.to_dense(), jnp.array([0, 0, 0, 1]))
 
 
-def test_tensor_device_rejects_nonphysical_local_operations():
+def test_tensor_program_executors_reject_nonphysical_local_operations():
     layout = HilbertRegisterLayout(("q",), (2,))
-    policy = TensorNetworkQuantumProgramPolicy(
-        maximum_operations=1,
-        maximum_bond_dimension=2,
-        maximum_purification_dimension=2,
-    )
-
+    initial_mps = product_mps(jnp.array([[1, 0]], dtype=jnp.complex64))
     nonunitary = QuantumProgram(
         layout,
         (
@@ -66,17 +63,13 @@ def test_tensor_device_rejects_nonphysical_local_operations():
         ),
         state_kind="state-vector",
     )
-    prepared_nonunitary = prepare_tensor_network_quantum_program(
-        nonunitary,
-        policy,
-    )
-    vector_result = execute_tensor_network_quantum_program(
-        prepared_nonunitary,
-        product_mps(jnp.array([[1, 0]], dtype=jnp.complex64)),
-    )
-    assert not bool(prepared_nonunitary.operation_evidence[0].valid)
-    assert not bool(vector_result.operation_valid[0])
-    assert not bool(vector_result.valid)
+    mps_policy = MPSQuantumProgramPolicy(maximum_bond_dimension=2)
+    mps_plan = plan_mps_quantum_program(nonunitary, initial_mps, mps_policy)
+    mps_prepared = prepare_mps_quantum_program(nonunitary, mps_plan)
+    vector_result = execute_mps_quantum_program(mps_prepared, initial_mps)
+    assert not bool(mps_prepared.operation_evidence[0].valid)
+    assert not bool(vector_result.diagnostics.operations_valid)
+    assert not bool(vector_result.diagnostics.successful)
 
     non_tp = QuantumProgram(
         layout,
@@ -88,14 +81,19 @@ def test_tensor_device_rejects_nonphysical_local_operations():
         ),
         state_kind="density-matrix",
     )
-    prepared_non_tp = prepare_tensor_network_quantum_program(non_tp, policy)
-    density_result = execute_tensor_network_quantum_program(
-        prepared_non_tp,
-        LocallyPurifiedDensity((jnp.array([[[[1.0]], [[0.0]]]], dtype=jnp.complex64),)),
+    initial_lpdo = LocallyPurifiedDensity(
+        (jnp.array([[[[1.0]], [[0.0]]]], dtype=jnp.complex64),)
     )
-    assert not bool(prepared_non_tp.operation_evidence[0].valid)
-    assert not bool(density_result.operation_valid[0])
-    assert not bool(density_result.valid)
+    lpdo_policy = LPDOQuantumProgramPolicy(
+        maximum_bond_dimension=2,
+        maximum_purification_dimension=2,
+    )
+    lpdo_plan = plan_lpdo_quantum_program(non_tp, initial_lpdo, lpdo_policy)
+    lpdo_prepared = prepare_lpdo_quantum_program(non_tp, lpdo_plan)
+    density_result = execute_lpdo_quantum_program(lpdo_prepared, initial_lpdo)
+    assert not bool(lpdo_prepared.operation_evidence[0].valid)
+    assert not bool(density_result.diagnostics.operations_valid)
+    assert not bool(density_result.diagnostics.successful)
 
 
 def test_lpdo_compression_remains_psd_by_factor_construction_with_bound():

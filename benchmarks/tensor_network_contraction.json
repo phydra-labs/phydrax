@@ -38,28 +38,27 @@
   "cases": [
     {
       "size": 8,
-      "plan_seconds": 0.000572958,
-      "prepare_seconds": 0.000492375,
-      "refresh_seconds": 0.032133625,
-      "lowering_seconds": 0.005819583,
-      "compilation_seconds": 0.016738667,
+      "plan_seconds": 0.001284333,
+      "prepare_seconds": 0.00044025,
+      "refresh_seconds": 0.034193541,
+      "lowering_seconds": 0.005747292,
+      "compilation_seconds": 0.016944833,
       "execution": {
-        "count": 2,
+        "count": 1,
         "samples_ms": [
-          0.138416,
-          0.074916
+          0.132916
         ],
-        "min_ms": 0.074916,
-        "median_ms": 0.10666600000000001,
-        "mean_ms": 0.10666600000000001,
-        "std_ms": 0.03175000000000001,
-        "max_ms": 0.138416
+        "min_ms": 0.132916,
+        "median_ms": 0.132916,
+        "mean_ms": 0.132916,
+        "std_ms": 0.0,
+        "max_ms": 0.132916
       },
       "cost": {
         "operand_elements": 128,
         "output_elements": 64,
         "largest_intermediate_elements": 64,
-        "workspace_bytes": 512,
+        "workspace_bytes": 1536,
         "estimated_flops": 1024
       },
       "finite": true,

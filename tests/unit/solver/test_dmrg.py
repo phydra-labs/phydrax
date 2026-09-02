@@ -19,8 +19,8 @@ def _two_site_hamiltonian():
 def test_prepared_two_site_dmrg_reaches_dense_ground_state():
     hamiltonian = _two_site_hamiltonian()
     initial = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128))
-    problem = phx.solver.DMRGProblem(initial, hamiltonian, problem_id="two-site")
-    policy = phx.solver.DMRGPolicy(
+    problem = phx.solver.FiniteDMRGProblem(initial, hamiltonian, problem_id="two-site")
+    policy = phx.solver.FiniteDMRGPolicy(
         maximum_bond_dimension=2,
         maximum_sweeps=4,
         energy_tolerance=1e-9,
@@ -29,8 +29,8 @@ def test_prepared_two_site_dmrg_reaches_dense_ground_state():
             phx.linalg.eigen.DenseEigh(), count=1, which="smallest-algebraic"
         ),
     )
-    prepared = phx.solver.prepare_dmrg(problem, policy)
-    result = phx.solver.solve_dmrg(prepared)
+    prepared = phx.solver.prepare_finite_dmrg(problem, policy)
+    result = phx.solver.solve_finite_dmrg(prepared)
     eigenvalues, eigenvectors = jnp.linalg.eigh(hamiltonian.to_dense())
     overlap = jnp.abs(jnp.vdot(eigenvectors[:, 0], result.best_state.to_dense()))
 
@@ -44,14 +44,14 @@ def test_prepared_two_site_dmrg_reaches_dense_ground_state():
 def test_dmrg_refresh_preserves_plan_identity_for_numeric_updates():
     hamiltonian = _two_site_hamiltonian()
     initial = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128))
-    problem = phx.solver.DMRGProblem(initial, hamiltonian, problem_id="refresh")
-    policy = phx.solver.DMRGPolicy(maximum_bond_dimension=2, maximum_sweeps=1)
-    prepared = phx.solver.prepare_dmrg(problem, policy)
-    updated = phx.solver.DMRGProblem(
+    problem = phx.solver.FiniteDMRGProblem(initial, hamiltonian, problem_id="refresh")
+    policy = phx.solver.FiniteDMRGPolicy(maximum_bond_dimension=2, maximum_sweeps=1)
+    prepared = phx.solver.prepare_finite_dmrg(problem, policy)
+    updated = phx.solver.FiniteDMRGProblem(
         tn.product_mps(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)),
         hamiltonian,
         problem_id="refresh",
     )
-    refreshed = phx.solver.refresh_dmrg(prepared, updated)
+    refreshed = phx.solver.refresh_finite_dmrg(prepared, updated)
     assert refreshed.prepared_id == prepared.prepared_id
     assert refreshed.numeric_version == prepared.numeric_version + 1

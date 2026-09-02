@@ -10,6 +10,7 @@ from .._event_layout import (
     ComplexEventLayout,
     PyTreeEventLayout,
 )
+from . import path_sampling
 from ._bsde import (
     autodiff_bsde_control,
     bsde_diagnostics,
@@ -664,4 +665,5 @@ __all__ = [
     "trajectory_blocks",
     "compress_trajectory_blocks",
     "trajectory_block_coreset_to_operator_dataset",
+    "path_sampling",
 ]

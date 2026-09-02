@@ -42,17 +42,26 @@ def test_labelled_plan_preserves_output_order_refresh_and_jit():
     assert jnp.allclose(refreshed_result.value, ((left + 1.0) @ right).T)
 
 
-def test_contraction_structure_rejects_hyperedges_and_resource_overflow():
-    with pytest.raises(ValueError, match="hyperedges"):
-        tn.ContractionStructure(
-            tuple(
-                tn.ContractionOperand(
-                    f"operand-{index}", (tn.ContractionLeg("shared", 2),)
-                )
-                for index in range(3)
+def test_contraction_structure_supports_hyperedges_and_rejects_resource_overflow():
+    hyperedge = tn.ContractionStructure(
+        tuple(
+            tn.ContractionOperand(f"operand-{index}", (tn.ContractionLeg("shared", 2),))
+            for index in range(3)
+        ),
+        (),
+    )
+    hyperplan = tn.plan_contraction(hyperedge, dtype="float64")
+    hyperresult = tn.execute_contraction(
+        tn.prepare_contraction(
+            hyperplan,
+            (
+                jnp.asarray([1.0, 2.0]),
+                jnp.asarray([3.0, 4.0]),
+                jnp.asarray([5.0, 6.0]),
             ),
-            (),
         )
+    )
+    assert jnp.allclose(hyperresult.value, 63.0)
     with pytest.raises(MemoryError, match="intermediate"):
         tn.plan_contraction(
             _matrix_structure(),

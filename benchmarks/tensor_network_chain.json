@@ -42,36 +42,34 @@
       "bond_dimension": 2,
       "logical_input_bytes": 576,
       "expectation": {
-        "lowering_seconds": 0.009524541,
-        "compilation_seconds": 0.051733583,
+        "lowering_seconds": 0.009075584,
+        "compilation_seconds": 0.037075083,
         "execution": {
-          "count": 2,
+          "count": 1,
           "samples_ms": [
-            0.08666700000000001,
-            0.067167
+            0.06525
           ],
-          "min_ms": 0.067167,
-          "median_ms": 0.07691700000000001,
-          "mean_ms": 0.07691700000000001,
-          "std_ms": 0.009750000000000002,
-          "max_ms": 0.08666700000000001
+          "min_ms": 0.06525,
+          "median_ms": 0.06525,
+          "mean_ms": 0.06525,
+          "std_ms": 0.0,
+          "max_ms": 0.06525
         },
         "finite": true
       },
       "apply": {
-        "lowering_seconds": 0.034182166,
-        "compilation_seconds": 0.1122145,
+        "lowering_seconds": 0.030936291,
+        "compilation_seconds": 0.071867958,
         "execution": {
-          "count": 2,
+          "count": 1,
           "samples_ms": [
-            0.343167,
-            0.249625
+            0.322125
           ],
-          "min_ms": 0.249625,
-          "median_ms": 0.296396,
-          "mean_ms": 0.296396,
-          "std_ms": 0.04677099999999999,
-          "max_ms": 0.343167
+          "min_ms": 0.322125,
+          "median_ms": 0.322125,
+          "mean_ms": 0.322125,
+          "std_ms": 0.0,
+          "max_ms": 0.322125
         },
         "output_bytes": 236,
         "discarded_weight": 0.0022608557006715455
