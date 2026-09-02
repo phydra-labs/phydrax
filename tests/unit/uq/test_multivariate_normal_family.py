@@ -12,7 +12,7 @@ import opt_einsum as oe
 import pytest
 
 import phydrax as phx
-from phydrax._exponential_family._symmetric_coordinates import smat, svec
+from phydrax._symmetric_coordinates import smat, svec
 
 
 def test_symmetric_coordinates_preserve_frobenius_geometry():

@@ -67,6 +67,7 @@ from ._selective_sequence import (
     SelectiveStateSpaceState,
 )
 from ._sine import SineLayer
+from ._spectral_neuron import SpectralNeuron, SpectralNeuronInitializationReport
 from ._warp import MultiheadWarp, WarpBoundaryMode
 from ._warp_geometry import (
     conservative_remap,
@@ -136,6 +137,8 @@ __all__ = [
     "SineLayer",
     "SelectiveStateSpaceBlock",
     "SelectiveStateSpaceState",
+    "SpectralNeuron",
+    "SpectralNeuronInitializationReport",
     "WeightSpaceRecurrence",
     "WeightSpaceState",
     "GaussianWarpRoute",
