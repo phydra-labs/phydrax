@@ -10,8 +10,9 @@ from math import isfinite, pi
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -62,7 +63,7 @@ def mps_projector_mpo(state: MatrixProductState, /) -> MatrixProductOperator:
     )
     tensors = []
     for index, tensor in enumerate(state.tensors):
-        combined = oe.contract("apr,bqs->abpqrs", tensor, jnp.conj(tensor))
+        combined = ein.contract("apr,bqs->abpqrs", tensor, jnp.conj(tensor))
         value = combined.reshape(
             (
                 tensor.shape[0] * tensor.shape[0],
@@ -115,7 +116,7 @@ def solve_finite_excited_state(
             for reference in references
         ]
     )
-    penalty_energy = oe.contract("i,i->", penalty_values, overlaps)
+    penalty_energy = ein.contract("i,i->", penalty_values, overlaps)
     successful = result.successful & jnp.all(jnp.isfinite(overlaps))
     return FiniteExcitedStateResult(
         result,
@@ -361,7 +362,7 @@ def solve_finite_response(
     weights = (
         jnp.ones((policy.steps + 1,), dtype=real_dtype).at[0].set(0.5).at[-1].set(0.5)
     )
-    spectrum = policy.step_size * oe.contract(
+    spectrum = policy.step_size * ein.contract(
         "wt,t,t,t->w", phases, window, weights, correlations
     )
     if problem.frequencies.size > 1:

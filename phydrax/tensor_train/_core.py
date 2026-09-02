@@ -14,8 +14,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -184,7 +185,7 @@ class TensorTrain(StrictModule):
             raise IndexError("TensorTrain entry index is outside its mode.")
         value = self.cores[0][0, position[0], :]
         for core, value_index in zip(self.cores[1:], position[1:], strict=True):
-            value = oe.contract("a,ab->b", value, core[:, value_index, :])
+            value = ein.contract("a,ab->b", value, core[:, value_index, :])
         return value[0]
 
     def evaluate(self, indices: ArrayLike, /) -> Array:
@@ -203,7 +204,7 @@ class TensorTrain(StrictModule):
         def evaluate_one(point):
             value = self.cores[0][0, point[0], :]
             for axis, core in enumerate(self.cores[1:], start=1):
-                value = oe.contract("a,ab->b", value, core[:, point[axis], :])
+                value = ein.contract("a,ab->b", value, core[:, point[axis], :])
             return value[0]
 
         return jax.vmap(evaluate_one)(flat).reshape(points.shape[:-1])
@@ -218,7 +219,7 @@ class TensorTrain(StrictModule):
             )
         data = self.cores[0][0, :, :]
         for core in self.cores[1:]:
-            data = oe.contract("...a,aib->...ib", data, core)
+            data = ein.contract("...a,aib->...ib", data, core)
         return data[..., 0]
 
     def inner(self, other: TensorTrain, /) -> Array:
@@ -226,7 +227,7 @@ class TensorTrain(StrictModule):
             raise ValueError("TensorTrain inner products require identical mode sizes.")
         environment = jnp.ones((1, 1), dtype=jnp.result_type(self.dtype, other.dtype))
         for left, right in zip(self.cores, other.cores, strict=True):
-            environment = oe.contract(
+            environment = ein.contract(
                 "ab,aic,bid->cd", environment, jnp.conj(left), right
             )
         return environment[0, 0]
@@ -283,7 +284,7 @@ class TensorTrain(StrictModule):
             raise ValueError("Hadamard products require identical mode sizes.")
         cores = []
         for left, right in zip(self.cores, other.cores, strict=True):
-            product = oe.contract("aib,cid->acibd", left, right)
+            product = ein.contract("aib,cid->acibd", left, right)
             cores.append(
                 product.reshape(
                     (
@@ -392,7 +393,7 @@ class TensorTrainOperator(StrictModule):
             raise ValueError("TT operator inner products require identical modes.")
         environment = jnp.ones((1, 1), dtype=jnp.result_type(self.dtype, other.dtype))
         for left, right in zip(self.cores, other.cores, strict=True):
-            environment = oe.contract(
+            environment = ein.contract(
                 "ab,aoic,boid->cd", environment, jnp.conj(left), right
             )
         return environment[0, 0]
@@ -453,7 +454,7 @@ class TensorTrainOperator(StrictModule):
             )
         data = self.cores[0][0, :, :, :]
         for core in self.cores[1:]:
-            data = oe.contract("...a,aoib->...oib", data, core)
+            data = ein.contract("...a,aoib->...oib", data, core)
         interleaved = data[..., 0]
         order = self.order
         outputs = tuple(range(0, 2 * order, 2))
@@ -487,7 +488,7 @@ class TensorTrainOperator(StrictModule):
             raise IndexError("TT operator entry index is outside its physical mode.")
         value = self.cores[0][0, output[0], input_[0], :]
         for core, out, inp in zip(self.cores[1:], output[1:], input_[1:], strict=True):
-            value = oe.contract("a,ab->b", value, core[:, out, inp, :])
+            value = ein.contract("a,ab->b", value, core[:, out, inp, :])
         return value[0]
 
     def evaluate(
@@ -523,7 +524,7 @@ class TensorTrainOperator(StrictModule):
         def evaluate_one(output, input_):
             value = self.cores[0][0, output[0], input_[0], :]
             for axis, core in enumerate(self.cores[1:], start=1):
-                value = oe.contract(
+                value = ein.contract(
                     "a,ab->b", value, core[:, output[axis], input_[axis], :]
                 )
             return value[0]
@@ -537,7 +538,7 @@ class TensorTrainOperator(StrictModule):
             raise ValueError("TT operator input modes do not match the tensor.")
         cores = []
         for operator_core, tensor_core in zip(self.cores, tensor.cores, strict=True):
-            product = oe.contract("aoib,cid->acobd", operator_core, tensor_core)
+            product = ein.contract("aoib,cid->acobd", operator_core, tensor_core)
             cores.append(
                 product.reshape(
                     (
@@ -601,7 +602,7 @@ class TensorTrainOperator(StrictModule):
             raise ValueError("Composed TT operator modes do not agree.")
         cores = []
         for left, right in zip(self.cores, other.cores, strict=True):
-            product = oe.contract("aomb,cmid->acoibd", left, right)
+            product = ein.contract("aomb,cmid->acoibd", left, right)
             cores.append(
                 product.reshape(
                     (
@@ -748,7 +749,7 @@ def _right_orthogonalize(tensor: TensorTrain, /) -> tuple[Array, ...]:
         cores[axis] = orthogonal.T.reshape(
             (orthogonal.shape[1], core.shape[1], core.shape[2])
         )
-        cores[axis - 1] = oe.contract("aib,bc->aic", cores[axis - 1], triangular.T)
+        cores[axis - 1] = ein.contract("aib,bc->aic", cores[axis - 1], triangular.T)
     return tuple(cores)
 
 
@@ -780,7 +781,7 @@ def round_tensor_train(
         discarded.append(jnp.sqrt(jnp.sum(jnp.abs(singular_values[rank:]) ** 2)))
         cores[cut] = left[:, :rank].reshape((core.shape[0], core.shape[1], rank))
         transfer = singular_values[:rank, None] * right[:rank, :]
-        cores[cut + 1] = oe.contract("ab,bic->aic", transfer, cores[cut + 1])
+        cores[cut + 1] = ein.contract("ab,bic->aic", transfer, cores[cut + 1])
     rounded = TensorTrain(tuple(cores))
     evidence = TTRoundingEvidence(
         jnp.stack(discarded) if discarded else jnp.zeros((0,), dtype=input_norm.dtype),

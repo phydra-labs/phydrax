@@ -8,8 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._compensated import compensated_sum
@@ -154,7 +155,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         if value_.shape != (self.source_size,):
             raise ValueError("Element tensor input shape is incompatible.")
         local_input = value_[self.input_gathers]
-        contribution = oe.contract("eoi,ei->eo", self.local_matrices, local_input)
+        contribution = ein.contract("eoi,ei->eo", self.local_matrices, local_input)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
         return scatter_local(
             jnp.zeros((self.target_size,), dtype=contribution.dtype),
@@ -168,7 +169,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         if value_.shape != (self.target_size,):
             raise ValueError("Element tensor transpose input shape is incompatible.")
         local_input = value_[self.output_gathers]
-        contribution = oe.contract("eoi,eo->ei", self.local_matrices, local_input)
+        contribution = ein.contract("eoi,eo->ei", self.local_matrices, local_input)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
         return scatter_local(
             jnp.zeros((self.source_size,), dtype=contribution.dtype),

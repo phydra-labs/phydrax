@@ -8,8 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ...discretization._hexahedral import HexahedralConnectivity
@@ -670,7 +671,7 @@ def _prepared_local_volume_residual(
                 "Cell bilinear kernel must return shape "
                 "(entities, local_dofs, local_dofs)."
             )
-        local = oe.contract("cij,cj...->ci...", matrix, local_state)
+        local = ein.contract("cij,cj...->ci...", matrix, local_state)
     else:
         raise TypeError("Unsupported prepared-local volume action.")
     valid = jnp.asarray(workset.valid) & jnp.asarray(metric.valid)
@@ -864,13 +865,13 @@ def _cell_functional_problem(
             physical_gradient = gradients[index]
             if basis.ndim == 2:
                 value = (
-                    oe.contract("qi,ci...->cq...", basis, coefficient)
+                    ein.contract("qi,ci...->cq...", basis, coefficient)
                     if specification.value
                     else None
                 )
                 gradient = (
                     jnp.moveaxis(
-                        oe.contract(
+                        ein.contract(
                             "cqid,ci...->cqd...",
                             physical_gradient,
                             coefficient,
@@ -883,12 +884,12 @@ def _cell_functional_problem(
                 )
             else:
                 value = (
-                    oe.contract("cqiv,ci->cqv", basis, coefficient)
+                    ein.contract("cqiv,ci->cqv", basis, coefficient)
                     if specification.value
                     else None
                 )
                 gradient = (
-                    oe.contract(
+                    ein.contract(
                         "cqivd,ci->cqvd",
                         physical_gradient,
                         coefficient,
@@ -1097,9 +1098,9 @@ def _exterior_functional_value(
             basis = selected_bases[index]
             coefficient = coefficients[index]
             if basis.ndim == 3:
-                value = oe.contract("eqi,ei...->eq...", basis, coefficient)
+                value = ein.contract("eqi,ei...->eq...", basis, coefficient)
             else:
-                value = oe.contract("eqiv,ei->eqv", basis, coefficient)
+                value = ein.contract("eqiv,ei->eqv", basis, coefficient)
             jets[specification.field_name] = LocalFieldJet(value=value)
         density = jnp.asarray(
             action.term.density(
@@ -1469,7 +1470,7 @@ def _full_residual(
                         + (1,) * len(component_shape)
                         + (plan.tabulation.dimension, plan.tabulation.dimension)
                     )
-                    flux = oe.contract(
+                    flux = ein.contract(
                         "...ab,...b->...a", weighted_metric, reference_gradient
                     )
                     coefficient_grid = values.reshape(
@@ -1483,12 +1484,12 @@ def _full_residual(
                         component_shape,
                     )
                 else:
-                    field_gradient = oe.contract(
+                    field_gradient = ein.contract(
                         "cqid,ci...->cqd...",
                         physical_gradients,
                         local_state,
                     )
-                    local = oe.contract(
+                    local = ein.contract(
                         "cq,cq,cqid,cqd...->ci...",
                         physical_weights,
                         values,
@@ -1530,12 +1531,12 @@ def _full_residual(
                         component_shape,
                     )
                 else:
-                    field_value = oe.contract(
+                    field_value = ein.contract(
                         "qi,ci...->cq...",
                         basis_values,
                         local_state,
                     )
-                    local = oe.contract(
+                    local = ein.contract(
                         "cq,cq,qi,cq...->ci...",
                         physical_weights,
                         values,
@@ -1580,7 +1581,7 @@ def _full_residual(
                         component_shape,
                     )
                 else:
-                    local = -oe.contract(
+                    local = -ein.contract(
                         "cq,cq...,qi->ci...",
                         physical_weights,
                         values,
@@ -1614,14 +1615,14 @@ def _full_residual(
                     ]
                     if input_basis.ndim == 2:
                         input_values.append(
-                            oe.contract(
+                            ein.contract(
                                 "qi,ci...->cq...",
                                 input_basis,
                                 local_input,
                             )
                         )
                         input_gradients.append(
-                            oe.contract(
+                            ein.contract(
                                 "cqid,ci...->cqd...",
                                 input_physical_gradients,
                                 local_input,
@@ -1629,14 +1630,14 @@ def _full_residual(
                         )
                     else:
                         input_values.append(
-                            oe.contract(
+                            ein.contract(
                                 "cqiv,ci->cqv",
                                 input_basis[local_cells],
                                 local_input,
                             )
                         )
                         input_gradients.append(
-                            oe.contract(
+                            ein.contract(
                                 "cqivd,ci->cqvd",
                                 input_physical_gradients,
                                 local_input,
@@ -1681,7 +1682,7 @@ def _full_residual(
                     def energy(local_coefficients):
                         values_grid = _tensor_forward(plan, local_coefficients)
                         reference_gradient = _tensor_gradient(plan, local_coefficients)
-                        physical_gradient = oe.contract(
+                        physical_gradient = ein.contract(
                             "...r,...rd->...d",
                             reference_gradient,
                             inverse_jacobian,
@@ -1721,23 +1722,23 @@ def _full_residual(
 
                     def energy(local_coefficients):
                         if basis_values.ndim == 2:
-                            values_ = oe.contract(
+                            values_ = ein.contract(
                                 "qi,ci...->cq...",
                                 basis_values,
                                 local_coefficients,
                             )
-                            gradients_ = oe.contract(
+                            gradients_ = ein.contract(
                                 "cqid,ci...->cqd...",
                                 physical_gradients,
                                 local_coefficients,
                             )
                         else:
-                            values_ = oe.contract(
+                            values_ = ein.contract(
                                 "cqiv,ci->cqv",
                                 basis_values,
                                 local_coefficients,
                             )
-                            gradients_ = oe.contract(
+                            gradients_ = ein.contract(
                                 "cqivd,ci->cqvd",
                                 physical_gradients,
                                 local_coefficients,
@@ -1778,7 +1779,7 @@ def _full_residual(
                         "Cell bilinear kernel must return shape "
                         "(cells, local_dofs, local_dofs)."
                     )
-                local = oe.contract(
+                local = ein.contract(
                     "cij,cj...->ci...",
                     matrix,
                     local_state,
@@ -2028,7 +2029,7 @@ def _prepared_facet_side(
         local_state = state[dofs] * orientation.reshape(
             orientation.shape + (1,) * (state[dofs].ndim - orientation.ndim)
         )
-        trace = oe.contract("qi,ei...->eq...", facet.basis_values, local_state)
+        trace = ein.contract("qi,ei...->eq...", facet.basis_values, local_state)
     permutations = _facet_point_permutations(
         discretization.mesh.connectivity,
         workset,
@@ -2195,7 +2196,7 @@ def _prepared_tensor_facet_residual(
     for local_facet, plus in enumerate(plus_sides):
         active = valid & (owner_local == local_facet)
         local_flux = _localize_facet(weighted_plus, plus[3])
-        local = oe.contract("qi,eq...->ei...", plus[0].basis_values, local_flux)
+        local = ein.contract("qi,eq...->ei...", plus[0].basis_values, local_flux)
         local = jnp.where(
             active.reshape((count, 1) + (1,) * len(output_component_shape)),
             local,
@@ -2215,7 +2216,7 @@ def _prepared_tensor_facet_residual(
         for local_facet, minus in enumerate(minus_sides):
             active = valid & (neighbour_local == local_facet)
             local_flux = _localize_facet(weighted_minus, minus[3])
-            local = oe.contract("qi,eq...->ei...", minus[0].basis_values, local_flux)
+            local = ein.contract("qi,eq...->ei...", minus[0].basis_values, local_flux)
             local = jnp.where(
                 active.reshape((count, 1) + (1,) * len(output_component_shape)),
                 local,
@@ -2350,8 +2351,8 @@ def _sipg_facet_residual(
         dofs = dof_map.cell_dofs[0][cells]
         orientation_values = dof_map.orientations[0][cells]
         local_state = state[dofs] * orientation_values
-        value = oe.contract("qi,ei->eq", basis, local_state)
-        gradient = oe.contract("eqid,ei->eqd", gradients, local_state)
+        value = ein.contract("qi,ei->eq", basis, local_state)
+        gradient = ein.contract("eqid,ei->eqd", gradients, local_state)
         return basis, gradients, dofs, orientation_values, value, gradient
 
     result = jnp.zeros_like(state)
@@ -2453,8 +2454,10 @@ def _sipg_facet_residual(
                             minus_weight * minus_diffusivity * jet.jump
                         )[:, :, None] * minus_test_normal
                         weights = facet_weights * active[:, None]
-                        plus_residual = oe.contract("eq,eqi->ei", weights, plus_density)
-                        minus_residual = oe.contract("eq,eqi->ei", weights, minus_density)
+                        plus_residual = ein.contract("eq,eqi->ei", weights, plus_density)
+                        minus_residual = ein.contract(
+                            "eq,eqi->ei", weights, minus_density
+                        )
                         result = _scatter_local(
                             result,
                             plus_dofs,
@@ -2547,7 +2550,7 @@ def _sipg_facet_residual(
                     None
                 ]
             weights = facet_weights * active[:, None]
-            plus_residual = oe.contract("eq,eqi->ei", weights, density)
+            plus_residual = ein.contract("eq,eqi->ei", weights, density)
             result = _scatter_local(
                 result,
                 plus_dofs,
@@ -2628,7 +2631,7 @@ def _cell_local_interior_facet_residual(
         oriented = local_state * dof_orientation.reshape(
             dof_orientation.shape + (1,) * (local_state.ndim - dof_orientation.ndim)
         )
-        value = oe.contract("qi,ei...->eq...", basis, oriented)
+        value = ein.contract("qi,ei...->eq...", basis, oriented)
         return basis, dofs, dof_orientation, value
 
     result = jnp.zeros_like(state)
@@ -2677,13 +2680,13 @@ def _cell_local_interior_facet_residual(
                             "Interior flux kernel must return plus/minus trace shapes."
                         )
                     active_weights = weights * active[:, None]
-                    plus_residual = oe.contract(
+                    plus_residual = ein.contract(
                         "eq,eq...,qi->ei...",
                         active_weights,
                         plus_flux,
                         plus_basis,
                     )
-                    minus_residual = oe.contract(
+                    minus_residual = ein.contract(
                         "eq,eq...,qi->ei...",
                         active_weights,
                         minus_flux,
@@ -2791,7 +2794,7 @@ def _exterior_facet_residual(
             oriented = local_state * dof_orientation.reshape(
                 dof_orientation.shape + (1,) * (local_state.ndim - dof_orientation.ndim)
             )
-            value = oe.contract("qi,ei...->eq...", basis, oriented)
+            value = ein.contract("qi,ei...->eq...", basis, oriented)
             flux = jnp.asarray(
                 action.kernel(
                     (value,),
@@ -2803,7 +2806,7 @@ def _exterior_facet_residual(
             )
             if flux.shape != value.shape:
                 raise ValueError("Exterior flux kernel must return the trace shape.")
-            local = oe.contract(
+            local = ein.contract(
                 "eq,eq...,qi->ei...",
                 weights * active[:, None],
                 flux,
@@ -2923,7 +2926,7 @@ def _interior_facet_residual(
         first = data.points[:, 0]
         second = data.points[:, 1]
         trace_basis = jnp.stack((1.0 - first - second, first, second), axis=-1)
-        physical_points = oe.contract("qi,eid->eqd", trace_basis, face_points)
+        physical_points = ein.contract("qi,eid->eqd", trace_basis, face_points)
         cross = jnp.cross(
             face_points[:, 1] - face_points[:, 0],
             face_points[:, 2] - face_points[:, 0],
@@ -2937,8 +2940,8 @@ def _interior_facet_residual(
         raise TypeError("Unsupported interior-facet connectivity.")
     plus_local = state[plus_dofs]
     minus_local = state[minus_dofs]
-    plus_value = oe.contract("qi,ei...->eq...", trace_basis, plus_local)
-    minus_value = oe.contract("qi,ei...->eq...", trace_basis, minus_local)
+    plus_value = ein.contract("qi,ei...->eq...", trace_basis, plus_local)
+    minus_value = ein.contract("qi,ei...->eq...", trace_basis, minus_local)
     plus_flux, minus_flux = action.kernel(
         (plus_value,),
         (minus_value,),
@@ -2954,13 +2957,13 @@ def _interior_facet_residual(
         raise ValueError(
             "Interior facet kernel must return plus/minus quadrature flux densities."
         )
-    plus_residual = oe.contract(
+    plus_residual = ein.contract(
         "eq,eq...,qi->ei...",
         weights,
         plus_flux,
         trace_basis,
     )
-    minus_residual = oe.contract(
+    minus_residual = ein.contract(
         "eq,eq...,qi->ei...",
         weights,
         minus_flux,
@@ -3031,7 +3034,7 @@ def _prepared_tensor_boundary_load(
     for local_facet, side in enumerate(sides):
         active = valid & (owner_local == local_facet)
         local_values = _localize_facet(weighted, side[3])
-        local = oe.contract("qi,eq...->ei...", side[0].basis_values, local_values)
+        local = ein.contract("qi,eq...->ei...", side[0].basis_values, local_values)
         local = jnp.where(
             active.reshape((count, 1) + (1,) * len(component_shape)),
             local,
@@ -3112,7 +3115,7 @@ def _boundary_load(
             first = data.points[:, 0]
             second = data.points[:, 1]
             basis = jnp.stack((1.0 - first - second, first, second), axis=-1)
-            physical_points = oe.contract("qi,eid->eqd", basis, face_points)
+            physical_points = ein.contract("qi,eid->eqd", basis, face_points)
             cross = jnp.cross(
                 face_points[:, 1] - face_points[:, 0],
                 face_points[:, 2] - face_points[:, 0],
@@ -3134,7 +3137,7 @@ def _boundary_load(
             rule_id=action.load.rule_id,
             side="plus",
         )
-        local = oe.contract(
+        local = ein.contract(
             "eq,eq...,qi->ei...",
             physical_weights,
             values,

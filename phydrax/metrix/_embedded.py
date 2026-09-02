@@ -9,8 +9,9 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._chart import CoordinateChart
@@ -28,7 +29,7 @@ def tangent_projector_from_normal(normal: ArrayLike, /) -> Array:
     values = eqx.error_if(values, jnp.any(norm == 0), "Normal vectors must be nonzero.")
     unit = values / norm
     identity = jnp.eye(values.shape[-1], dtype=values.dtype)
-    return identity - oe.contract("...i,...j->...ij", unit, unit)
+    return identity - ein.contract("...i,...j->...ij", unit, unit)
 
 
 class _InducedMetricMap(StrictModule):
@@ -39,7 +40,7 @@ class _InducedMetricMap(StrictModule):
 
     def __call__(self, coordinates: Array, /) -> Array:
         jacobian = jax.jacfwd(self.embedding)(coordinates)
-        return oe.contract("ai,aj->ij", jacobian, jacobian)
+        return ein.contract("ai,aj->ij", jacobian, jacobian)
 
 
 class EmbeddedChart(StrictModule):
@@ -120,7 +121,7 @@ class EmbeddedChart(StrictModule):
     def tangent_projector(self, coordinates: ArrayLike, /) -> Array:
         basis = self.tangent_basis(coordinates)
         inverse = self.induced_metric().inverse(coordinates)
-        return oe.contract("...ai,...ij,...bj->...ab", basis, inverse, basis)
+        return ein.contract("...ai,...ij,...bj->...ab", basis, inverse, basis)
 
     def normal_projector(self, coordinates: ArrayLike, /) -> Array:
         tangent = self.tangent_projector(coordinates)
@@ -140,7 +141,7 @@ class EmbeddedChart(StrictModule):
             raise ValueError(
                 f"Ambient vector must have shape {expected}; got {values.shape}."
             )
-        return oe.contract("...ab,...b->...a", self.tangent_projector(points), values)
+        return ein.contract("...ab,...b->...a", self.tangent_projector(points), values)
 
     def project_normal(
         self,
@@ -155,7 +156,7 @@ class EmbeddedChart(StrictModule):
             raise ValueError(
                 f"Ambient vector must have shape {expected}; got {values.shape}."
             )
-        return oe.contract("...ab,...b->...a", self.normal_projector(points), values)
+        return ein.contract("...ab,...b->...a", self.normal_projector(points), values)
 
     def retract(self, ambient_points: ArrayLike, /) -> Array:
         if self.retraction is None:
@@ -177,12 +178,12 @@ class EmbeddedChart(StrictModule):
 
         hessian = self.embedding_hessian(coordinates)
         normal = self.normal_projector(coordinates)
-        return oe.contract("...ab,...bij->...aij", normal, hessian)
+        return ein.contract("...ab,...bij->...aij", normal, hessian)
 
     def mean_curvature_vector(self, coordinates: ArrayLike, /) -> Array:
         form = self.second_fundamental_form(coordinates)
         inverse = self.induced_metric().inverse(coordinates)
-        trace = oe.contract("...ij,...aij->...a", inverse, form)
+        trace = ein.contract("...ij,...aij->...a", inverse, form)
         return trace / float(self.chart.dimension)
 
     def shape_operator(
@@ -198,12 +199,12 @@ class EmbeddedChart(StrictModule):
         expected = points.shape[:-1] + (self.ambient_dimension,)
         if normal_.shape != expected:
             raise ValueError(f"Normal must have shape {expected}; got {normal_.shape}.")
-        second_form = oe.contract(
+        second_form = ein.contract(
             "...a,...aij->...ij",
             normal_,
             self.second_fundamental_form(points),
         )
-        return oe.contract(
+        return ein.contract(
             "...ik,...kj->...ij",
             self.induced_metric().inverse(points),
             second_form,

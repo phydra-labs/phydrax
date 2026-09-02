@@ -8,8 +8,8 @@ from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 
+import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
 
 from ..._strict import StrictModule
@@ -152,7 +152,7 @@ class _CoordinateToCovariantDriftCallable(StrictModule):
         coefficients = LeviCivitaConnection(self.metric).coefficients(
             args[self.coordinate_position]
         )
-        return drift + 0.5 * oe.contract(
+        return drift + 0.5 * ein.contract(
             "...kij,...ij->...k",
             coefficients,
             covariance,

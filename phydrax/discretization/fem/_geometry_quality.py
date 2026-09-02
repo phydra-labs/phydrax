@@ -9,8 +9,9 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -65,7 +66,7 @@ def finite_element_geometry_quality(
         _basis, gradients = coordinate_element.tabulate(points)
         coordinate_routes = discretization.coordinate_dofs[block_index]
         local_coordinates = runtime_.coordinates[coordinate_routes]
-        jacobian = oe.contract(
+        jacobian = ein.contract(
             "qid,cia->cqad", gradients, local_coordinates, backend="jax"
         )
         singular_values = np.linalg.svd(np.asarray(jacobian), compute_uv=False)

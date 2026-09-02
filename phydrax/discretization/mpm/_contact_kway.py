@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -434,7 +435,9 @@ def apply_rigid_actor_reactions(
             jnp.eye(3, dtype=actors.inertia.dtype), actors.inertia.shape
         )
         solve = solve_small_linear(SmallLinearSolvePlan(3), actors.inertia, identity)
-        angular = actors.angular_velocity + oe.contract("aij,aj->ai", solve.value, torque)
+        angular = actors.angular_velocity + ein.contract(
+            "aij,aj->ai", solve.value, torque
+        )
     return MPMRigidActorState(
         actors.mass,
         actors.inertia,

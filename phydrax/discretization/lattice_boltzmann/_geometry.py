@@ -9,8 +9,9 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -556,13 +557,13 @@ class LatticeBoltzmannPopulationTransferPlan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=dtype),
         )
         source_mass = jnp.sum(source_values)
-        source_momentum = oe.contract("...q,qd->d", source_values, velocities)
+        source_momentum = ein.contract("...q,qd->d", source_values, velocities)
         target_cell_count = self.target.snapshot.fluid_count
         mass_per_cell = source_mass / target_cell_count
         momentum_per_cell = source_momentum / target_cell_count
         default_uncovered = weights * (
             mass_per_cell
-            + oe.contract("d,qd->q", momentum_per_cell, velocities) / sound_speed_squared
+            + ein.contract("d,qd->q", momentum_per_cell, velocities) / sound_speed_squared
         )
         default_uncovered = jnp.broadcast_to(
             default_uncovered,
@@ -593,12 +594,12 @@ class LatticeBoltzmannPopulationTransferPlan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=dtype),
         )
         base_mass = jnp.sum(target_values)
-        base_momentum = oe.contract("...q,qd->d", target_values, velocities)
+        base_momentum = ein.contract("...q,qd->d", target_values, velocities)
         mass_correction = (source_mass - base_mass) / target_cell_count
         momentum_correction = (source_momentum - base_momentum) / target_cell_count
         population_correction = weights * (
             mass_correction
-            + oe.contract("d,qd->q", momentum_correction, velocities)
+            + ein.contract("d,qd->q", momentum_correction, velocities)
             / sound_speed_squared
         )
         corrected = jnp.where(
@@ -612,7 +613,7 @@ class LatticeBoltzmannPopulationTransferPlan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=dtype),
         )
         target_mass = jnp.sum(active_corrected)
-        target_momentum = oe.contract("...q,qd->d", active_corrected, velocities)
+        target_momentum = ein.contract("...q,qd->d", active_corrected, velocities)
         mass_residual = jnp.abs(target_mass - source_mass)
         momentum_residual = jnp.max(jnp.abs(target_momentum - source_momentum))
         minimum = jnp.min(

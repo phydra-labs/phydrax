@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -259,8 +260,8 @@ def phase_population_moments(
     velocities = precision.accumulation(velocity_set.velocities)
     return PhasePopulationMoments(
         jnp.sum(values, axis=-1),
-        oe.contract("...q,qa->...a", values, velocities),
-        oe.contract("...q,qa,qb->...ab", values, velocities, velocities),
+        ein.contract("...q,qa->...a", values, velocities),
+        ein.contract("...q,qa,qb->...ab", values, velocities, velocities),
     )
 
 
@@ -282,7 +283,7 @@ def phase_field_equilibrium(
     weights = precision.coefficient(velocity_set.weights)
     velocities = precision.coefficient(velocity_set.velocities)
     cs2 = precision.coefficient(velocity_set.sound_speed_squared)
-    cu = oe.contract("...d,qd->...q", flow, velocities)
+    cu = ein.contract("...d,qd->...q", flow, velocities)
     equilibrium = weights * (chemical[..., None] / cs2 + phi[..., None] * cu / cs2)
     rest = velocity_set.velocity_tuples.index((0,) * velocity_set.dimension)
     equilibrium = equilibrium.at[..., rest].add(phi - chemical / cs2)
@@ -424,7 +425,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             raise ValueError("wall_normal must contain one vector per lattice cell.")
         mask = parameters.wetting_mask
         wall = jnp.asarray(parameters.wall_normal, dtype=dtype)
-        norm = jnp.sqrt(oe.contract("...d,...d->...", wall, wall))
+        norm = jnp.sqrt(ein.contract("...d,...d->...", wall, wall))
         normal_valid = jnp.all(jnp.isfinite(wall), axis=-1) & (norm > 0.0)
         fallback = jnp.zeros_like(wall).at[..., 0].set(1.0)
         safe_wall = jnp.where((~mask | normal_valid)[..., None], wall, fallback)
@@ -493,7 +494,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         kinetic_density = (
             0.5
             * fields.density
-            * oe.contract("...d,...d->...", fields.velocity, fields.velocity)
+            * ein.contract("...d,...d->...", fields.velocity, fields.velocity)
         )
         mixture_mass = jnp.sum(jnp.where(fluid, fields.density, 0.0))
         phase_mass = jnp.sum(jnp.where(fluid, fields.phase_fields.phase, 0.0))
@@ -647,7 +648,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         /,
     ) -> FreeEnergyDiagnostics:
         fluid = self.boundary.geometry.fluid_mask
-        speed = jnp.sqrt(oe.contract("...d,...d->...", fields.velocity, fields.velocity))
+        speed = jnp.sqrt(ein.contract("...d,...d->...", fields.velocity, fields.velocity))
         cs = jnp.sqrt(
             jnp.asarray(
                 self.discretization.velocity_set.sound_speed_squared,

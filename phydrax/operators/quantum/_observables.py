@@ -9,8 +9,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -110,7 +111,7 @@ def local_state_expectation(
         observable.target_wire_ids,
         vector,
     )
-    return oe.contract("...i,...i->...", jnp.conj(vector), transformed)
+    return ein.contract("...i,...i->...", jnp.conj(vector), transformed)
 
 
 def local_density_expectation(

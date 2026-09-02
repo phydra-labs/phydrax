@@ -10,9 +10,10 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 from scipy.special import eval_legendre
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._ssp_runge_kutta import (
@@ -207,7 +208,7 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
         result = value
         for axis in range(self.dynamics.metrics.dimension):
             moved = jnp.moveaxis(result, axis + 1, 1)
-            moved = oe.contract("ij,cj...->ci...", matrix, moved, backend="jax")
+            moved = ein.contract("ij,cj...->ci...", matrix, moved, backend="jax")
             result = jnp.moveaxis(moved, 1, axis + 1)
         return result
 
@@ -264,7 +265,7 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
                     int(owner_cell), side
                 ].reshape((-1, self.dynamics.metrics.dimension))
                 measure = jnp.sqrt(
-                    oe.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
+                    ein.contract("qd,qd->q", scaled_normal, scaled_normal, backend="jax")
                 )
                 normal = scaled_normal / measure[:, None]
                 exterior = patch.boundary.exterior_state(
@@ -492,7 +493,7 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
             integration_weights = jnp.sum(matrices, axis=1)
             denominator = jnp.sum(integration_weights, axis=1)
             mean = (
-                oe.contract("ci,civ->cv", integration_weights, local, backend="jax")
+                ein.contract("ci,civ->cv", integration_weights, local, backend="jax")
                 / denominator[:, None]
             )
             mean_local = jnp.broadcast_to(mean[:, None, :], local.shape)
@@ -524,7 +525,7 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
             accepted = jnp.where(cell_success[:, None, None], filtered, local)
             result = result.at[routes].set(accepted)
             filtered_mean = (
-                oe.contract("ci,civ->cv", integration_weights, filtered, backend="jax")
+                ein.contract("ci,civ->cv", integration_weights, filtered, backend="jax")
                 / denominator[:, None]
             )
             maximum_mean_defect = jnp.maximum(

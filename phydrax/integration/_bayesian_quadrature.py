@@ -9,10 +9,10 @@ from typing import Any
 import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax.kernels import ScaleKernel, SquaredExponentialKernel
 
 from .._doc import DOC_KEY0
@@ -579,7 +579,7 @@ def materialize_bayesian_quadrature(
     decision_kernel_mean = policy.decision(kernel_mean)
     decision_weights = policy.decision(weights)
     decision_double_mean = policy.decision(kernel_double_mean)
-    contracted = oe.contract("i,i->", decision_kernel_mean, decision_weights)
+    contracted = ein.contract("i,i->", decision_kernel_mean, decision_weights)
     posterior_variance = decision_double_mean - contracted
     arithmetic_epsilon = max(
         jnp.finfo(evaluation_design.dtype).eps,
@@ -676,7 +676,7 @@ def integrate_bayesian_quadrature(
     weighted_values = values * factors.reshape(
         (factors.shape[0],) + (1,) * (values.ndim - 1)
     )
-    value = oe.contract("i,i...->...", batch.weights, weighted_values)
+    value = ein.contract("i,i...->...", batch.weights, weighted_values)
     finite_inputs = jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(factors))
     finite_value = jnp.all(jnp.isfinite(value))
     solve_success = batch.solve_result.status == int(LinearSolveStatus.SUCCESS)

@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -345,7 +346,7 @@ def _parameter_shift_expectation_values_bwd(
         shifted_values,
         observable_plan.cost.observable_count,
     )
-    return oe.contract("oa,o->a", jacobian, output_cotangent)
+    return ein.contract("oa,o->a", jacobian, output_cotangent)
 
 
 _parameter_shift_expectation_values.def_fwd(_parameter_shift_expectation_values_fwd)

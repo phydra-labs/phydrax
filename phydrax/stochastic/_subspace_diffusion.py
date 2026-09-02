@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
@@ -68,10 +69,12 @@ class AffineSubspaceLayout(StrictModule):
         )
         if bool(jnp.any(~jnp.isfinite(weights) | (weights <= 0.0))):
             raise ValueError("quadrature_weights must be finite and positive.")
-        gram = oe.contract("ir,i,is->rs", vectors, weights, vectors)
+        gram = ein.contract("ir,i,is->rs", vectors, weights, vectors)
         eigenvalues = jnp.linalg.eigvalsh(gram)
         if bool(jnp.any(~jnp.isfinite(eigenvalues) | (eigenvalues <= 0.0))):
-            raise ValueError("Subspace basis columns must be metric-linearly independent.")
+            raise ValueError(
+                "Subspace basis columns must be metric-linearly independent."
+            )
         identifier = layout_id or canonical_fingerprint(
             {
                 "kind": "affine-subspace-layout",
@@ -104,7 +107,7 @@ class AffineSubspaceLayout(StrictModule):
         value = jnp.asarray(coefficients, dtype=self.origin.dtype)
         if value.shape[-1:] != (self.rank,):
             raise ValueError("Subspace coefficients must end in the retained rank.")
-        flat = self.origin.reshape((self.event_size,)) + oe.contract(
+        flat = self.origin.reshape((self.event_size,)) + ein.contract(
             "ir,...r->...i", self.basis, value
         )
         return flat.reshape(value.shape[:-1] + self.event_shape)
@@ -118,12 +121,16 @@ class AffineSubspaceLayout(StrictModule):
         residual = array.reshape(leading + (self.event_size,)) - self.origin.reshape(
             (self.event_size,)
         )
-        rhs = oe.contract("ir,i,...i->...r", self.basis, self.quadrature_weights, residual)
+        rhs = ein.contract(
+            "ir,i,...i->...r", self.basis, self.quadrature_weights, residual
+        )
         coefficients = self.solve_gram(rhs)
-        reconstruction = oe.contract("ir,...r->...i", self.basis, coefficients)
+        reconstruction = ein.contract("ir,...r->...i", self.basis, coefficients)
         orthogonal = residual - reconstruction
         norm = jnp.sqrt(
-            oe.contract("...i,i,...i->...", orthogonal, self.quadrature_weights, orthogonal)
+            ein.contract(
+                "...i,i,...i->...", orthogonal, self.quadrature_weights, orthogonal
+            )
         )
         return coefficients, norm
 
@@ -147,9 +154,13 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
         if not isinstance(coefficient_law, (DiagonalNormalLaw, GaussianFactorLaw)):
             raise TypeError("SubspaceGaussianLaw requires a Gaussian coefficient law.")
         if coefficient_law.density_measure_kind != "lebesgue":
-            raise ValueError("Coefficient Gaussian must be full rank in subspace coordinates.")
+            raise ValueError(
+                "Coefficient Gaussian must be full rank in subspace coordinates."
+            )
         if coefficient_law.batch_shape or coefficient_law.event_shape != (layout.rank,):
-            raise ValueError("Coefficient law must be unbatched with event shape (rank,).")
+            raise ValueError(
+                "Coefficient law must be unbatched with event shape (rank,)."
+            )
         tolerance = jnp.asarray(support_tolerance, dtype=float).reshape(())
         if bool(~jnp.isfinite(tolerance)) or float(tolerance) < 0.0:
             raise ValueError("support_tolerance must be finite and nonnegative.")
@@ -198,7 +209,7 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
     def tangent_score(self, value: ArrayLike, /) -> Array:
         coefficient_score = self.coefficient_score(value)
         tangent_coefficients = self.layout.solve_gram(coefficient_score)
-        tangent = oe.contract("ir,...r->...i", self.layout.basis, tangent_coefficients)
+        tangent = ein.contract("ir,...r->...i", self.layout.basis, tangent_coefficients)
         return tangent.reshape(coefficient_score.shape[:-1] + self.event_shape)
 
 
@@ -213,7 +224,9 @@ class SubspaceGaussianDiffusion(StrictModule):
         if not isinstance(layout, AffineSubspaceLayout):
             raise TypeError("layout must be an AffineSubspaceLayout.")
         if not isinstance(coefficient_process, AbstractGaussianDiffusion):
-            raise TypeError("coefficient_process must implement AbstractGaussianDiffusion.")
+            raise TypeError(
+                "coefficient_process must implement AbstractGaussianDiffusion."
+            )
         if coefficient_process.state_shape != (layout.rank,):
             raise ValueError("Coefficient diffusion dimension must equal subspace rank.")
         self.layout = layout

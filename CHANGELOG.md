@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.ein` as the package-wide optimized contraction boundary with
+  native named JAX rearrangement, reduction, and repetition.
 - Added log-stable numerator/support gradient accumulation shared by operator,
   discrete-dynamics, and standard-Optax functional training. Operator case
   measures now remain exact across weighted, masked, uneven, lazy, and sharded

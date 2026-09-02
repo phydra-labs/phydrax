@@ -9,8 +9,9 @@ from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -409,7 +410,7 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
     ) -> LatticeBoltzmannDiagnostics:
         fluid = self.boundary.geometry.fluid_mask
         density = jnp.where(fluid, fields.density, jnp.inf)
-        speed = jnp.sqrt(oe.contract("...d,...d->...", fields.velocity, fields.velocity))
+        speed = jnp.sqrt(ein.contract("...d,...d->...", fields.velocity, fields.velocity))
         cs = jnp.sqrt(
             jnp.asarray(
                 self.discretization.velocity_set.sound_speed_squared,

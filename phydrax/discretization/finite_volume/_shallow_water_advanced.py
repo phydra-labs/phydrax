@@ -10,8 +10,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -250,7 +251,7 @@ class ShallowWaterNormalDischargeBoundary(StrictModule, NonTrainableState):
         )
         tangent = (
             tangent
-            - oe.contract("...d,...d->...", tangent, normal_, backend="jax")[..., None]
+            - ein.contract("...d,...d->...", tangent, normal_, backend="jax")[..., None]
             * normal_
         )
         exterior = wet_dry.enforce_dry_momentum(
@@ -311,8 +312,8 @@ class ShallowWaterCharacteristicOpenBoundary(StrictModule, NonTrainableState):
             jnp.asarray(self.exterior_surface(time, points, args)) - jnp.asarray(bed), 0
         )
         ue = jnp.asarray(self.exterior_velocity(time, points, args))
-        uni = oe.contract("...d,...d->...", ui, normal_, backend="jax")
-        une = oe.contract("...d,...d->...", ue, normal_, backend="jax")
+        uni = ein.contract("...d,...d->...", ui, normal_, backend="jax")
+        une = ein.contract("...d,...d->...", ue, normal_, backend="jax")
         ci, ce = (
             jnp.sqrt(jnp.maximum(gravity * hi, 0)),
             jnp.sqrt(jnp.maximum(gravity * he, 0)),
@@ -450,7 +451,8 @@ class ShallowWaterShorelineEvent(StrictModule):
             "Grazing shoreline event has no derivative.",
         )
         root_shift = (
-            oe.contract("i,i->", self.event_normal, tangent_, backend="jax") / denominator
+            ein.contract("i,i->", self.event_normal, tangent_, backend="jax")
+            / denominator
         )
         return (
             self.reset_jacobian @ tangent_

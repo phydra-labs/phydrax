@@ -10,7 +10,8 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule

@@ -9,8 +9,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._force_density import ForceDensityState
 from ._force_density_topology import ForceDensityStructure
@@ -287,7 +288,7 @@ def surface_planarity_residual(
     scale = _positive_scale("length_scale", length_scale, xyz.dtype)
     indices = jnp.where(connectivity.cell_vertex_valid, connectivity.cell_vertices, 0)
     points = xyz[indices]
-    volume = oe.contract(
+    volume = ein.contract(
         "cd,cd->c",
         points[:, 3] - points[:, 0],
         jnp.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0]),

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -71,9 +72,7 @@ def stabilize_virtual_element_tensor(
         raise ValueError("projector must be h1 or l2.")
     matrix = jnp.asarray(consistent)
     dof_projector = (
-        projection.h1_dof_projector
-        if projector == "h1"
-        else projection.l2_dof_projector
+        projection.h1_dof_projector if projector == "h1" else projection.l2_dof_projector
     )
     local = dof_projector.shape[-1]
     residual = jnp.eye(local, dtype=matrix.dtype)[None] - dof_projector
@@ -82,16 +81,16 @@ def stabilize_virtual_element_tensor(
     rank = max(polynomial_rank - (1 if projector == "h1" else 0), 1)
     scale = jnp.maximum(jnp.abs(trace) / rank, policy.minimum_scale)
     if policy.kind == "dofi_dofi":
-        stabilization = scale[:, None, None] * oe.contract(
+        stabilization = scale[:, None, None] * ein.contract(
             "cki,ckj->cij", residual, residual
         )
     else:
         diagonal = jnp.abs(jnp.diagonal(matrix, axis1=-2, axis2=-1))
         floor = scale[:, None] / local
         weights = jnp.maximum(diagonal, floor)
-        stabilization = oe.contract("cki,ck,ckj->cij", residual, weights, residual)
+        stabilization = ein.contract("cki,ck,ckj->cij", residual, weights, residual)
     combined = matrix + stabilization
-    leakage = oe.contract("cij,cja->cia", stabilization, projection.dof_matrix)
+    leakage = ein.contract("cij,cja->cia", stabilization, projection.dof_matrix)
     symmetry = stabilization - jnp.swapaxes(stabilization, -1, -2)
     eigenvalues = jnp.linalg.eigvalsh(
         0.5 * (stabilization + jnp.swapaxes(stabilization, -1, -2))

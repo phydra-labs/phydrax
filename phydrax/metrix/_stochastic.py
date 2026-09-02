@@ -8,8 +8,9 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._connection import LeviCivitaConnection
 from ._metric import RiemannianMetric
@@ -95,7 +96,7 @@ def _coordinate_stratonovich_to_ito_drift_point(
             f"diffusion derivative must have pointwise shape {expected}; "
             f"got {derivative.shape}."
         )
-    correction = 0.5 * oe.contract("jk,ikj->i", sigma, derivative)
+    correction = 0.5 * ein.contract("jk,ikj->i", sigma, derivative)
     return drift_value + correction
 
 
@@ -138,7 +139,7 @@ def _coordinate_to_covariant_drift_point(
     drift_value = _vector_value(drift, coordinates, dimension, "drift")
     covariance_value = _covariance_value(covariance, coordinates, dimension)
     coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
-    correction = 0.5 * oe.contract("kij,ij->k", coefficients, covariance_value)
+    correction = 0.5 * ein.contract("kij,ij->k", coefficients, covariance_value)
     return drift_value + correction
 
 
@@ -184,7 +185,7 @@ def _covariant_hessian_point(
     ):
         raise ValueError("observable derivatives do not end in the coordinate axes.")
     coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
-    correction = oe.contract("kij,...k->...ij", coefficients, differential)
+    correction = ein.contract("kij,...k->...ij", coefficients, differential)
     return differential, second - correction
 
 
@@ -204,7 +205,7 @@ def _covariant_kolmogorov_generator_point(
         metric,
         coordinates,
     )
-    result = oe.contract("i,...i->...", drift_value, differential)
+    result = ein.contract("i,...i->...", drift_value, differential)
     covariance_value = _resolve_covariance(
         diffusion,
         covariance,
@@ -213,7 +214,7 @@ def _covariant_kolmogorov_generator_point(
     )
     if covariance_value is None:
         return result
-    return result + 0.5 * oe.contract(
+    return result + 0.5 * ein.contract(
         "ij,...ij->...",
         covariance_value,
         covariant_hessian,
@@ -269,8 +270,8 @@ def _covariant_derivative_rank_two_point(
         )
     derivative = jax.jacfwd(field)(coordinates)
     coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
-    first = oe.contract("ixy,yj->ijx", coefficients, values)
-    second = oe.contract("jxy,iy->ijx", coefficients, values)
+    first = ein.contract("ixy,yj->ijx", coefficients, values)
+    second = ein.contract("jxy,iy->ijx", coefficients, values)
     return derivative + first + second
 
 
@@ -281,7 +282,7 @@ def _divergence_rank_two_point(
     /,
 ) -> Array:
     derivative = _covariant_derivative_rank_two_point(field, metric, coordinates)
-    return oe.contract("ijj->i", derivative)
+    return ein.contract("ijj->i", derivative)
 
 
 def _divergence_vector_point(
@@ -294,7 +295,7 @@ def _divergence_vector_point(
     values = _vector_value(field, coordinates, dimension, "vector field")
     derivative = jax.jacfwd(field)(coordinates)
     coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
-    return jnp.trace(derivative) + oe.contract("iik,k->", coefficients, values)
+    return jnp.trace(derivative) + ein.contract("iik,k->", coefficients, values)
 
 
 def _covariant_fokker_planck_operator_point(

@@ -8,8 +8,9 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
@@ -89,7 +90,7 @@ class LinearDifferentialTransform(StrictModule):
         return int(self.coefficients.shape[2])
 
     def __call__(self, jacobian: Array, /) -> Array:
-        return oe.contract("ofc,...fc->...o", self.coefficients, jacobian)
+        return ein.contract("ofc,...fc->...o", self.coefficients, jacobian)
 
 
 def _field_channels(out_size: Any, /) -> int:

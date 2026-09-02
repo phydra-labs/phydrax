@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -227,7 +228,7 @@ def _left_samples(tensor: TensorTrain, points: Array, stop: int, /) -> Array:
     def one(point):
         value = jnp.ones((1,), dtype=tensor.dtype)
         for axis in range(stop):
-            value = oe.contract("a,ab->b", value, tensor.cores[axis][:, point[axis], :])
+            value = ein.contract("a,ab->b", value, tensor.cores[axis][:, point[axis], :])
         return value
 
     return jax.vmap(one)(points)
@@ -237,7 +238,7 @@ def _right_samples(tensor: TensorTrain, points: Array, start: int, /) -> Array:
     def one(point):
         value = jnp.ones((1,), dtype=tensor.dtype)
         for axis in range(tensor.order - 1, start - 1, -1):
-            value = oe.contract("ab,b->a", tensor.cores[axis][:, point[axis], :], value)
+            value = ein.contract("ab,b->a", tensor.cores[axis][:, point[axis], :], value)
         return value
 
     return jax.vmap(one)(points)
@@ -250,7 +251,7 @@ def _two_site_design(tensor: TensorTrain, points: Array, axis: int, /) -> Array:
     second = jax.nn.one_hot(
         points[:, axis + 1], tensor.mode_sizes[axis + 1], dtype=tensor.dtype
     )
-    frame = oe.contract("sa,sp,sq,sb->sapqb", left, first, second, right)
+    frame = ein.contract("sa,sp,sq,sb->sapqb", left, first, second, right)
     return frame.reshape((points.shape[0], -1))
 
 

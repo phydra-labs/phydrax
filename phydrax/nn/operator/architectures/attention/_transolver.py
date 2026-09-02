@@ -12,9 +12,9 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey
@@ -124,7 +124,7 @@ class _PhysicsSliceTokenizer(StrictModule):
         slice_measure = jnp.sum(weighted_memberships, axis=1)
         slice_mask = slice_measure > 0.0
         normalizer = jnp.where(slice_mask, slice_measure, 1.0)
-        tokens = oe.contract(
+        tokens = ein.contract(
             "bns,bnc->bsc", weighted_memberships, self.value(safe_features)
         )
         tokens = (tokens / normalizer[..., None]) * slice_mask[..., None]

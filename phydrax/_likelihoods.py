@@ -12,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._classification import (
     categorical_probabilities_from_logits,
@@ -712,7 +713,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
             )
         inverse_values = 1.0 / eigenvalues
         root_values = jnp.sqrt(eigenvalues)
-        precision = oe.contract(
+        precision = ein.contract(
             "ik,k,jk->ij", eigenvectors, inverse_values, jnp.conj(eigenvectors)
         )
         factor = eigenvectors * root_values[None, :]
@@ -770,7 +771,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
         location_array, target_array = self.align_observations(location, target)
         residual = target_array - location_array
         coordinates = jnp.concatenate((jnp.real(residual), jnp.imag(residual)), axis=-1)
-        quadratic = oe.contract(
+        quadratic = ein.contract(
             "...i,ij,...j->...", coordinates, self.real_precision, coordinates
         )
         return jnp.real(self.log_normalizer - 0.5 * quadratic)
@@ -791,7 +792,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
         real_dtype = jnp.real(location_array).dtype
         noise_shape = (*location_array.shape[:-1], 2 * self.event_size)
         standard = jr.normal(key, shape=noise_shape, dtype=real_dtype)
-        coordinates = oe.contract("ij,...j->...i", self.real_factor, standard)
+        coordinates = ein.contract("ij,...j->...i", self.real_factor, standard)
         noise = (
             coordinates[..., : self.event_size] + 1j * coordinates[..., self.event_size :]
         )

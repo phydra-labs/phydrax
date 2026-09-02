@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._register import HilbertRegisterLayout
 
@@ -29,7 +30,7 @@ def apply_unitary_to_state(unitary: ArrayLike, state: ArrayLike, /) -> Array:
     vector = jnp.asarray(state)
     if vector.shape[-1:] != (matrix.shape[-1],):
         raise ValueError("State trailing dimension must match the unitary dimension.")
-    return oe.contract("...ij,...j->...i", matrix, vector)
+    return ein.contract("...ij,...j->...i", matrix, vector)
 
 
 def conjugate_density(unitary: ArrayLike, density: ArrayLike, /) -> Array:
@@ -118,7 +119,7 @@ def apply_local_operator_to_state(
     target_dimensions = tuple(layout.local_dimensions[index] for index in target_indices)
     remaining_dimension = layout.dimension // layout.target_dimension(targets)
     grouped = ordered.reshape(batch_shape + (remaining_dimension, matrix.shape[-1]))
-    transformed = oe.contract("ij,...rj->...ri", matrix, grouped)
+    transformed = ein.contract("ij,...rj->...ri", matrix, grouped)
     expanded = transformed.reshape(batch_shape + remaining_dimensions + target_dimensions)
     inverse = tuple(permutation.index(index) for index in range(len(permutation)))
     return jnp.transpose(expanded, inverse).reshape(vector.shape)
@@ -199,7 +200,7 @@ def kraus_trace_preservation_residual(kraus: ArrayLike, /) -> Array:
         or not jnp.issubdtype(operators.dtype, jnp.complexfloating)
     ):
         raise ValueError("kraus must have exact complex shape (K, dT, dT).")
-    completeness = oe.contract("kai,kaj->ij", jnp.conj(operators), operators)
+    completeness = ein.contract("kai,kaj->ij", jnp.conj(operators), operators)
     identity = jnp.eye(operators.shape[-1], dtype=operators.dtype)
     return jnp.max(jnp.abs(completeness - identity))
 

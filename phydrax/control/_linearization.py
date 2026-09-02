@@ -11,8 +11,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..dynamics import DiscreteStepContext
@@ -211,8 +212,8 @@ def _linearize(
     )
     affine_offset = (
         dynamics_value
-        - oe.contract("...ij,...j->...i", state_matrix, flat_states)
-        - oe.contract("...ij,...j->...i", control_matrix, flat_controls)
+        - ein.contract("...ij,...j->...i", state_matrix, flat_states)
+        - ein.contract("...ij,...j->...i", control_matrix, flat_controls)
     )
 
     if output is None:
@@ -260,8 +261,8 @@ def _linearize(
 
     output_offset = (
         output_value
-        - oe.contract("...ij,...j->...i", output_matrix, flat_states)
-        - oe.contract("...ij,...j->...i", feedthrough_matrix, flat_controls)
+        - ein.contract("...ij,...j->...i", output_matrix, flat_states)
+        - ein.contract("...ij,...j->...i", feedthrough_matrix, flat_controls)
     )
     finite_parts = (
         flat_times.reshape((case_count, 1)),

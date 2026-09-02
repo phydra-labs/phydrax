@@ -9,10 +9,10 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
@@ -132,8 +132,10 @@ class O3Representation(StrictModule, NonTrainableState):
         tensor_coefficients = take(self.tensors, 5)
         pseudotensor_coefficients = take(self.pseudotensors, 5)
         basis = _tensor_basis(array.dtype)
-        tensors = oe.contract("...mk,kij->...mij", tensor_coefficients, basis)
-        pseudotensors = oe.contract("...mk,kij->...mij", pseudotensor_coefficients, basis)
+        tensors = ein.contract("...mk,kij->...mij", tensor_coefficients, basis)
+        pseudotensors = ein.contract(
+            "...mk,kij->...mij", pseudotensor_coefficients, basis
+        )
         return O3Features(
             scalars=scalars,
             pseudoscalars=pseudoscalars,
@@ -145,8 +147,8 @@ class O3Representation(StrictModule, NonTrainableState):
 
     def join(self, features: O3Features, /) -> Array:
         basis = _tensor_basis(features.scalars.dtype)
-        tensor_coefficients = oe.contract("...mij,kij->...mk", features.tensors, basis)
-        pseudotensor_coefficients = oe.contract(
+        tensor_coefficients = ein.contract("...mij,kij->...mk", features.tensors, basis)
+        pseudotensor_coefficients = ein.contract(
             "...mij,kij->...mk", features.pseudotensors, basis
         )
         parts = (
@@ -176,12 +178,12 @@ class O3Representation(StrictModule, NonTrainableState):
                 raise ValueError("O(3) transform matrix must be orthogonal.")
         determinant = jnp.linalg.det(matrix)
         features = self.split(values)
-        vectors = oe.contract("ij,...mj->...mi", matrix, features.vectors)
-        pseudovectors = determinant * oe.contract(
+        vectors = ein.contract("ij,...mj->...mi", matrix, features.vectors)
+        pseudovectors = determinant * ein.contract(
             "ij,...mj->...mi", matrix, features.pseudovectors
         )
-        tensors = oe.contract("ia,...mab,jb->...mij", matrix, features.tensors, matrix)
-        pseudotensors = determinant * oe.contract(
+        tensors = ein.contract("ia,...mab,jb->...mij", matrix, features.tensors, matrix)
+        pseudotensors = determinant * ein.contract(
             "ia,...mab,jb->...mij", matrix, features.pseudotensors, matrix
         )
         return self.join(

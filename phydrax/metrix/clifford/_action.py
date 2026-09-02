@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -78,7 +79,7 @@ class CliffordOutermorphismPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Clifford action input must end in the prepared blade count."
             )
-        return oe.contract(
+        return ein.contract(
             "oi,...i->...o",
             self.representation.astype(array.dtype),
             array,

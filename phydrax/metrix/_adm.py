@@ -10,8 +10,9 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._chart import CoordinateChart
@@ -78,7 +79,7 @@ class ADMDecomposition(StrictModule):
 
     @property
     def shift_covector(self) -> Array:
-        return oe.contract("...ij,...j->...i", self.spatial_metric, self.shift)
+        return ein.contract("...ij,...j->...i", self.spatial_metric, self.shift)
 
     @property
     def spatial_inverse(self) -> Array:
@@ -101,7 +102,7 @@ class ADMDecomposition(StrictModule):
         time_space = self.shift * inverse_lapse_squared[..., None]
         spatial = (
             self.spatial_inverse
-            - oe.contract(
+            - ein.contract(
                 "...i,...j->...ij",
                 self.shift,
                 self.shift,
@@ -128,7 +129,7 @@ def decompose_adm_metric(
     shift_covector = normalized[..., 0, 1:]
     shift = jnp.linalg.solve(spatial, shift_covector[..., None])[..., 0]
     lapse_squared = (
-        oe.contract("...i,...i->...", shift, shift_covector) - normalized[..., 0, 0]
+        ein.contract("...i,...i->...", shift, shift_covector) - normalized[..., 0, 0]
     )
     asymmetry = jnp.max(
         jnp.abs(spatial - jnp.swapaxes(spatial, -1, -2)),

@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -421,7 +422,7 @@ def solve_levy_sde(
             ends,
             dtype=problem.initial_state.real.dtype,
         )
-        driver_increments = driver_increments + oe.contract(
+        driver_increments = driver_increments + ein.contract(
             "ij,...j->...i",
             _covariance_factor(small_covariance),
             gaussian,

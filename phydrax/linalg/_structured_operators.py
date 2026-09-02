@@ -13,8 +13,9 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from ._operators import (
     _array_value,
@@ -627,7 +628,7 @@ class LocalBlockDiagonalLinearOperator(AbstractLinearOperator):
         columns = value.reshape(
             (blocks.shape[0], blocks.shape[2], prod(rhs_shape) if rhs_shape else 1)
         )
-        image = oe.contract("boi,bir->bor", blocks, columns)
+        image = ein.contract("boi,bir->bor", blocks, columns)
         return image.reshape(target.shape + rhs_shape)
 
     def mv(self, vector: PyTree[Any], /) -> Array:
@@ -1446,9 +1447,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         ):
             if euclidean and properties.certifies(name):
                 evidence[name] = "transformed"
-        if rank is not None and (
-            properties.certifies("rank") or certified_full_rank
-        ):
+        if rank is not None and (properties.certifies("rank") or certified_full_rank):
             evidence["rank"] = "transformed"
 
         self.local_operator = local_operator

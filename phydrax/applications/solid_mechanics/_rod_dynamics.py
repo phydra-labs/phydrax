@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -462,7 +463,7 @@ class PreparedRod(StrictModule, NonTrainableState):
             plan.rest_positions[plan.segment_node_ids[:, 1]]
             - plan.rest_positions[plan.segment_node_ids[:, 0]]
         )
-        rest_stretch_shear = oe.contract(
+        rest_stretch_shear = ein.contract(
             "sji,sj->si",
             plan.rest_frames,
             segment_vectors / plan.rest_lengths[:, None],
@@ -627,7 +628,7 @@ def _rod_strains(
         chart_threshold = jnp.sin(0.5 * plan.chart_margin)
         chart_valid = jnp.abs(relative_error[:, 0]) > chart_threshold
     stretch_shear = (
-        oe.contract("sji,sj->si", frames, vectors / plan.rest_lengths[:, None])
+        ein.contract("sji,sj->si", frames, vectors / plan.rest_lengths[:, None])
         - prepared.rest_stretch_shear
     )
     if plan.inextensible:
@@ -661,13 +662,13 @@ def rod_potential_energy(
     _, constitutive, bend_twist, _, _, _ = _rod_strains(
         prepared, positions_, orientations_
     )
-    stretch_density = 0.5 * oe.contract(
+    stretch_density = 0.5 * ein.contract(
         "si,sij,sj->s",
         constitutive,
         prepared.plan.stretch_shear_stiffness,
         constitutive,
     )
-    bend_density = 0.5 * oe.contract(
+    bend_density = 0.5 * ein.contract(
         "si,sij,sj->s",
         bend_twist,
         prepared.plan.bend_twist_stiffness,
@@ -738,7 +739,7 @@ def evaluate_rod(prepared: PreparedRod, state: RodState, /) -> RodEvaluation:
             _quaternion_conjugate(normalized), orientation_gradient
         )
         internal_moments = -0.5 * material_gradient[:, 1:]
-        rotational_kinetic = 0.5 * oe.contract(
+        rotational_kinetic = 0.5 * ein.contract(
             "si,sij,sj->",
             state.angular_velocities,
             plan.segment_inertias,
@@ -886,7 +887,7 @@ def evaluate_endpoint_attachment(
         if body_orientation.shape != ():
             raise ValueError("Planar rigid_orientation must be a scalar angle.")
         body_frame = _planar_rotation_matrix(body_orientation)
-        lever = oe.contract("ij,j->i", body_frame, attachment.local_offset)
+        lever = ein.contract("ij,j->i", body_frame, attachment.local_offset)
         elastic_moment = evaluation.internal_moments[segment_index]
         force_on_rod = -elastic_force
         moment_on_rod = -elastic_moment
@@ -903,10 +904,10 @@ def evaluate_endpoint_attachment(
             raise ValueError("Spatial rigid_orientation must be a quaternion.")
         body_quaternion, body_norm = _safe_unit_quaternion(body_orientation)
         body_frame = _quaternion_rotation_matrix(body_quaternion)
-        lever = oe.contract("ij,j->i", body_frame, attachment.local_offset)
+        lever = ein.contract("ij,j->i", body_frame, attachment.local_offset)
         rod_quaternion, _ = _safe_unit_quaternion(state.orientations[segment_index])
         rod_frame = _quaternion_rotation_matrix(rod_quaternion)
-        elastic_moment = oe.contract(
+        elastic_moment = ein.contract(
             "ij,j->i", rod_frame, evaluation.internal_moments[segment_index]
         )
         force_on_rod = -elastic_force
@@ -1165,7 +1166,7 @@ class PreparedRodDynamics(StrictModule, NonTrainableState):
             inertia_valid = jnp.asarray(True)
             angular_increment = jnp.max(jnp.abs(time_step * angular_velocity))
         else:
-            angular_momentum = oe.contract(
+            angular_momentum = ein.contract(
                 "sij,sj->si", rod_plan.segment_inertias, state.angular_velocities
             )
             gyroscopic = jnp.cross(state.angular_velocities, angular_momentum)

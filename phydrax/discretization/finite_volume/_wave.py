@@ -9,8 +9,9 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -110,7 +111,7 @@ class RoeWavePropagationPlan(AbstractWavePropagationPlan):
         left_matrix, right_matrix, speeds = system.eigensystem(
             left, right, int(axis), args
         )
-        amplitudes = oe.contract("...ij,...j->...i", left_matrix, right - left)
+        amplitudes = ein.contract("...ij,...j->...i", left_matrix, right - left)
         waves = right_matrix * amplitudes[..., None, :]
         negative = jnp.minimum(speeds, 0.0)
         positive = jnp.maximum(speeds, 0.0)
@@ -202,7 +203,7 @@ class TransverseWaveSolverPlan(StrictModule, NonTrainableState):
         left_matrix, right_matrix, speeds = system.eigensystem(
             left, right, int(transverse_axis), args
         )
-        amplitudes = oe.contract("...ij,...j->...i", left_matrix, fluctuation)
+        amplitudes = ein.contract("...ij,...j->...i", left_matrix, fluctuation)
         waves = right_matrix * amplitudes[..., None, :]
         negative = jnp.sum(jnp.minimum(speeds, 0.0)[..., None, :] * waves, axis=-1)
         positive = jnp.sum(jnp.maximum(speeds, 0.0)[..., None, :] * waves, axis=-1)

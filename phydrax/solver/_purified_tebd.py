@@ -7,8 +7,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
@@ -39,8 +40,8 @@ def apply_lpdo_two_site_unitary(
     gate_ = precision.contraction(jnp.asarray(gate))
     if gate_.shape != (left.shape[1], right.shape[1], left.shape[1], right.shape[1]):
         raise ValueError("LPDO unitary gate shape is invalid.")
-    theta = oe.contract("lpki,iqmr->lpkqmr", left, right)
-    theta = oe.contract("abij,likjmr->lakbmr", gate_, theta)
+    theta = ein.contract("lpki,iqmr->lpkqmr", left, right)
+    theta = ein.contract("abij,likjmr->lakbmr", gate_, theta)
     matrix = theta.reshape(
         (
             left.shape[0] * left.shape[1] * left.shape[2],

@@ -9,8 +9,9 @@ from typing import Any, Mapping
 import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
@@ -109,10 +110,10 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
         values = predicted.data if isinstance(predicted, cx.Field) else predicted
         residual = jnp.asarray(values) - self.dataset.controlled_drift_targets
         if self.metric is None:
-            squared = oe.contract("...i,...i->...", residual, residual)
+            squared = ein.contract("...i,...i->...", residual, residual)
         else:
             metric = jnp.asarray(self.metric(self.dataset.states))
-            squared = oe.contract("...i,...ij,...j->...", residual, metric, residual)
+            squared = ein.contract("...i,...ij,...j->...", residual, metric, residual)
         weights = jnp.where(self.dataset.mask, self.dataset.weights, 0.0)
         normalizer = jnp.sum(weights)
         checked = eqx.error_if(

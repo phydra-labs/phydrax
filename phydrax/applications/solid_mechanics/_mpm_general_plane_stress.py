@@ -8,8 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -85,11 +86,11 @@ class OrientedMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
 
     def _to_material(self, deformation):
         rotation = self.orientation.rotation.astype(deformation.dtype)
-        return oe.contract("ij,...jk,lk->...il", rotation, deformation, rotation)
+        return ein.contract("ij,...jk,lk->...il", rotation, deformation, rotation)
 
     def _to_global_stress(self, stress):
         rotation = self.orientation.rotation.astype(stress.dtype)
-        return oe.contract("ij,...jk,lk->...il", rotation.T, stress, rotation.T)
+        return ein.contract("ij,...jk,lk->...il", rotation.T, stress, rotation.T)
 
     def evaluate(
         self,
@@ -151,7 +152,7 @@ class OrientedMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
             step_size,
         )
         rotation = self.orientation.rotation.astype(deformation.dtype)
-        tangent = oe.contract(
+        tangent = ein.contract(
             "ia,Jb,...abCD,kC,LD->...iJkL",
             rotation,
             rotation,

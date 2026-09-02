@@ -10,8 +10,9 @@ from itertools import product
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -93,13 +94,13 @@ class IGATraceProjection(StrictModule, NonTrainableState):
         values = jnp.asarray(coefficients)
         if values.ndim == 0 or values.shape[0] != self.source_coefficient_count:
             raise ValueError("IGA trace source has an incompatible leading dimension.")
-        return oe.contract("ts,s...->t...", self.matrix.astype(values.dtype), values)
+        return ein.contract("ts,s...->t...", self.matrix.astype(values.dtype), values)
 
     def transpose(self, trace_dual: ArrayLike, /) -> Array:
         values = jnp.asarray(trace_dual)
         if values.ndim == 0 or values.shape[0] != self.trace_coefficient_count:
             raise ValueError("IGA trace dual has an incompatible leading dimension.")
-        return oe.contract("ts,t...->s...", self.matrix.astype(values.dtype), values)
+        return ein.contract("ts,t...->s...", self.matrix.astype(values.dtype), values)
 
     def duality_evidence(
         self,
@@ -288,10 +289,10 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
         matrix = self.projection.matrix
 
         def map_controls(value):
-            return oe.contract("vc,cd->vd", matrix.astype(value.dtype), value)
+            return ein.contract("vc,cd->vd", matrix.astype(value.dtype), value)
 
         def pull_proxy(value):
-            return oe.contract("vc,vd->cd", matrix.astype(value.dtype), value)
+            return ein.contract("vc,vd->cd", matrix.astype(value.dtype), value)
 
         operator = FunctionLinearOperator(
             map_controls,

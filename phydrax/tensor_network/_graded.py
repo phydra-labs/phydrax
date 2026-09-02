@@ -9,8 +9,9 @@ from itertools import product
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -403,7 +404,7 @@ def contract_graded_closed_network(
                     [ordered_modes.index(leg.mode_label) for leg in tensor.legs],
                 )
             )
-        result = result + sign * oe.contract(*operands, [])
+        result = result + sign * ein.contract(*operands, [])
     return result
 
 

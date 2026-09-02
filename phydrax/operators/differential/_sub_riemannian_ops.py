@@ -7,8 +7,8 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import jax.numpy as jnp
-import opt_einsum as oe
 
+import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction
 
 from ..._strict import StrictModule
@@ -71,7 +71,7 @@ class _HorizontalGradientCallable(StrictModule):
                 **kwargs,
             )
         )
-        return oe.contract(
+        return ein.contract(
             "...ij,...j->...i",
             self.cometric(args[self.coordinate_position]),
             differential,

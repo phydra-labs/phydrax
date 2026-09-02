@@ -9,8 +9,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...linalg import RankPolicy
 from ...linalg._dense_pseudoinverse import (
@@ -245,7 +246,7 @@ def _normal_solve(
     residual = prediction - targets
     rss = jnp.sum(weights * jnp.real(residual * jnp.conj(residual)), axis=(1, 2))
     penalty_value = jnp.real(
-        oe.contract(
+        ein.contract(
             "cfo,cofg,cgo->c",
             jnp.conj(coefficients),
             penalty,

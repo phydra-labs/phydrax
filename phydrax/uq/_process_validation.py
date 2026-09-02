@@ -13,8 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from .._uncertainty import UNCERTAINTY_SOURCES, UncertaintySource
@@ -339,10 +340,10 @@ def _jump_event_summary(
         raise ValueError("Active event marks must be finite.")
     mark_weight = channel_one_hot * usable[..., None]
     mark_counts = jnp.sum(mark_weight, axis=tuple(range(usable.ndim)))
-    mark_sum = oe.contract("...k,...i->ki", mark_weight, marks)
+    mark_sum = ein.contract("...k,...i->ki", mark_weight, marks)
     mark_mean_flat = mark_sum / jnp.maximum(mark_counts[:, None], 1)
     centered_marks = marks[..., None, :] - mark_mean_flat
-    mark_covariance_flat = oe.contract(
+    mark_covariance_flat = ein.contract(
         "...k,...ki,...kj->kij",
         mark_weight,
         centered_marks,

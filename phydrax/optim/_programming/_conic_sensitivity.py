@@ -10,8 +10,9 @@ from typing import Any, Callable, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...linalg import (
@@ -725,7 +726,7 @@ def prepare_conic_sensitivity(
     )
     termination = prepared.plan.policy.termination
     root_tolerance = termination.absolute + termination.relative * data_scale
-    projection_point = dual + oe.contract("bij,bj->bi", matrix, primal) - rhs
+    projection_point = dual + ein.contract("bij,bj->bi", matrix, primal) - rhs
     projection_margin = cone.dual_projection_smoothness_margin(projection_point)
     projection_scale = jnp.maximum(1.0, _max_abs(projection_point))
     projection_regular = projection_margin > tolerance * projection_scale
