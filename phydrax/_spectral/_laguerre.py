@@ -10,13 +10,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 from scipy.linalg import eigh_tridiagonal
 from scipy.special import eval_genlaguerre
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..ein import contract
 
 
 _DEFAULT_PRECOMPUTE_BYTES = 512 * 1024**2

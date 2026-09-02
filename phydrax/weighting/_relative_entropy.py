@@ -7,9 +7,10 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._numerics import weight_ess
 from ..linalg import DenseLinearOperator
@@ -186,7 +187,7 @@ def _dual_objective(problem, geometry, coordinates):
         return value + 0.5 * jnp.sum(jnp.where(inactive, coordinates**2, 0.0))
     assert isinstance(problem.target, QuadraticMoments)
     covariance_dual = problem.target.covariance.mv(dual)
-    return value + 0.5 * oe.contract("i,i->", dual, covariance_dual)
+    return value + 0.5 * ein.contract("i,i->", dual, covariance_dual)
 
 
 def _result(
@@ -351,7 +352,7 @@ def _dual_gradient(problem, geometry, coordinates, residual):
     assert isinstance(problem.target, QuadraticMoments)
     dual = physical_dual(geometry, coordinates)
     covariance_dual = problem.target.covariance.mv(dual)
-    return gradient + oe.contract("ji,j->i", geometry.transform, covariance_dual)
+    return gradient + ein.contract("ji,j->i", geometry.transform, covariance_dual)
 
 
 def _coordinate_hessian(problem, geometry, covariance):

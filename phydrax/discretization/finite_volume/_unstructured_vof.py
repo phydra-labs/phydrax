@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -291,8 +292,8 @@ def _jax_clip_convex_polygon(
             following = jnp.mod(index + 1, jnp.maximum(arity, 1))
             first = vertices[index]
             second = vertices[following]
-            first_signed = offset - oe.contract("d,d->", normal, first)
-            second_signed = offset - oe.contract("d,d->", normal, second)
+            first_signed = offset - ein.contract("d,d->", normal, first)
+            second_signed = offset - ein.contract("d,d->", normal, second)
             first_inside = first_signed >= 0.0
             second_inside = second_signed >= 0.0
             crosses = first_inside != second_inside
@@ -451,8 +452,8 @@ def _jax_segment_phase_geometry(
     """Return complementary phase apertures and centroids on one face."""
 
     dtype = first.dtype
-    first_signed = offset - oe.contract("d,d->", normal, first)
-    second_signed = offset - oe.contract("d,d->", normal, second)
+    first_signed = offset - ein.contract("d,d->", normal, first)
+    second_signed = offset - ein.contract("d,d->", normal, second)
     first_inside = first_signed >= 0.0
     second_inside = second_signed >= 0.0
     denominator = first_signed - second_signed
@@ -489,7 +490,7 @@ def _jax_segment_phase_geometry(
 
 
 def _dot(left: np.ndarray, right: np.ndarray, /) -> float:
-    return float(oe.contract("d,d->", left, right))
+    return float(ein.contract("d,d->", left, right))
 
 
 def _segment_phase_geometry(
@@ -852,7 +853,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             "Stage PLIC normals are not finite unit vectors.",
         )
 
-        projections = oe.contract("cvd,cd->cv", polygons, normals)
+        projections = ein.contract("cvd,cd->cv", polygons, normals)
         lower = jnp.min(jnp.where(cell_vertex_valid, projections, jnp.inf), axis=1)
         upper = jnp.max(jnp.where(cell_vertex_valid, projections, -jnp.inf), axis=1)
         lower = jnp.where(cell_active, lower, 0.0)
@@ -1145,7 +1146,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         for cell in range(geometry.cell_count):
             arity = int(cell_kinds[cell])
             polygon = vertices[cell_vertices[cell, :arity]]
-            projection = oe.contract("vd,d->v", polygon, normals[cell])
+            projection = ein.contract("vd,d->v", polygon, normals[cell])
             lower = float(np.min(projection))
             upper = float(np.max(projection))
             if alpha[cell] <= tolerance:

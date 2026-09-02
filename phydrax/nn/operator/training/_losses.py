@@ -15,8 +15,9 @@ from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._frozendict import frozendict
 from ...._numerics import log_normalize
@@ -870,7 +871,7 @@ def _weighted_case_reduction(
         raise ValueError(
             "Per-case loss values must align with the operator case measure."
         )
-    normalized_value = oe.contract(
+    normalized_value = ein.contract(
         "i,i->",
         measure.normalized_weights,
         flat_values,

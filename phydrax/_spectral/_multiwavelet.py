@@ -9,8 +9,9 @@ from math import sqrt
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._numerics._quadrature_rules import gauss_legendre_data
@@ -158,7 +159,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         samples = padded.reshape(
             padded.shape[:-2] + (cells, self.order, padded.shape[-1])
         )
-        approximation = oe.contract("mp,...cpi->...cmi", self.base_analysis, samples)
+        approximation = ein.contract("mp,...cpi->...cmi", self.base_analysis, samples)
         details: list[tuple[Array, ...]] = []
         shapes: list[tuple[int, ...]] = []
         for _ in range(self.levels):
@@ -172,7 +173,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
                 approximation.shape[:-3]
                 + (cells // 2, 2 * self.order, approximation.shape[-1])
             )
-            transformed = oe.contract("mn,...pni->...pmi", self.level_analysis, paired)
+            transformed = ein.contract("mn,...pni->...pmi", self.level_analysis, paired)
             approximation = transformed[..., : self.order, :]
             details.append((transformed[..., self.order :, :],))
         return MultiresolutionCoefficients(
@@ -206,11 +207,11 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
                 )
             detail = detail_level[0]
             merged = jnp.concatenate((approximation, detail), axis=-2)
-            fine = oe.contract("nm,...pmi->...pni", self.level_synthesis, merged)
+            fine = ein.contract("nm,...pmi->...pni", self.level_synthesis, merged)
             approximation = fine.reshape(
                 fine.shape[:-3] + (shape[0], self.order, fine.shape[-1])
             )
-        samples = oe.contract("pm,...cmi->...cpi", self.base_synthesis, approximation)
+        samples = ein.contract("pm,...cmi->...cpi", self.base_synthesis, approximation)
         output = samples.reshape(samples.shape[:-3] + (padded_points, samples.shape[-1]))
         return output[..., :num_points, :]
 

@@ -12,9 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
 from .._strict import StrictModule
@@ -187,7 +187,7 @@ def deep_bsde_rollout(
             return output.reshape((output_size,))
 
         generator_flat = jax.vmap(generator_at)(state_flat, value_flat, control_flat)
-        martingale_flat = oe.contract("son,sn->so", control_flat, increment_flat)
+        martingale_flat = ein.contract("son,sn->so", control_flat, increment_flat)
         next_value = value_flat - dt * generator_flat + martingale_flat
         return next_value, (next_value, generator_flat, martingale_flat)
 

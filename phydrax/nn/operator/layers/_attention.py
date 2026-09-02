@@ -9,8 +9,9 @@ from math import prod
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
@@ -194,14 +195,14 @@ class SliceAttention(StrictModule):
             jnp.asarray(-1e30, dtype=logits.dtype),
         )
         point_to_slice = jnn.softmax(logits + measure_logits, axis=1)
-        tokens = oe.contract("bns,bnc->bsc", point_to_slice, flattened)
+        tokens = ein.contract("bns,bnc->bsc", point_to_slice, flattened)
         tokens = self.attention(
             tokens,
             tokens,
             jnp.ones((flattened.shape[0], self.num_slices), dtype=float),
         )
         slice_to_point = jnn.softmax(logits, axis=-1)
-        decoded = oe.contract("bns,bsc->bnc", slice_to_point, tokens)
+        decoded = ein.contract("bns,bsc->bnc", slice_to_point, tokens)
         output = self.projection(decoded)
         output = output * samples.mask_array(case_shape=case_shape).reshape(
             flattened.shape[:2] + (1,)

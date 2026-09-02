@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -225,7 +226,7 @@ def apply_abelian_two_site_gate(
                             ] : right_physical_offsets[right_in_physical]
                             + right_physical.capacities[right_in_physical],
                         ]
-                        local = oe.contract(
+                        local = ein.contract(
                             "abij,lix,xjr->labr",
                             gate_block,
                             precision.contraction(left_tensor.blocks[left_index]),

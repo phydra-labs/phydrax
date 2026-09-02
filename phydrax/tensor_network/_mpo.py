@@ -9,8 +9,9 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -178,7 +179,7 @@ def compress_mps(
         retained = evidence.retained_rank
         tensors[index] = left.reshape(tensor.shape[:-1] + (retained,))
         tensors[index + 1] = precision.storage(
-            oe.contract(
+            ein.contract(
                 "ab,bpr->apr",
                 precision.contraction(right),
                 precision.contraction(tensors[index + 1]),
@@ -219,7 +220,7 @@ def compress_mpo(
         retained = evidence.retained_rank
         tensors[index] = left.reshape(tensor.shape[:-1] + (retained,))
         tensors[index + 1] = precision.storage(
-            oe.contract(
+            ein.contract(
                 "ab,boir->aoir",
                 precision.contraction(right),
                 precision.contraction(tensors[index + 1]),
@@ -247,7 +248,7 @@ def apply_mpo_exact(
         raise ValueError("MPO input dimensions must match MPS physical dimensions.")
     tensors = []
     for op_tensor, state_tensor in zip(operator.tensors, state.tensors, strict=True):
-        combined = oe.contract(
+        combined = ein.contract(
             "aoib,cid->acobd",
             precision.contraction(op_tensor),
             precision.contraction(state_tensor),
@@ -300,7 +301,7 @@ def compose_mpo(
         raise ValueError("Left MPO inputs must match right MPO outputs.")
     tensors = []
     for first, second in zip(left.tensors, right.tensors, strict=True):
-        combined = oe.contract(
+        combined = ein.contract(
             "aomb,cmid->acoibd",
             precision.contraction(first),
             precision.contraction(second),
@@ -372,7 +373,7 @@ class VariationalCompressionEvidence(StrictModule):
 def _tuple_inner(left, right, /):
     environment = jnp.ones((1, 1), dtype=jnp.result_type(left[0], right[0]))
     for first, second in zip(left, right, strict=True):
-        environment = oe.contract("ab,api,bpj->ij", environment, jnp.conj(first), second)
+        environment = ein.contract("ab,api,bpj->ij", environment, jnp.conj(first), second)
     return environment.reshape(())
 
 

@@ -9,8 +9,9 @@ from itertools import product
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -486,49 +487,49 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         values = jnp.asarray(trace_values)
         if values.shape[0] != self.left_interpolation.shape[1]:
             raise ValueError("Left trace values have incompatible shape.")
-        return oe.contract("qi,i...->q...", self.left_interpolation, values)
+        return ein.contract("qi,i...->q...", self.left_interpolation, values)
 
     def interpolate_right(self, trace_values: ArrayLike, /) -> Array:
         values = jnp.asarray(trace_values)
         if values.shape[0] != self.right_interpolation.shape[1]:
             raise ValueError("Right trace values have incompatible shape.")
-        return oe.contract("qi,i...->q...", self.right_interpolation, values)
+        return ein.contract("qi,i...->q...", self.right_interpolation, values)
 
     def pullback_left_raw(self, quadrature_dual: ArrayLike, /) -> Array:
         value = jnp.asarray(quadrature_dual)
         if value.shape[0] != self.left_interpolation.shape[0]:
             raise ValueError("Mortar quadrature dual has incompatible shape.")
-        return oe.contract("iq,q...->i...", self.left_raw_dual_pullback, value)
+        return ein.contract("iq,q...->i...", self.left_raw_dual_pullback, value)
 
     def pullback_right_raw(self, quadrature_dual: ArrayLike, /) -> Array:
         value = jnp.asarray(quadrature_dual)
         if value.shape[0] != self.right_interpolation.shape[0]:
             raise ValueError("Mortar quadrature dual has incompatible shape.")
-        return oe.contract("iq,q...->i...", self.right_raw_dual_pullback, value)
+        return ein.contract("iq,q...->i...", self.right_raw_dual_pullback, value)
 
     def mass_project_left(self, trace_values: ArrayLike, /) -> Array:
         values = jnp.asarray(trace_values)
         if values.shape[0] != self.left_mass_projection.shape[1]:
             raise ValueError("Left trace values have incompatible shape.")
-        return oe.contract("mi,i...->m...", self.left_mass_projection, values)
+        return ein.contract("mi,i...->m...", self.left_mass_projection, values)
 
     def mass_project_right(self, trace_values: ArrayLike, /) -> Array:
         values = jnp.asarray(trace_values)
         if values.shape[0] != self.right_mass_projection.shape[1]:
             raise ValueError("Right trace values have incompatible shape.")
-        return oe.contract("mi,i...->m...", self.right_mass_projection, values)
+        return ein.contract("mi,i...->m...", self.right_mass_projection, values)
 
     def pairing_adjoint_to_left(self, mortar_values: ArrayLike, /) -> Array:
         values = jnp.asarray(mortar_values)
         if values.shape[0] != self.left_pairing_adjoint.shape[1]:
             raise ValueError("Mortar values have incompatible shape.")
-        return oe.contract("im,m...->i...", self.left_pairing_adjoint, values)
+        return ein.contract("im,m...->i...", self.left_pairing_adjoint, values)
 
     def pairing_adjoint_to_right(self, mortar_values: ArrayLike, /) -> Array:
         values = jnp.asarray(mortar_values)
         if values.shape[0] != self.right_pairing_adjoint.shape[1]:
             raise ValueError("Mortar values have incompatible shape.")
-        return oe.contract("im,m...->i...", self.right_pairing_adjoint, values)
+        return ein.contract("im,m...->i...", self.right_pairing_adjoint, values)
 
     def integrated_flux(
         self,

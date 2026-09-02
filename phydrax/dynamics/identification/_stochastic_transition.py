@@ -8,7 +8,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..._strict import StrictModule
 from .._system import DiscreteStepContext

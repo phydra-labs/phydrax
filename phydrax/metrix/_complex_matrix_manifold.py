@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._lie_group import AbstractLieGroup
 from ._manifold import (
@@ -491,7 +492,7 @@ class AffineInvariantHPDManifold(AbstractGeodesicManifold):
         left_solved = jnp.linalg.solve(matrix, left)
         right_solved = jnp.linalg.solve(matrix, right)
         return jnp.real(
-            jnp.sum(oe.contract("...ij,...ji->...", left_solved, right_solved))
+            jnp.sum(ein.contract("...ij,...ji->...", left_solved, right_solved))
         )
 
     def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:

@@ -10,9 +10,9 @@ import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -166,7 +166,7 @@ def _tensor_rule(rule, dimension: int, dtype) -> tuple[Array, Array]:
 def _contract_tensor(weights: Array, values: Array, dimension: int, order: int) -> Array:
     tensor = values.reshape((order,) * dimension + values.shape[1:])
     for _ in range(dimension):
-        tensor = oe.contract("i,i...->...", weights, tensor)
+        tensor = ein.contract("i,i...->...", weights, tensor)
     return tensor
 
 

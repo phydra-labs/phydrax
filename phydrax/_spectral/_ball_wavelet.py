@@ -13,13 +13,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 from scipy.integrate import quad
 from scipy.special import gammaln
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..ein import contract
 from ._fourier_laguerre import FourierLaguerrePlan
 from ._laguerre import RadialLaguerrePlan
 from ._spherical import SphericalExecution

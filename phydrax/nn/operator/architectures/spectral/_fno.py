@@ -14,9 +14,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
@@ -218,7 +218,7 @@ class SpectralConvND(StrictModule):
         assert self.core is not None
         core = self.core[(corner, slice(None), slice(None), *mode_slices)]
         letters = ascii_lowercase[: len(modes)]
-        return oe.contract(
+        return ein.contract(
             f"ir,os,rs{letters}->io{letters}",
             self.factor_in,
             self.factor_out,
@@ -268,7 +268,7 @@ class SpectralConvND(StrictModule):
             spatial_slices = tuple(slices)
             block = transformed[(..., *spatial_slices, slice(None))]
             weight = self._dense_weight(corner, modes)
-            result = oe.contract(
+            result = ein.contract(
                 f"...{letters}i,io{letters}->...{letters}o",
                 block,
                 weight,

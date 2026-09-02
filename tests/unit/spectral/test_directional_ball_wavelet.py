@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
-from opt_einsum import contract
 
 from phydrax.discretization import (
     BallWaveletCoefficients,
@@ -17,6 +16,7 @@ from phydrax.discretization import (
     RadialLaguerrePlan,
     SphericalHarmonicPlan,
 )
+from phydrax.ein import contract
 
 
 def _plan(

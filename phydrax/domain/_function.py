@@ -12,8 +12,9 @@ import coordax as cx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -43,6 +44,7 @@ def _drop_model_construction_certificates(
             if name not in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
         }
     )
+
 
 def _rank1_leading_broadcast_op(
     op: Callable[[Any, Any], Any],
@@ -134,7 +136,7 @@ class _ExpectationFieldOp(StrictModule, NonTrainableState):
                 f"output axis, got {self.class_values.shape[0]} and "
                 f"{probabilities_.shape[-1]}."
             )
-        return oe.contract("...c,c->...", probabilities_, self.class_values)
+        return ein.contract("...c,c->...", probabilities_, self.class_values)
 
 
 class SwapAxesFieldEvaluator(StrictModule):

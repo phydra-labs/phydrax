@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import barycentric_differentiation_matrix
@@ -361,7 +362,7 @@ class MappedTensorMetrics(StrictModule, NonTrainableState):
 
 def _differentiate(value: Array, derivative: Array, axis: int, /) -> Array:
     moved = jnp.moveaxis(value, axis + 1, 1)
-    differentiated = oe.contract("ij,cj...->ci...", derivative, moved, backend="jax")
+    differentiated = ein.contract("ij,cj...->ci...", derivative, moved, backend="jax")
     return jnp.moveaxis(differentiated, 1, axis + 1)
 
 
@@ -518,7 +519,7 @@ class MappedTensorMetricPlan(StrictModule, NonTrainableState):
             for axis in range(self.dimension)
         )
         determinant = sum(
-            oe.contract(
+            ein.contract(
                 "c...d,c...d->c...",
                 coordinate_derivatives[axis],
                 cofactors[..., axis, :],

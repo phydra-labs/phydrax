@@ -8,8 +8,9 @@ from math import isfinite
 from typing import NamedTuple
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ._quadratic import _max_abs, _min_value, QuadraticProgram
 
@@ -55,15 +56,17 @@ def audit_primal_recession_ray(
     if not isfinite(tolerance_) or tolerance_ < 0.0:
         raise ValueError("Ray-audit tolerance must be finite and non-negative.")
     ray, _ = _normalize_vector(raw_candidate.astype(problem.linear.dtype))
-    quadratic_residual = _max_abs(oe.contract("...ij,...j->...i", problem.quadratic, ray))
+    quadratic_residual = _max_abs(
+        ein.contract("...ij,...j->...i", problem.quadratic, ray)
+    )
     equality_residual = _max_abs(
-        oe.contract(
+        ein.contract(
             "...ij,...j->...i",
             problem.equality_matrix[..., : problem.num_user_equalities, :],
             ray,
         )
     )
-    inequality_direction = oe.contract(
+    inequality_direction = ein.contract(
         "...ij,...j->...i",
         problem.inequality_matrix[..., : problem.num_user_inequalities, :],
         ray,
@@ -155,12 +158,12 @@ def audit_dual_infeasibility_ray(
     lower = lower / scale[..., None]
     upper = upper / scale[..., None]
     stationarity = (
-        oe.contract(
+        ein.contract(
             "...ji,...j->...i",
             problem.equality_matrix[..., : problem.num_user_equalities, :],
             equality,
         )
-        + oe.contract(
+        + ein.contract(
             "...ji,...j->...i",
             problem.inequality_matrix[..., : problem.num_user_inequalities, :],
             inequality,

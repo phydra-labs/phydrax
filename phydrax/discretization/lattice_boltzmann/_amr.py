@@ -10,8 +10,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -111,8 +112,8 @@ class LatticeBoltzmannAMRTransferPlan(StrictModule, NonTrainableState):
         fine_mass = jnp.sum(fine) / ratio_volume
         coarse_mass = jnp.sum(coarse)
         velocities = jnp.asarray(self.velocity_set.velocities, dtype=fine.dtype)
-        fine_momentum = oe.contract("...q,qd->d", fine, velocities) / ratio_volume
-        coarse_momentum = oe.contract("...q,qd->d", coarse, velocities)
+        fine_momentum = ein.contract("...q,qd->d", fine, velocities) / ratio_volume
+        coarse_momentum = ein.contract("...q,qd->d", coarse, velocities)
         mass_defect = jnp.abs(fine_mass - coarse_mass)
         momentum_defect = jnp.sqrt(jnp.sum((fine_momentum - coarse_momentum) ** 2))
         minimum = jnp.minimum(jnp.min(fine), jnp.min(coarse))
@@ -266,7 +267,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         )
         return (
             jnp.max(jnp.abs(jnp.sum(nonequilibrium, axis=-1))),
-            jnp.max(jnp.abs(oe.contract("...q,qd->...d", nonequilibrium, velocities))),
+            jnp.max(jnp.abs(ein.contract("...q,qd->...d", nonequilibrium, velocities))),
         )
 
     def prolong(
@@ -528,7 +529,7 @@ class LatticeBoltzmannAMRTemporalTracePlan(StrictModule, NonTrainableState):
         fraction_ = jnp.asarray(fraction, dtype=values_.real.dtype).reshape(())
         powers = fraction_ ** jnp.arange(self.exactness_degree + 1, dtype=fraction_.dtype)
         weights = self.coefficients.astype(fraction_.dtype) @ powers
-        return oe.contract("n,n...->...", weights.astype(values_.dtype), values_)
+        return ein.contract("n,n...->...", weights.astype(values_.dtype), values_)
 
 
 class LatticeBoltzmannAMRState(StrictModule):

@@ -9,8 +9,9 @@ from collections import deque
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -193,7 +194,7 @@ class PreparedTriangleQuadratic(StrictModule, NonTrainableState):
             raise ValueError("Quadratic values must begin with triangle cell count.")
         difference = value[self.neighbour_cells] - value[:, None, ...]
         mask = self.valid.reshape(self.valid.shape + (1,) * (difference.ndim - 2))
-        return oe.contract(
+        return ein.contract(
             "cin,cn...->c...i",
             self.factors.astype(value.dtype),
             jnp.where(mask, difference, 0.0),
@@ -243,8 +244,8 @@ class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
                 axis=-1,
             )
 
-        left_delta = oe.contract("f...i,fqi->fq...", coefficients[owner], basis(owner))
-        right_delta = oe.contract(
+        left_delta = ein.contract("f...i,fqi->fq...", coefficients[owner], basis(owner))
+        right_delta = ein.contract(
             "f...i,fqi->fq...",
             coefficients[safe_neighbour],
             basis(safe_neighbour),

@@ -11,8 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -247,7 +248,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
             ),
             axis=-1,
         )
-        return oe.contract("...d,...d->...", fluxes, normal_, backend="jax")
+        return ein.contract("...d,...d->...", fluxes, normal_, backend="jax")
 
     def relative_entropy(
         self,
@@ -339,7 +340,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
             state.shape,
             "Conservation-system physical flux",
         )
-        return oe.contract(
+        return ein.contract(
             "...i,...i->...",
             self._entropy_variables_unchecked(state),
             flux,
@@ -368,8 +369,8 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
             ),
             axis=-1,
         )
-        physical = oe.contract("...id,...d->...i", fluxes, normal_, backend="jax")
-        return oe.contract(
+        physical = ein.contract("...id,...d->...i", fluxes, normal_, backend="jax")
+        return ein.contract(
             "...i,...i->...",
             self._entropy_variables_unchecked(value),
             physical,
@@ -395,7 +396,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
         axis_ = _axis(axis, self.dimension)
         variables_left = self._entropy_variables_unchecked(left_value)
         variables_right = self._entropy_variables_unchecked(right_value)
-        return oe.contract(
+        return ein.contract(
             "...i,...i->...",
             variables_right - variables_left,
             flux,
@@ -423,7 +424,7 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
             raise ValueError("Numerical flux must match the interface state shape.")
         variables_left = self._entropy_variables_unchecked(left_value)
         variables_right = self._entropy_variables_unchecked(right_value)
-        return oe.contract(
+        return ein.contract(
             "...i,...i->...",
             variables_right - variables_left,
             flux,
@@ -610,12 +611,12 @@ def validate_convex_entropy_pair(
             state,
             pair.component_count,
         )
-        compatibility = oe.contract("...i,...ij->...j", variables, flux_jacobian)
+        compatibility = ein.contract("...i,...ij->...j", variables, flux_jacobian)
         maximum_flux_compatibility_residual = jnp.maximum(
             maximum_flux_compatibility_residual,
             _maximum_abs(flux_gradient - compatibility, policy),
         )
-        symmetrized_flux = oe.contract("...ik,...kj->...ij", hessian, flux_jacobian)
+        symmetrized_flux = ein.contract("...ik,...kj->...ij", hessian, flux_jacobian)
         maximum_flux_symmetrizer_asymmetry = jnp.maximum(
             maximum_flux_symmetrizer_asymmetry,
             _maximum_abs(

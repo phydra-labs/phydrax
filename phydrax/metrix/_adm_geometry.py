@@ -9,8 +9,9 @@ from math import pi
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._adm import decompose_adm_metric
@@ -146,7 +147,7 @@ def adm_spacetime_projector(
     conormal = adm_normal_covector(metric, points)
     timelike_sign = -1.0 if metric.convention == "mostly_plus" else 1.0
     identity = jnp.eye(dimension, dtype=normal.dtype)
-    return identity - timelike_sign * oe.contract(
+    return identity - timelike_sign * ein.contract(
         "...i,...j->...ij",
         normal,
         conormal,
@@ -165,7 +166,7 @@ def _extrinsic_curvature_at(
 
     def shift_covector(point: Array, /) -> Array:
         fields = decompose_adm_metric(metric, point)
-        return oe.contract("ij,j->i", fields.spatial_metric, fields.shift)
+        return ein.contract("ij,j->i", fields.spatial_metric, fields.shift)
 
     def spatial_matrix(point: Array, /) -> Array:
         return decompose_adm_metric(metric, point).spatial_metric
@@ -174,7 +175,7 @@ def _extrinsic_curvature_at(
     shift_derivative = jax.jacfwd(shift_covector)(coordinates)
     spatial_derivative = jax.jacfwd(spatial_matrix)(coordinates)
     partial_shift = jnp.swapaxes(shift_derivative[:, 1:], -2, -1)
-    covariant_shift = partial_shift - oe.contract(
+    covariant_shift = partial_shift - ein.contract(
         "kij,k->ij",
         connection,
         shift_covector_value,
@@ -210,14 +211,14 @@ def _hamiltonian_geometry_at(
     spatial_coordinates = coordinates[1:]
     extrinsic = _extrinsic_curvature_at(metric, coordinates)
     spatial_inverse = decomposition.spatial_inverse
-    trace = oe.contract("ij,ij->", spatial_inverse, extrinsic)
-    raised = oe.contract(
+    trace = ein.contract("ij,ij->", spatial_inverse, extrinsic)
+    raised = ein.contract(
         "ik,jl,kl->ij",
         spatial_inverse,
         spatial_inverse,
         extrinsic,
     )
-    extrinsic_square = oe.contract("ij,ij->", extrinsic, raised)
+    extrinsic_square = ein.contract("ij,ij->", extrinsic, raised)
     return (
         scalar_curvature(spatial_metric, spatial_coordinates)
         + trace**2
@@ -240,15 +241,15 @@ def _momentum_geometry_at(
         decomposition = decompose_adm_metric(metric, point)
         extrinsic = _extrinsic_curvature_at(metric, point)
         inverse = decomposition.spatial_inverse
-        trace = oe.contract("ij,ij->", inverse, extrinsic)
-        raised = oe.contract("ik,jl,kl->ij", inverse, inverse, extrinsic)
+        trace = ein.contract("ij,ij->", inverse, extrinsic)
+        raised = ein.contract("ik,jl,kl->ij", inverse, inverse, extrinsic)
         return raised - trace * inverse
 
     tensor = trace_reversed(spatial_coordinates)
     derivative = jax.jacfwd(trace_reversed)(spatial_coordinates)
-    partial = oe.contract("ijj->i", derivative)
-    first_connection = oe.contract("ijk,kj->i", connection, tensor)
-    second_connection = oe.contract("jjk,ik->i", connection, tensor)
+    partial = ein.contract("ijj->i", derivative)
+    first_connection = ein.contract("ijk,kj->i", connection, tensor)
+    second_connection = ein.contract("jjk,ik->i", connection, tensor)
     return partial + first_connection + second_connection
 
 

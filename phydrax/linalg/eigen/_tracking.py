@@ -13,8 +13,9 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._assignment_core import hungarian_assignment_one
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -191,7 +192,7 @@ def plan_hermitian_eigenspace_tracking(
 
 def _orthogonality_residual(vectors: Array, /) -> Array:
     dimension = vectors.shape[1]
-    gram = oe.contract("ai,aj->ij", jnp.conj(vectors), vectors)
+    gram = ein.contract("ai,aj->ij", jnp.conj(vectors), vectors)
     return jnp.max(jnp.abs(gram - jnp.eye(dimension, dtype=gram.dtype)))
 
 
@@ -245,7 +246,7 @@ def track_hermitian_eigenspaces(
     if jnp.issubdtype(values.dtype, jnp.complexfloating):
         raise TypeError("candidate_values must be real.")
 
-    overlap = oe.contract("ai,aj->ij", jnp.conj(reference), candidate)
+    overlap = ein.contract("ai,aj->ij", jnp.conj(reference), candidate)
     overlap_weights = jnp.real(overlap * jnp.conj(overlap))
     assignment, _, _, assignment_solved, _ = hungarian_assignment_one(
         -jax.lax.stop_gradient(overlap_weights),
@@ -265,7 +266,7 @@ def track_hermitian_eigenspaces(
         indices = jnp.asarray(cluster, dtype=jnp.int32)
         reference_cluster = reference[:, indices]
         candidate_cluster = selected_vectors[:, indices]
-        cross = oe.contract("ai,aj->ij", jnp.conj(reference_cluster), candidate_cluster)
+        cross = ein.contract("ai,aj->ij", jnp.conj(reference_cluster), candidate_cluster)
         left, singular_values, right_adjoint = jnp.linalg.svd(
             cross,
             full_matrices=False,

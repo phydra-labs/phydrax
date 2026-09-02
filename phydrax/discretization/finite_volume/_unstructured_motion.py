@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -383,8 +384,8 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 axis=1,
             )
             quadrilateral_points = points[self.base_plan.quadrilaterals]
-            mapped = oe.contract("qv,cvd->cqd", shape, quadrilateral_points)
-            jacobian = oe.contract("qva,cvd->cqad", gradient, quadrilateral_points)
+            mapped = ein.contract("qv,cvd->cqd", shape, quadrilateral_points)
+            jacobian = ein.contract("qva,cvd->cqad", gradient, quadrilateral_points)
             determinant = (
                 jacobian[..., 0, 0] * jacobian[..., 1, 1]
                 - jacobian[..., 0, 1] * jacobian[..., 1, 0]
@@ -513,18 +514,18 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             jnp.zeros_like(vertex_velocity),
         )
         face_vertex_velocity = safe_vertex_velocity[self.face_vertices]
-        quadrature_grid_velocity = oe.contract(
+        quadrature_grid_velocity = ein.contract(
             "qv,fvd->fqd",
             self.face_quadrature_vertex_weights,
             face_vertex_velocity,
         )
         unit_normals = area_vectors / face_measures[:, None]
-        quadrature_grid_normal_velocity = oe.contract(
+        quadrature_grid_normal_velocity = ein.contract(
             "fqd,fd->fq",
             quadrature_grid_velocity,
             unit_normals,
         )
-        face_mesh_volume_rate = oe.contract(
+        face_mesh_volume_rate = ein.contract(
             "fq,fq->f",
             quadrature_weights,
             quadrature_grid_normal_velocity,

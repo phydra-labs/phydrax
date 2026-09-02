@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch
@@ -640,7 +641,7 @@ def solve_reflected_path_dependent_bsde(
                 ridge_value,
             )
 
-        martingale = oe.contract(
+        martingale = ein.contract(
             "pon,pn->po",
             z_value.reshape((num_paths, output_size, noise_size)),
             increments[:, step],

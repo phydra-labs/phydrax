@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
 from ...._model import AbstractArrayModel
@@ -292,7 +293,9 @@ class HelmholtzCombinedField3D(AbstractArrayModel):
     def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
         values = jnp.asarray(targets, dtype=float)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
-            raise ValueError("3D combined-field targets must have shape (target_count, 3).")
+            raise ValueError(
+                "3D combined-field targets must have shape (target_count, 3)."
+            )
         return jax.vmap(self)(values)
 
     def discretization_report(self) -> LayerDiscretizationReport:

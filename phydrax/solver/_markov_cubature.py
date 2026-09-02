@@ -12,8 +12,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._measure_weights import normalized_weights
@@ -358,7 +359,7 @@ def solve_markov_cubature(
             lambda state, enabled: evaluate_parent(time, state, enabled)
         )(current, active)
         state_width = jnp.asarray(width, dtype=current.dtype)
-        noise = oe.contract("rsd,pd->rps", diffusion, controls)
+        noise = ein.contract("rsd,pd->rps", diffusion, controls)
         return (
             current[:, None, :]
             + state_width * drift[:, None, :]

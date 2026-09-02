@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -139,7 +140,7 @@ class CPICFracturePlan(StrictModule, NonTrainableState):
         gathered = grid[routes.stencil.indices]
         particle = jnp.asarray(particle_velocity)
         affine = jnp.asarray(affine_velocity)
-        ghost = particle[:, None, :] + oe.contract(
+        ghost = particle[:, None, :] + ein.contract(
             "pij,prj->pri", affine, routes.route_offsets
         )
         return jnp.where(compatibility.compatible[..., None], gathered, ghost)

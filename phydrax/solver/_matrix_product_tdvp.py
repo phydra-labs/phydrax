@@ -11,8 +11,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -480,7 +481,7 @@ def _one_site_step(state, hamiltonian, policy):
         converged.append(bond_evolved.converged)
         tensors[site] = precision.storage(left_core)
         tensors[site + 1] = precision.storage(
-            oe.contract(
+            ein.contract(
                 "ab,bpr->apr",
                 precision.contraction(bond_evolved.value),
                 precision.contraction(tensors[site + 1]),
@@ -551,7 +552,7 @@ def _one_site_step(state, hamiltonian, policy):
         converged.append(bond_evolved.converged)
         tensors[site] = precision.storage(right_core)
         tensors[site - 1] = precision.storage(
-            oe.contract(
+            ein.contract(
                 "lpa,ab->lpb",
                 precision.contraction(tensors[site - 1]),
                 precision.contraction(bond_evolved.value),
@@ -599,7 +600,7 @@ def _two_site_step(state, hamiltonian, policy):
         for bond in bonds:
             left = precision.contraction(state.tensors[bond])
             right = precision.contraction(state.tensors[bond + 1])
-            theta = oe.contract("lpi,iqr->lpqr", left, right)
+            theta = ein.contract("lpi,iqr->lpqr", left, right)
             evolved = _evolve(
                 TwoSiteMPOEffectiveAction(
                     precision.accumulation(environments.left[bond]),

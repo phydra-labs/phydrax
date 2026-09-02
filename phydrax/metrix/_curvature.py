@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._connection import AbstractAffineConnection, LeviCivitaConnection
 from ._metric import AbstractSemiRiemannianMetric
@@ -28,10 +29,10 @@ def connection_riemann_tensor(
 ) -> Array:
     """Return ``R[..., l, k, i, j] = Rˡ_kij`` for an affine connection."""
     gamma, derivative = _connection_values(connection, coordinates)
-    first_derivative = oe.contract("...ljki->...lkij", derivative)
-    second_derivative = oe.contract("...likj->...lkij", derivative)
-    first_product = oe.contract("...lim,...mjk->...lkij", gamma, gamma)
-    second_product = oe.contract("...ljm,...mik->...lkij", gamma, gamma)
+    first_derivative = ein.contract("...ljki->...lkij", derivative)
+    second_derivative = ein.contract("...likj->...lkij", derivative)
+    first_product = ein.contract("...lim,...mjk->...lkij", gamma, gamma)
+    second_product = ein.contract("...ljm,...mik->...lkij", gamma, gamma)
     return first_derivative - second_derivative + first_product - second_product
 
 
@@ -51,10 +52,10 @@ def connection_ricci_tensor(
 ) -> Array:
     """Return the Ricci contraction without materializing full curvature."""
     gamma, derivative = _connection_values(connection, coordinates)
-    first_derivative = oe.contract("...ljkl->...kj", derivative)
-    second_derivative = oe.contract("...llkj->...kj", derivative)
-    first_product = oe.contract("...llm,...mjk->...kj", gamma, gamma)
-    second_product = oe.contract("...ljm,...mlk->...kj", gamma, gamma)
+    first_derivative = ein.contract("...ljkl->...kj", derivative)
+    second_derivative = ein.contract("...llkj->...kj", derivative)
+    first_product = ein.contract("...llm,...mjk->...kj", gamma, gamma)
+    second_product = ein.contract("...ljm,...mlk->...kj", gamma, gamma)
     return first_derivative - second_derivative + first_product - second_product
 
 
@@ -72,7 +73,7 @@ def scalar_curvature(
     /,
 ) -> Array:
     """Return the metric trace of the Ricci tensor."""
-    return oe.contract(
+    return ein.contract(
         "...ij,...ij->...",
         metric.inverse(coordinates),
         ricci_tensor(metric, coordinates),
@@ -86,7 +87,7 @@ def einstein_tensor(
 ) -> Array:
     """Return ``Ric - 1/2 scalar_curvature * metric``."""
     ricci = ricci_tensor(metric, coordinates)
-    scalar = oe.contract("...ij,...ij->...", metric.inverse(coordinates), ricci)
+    scalar = ein.contract("...ij,...ij->...", metric.inverse(coordinates), ricci)
     return ricci - 0.5 * scalar[..., None, None] * metric(coordinates)
 
 
@@ -109,8 +110,8 @@ def sectional_curvature(
         raise ValueError(f"Section vectors must have trailing dimension {dimension}.")
     matrix = metric(coordinates)
     riemann = riemann_tensor(metric, coordinates)
-    lowered = oe.contract("...al,...lkij->...akij", matrix, riemann)
-    numerator = oe.contract(
+    lowered = ein.contract("...al,...lkij->...akij", matrix, riemann)
+    numerator = ein.contract(
         "...akij,...a,...k,...i,...j->...",
         lowered,
         first_array,
@@ -118,11 +119,11 @@ def sectional_curvature(
         first_array,
         second_array,
     )
-    first_square = oe.contract("...i,...ij,...j->...", first_array, matrix, first_array)
-    second_square = oe.contract(
+    first_square = ein.contract("...i,...ij,...j->...", first_array, matrix, first_array)
+    second_square = ein.contract(
         "...i,...ij,...j->...", second_array, matrix, second_array
     )
-    cross = oe.contract("...i,...ij,...j->...", first_array, matrix, second_array)
+    cross = ein.contract("...i,...ij,...j->...", first_array, matrix, second_array)
     denominator = first_square * second_square - cross * cross
     scale = jnp.maximum(
         jnp.abs(first_square * second_square) + cross * cross,

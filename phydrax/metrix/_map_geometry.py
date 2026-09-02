@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -90,11 +91,11 @@ class RiemannianMapGeometry(StrictModule):
     def pullback_metric(self, coordinates: ArrayLike, /) -> Array:
         jacobian = self.map.jacobian(coordinates)
         target = self.target_metric(self.map(coordinates))
-        return oe.contract("...ai,...ab,...bj->...ij", jacobian, target, jacobian)
+        return ein.contract("...ai,...ab,...bj->...ij", jacobian, target, jacobian)
 
     def energy_density(self, coordinates: ArrayLike, /) -> Array:
         inverse = self.source_metric.inverse(coordinates)
-        return 0.5 * oe.contract(
+        return 0.5 * ein.contract(
             "...ij,...ij->...", inverse, self.pullback_metric(coordinates)
         )
 
@@ -107,7 +108,7 @@ class RiemannianMapGeometry(StrictModule):
     def conformality_tensor(self, coordinates: ArrayLike, /) -> Array:
         source = self.source_metric(coordinates)
         pullback = self.pullback_metric(coordinates)
-        scale = oe.contract(
+        scale = ein.contract(
             "...ij,...ij->...", self.source_metric.inverse(coordinates), pullback
         ) / float(self.map.source.dimension)
         return pullback - scale[..., None, None] * source
@@ -130,8 +131,8 @@ class RiemannianMapGeometry(StrictModule):
             hessian = self.map.hessian(point)
             source_coefficients = source_connection.coefficients(point)
             target_coefficients = target_connection.coefficients(mapped)
-            source_correction = oe.contract("kij,ak->aij", source_coefficients, jacobian)
-            target_correction = oe.contract(
+            source_correction = ein.contract("kij,ak->aij", source_coefficients, jacobian)
+            target_correction = ein.contract(
                 "abc,bi,cj->aij", target_coefficients, jacobian, jacobian
             )
             return hessian - source_correction + target_correction
@@ -139,7 +140,7 @@ class RiemannianMapGeometry(StrictModule):
         return _pointwise_array(evaluate, coordinates, self.map.source.dimension)
 
     def tension_field(self, coordinates: ArrayLike, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "...ij,...aij->...a",
             self.source_metric.inverse(coordinates),
             self.second_covariant_derivative(coordinates),
@@ -151,7 +152,7 @@ class RiemannianMapGeometry(StrictModule):
         jacobian = self.map.jacobian(coordinates)
         target_metric = self.target_metric(self.map(coordinates))
         induced = self.pullback_metric(coordinates)
-        right_hand_side = oe.contract(
+        right_hand_side = ein.contract(
             "...bj,...bc->...jc",
             jacobian,
             target_metric,
@@ -161,7 +162,7 @@ class RiemannianMapGeometry(StrictModule):
             right_hand_side,
             (self.map.target.dimension,),
         )
-        return oe.contract("...ai,...ic->...ac", jacobian, solved)
+        return ein.contract("...ai,...ic->...ac", jacobian, solved)
 
     def target_normal_projector(self, coordinates: ArrayLike, /) -> Array:
         tangent = self.target_tangent_projector(coordinates)
@@ -169,7 +170,7 @@ class RiemannianMapGeometry(StrictModule):
         return identity - tangent
 
     def second_fundamental_form(self, coordinates: ArrayLike, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "...ab,...bij->...aij",
             self.target_normal_projector(coordinates),
             self.second_covariant_derivative(coordinates),
@@ -184,7 +185,7 @@ class RiemannianMapGeometry(StrictModule):
             right_hand_side,
             (self.map.source.dimension, self.map.target.dimension),
         )
-        return oe.contract("...iia->...a", solved) / float(self.map.source.dimension)
+        return ein.contract("...iia->...a", solved) / float(self.map.source.dimension)
 
 
 __all__ = ["RiemannianMapGeometry"]

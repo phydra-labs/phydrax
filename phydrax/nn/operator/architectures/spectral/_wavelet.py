@@ -14,10 +14,10 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._spectral import (
     DiscreteWaveletTransform,
@@ -72,7 +72,7 @@ class _WaveletSubbandMixerND(StrictModule):
 
     @staticmethod
     def _mix(weight: Array, values: Array, /) -> Array:
-        return oe.contract("oi,...i->...o", weight, values)
+        return ein.contract("oi,...i->...o", weight, values)
 
     def __call__(
         self, coefficients: MultiresolutionCoefficients, /
@@ -136,7 +136,7 @@ class _MultiwaveletSubbandMixer1D(StrictModule):
 
     def _mix(self, weight: Array, values: Array, /) -> Array:
         flattened = values.reshape(values.shape[:-2] + (self.order * self.in_channels,))
-        mixed = oe.contract("oi,...i->...o", weight, flattened)
+        mixed = ein.contract("oi,...i->...o", weight, flattened)
         return mixed.reshape(mixed.shape[:-1] + (self.order, self.out_channels))
 
     def __call__(
@@ -275,7 +275,7 @@ def _decode_multiwavelet_queries(
                         / (reference_nodes[basis_index] - reference_nodes[node_index])
                     )
             basis.append(weight)
-        return oe.contract(
+        return ein.contract(
             "qp,qpc->qc",
             jnp.stack(tuple(basis), axis=-1),
             samples,

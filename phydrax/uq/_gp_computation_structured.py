@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..kernels import Matern32Kernel
@@ -122,7 +123,7 @@ class StructuredComputationAwareGaussianProcessFactor(StrictModule):
             ~successful,
             "Structured projected GP covariance solve failed.",
         )
-        mean = oe.contract("qm,m->q", query_action, alpha)
+        mean = ein.contract("qm,m->q", query_action, alpha)
         covariance = prior - query_action @ solved
         covariance = 0.5 * (covariance + covariance.T)
         variance = jnp.diag(covariance)

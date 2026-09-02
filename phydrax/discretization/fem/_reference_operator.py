@@ -9,8 +9,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -169,21 +170,21 @@ def _dense_interpolate(basis: Array, coefficients: ArrayLike, /) -> Array:
     values = jnp.asarray(coefficients)
     if values.ndim < 1 or values.shape[-1] != basis.shape[1]:
         raise ValueError("Reference coefficients have an incompatible DOF axis.")
-    return oe.contract("qd,...d->...q", basis, values)
+    return ein.contract("qd,...d->...q", basis, values)
 
 
 def _dense_interpolate_transpose(basis: Array, values: ArrayLike, /) -> Array:
     evaluated = jnp.asarray(values)
     if evaluated.ndim < 1 or evaluated.shape[-1] != basis.shape[0]:
         raise ValueError("Reference values have an incompatible point axis.")
-    return oe.contract("qd,...q->...d", basis, evaluated)
+    return ein.contract("qd,...q->...d", basis, evaluated)
 
 
 def _dense_gradient(gradients: Array, coefficients: ArrayLike, /) -> Array:
     values = jnp.asarray(coefficients)
     if values.ndim < 1 or values.shape[-1] != gradients.shape[1]:
         raise ValueError("Reference coefficients have an incompatible DOF axis.")
-    return oe.contract("qdk,...d->...qk", gradients, values)
+    return ein.contract("qdk,...d->...qk", gradients, values)
 
 
 def _dense_gradient_transpose(gradients: Array, values: ArrayLike, /) -> Array:
@@ -193,7 +194,7 @@ def _dense_gradient_transpose(gradients: Array, values: ArrayLike, /) -> Array:
         gradients.shape[2],
     ):
         raise ValueError("Reference gradients have incompatible point/component axes.")
-    return oe.contract("qdk,...qk->...d", gradients, evaluated)
+    return ein.contract("qdk,...qk->...d", gradients, evaluated)
 
 
 class FiniteElementFacetReference(StrictModule, NonTrainableState):

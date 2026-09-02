@@ -6,7 +6,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
+
+import phydrax.ein as ein
 
 from ._graph import ensure_graph
 from ._ir import GraphIR
@@ -204,7 +205,7 @@ def _relation_transform(nodes: jnp.ndarray, relation_weights: jnp.ndarray) -> jn
     if relation_weights.ndim == 2:
         return nodes * relation_weights
     if relation_weights.ndim == 3:
-        return oe.contract("ef,efo->eo", nodes, relation_weights)
+        return ein.contract("ef,efo->eo", nodes, relation_weights)
     raise ValueError("relation_weights must have shape (R,), (R, F), or (R, F, O).")
 
 

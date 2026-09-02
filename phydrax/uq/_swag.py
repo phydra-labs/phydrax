@@ -10,9 +10,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 import optax
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -260,7 +261,7 @@ def sample_swag_vector(
     low_rank_noise = jr.normal(
         low_rank_key, (state.snapshots.shape[0],), dtype=state.mean.dtype
     )
-    low_rank = oe.contract("kp,k->p", centered, low_rank_noise) / jnp.sqrt(
+    low_rank = ein.contract("kp,k->p", centered, low_rank_noise) / jnp.sqrt(
         active_count - 1.0
     )
     return state.mean + (

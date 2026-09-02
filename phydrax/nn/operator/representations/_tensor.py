@@ -9,9 +9,9 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax.linalg import inverse as matrix_inverse
 
@@ -116,7 +116,7 @@ class TensorType(StrictModule):
             leading_shape = array.shape
         flat = array.reshape(leading_shape + (self.component_count,))
         action = self.representation_matrix(transform).astype(flat.dtype)
-        transformed = oe.contract("ij,...j->...i", action, flat)
+        transformed = ein.contract("ij,...j->...i", action, flat)
         return transformed.reshape(array.shape)
 
     def to_dict(self) -> dict[str, Any]:

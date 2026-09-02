@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
@@ -490,7 +491,7 @@ def _rough_delay_integrate(
                         problem.driver_dimension,
                     )
                 )
-                current_second_update = oe.contract(
+                current_second_update = ein.contract(
                     "isj,ij->s",
                     flattened,
                     second_increment,
@@ -565,12 +566,12 @@ def _rough_delay_integrate(
                                 problem.driver_dimension,
                             )
                         )
-                        delayed_cross_level = 0.5 * oe.contract(
+                        delayed_cross_level = 0.5 * ein.contract(
                             "i,j->ij",
                             first[delayed_step_index],
                             first_increment,
                         )
-                        return oe.contract(
+                        return ein.contract(
                             "isj,ij->s",
                             delayed_derivatives,
                             delayed_cross_level,

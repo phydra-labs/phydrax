@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._model import AbstractArrayModel
@@ -96,7 +97,7 @@ class ExactQuantumStateFidelityKernel(AbstractPositiveDefiniteKernel):
     def pairwise(self, x: Any, y: Any, /) -> Array:
         left = self._state(x)
         right = self._state(y)
-        overlap = oe.contract("i,i->", jnp.conj(left), right)
+        overlap = ein.contract("i,i->", jnp.conj(left), right)
         return jnp.real(overlap * jnp.conj(overlap))
 
     def matrix(self, x: ArrayLike, y: ArrayLike, /) -> Array:
@@ -113,7 +114,7 @@ class ExactQuantumStateFidelityKernel(AbstractPositiveDefiniteKernel):
             )
         left_states = jax.vmap(self._state)(left_points)
         right_states = jax.vmap(self._state)(right_points)
-        overlaps = oe.contract("id,jd->ij", jnp.conj(left_states), right_states)
+        overlaps = ein.contract("id,jd->ij", jnp.conj(left_states), right_states)
         return jnp.real(overlaps * jnp.conj(overlaps))
 
     def diagonal(self, x: ArrayLike, /) -> Array:

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
@@ -186,8 +187,8 @@ def evaluate_fiber_section(
     tangent = (1.0 - damage) * tangent
     basis = jnp.stack((jnp.ones_like(y), -z, y), axis=-1)
     weighted_stress = geometry.areas * stress
-    resultants = oe.contract("fi,f->i", basis, weighted_stress)
-    section_tangent = oe.contract("fi,f,fj->ij", basis, geometry.areas * tangent, basis)
+    resultants = ein.contract("fi,f->i", basis, weighted_stress)
+    section_tangent = ein.contract("fi,f,fj->ij", basis, geometry.areas * tangent, basis)
     dissipation = jnp.sum(
         geometry.areas
         * increment

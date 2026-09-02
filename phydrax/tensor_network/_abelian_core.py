@@ -9,8 +9,9 @@ from itertools import pairwise
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
@@ -224,7 +225,7 @@ def abelian_mps_inner(
                     ):
                         continue
                     key = (left_sector[2], right_sector[2])
-                    contribution = oe.contract(
+                    contribution = ein.contract(
                         "ab,api,bpj->ij",
                         precision.accumulation(value),
                         jnp.conj(precision.accumulation(left_block)),
@@ -287,7 +288,7 @@ def abelian_mps_one_site_expectation(
                     else:
                         local = jnp.eye(bra_block.shape[1], dtype=value.dtype)
                     key = (bra_sector[2], ket_sector[2])
-                    contribution = oe.contract(
+                    contribution = ein.contract(
                         "ab,api,pq,bqj->ij",
                         precision.accumulation(env),
                         jnp.conj(precision.accumulation(bra_block)),
@@ -402,7 +403,7 @@ def canonicalize_abelian_mps(
         tensors[site] = _replace_blocks(tensor, blocks)
         next_tensor = tensors[site + 1]
         next_blocks = [
-            oe.contract("ab,bpr->apr", transfers[sector[0]], block)
+            ein.contract("ab,bpr->apr", transfers[sector[0]], block)
             for sector, block in zip(
                 next_tensor.layout.sectors, next_tensor.blocks, strict=True
             )
@@ -453,7 +454,7 @@ def canonicalize_abelian_mps(
         tensors[site] = _replace_blocks(tensor, blocks)
         previous = tensors[site - 1]
         previous_blocks = [
-            oe.contract("lpa,ab->lpb", block, transfers[sector[2]])
+            ein.contract("lpa,ab->lpb", block, transfers[sector[2]])
             for sector, block in zip(
                 previous.layout.sectors, previous.blocks, strict=True
             )
@@ -787,7 +788,7 @@ def apply_abelian_mpo_exact(
                     right_ordinal,
                 )
                 result_index = layout.sectors.index(result_sector)
-                combined = oe.contract(
+                combined = ein.contract(
                     "aoib,cid->caodb",
                     state.precision.contraction(op_block),
                     state.precision.contraction(state_block),
@@ -890,7 +891,7 @@ def compose_abelian_mpo_exact(
                     right_ordinal,
                 )
                 result_index = layout.sectors.index(result_sector)
-                combined = oe.contract(
+                combined = ein.contract(
                     "aomb,cmid->acoibd",
                     left.precision.contraction(first_block),
                     left.precision.contraction(second_block),

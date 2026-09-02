@@ -14,8 +14,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from ..linalg import ArraySpace, DiagonalPairing
@@ -575,11 +576,11 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
         if selected != (0,):
             raise ValueError("Spectral spatial Laplacians expose one point axis.")
         array = self._validate_state(state)
-        coefficients = oe.contract("mp,p...->m...", self.plan.analysis, array)
+        coefficients = ein.contract("mp,p...->m...", self.plan.analysis, array)
         scale = self.plan.eigenvalues.reshape(
             (self.plan.num_modes,) + (1,) * (coefficients.ndim - 1)
         )
-        return -oe.contract("pm,m...->p...", self.plan.synthesis, scale * coefficients)
+        return -ein.contract("pm,m...->p...", self.plan.synthesis, scale * coefficients)
 
     def flatten(self, state: ArrayLike, /) -> Array:
         return self._validate_state(state)

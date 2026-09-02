@@ -10,8 +10,9 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -91,9 +92,9 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         if value_.shape != (self.global_size,):
             raise ValueError("Partial assembly input shape is incompatible.")
         local = value_[self.gathers]
-        quadrature = oe.contract("qi,ci->cq", self.basis_values, local)
+        quadrature = ein.contract("qi,ci->cq", self.basis_values, local)
         weighted = self.quadrature_weights * self.quadrature_coefficient * quadrature
-        contribution = oe.contract("qi,cq->ci", self.basis_values, weighted)
+        contribution = ein.contract("qi,cq->ci", self.basis_values, weighted)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
         return (
             jnp.zeros((self.global_size,), dtype=contribution.dtype)
@@ -105,7 +106,7 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         return self.mv(value)
 
     def as_element_tensor(self, /) -> ElementTensorOperator:
-        local = oe.contract(
+        local = ein.contract(
             "cq,cq,qi,qj->cij",
             self.quadrature_weights,
             self.quadrature_coefficient,
@@ -332,7 +333,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
             )
         else:
             gradient = self.plan.gradient(local)
-            flux = oe.contract("...ab,...b->...a", self.quadrature_data, gradient)
+            flux = ein.contract("...ab,...b->...a", self.quadrature_data, gradient)
             local_output = self.plan.gradient_transpose(flux)
         contribution = local_output.reshape(self.gathers.shape)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
@@ -452,8 +453,8 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             nx, ny = self.weighted_mass.shape[1:]
             dx, dy = self.derivatives
             q = local.reshape((-1, nx, ny))
-            qx = oe.contract("ia,eaj->eij", dx, q)
-            qy = oe.contract("ja,eia->eij", dy, q)
+            qx = ein.contract("ia,eaj->eij", dx, q)
+            qy = ein.contract("ja,eia->eij", dy, q)
             g00, g01, g11 = (
                 self.weighted_metric[..., 0],
                 self.weighted_metric[..., 1],
@@ -462,17 +463,17 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             flux_x = g00 * qx + g01 * qy
             flux_y = g01 * qx + g11 * qy
             output = (
-                oe.contract("ia,eij->eaj", dx, flux_x)
-                + oe.contract("ja,eij->eia", dy, flux_y)
+                ein.contract("ia,eij->eaj", dx, flux_x)
+                + ein.contract("ja,eij->eia", dy, flux_y)
                 + self.weighted_mass * q
             )
         else:
             nx, ny, nz = self.weighted_mass.shape[1:]
             dx, dy, dz = self.derivatives
             q = local.reshape((-1, nx, ny, nz))
-            qx = oe.contract("ia,eajk->eijk", dx, q)
-            qy = oe.contract("ja,eiak->eijk", dy, q)
-            qz = oe.contract("ka,eija->eijk", dz, q)
+            qx = ein.contract("ia,eajk->eijk", dx, q)
+            qy = ein.contract("ja,eiak->eijk", dy, q)
+            qz = ein.contract("ka,eija->eijk", dz, q)
             g00, g01, g02, g11, g12, g22 = tuple(
                 self.weighted_metric[..., index] for index in range(6)
             )
@@ -480,9 +481,9 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             flux_y = g01 * qx + g11 * qy + g12 * qz
             flux_z = g02 * qx + g12 * qy + g22 * qz
             output = (
-                oe.contract("ia,eijk->eajk", dx, flux_x)
-                + oe.contract("ja,eijk->eiak", dy, flux_y)
-                + oe.contract("ka,eijk->eija", dz, flux_z)
+                ein.contract("ia,eijk->eajk", dx, flux_x)
+                + ein.contract("ja,eijk->eiak", dy, flux_y)
+                + ein.contract("ka,eijk->eija", dz, flux_z)
                 + self.weighted_mass * q
             )
         contribution = output.reshape(self.gathers.shape)
