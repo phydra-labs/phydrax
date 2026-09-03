@@ -8,11 +8,16 @@
   learned free-energy biases, immutable atomistic learning campaigns,
   non-element molecular coarse beads with fixed-map force matching, and exact
   targeted free-energy maps with FlowJAX and alchemical endpoint adapters.
-- Added a native robotics platform with bounded, fail-closed URDF adaptation;
-  fixed-base 3-D fixed/hinge/prismatic articulation, kinematics, dynamics, and
-  local frame IK; articulated Delassus impact; status-aware rollouts, sampling
-  MPC, and manifold defects; immutable task environments; physical inertial
-  realization and reduced rods; and capability/freshness-aware optional MJX.
+- Added the native robotics Wave 0 platform: explicit-root, descriptor-relative
+  bounded URDF adaptation with exact manifests and non-waivable required
+  semantics; COM-centred rigid mass properties and reference rebasing;
+  fixed-base articulation with bounded semi-implicit velocity Euler;
+  result-preserving discrete evolution/control and accepted-state environments;
+  certified fixed-route articulated impact; local frame IK, sampling MPC,
+  manifold defects, and reduced rods; plus optional MJX gated by complete state
+  schemas, projection provenance, freshness epochs, and a matching 3.12
+  provider pair. Fixed-route impact remains an operator utility; collision
+  discovery and an atomic robot/contact step are not included.
 - Added first-class surfel discretizations with stable point ownership,
   validated oriented tangent footprints, physical surface quadrature,
   boundary-atlas and simplicial materialization, Morton primitive bounds,

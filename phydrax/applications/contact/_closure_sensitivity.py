@@ -13,9 +13,12 @@ from ..._strict import StrictModule
 from ...discretization.contact._kinematics import ContactKinematicsEpoch
 from ._closure import ContactClosurePlan, evaluate_contact_closure
 from ._cone import (
+    _contact_law_diagnostics,
+    contact_cone_result_is_certified,
+    ContactConeNumericRevision,
     ContactConeProgram,
-    ContactConeSolverPlan,
-    solve_contact_cone,
+    ContactConeResult,
+    project_coulomb_cone,
 )
 from ._mortar import (
     evaluate_mortar_contact,
@@ -32,6 +35,13 @@ class ContactDerivativeEvidence(StrictModule):
     branch_qualified: Array
     successful: Array
     source_id: str = eqx.field(static=True)
+    numeric_revision: ContactConeNumericRevision | None = None
+    route_keys: Array | None = None
+    route_mask: Array | None = None
+    branch_classification: Array | None = None
+    branch_margins: Array | None = None
+
+
 
 
 class ContactClosureGapJVP(StrictModule):
@@ -171,14 +181,19 @@ class ContactConeJVP(StrictModule):
 
 def contact_cone_solution_jvp(
     program: ContactConeProgram,
+    result: ContactConeResult,
     tangent_free_velocity: Array,
     tangent_effective_mass: Array,
     /,
     *,
-    solver: ContactConeSolverPlan | None = None,
     margin_tolerance: float = 1.0e-10,
 ) -> ContactConeJVP:
-    solver_ = ContactConeSolverPlan() if solver is None else solver
+    """Differentiate a certified cone solution without changing its contact branch."""
+
+    if not isinstance(program, ContactConeProgram):
+        raise TypeError("program must be ContactConeProgram.")
+    if not isinstance(result, ContactConeResult):
+        raise TypeError("result must be ContactConeResult.")
     free = program.free_velocity
     matrix = program.effective_mass
     tangent_free = jnp.asarray(tangent_free_velocity, dtype=free.dtype)
@@ -186,7 +201,125 @@ def contact_cone_solution_jvp(
     if tangent_free.shape != free.shape or tangent_matrix.shape != matrix.shape:
         raise ValueError("Contact cone tangent shapes are invalid.")
 
-    def solution(free_value, matrix_value):
+    revision = result.evidence.numeric_revision
+    current = contact_cone_result_is_certified(program, result)
+    zero_tangent = jnp.zeros_like(result.impulse)
+    inactive_margin = jnp.where(program.valid, 0.0, jnp.inf)
+    unclassified = jnp.zeros(program.valid.shape, dtype=jnp.int8)
+    if not bool(current):
+        evidence = ContactDerivativeEvidence(
+            jnp.min(inactive_margin, initial=jnp.inf),
+            current,
+            jnp.asarray(False),
+            jnp.asarray(False),
+            jnp.asarray(False),
+            program.program_id,
+            numeric_revision=revision,
+            route_keys=program.route_keys,
+            route_mask=program.valid,
+            branch_classification=unclassified,
+            branch_margins=inactive_margin,
+        )
+        return ContactConeJVP(
+            zero_tangent,
+            evidence.branch_margin,
+            evidence,
+        )
+
+    certificate_tolerance = jnp.maximum(
+        result.evidence.certificate_tolerance,
+        jnp.asarray(0.0, dtype=free.dtype),
+    )
+    qualification_tolerance = jnp.maximum(
+        certificate_tolerance,
+        jnp.asarray(margin_tolerance, dtype=free.dtype),
+    )
+    normal_impulse = result.impulse[:, 0]
+    tangent_impulse = result.impulse[:, 1:]
+    normal_velocity = result.contact_law_velocity[:, 0]
+    tangent_velocity = result.contact_law_velocity[:, 1:]
+    tangent_impulse_norm = jnp.sqrt(
+        jnp.sum(tangent_impulse * tangent_impulse, axis=-1)
+    )
+    tangent_velocity_norm = jnp.sqrt(
+        jnp.sum(tangent_velocity * tangent_velocity, axis=-1)
+    )
+    static_slack = (
+        program.static_friction * normal_impulse - tangent_impulse_norm
+    )
+    contacting = normal_impulse > certificate_tolerance
+    separating = (
+        (normal_impulse <= certificate_tolerance)
+        & (normal_velocity > certificate_tolerance)
+    )
+    if program.tangent_dimension == 0:
+        sticking = contacting
+        sticking_margin = normal_impulse
+    else:
+        sticking = (
+            contacting
+            & (tangent_velocity_norm <= certificate_tolerance)
+            & (static_slack > certificate_tolerance)
+        )
+        sticking_margin = jnp.minimum(normal_impulse, static_slack)
+    sliding = contacting & (tangent_velocity_norm > certificate_tolerance)
+    branch_classification = jnp.where(
+        program.valid & separating,
+        1,
+        jnp.where(
+            program.valid & sticking,
+            2,
+            jnp.where(program.valid & sliding, 3, 0),
+        ),
+    ).astype(jnp.int8)
+    branch_margins = jnp.where(
+        ~program.valid,
+        jnp.inf,
+        jnp.where(
+            branch_classification == 1,
+            normal_velocity,
+            jnp.where(
+                branch_classification == 2,
+                sticking_margin,
+                jnp.where(
+                    branch_classification == 3,
+                    jnp.minimum(normal_impulse, tangent_velocity_norm),
+                    0.0,
+                ),
+            ),
+        ),
+    )
+    cone_margin = jnp.min(branch_margins, initial=jnp.inf)
+    branch_qualified = (
+        jnp.all((~program.valid) | (branch_classification > 0))
+        & (cone_margin > qualification_tolerance)
+    )
+    if not bool(branch_qualified):
+        evidence = ContactDerivativeEvidence(
+            cone_margin,
+            current,
+            jnp.asarray(False),
+            branch_qualified,
+            jnp.asarray(False),
+            program.program_id,
+            numeric_revision=revision,
+            route_keys=program.route_keys,
+            route_mask=program.valid,
+            branch_classification=branch_classification,
+            branch_margins=branch_margins,
+        )
+        return ContactConeJVP(zero_tangent, cone_margin, evidence)
+
+    selected_friction = jnp.where(
+        branch_classification == 2,
+        program.static_friction,
+        program.friction,
+    )
+    sliding_routes = branch_classification == 3
+    sticking_routes = branch_classification == 2
+
+    def fixed_branch_residual(flat_impulse, free_value, matrix_value):
+        impulse = flat_impulse.reshape(result.impulse.shape)
         changed = eqx.tree_at(
             lambda value: (
                 value.free_velocity,
@@ -195,38 +328,63 @@ def contact_cone_solution_jvp(
             program,
             (free_value, matrix_value),
         )
-        return solve_contact_cone(changed, solver=solver_).impulse
+        law_velocity = _contact_law_diagnostics(changed, impulse)[0]
+        projection_argument = impulse - law_velocity
+        safe_projection_argument = jnp.where(
+            sliding_routes[:, None],
+            projection_argument,
+            jnp.ones_like(projection_argument),
+        )
+        sliding_residual = impulse - project_coulomb_cone(
+            safe_projection_argument,
+            selected_friction,
+        )
+        residual = jnp.where(sticking_routes[:, None], law_velocity, impulse)
+        residual = jnp.where(
+            sliding_routes[:, None],
+            sliding_residual,
+            residual,
+        )
+        return residual.reshape((-1,))
 
-    primal = solve_contact_cone(program, solver=solver_)
-    _, tangent = jax.jvp(
-        solution,
+    flat_impulse = result.impulse.reshape((-1,))
+    impulse_jacobian = jax.jacfwd(
+        lambda value: fixed_branch_residual(value, free, matrix)
+    )(flat_impulse)
+    _, parameter_tangent = jax.jvp(
+        lambda free_value, matrix_value: fixed_branch_residual(
+            flat_impulse,
+            free_value,
+            matrix_value,
+        ),
         (free, matrix),
         (tangent_free, tangent_matrix),
     )
-    normal = primal.impulse[:, 0]
-    tangent_impulse = primal.impulse[:, 1:]
-    tangent_norm = jnp.sqrt(jnp.sum(tangent_impulse * tangent_impulse, axis=-1))
-    cone_margin = jnp.min(
-        jnp.where(
-            program.valid,
-            jnp.minimum(
-                normal,
-                program.friction * normal - tangent_norm,
-            ),
-            jnp.inf,
-        ),
-        initial=jnp.inf,
+    candidate_tangent = -jnp.linalg.solve(
+        impulse_jacobian,
+        parameter_tangent,
+    ).reshape(result.impulse.shape)
+    finite = jnp.all(jnp.isfinite(candidate_tangent))
+    successful = current & finite & branch_qualified
+    impulse_tangent = jnp.where(
+        successful,
+        candidate_tangent,
+        jnp.zeros_like(candidate_tangent),
     )
-    finite = jnp.all(jnp.isfinite(tangent))
     evidence = ContactDerivativeEvidence(
         cone_margin,
-        primal.evidence.successful,
+        current,
         finite,
-        cone_margin > margin_tolerance,
-        primal.evidence.successful & finite & (cone_margin > margin_tolerance),
+        branch_qualified,
+        successful,
         program.program_id,
+        numeric_revision=revision,
+        route_keys=program.route_keys,
+        route_mask=program.valid,
+        branch_classification=branch_classification,
+        branch_margins=branch_margins,
     )
-    return ContactConeJVP(tangent, cone_margin, evidence)
+    return ContactConeJVP(impulse_tangent, cone_margin, evidence)
 
 
 class MortarGapJVP(StrictModule):

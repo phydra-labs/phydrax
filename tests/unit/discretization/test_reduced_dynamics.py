@@ -15,11 +15,12 @@ from phydrax.discretization.particle._reduced_dynamics import (
     reduced_forward_dynamics,
     reduced_inverse_dynamics,
     reduced_mass_matrix,
-    reduced_symplectic_step,
+    reduced_semi_implicit_velocity_euler_step,
     ReducedDynamicsStatus,
-    ReducedSymplecticStepPolicy,
+    ReducedSemiImplicitVelocityEulerStepPolicy,
 )
 from phydrax.discretization.particle._rigid_body import (
+    quaternion_rotation_matrix,
     RigidBodyLoad,
     RigidBodySetPlan,
 )
@@ -27,6 +28,9 @@ from phydrax.discretization.particle._rigid_joints import (
     HingeJointSetPlan,
     PrismaticJointSetPlan,
     RigidJointGraphPlan,
+)
+from phydrax.discretization.particle._rigid_parameters import (
+    RigidInertialParameterization,
 )
 
 
@@ -175,14 +179,14 @@ def test_external_body_load_pullback_preserves_power():
     assert jnp.abs(inverse.external_power_residual) <= 1.0e-7
 
 
-def test_zero_force_symplectic_step_reports_and_respects_energy_bound():
+def test_zero_force_velocity_euler_step_reports_and_respects_energy_bound():
     articulation = _single_axis_articulation("hinge")
     state = ReducedArticulationState(jnp.asarray([0.2]), jnp.asarray([0.3]))
     zero_gravity = jnp.zeros((3,))
     initial = reduced_energy(
         articulation, state.configuration, state.velocity, zero_gravity
     )
-    result = reduced_symplectic_step(
+    result = reduced_semi_implicit_velocity_euler_step(
         articulation,
         state,
         jnp.asarray([0.0]),
@@ -209,13 +213,13 @@ def test_zero_force_symplectic_step_reports_and_respects_energy_bound():
 def test_failed_step_rolls_back_candidate_state():
     articulation = _single_axis_articulation("prismatic")
     state = ReducedArticulationState(jnp.asarray([0.2]), jnp.asarray([0.3]))
-    result = reduced_symplectic_step(
+    result = reduced_semi_implicit_velocity_euler_step(
         articulation,
         state,
         jnp.asarray([1.0]),
         jnp.zeros((3,)),
         jnp.asarray(0.2),
-        policy=ReducedSymplecticStepPolicy(maximum_step_size=0.1),
+        policy=ReducedSemiImplicitVelocityEulerStepPolicy(maximum_step_size=0.1),
     )
 
     assert not result.successful
@@ -226,7 +230,7 @@ def test_failed_step_rolls_back_candidate_state():
         result.candidate_state.configuration, state.configuration
     )
 
-    nonfinite = reduced_symplectic_step(
+    nonfinite = reduced_semi_implicit_velocity_euler_step(
         articulation,
         state,
         jnp.asarray([jnp.nan]),
@@ -239,3 +243,65 @@ def test_failed_step_rolls_back_candidate_state():
         nonfinite.accepted_state.configuration, state.configuration
     )
     assert jnp.allclose(nonfinite.accepted_state.velocity, state.velocity)
+
+
+def test_rebased_nonzero_com_energy_matches_maximal_com_evaluation():
+    source_articulation = _single_axis_articulation("hinge")
+    baseline = source_articulation.graph.bodies
+    source = RigidBodySetPlan(
+        baseline.material_ids,
+        jnp.stack(
+            (
+                jnp.eye(3),
+                jnp.diag(jnp.asarray([1.0, 1.2, 1.5])),
+            )
+        ),
+        fixed_mask=baseline.fixed_mask,
+    ).prepare(baseline.particles)
+    source_reference = source.kinematics(
+        jnp.asarray([[1.0, -0.5, 0.2], [2.0, -0.5, 0.2]]),
+        jnp.zeros((2, 3)),
+        jnp.asarray(
+            [
+                [0.9238795325, 0.0, 0.3826834324, 0.0],
+                [0.9238795325, 0.0, 0.3826834324, 0.0],
+            ]
+        ),
+        jnp.zeros((2, 3)),
+    )
+    offsets = jnp.asarray([[0.1, -0.2, 0.05], [-0.25, 0.15, 0.3]])
+    parameterization = RigidInertialParameterization(source)
+    realization = parameterization.realize(parameterization.inverse(offsets))
+    target = realization.rigid_body_plan.prepare(realization.particle_plan.prepare())
+    target_reference = realization.reference_frame_rebase.rebase_kinematics(
+        source_reference, source, target
+    )
+    graph = source_articulation.graph.plan.prepare(target, target_reference)
+    articulation = source_articulation.plan.prepare(graph, target_reference)
+    configuration = jnp.asarray([0.37])
+    velocity = jnp.asarray([-0.61])
+
+    reduced = reduced_energy(
+        articulation, configuration, velocity, jnp.zeros((3,))
+    )
+    kinematics = articulation.forward_kinematics(
+        configuration, velocity
+    ).bodies
+    rotation = quaternion_rotation_matrix(kinematics.orientation)
+    world_inertia = (
+        rotation
+        @ target.mass_properties.inertia_com
+        @ jnp.swapaxes(rotation, -1, -2)
+    )
+    angular_momentum = (
+        world_inertia @ kinematics.angular_velocity[..., None]
+    )[..., 0]
+    maximal_kinetic = 0.5 * jnp.sum(
+        target.mass_properties.masses
+        * jnp.sum(kinematics.velocity * kinematics.velocity, axis=-1)
+    ) + 0.5 * jnp.sum(
+        kinematics.angular_velocity * angular_momentum
+    )
+
+    assert reduced.successful
+    assert jnp.allclose(reduced.kinetic, maximal_kinetic, rtol=2.0e-6)

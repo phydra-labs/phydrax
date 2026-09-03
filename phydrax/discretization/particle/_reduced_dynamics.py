@@ -104,7 +104,7 @@ class ReducedForwardDynamicsResult(StrictModule):
     status: Array
 
 
-class ReducedSymplecticStepPolicy(StrictModule):
+class ReducedSemiImplicitVelocityEulerStepPolicy(StrictModule):
     maximum_step_size: float = eqx.field(static=True)
     absolute_energy_tolerance: float = eqx.field(static=True)
     relative_energy_tolerance: float = eqx.field(static=True)
@@ -142,7 +142,7 @@ class ReducedSymplecticStepPolicy(StrictModule):
         self.inverse_forward_tolerance = residual
 
 
-class ReducedSymplecticStepDiagnostics(StrictModule):
+class ReducedSemiImplicitVelocityEulerStepDiagnostics(StrictModule):
     initial_energy: Array
     candidate_energy: Array
     applied_work: Array
@@ -154,11 +154,11 @@ class ReducedSymplecticStepDiagnostics(StrictModule):
     finite: Array
 
 
-class ReducedSymplecticStepResult(StrictModule):
+class ReducedSemiImplicitVelocityEulerStepResult(StrictModule):
     candidate_state: ReducedArticulationState
     accepted_state: ReducedArticulationState
     dynamics: ReducedForwardDynamicsResult
-    diagnostics: ReducedSymplecticStepDiagnostics
+    diagnostics: ReducedSemiImplicitVelocityEulerStepDiagnostics
     successful: Array
     status: Array
 
@@ -299,10 +299,10 @@ def _world_body_inertia(
     body_transforms: Array,
     /,
 ) -> tuple[Array, Array]:
-    bodies = articulation.graph.bodies
+    properties = articulation.graph.bodies.mass_properties
     rotation = body_transforms[:, :3, :3]
-    inertia = rotation @ bodies.inertia_body @ jnp.swapaxes(rotation, -1, -2)
-    mass = bodies.particles.safe_masses.astype(rotation.dtype)
+    inertia = rotation @ properties.inertia_com @ jnp.swapaxes(rotation, -1, -2)
+    mass = properties.masses.astype(rotation.dtype)
     return mass, inertia
 
 
@@ -986,7 +986,7 @@ def _dense_reduced_forward_dynamics_reference(
     )
 
 
-def reduced_symplectic_step(
+def reduced_semi_implicit_velocity_euler_step(
     articulation: PreparedReducedArticulation,
     state: ReducedArticulationState,
     generalized_effort: ArrayLike,
@@ -995,16 +995,20 @@ def reduced_symplectic_step(
     /,
     *,
     external_load: RigidBodyLoad | None = None,
-    policy: ReducedSymplecticStepPolicy | None = None,
-) -> ReducedSymplecticStepResult:
-    """Advance by bounded symplectic Euler and atomically accept or roll back."""
+    policy: ReducedSemiImplicitVelocityEulerStepPolicy | None = None,
+) -> ReducedSemiImplicitVelocityEulerStepResult:
+    """Advance by bounded semi-implicit velocity Euler with atomic rollback."""
 
     articulation = _require_articulation(articulation)
     if not isinstance(state, ReducedArticulationState):
         raise TypeError("state must be ReducedArticulationState.")
-    policy_ = ReducedSymplecticStepPolicy() if policy is None else policy
-    if not isinstance(policy_, ReducedSymplecticStepPolicy):
-        raise TypeError("policy must be ReducedSymplecticStepPolicy or None.")
+    policy_ = (
+        ReducedSemiImplicitVelocityEulerStepPolicy() if policy is None else policy
+    )
+    if not isinstance(policy_, ReducedSemiImplicitVelocityEulerStepPolicy):
+        raise TypeError(
+            "policy must be ReducedSemiImplicitVelocityEulerStepPolicy or None."
+        )
     q = _configuration(articulation, state.configuration)
     v = _tangent(articulation, state.velocity, name="state.velocity")
     effort = _tangent(
@@ -1091,7 +1095,7 @@ def reduced_symplectic_step(
         int(ReducedDynamicsStatus.STEP_SIZE_REJECTED),
         status,
     ).astype(jnp.int32)
-    diagnostics = ReducedSymplecticStepDiagnostics(
+    diagnostics = ReducedSemiImplicitVelocityEulerStepDiagnostics(
         initial_energy.total,
         candidate_energy.total,
         applied_work,
@@ -1102,7 +1106,7 @@ def reduced_symplectic_step(
         step_size_within_bound,
         finite,
     )
-    return ReducedSymplecticStepResult(
+    return ReducedSemiImplicitVelocityEulerStepResult(
         candidate, accepted, dynamics, diagnostics, successful, status
     )
 
@@ -1114,13 +1118,13 @@ __all__ = [
     "ReducedForwardDynamicsResult",
     "ReducedInverseDynamicsResult",
     "ReducedMassMatrixResult",
-    "ReducedSymplecticStepDiagnostics",
-    "ReducedSymplecticStepPolicy",
-    "ReducedSymplecticStepResult",
+    "ReducedSemiImplicitVelocityEulerStepDiagnostics",
+    "ReducedSemiImplicitVelocityEulerStepPolicy",
+    "ReducedSemiImplicitVelocityEulerStepResult",
     "reduced_bias_terms",
     "reduced_energy",
     "reduced_forward_dynamics",
     "reduced_inverse_dynamics",
     "reduced_mass_matrix",
-    "reduced_symplectic_step",
+    "reduced_semi_implicit_velocity_euler_step",
 ]

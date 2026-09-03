@@ -1,4 +1,4 @@
-"""Adapt and evaluate a native fixed-base hinge/prismatic robot."""
+"""Adapt, evaluate, and advance a native fixed-base hinge/prismatic robot."""
 
 import json
 
@@ -9,6 +9,7 @@ from phydrax.applications.robotics import parse_urdf_text
 from phydrax.discretization import (
     reduced_forward_dynamics,
     reduced_inverse_dynamics,
+    reduced_semi_implicit_velocity_euler_step,
 )
 
 
@@ -55,7 +56,7 @@ URDF = """
 """
 
 
-adaptation = parse_urdf_text(URDF)
+adaptation = parse_urdf_text(URDF, root_policy="fixed_world")
 if not adaptation.negotiation.valid or adaptation.evidence.loss_paths:
     raise RuntimeError("the self-contained URDF did not adapt losslessly")
 
@@ -150,6 +151,27 @@ if not np.allclose(
     atol=2.0e-6,
 ):
     raise RuntimeError("inverse/forward dynamics reconstruction exceeded tolerance")
+
+state = articulation.unpack_state(articulation.pack_state(configuration, velocity))
+step = reduced_semi_implicit_velocity_euler_step(
+    articulation,
+    state,
+    inverse.generalized_effort,
+    gravity,
+    jnp.asarray(1.0e-6, dtype=dtype),
+)
+if not bool(step.successful):
+    raise RuntimeError(
+        f"semi-implicit velocity Euler failed with status {int(step.status)}"
+    )
+if not np.allclose(
+    np.asarray(step.accepted_state.configuration),
+    np.asarray(step.candidate_state.configuration),
+) or not np.allclose(
+    np.asarray(step.accepted_state.velocity),
+    np.asarray(step.candidate_state.velocity),
+):
+    raise RuntimeError("a successful step did not commit its candidate state")
 
 print(
     json.dumps(

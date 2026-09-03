@@ -86,10 +86,11 @@ Most workflows are composing a few primitives:
   exact construction-order search, standards clauses, reliability, calibration,
   evidence acquisition, and immutable digital-twin ancestry extend member-network
   mechanics without erasing model fidelity or applicability.
-- **Native robotics**: secure loss-negotiated URDF adaptation, fixed-base
-  hinge/prismatic kinematics and dynamics, local frame IK, articulated Delassus
-  contact, status-aware control, immutable environments, reduced rods, and
-  capability-gated optional MJX execution retain explicit evidence and rollback.
+- **Native robotics**: explicit-root, descriptor-relative bounded URDF adaptation;
+  COM-centred fixed-base hinge/prismatic mechanics and rebasing; local frame IK;
+  result-preserving rollout/environment rollback; certified fixed-route impact;
+  reduced rods; and freshness/schema-gated optional MJX. Fixed-route contact is
+  an operator utility, not collision discovery or an atomic robot/contact step.
   See the [robotics guide](docs/guides_robotics.md) and
   [robotics API](docs/api/applications/robotics.md).
 - **Atomistic learning, force fields, and sampling**: scale-identified structures,

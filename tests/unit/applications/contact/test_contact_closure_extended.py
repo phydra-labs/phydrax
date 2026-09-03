@@ -6,6 +6,10 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax.applications.contact._cone import (
+    contact_cone_numeric_revision_matches,
+    contact_cone_result_is_certified,
+)
 
 
 def _closure_case():
@@ -191,8 +195,12 @@ def test_contact_cone_impact_and_rolling_resistance_are_dissipative():
         1,
         "interior-cone-derivative",
     )
+    differentiable_result = phx.applications.contact.solve_contact_cone(
+        differentiable_program
+    )
     cone_derivative = phx.applications.contact.contact_cone_solution_jvp(
         differentiable_program,
+        differentiable_result,
         jnp.asarray(((0.1, 0.0),)),
         jnp.zeros((2, 2)),
     )
@@ -203,6 +211,21 @@ def test_contact_cone_impact_and_rolling_resistance_are_dissipative():
     assert jnp.all(rolling.dissipated_work >= 0.0)
     assert bool(cone_derivative.evidence.successful)
     assert jnp.all(jnp.isfinite(cone_derivative.impulse_tangent))
+    assert (
+        cone_derivative.evidence.numeric_revision.solver_id
+        == differentiable_result.evidence.numeric_revision.solver_id
+    )
+    np.testing.assert_array_equal(
+        cone_derivative.evidence.route_keys,
+        differentiable_program.route_keys,
+    )
+    np.testing.assert_array_equal(
+        cone_derivative.evidence.route_mask,
+        differentiable_program.valid,
+    )
+    assert jnp.all(
+        cone_derivative.evidence.branch_margins[differentiable_program.valid] > 0.0
+    )
 
 
 def _interface_case(gap=-0.05):
@@ -375,9 +398,99 @@ def test_advanced_cone_solver_families_recover_interior_contact_solution():
     assert bool(sap.evidence.successful)
     assert bool(semismooth.evidence.successful)
     assert bool(primal_dual.evidence.successful)
+    for result in (sap, semismooth, primal_dual):
+        assert result.evidence.numeric_revision is not None
+        assert bool(contact_cone_numeric_revision_matches(program, result))
+        assert bool(contact_cone_result_is_certified(program, result))
+        np.testing.assert_allclose(result.candidate_impulse, result.impulse)
+        np.testing.assert_allclose(
+            result.candidate_post_relative_velocity,
+            result.post_relative_velocity,
+        )
+        np.testing.assert_allclose(
+            result.candidate_contact_law_velocity,
+            result.contact_law_velocity,
+        )
     np.testing.assert_allclose(sap.impulse, ((1.0, 0.0),), atol=1.0e-6)
     np.testing.assert_allclose(semismooth.impulse, ((1.0, 0.0),), atol=1.0e-6)
     np.testing.assert_allclose(primal_dual.impulse, ((1.0, 0.0),), atol=1.0e-4)
+
+
+def test_cone_certificates_and_fixed_route_sensitivity_fail_closed_when_stale():
+    program = phx.applications.contact.ContactConeProgram(
+        jnp.asarray(((-1.0, 0.0),)),
+        jnp.eye(2),
+        jnp.zeros((2,)),
+        jnp.asarray((0.5,)),
+        jnp.asarray((7,), dtype=jnp.int64),
+        jnp.asarray((True,)),
+        1,
+        "cone-fail-closed",
+    )
+    result = phx.applications.contact.solve_contact_sap(
+        program,
+        solver=phx.applications.contact.SAPContactSolverPlan(
+            maximum_iterations=100,
+            tolerance=1.0e-8,
+        ),
+    )
+    stale = phx.applications.contact.ContactConeProgram(
+        jnp.asarray(((-2.0, 0.0),)),
+        program.effective_mass,
+        program.compliance,
+        program.friction,
+        program.route_keys,
+        program.valid,
+        program.tangent_dimension,
+        program.program_id,
+        static_friction=program.static_friction,
+        restitution=program.restitution,
+        mechanical_available=program.mechanical_available,
+    )
+    stale_derivative = phx.applications.contact.contact_cone_solution_jvp(
+        stale,
+        result,
+        jnp.zeros_like(stale.free_velocity),
+        jnp.zeros_like(stale.effective_mass),
+    )
+    unavailable = phx.applications.contact.ContactConeProgram(
+        program.free_velocity,
+        program.effective_mass,
+        program.compliance,
+        program.friction,
+        program.route_keys,
+        program.valid,
+        program.tangent_dimension,
+        "cone-unavailable-material",
+        static_friction=program.static_friction,
+        restitution=program.restitution,
+        mechanical_available=jnp.asarray((False,)),
+    )
+    failed = phx.applications.contact.solve_contact_sap(
+        unavailable,
+        solver=phx.applications.contact.SAPContactSolverPlan(
+            maximum_iterations=100,
+            tolerance=1.0e-8,
+        ),
+    )
+    failed_derivative = phx.applications.contact.contact_cone_solution_jvp(
+        unavailable,
+        failed,
+        jnp.zeros_like(unavailable.free_velocity),
+        jnp.zeros_like(unavailable.effective_mass),
+    )
+
+    assert not bool(contact_cone_numeric_revision_matches(stale, result))
+    assert not bool(contact_cone_result_is_certified(stale, result))
+    assert not bool(stale_derivative.evidence.successful)
+    np.testing.assert_array_equal(stale_derivative.impulse_tangent, 0.0)
+    assert failed.evidence.numeric_revision is not None
+    assert not bool(failed.evidence.successful)
+    assert not bool(contact_cone_result_is_certified(unavailable, failed))
+    np.testing.assert_array_equal(failed.impulse, 0.0)
+    assert jnp.linalg.norm(failed.candidate_impulse) > 0.0
+    assert not bool(failed_derivative.evidence.successful)
+    np.testing.assert_array_equal(failed_derivative.impulse_tangent, 0.0)
 
 
 def test_rigid_participant_and_geometric_filter_preserve_explicit_kinematics():

@@ -67,6 +67,7 @@ from ._closure_sensitivity import (
 from ._cone import (
     build_contact_cone_program,
     ContactConeEvidence,
+    ContactConeNumericRevision,
     ContactConeProgram,
     ContactConeResult,
     ContactConeSolverPlan,
@@ -317,6 +318,7 @@ __all__ = [
     "prepare_articulated_contact",
     "solve_articulated_contact",
     "ContactConeEvidence",
+    "ContactConeNumericRevision",
     "ContactConeJVP",
     "ContactConeProgram",
     "ContactConeResult",

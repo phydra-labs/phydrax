@@ -411,3 +411,66 @@ def test_cyclic_ball_distance_and_non_3d_tree_inputs_reject():
             body_ids_2d[:1],
             body_ids_2d[1:],
         ).prepare(graph_2d, reference_2d)
+
+
+@pytest.mark.parametrize(
+    ("extra_kind", "body_count"),
+    (("ball", 4), ("distance", 2), ("prismatic", 6)),
+)
+def test_unconsumed_graph_joints_reject(extra_kind, body_count):
+    body_ids, bodies, reference = _prepared_bodies(body_count)
+    edge_count = body_count - 1
+    tree_ids = jnp.arange(70, 70 + edge_count)
+    tree_anchors = jnp.pad(
+        (jnp.arange(edge_count, dtype=jnp.float64) + 0.5)[:, None],
+        ((0, 0), (0, 2)),
+    )
+    tree_joint = phx.discretization.HingeJointSetPlan(
+        tree_ids,
+        body_ids[:-1],
+        body_ids[1:],
+        tree_anchors,
+        jnp.broadcast_to(jnp.asarray([0.0, 0.0, 1.0]), (edge_count, 3)),
+    )
+    extra_id = jnp.asarray([99])
+    if extra_kind == "ball":
+        graph_plan = phx.discretization.RigidJointGraphPlan(
+            hinge=tree_joint,
+            ball=phx.discretization.BallJointSetPlan(
+                extra_id,
+                body_ids[:1],
+                body_ids[-1:],
+                jnp.asarray([[1.5, 0.0, 0.0]]),
+            ),
+        )
+    elif extra_kind == "distance":
+        graph_plan = phx.discretization.RigidJointGraphPlan(
+            hinge=tree_joint,
+            distance=phx.discretization.DistanceJointSetPlan(
+                extra_id,
+                body_ids[:1],
+                body_ids[-1:],
+                jnp.asarray([[0.0, 0.0, 0.0]]),
+                jnp.asarray([[1.0, 0.0, 0.0]]),
+            ),
+        )
+    else:
+        graph_plan = phx.discretization.RigidJointGraphPlan(
+            hinge=tree_joint,
+            prismatic=phx.discretization.PrismaticJointSetPlan(
+                extra_id,
+                body_ids[:1],
+                body_ids[-1:],
+                jnp.asarray([[2.5, 0.0, 0.0]]),
+                jnp.asarray([[1.0, 0.0, 0.0]]),
+            ),
+        )
+    graph = graph_plan.prepare(bodies, reference)
+
+    with pytest.raises(ValueError, match="neither selected tree edges"):
+        ReducedArticulationPlan(
+            int(body_ids[0]),
+            tree_ids,
+            body_ids[:-1],
+            body_ids[1:],
+        ).prepare(graph, reference)

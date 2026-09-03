@@ -41,6 +41,7 @@ class AdapterLoss(StrictModule, NonTrainableState):
     category: _AdapterLossCategory = eqx.field(static=True)
     rationale: str = eqx.field(static=True)
     changes_interpretation: bool = eqx.field(static=True)
+    affected_capability_ids: tuple[str, ...] = eqx.field(static=True)
     loss_id: str = eqx.field(static=True)
 
     def __init__(
@@ -52,6 +53,7 @@ class AdapterLoss(StrictModule, NonTrainableState):
         /,
         *,
         changes_interpretation: bool,
+        affected_capability_ids: Sequence[str] = (),
     ):
         path_ = str(path).strip()
         rationale_ = str(rationale).strip()
@@ -61,11 +63,15 @@ class AdapterLoss(StrictModule, NonTrainableState):
             raise ValueError("Adapter loss direction must be 'import' or 'export'.")
         if category not in ("dropped", "synthesized", "transformed", "unsupported"):
             raise ValueError("Unknown adapter loss category.")
+        affected_capability_ids_ = tuple(
+            sorted(_strings(affected_capability_ids, "affected_capability_ids"))
+        )
         self.path = path_
         self.direction = direction
         self.category = category
         self.rationale = rationale_
         self.changes_interpretation = bool(changes_interpretation)
+        self.affected_capability_ids = affected_capability_ids_
         self.loss_id = canonical_fingerprint(
             {
                 "kind": "adapter-loss",
@@ -74,6 +80,7 @@ class AdapterLoss(StrictModule, NonTrainableState):
                 "category": category,
                 "rationale": rationale_,
                 "changes_interpretation": self.changes_interpretation,
+                "affected_capability_ids": list(affected_capability_ids_),
             }
         )
 
@@ -223,6 +230,28 @@ class AdapterNegotiationResult(StrictModule, NonTrainableState):
         waivers_ = _waivers(waivers)
         available = frozenset(item.semantic_id for item in capabilities_)
         waived_loss_ids = frozenset(item.loss_id for item in waivers_)
+        required_semantics = frozenset(
+            item.semantic_id for item in requirements_ if item.required
+        )
+        required_capability_ids = frozenset(
+            item.capability_id
+            for item in capabilities_
+            if item.semantic_id in required_semantics
+        )
+        unwaivable_loss_ids = frozenset(
+            item.loss_id
+            for item in losses_
+            if item.changes_interpretation
+            and (
+                required_capability_ids.intersection(
+                    item.affected_capability_ids
+                )
+                or (
+                    required_capability_ids
+                    and not item.affected_capability_ids
+                )
+            )
+        )
         satisfied = tuple(
             item for item in requirements_ if item.semantic_id in available
         )
@@ -239,18 +268,27 @@ class AdapterNegotiationResult(StrictModule, NonTrainableState):
         waived_losses = tuple(
             item
             for item in losses_
-            if item.changes_interpretation and item.loss_id in waived_loss_ids
+            if item.changes_interpretation
+            and item.loss_id in waived_loss_ids
+            and item.loss_id not in unwaivable_loss_ids
         )
         unwaived_losses = tuple(
             item
             for item in losses_
-            if item.changes_interpretation and item.loss_id not in waived_loss_ids
+            if item.changes_interpretation
+            and (
+                item.loss_id not in waived_loss_ids
+                or item.loss_id in unwaivable_loss_ids
+            )
         )
-        present_loss_ids = frozenset(item.loss_id for item in losses_)
+        losses_by_id = {item.loss_id: item for item in losses_}
         unused_waivers = tuple(
-            item for item in waivers_ if item.loss_id not in present_loss_ids
+            item
+            for item in waivers_
+            if item.loss_id not in losses_by_id
+            or not losses_by_id[item.loss_id].changes_interpretation
         )
-        if missing_required or unwaived_losses:
+        if missing_required or unwaived_losses or unused_waivers:
             status = AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
         elif losses_ or missing_optional:
             status = AdapterStatus.DECLARED_LOSS
@@ -346,8 +384,6 @@ class AdapterReport(StrictModule, NonTrainableState):
             raise TypeError("losses must contain AdapterLoss values.")
         if status_ == AdapterStatus.LOSSLESS and losses_:
             raise ValueError("A lossless report cannot contain semantic losses.")
-        if status_ == AdapterStatus.DECLARED_LOSS and not losses_:
-            raise ValueError("A declared-loss report must enumerate its losses.")
         source_profile_ = (
             AdapterFormatProfile(source_format_)
             if source_profile is None
@@ -383,6 +419,15 @@ class AdapterReport(StrictModule, NonTrainableState):
             losses=_deduplicate_losses(losses_),
             waivers=waivers_,
         )
+        if (
+            status_ == AdapterStatus.DECLARED_LOSS
+            and not losses_
+            and not negotiation.missing_optional
+        ):
+            raise ValueError(
+                "A declared-loss report must enumerate losses or missing optional "
+                "requirements."
+            )
         enforce_negotiation = (
             source_profile is not None
             or target_profile is not None
@@ -511,9 +556,9 @@ def compose_adapter_reports(
             not in (AdapterStatus.LOSSLESS, AdapterStatus.DECLARED_LOSS)
             else AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
         )
-    elif not negotiation.valid:
+    elif negotiation.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC:
         status = AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
-    elif losses:
+    elif negotiation.status == AdapterStatus.DECLARED_LOSS:
         status = AdapterStatus.DECLARED_LOSS
     else:
         status = AdapterStatus.LOSSLESS

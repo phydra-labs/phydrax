@@ -20,12 +20,14 @@ from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite
 from ...metrix._state_geometry import AbstractStateGeometry
 from .._core import DiscretizationKey, DiscretizationRole, PreparationReport
-from ._core import ParticleDiscretization
+from ._core import ParticleDiscretization, ParticleSetPlan
 
 
 class RigidBodySetPlan(StrictModule, NonTrainableState):
+    """Rigid-body material and COM-inertia data for COM-centred kinematics."""
+
     material_ids: Array
-    inertia_body: Array
+    inertia_com: Array
     fixed_mask: Array
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
@@ -33,7 +35,7 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         material_ids: ArrayLike,
-        inertia_body: ArrayLike,
+        inertia_com: ArrayLike,
         /,
         *,
         fixed_mask: ArrayLike | None = None,
@@ -41,7 +43,7 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
         plan_id: str | None = None,
     ):
         material = np.asarray(material_ids)
-        inertia = np.asarray(inertia_body)
+        inertia = np.asarray(inertia_com)
         if (
             material.ndim != 1
             or material.size == 0
@@ -50,7 +52,7 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
             raise TypeError("material_ids must be a nonempty rank-1 integer array.")
         count = material.size
         if inertia.shape not in ((count,), (count, 3, 3)):
-            raise ValueError("inertia_body must have shape (N,) or (N,3,3).")
+            raise ValueError("inertia_com must have shape (N,) or (N,3,3).")
         if inertia.ndim == 1:
             valid_inertia = np.isfinite(inertia) & (inertia > 0.0)
         else:
@@ -60,9 +62,9 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
                 eigenvalues > 0.0
             ).all(axis=-1)
             if not symmetric:
-                raise ValueError("Three-dimensional inertia tensors must be symmetric.")
+                raise ValueError("Three-dimensional COM inertia tensors must be symmetric.")
         if not np.all(valid_inertia) or np.any(material < 0):
-            raise ValueError("Rigid-body inertia and material IDs are invalid.")
+            raise ValueError("Rigid-body COM inertia and material IDs are invalid.")
         fixed = (
             np.zeros((count,), dtype=bool)
             if fixed_mask is None
@@ -81,7 +83,7 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
                 "values": array_tree_fingerprint(
                     {
                         "material_ids": material,
-                        "inertia_body": inertia,
+                        "inertia_com": inertia,
                         "fixed_mask": fixed,
                     }
                 ),
@@ -89,41 +91,51 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
             }
         )
         self.material_ids = jnp.asarray(material, dtype=jnp.int32)
-        self.inertia_body = jnp.asarray(inertia)
+        self.inertia_com = jnp.asarray(inertia)
         self.fixed_mask = jnp.asarray(fixed)
         self.key = key
         self.plan_id = generated if plan_id is None else str(plan_id)
         if not self.plan_id:
             raise ValueError("plan_id must be nonempty.")
 
+    @property
+    def inertia_body(self) -> Array:
+        """Body-coordinate inertia about the centre of mass."""
+
+        return self.inertia_com
+
     def prepare(self, particles: ParticleDiscretization, /) -> PreparedRigidBodySet:
         return PreparedRigidBodySet(self, particles)
 
 
-class PreparedRigidBodySet(StrictModule, NonTrainableState):
-    plan: RigidBodySetPlan
-    particles: ParticleDiscretization
-    inertia_body: Array
-    inverse_inertia_body: Array
-    inverse_masses: Array
-    material_ids: Array
-    fixed_mask: Array
-    key: DiscretizationKey
-    preparation: PreparationReport
-    prepared_id: str = eqx.field(static=True)
+class RigidBodyMassProperties(StrictModule, NonTrainableState):
+    """Prepared COM-centred mass properties shared by maximal and reduced paths.
 
-    def __init__(self, plan: RigidBodySetPlan, particles: ParticleDiscretization, /):
-        if not isinstance(plan, RigidBodySetPlan):
-            raise TypeError("plan must be a RigidBodySetPlan.")
-        if not isinstance(particles, ParticleDiscretization):
-            raise TypeError("particles must be a ParticleDiscretization.")
+    Linear velocity is the centre-of-mass velocity, so the body-frame first
+    moment is identically zero and ``inertia_com`` is the rotational block of
+    the spatial inertia.
+    """
+
+    masses: Array
+    inverse_masses: Array
+    first_moments: Array
+    inertia_com: Array
+    inverse_inertia_com: Array
+    properties_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: RigidBodySetPlan,
+        particles: ParticleDiscretization,
+        /,
+    ):
         dimension = particles.ambient_dimension
         expected = (particles.capacity,) if dimension == 2 else (particles.capacity, 3, 3)
-        if dimension not in (2, 3) or plan.inertia_body.shape != expected:
+        if dimension not in (2, 3) or plan.inertia_com.shape != expected:
             raise ValueError(
-                "Rigid-body inertia schema does not match dimension/capacity."
+                "Rigid-body COM inertia schema does not match dimension/capacity."
             )
-        inertia_host = np.asarray(plan.inertia_body)
+        inertia_host = np.asarray(plan.inertia_com)
         inverse_host = (
             1.0 / inertia_host
             if dimension == 2
@@ -145,24 +157,58 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
             inverse_inertia = jnp.where(mobile[:, None, None], inverse_inertia, 0.0)
             identity = jnp.eye(3, dtype=dtype)
             inertia = jnp.where(active[:, None, None], inertia, identity)
-        inverse_mass = jnp.where(mobile, 1.0 / particles.safe_masses, 0.0)
+        self.masses = particles.safe_masses
+        self.inverse_masses = jnp.where(
+            mobile, 1.0 / particles.safe_masses, 0.0
+        )
+        self.first_moments = jnp.zeros(
+            (particles.capacity, dimension), dtype=dtype
+        )
+        self.inertia_com = inertia
+        self.inverse_inertia_com = inverse_inertia
+        self.properties_id = canonical_fingerprint(
+            {
+                "kind": "rigid-body-com-mass-properties",
+                "plan": plan.plan_id,
+                "particles": particles.prepared_id,
+            }
+        )
+
+
+class PreparedRigidBodySet(StrictModule, NonTrainableState):
+    plan: RigidBodySetPlan
+    particles: ParticleDiscretization
+    mass_properties: RigidBodyMassProperties
+    material_ids: Array
+    fixed_mask: Array
+    key: DiscretizationKey
+    preparation: PreparationReport
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: RigidBodySetPlan, particles: ParticleDiscretization, /):
+        if not isinstance(plan, RigidBodySetPlan):
+            raise TypeError("plan must be a RigidBodySetPlan.")
+        if not isinstance(particles, ParticleDiscretization):
+            raise TypeError("particles must be a ParticleDiscretization.")
+        mass_properties = RigidBodyMassProperties(plan, particles)
+        active = particles.active_mask
+        fixed = plan.fixed_mask & active
         preparation = PreparationReport(
             diagnostics=(
-                "SO(2)/SO(3) rigid-body pose",
-                "body-frame SPD inertia",
+                "SO(2)/SO(3) COM-centred rigid-body pose",
+                "body-frame SPD COM inertia",
                 "world-frame angular velocity",
+                "zero body-frame first moment",
             ),
             resource_counts={
                 "body_capacity": particles.capacity,
                 "active_bodies": particles.active_count,
-                "ambient_dimension": dimension,
+                "ambient_dimension": particles.ambient_dimension,
             },
         )
         self.plan = plan
         self.particles = particles
-        self.inertia_body = inertia
-        self.inverse_inertia_body = inverse_inertia
-        self.inverse_masses = inverse_mass
+        self.mass_properties = mass_properties
         self.material_ids = jnp.where(active, plan.material_ids, 0)
         self.fixed_mask = fixed
         self.key = plan.key
@@ -172,9 +218,34 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
                 "kind": "prepared-rigid-body-set",
                 "plan": plan.plan_id,
                 "particles": particles.prepared_id,
+                "mass_properties": mass_properties.properties_id,
                 "preparation": preparation.report_id,
             }
         )
+
+    @property
+    def inertia_com(self) -> Array:
+        return self.mass_properties.inertia_com
+
+    @property
+    def inverse_inertia_com(self) -> Array:
+        return self.mass_properties.inverse_inertia_com
+
+    @property
+    def inverse_masses(self) -> Array:
+        return self.mass_properties.inverse_masses
+
+    @property
+    def inertia_body(self) -> Array:
+        """Body-coordinate inertia about the centre of mass."""
+
+        return self.inertia_com
+
+    @property
+    def inverse_inertia_body(self) -> Array:
+        """Inverse body-coordinate inertia about the centre of mass."""
+
+        return self.inverse_inertia_com
 
     @property
     def capacity(self) -> int:
@@ -222,10 +293,189 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
 
 
 class RigidBodyKinematics(StrictModule):
+    """Rigid-body pose and twist expressed at each centre of mass."""
     position: Array
     velocity: Array
     orientation: Array
     angular_velocity: Array
+
+
+class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
+    """Explicit old-body-origin to COM-centred reference-frame transfer."""
+
+    center_of_mass_offsets: Array
+    body_ids: Array
+    source_prepared_id: str = eqx.field(static=True)
+    source_particle_plan_id: str = eqx.field(static=True)
+    source_body_plan_id: str = eqx.field(static=True)
+    target_particle_plan_id: str = eqx.field(static=True)
+    target_body_plan_id: str = eqx.field(static=True)
+    rebase_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source: PreparedRigidBodySet,
+        target_particles: ParticleSetPlan,
+        target_bodies: RigidBodySetPlan,
+        center_of_mass_offsets: ArrayLike,
+        /,
+    ):
+        if not isinstance(source, PreparedRigidBodySet):
+            raise TypeError("source must be a PreparedRigidBodySet.")
+        if not isinstance(target_particles, ParticleSetPlan):
+            raise TypeError("target_particles must be a ParticleSetPlan.")
+        if not isinstance(target_bodies, RigidBodySetPlan):
+            raise TypeError("target_bodies must be a RigidBodySetPlan.")
+        if source.ambient_dimension != 3 or target_particles.ambient_dimension != 3:
+            raise ValueError("Rigid-body reference-frame rebasing requires 3-D bodies.")
+        offsets = np.asarray(center_of_mass_offsets)
+        expected = (source.capacity, 3)
+        if offsets.shape != expected or not np.all(np.isfinite(offsets)):
+            raise ValueError(
+                "center_of_mass_offsets must be finite with source body-capacity shape."
+            )
+        source_ids = np.asarray(source.particles.particle_ids)
+        target_ids = np.asarray(target_particles.particle_ids)
+        if (
+            target_particles.particle_ids.shape != (source.capacity,)
+            or target_bodies.material_ids.shape != (source.capacity,)
+            or target_bodies.inertia_com.shape != (source.capacity, 3, 3)
+            or not np.array_equal(target_ids, source_ids)
+            or not np.array_equal(
+                np.asarray(target_particles.active_mask),
+                np.asarray(source.particles.active_mask),
+            )
+        ):
+            raise ValueError(
+                "Target particle/body plans do not preserve source body identity."
+            )
+        self.center_of_mass_offsets = jnp.asarray(
+            offsets, dtype=source.particles.safe_masses.dtype
+        )
+        self.body_ids = jnp.asarray(source_ids)
+        self.source_prepared_id = source.prepared_id
+        self.source_particle_plan_id = source.particles.plan.plan_id
+        self.source_body_plan_id = source.plan.plan_id
+        self.target_particle_plan_id = target_particles.plan_id
+        self.target_body_plan_id = target_bodies.plan_id
+        self.rebase_id = canonical_fingerprint(
+            {
+                "kind": "rigid-body-reference-frame-rebase",
+                "source_prepared": source.prepared_id,
+                "source_particle_plan": source.particles.plan.plan_id,
+                "source_body_plan": source.plan.plan_id,
+                "target_particle_plan": target_particles.plan_id,
+                "target_body_plan": target_bodies.plan_id,
+                "body_ids": array_tree_fingerprint(source_ids),
+                "center_of_mass_offsets": array_tree_fingerprint(offsets),
+            }
+        )
+
+    def _require_owners(
+        self,
+        source: PreparedRigidBodySet,
+        target: PreparedRigidBodySet,
+        /,
+    ) -> None:
+        if not isinstance(source, PreparedRigidBodySet):
+            raise TypeError("source must be a PreparedRigidBodySet.")
+        if not isinstance(target, PreparedRigidBodySet):
+            raise TypeError("target must be a PreparedRigidBodySet.")
+        if (
+            source.prepared_id != self.source_prepared_id
+            or source.particles.plan.plan_id != self.source_particle_plan_id
+            or source.plan.plan_id != self.source_body_plan_id
+        ):
+            raise ValueError("Source body identity does not match this rebase.")
+        if (
+            target.particles.plan.plan_id != self.target_particle_plan_id
+            or target.plan.plan_id != self.target_body_plan_id
+        ):
+            raise ValueError("Target body identity does not match this rebase.")
+        expected_ids = np.asarray(self.body_ids)
+        if (
+            source.ambient_dimension != 3
+            or target.ambient_dimension != 3
+            or source.capacity != target.capacity
+            or not np.array_equal(
+                np.asarray(source.particles.particle_ids), expected_ids
+            )
+            or not np.array_equal(
+                np.asarray(target.particles.particle_ids), expected_ids
+            )
+        ):
+            raise ValueError("Rebase owners have incompatible body support.")
+
+    def rebase_kinematics(
+        self,
+        reference: RigidBodyKinematics,
+        source: PreparedRigidBodySet,
+        target: PreparedRigidBodySet,
+        /,
+    ) -> RigidBodyKinematics:
+        """Shift an old-origin pose/twist to the target centre of mass."""
+
+        self._require_owners(source, target)
+        if not isinstance(reference, RigidBodyKinematics):
+            raise TypeError("reference must be RigidBodyKinematics.")
+        expected_vector = (source.capacity, 3)
+        if (
+            reference.position.shape != expected_vector
+            or reference.velocity.shape != expected_vector
+            or reference.orientation.shape != (source.capacity, 4)
+            or reference.angular_velocity.shape != expected_vector
+        ):
+            raise ValueError("Reference kinematics do not match rebase body support.")
+        leaves = (
+            reference.position,
+            reference.velocity,
+            reference.orientation,
+            reference.angular_velocity,
+        )
+        if not all(np.all(np.isfinite(np.asarray(leaf))) for leaf in leaves):
+            raise ValueError("Reference kinematics must be finite.")
+        orientation_norm = np.linalg.norm(
+            np.asarray(reference.orientation), axis=-1
+        )
+        if not np.allclose(orientation_norm, 1.0, rtol=0.0, atol=1.0e-8):
+            raise ValueError("Reference orientations must have unit norm.")
+        rotation = quaternion_rotation_matrix(reference.orientation)
+        world_offset = contract(
+            "bij,bj->bi", rotation, self.center_of_mass_offsets
+        )
+        return RigidBodyKinematics(
+            reference.position + world_offset,
+            reference.velocity
+            + jnp.cross(reference.angular_velocity, world_offset),
+            reference.orientation,
+            reference.angular_velocity,
+        )
+
+    def rebase_local_points(
+        self,
+        points: ArrayLike,
+        source: PreparedRigidBodySet,
+        target: PreparedRigidBodySet,
+        /,
+    ) -> Array:
+        """Map full-capacity old-local attachment points into COM coordinates."""
+
+        self._require_owners(source, target)
+        points_host = np.asarray(points)
+        if (
+            points_host.ndim < 2
+            or points_host.shape[0] != source.capacity
+            or points_host.shape[-1] != 3
+            or not np.all(np.isfinite(points_host))
+        ):
+            raise ValueError(
+                "Local points must be finite with leading body-capacity and "
+                "trailing spatial axes."
+            )
+        offsets = self.center_of_mass_offsets.reshape(
+            (source.capacity,) + (1,) * (points_host.ndim - 2) + (3,)
+        )
+        return jnp.asarray(points_host, dtype=offsets.dtype) - offsets
 
 
 class RigidBodyLoad(StrictModule):
@@ -338,13 +588,13 @@ def rigid_body_world_inertia(
     inertia = contract(
         "...ij,...jk,...lk->...il",
         rotation,
-        bodies.inertia_body,
+        bodies.mass_properties.inertia_com,
         rotation,
     )
     inverse = contract(
         "...ij,...jk,...lk->...il",
         rotation,
-        bodies.inverse_inertia_body,
+        bodies.mass_properties.inverse_inertia_com,
         rotation,
     )
     return inertia, inverse
@@ -359,7 +609,7 @@ def _rigid_body_half_kick(
 ) -> RigidBodyKinematics:
     mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
     velocity = kinematics.velocity + 0.5 * step_size * (
-        bodies.inverse_masses[:, None] * load.force
+        bodies.mass_properties.inverse_masses[:, None] * load.force
     )
     angular = kinematics.angular_velocity + 0.5 * step_size * (
         rigid_body_angular_acceleration(bodies, kinematics, load.torque)
@@ -409,7 +659,7 @@ def _rigid_body_close_kick(
 ) -> RigidBodyKinematics:
     mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
     velocity = kinematics.velocity + 0.5 * step_size * (
-        bodies.inverse_masses[:, None] * load.force
+        bodies.mass_properties.inverse_masses[:, None] * load.force
     )
     angular = kinematics.angular_velocity + 0.5 * step_size * (
         rigid_body_angular_acceleration(bodies, kinematics, load.torque)
@@ -468,7 +718,7 @@ def rigid_body_angular_acceleration(
     /,
 ) -> Array:
     if bodies.ambient_dimension == 2:
-        return bodies.inverse_inertia_body[:, None] * torque
+        return bodies.mass_properties.inverse_inertia_com[:, None] * torque
     inertia_world, inverse_world = rigid_body_world_inertia(
         bodies, kinematics.orientation
     )
@@ -506,7 +756,7 @@ def rigid_body_kick_drift_kick(
 
 
 class RigidBodyStateGeometry(AbstractStateGeometry):
-    bodies: PreparedRigidBodySet
+    bodies: PreparedRigidBodySet  # ty: ignore[dataclass-field-order]
     geometry_id: str = eqx.field(static=True)
     retraction_method: str = "rigid-body-lie-retraction"
     trivial: bool = False
@@ -574,7 +824,9 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
 __all__ = [
     "PreparedRigidBodySet",
     "RigidBodyKinematics",
+    "RigidBodyMassProperties",
     "RigidBodyLoad",
+    "RigidBodyReferenceFrameRebase",
     "RigidBodySetPlan",
     "RigidBodyStateGeometry",
     "RigidBodyStepResult",

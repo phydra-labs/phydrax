@@ -462,6 +462,13 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             kinds_plan.append(kind)
             rows_plan.append(row)
 
+        unconsumed_joint_ids = sorted(set(joint_by_id) - set(joint_ids.tolist()))
+        if unconsumed_joint_ids:
+            raise ValueError(
+                "Prepared rigid-joint graph contains joints that are neither "
+                f"selected tree edges nor represented closures: {unconsumed_joint_ids!r}."
+            )
+
         active_indices = np.flatnonzero(active).astype(np.int32)
         declared_indices = set(parent_plan_indices.tolist()) | set(
             child_plan_indices.tolist()

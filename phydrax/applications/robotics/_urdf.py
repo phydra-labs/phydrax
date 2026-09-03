@@ -9,11 +9,11 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from math import cos, isfinite, sin
 from pathlib import Path
-from typing import Never
+from typing import cast, Literal, Never
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -47,9 +47,22 @@ from ...interchange._report import (
     AdapterWaiver,
     negotiate_adapter,
 )
+from ...interchange._resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceManifest,
+    ResourceReadError,
+)
 
 
 _DEFAULT_MAX_BYTES = 4 * 1024 * 1024
+_DEFAULT_MAX_DEPTH = 64
+_DEFAULT_MAX_NODES = 100_000
+_DEFAULT_MAX_ATTRIBUTES = 500_000
+_DEFAULT_MAX_LOSSES = 4_096
 _FLOAT_TOKEN = re.compile(
     r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", re.ASCII
 )
@@ -65,6 +78,29 @@ _XML_DECLARATION = re.compile(
     re.IGNORECASE,
 )
 _SUPPORTED_JOINT_KINDS = frozenset(("fixed", "revolute", "continuous", "prismatic"))
+_URDFRootPolicy = Literal["fixed_world", "reject_unpinned"]
+_URDF_CAPABILITIES = (
+    AdapterCapability("robot.connected-oriented-tree"),
+    AdapterCapability("robot.inertial-rigid-links"),
+    AdapterCapability("robot.fixed-hinge-prismatic-kinematics"),
+    AdapterCapability("robot.reference-kinematics"),
+    AdapterCapability("robot.joint-limit-evidence"),
+    AdapterCapability("robot.joint-damping-evidence"),
+    AdapterCapability("robot.si-dimensional-contract"),
+    AdapterCapability("robot.stable-int64-name-maps"),
+    AdapterCapability("robot.fixed-world-root"),
+)
+_URDF_CAPABILITY_IDS = {
+    capability.semantic_id: capability.capability_id
+    for capability in _URDF_CAPABILITIES
+}
+_EXTENSION_CAPABILITY_ID = AdapterCapability(
+    "robot.source-extension-semantics"
+).capability_id
+_VISUAL_CAPABILITY_ID = AdapterCapability("robot.visual-description").capability_id
+_COLLISION_CAPABILITY_ID = AdapterCapability("robot.collision-geometry").capability_id
+_ACTUATION_CAPABILITY_ID = AdapterCapability("robot.actuation-mapping").capability_id
+_FRICTION_CAPABILITY_ID = AdapterCapability("robot.joint-friction").capability_id
 
 
 class RobotNameIDMap(StrictModule, NonTrainableState):
@@ -164,6 +200,10 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
     format_version: str = eqx.field(static=True)
     source_path: str | None = eqx.field(static=True)
     source_size_bytes: int = eqx.field(static=True)
+    source_bytes: bytes = eqx.field(static=True)
+    source_content_sha256: str = eqx.field(static=True)
+    resource_manifest: ResourceManifest = eqx.field(static=True)
+    root_policy: _URDFRootPolicy = eqx.field(static=True)
     root_link: str = eqx.field(static=True)
     link_count: int = eqx.field(static=True)
     joint_count: int = eqx.field(static=True)
@@ -180,8 +220,8 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
     def __init__(
         self,
         robot_name: str,
-        source_path: str | None,
-        source_size_bytes: int,
+        resource: BoundedResource,
+        root_policy: _URDFRootPolicy,
         root_link: str,
         link_ids: RobotNameIDMap,
         joint_ids: RobotNameIDMap,
@@ -194,19 +234,25 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
     ):
         links_ = tuple(links)
         joints_ = tuple(joints)
+        manifest = resource.manifest
         policies = (
             "host-only parsing",
             "network access disabled",
             "DTD and entity declarations disabled",
             "xacro and include expansion disabled",
             "plugin execution disabled",
+            f"root interpretation explicitly selected as {root_policy}",
         )
         paths = tuple(loss_paths)
         self.robot_name = robot_name
         self.format_name = "URDF"
         self.format_version = "1.0"
-        self.source_path = source_path
-        self.source_size_bytes = int(source_size_bytes)
+        self.source_path = manifest.source_path
+        self.source_size_bytes = manifest.size_bytes
+        self.source_bytes = resource.data
+        self.source_content_sha256 = manifest.content_sha256
+        self.resource_manifest = manifest
+        self.root_policy = root_policy
         self.root_link = root_link
         self.link_count = len(links_)
         self.joint_count = len(joints_)
@@ -223,8 +269,11 @@ class URDFFormatEvidence(StrictModule, NonTrainableState):
                 "kind": "urdf-adapter-evidence",
                 "format": "URDF 1.0",
                 "robot_name": robot_name,
-                "source_path": source_path,
-                "source_size_bytes": int(source_size_bytes),
+                "source_path": manifest.source_path,
+                "source_size_bytes": manifest.size_bytes,
+                "source_content_sha256": manifest.content_sha256,
+                "resource_manifest": manifest.manifest_id,
+                "root_policy": root_policy,
                 "root_link": root_link,
                 "link_mapping": link_ids.mapping_id,
                 "joint_mapping": joint_ids.mapping_id,
@@ -355,6 +404,24 @@ class _ParsedURDF:
     losses: tuple[AdapterLoss, ...]
 
 
+@dataclass(slots=True)
+class _LossAccumulator:
+    maximum: int
+    items: list[AdapterLoss]
+
+    def __init__(self, maximum: int, /):
+        self.maximum = int(maximum)
+        self.items = []
+
+    def append(self, loss: AdapterLoss, /) -> None:
+        if len(self.items) >= self.maximum:
+            _fail(
+                AdapterStatus.MALFORMED_SOURCE,
+                f"URDF semantic losses exceed the configured {self.maximum}-loss limit.",
+            )
+        self.items.append(loss)
+
+
 def _fail(status: AdapterStatus, message: str, /) -> Never:
     raise URDFImportError(status, message)
 
@@ -409,6 +476,7 @@ def _loss(
     *,
     changes_interpretation: bool,
     category: str = "unsupported",
+    affected_capability_ids: Sequence[str] = (_EXTENSION_CAPABILITY_ID,),
 ) -> AdapterLoss:
     return AdapterLoss(
         path,
@@ -416,6 +484,7 @@ def _loss(
         category,
         rationale,
         changes_interpretation=changes_interpretation,
+        affected_capability_ids=affected_capability_ids,
     )
 
 
@@ -423,7 +492,7 @@ def _attribute_losses(
     element: ET.Element,
     allowed: frozenset[str],
     path: str,
-    losses: list[AdapterLoss],
+    losses: _LossAccumulator,
     /,
 ) -> None:
     for name in sorted(set(element.attrib) - allowed):
@@ -440,7 +509,7 @@ def _unknown_child_losses(
     element: ET.Element,
     allowed: frozenset[str],
     path: str,
-    losses: list[AdapterLoss],
+    losses: _LossAccumulator,
     /,
 ) -> None:
     counts: dict[str, int] = {}
@@ -482,7 +551,7 @@ def _single_child(
 def _parse_origin(
     owner: ET.Element,
     owner_path: str,
-    losses: list[AdapterLoss],
+    losses: _LossAccumulator,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     origin = _single_child(owner, "origin", owner_path, required=False)
@@ -574,7 +643,7 @@ def _quaternion_from_rotation(rotation: np.ndarray, /) -> np.ndarray:
     return quaternion if quaternion[0] >= 0.0 else -quaternion
 
 
-def _parse_link(element: ET.Element, losses: list[AdapterLoss], /) -> _LinkRecord:
+def _parse_link(element: ET.Element, losses: _LossAccumulator, /) -> _LinkRecord:
     name = _required_attribute(element, "name", "/robot/link")
     path = f"/robot/links/{_pointer(name)}"
     _check_leaf_text(element, path)
@@ -653,6 +722,7 @@ def _parse_link(element: ET.Element, losses: list[AdapterLoss], /) -> _LinkRecor
                 "Visual geometry and material are intentionally not lowered into the native dynamics plans.",
                 changes_interpretation=False,
                 category="dropped",
+                affected_capability_ids=(_VISUAL_CAPABILITY_ID,),
             )
         )
     for index, collision in enumerate(_children(element, "collision")):
@@ -663,6 +733,7 @@ def _parse_link(element: ET.Element, losses: list[AdapterLoss], /) -> _LinkRecor
                 "Collision geometry is not represented by the articulation target.",
                 changes_interpretation=True,
                 category="dropped",
+                affected_capability_ids=(_COLLISION_CAPABILITY_ID,),
             )
         )
     return _LinkRecord(
@@ -679,7 +750,7 @@ def _parse_limit(
     joint: ET.Element,
     path: str,
     kind: str,
-    losses: list[AdapterLoss],
+    losses: _LossAccumulator,
     /,
 ) -> tuple[float | None, float | None, float | None, float | None]:
     limit = _single_child(joint, "limit", path, required=kind != "fixed")
@@ -690,6 +761,9 @@ def _parse_limit(
                     f"{path}/limit",
                     "A fixed-joint limit has no native interpretation and is not lowered.",
                     changes_interpretation=True,
+                    affected_capability_ids=(
+                        _URDF_CAPABILITY_IDS["robot.joint-limit-evidence"],
+                    ),
                 )
             )
         return None, None, None, None
@@ -720,6 +794,9 @@ def _parse_limit(
                         "Continuous-joint position bounds contradict the unbounded "
                         "native coordinate and are not lowered.",
                         changes_interpretation=True,
+                        affected_capability_ids=(
+                            _URDF_CAPABILITY_IDS["robot.joint-limit-evidence"],
+                        ),
                     )
                 )
         return None, None, effort, velocity
@@ -738,7 +815,7 @@ def _parse_damping(
     joint: ET.Element,
     path: str,
     kind: str,
-    losses: list[AdapterLoss],
+    losses: _LossAccumulator,
     /,
 ) -> float | None:
     dynamics = _single_child(joint, "dynamics", path, required=False)
@@ -751,6 +828,9 @@ def _parse_damping(
                 dynamics_path,
                 "Fixed-joint dynamics has no free coordinate and is not lowered.",
                 changes_interpretation=True,
+                affected_capability_ids=(
+                    _URDF_CAPABILITY_IDS["robot.joint-damping-evidence"],
+                ),
             )
         )
         return None
@@ -780,12 +860,13 @@ def _parse_damping(
                 "URDF joint friction is not represented by the native articulation target.",
                 changes_interpretation=True,
                 category="dropped",
+                affected_capability_ids=(_FRICTION_CAPABILITY_ID,),
             )
         )
     return damping
 
 
-def _parse_joint(element: ET.Element, losses: list[AdapterLoss], /) -> _JointRecord:
+def _parse_joint(element: ET.Element, losses: _LossAccumulator, /) -> _JointRecord:
     name = _required_attribute(element, "name", "/robot/joint")
     path = f"/robot/joints/{_pointer(name)}"
     _check_leaf_text(element, path)
@@ -824,6 +905,11 @@ def _parse_joint(element: ET.Element, losses: list[AdapterLoss], /) -> _JointRec
                     f"{path}/axis",
                     "A fixed-joint axis has no native interpretation and is not lowered.",
                     changes_interpretation=True,
+                    affected_capability_ids=(
+                        _URDF_CAPABILITY_IDS[
+                            "robot.fixed-hinge-prismatic-kinematics"
+                        ],
+                    ),
                 )
             )
         axis = np.asarray((1.0, 0.0, 0.0))
@@ -862,7 +948,7 @@ def _parse_joint(element: ET.Element, losses: list[AdapterLoss], /) -> _JointRec
     )
 
 
-def _parse_tree(root: ET.Element, /) -> _ParsedURDF:
+def _parse_tree(root: ET.Element, max_losses: int, /) -> _ParsedURDF:
     if _tag_name(root) != "robot":
         _fail(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
@@ -870,7 +956,7 @@ def _parse_tree(root: ET.Element, /) -> _ParsedURDF:
         )
     robot_name = _required_attribute(root, "name", "/robot")
     _check_leaf_text(root, "/robot")
-    losses: list[AdapterLoss] = []
+    losses = _LossAccumulator(max_losses)
     _attribute_losses(root, frozenset(("name", "version")), "/robot", losses)
     if "version" in root.attrib and root.attrib["version"] != "1.0":
         _fail(
@@ -951,6 +1037,7 @@ def _parse_tree(root: ET.Element, /) -> _ParsedURDF:
                 "Robot-level visual material declarations are not lowered into dynamics plans.",
                 changes_interpretation=False,
                 category="dropped",
+                affected_capability_ids=(_VISUAL_CAPABILITY_ID,),
             )
         )
     for index, transmission in enumerate(_children(root, "transmission")):
@@ -961,6 +1048,7 @@ def _parse_tree(root: ET.Element, /) -> _ParsedURDF:
                 "URDF transmissions and actuator mappings are not represented by the native articulation target.",
                 changes_interpretation=True,
                 category="dropped",
+                affected_capability_ids=(_ACTUATION_CAPABILITY_ID,),
             )
         )
     return _ParsedURDF(
@@ -969,27 +1057,20 @@ def _parse_tree(root: ET.Element, /) -> _ParsedURDF:
         tuple(sorted(joints, key=lambda item: item.name)),
         root_name,
         tuple(traversal),
-        tuple(sorted(losses, key=lambda item: (item.path, item.loss_id))),
+        tuple(sorted(losses.items, key=lambda item: (item.path, item.loss_id))),
     )
 
 
-def _validated_xml(text: str, max_bytes: int, /) -> tuple[ET.Element, int]:
-    if not isinstance(text, str):
-        raise TypeError("URDF text must be a string.")
-    maximum = int(max_bytes)
-    if maximum <= 0:
-        raise ValueError("max_bytes must be positive.")
+def _validated_xml(
+    resource: BoundedResource, /
+) -> tuple[ET.Element, str, int, int, int]:
     try:
-        encoded = text.encode("utf-8", errors="strict")
-    except UnicodeEncodeError as error:
+        text = resource.data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
         raise URDFImportError(
-            AdapterStatus.MALFORMED_SOURCE, "URDF text must be valid Unicode encodable as UTF-8."
-        ) from error
-    if len(encoded) > maximum:
-        _fail(
             AdapterStatus.MALFORMED_SOURCE,
-            f"URDF source exceeds the configured {maximum}-byte size limit.",
-        )
+            "URDF sources must be strict UTF-8.",
+        ) from error
     if _UNSAFE_DECLARATION.search(text) is not None:
         _fail(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
@@ -1003,54 +1084,123 @@ def _validated_xml(text: str, max_bytes: int, /) -> tuple[ET.Element, int]:
     stripped = text.lstrip("\ufeff \t\r\n")
     if stripped.startswith("<?xml"):
         declaration_end = stripped.find("?>")
-        if declaration_end < 0 or _XML_DECLARATION.fullmatch(stripped[: declaration_end + 2]) is None:
+        if (
+            declaration_end < 0
+            or _XML_DECLARATION.fullmatch(stripped[: declaration_end + 2]) is None
+        ):
             _fail(
                 AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
                 "Only a standard UTF-8 XML 1.0 declaration is accepted.",
             )
+    limits = resource.manifest.limits
+    parser = ET.XMLPullParser(events=("start", "end"))
+    root: ET.Element | None = None
+    current_depth = 0
+    observed_depth = 0
+    nodes = 0
+    attributes = 0
+
+    def consume_events() -> None:
+        nonlocal root, current_depth, observed_depth, nodes, attributes
+        events = cast(Iterator[tuple[str, ET.Element]], parser.read_events())
+        for event, element in events:
+            if event == "start":
+                if root is None:
+                    root = element
+                current_depth += 1
+                observed_depth = max(observed_depth, current_depth)
+                nodes += 1
+                attributes += len(element.attrib)
+                if observed_depth > limits.max_depth:
+                    _fail(
+                        AdapterStatus.MALFORMED_SOURCE,
+                        f"URDF XML exceeds the configured {limits.max_depth}-level depth limit.",
+                    )
+                if nodes > limits.max_nodes:
+                    _fail(
+                        AdapterStatus.MALFORMED_SOURCE,
+                        f"URDF XML exceeds the configured {limits.max_nodes}-node limit.",
+                    )
+                if attributes > limits.max_attributes:
+                    _fail(
+                        AdapterStatus.MALFORMED_SOURCE,
+                        "URDF XML exceeds the configured "
+                        f"{limits.max_attributes}-attribute limit.",
+                    )
+                _reject_external_execution(element)
+            else:
+                current_depth -= 1
+
     try:
-        root = ET.fromstring(text)
+        for offset in range(0, len(text), 64 * 1024):
+            parser.feed(text[offset : offset + 64 * 1024])
+            consume_events()
+        parser.close()
+        consume_events()
     except ET.ParseError as error:
         raise URDFImportError(
             AdapterStatus.MALFORMED_SOURCE, f"Malformed URDF XML: {error}."
         ) from error
-    return root, len(encoded)
+    if root is None or current_depth != 0:
+        _fail(AdapterStatus.MALFORMED_SOURCE, "URDF XML must contain one complete root.")
+    return root, text, observed_depth, nodes, attributes
 
 
-def _resolved_file(path: str | Path, allowed_root: str | Path, /) -> Path:
-    source_text = str(path)
-    root_text = str(allowed_root)
-    if (
-        "://" in source_text
-        or source_text.startswith(("//", "\\\\"))
-        or "://" in root_text
-        or root_text.startswith(("//", "\\\\"))
-    ):
-        _fail(AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC, "Network URDF locations are disabled.")
-    try:
-        root = Path(allowed_root).expanduser().resolve(strict=True)
-    except OSError as error:
-        raise URDFImportError(
-            AdapterStatus.MALFORMED_SOURCE, "The URDF allowed root does not exist."
-        ) from error
-    if not root.is_dir():
-        _fail(AdapterStatus.MALFORMED_SOURCE, "The URDF allowed root must be a directory.")
-    candidate = Path(path).expanduser()
-    candidate = candidate if candidate.is_absolute() else root / candidate
-    try:
-        normalized = candidate.resolve(strict=True)
-    except OSError as error:
-        raise URDFImportError(
-            AdapterStatus.MALFORMED_SOURCE, "The requested URDF file does not exist."
-        ) from error
-    if not normalized.is_relative_to(root):
+def _reject_external_execution(element: ET.Element, /) -> None:
+    tag = _tag_name(element)
+    local_tag = tag.rsplit("}", 1)[-1].lower()
+    if local_tag in ("include", "plugin"):
         _fail(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
-            "The normalized URDF path escapes the configured allowed root.",
+            "URDF include and plugin elements are disabled.",
         )
-    if not normalized.is_file():
-        _fail(AdapterStatus.MALFORMED_SOURCE, "The normalized URDF path is not a file.")
-    return normalized
+    if any(
+        "://" in value or value.startswith(("//", "\\\\"))
+        for value in element.attrib.values()
+    ):
+        _fail(
+            AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+            "URDF network and external resource references are disabled.",
+        )
+
+
+def _resource_limits(
+    max_bytes: int,
+    max_depth: int,
+    max_nodes: int,
+    max_attributes: int,
+    max_losses: int,
+    /,
+) -> ResourceLimits:
+    return ResourceLimits(
+        max_bytes,
+        max_depth,
+        max_nodes,
+        max_attributes,
+        max_losses,
+    )
+
+
+def _resource_failure(error: ResourceReadError, /) -> Never:
+    status = (
+        AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+        if error.reason == "policy"
+        else AdapterStatus.INCONSISTENT_SOURCE
+        if error.reason == "inconsistent"
+        else AdapterStatus.MALFORMED_SOURCE
+    )
+    raise URDFImportError(status, str(error)) from error
+
+
+def _root_policy(value: str, /) -> _URDFRootPolicy:
+    value_ = str(value).strip()
+    if value_ == "fixed_world":
+        return "fixed_world"
+    if value_ == "reject_unpinned":
+        return "reject_unpinned"
+    raise ValueError("root_policy must be 'fixed_world' or 'reject_unpinned'.")
+
+
 
 
 def _world_link_frames(
@@ -1149,8 +1299,8 @@ def _waivers_for_losses(
 def _adapt(
     parsed: _ParsedURDF,
     source_id: str,
-    source_path: str | None,
-    source_size_bytes: int,
+    resource: BoundedResource,
+    root_policy: _URDFRootPolicy,
     waivers: Sequence[AdapterWaiver],
     waived_loss_paths: Sequence[str],
     /,
@@ -1307,6 +1457,7 @@ def _adapt(
             "dimensions": dimensions.scale_id,
             "link_mapping": link_ids.mapping_id,
             "joint_mapping": joint_ids.mapping_id,
+            "root_policy": root_policy,
         }
     )
     applied_waivers = _waivers_for_losses(
@@ -1314,8 +1465,8 @@ def _adapt(
     )
     evidence = URDFFormatEvidence(
         parsed.robot_name,
-        source_path,
-        source_size_bytes,
+        resource,
+        root_policy,
         parsed.root_link,
         link_ids,
         joint_ids,
@@ -1334,17 +1485,9 @@ def _adapt(
         AdapterRequirement("robot.joint-damping-evidence"),
         AdapterRequirement("robot.si-dimensional-contract"),
         AdapterRequirement("robot.stable-int64-name-maps"),
+        AdapterRequirement("robot.fixed-world-root"),
     )
-    capabilities = (
-        AdapterCapability("robot.connected-oriented-tree"),
-        AdapterCapability("robot.inertial-rigid-links"),
-        AdapterCapability("robot.fixed-hinge-prismatic-kinematics"),
-        AdapterCapability("robot.reference-kinematics"),
-        AdapterCapability("robot.joint-limit-evidence"),
-        AdapterCapability("robot.joint-damping-evidence"),
-        AdapterCapability("robot.si-dimensional-contract"),
-        AdapterCapability("robot.stable-int64-name-maps"),
-    )
+    capabilities = _URDF_CAPABILITIES
     negotiation = negotiate_adapter(
         requirements, capabilities, losses=parsed.losses, waivers=applied_waivers
     )
@@ -1394,8 +1537,8 @@ def _adapt(
             "URDF masses are kilograms",
             "URDF angles are radians",
             "URDF inertia components are kg*m^2 about the link COM",
-            "the unique root link is fixed to the world",
-            "external macros, includes, resources, networks, and plugins are not evaluated",
+            "the caller explicitly selected fixed_world root attachment",
+            "external macros, includes, resources, networks, and plugins are rejected",
         ),
         losses=parsed.losses,
         requirements=requirements,
@@ -1405,7 +1548,7 @@ def _adapt(
     if not negotiation.valid:
         raise URDFImportError(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
-            "URDF input contains unwaived interpretation-changing semantics.",
+            "URDF input contains an unwaived or unwaivable semantic loss or a stale waiver.",
             report=report,
             evidence=evidence,
         )
@@ -1431,29 +1574,82 @@ def _adapt(
     )
 
 
-def parse_urdf_text(
-    text: str,
+def _adapt_resource(
+    resource: BoundedResource,
+    root_policy: _URDFRootPolicy,
+    waivers: Sequence[AdapterWaiver],
+    waived_loss_paths: Sequence[str],
     /,
-    *,
-    max_bytes: int = _DEFAULT_MAX_BYTES,
-    waivers: Sequence[AdapterWaiver] = (),
-    waived_loss_paths: Sequence[str] = (),
 ) -> RobotAdaptation:
-    """Parse bounded URDF text without resolving any external resource."""
-
-    root, source_size = _validated_xml(text, max_bytes)
-    parsed = _parse_tree(root)
+    root, _, depth, nodes, attributes = _validated_xml(resource)
+    parsed = _parse_tree(root, resource.manifest.limits.max_losses)
+    try:
+        accounted = account_bounded_resource(
+            resource,
+            depth=depth,
+            nodes=nodes,
+            attributes=attributes,
+            losses=len(parsed.losses),
+        )
+    except ResourceReadError as error:
+        _resource_failure(error)
+    if root_policy == "reject_unpinned":
+        _fail(
+            AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+            "URDF does not encode a world attachment for its root link; "
+            "reject_unpinned forbids synthesizing one.",
+        )
     source_id = canonical_fingerprint(
-        {"kind": "urdf-source", "format": "URDF 1.0", "utf8_text": text}
+        {
+            "kind": "urdf-source",
+            "format": "URDF 1.0",
+            "size_bytes": accounted.manifest.size_bytes,
+            "content_sha256": accounted.manifest.content_sha256,
+        }
     )
     return _adapt(
         parsed,
         source_id,
-        None,
-        source_size,
+        accounted,
+        root_policy,
         waivers,
         waived_loss_paths,
     )
+
+
+def parse_urdf_text(
+    text: str,
+    /,
+    *,
+    root_policy: _URDFRootPolicy,
+    max_bytes: int = _DEFAULT_MAX_BYTES,
+    max_depth: int = _DEFAULT_MAX_DEPTH,
+    max_nodes: int = _DEFAULT_MAX_NODES,
+    max_attributes: int = _DEFAULT_MAX_ATTRIBUTES,
+    max_losses: int = _DEFAULT_MAX_LOSSES,
+    waivers: Sequence[AdapterWaiver] = (),
+    waived_loss_paths: Sequence[str] = (),
+) -> RobotAdaptation:
+    """Parse bounded URDF text under an explicit root interpretation policy."""
+
+    policy = _root_policy(root_policy)
+    if not isinstance(text, str):
+        raise TypeError("URDF text must be a string.")
+    try:
+        data = text.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise URDFImportError(
+            AdapterStatus.MALFORMED_SOURCE,
+            "URDF text must be valid Unicode encodable as UTF-8.",
+        ) from error
+    limits = _resource_limits(
+        max_bytes, max_depth, max_nodes, max_attributes, max_losses
+    )
+    try:
+        resource = bounded_resource_from_bytes(data, limits=limits)
+    except ResourceReadError as error:
+        _resource_failure(error)
+    return _adapt_resource(resource, policy, waivers, waived_loss_paths)
 
 
 def parse_urdf_file(
@@ -1461,60 +1657,30 @@ def parse_urdf_file(
     /,
     *,
     allowed_root: str | Path,
+    root_policy: _URDFRootPolicy,
     max_bytes: int = _DEFAULT_MAX_BYTES,
+    max_depth: int = _DEFAULT_MAX_DEPTH,
+    max_nodes: int = _DEFAULT_MAX_NODES,
+    max_attributes: int = _DEFAULT_MAX_ATTRIBUTES,
+    max_losses: int = _DEFAULT_MAX_LOSSES,
     waivers: Sequence[AdapterWaiver] = (),
     waived_loss_paths: Sequence[str] = (),
 ) -> RobotAdaptation:
-    """Resolve and parse one bounded UTF-8 URDF beneath an explicit allowed root."""
+    """Descriptor-read one bounded UTF-8 URDF under an explicit root policy."""
 
-    maximum = int(max_bytes)
-    if maximum <= 0:
-        raise ValueError("max_bytes must be positive.")
-    source = _resolved_file(path, allowed_root)
-    try:
-        size = source.stat().st_size
-    except OSError as error:
-        raise URDFImportError(
-            AdapterStatus.MALFORMED_SOURCE,
-            "The normalized URDF file could not be inspected.",
-        ) from error
-    if size > maximum:
-        _fail(
-            AdapterStatus.MALFORMED_SOURCE,
-            f"URDF source exceeds the configured {maximum}-byte size limit.",
-        )
-    try:
-        with source.open("rb") as stream:
-            data = stream.read(maximum + 1)
-    except OSError as error:
-        raise URDFImportError(
-            AdapterStatus.MALFORMED_SOURCE,
-            "The normalized URDF file could not be read.",
-        ) from error
-    if len(data) > maximum:
-        _fail(
-            AdapterStatus.MALFORMED_SOURCE,
-            f"URDF source exceeds the configured {maximum}-byte size limit.",
-        )
-    try:
-        text = data.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as error:
-        raise URDFImportError(
-            AdapterStatus.MALFORMED_SOURCE, "URDF files must be strict UTF-8."
-        ) from error
-    root, source_size = _validated_xml(text, maximum)
-    parsed = _parse_tree(root)
-    source_id = canonical_fingerprint(
-        {"kind": "urdf-source", "format": "URDF 1.0", "utf8_text": text}
+    policy = _root_policy(root_policy)
+    limits = _resource_limits(
+        max_bytes, max_depth, max_nodes, max_attributes, max_losses
     )
-    return _adapt(
-        parsed,
-        source_id,
-        str(source),
-        source_size,
-        waivers,
-        waived_loss_paths,
-    )
+    try:
+        resource = read_bounded_resource(
+            path,
+            trusted_root=allowed_root,
+            limits=limits,
+        )
+    except ResourceReadError as error:
+        _resource_failure(error)
+    return _adapt_resource(resource, policy, waivers, waived_loss_paths)
 
 
 __all__ = [

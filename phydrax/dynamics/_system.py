@@ -62,6 +62,73 @@ class DiscreteTransitionResult(StrictModule):
         self.status = status_array
 
 
+class DiscreteTransitionEvidence(StrictModule):
+    """Per-step discrete transition outcomes and deterministic failure summaries."""
+
+    candidate_states: Array
+    accepted_states: Array
+    successful: Array
+    status: Array
+    first_failure_step: Array
+    first_failure_status: Array
+
+    def __init__(
+        self,
+        candidate_states: ArrayLike,
+        accepted_states: ArrayLike,
+        successful: ArrayLike,
+        status: ArrayLike,
+        /,
+    ):
+        candidates = _inexact(candidate_states)
+        accepted = _inexact(accepted_states)
+        successful_array = jnp.asarray(successful, dtype=bool)
+        status_array = jnp.asarray(status, dtype=jnp.int32)
+        if candidates.shape != accepted.shape:
+            raise ValueError(
+                "Discrete transition evidence candidate_states and accepted_states "
+                "must have matching shapes."
+            )
+        if successful_array.ndim < 1:
+            raise ValueError(
+                "Discrete transition evidence successful must include a step axis."
+            )
+        if status_array.shape != successful_array.shape:
+            raise ValueError(
+                "Discrete transition evidence status must match successful."
+            )
+        if (
+            candidates.ndim < successful_array.ndim
+            or candidates.shape[: successful_array.ndim] != successful_array.shape
+        ):
+            raise ValueError(
+                "Discrete transition evidence state leading axes must match "
+                "successful, including its final step axis."
+            )
+        failed = ~successful_array
+        has_failure = jnp.any(failed, axis=-1)
+        first_index = jnp.argmax(failed.astype(jnp.int32), axis=-1).astype(jnp.int32)
+        gathered_status = jnp.take_along_axis(
+            status_array,
+            first_index[..., None],
+            axis=-1,
+        )[..., 0]
+        self.candidate_states = candidates
+        self.accepted_states = accepted
+        self.successful = successful_array
+        self.status = status_array
+        self.first_failure_step = jnp.where(
+            has_failure,
+            first_index,
+            jnp.asarray(-1, dtype=jnp.int32),
+        ).astype(jnp.int32)
+        self.first_failure_status = jnp.where(
+            has_failure,
+            gathered_status,
+            jnp.asarray(0, dtype=jnp.int32),
+        ).astype(jnp.int32)
+
+
 AutonomousContinuousVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 InputContinuousVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
 AutonomousDiscreteTransition: TypeAlias = Callable[
@@ -190,9 +257,7 @@ class ContinuousSystem(StrictModule):
 class DiscreteSystem(StrictModule):
     """A discrete transition law independent of rollout and analysis policy."""
 
-    transition: Callable[..., ArrayLike | DiscreteTransitionResult] = eqx.field(
-        static=True
-    )
+    transition: Callable[..., ArrayLike | DiscreteTransitionResult]
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)
@@ -547,6 +612,7 @@ __all__ = [
     "DiscreteStepContext",
     "DiscreteSystem",
     "DiscreteTransitionResult",
+    "DiscreteTransitionEvidence",
     "InputContinuousVectorField",
     "InputDiscreteTransition",
     "SystemTransition",

@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -43,6 +44,20 @@ def _dynamics(transition, *, system_id):
     )
 
 
+class _ScaledTransition(eqx.Module):
+    scale: jax.Array
+
+    def __call__(self, context, state, control, args):
+        del context, args
+        following = state + self.scale * control
+        return DiscreteTransitionResult(
+            following,
+            following,
+            jnp.asarray(True),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+
+
 def test_discrete_system_preserves_legacy_array_evaluation():
     system = DiscreteSystem(
         lambda context, state, control, args: state + context.duration * control,
@@ -74,6 +89,41 @@ def test_discrete_system_preserves_legacy_array_evaluation():
         system(context, state, inputs=control),
         result.accepted_state,
     )
+
+
+def test_filtered_jit_keeps_transition_parameters_differentiable_and_refreshable():
+    grid, parameterization = _grid_and_parameterization()
+    system = DiscreteSystem(
+        _ScaledTransition(jnp.asarray(1.5)),
+        state_layout=StateLayout((1,)),
+        input_layout=InputLayout((1,), roles="control"),
+        system_id="trainable-filtered-transition",
+    )
+    coefficients = jnp.asarray([[1.0], [2.0]])
+
+    def objective(candidate):
+        trajectory = DiscreteControlDynamics(candidate).rollout(
+            grid,
+            jnp.asarray([2.0]),
+            parameterization,
+            coefficients,
+            problem_id="trainable-filtered-transition",
+        )
+        return trajectory.final_state[0]
+
+    compiled_value_and_grad = eqx.filter_jit(eqx.filter_value_and_grad(objective))
+    value, gradient = compiled_value_and_grad(system)
+    np.testing.assert_allclose(value, 6.5)
+    np.testing.assert_allclose(gradient.transition.scale, 3.0)
+
+    refreshed = eqx.tree_at(
+        lambda candidate: candidate.transition.scale,
+        system,
+        jnp.asarray(2.0),
+    )
+    refreshed_value, refreshed_gradient = compiled_value_and_grad(refreshed)
+    np.testing.assert_allclose(refreshed_value, 8.0)
+    np.testing.assert_allclose(refreshed_gradient.transition.scale, 3.0)
 
 
 def test_failed_finite_rollback_remains_invalid_and_preserves_backend_status():
@@ -110,6 +160,18 @@ def test_failed_finite_rollback_remains_invalid_and_preserves_backend_status():
     assert bool(jnp.isnan(trajectory.states[2, 0]))
     assert float(trajectory.controls[0, 0]) == 1.0
     assert bool(jnp.isnan(trajectory.controls[1, 0]))
+    evidence = trajectory.transition_evidence
+    assert evidence is not None
+    np.testing.assert_allclose(evidence.candidate_states[0], jnp.asarray([103.0]))
+    np.testing.assert_allclose(evidence.accepted_states[0], jnp.asarray([2.0]))
+    assert bool(jnp.isnan(evidence.candidate_states[1, 0]))
+    np.testing.assert_array_equal(evidence.successful, jnp.asarray([False, False]))
+    np.testing.assert_array_equal(
+        evidence.status,
+        jnp.asarray([failure_status, 0], dtype=jnp.int32),
+    )
+    assert int(evidence.first_failure_step) == 0
+    assert int(evidence.first_failure_status) == failure_status
 
 
 def test_successful_result_and_legacy_rollouts_agree_under_batching_and_jit():
@@ -163,6 +225,19 @@ def test_successful_result_and_legacy_rollouts_agree_under_batching_and_jit():
         result_trajectory.backend_status,
         jnp.zeros((2,), dtype=jnp.int32),
     )
+    legacy_evidence = legacy_trajectory.transition_evidence
+    result_evidence = result_trajectory.transition_evidence
+    assert legacy_evidence is not None
+    assert result_evidence is not None
+    np.testing.assert_allclose(
+        legacy_evidence.accepted_states,
+        result_evidence.accepted_states,
+    )
+    np.testing.assert_array_equal(
+        legacy_evidence.successful,
+        result_evidence.successful,
+    )
+    np.testing.assert_array_equal(legacy_evidence.status, result_evidence.status)
 
 
 def test_batched_result_failures_preserve_per_case_validity_and_status():
@@ -209,4 +284,19 @@ def test_batched_result_failures_preserve_per_case_validity_and_status():
     np.testing.assert_array_equal(
         trajectory.backend_status,
         jnp.asarray([0, failure_status], dtype=jnp.int32),
+    )
+    evidence = trajectory.transition_evidence
+    assert evidence is not None
+    assert evidence.candidate_states.shape == (2, 2, 1)
+    np.testing.assert_array_equal(
+        evidence.first_failure_step,
+        jnp.asarray([-1, 0], dtype=jnp.int32),
+    )
+    np.testing.assert_array_equal(
+        evidence.first_failure_status,
+        jnp.asarray([0, failure_status], dtype=jnp.int32),
+    )
+    np.testing.assert_array_equal(
+        evidence.status,
+        jnp.asarray([[0, 0], [failure_status, 0]], dtype=jnp.int32),
     )
