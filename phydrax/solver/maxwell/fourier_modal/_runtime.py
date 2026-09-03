@@ -8,6 +8,7 @@ from enum import IntEnum
 from typing import Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
@@ -31,12 +32,17 @@ from ._contracts import (
     FourierModalLayer,
     FourierModalMaxwellProblem,
     FourierModalSourcePlane,
+    FrequencyMaxwellMaterial,
+    PeriodicMaxwellPort,
 )
 from ._factorization import (
     _dense_solve,
+    _tensor_samples,
+    AnalyticInterfaceFramePlan,
     prepare_fourier_material,
     PreparedFourierMaterial,
     translate_prepared_fourier_material,
+    VectorFourierFactorizationPlan,
 )
 from ._layer import prepare_layer_operator, PreparedLayerOperator
 from ._scattering import (
@@ -68,7 +74,6 @@ class FourierModalSolveStatus(IntEnum):
     SUCCESS = 0
     PROPAGATION_TOLERANCE_NOT_MET = 1
     NONFINITE_RESULT = 2
-    POWER_BALANCE_NOT_MET = 3
 
 
 class FourierModalResourcePolicy(StrictModule, NonTrainableState):
@@ -117,7 +122,6 @@ class FourierModalResourcePolicy(StrictModule, NonTrainableState):
 class FourierModalSolvePolicy(StrictModule, NonTrainableState):
     boundary: BoundaryCascadePolicy
     resources: FourierModalResourcePolicy
-    power_tolerance: float = eqx.field(static=True)
     retain_boundary_fields: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
@@ -126,24 +130,18 @@ class FourierModalSolvePolicy(StrictModule, NonTrainableState):
         *,
         boundary: BoundaryCascadePolicy | None = None,
         resources: FourierModalResourcePolicy | None = None,
-        power_tolerance: float = 1e-7,
         retain_boundary_fields: bool = True,
     ):
         boundary_ = BoundaryCascadePolicy() if boundary is None else boundary
         resources_ = FourierModalResourcePolicy() if resources is None else resources
-        tolerance = float(power_tolerance)
-        if tolerance < 0.0:
-            raise ValueError("power_tolerance must be non-negative.")
         self.boundary = boundary_
         self.resources = resources_
-        self.power_tolerance = tolerance
         self.retain_boundary_fields = bool(retain_boundary_fields)
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "fourier-modal-solve-policy",
                 "boundary": boundary_.policy_id,
                 "resources": resources_.policy_id,
-                "power_tolerance": tolerance,
                 "retain_boundary_fields": self.retain_boundary_fields,
             }
         )
@@ -254,7 +252,6 @@ class FourierModalDiagnostics(StrictModule):
     maximum_boundary_solve_residual: Array
     maximum_boundary_paired_error: Array
     scattering_conversion_residual: Array
-    power_balance_residual: Array
     finite: Array
     propagation_converged: Array
     refresh_count: Array
@@ -273,14 +270,17 @@ class FourierModalSolveResult(StrictModule):
     scattering: MaxwellPortScatteringOperator
     right_outgoing: Array
     left_outgoing: Array
-    incident_power: Array
-    reflected_power: Array
-    transmitted_power: Array
-    absorbed_power: Array
-    weighted_incident_power: Array
-    weighted_reflected_power: Array
-    weighted_transmitted_power: Array
-    weighted_absorbed_power: Array
+    left_incoming_power: Array
+    right_incoming_power: Array
+    left_outgoing_power: Array
+    right_outgoing_power: Array
+    net_port_power_into_stack: Array
+    weighted_left_incoming_power: Array
+    weighted_right_incoming_power: Array
+    weighted_left_outgoing_power: Array
+    weighted_right_outgoing_power: Array
+    weighted_net_port_power_into_stack: Array
+    internal_source_excitation: Array
     boundary_electric_fields: tuple[Array, ...]
     boundary_magnetic_fields: tuple[Array, ...]
     status: Array
@@ -291,7 +291,7 @@ class FourierModalSolveResult(StrictModule):
 class FourierModalConvergenceReport(StrictModule):
     harmonic_counts: Array
     scattering_differences: Array
-    power_differences: Array
+    port_power_differences: Array
     converged: Array
 
 
@@ -347,6 +347,166 @@ def plan_fourier_modal_maxwell(
         FourierModalCapabilities(),
         problem_id=problem.problem_id,
         plan_id=plan_id,
+    )
+
+
+def _tree_has_tracer(value: object, /) -> bool:
+    return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(value))
+
+
+def _canonical_material_samples(
+    material: FrequencyMaxwellMaterial,
+    problem: FourierModalMaxwellProblem,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    return tuple(
+        _tensor_samples(value, problem.harmonics)[0]
+        for value in (
+            material.permittivity,
+            material.permeability,
+            material.magnetoelectric_xi,
+            material.magnetoelectric_zeta,
+        )
+    )
+
+
+def _concrete_arrays_equal(left: tuple[Array, ...], right: tuple[Array, ...], /) -> bool:
+    if _tree_has_tracer((left, right)):
+        return False
+    return all(
+        first.shape == second.shape
+        and first.dtype == second.dtype
+        and np.array_equal(np.asarray(first), np.asarray(second), equal_nan=False)
+        for first, second in zip(left, right, strict=True)
+    )
+
+
+def _checked_material_slot(
+    material: FrequencyMaxwellMaterial,
+    problem: FourierModalMaxwellProblem,
+    records: dict[
+        str, tuple[FrequencyMaxwellMaterial, tuple[Array, Array, Array, Array]]
+    ],
+    /,
+) -> FrequencyMaxwellMaterial:
+    samples = _canonical_material_samples(material, problem)
+    previous = records.get(material.material_id)
+    if previous is None:
+        records[material.material_id] = (material, samples)
+        return material
+    previous_material, previous_samples = previous
+    if (
+        material.material_role != previous_material.material_role
+        or material.origin_evidence_id != previous_material.origin_evidence_id
+    ):
+        raise ValueError(
+            "Occurrences of one material_id must share role and origin evidence."
+        )
+    if _tree_has_tracer((samples, previous_samples)):
+        mismatch = jnp.asarray(False)
+        for current, reference in zip(samples, previous_samples, strict=True):
+            if current.shape != reference.shape or current.dtype != reference.dtype:
+                raise ValueError(
+                    "Occurrences of one material_id have incompatible canonical samples."
+                )
+            mismatch = mismatch | ~jnp.all(current == reference)
+        checked = eqx.error_if(
+            material.permittivity,
+            mismatch,
+            "Occurrences of one material_id must have equal canonical samples.",
+        )
+        material = eqx.tree_at(lambda value: value.permittivity, material, checked)
+        return material
+    if not _concrete_arrays_equal(samples, previous_samples):
+        raise ValueError(
+            "Occurrences of one material_id must have equal canonical samples."
+        )
+    return material
+
+
+def _checked_factorization_frame(
+    factorization,
+    records: dict[str, Array],
+    /,
+):
+    if not isinstance(factorization, VectorFourierFactorizationPlan) or not isinstance(
+        factorization.frame, AnalyticInterfaceFramePlan
+    ):
+        return factorization
+    frame = factorization.frame
+    previous = records.get(frame.frame_id)
+    if previous is None:
+        records[frame.frame_id] = frame.tangent_field
+        return factorization
+    if (
+        frame.tangent_field.shape != previous.shape
+        or frame.tangent_field.dtype != previous.dtype
+    ):
+        raise ValueError("Occurrences of one frame_id have incompatible tangent fields.")
+    if _tree_has_tracer((frame.tangent_field, previous)):
+        checked = eqx.error_if(
+            frame.tangent_field,
+            ~jnp.all(frame.tangent_field == previous),
+            "Occurrences of one frame_id must have equal tangent-field values.",
+        )
+        return eqx.tree_at(
+            lambda value: value.frame.tangent_field,
+            factorization,
+            checked,
+        )
+    if not np.array_equal(
+        np.asarray(frame.tangent_field), np.asarray(previous), equal_nan=False
+    ):
+        raise ValueError(
+            "Occurrences of one frame_id must have equal tangent-field values."
+        )
+    return factorization
+
+
+def _checked_problem_slots(
+    problem: FourierModalMaxwellProblem, /
+) -> FourierModalMaxwellProblem:
+    material_records: dict[
+        str, tuple[FrequencyMaxwellMaterial, tuple[Array, Array, Array, Array]]
+    ] = {}
+    frame_records: dict[str, Array] = {}
+
+    def checked_port(port):
+        material = _checked_material_slot(port.material, problem, material_records)
+        port = eqx.tree_at(lambda value: value.material, port, material)
+        if isinstance(port, PeriodicMaxwellPort):
+            factorization = _checked_factorization_frame(
+                port.factorization, frame_records
+            )
+            port = eqx.tree_at(lambda value: value.factorization, port, factorization)
+        return port
+
+    superstrate = checked_port(problem.superstrate)
+    elements = []
+    for element in problem.elements:
+        if isinstance(element, FourierModalLayer):
+            material = _checked_material_slot(element.material, problem, material_records)
+            factorization = _checked_factorization_frame(
+                element.factorization, frame_records
+            )
+            element = eqx.tree_at(
+                lambda value: (value.material, value.factorization),
+                element,
+                (material, factorization),
+            )
+        elif isinstance(element, ContinuousFourierModalLayer):
+            factorization = _checked_factorization_frame(
+                element.factorization, frame_records
+            )
+            element = eqx.tree_at(
+                lambda value: value.factorization, element, factorization
+            )
+        elements.append(element)
+    substrate = checked_port(problem.substrate)
+    return eqx.tree_at(
+        lambda value: (value.superstrate, value.elements, value.substrate),
+        problem,
+        (superstrate, tuple(elements), substrate),
     )
 
 
@@ -510,8 +670,9 @@ def prepare_fourier_modal_maxwell(
     )
     if plan.problem_id != problem.problem_id:
         raise ValueError("The solve plan belongs to a different problem identity.")
+    problem = _checked_problem_slots(problem)
     prepared_elements: list[PreparedElement] = []
-    material_cache: dict[tuple[str, str], PreparedFourierMaterial] = {}
+    material_cache: dict[tuple[str, str, str, str], PreparedFourierMaterial] = {}
     for element in problem.elements:
         if isinstance(element, FourierModalSourcePlane):
             prepared_elements.append(element)
@@ -523,15 +684,28 @@ def prepare_fourier_modal_maxwell(
                 )
             )
             continue
-        key = (element.material.material_id, element.factorization.plan_id)
-        base_material = material_cache.get(key)
+        key = (
+            element.material.material_id,
+            element.material.material_role,
+            element.material.origin_evidence_id,
+            element.factorization.plan_id,
+        )
+        reuse_is_proven = not _tree_has_tracer(
+            (
+                element.material,
+                element.factorization,
+                problem.harmonics.primitive_vectors,
+            )
+        )
+        base_material = material_cache.get(key) if reuse_is_proven else None
         prepared_layer = _prepare_layer(
             problem,
             element,
             plan.policy,
             base_material=base_material,
         )
-        material_cache[key] = prepared_layer.base_material
+        if reuse_is_proven:
+            material_cache[key] = prepared_layer.base_material
         prepared_elements.append(prepared_layer)
     return _finalize_prepared(
         problem,
@@ -542,31 +716,160 @@ def prepare_fourier_modal_maxwell(
     )
 
 
+def _values_proven_equal(left: object, right: object, /) -> bool:
+    left_leaves = jax.tree.leaves(left)
+    right_leaves = jax.tree.leaves(right)
+    if len(left_leaves) != len(right_leaves) or _tree_has_tracer(
+        (left_leaves, right_leaves)
+    ):
+        return False
+    return all(
+        first.shape == second.shape
+        and first.dtype == second.dtype
+        and np.array_equal(np.asarray(first), np.asarray(second), equal_nan=False)
+        for first, second in zip(left_leaves, right_leaves, strict=True)
+    )
+
+
+def _port_identity(port, /) -> tuple[object, ...]:
+    return (
+        type(port),
+        port.port_id,
+        port.material.material_id,
+        port.material.material_role,
+        port.material.origin_evidence_id,
+        port.factorization.plan_id if isinstance(port, PeriodicMaxwellPort) else None,
+    )
+
+
+def _stack_identity(problem: FourierModalMaxwellProblem, /) -> tuple[object, ...]:
+    return (
+        problem.harmonics.plan.plan_id,
+        problem.harmonics.plan.layout.layout_id,
+        _port_identity(problem.superstrate),
+        tuple(
+            (
+                type(element),
+                (
+                    element.source_id
+                    if isinstance(element, FourierModalSourcePlane)
+                    else element.layer_id
+                ),
+                (
+                    None
+                    if isinstance(element, FourierModalSourcePlane)
+                    else element.factorization.plan_id
+                ),
+                (
+                    None
+                    if isinstance(
+                        element,
+                        FourierModalSourcePlane | ContinuousFourierModalLayer,
+                    )
+                    else (
+                        element.material.material_id,
+                        element.material.material_role,
+                        element.material.origin_evidence_id,
+                    )
+                ),
+            )
+            for element in problem.elements
+        ),
+        _port_identity(problem.substrate),
+    )
+
+
+def _refreshed_layer(
+    problem: FourierModalMaxwellProblem,
+    element: FourierModalLayer,
+    old: PreparedFourierModalLayer,
+    policy: FourierModalSolvePolicy,
+    /,
+    *,
+    lattice_same: bool,
+    frequency_same: bool,
+    bloch_same: bool,
+) -> PreparedFourierModalLayer:
+    old_problem = old.layer
+    if (
+        element.material.material_id != old_problem.material.material_id
+        or element.material.material_role != old_problem.material.material_role
+        or element.material.origin_evidence_id != old_problem.material.origin_evidence_id
+        or element.factorization.plan_id != old_problem.factorization.plan_id
+    ):
+        raise ValueError(
+            "Refresh cannot change material slots, origins, or factorization."
+        )
+    material_same = _concrete_arrays_equal(
+        _canonical_material_samples(element.material, problem),
+        _canonical_material_samples(old_problem.material, problem),
+    )
+    frame_same = _values_proven_equal(element.factorization, old_problem.factorization)
+    translation_same = _values_proven_equal(element.translation, old_problem.translation)
+    thickness_same = _values_proven_equal(element.thickness, old_problem.thickness)
+    if not lattice_same or not material_same or not frame_same:
+        return _prepare_layer(problem, element, policy)
+    if not translation_same:
+        material = translate_prepared_fourier_material(
+            old.base_material,
+            problem.harmonics,
+            element.translation,
+        )
+        operator = prepare_layer_operator(
+            material,
+            problem.harmonics,
+            problem.angular_frequency,
+            problem.bloch_wavevector,
+        )
+        boundary = prepare_layer_boundary(operator, element.thickness, policy.boundary)
+        return PreparedFourierModalLayer(
+            element, old.base_material, material, operator, boundary
+        )
+    if not frequency_same or not bloch_same:
+        operator = prepare_layer_operator(
+            old.material,
+            problem.harmonics,
+            problem.angular_frequency,
+            problem.bloch_wavevector,
+        )
+        boundary = prepare_layer_boundary(operator, element.thickness, policy.boundary)
+        return PreparedFourierModalLayer(
+            element, old.base_material, old.material, operator, boundary
+        )
+    if not thickness_same:
+        boundary = prepare_layer_boundary(
+            old.operator, element.thickness, policy.boundary
+        )
+        return PreparedFourierModalLayer(
+            element, old.base_material, old.material, old.operator, boundary
+        )
+    return PreparedFourierModalLayer(
+        element, old.base_material, old.material, old.operator, old.boundary
+    )
+
+
 def refresh_fourier_modal_maxwell(
     prepared: PreparedFourierModalMaxwell,
     problem: FourierModalMaxwellProblem,
     spec: FourierModalRefreshSpec | None = None,
     /,
 ) -> PreparedFourierModalMaxwell:
-    if len(problem.elements) != len(prepared.problem.elements):
-        raise ValueError("Refresh cannot change stack topology.")
-    if tuple(type(value) for value in problem.elements) != tuple(
-        type(value) for value in prepared.problem.elements
-    ):
-        raise ValueError("Refresh cannot change stack element kinds.")
+    if _stack_identity(problem) != _stack_identity(prepared.problem):
+        raise ValueError("Refresh cannot change harmonic layout or stack identity.")
     layer_count = problem.layer_count
-    spec_ = (
-        FourierModalRefreshSpec(
-            tuple("material" for _ in range(layer_count)),
-            angular_frequency_changed=True,
-            bloch_wavevector_changed=True,
-            ports_changed=True,
-        )
-        if spec is None
-        else spec
-    )
-    if len(spec_.layer_updates) != layer_count:
+    if spec is not None and len(spec.layer_updates) != layer_count:
         raise ValueError("layer_updates must contain one entry per finite layer.")
+    problem = _checked_problem_slots(problem)
+    lattice_same = _values_proven_equal(
+        problem.harmonics.primitive_vectors,
+        prepared.problem.harmonics.primitive_vectors,
+    )
+    frequency_same = _values_proven_equal(
+        problem.angular_frequency, prepared.problem.angular_frequency
+    )
+    bloch_same = _values_proven_equal(
+        problem.bloch_wavevector, prepared.problem.bloch_wavevector
+    )
     if any(
         isinstance(element, ContinuousFourierModalLayer) for element in problem.elements
     ):
@@ -575,7 +878,7 @@ def refresh_fourier_modal_maxwell(
         preparation_id = canonical_fingerprint(
             {
                 "kind": "prepared-fourier-modal-maxwell",
-                "plan": prepared.plan.plan_id,
+                "plan": refreshed.plan.plan_id,
                 "numeric_version": problem.numeric_version,
                 "refresh_count": refresh_count,
             }
@@ -585,9 +888,6 @@ def refresh_fourier_modal_maxwell(
             refreshed,
             (refresh_count, preparation_id),
         )
-    force_operator_refresh = (
-        spec_.angular_frequency_changed or spec_.bloch_wavevector_changed
-    )
     old_layers = tuple(
         value
         for value in prepared.elements
@@ -600,74 +900,17 @@ def refresh_fourier_modal_maxwell(
             new_elements.append(element)
             continue
         old = old_layers[layer_index]
-        update = spec_.layer_updates[layer_index]
-        if update == "material":
-            new_layer = _prepare_layer(problem, element, prepared.plan.policy)
-        elif update == "translation":
-            material = translate_prepared_fourier_material(
-                old.base_material,
-                problem.harmonics,
-                element.translation,
-            )
-            operator = prepare_layer_operator(
-                material,
-                problem.harmonics,
-                problem.angular_frequency,
-                problem.bloch_wavevector,
-            )
-            boundary = prepare_layer_boundary(
-                operator,
-                element.thickness,
-                prepared.plan.policy.boundary,
-            )
-            new_layer = PreparedFourierModalLayer(
+        new_elements.append(
+            _refreshed_layer(
+                problem,
                 element,
-                old.base_material,
-                material,
-                operator,
-                boundary,
+                old,
+                prepared.plan.policy,
+                lattice_same=lattice_same,
+                frequency_same=frequency_same,
+                bloch_same=bloch_same,
             )
-        elif force_operator_refresh:
-            operator = prepare_layer_operator(
-                old.material,
-                problem.harmonics,
-                problem.angular_frequency,
-                problem.bloch_wavevector,
-            )
-            boundary = prepare_layer_boundary(
-                operator,
-                element.thickness,
-                prepared.plan.policy.boundary,
-            )
-            new_layer = PreparedFourierModalLayer(
-                element,
-                old.base_material,
-                old.material,
-                operator,
-                boundary,
-            )
-        elif update == "thickness":
-            boundary = prepare_layer_boundary(
-                old.operator,
-                element.thickness,
-                prepared.plan.policy.boundary,
-            )
-            new_layer = PreparedFourierModalLayer(
-                element,
-                old.base_material,
-                old.material,
-                old.operator,
-                boundary,
-            )
-        else:
-            new_layer = PreparedFourierModalLayer(
-                element,
-                old.base_material,
-                old.material,
-                old.operator,
-                old.boundary,
-            )
-        new_elements.append(new_layer)
+        )
         layer_index += 1
     new_plan = plan_fourier_modal_maxwell(problem, prepared.plan.policy)
     return _finalize_prepared(
@@ -829,19 +1072,35 @@ def solve_fourier_modal_maxwell(
     left_outgoing = left_phase * interface_left
     left_weights = jnp.abs(prepared.left_modes.flux_weights)[:, None]
     right_weights = jnp.abs(prepared.right_modes.flux_weights)[:, None]
-    incident_power = jnp.sum(
-        left_weights * jnp.abs(excitation.left_incident) ** 2
-        + right_weights * jnp.abs(excitation.right_incident) ** 2,
-        axis=0,
+    left_incoming_power = jnp.sum(
+        left_weights * jnp.abs(excitation.left_incident) ** 2, axis=0
     )
-    reflected_power = jnp.sum(left_weights * jnp.abs(left_outgoing) ** 2, axis=0)
-    transmitted_power = jnp.sum(right_weights * jnp.abs(right_outgoing) ** 2, axis=0)
-    absorbed_power = incident_power - reflected_power - transmitted_power
+    right_incoming_power = jnp.sum(
+        right_weights * jnp.abs(excitation.right_incident) ** 2, axis=0
+    )
+    left_outgoing_power = jnp.sum(left_weights * jnp.abs(left_outgoing) ** 2, axis=0)
+    right_outgoing_power = jnp.sum(right_weights * jnp.abs(right_outgoing) ** 2, axis=0)
+    net_port_power = (
+        left_incoming_power
+        + right_incoming_power
+        - left_outgoing_power
+        - right_outgoing_power
+    )
     weights = excitation.channel_weights
-    weighted_incident = jnp.sum(weights * incident_power)
-    weighted_reflected = jnp.sum(weights * reflected_power)
-    weighted_transmitted = jnp.sum(weights * transmitted_power)
-    weighted_absorbed = jnp.sum(weights * absorbed_power)
+    weighted_left_incoming = jnp.sum(weights * left_incoming_power)
+    weighted_right_incoming = jnp.sum(weights * right_incoming_power)
+    weighted_left_outgoing = jnp.sum(weights * left_outgoing_power)
+    weighted_right_outgoing = jnp.sum(weights * right_outgoing_power)
+    weighted_net_port_power = jnp.sum(weights * net_port_power)
+    internal_source_excitation = jnp.any(
+        jnp.stack(
+            tuple(
+                jnp.any(jnp.abs(value) > 0.0)
+                for value in excitation.electric_currents + excitation.magnetic_currents
+            )
+            or (jnp.asarray(False),)
+        )
+    )
     boundary_electric, boundary_magnetic = _interface_boundary_fields(
         prepared,
         excitation,
@@ -894,14 +1153,11 @@ def solve_fourier_modal_maxwell(
     finite = (
         jnp.all(jnp.isfinite(right_outgoing))
         & jnp.all(jnp.isfinite(left_outgoing))
-        & jnp.all(jnp.isfinite(absorbed_power))
-    )
-    power_scale = jnp.maximum(jnp.max(jnp.abs(incident_power)), 1.0)
-    power_balance = (
-        jnp.max(
-            jnp.abs(incident_power - reflected_power - transmitted_power - absorbed_power)
-        )
-        / power_scale
+        & jnp.all(jnp.isfinite(left_incoming_power))
+        & jnp.all(jnp.isfinite(right_incoming_power))
+        & jnp.all(jnp.isfinite(left_outgoing_power))
+        & jnp.all(jnp.isfinite(right_outgoing_power))
+        & jnp.all(jnp.isfinite(net_port_power))
     )
     status = jnp.where(
         ~finite,
@@ -909,11 +1165,7 @@ def solve_fourier_modal_maxwell(
         jnp.where(
             ~propagation_converged,
             int(FourierModalSolveStatus.PROPAGATION_TOLERANCE_NOT_MET),
-            jnp.where(
-                power_balance > prepared.plan.policy.power_tolerance,
-                int(FourierModalSolveStatus.POWER_BALANCE_NOT_MET),
-                int(FourierModalSolveStatus.SUCCESS),
-            ),
+            int(FourierModalSolveStatus.SUCCESS),
         ),
     )
     diagnostics = FourierModalDiagnostics(
@@ -921,7 +1173,6 @@ def solve_fourier_modal_maxwell(
         maximum_boundary_solve,
         maximum_paired,
         interface.diagnostics.conversion_residual,
-        power_balance,
         finite,
         propagation_converged,
         jnp.asarray(prepared.refresh_count, dtype=jnp.int32),
@@ -938,14 +1189,17 @@ def solve_fourier_modal_maxwell(
         prepared.scattering,
         right_outgoing,
         left_outgoing,
-        incident_power,
-        reflected_power,
-        transmitted_power,
-        absorbed_power,
-        weighted_incident,
-        weighted_reflected,
-        weighted_transmitted,
-        weighted_absorbed,
+        left_incoming_power,
+        right_incoming_power,
+        left_outgoing_power,
+        right_outgoing_power,
+        net_port_power,
+        weighted_left_incoming,
+        weighted_right_incoming,
+        weighted_left_outgoing,
+        weighted_right_outgoing,
+        weighted_net_port_power,
+        internal_source_excitation,
         boundary_electric if prepared.plan.policy.retain_boundary_fields else (),
         boundary_magnetic if prepared.plan.policy.retain_boundary_fields else (),
         status,
@@ -957,7 +1211,7 @@ def solve_fourier_modal_maxwell(
 def fourier_modal_convergence_report(
     harmonic_counts: Array,
     scattering_matrices: tuple[Array, ...],
-    power_values: tuple[Array, ...],
+    port_power_values: tuple[Array, ...],
     /,
     *,
     relative_tolerance: float = 1e-4,
@@ -966,17 +1220,17 @@ def fourier_modal_convergence_report(
     counts = jnp.asarray(harmonic_counts, dtype=jnp.int32)
     if counts.ndim != 1 or counts.size != len(scattering_matrices):
         raise ValueError("harmonic_counts must match the supplied result sequences.")
-    if len(scattering_matrices) < 2 or len(power_values) != len(scattering_matrices):
+    if len(scattering_matrices) < 2 or len(port_power_values) != len(scattering_matrices):
         raise ValueError(
-            "At least two matching scattering and power results are required."
+            "At least two matching scattering and directional-power results are required."
         )
     scattering_differences = []
-    power_differences = []
+    port_power_differences = []
     for previous, current, previous_power, current_power in zip(
         scattering_matrices[:-1],
         scattering_matrices[1:],
-        power_values[:-1],
-        power_values[1:],
+        port_power_values[:-1],
+        port_power_values[1:],
         strict=True,
     ):
         scattering_scale = jnp.maximum(jnp.sqrt(jnp.sum(jnp.abs(current) ** 2)), 1.0)
@@ -984,18 +1238,18 @@ def fourier_modal_convergence_report(
         scattering_differences.append(
             jnp.sqrt(jnp.sum(jnp.abs(current - previous) ** 2)) / scattering_scale
         )
-        power_differences.append(
+        port_power_differences.append(
             jnp.sqrt(jnp.sum(jnp.abs(current_power - previous_power) ** 2)) / power_scale
         )
     scattering_array = jnp.stack(scattering_differences)
-    power_array = jnp.stack(power_differences)
+    port_power_array = jnp.stack(port_power_differences)
     converged = (scattering_array[-1] <= relative_tolerance + absolute_tolerance) & (
-        power_array[-1] <= relative_tolerance + absolute_tolerance
+        port_power_array[-1] <= relative_tolerance + absolute_tolerance
     )
     return FourierModalConvergenceReport(
         counts,
         scattering_array,
-        power_array,
+        port_power_array,
         converged,
     )
 

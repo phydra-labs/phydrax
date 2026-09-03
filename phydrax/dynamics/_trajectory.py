@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..series import CoordinateKind, SampledSeries, SeriesPairView, SeriesSupport
 from ._layout import InputLayout, StateLayout
 
 
@@ -84,10 +85,7 @@ class TrajectoryTransitions(StrictModule):
 class TrajectoryData(StrictModule):
     """Axis-explicit, padded trajectory observations for identification and analysis."""
 
-    coordinates: Array
-    states: Array
-    sample_valid: Array
-    transition_valid: Array
+    series: SampledSeries
     reset_mask: Array
     weights: Array
     inputs: Array | None
@@ -97,11 +95,8 @@ class TrajectoryData(StrictModule):
     state_layout: StateLayout
     input_layout: InputLayout | None
     input_alignment: InputAlignment | None = eqx.field(static=True)
-    case_shape: tuple[int, ...] = eqx.field(static=True)
     case_axes: tuple[str, ...] = eqx.field(static=True)
     case_axis_roles: tuple[CaseAxisRole, ...] = eqx.field(static=True)
-    capacity: int = eqx.field(static=True)
-    coordinate_id: str = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
 
@@ -125,6 +120,7 @@ class TrajectoryData(StrictModule):
         case_axes: Sequence[str] | None = None,
         case_axis_roles: Sequence[CaseAxisRole] | None = None,
         coordinate_id: str = "time",
+        coordinate_kind: CoordinateKind = "continuous",
         source_id: str,
         dataset_id: str | None = None,
     ):
@@ -132,21 +128,33 @@ class TrajectoryData(StrictModule):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
-        coordinate_values = jnp.asarray(coordinates)
-        if coordinate_values.ndim < 1 or int(coordinate_values.shape[-1]) < 2:
+        if not isinstance(coordinate_id, str) or not coordinate_id:
+            raise ValueError("coordinate_id must be a non-empty string.")
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("source_id must be a non-empty string.")
+
+        state_values = jnp.asarray(states)
+        event_rank = len(state_layout.shape)
+        if state_values.ndim < event_rank + 1:
+            raise ValueError(
+                "states must have shape case_shape + (capacity,) + state_layout.shape."
+            )
+        if event_rank and state_values.shape[-event_rank:] != state_layout.shape:
+            raise ValueError(
+                "states trailing event shape must match state_layout.shape "
+                f"{state_layout.shape}; got {state_values.shape}."
+            )
+        sample_shape = (
+            state_values.shape[:-event_rank] if event_rank else state_values.shape
+        )
+        cases = tuple(int(size) for size in sample_shape[:-1])
+        capacity = int(sample_shape[-1])
+        if capacity < 2:
             raise ValueError(
                 "coordinates must have shape case_shape + (capacity,) with capacity >= 2."
             )
-        if jnp.issubdtype(coordinate_values.dtype, jnp.complexfloating):
-            raise TypeError("Trajectory coordinates must be real-valued.")
-        coordinate_values = coordinate_values.astype(
-            jnp.result_type(coordinate_values, float)
-        )
-        cases = tuple(int(size) for size in coordinate_values.shape[:-1])
         if any(size <= 0 for size in cases):
             raise ValueError("Trajectory case dimensions must be positive.")
-        capacity = int(coordinate_values.shape[-1])
-        state_values = jnp.asarray(states)
         expected_states = cases + (capacity,) + state_layout.shape
         if state_values.shape != expected_states:
             raise ValueError(
@@ -155,15 +163,29 @@ class TrajectoryData(StrictModule):
         if not jnp.issubdtype(state_values.dtype, jnp.inexact):
             state_values = state_values.astype(float)
 
+        coordinate_values = jnp.asarray(coordinates)
+        if coordinate_values.shape not in ((capacity,), cases + (capacity,)):
+            raise ValueError(
+                "coordinates must have shape (capacity,) or case_shape + (capacity,)."
+            )
+        if jnp.issubdtype(coordinate_values.dtype, jnp.complexfloating):
+            raise TypeError("Trajectory coordinates must be real-valued.")
+        coordinate_values = coordinate_values.astype(
+            jnp.result_type(coordinate_values, float)
+        )
+        coordinates_full = jnp.broadcast_to(coordinate_values, cases + (capacity,))
+
         valid = (
             jnp.ones(cases + (capacity,), dtype=bool)
             if sample_valid is None
             else jnp.asarray(sample_valid, dtype=bool)
         )
+        if valid.shape == (capacity,):
+            valid = jnp.broadcast_to(valid, cases + (capacity,))
         if valid.shape != cases + (capacity,):
             raise ValueError("sample_valid must have shape case_shape + (capacity,).")
-        sample_finite = jnp.isfinite(coordinate_values) & _event_finite(
-            state_values, len(state_layout.shape)
+        sample_finite = jnp.isfinite(coordinates_full) & _event_finite(
+            state_values, event_rank
         )
         state_values = eqx.error_if(
             state_values,
@@ -175,15 +197,19 @@ class TrajectoryData(StrictModule):
             if reset_mask is None
             else jnp.asarray(reset_mask, dtype=bool)
         )
+        if resets.shape == (capacity - 1,):
+            resets = jnp.broadcast_to(resets, cases + (capacity - 1,))
         if resets.shape != cases + (capacity - 1,):
             raise ValueError("reset_mask must have shape case_shape + (capacity - 1,).")
-        increasing = coordinate_values[..., 1:] > coordinate_values[..., :-1]
+        increasing = coordinates_full[..., 1:] > coordinates_full[..., :-1]
         adjacent_valid = valid[..., :-1] & valid[..., 1:] & increasing & ~resets
         transitions = (
             adjacent_valid
             if transition_valid is None
             else jnp.asarray(transition_valid, dtype=bool)
         )
+        if transitions.shape == (capacity - 1,):
+            transitions = jnp.broadcast_to(transitions, cases + (capacity - 1,))
         if transitions.shape != cases + (capacity - 1,):
             raise ValueError(
                 "transition_valid must have shape case_shape + (capacity - 1,)."
@@ -199,6 +225,8 @@ class TrajectoryData(StrictModule):
             if weights is None
             else jnp.asarray(weights, dtype=coordinate_values.dtype)
         )
+        if sample_weights.shape == (capacity,):
+            sample_weights = jnp.broadcast_to(sample_weights, cases + (capacity,))
         if sample_weights.shape != cases + (capacity,):
             raise ValueError("weights must have shape case_shape + (capacity,).")
         state_values = eqx.error_if(
@@ -237,6 +265,10 @@ class TrajectoryData(StrictModule):
                 if input_valid is None
                 else jnp.asarray(input_valid, dtype=bool)
             )
+            if resolved_input_valid.shape == (input_count,):
+                resolved_input_valid = jnp.broadcast_to(
+                    resolved_input_valid, cases + (input_count,)
+                )
             if resolved_input_valid.shape != cases + (input_count,):
                 raise ValueError(f"input_valid must have shape {cases + (input_count,)}.")
             input_finite = _event_finite(input_values, len(input_layout.shape))
@@ -265,11 +297,15 @@ class TrajectoryData(StrictModule):
                 if derivative_valid is None
                 else jnp.asarray(derivative_valid, dtype=bool)
             )
+            if resolved_derivative_valid.shape == (capacity,):
+                resolved_derivative_valid = jnp.broadcast_to(
+                    resolved_derivative_valid, cases + (capacity,)
+                )
             if resolved_derivative_valid.shape != cases + (capacity,):
                 raise ValueError(
                     "derivative_valid must have shape case_shape + (capacity,)."
                 )
-            derivative_finite = _event_finite(derivative_values, len(state_layout.shape))
+            derivative_finite = _event_finite(derivative_values, event_rank)
             derivative_values = eqx.error_if(
                 derivative_values,
                 jnp.any(resolved_derivative_valid & (~valid | ~derivative_finite)),
@@ -277,10 +313,6 @@ class TrajectoryData(StrictModule):
             )
 
         names, roles = _case_axes(cases, case_axes, case_axis_roles)
-        if not isinstance(coordinate_id, str) or not coordinate_id:
-            raise ValueError("coordinate_id must be a non-empty string.")
-        if not isinstance(source_id, str) or not source_id:
-            raise ValueError("source_id must be a non-empty string.")
         resolved_dataset_id = _identifier(
             dataset_id,
             {
@@ -294,10 +326,21 @@ class TrajectoryData(StrictModule):
             },
             "trajectory-data",
         )
-        self.coordinates = coordinate_values
-        self.states = state_values
-        self.sample_valid = valid
-        self.transition_valid = transitions
+        support = SeriesSupport(
+            coordinate_values,
+            node_valid=valid,
+            edge_valid=transitions,
+            series_shape=cases,
+            series_axes=names,
+            coordinate_name="coordinate",
+            coordinate_kind=coordinate_kind,
+            coordinate_id=coordinate_id,
+        )
+        self.series = SampledSeries(
+            support,
+            state_values,
+            series_id=f"{resolved_dataset_id}:states",
+        )
         self.reset_mask = resets
         self.weights = sample_weights
         self.inputs = input_values
@@ -307,44 +350,65 @@ class TrajectoryData(StrictModule):
         self.state_layout = state_layout
         self.input_layout = input_layout
         self.input_alignment = resolved_input_alignment
-        self.case_shape = cases
         self.case_axes = names
         self.case_axis_roles = roles
-        self.capacity = capacity
-        self.coordinate_id = coordinate_id
         self.source_id = source_id
         self.dataset_id = resolved_dataset_id
 
     @property
+    def coordinates(self) -> Array:
+        return self.series.support.broadcast_coordinates()
+
+    @property
+    def states(self) -> Array:
+        return self.series.values
+
+    @property
+    def sample_valid(self) -> Array:
+        return self.series.sample_valid
+
+    @property
+    def transition_valid(self) -> Array:
+        return self.series.support.edge_valid
+
+    @property
+    def case_shape(self) -> tuple[int, ...]:
+        return self.series.support.series_shape
+
+    @property
+    def capacity(self) -> int:
+        return self.series.support.capacity
+
+    @property
+    def coordinate_id(self) -> str:
+        return self.series.support.coordinate_id
+
+    @property
+    def coordinate_kind(self) -> CoordinateKind:
+        return self.series.support.coordinate_kind
+
+    @property
     def num_cases(self) -> int:
-        count = 1
-        for size in self.case_shape:
-            count *= size
-        return count
+        return self.series.support.num_series
 
     def transitions(self, lag: int = 1, /) -> TrajectoryTransitions:
         """Return source/target pairs without crossing invalid or reset transitions."""
         offset = int(lag)
         if offset < 1 or offset >= self.capacity:
             raise ValueError("lag must lie between one and capacity - 1.")
-        pair_count = self.capacity - offset
-        valid = self.sample_valid[..., :pair_count] & self.sample_valid[..., offset:]
-        for intermediate in range(offset):
-            valid = (
-                valid
-                & self.transition_valid[..., intermediate : intermediate + pair_count]
-            )
+        view = SeriesPairView.from_lag(self.series, offset)
+        pair_count = view.pair_count
+        valid = view.valid
         source_index = (slice(None),) * len(self.case_shape) + (slice(0, pair_count),)
-        target_index = (slice(None),) * len(self.case_shape) + (slice(offset, None),)
         input_values = None if self.inputs is None else self.inputs[source_index]
         if self.input_valid is not None:
             valid = valid & self.input_valid[..., :pair_count]
         weights = jnp.sqrt(self.weights[..., :pair_count] * self.weights[..., offset:])
         return TrajectoryTransitions(
-            source_coordinates=self.coordinates[..., :pair_count],
-            target_coordinates=self.coordinates[..., offset:],
-            source_states=self.states[source_index],
-            target_states=self.states[target_index],
+            source_coordinates=view.source_coordinates,
+            target_coordinates=view.target_coordinates,
+            source_states=view.source_values,
+            target_states=view.target_values,
             inputs=input_values,
             weights=jnp.where(valid, weights, 0.0),
             valid=valid,
@@ -365,7 +429,7 @@ class TrajectoryData(StrictModule):
     ) -> TrajectoryData:
         """Return this dataset with one explicit derivative estimate attached."""
         return TrajectoryData(
-            self.coordinates,
+            self.series.support.coordinates,
             self.states,
             state_layout=self.state_layout,
             sample_valid=self.sample_valid,
@@ -383,6 +447,7 @@ class TrajectoryData(StrictModule):
             case_axes=self.case_axes,
             case_axis_roles=self.case_axis_roles,
             coordinate_id=self.coordinate_id,
+            coordinate_kind=self.coordinate_kind,
             source_id=source_id,
         )
 

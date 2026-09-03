@@ -116,6 +116,13 @@ from ._kernel_means import (
     FiniteMeasureKernelMean,
     IntervalKernelMean,
 )
+from ._linear import (
+    LinearReductionEvidence,
+    LinearReductionSchema,
+    prepare_linear_reduction,
+    PreparedLinearReduction,
+    refresh_linear_reduction,
+)
 from ._markov import markov_chain_measure
 from ._multilevel import (
     advance_multilevel,
@@ -323,6 +330,8 @@ __all__ = [
     "contract_axis_factors",
     "factorized_bilinear_form",
     "factorized_inner_product",
+    "LinearReductionEvidence",
+    "LinearReductionSchema",
     "IntegrationPlan",
     "IntegrationPrecisionPolicy",
     "MeasureCalibrationDiagnostics",
@@ -334,6 +343,9 @@ __all__ = [
     "DeformedMeasurePlan",
     "DeformedMeasureState",
     "IntegrationRealization",
+    "prepare_linear_reduction",
+    "PreparedLinearReduction",
+    "refresh_linear_reduction",
     "IntegrationSource",
     "IntegrationTarget",
     "IntervalRule",

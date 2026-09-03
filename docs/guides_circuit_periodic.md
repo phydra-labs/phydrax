@@ -34,6 +34,22 @@ changing the nonlinear method/termination structure requires replanning or
 repreparation as appropriate. Frequency is refreshable because it does not change
 the Fourier-collocation shape.
 
+## Periodic energy evidence
+
+`evaluate_harmonic_balance_energy_ledger` applies the transient energy contract to the
+existing harmonic-balance waveform and its Fourier derivative. It uses the existing
+DAE laws and accepts the same runtime arguments; no second periodic device model is
+introduced. Source and external-port powers retain their separate signed axes.
+
+On the endpoint-exclusive uniform grid, periodic quadrature is the sample mean times
+the declared period. `CircuitPeriodicEnergyLedger` independently retains integrated
+storage rate, the periodic endpoint storage change, their endpoint defect, passive
+dissipated energy, external-port energy, source energy, the integral of the pointwise
+balance, and the period balance defect. Closure also requires the retained nonlinear
+success, residual norms, and harmonic-balance aliasing-tail evidence. Exact periodic
+representation alone is not treated as energy closure, and sample-count convergence
+remains a separate study.
+
 `shoot_periodic_circuit` integrates one native DAE period and reports the exact
 final-minus-initial mismatch. It is useful for validating a harmonic solution or
 constructing an external shooting corrector. `floquet_multipliers` differentiates

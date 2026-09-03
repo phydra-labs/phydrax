@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.discretization.spectral import BrillouinZonePlan, LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
@@ -63,14 +66,17 @@ def test_internal_current_emits_to_both_ports_and_many_rhs_match() -> None:
         magnetic_currents=(jnp.zeros_like(current),),
     )
     result = fm.solve_fourier_modal_maxwell(prepared, excitation)
-    assert bool(jnp.all(result.reflected_power > 0.0))
-    assert bool(jnp.all(result.transmitted_power > 0.0))
+    assert bool(jnp.all(result.left_outgoing_power > 0.0))
+    assert bool(jnp.all(result.right_outgoing_power > 0.0))
     np.testing.assert_allclose(
         np.asarray(result.right_outgoing[:, 1]),
         2.0 * np.asarray(result.right_outgoing[:, 0]),
         rtol=1e-10,
         atol=1e-10,
     )
+    loss = fm.evaluate_fourier_modal_loss(prepared, result, fm.FourierModalLossPolicy())
+    assert not bool(loss.eligible)
+    assert int(loss.status) == int(fm.FourierModalLossStatus.INELIGIBLE)
 
 
 def test_thickness_refresh_reuses_material_and_operator() -> None:
@@ -178,6 +184,205 @@ def test_translation_refresh_reuses_shared_base_convolution() -> None:
         np.asarray(translated_layers[0].material.permittivity),
         np.asarray(expected.permittivity),
     )
+
+
+def test_same_material_slot_requires_equal_canonical_samples() -> None:
+    harmonics, problem, policy = _source_problem()
+    left, source, right = problem.elements
+    assert isinstance(left, fm.FourierModalLayer)
+    assert isinstance(right, fm.FourierModalLayer)
+    conflicting = fm.FourierModalLayer(
+        fm.FrequencyMaxwellMaterial(3.0, material_id=left.material.material_id),
+        right.thickness,
+        right.factorization,
+        layer_id=right.layer_id,
+    )
+    invalid = fm.FourierModalMaxwellProblem(
+        harmonics,
+        problem.angular_frequency,
+        problem.bloch_wavevector,
+        problem.superstrate,
+        (left, source, conflicting),
+        problem.substrate,
+    )
+    with pytest.raises(ValueError, match="equal canonical samples"):
+        fm.prepare_fourier_modal_maxwell(invalid, policy)
+
+
+def test_dishonest_refresh_hint_recomputes_material_and_primitive_values() -> None:
+    harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
+        jnp.asarray(((1.0, 0.0),))
+    )
+    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="refresh-vacuum")
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="refresh-film")
+    layer = fm.FourierModalLayer(
+        material,
+        0.1,
+        fm.DirectFourierFactorizationPlan(),
+        layer_id="film",
+    )
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.zeros((2,)),
+        fm.HomogeneousMaxwellPort(vacuum, port_id="left"),
+        (layer,),
+        fm.HomogeneousMaxwellPort(vacuum, port_id="right"),
+    )
+    prepared = fm.prepare_fourier_modal_maxwell(problem)
+    changed_harmonics = harmonics.plan.prepare(jnp.asarray(((1.2, 0.0),)))
+    changed_layer = fm.FourierModalLayer(
+        fm.FrequencyMaxwellMaterial(3.0, material_id="refresh-film"),
+        layer.thickness,
+        layer.factorization,
+        layer_id=layer.layer_id,
+    )
+    changed = fm.FourierModalMaxwellProblem(
+        changed_harmonics,
+        problem.angular_frequency,
+        problem.bloch_wavevector,
+        problem.superstrate,
+        (changed_layer,),
+        problem.substrate,
+        numeric_version="changed",
+    )
+    refreshed = fm.refresh_fourier_modal_maxwell(
+        prepared,
+        changed,
+        fm.FourierModalRefreshSpec(("unchanged",)),
+    )
+    old_layer = prepared.elements[0]
+    new_layer = refreshed.elements[0]
+    assert isinstance(old_layer, fm.PreparedFourierModalLayer)
+    assert isinstance(new_layer, fm.PreparedFourierModalLayer)
+    assert not np.array_equal(
+        np.asarray(old_layer.operator.matrix), np.asarray(new_layer.operator.matrix)
+    )
+
+
+def test_primitive_vector_refresh_cannot_reuse_stale_operators() -> None:
+    plan = LatticeHarmonicPlan.parallelogramic((3,), (7,))
+    harmonics = plan.prepare(jnp.asarray(((1.0, 0.0),)))
+    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="primitive-vacuum")
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="primitive-film")
+    layer = fm.FourierModalLayer(
+        material,
+        0.1,
+        fm.DirectFourierFactorizationPlan(),
+        layer_id="film",
+    )
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.zeros((2,)),
+        fm.HomogeneousMaxwellPort(vacuum, port_id="left"),
+        (layer,),
+        fm.HomogeneousMaxwellPort(vacuum, port_id="right"),
+    )
+    prepared = fm.prepare_fourier_modal_maxwell(problem)
+    changed_harmonics = plan.prepare(jnp.asarray(((1.2, 0.0),)))
+    changed = fm.FourierModalMaxwellProblem(
+        changed_harmonics,
+        problem.angular_frequency,
+        problem.bloch_wavevector,
+        problem.superstrate,
+        problem.elements,
+        problem.substrate,
+        numeric_version="primitive-changed",
+    )
+    refreshed = fm.refresh_fourier_modal_maxwell(
+        prepared, changed, fm.FourierModalRefreshSpec(("unchanged",))
+    )
+    old_layer = prepared.elements[0]
+    new_layer = refreshed.elements[0]
+    assert isinstance(old_layer, fm.PreparedFourierModalLayer)
+    assert isinstance(new_layer, fm.PreparedFourierModalLayer)
+    assert not np.array_equal(
+        np.asarray(old_layer.operator.matrix), np.asarray(new_layer.operator.matrix)
+    )
+
+
+def test_traced_equal_independent_materials_keep_independent_gradients() -> None:
+    harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
+        jnp.asarray(((1.0, 0.0),))
+    )
+    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="gradient-vacuum")
+
+    def objective(first, second):
+        layers = (
+            fm.FourierModalLayer(
+                fm.FrequencyMaxwellMaterial(first, material_id="first-slot"),
+                0.1,
+                fm.DirectFourierFactorizationPlan(),
+                layer_id="first",
+            ),
+            fm.FourierModalLayer(
+                fm.FrequencyMaxwellMaterial(second, material_id="second-slot"),
+                0.1,
+                fm.DirectFourierFactorizationPlan(),
+                layer_id="second",
+            ),
+        )
+        problem = fm.FourierModalMaxwellProblem(
+            harmonics,
+            2.0 * jnp.pi,
+            jnp.zeros((2,)),
+            fm.HomogeneousMaxwellPort(vacuum, port_id="left"),
+            layers,
+            fm.HomogeneousMaxwellPort(vacuum, port_id="right"),
+        )
+        prepared = fm.prepare_fourier_modal_maxwell(problem)
+        return jnp.imag(
+            prepared.elements[0].operator.matrix[2, 1]
+            + prepared.elements[1].operator.matrix[2, 1]
+        )
+
+    jitted_value = jax.jit(objective)(jnp.asarray(2.0), jnp.asarray(2.0))
+    _, tangent = jax.jvp(
+        objective,
+        (jnp.asarray(2.0), jnp.asarray(2.0)),
+        (jnp.asarray(1.0), jnp.asarray(-0.5)),
+    )
+    assert jnp.isfinite(jitted_value)
+    assert jnp.isfinite(tangent)
+    first_gradient, second_gradient = jax.grad(objective, argnums=(0, 1))(2.0, 2.0)
+    assert first_gradient != 0.0
+    assert second_gradient != 0.0
+
+
+def test_unequal_traced_values_cannot_reuse_one_material_slot() -> None:
+    harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
+        jnp.asarray(((1.0, 0.0),))
+    )
+    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="traced-vacuum")
+
+    @jax.jit
+    def prepare_entry(first, second):
+        layers = tuple(
+            fm.FourierModalLayer(
+                fm.FrequencyMaxwellMaterial(value, material_id="shared-slot"),
+                0.1,
+                fm.DirectFourierFactorizationPlan(),
+                layer_id=identifier,
+            )
+            for value, identifier in ((first, "first"), (second, "second"))
+        )
+        problem = fm.FourierModalMaxwellProblem(
+            harmonics,
+            2.0 * jnp.pi,
+            jnp.zeros((2,)),
+            fm.HomogeneousMaxwellPort(vacuum, port_id="left"),
+            layers,
+            fm.HomogeneousMaxwellPort(vacuum, port_id="right"),
+        )
+        prepared = fm.prepare_fourier_modal_maxwell(problem)
+        return prepared.elements[1].operator.matrix[2, 1]
+
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError, jax.errors.JaxRuntimeError),
+        match="equal canonical samples",
+    ):
+        jax.block_until_ready(prepare_entry(jnp.asarray(2.0), jnp.asarray(3.0)))
 
 
 def test_brillouin_case_batch_preserves_case_and_rhs_axes() -> None:

@@ -28,6 +28,7 @@ from phydrax.domain import (
     GridBatch,
     GridSampling,
     Interior,
+    open_unit_interval,
     PointBatch,
     ProbabilityDomain,
     require_exact_mass,
@@ -424,12 +425,14 @@ def _scalar_interior_rule_data(
     data = interval_rule_data(rule)
     if isinstance(factor, ProbabilityDomain):
         transport = factor.reference_transport
-        if transport.reference_measure != "uniform":
-            raise ValueError(
-                "Interval quadrature on a probability factor requires a uniform "
-                "reference transport."
-            )
-        return transport.from_reference(data.nodes), 0.5 * data.weights
+        if transport.reference_measure == "uniform":
+            reference_nodes = data.nodes
+        elif transport.reference_measure == "standard-normal":
+            probabilities = open_unit_interval(0.5 * (data.nodes + 1.0))
+            reference_nodes = jax.scipy.special.ndtri(probabilities)
+        else:
+            raise ValueError("Unsupported probability reference measure.")
+        return transport.from_reference(reference_nodes), 0.5 * data.weights
     lower = jnp.asarray(factor.fixed("start"))
     upper = jnp.asarray(factor.fixed("end"))
     half = 0.5 * (upper - lower)

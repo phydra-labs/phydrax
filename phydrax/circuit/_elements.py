@@ -122,6 +122,93 @@ class AbstractCircuitEnergyLaw(StrictModule):
         raise NotImplementedError
 
 
+class TwoTerminalConductanceEnergyLaw(AbstractCircuitEnergyLaw):
+    conductance: Array
+
+    def __init__(self, conductance: ArrayLike, /):
+        value = jnp.asarray(conductance, dtype=float)
+        if value.shape != () or bool(~jnp.isfinite(value)) or bool(value < 0.0):
+            raise ValueError("conductance must be one finite nonnegative scalar.")
+        self.conductance = value
+
+    def stored_energy(
+        self, terminal_voltages: Array, state: Array, /, *, args: Any = None
+    ) -> Array:
+        del terminal_voltages, state, args
+        return jnp.asarray(0.0, dtype=self.conductance.dtype)
+
+    def dissipated_power(
+        self,
+        terminal_voltages: Array,
+        terminal_currents: Array,
+        state: Array,
+        /,
+        *,
+        args: Any = None,
+    ) -> Array:
+        del terminal_currents, state, args
+        voltage = terminal_voltages[0] - terminal_voltages[1]
+        return self.conductance * jnp.real(voltage * jnp.conj(voltage))
+
+
+class TwoTerminalCapacitanceEnergyLaw(AbstractCircuitEnergyLaw):
+    capacitance: Array
+
+    def __init__(self, capacitance: ArrayLike, /):
+        value = jnp.asarray(capacitance, dtype=float)
+        if value.shape != () or bool(~jnp.isfinite(value)) or bool(value <= 0.0):
+            raise ValueError("capacitance must be one finite positive scalar.")
+        self.capacitance = value
+
+    def stored_energy(
+        self, terminal_voltages: Array, state: Array, /, *, args: Any = None
+    ) -> Array:
+        del state, args
+        voltage = terminal_voltages[0] - terminal_voltages[1]
+        return 0.5 * self.capacitance * jnp.real(voltage * jnp.conj(voltage))
+
+    def dissipated_power(
+        self,
+        terminal_voltages: Array,
+        terminal_currents: Array,
+        state: Array,
+        /,
+        *,
+        args: Any = None,
+    ) -> Array:
+        del terminal_voltages, terminal_currents, state, args
+        return jnp.asarray(0.0, dtype=self.capacitance.dtype)
+
+
+class TwoTerminalInductanceEnergyLaw(AbstractCircuitEnergyLaw):
+    inductance: Array
+
+    def __init__(self, inductance: ArrayLike, /):
+        value = jnp.asarray(inductance, dtype=float)
+        if value.shape != () or bool(~jnp.isfinite(value)) or bool(value <= 0.0):
+            raise ValueError("inductance must be one finite positive scalar.")
+        self.inductance = value
+
+    def stored_energy(
+        self, terminal_voltages: Array, state: Array, /, *, args: Any = None
+    ) -> Array:
+        del terminal_voltages, args
+        current = state[0]
+        return 0.5 * self.inductance * jnp.real(current * jnp.conj(current))
+
+    def dissipated_power(
+        self,
+        terminal_voltages: Array,
+        terminal_currents: Array,
+        state: Array,
+        /,
+        *,
+        args: Any = None,
+    ) -> Array:
+        del terminal_voltages, terminal_currents, state, args
+        return jnp.asarray(0.0, dtype=self.inductance.dtype)
+
+
 class AbstractCircuitNoiseLaw(StrictModule):
     @abstractmethod
     def spectral_factor(
@@ -329,12 +416,13 @@ class IndependentCurrentSourceLaw(AbstractImplicitCircuitLaw):
         args,
         /,
     ) -> CircuitElementEvaluation:
-        del time, terminal_voltages, terminal_voltage_rates, state, state_rate, args
+        del terminal_voltages, terminal_voltage_rates, state, state_rate, args
         current = self.current
         if self.input_key is not None:
             if not isinstance(inputs, dict) or self.input_key not in inputs:
                 raise ValueError(f"Current source requires input {self.input_key!r}.")
-            current = current * jnp.asarray(inputs[self.input_key])
+            drive = inputs[self.input_key]
+            current = current * jnp.asarray(drive(time) if callable(drive) else drive)
         return CircuitElementEvaluation(jnp.asarray([current, -current]), jnp.zeros((0,)))
 
 
@@ -373,12 +461,13 @@ class IndependentVoltageSourceLaw(AbstractImplicitCircuitLaw):
         args,
         /,
     ) -> CircuitElementEvaluation:
-        del time, terminal_voltage_rates, state_rate, args
+        del terminal_voltage_rates, state_rate, args
         voltage = self.voltage
         if self.input_key is not None:
             if not isinstance(inputs, dict) or self.input_key not in inputs:
                 raise ValueError(f"Voltage source requires input {self.input_key!r}.")
-            voltage = voltage * jnp.asarray(inputs[self.input_key])
+            drive = inputs[self.input_key]
+            voltage = voltage * jnp.asarray(drive(time) if callable(drive) else drive)
         current = state[0]
         residual = terminal_voltages[0] - terminal_voltages[1] - voltage
         return CircuitElementEvaluation(
@@ -638,6 +727,21 @@ def implicit_law_for(component: AbstractMNAComponent, /) -> AbstractImplicitCirc
     )
 
 
+def energy_law_for(component: AbstractMNAComponent, /) -> AbstractCircuitEnergyLaw | None:
+    """Return an explicit passive energy law when the component supplies one."""
+    from ._components import Capacitor, Inductor, Resistor
+
+    if isinstance(component, CircuitElement):
+        return component.energy_law
+    if isinstance(component, Resistor):
+        return TwoTerminalConductanceEnergyLaw(1.0 / component.resistance)
+    if isinstance(component, Capacitor):
+        return TwoTerminalCapacitanceEnergyLaw(component.capacitance)
+    if isinstance(component, Inductor):
+        return TwoTerminalInductanceEnergyLaw(component.inductance)
+    return None
+
+
 __all__ = [
     "AbstractCircuitEnergyLaw",
     "AbstractCircuitNoiseLaw",
@@ -647,14 +751,18 @@ __all__ = [
     "CircuitElementStateLayout",
     "CircuitVariableRole",
     "ExponentialDiodeLaw",
+    "energy_law_for",
     "IndependentCurrentSourceLaw",
     "IndependentVoltageSourceLaw",
     "IdealTransformerLaw",
     "implicit_law_for",
     "SmoothSwitchLaw",
     "TwoTerminalCapacitanceLaw",
+    "TwoTerminalCapacitanceEnergyLaw",
     "TwoTerminalConductanceLaw",
+    "TwoTerminalConductanceEnergyLaw",
     "TwoTerminalInductanceLaw",
+    "TwoTerminalInductanceEnergyLaw",
     "VoltageControlledCurrentLaw",
     "VoltageControlledVoltageLaw",
 ]

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax
-from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -43,6 +42,8 @@ class ConstraintMap(StrictModule, NonTrainableState):
             reduced_space
         ) or not prolongation.target.compatible(full_space):
             raise ValueError("Constraint prolongation must map reduced to full space.")
+        if prolongation.batch_shape:
+            raise ValueError("Constraint prolongation must be unbatched.")
         full_dual = DualSpace(full_space)
         reduced_dual = DualSpace(reduced_space)
         pullback = FunctionLinearOperator(
@@ -57,6 +58,8 @@ class ConstraintMap(StrictModule, NonTrainableState):
                 }
             ),
         )
+        if constraint_id is not None and not isinstance(constraint_id, str):
+            raise TypeError("constraint_id must be a string or None.")
         resolved_id = (
             canonical_fingerprint(
                 {
@@ -67,7 +70,7 @@ class ConstraintMap(StrictModule, NonTrainableState):
                 }
             )
             if constraint_id is None
-            else str(constraint_id)
+            else constraint_id
         )
         if not resolved_id:
             raise ValueError("constraint_id must be non-empty.")
@@ -88,8 +91,10 @@ class ConstraintMap(StrictModule, NonTrainableState):
             )
         )
 
-    def homogeneous_correction(self, reduced: Array, /):
-        return self.prolongation.mv(self.reduced_space.validate(reduced))
+    def homogeneous_correction(self, reduced: object, /):
+        return self.full_space.validate(
+            self.prolongation.mv(self.reduced_space.validate(reduced))
+        )
 
     def pullback_dual(self, residual, /):
         return self.dual_pullback.mv(residual)
@@ -98,4 +103,44 @@ class ConstraintMap(StrictModule, NonTrainableState):
         return self.prolongation.adjoint_mv(self.full_space.validate(residual))
 
 
-__all__ = ["ConstraintMap"]
+def compose_constraint_maps(
+    outer: ConstraintMap,
+    inner: ConstraintMap,
+    /,
+    *,
+    constraint_id: str | None = None,
+) -> ConstraintMap:
+    """Compose nested affine charts' homogeneous maps.
+
+    If ``outer`` expands ``y`` into ``x`` and ``inner`` expands ``z`` into
+    ``y``, the returned map expands ``z`` into ``x``. Their dynamic lifts
+    compose as ``outer.expand(inner_lift, outer_lift)``.
+    """
+    if not isinstance(outer, ConstraintMap) or not isinstance(inner, ConstraintMap):
+        raise TypeError("outer and inner must be ConstraintMap values.")
+    if not inner.full_space.compatible(outer.reduced_space):
+        raise ValueError(
+            "The inner full space must match the outer reduced space exactly."
+        )
+    if constraint_id is not None and not isinstance(constraint_id, str):
+        raise TypeError("constraint_id must be a string or None.")
+    identifier = (
+        canonical_fingerprint(
+            {
+                "kind": "composed-constraint-map",
+                "outer": outer.constraint_id,
+                "inner": inner.constraint_id,
+            }
+        )
+        if constraint_id is None
+        else constraint_id
+    )
+    return ConstraintMap(
+        outer.full_space,
+        inner.reduced_space,
+        outer.prolongation @ inner.prolongation,
+        constraint_id=identifier,
+    )
+
+
+__all__ = ["ConstraintMap", "compose_constraint_maps"]

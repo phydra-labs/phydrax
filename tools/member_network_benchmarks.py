@@ -118,12 +118,18 @@ def run_beam():
     )
     started = time.perf_counter()
     result = mn.member_network_equilibrium(problem, inputs, initial)
-    stability = mn.tangent_stability(problem, inputs, result.state.kinematics)
+    stability = mn.tangent_stability(
+        problem,
+        result,
+        mass=jnp.eye(definition.dofs.reduced_size),
+    )
     jax.block_until_ready(stability.eigenvalues)
     return {
         "status": int(result.status),
         "tip_y": float(result.state.kinematics.positions[1, 1]),
         "minimum_tangent_eigenvalue": float(stability.minimum_eigenvalue),
+        "minimum_angular_frequency": float(stability.angular_frequencies[0]),
+        "modal_evidence_valid": bool(stability.modal_valid),
         "wall_seconds": time.perf_counter() - started,
     }
 

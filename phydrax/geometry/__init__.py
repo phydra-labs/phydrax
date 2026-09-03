@@ -33,6 +33,7 @@ from ._bvh_overlap import (
 )
 from ._capabilities import (
     BoundaryAtlasProvider,
+    ClosestPointProvider,
     ContactCurvatureProvider,
     GeometryCapability,
     SeamDiagnosticsProvider,
@@ -48,7 +49,15 @@ from ._certificate import (
     ZeroSetAccuracy,
 )
 from ._certified_implicit import CertifiedImplicitCover, CertifiedImplicitTopology
+from ._closest_point import (
+    box_closest_point,
+    radial_closest_point,
+    represented_mesh_closest_point,
+    segment_query_evidence,
+    triangle_query_evidence,
+)
 from ._contracts import (
+    ClosestPointResult,
     CompiledGeometry,
     ContactCurvatureResult,
     GeometryKernel,
@@ -90,6 +99,11 @@ from ._sampling import (
     sample_boundary_atlas,
     SamplingReport,
     SamplingResult,
+)
+from ._surfel_atlas import (
+    BoundaryAtlasSurfelMaterialization,
+    BoundaryAtlasSurfelPlan,
+    PreparedBoundaryAtlasSurfels,
 )
 from ._tetra_intersections import (
     intersect_tetrahedra,
@@ -245,9 +259,11 @@ from .simplicial import (
     planar_region_from_source,
     planar_region_from_triangles,
     PlanarMeshRegion,
+    PreparedSimplicialSurfels,
     SegmentMesh,
     SegmentQueryResult,
     SegmentTopology,
+    SimplicialSurfelPlan,
     triangle_arrays,
     TriangleBVH,
     TriangleMesh,
@@ -281,6 +297,9 @@ __all__ = [
     "ImmersedMarkerMaterialization",
     "ImmersedMarkerQuadraturePlan",
     "MarkerVelocityProvider",
+    "BoundaryAtlasSurfelMaterialization",
+    "BoundaryAtlasSurfelPlan",
+    "PreparedBoundaryAtlasSurfels",
     "IntersectionResult",
     "IntersectionStatus",
     "PredicateEvidence",
@@ -353,6 +372,8 @@ __all__ = [
     "DesignSearchResult",
     "Cone",
     "DDGOperators",
+    "PreparedSimplicialSurfels",
+    "SimplicialSurfelPlan",
     "DesignState",
     "DistanceSemantics",
     "ExactSDFEnclosureCertificate",
@@ -473,6 +494,13 @@ __all__ = [
     "PreparedCSGContinuation",
     "prepare_csg_continuation",
     "solve_csg_continuation",
+    "ClosestPointProvider",
+    "ClosestPointResult",
+    "box_closest_point",
+    "radial_closest_point",
+    "represented_mesh_closest_point",
+    "segment_query_evidence",
+    "triangle_query_evidence",
 ]
 
 __all__ += [name for name in _surface_all if name not in __all__]

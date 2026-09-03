@@ -19,7 +19,7 @@ from .._strict import StrictModule
 
 
 class AbstractBijector(StrictModule):
-    """Invertible map from unconstrained coordinates to physical parameters."""
+    """Exact invertible array map used by parameter and targeted-measure transforms."""
 
     @abstractmethod
     def forward(self, value: ArrayLike, /) -> Array:

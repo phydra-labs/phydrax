@@ -24,6 +24,7 @@ from .._atlas import (
 )
 from .._capabilities import GeometryCapability
 from .._certificate import exact_signed_distance_certificate, FieldCertificate
+from .._closest_point import box_closest_point, radial_closest_point
 from .._contracts import (
     ContactCurvatureResult,
     GeometryKernel,
@@ -48,6 +49,7 @@ _ANALYTIC_CAPABILITIES = frozenset(
     {
         GeometryCapability.REGION_QUERY,
         GeometryCapability.SIGNED_DISTANCE,
+        GeometryCapability.CLOSEST_POINT,
         GeometryCapability.BOUNDARY_NORMAL,
         GeometryCapability.MEASURE,
         GeometryCapability.INTERIOR_SAMPLING,
@@ -259,6 +261,16 @@ class _CircleKernel(GeometryKernel):
         norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
         return direction / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
+    def closest_point(self, state: DesignState, points: Array, /):
+        points_ = _check_points(points, 2)
+        center, radius = self._parameters(state)
+        return radial_closest_point(
+            points_,
+            center,
+            radius,
+            represented_geometry_id=self.source_id,
+        )
+
     def contact_curvature(
         self, state: DesignState, points: Array, /
     ) -> ContactCurvatureResult:
@@ -437,6 +449,16 @@ class _SphereKernel(GeometryKernel):
         direction = points_ - center
         norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
         return direction / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
+
+    def closest_point(self, state: DesignState, points: Array, /):
+        points_ = _check_points(points, 3)
+        center, radius = self._parameters(state)
+        return radial_closest_point(
+            points_,
+            center,
+            radius,
+            represented_geometry_id=self.source_id,
+        )
 
     def contact_curvature(
         self, state: DesignState, points: Array, /
@@ -626,6 +648,16 @@ class _BoxKernel(GeometryKernel):
         normal = jnp.sign(relative) * active.astype(points_.dtype)
         norm = jnp.linalg.norm(normal, axis=-1, keepdims=True)
         return normal / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
+
+    def closest_point(self, state: DesignState, points: Array, /):
+        points_ = _check_points(points, 3)
+        center, size = self._parameters(state)
+        return box_closest_point(
+            points_,
+            center,
+            size,
+            represented_geometry_id=self.source_id,
+        )
 
     def bounds(self, state: DesignState, /) -> Array:
         center, size = self._parameters(state)

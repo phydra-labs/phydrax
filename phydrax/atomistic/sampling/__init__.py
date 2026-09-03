@@ -1,6 +1,9 @@
 """Collective variables, biases, replica exchange, and atomistic sampling."""
 
 from ._bias import (
+    AbstractAtomisticBiasPlan,
+    AbstractAtomisticBiasState,
+    AbstractPreparedAtomisticBias,
     AtomisticBiasEvaluation,
     AtomisticBiasPlan,
     AtomisticBiasState,
@@ -16,6 +19,7 @@ from ._bias import (
 )
 from ._collective_variable import (
     AbstractCollectiveVariablePlan,
+    AbstractCollectiveVariableProgram,
     CollectiveVariableEvaluation,
     CollectiveVariableKind,
     CollectiveVariableMetric,
@@ -23,6 +27,18 @@ from ._collective_variable import (
     CollectiveVariableProgram,
     PreparedCollectiveVariable,
 )
+from ._free_energy_learning import (
+    estimate_restrained_free_energy_gradient,
+    fit_free_energy_model,
+    FreeEnergyFitResult,
+    FreeEnergyTrainingPolicy,
+    LearnedFreeEnergyBiasPlan,
+    LearnedFreeEnergyBiasState,
+    MeanForceData,
+    PreparedLearnedFreeEnergyBias,
+    RestrainedMeanForcePlan,
+)
+from ._model_collective_variable import ModelCollectiveVariableProgram
 from ._replica import (
     AtomisticReplicaEnsemblePlan,
     AtomisticReplicaExchangeEvaluation,
@@ -36,6 +52,10 @@ from ._replica import (
 
 
 __all__ = [
+    "AbstractAtomisticBiasPlan",
+    "AbstractAtomisticBiasState",
+    "AbstractPreparedAtomisticBias",
+    "AbstractCollectiveVariableProgram",
     "AbstractCollectiveVariablePlan",
     "AtomisticBiasEvaluation",
     "AtomisticBiasPlan",
@@ -54,11 +74,21 @@ __all__ = [
     "CollectiveVariableMetric",
     "CollectiveVariablePlan",
     "CollectiveVariableProgram",
+    "FreeEnergyFitResult",
+    "FreeEnergyTrainingPolicy",
+    "LearnedFreeEnergyBiasPlan",
+    "LearnedFreeEnergyBiasState",
+    "MeanForceData",
+    "ModelCollectiveVariableProgram",
     "PreparedAtomisticBias",
     "PreparedBiasedDynamics",
     "PreparedCollectiveVariable",
+    "PreparedLearnedFreeEnergyBias",
     "ReplicaExchangeKind",
+    "RestrainedMeanForcePlan",
     "initialize_replica_state",
+    "estimate_restrained_free_energy_gradient",
+    "fit_free_energy_model",
     "read_biased_dynamics_checkpoint",
     "write_biased_dynamics_checkpoint",
     "reduced_potential_samples",

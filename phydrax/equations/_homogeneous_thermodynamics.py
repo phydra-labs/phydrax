@@ -390,14 +390,40 @@ class HomogeneousHelmholtzPlan(StrictModule, NonTrainableState):
             raise ValueError("maximum_iterations must be positive.")
         lower = jnp.full_like(target, self.thermodynamics.minimum_temperature)
         upper = jnp.full_like(target, self.thermodynamics.maximum_temperature)
+        masses = self.schema.molar_masses.astype(density.dtype)
+        concentration = density / masses
+        molar_density = jnp.sum(concentration, axis=-1)
+        safe_molar_density = jnp.maximum(
+            molar_density,
+            jnp.asarray(self.minimum_molar_density, dtype=density.dtype),
+        )
+        raw_composition = concentration / safe_molar_density[..., None]
+        clipped_composition = jnp.maximum(raw_composition, 0.0)
+        composition = clipped_composition / jnp.maximum(
+            jnp.sum(clipped_composition, axis=-1, keepdims=True),
+            1.0,
+        )
 
         def residual(temperature_value):
-            state_value = self.evaluate_density_temperature(density, temperature_value)
-            concentration = density / self.schema.molar_masses.astype(density.dtype)
-            return (
-                jnp.sum(concentration, axis=-1) * state_value.molar_internal_energy
-                - target
+            def total_molar_helmholtz(temperature_argument):
+                return jnp.sum(
+                    self.molar_helmholtz_energy(
+                        temperature_argument,
+                        safe_molar_density,
+                        composition,
+                    )
+                )
+
+            molar_helmholtz = self.molar_helmholtz_energy(
+                temperature_value,
+                safe_molar_density,
+                composition,
             )
+            temperature_derivative = jax.grad(total_molar_helmholtz)(temperature_value)
+            molar_internal_energy = (
+                molar_helmholtz - temperature_value * temperature_derivative
+            )
+            return molar_density * molar_internal_energy - target
 
         lower_residual = residual(lower)
         upper_residual = residual(upper)

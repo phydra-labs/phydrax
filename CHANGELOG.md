@@ -3,6 +3,55 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
+  shared or per-series masked supports, node- and edge-aligned numerical
+  PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;
+  canonical trajectory data, sampled dynamics and state-space inputs,
+  trajectory signals, and scalar cosmology histories now compose it without
+  erasing their domain-specific validity or provenance contracts.
+- Added reset-safe VAMP/VAC/TICA and Markov-state kinetics, exact full-batch
+  variational encoders and model-backed collective variables, gauge-aligned
+  learned free-energy biases, immutable atomistic learning campaigns,
+  non-element molecular coarse beads with fixed-map force matching, and exact
+  targeted free-energy maps with FlowJAX and alchemical endpoint adapters.
+- Added the native robotics Wave 0 platform: explicit-root, descriptor-relative
+  bounded URDF adaptation with exact manifests and non-waivable required
+  semantics; COM-centred rigid mass properties and reference rebasing;
+  fixed-base articulation with bounded semi-implicit velocity Euler;
+  result-preserving discrete evolution/control and accepted-state environments;
+  certified fixed-route articulated impact; local frame IK, sampling MPC,
+  manifold defects, and reduced rods; plus optional MJX gated by complete state
+  schemas, projection provenance, freshness epochs, and a matching 3.12
+  provider pair. Fixed-route impact remains an operator utility; collision
+  discovery and an atomic robot/contact step are not included.
+- Added first-class surfel discretizations with stable point ownership,
+  validated oriented tangent footprints, physical surface quadrature,
+  boundary-atlas and simplicial materialization, Morton primitive bounds,
+  bounded ray queries, and confidence-aware local sparse-voxel projection.
+- Added deterministic explicit lowest-order H1 elements on conformingly
+  segmented star-shaped polygons, with transported witness-fan condensation,
+  exact trace and affine-reproduction evidence, component-aware constraints,
+  reconstruction, differentiable geometry refresh, and capability-selected
+  dense matrix-free local functional execution.
+- Added the canonical `phydrax.applications.cardiovascular` platform with
+  explicit, duplicate-free anatomy, electrophysiology, mechanics, circulation,
+  hemodynamics, observations, and personalization facades; cross-domain
+  quantity/case, fixed-capacity execution, checkpoint/replay, distributed
+  reference, and fail-closed G0--G7 release contracts; harmonic cardiac
+  coordinates and ventricular microstructure; phenomenological and physical
+  monodomain, bidomain, eikonal, Purkinje/pacing, regional, and named cellular
+  electrophysiology routes; passive/active mechanics, electromechanics,
+  sarcomere, growth, and unloading workflows; 0D/1D circulation, coronary,
+  valve, device, oxygen, fixed-wall flow, ALE/immersed FSI, and leaflet routes;
+  observation, multimodal likelihood, inverse/design, cohort, surrogate
+  refusal, learning, and native reanalysis contracts; public generic ownership
+  for tensor diffusion, bounded array archives, and lifecycle support-bundle
+  authorization; a hard-failing public end-to-end example, focused
+  cross-domain integration tests, complete guide/API navigation, and bounded
+  qualification/benchmark indexes. All supported claims remain limited to the
+  exact declared research and engineering support tuple: no clinical,
+  diagnostic, treatment, regulated-device, regulatory, or commercial-readiness
+  claim is made.
 - Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
   traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
   FMM, brick-backed sparse voxel fields and qualified geometry sampling,
@@ -229,26 +278,63 @@
   wall-vortex injection, uncertainty-bounded load recovery, solver-owned
   hybrid-event replay, and Helmholtz compressible augmentation; and atomic
   runtime-capacity SPH emission with exact source ledgers.
-- Wave B SFD-01–SFD-06 added certified periodic Fourier Euler split forms, a unified
-  real-coordinate Diffrax state API and packed Hermitian DNS artifacts, batched
-  banded structured operator/channel evidence, explicit-norm projective-pencil
-  pseudospectra, and bounded spherical scattered/HEALPix/spin/Wigner/CG/dealias/modal
-  integration/compiler support. Distributed FFT and line solves remain excluded.
-- Added single-process periodic-spectral, channel, and structured-MAC production
-  assemblers with prepared full-complex ETDRK and exact-step restartable channel
-  SBDF2 methods, accepted-PyTree bounded compiled segments, absolute end-time/step
-  capacity, content-derived checkpoint IDs with optional Hermitian leaf encoding,
-  monotone durable generations, exact-time output, typed checkpoint/publish/stop
-  triggers, and windowed/block streaming moments.
-- Added periodic constant-power forcing and exact-transition solenoidal OU forcing
-  with transactional ETDRK stage coupling, conservative full-complex turbulence
-  spectra, separate-wall spectral-channel and
-  staggering-native raw MAC plane/wall statistics, fixed MAC pressure-gradient
-  forcing without feedback, pressure-eliminated fixed-band ultraspherical channel
-  solves with primitive public fields, and constant-density three-dimensional
-  all-Neumann MAC hybrid transform-line pressure solves. Distributed
-  spectral/hybrid lines, variable-density hybrid pressure, and MAC fixed-flux
-  control remain excluded.
+- Expanded spectral and structured linear execution with real JAX-mesh
+  full-complex slab/pencil FFTs, horizontal-partitioned channel actions,
+  resource-bounded layout/transposition evidence, partition-aware Thomas/SPIKE/PCR
+  line solves, and invariant-extruded multiblock PCG whose block-direct factors are
+  preconditioners rather than global direct solves. Line partition algebra remains
+  in-process unless a higher-level communication owner is supplied; multi-host launch
+  and scaling evidence are not inferred.
+- Added generalized MAC pressure and control: frozen
+  `-D(beta G_h p)` actions with Robin lifts and geometry epochs; exact
+  transform/hybrid direct eligibility; PCG for symmetric positive actions; FGMRES for
+  stabilized nonsymmetric traction; separate collective distributed projection; and
+  prescribed-pressure-gradient, bulk-velocity, and frozen-density mass-flux
+  method-stage response control with rank, conditioning, resource, residual, and
+  atomic rollback evidence.
+- Added exact candidate ownership for prescribed-marker, free-rigid,
+  fixed-topology-sharp, deformable/contact, LBM-body, and resolved CFD–DEM immersed
+  regimes. Two-phase runtime admission binds existing owners, support tuples, ranks,
+  resources, derivative scope, motion/topology/geometry epochs, distributed
+  reductions, gap state, sharp measures, and load provenance without route fallback.
+- Added smooth, finite-volume, all-speed, shock-resolving, and slow-growth
+  compressible-flow application policy over the canonical all-species homogeneous
+  Helmholtz gas state. Added canonical mixture Navier–Stokes transport, normal
+  characteristics, entropy evidence, full-species forcing/budgets/Favre statistics,
+  relative-Mach all-speed HLL, and pressure-sensor/admissibility generic-HLL fallback.
+  DGSEM/BR1, nodal-DG/LDG, structured/mapped WENO-Z/TENO/MP5, and Peng–Robinson
+  phase-equilibrium ownership remain distinct. Temporal and modeled-spatial slow
+  growth freeze one baseflow snapshot per parent step and retain
+  `claims_spatial_dns=false`.
+- Added reacting-flow mixture-averaged and bounded dense Stefan–Maxwell transport,
+  fixed-schedule Strang and iterative-trapezoidal chemistry with atomic rollback,
+  full-species reactive statistics/closure targets, and a separate low-Mach divergence
+  constraint over the canonical component/schema/Helmholtz/mechanism/Euler owners.
+  Chemical sources preserve full chemical total energy with a zero energy RHS; heat
+  release is diagnostic. Cantera import/reference is an explicit host-only,
+  non-differentiable, feature-gated boundary with explicit gas standard pressure.
+- Added LBM nondimensional operating envelopes, per-device resource preflight,
+  exact deployment compatibility, C0/C1/C2/C3 and conjugate-thermal unsigned
+  candidate profiles, and passive sensible-energy CHT with equal-and-opposite
+  interface heat rates and rollback. Profile evaluation does not set `released=true`,
+  and host/device declarations do not by themselves establish multi-host execution.
+- Added closure-data state/trajectory identity, symbolic filters and conservative
+  alignment, deterministic target lineage, complete content-addressed chunk coverage,
+  leakage-safe partitioning, train-only normalizer provenance, and artifact-bound
+  conservative-face/spectral-drift deployment. Invalid spectral drift returns an
+  explicit typed zero-drift fallback record rather than changing behavior invisibly.
+- Added finite exact QL/CE2 and GQL/GCE2 statistical dynamics, independent-real
+  barotropic beta-plane cumulant coordinates, dense/factor covariance evidence,
+  bounded segmented NILSS, continuation, logical shard layouts, and semantic-preserving
+  restart redistribution. Logical shard helpers are in-process array algebra, not a
+  multi-device statistical solver.
+- Added platform closure for exact support/evidence matrices and unreleased
+  candidates, resolved run identities, pure forward configuration migration,
+  transactional POSIX/conditional-object repositories, direct range-based
+  topology restart, durable reference-service orchestration, Slurm/Kubernetes and
+  identity provider boundaries, support bundles, process-local secret handles, and
+  explicit signing/trust rotation. Asymmetric JWT/X.509 and Ed25519 require optional
+  cryptography; no entry claims signed candidate evidence or universal certification.
 - Added declared-incidence acausal DAE structural reduction; bounded DAE
   reset/consistency/regularity/manifold stages; generalized-pencil/Hopf
   continuation; prepared case-axis iLQR; Radau/multiphase/complementarity/

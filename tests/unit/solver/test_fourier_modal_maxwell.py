@@ -44,10 +44,10 @@ def test_fresnel_interface_complex_amplitudes_and_power() -> None:
     )
     result = fm.solve_fourier_modal_maxwell(prepared, excitation)
     assert int(result.status) == int(fm.FourierModalSolveStatus.SUCCESS)
-    assert float(result.reflected_power[0]) == pytest.approx(
+    assert float(result.left_outgoing_power[0]) == pytest.approx(
         1.0 / 9.0, rel=2e-6, abs=2e-7
     )
-    assert float(result.transmitted_power[0]) == pytest.approx(
+    assert float(result.right_outgoing_power[0]) == pytest.approx(
         8.0 / 9.0, rel=2e-6, abs=2e-7
     )
 
@@ -81,8 +81,8 @@ def test_lossless_film_conserves_power_and_reconstructs_fields() -> None:
     )
     result = fm.solve_fourier_modal_maxwell(prepared, excitation)
     np.testing.assert_allclose(
-        np.asarray(result.reflected_power + result.transmitted_power),
-        np.asarray(result.incident_power),
+        np.asarray(result.net_port_power_into_stack),
+        0.0,
         rtol=1e-7,
         atol=1e-9,
     )
@@ -258,6 +258,43 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
         transformed.material.magnetoelectric_xi,
         jnp.zeros_like(expected),
     )
+    assert transformed.material.material_role == "artificial_pml"
+    assert transformed.material.origin_evidence_id == zero_pml.pml_id
+
+
+def test_continuous_profile_samples_are_never_aliased_by_material_id() -> None:
+    harmonics = _harmonics()
+    port_material = fm.FrequencyMaxwellMaterial(
+        1.0, material_id="continuous-sampling-port"
+    )
+    port = fm.HomogeneousMaxwellPort(port_material, port_id="port")
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.zeros((2,)),
+        port,
+        (),
+        port,
+    )
+    evaluated_coordinates = []
+
+    def profile(coordinate):
+        evaluated_coordinates.append(float(coordinate))
+        return fm.FrequencyMaxwellMaterial(
+            2.0 + 0.1 * coordinate,
+            material_id="one-continuous-law",
+        )
+
+    layer = fm.ContinuousFourierModalLayer(
+        profile,
+        0.2,
+        fm.DirectFourierFactorizationPlan(),
+        fm.ContinuousZIntegrationPolicy(maximum_segments=2),
+        layer_id="graded",
+    )
+    fm.prepare_continuous_fourier_modal_layer(problem, layer, _boundary_policy())
+    assert len(evaluated_coordinates) >= 3
+    assert len(set(evaluated_coordinates)) >= 3
 
 
 def test_zero_thickness_boundary_is_identity() -> None:

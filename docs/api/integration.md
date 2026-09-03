@@ -264,6 +264,33 @@ selection = phx.coresets.kernel_herd(
 
 ---
 
+## Prepared linear reductions
+
+`prepare_linear_reduction` converts an already materialized realization into an
+immutable linear action with explicit coefficient fields, reduced/retained
+Coordax axes, precision, transformations, and provenance. It supports complete
+and partial reductions, including fiber-valued actions.
+
+The action is exact for its fixed represented measure. A fixed Monte Carlo or
+adaptive population remains an empirical realization; preparing it does not
+promote it to a continuum-exact integral. Realizations whose weights depend
+implicitly on the constrained integrand are rejected.
+
+`refresh_linear_reduction` changes the numeric version only when points,
+coefficients, masks, density, or transformations change. Runtime application
+evaluates the integrand with the caller's key and contracts the frozen
+coefficients directly; it does not rematerialize or call generic `reduce`.
+
+::: phydrax.integration.PreparedLinearReduction
+
+---
+
+::: phydrax.integration.prepare_linear_reduction
+
+---
+
+::: phydrax.integration.refresh_linear_reduction
+
 ## Term integration sources
 
 Scalar penalties make realization ownership explicit:

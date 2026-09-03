@@ -275,6 +275,8 @@ def _atomistic_batch_id(
     topology_id: str,
     structure_ids: tuple[str, ...],
     atomic_numbers: Any,
+    atom_type_ids: Any,
+    element_mask: Any,
     positions: Any,
     masses: Any,
     mask: Any,
@@ -290,6 +292,8 @@ def _atomistic_batch_id(
             "arrays": array_tree_fingerprint(
                 {
                     "atomic_numbers": atomic_numbers,
+                    "atom_type_ids": atom_type_ids,
+                    "element_mask": element_mask,
                     "positions": positions,
                     "masses": masses,
                     "mask": mask,
@@ -305,6 +309,8 @@ class AtomisticBatch(StrictModule, NonTrainableState):
     """Case-isolated fixed-capacity batch of finite molecular structures."""
 
     atomic_numbers: Array
+    atom_type_ids: Array
+    element_mask: Array
     positions: Array
     particle_ids: Array
     masses: Array
@@ -329,6 +335,8 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         /,
         *,
         particle_ids: ArrayLike | None = None,
+        atom_type_ids: ArrayLike | None = None,
+        element_mask: ArrayLike | None = None,
         atom_mask: ArrayLike | None = None,
         cells: ArrayLike | None = None,
         periodic_axes: ArrayLike | None = None,
@@ -362,14 +370,27 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         mask = numbers > 0 if atom_mask is None else np.asarray(atom_mask, dtype=bool)
         if mask.shape != numbers.shape:
             raise ValueError("atom_mask must have shape (case, atom).")
+        elements = (
+            mask.copy() if element_mask is None else np.asarray(element_mask, dtype=bool)
+        )
+        if elements.shape != numbers.shape or np.any(elements & ~mask):
+            raise ValueError("element_mask must be a subset of atom_mask.")
         if np.any(np.sum(mask, axis=1) == 0):
-            raise ValueError("Every batch case requires at least one active atom.")
-        if np.any(numbers[mask] <= 0):
-            raise ValueError(
-                "Active atomic numbers must be positive; zero is padding only."
-            )
-        if np.any(numbers[~mask] != 0):
-            raise ValueError("Inactive padded atoms must have atomic number zero.")
+            raise ValueError("Every batch case requires at least one active particle.")
+        if np.any(numbers[elements] <= 0):
+            raise ValueError("Element particles require positive atomic numbers.")
+        if np.any(numbers[~elements] != 0):
+            raise ValueError("Non-element particles and padding use atomic number zero.")
+        atom_types = (
+            numbers.copy() if atom_type_ids is None else np.asarray(atom_type_ids)
+        )
+        if atom_types.shape != numbers.shape or not np.issubdtype(
+            atom_types.dtype, np.integer
+        ):
+            raise TypeError("atom_type_ids must be integer values shaped (case, atom).")
+        atom_types = atom_types.astype(np.int32, copy=False)
+        if np.any(atom_types[mask] < 0):
+            raise ValueError("Active atom type IDs must be nonnegative.")
         if np.any(~np.isfinite(position_host[mask])):
             raise ValueError("Active atom positions must be finite.")
         if np.any(~np.isfinite(mass_host[mask])) or np.any(mass_host[mask] <= 0.0):
@@ -430,6 +451,8 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             }
         )
         self.atomic_numbers = jnp.asarray(numbers, dtype=jnp.int32)
+        self.atom_type_ids = jnp.asarray(atom_types, dtype=jnp.int32)
+        self.element_mask = jnp.asarray(elements, dtype=bool)
         self.positions = jnp.asarray(position_host, dtype=dtype)
         self.particle_ids = jnp.asarray(ids, dtype=jnp.int64)
         self.masses = jnp.asarray(mass_host, dtype=dtype)
@@ -450,6 +473,8 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             topology_id=topology_id,
             structure_ids=ids_host,
             atomic_numbers=numbers,
+            atom_type_ids=atom_types,
+            element_mask=elements,
             positions=position_host,
             masses=mass_host,
             mask=mask,
@@ -506,6 +531,8 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             masses,
             scale,
             particle_ids=ids,
+            atom_type_ids=numbers,
+            element_mask=mask,
             atom_mask=mask,
             cells=cells,
             periodic_axes=periodic,
@@ -543,6 +570,8 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             topology_id=self.atom_topology_id,
             structure_ids=self.structure_ids,
             atomic_numbers=np.asarray(self.atomic_numbers),
+            atom_type_ids=np.asarray(self.atom_type_ids),
+            element_mask=np.asarray(self.element_mask),
             positions=host,
             masses=np.asarray(self.masses),
             mask=active,

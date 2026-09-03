@@ -256,7 +256,7 @@ def adaptive_interval_callable(
             upper > lower,
             evaluate,
             lambda _: (
-                jnp.zeros(output_shape, dtype=prototype.dtype),
+                precision_.accumulation(jnp.zeros(output_shape, dtype=prototype.dtype)),
                 precision_.decision(jnp.asarray(0.0)),
                 jnp.asarray(True),
             ),

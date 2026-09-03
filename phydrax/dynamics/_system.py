@@ -14,21 +14,8 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
+from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 from ._layout import InputLayout, StateLayout
-
-
-AutonomousContinuousVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
-InputContinuousVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
-AutonomousDiscreteTransition: TypeAlias = Callable[
-    ["DiscreteStepContext", Array, Any], ArrayLike
-]
-InputDiscreteTransition: TypeAlias = Callable[
-    ["DiscreteStepContext", Array, Array, Any], ArrayLike
-]
-SystemVectorField: TypeAlias = (
-    AutonomousContinuousVectorField | InputContinuousVectorField
-)
-SystemTransition: TypeAlias = AutonomousDiscreteTransition | InputDiscreteTransition
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -40,6 +27,122 @@ def _identifier(value: str, owner: str, /) -> str:
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+
+
+class DiscreteTransitionResult(StrictModule):
+    """Candidate and accepted states with explicit transition termination evidence."""
+
+    candidate_state: Array
+    accepted_state: Array
+    successful: Array
+    status: Array
+
+    def __init__(
+        self,
+        candidate_state: ArrayLike,
+        accepted_state: ArrayLike,
+        successful: ArrayLike,
+        status: ArrayLike,
+    ):
+        candidate = _inexact(candidate_state)
+        accepted = _inexact(accepted_state)
+        successful_array = jnp.asarray(successful, dtype=bool)
+        status_array = jnp.asarray(status, dtype=jnp.int32)
+        if candidate.shape != accepted.shape:
+            raise ValueError(
+                "Discrete transition candidate_state and accepted_state must "
+                "have matching shapes."
+            )
+        if successful_array.shape != ():
+            raise ValueError("Discrete transition successful must be scalar.")
+        if status_array.shape != ():
+            raise ValueError("Discrete transition status must be scalar.")
+        self.candidate_state = candidate
+        self.accepted_state = accepted
+        self.successful = successful_array
+        self.status = status_array
+
+
+class DiscreteTransitionEvidence(StrictModule):
+    """Per-step discrete transition outcomes and deterministic failure summaries."""
+
+    candidate_states: Array
+    accepted_states: Array
+    successful: Array
+    status: Array
+    first_failure_step: Array
+    first_failure_status: Array
+
+    def __init__(
+        self,
+        candidate_states: ArrayLike,
+        accepted_states: ArrayLike,
+        successful: ArrayLike,
+        status: ArrayLike,
+        /,
+    ):
+        candidates = _inexact(candidate_states)
+        accepted = _inexact(accepted_states)
+        successful_array = jnp.asarray(successful, dtype=bool)
+        status_array = jnp.asarray(status, dtype=jnp.int32)
+        if candidates.shape != accepted.shape:
+            raise ValueError(
+                "Discrete transition evidence candidate_states and accepted_states "
+                "must have matching shapes."
+            )
+        if successful_array.ndim < 1:
+            raise ValueError(
+                "Discrete transition evidence successful must include a step axis."
+            )
+        if status_array.shape != successful_array.shape:
+            raise ValueError(
+                "Discrete transition evidence status must match successful."
+            )
+        if (
+            candidates.ndim < successful_array.ndim
+            or candidates.shape[: successful_array.ndim] != successful_array.shape
+        ):
+            raise ValueError(
+                "Discrete transition evidence state leading axes must match "
+                "successful, including its final step axis."
+            )
+        failed = ~successful_array
+        has_failure = jnp.any(failed, axis=-1)
+        first_index = jnp.argmax(failed.astype(jnp.int32), axis=-1).astype(jnp.int32)
+        gathered_status = jnp.take_along_axis(
+            status_array,
+            first_index[..., None],
+            axis=-1,
+        )[..., 0]
+        self.candidate_states = candidates
+        self.accepted_states = accepted
+        self.successful = successful_array
+        self.status = status_array
+        self.first_failure_step = jnp.where(
+            has_failure,
+            first_index,
+            jnp.asarray(-1, dtype=jnp.int32),
+        ).astype(jnp.int32)
+        self.first_failure_status = jnp.where(
+            has_failure,
+            gathered_status,
+            jnp.asarray(0, dtype=jnp.int32),
+        ).astype(jnp.int32)
+
+
+AutonomousContinuousVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
+InputContinuousVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
+AutonomousDiscreteTransition: TypeAlias = Callable[
+    ["DiscreteStepContext", Array, Any], ArrayLike | DiscreteTransitionResult
+]
+InputDiscreteTransition: TypeAlias = Callable[
+    ["DiscreteStepContext", Array, Array, Any],
+    ArrayLike | DiscreteTransitionResult,
+]
+SystemVectorField: TypeAlias = (
+    AutonomousContinuousVectorField | InputContinuousVectorField
+)
+SystemTransition: TypeAlias = AutonomousDiscreteTransition | InputDiscreteTransition
 
 
 class DiscreteStepContext(StrictModule):
@@ -155,7 +258,7 @@ class ContinuousSystem(StrictModule):
 class DiscreteSystem(StrictModule):
     """A discrete transition law independent of rollout and analysis policy."""
 
-    transition: Callable[..., ArrayLike]
+    transition: Callable[..., ArrayLike | DiscreteTransitionResult]
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)
@@ -225,7 +328,7 @@ class DiscreteSystem(StrictModule):
         self.minimum_step_size = minimum_step
         self.maximum_step_size = maximum_step
 
-    def evaluate(
+    def evaluate_result(
         self,
         context: DiscreteStepContext,
         state: ArrayLike,
@@ -233,7 +336,8 @@ class DiscreteSystem(StrictModule):
         /,
         *,
         inputs: ArrayLike | None = None,
-    ) -> Array:
+    ) -> DiscreteTransitionResult:
+        """Evaluate one transition without discarding candidate/status evidence."""
         state_array = _inexact(state)
         if state_array.shape != self.state_layout.shape:
             raise ValueError(
@@ -278,13 +382,46 @@ class DiscreteSystem(StrictModule):
                     f"inputs must have shape {self.input_layout.shape}; got {input_array.shape}."
                 )
             value = self.transition(context, state_array, input_array, args)
+        if isinstance(value, DiscreteTransitionResult):
+            if value.candidate_state.shape != self.state_layout.shape:
+                raise ValueError(
+                    "DiscreteSystem transition candidate_state has shape "
+                    f"{value.candidate_state.shape}; expected {self.state_layout.shape}."
+                )
+            if value.accepted_state.shape != self.state_layout.shape:
+                raise ValueError(
+                    "DiscreteSystem transition accepted_state has shape "
+                    f"{value.accepted_state.shape}; expected {self.state_layout.shape}."
+                )
+            return value
         output = _inexact(value)
         if output.shape != self.state_layout.shape:
             raise ValueError(
                 "DiscreteSystem transition returned shape "
                 f"{output.shape}; expected {self.state_layout.shape}."
             )
-        return output
+        return DiscreteTransitionResult(
+            output,
+            output,
+            jnp.asarray(True),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+
+    def evaluate(
+        self,
+        context: DiscreteStepContext,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+        *,
+        inputs: ArrayLike | None = None,
+    ) -> Array:
+        return self.evaluate_result(
+            context,
+            state,
+            args,
+            inputs=inputs,
+        ).accepted_state
 
     def __call__(
         self,
@@ -339,13 +476,13 @@ class AbstractInputPolicy(StrictModule):
 class CallableInputPolicy(AbstractInputPolicy):
     """Callable input policy with an explicit layout and identity."""
 
-    policy: Callable[[Array, Array, Any], ArrayLike]
+    policy: Callable[..., ArrayLike]
     input_layout: InputLayout
     policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        policy: Callable[[Array, Array, Any], ArrayLike],
+        policy: Callable[..., ArrayLike],
         /,
         *,
         input_layout: InputLayout,
@@ -391,8 +528,7 @@ class CallableInputPolicy(AbstractInputPolicy):
 class HeldInputPolicy(AbstractInputPolicy):
     """State-independent interval values on one strictly increasing time grid."""
 
-    times: Array
-    values: Array
+    reconstruction: SampledSeriesReconstruction
     input_layout: InputLayout
     node_side: Literal["left", "right"] = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -411,6 +547,7 @@ class HeldInputPolicy(AbstractInputPolicy):
             raise TypeError("input_layout must be an InputLayout.")
         if node_side not in ("left", "right"):
             raise ValueError("node_side must be 'left' or 'right'.")
+        identifier = _identifier(policy_id, "HeldInputPolicy policy_id")
         times_ = _inexact(times)
         values_ = _inexact(values)
         if times_.ndim != 1 or int(times_.size) < 2:
@@ -430,11 +567,34 @@ class HeldInputPolicy(AbstractInputPolicy):
             jnp.any(~jnp.isfinite(values_)),
             "HeldInputPolicy values must be finite.",
         )
-        self.times = times_
-        self.values = values_
+        support = SeriesSupport(
+            times_,
+            coordinate_name="time",
+            coordinate_id=f"{identifier}:time",
+        )
+        series = SampledSeries(
+            support,
+            values_,
+            alignment="edge",
+            series_id=f"{identifier}:values",
+        )
+        self.reconstruction = SampledSeriesReconstruction(
+            series,
+            interpolation="interval_hold",
+            bounds="error",
+            node_side=node_side,
+        )
         self.input_layout = input_layout
         self.node_side = node_side
-        self.policy_id = _identifier(policy_id, "HeldInputPolicy policy_id")
+        self.policy_id = identifier
+
+    @property
+    def times(self) -> Array:
+        return self.reconstruction.series.support.coordinates
+
+    @property
+    def values(self) -> Array:
+        return self.reconstruction.series.values
 
     def evaluate(
         self,
@@ -452,9 +612,7 @@ class HeldInputPolicy(AbstractInputPolicy):
             ~jnp.isfinite(time) | (time < self.times[0]) | (time > self.times[-1]),
             "HeldInputPolicy coordinate lies outside its time grid.",
         )
-        side = "left" if self.node_side == "left" else "right"
-        index = jnp.searchsorted(self.times, time, side=side) - 1
-        return self.values[jnp.clip(index, 0, int(self.values.shape[0]) - 1)]
+        return self.reconstruction.evaluate(time).values
 
     def evaluate_step(
         self,
@@ -475,6 +633,8 @@ __all__ = [
     "ContinuousSystem",
     "DiscreteStepContext",
     "DiscreteSystem",
+    "DiscreteTransitionResult",
+    "DiscreteTransitionEvidence",
     "InputContinuousVectorField",
     "InputDiscreteTransition",
     "SystemTransition",

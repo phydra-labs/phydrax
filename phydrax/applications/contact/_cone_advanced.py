@@ -12,6 +12,8 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._cone import (
+    _contact_law_diagnostics,
+    _numeric_revision,
     ContactConeEvidence,
     ContactConeProgram,
     ContactConeResult,
@@ -47,6 +49,19 @@ class SAPContactSolverPlan(StrictModule, NonTrainableState):
                 "acceleration": bool(acceleration),
             }
         )
+    @property
+    def absolute_tolerance(self) -> float:
+        return self.tolerance
+
+    @property
+    def relative_tolerance(self) -> float:
+        return 0.0
+
+    @property
+    def relaxation(self) -> float:
+        return 1.0
+
+
 
 
 class SemismoothContactSolverPlan(StrictModule, NonTrainableState):
@@ -83,6 +98,19 @@ class SemismoothContactSolverPlan(StrictModule, NonTrainableState):
                 "regularization": regularization_.hex(),
             }
         )
+    @property
+    def absolute_tolerance(self) -> float:
+        return self.tolerance
+
+    @property
+    def relative_tolerance(self) -> float:
+        return 0.0
+
+    @property
+    def relaxation(self) -> float:
+        return 1.0
+
+
 
 
 class PrimalDualContactSolverPlan(StrictModule, NonTrainableState):
@@ -142,6 +170,23 @@ class PrimalDualContactSolverPlan(StrictModule, NonTrainableState):
                 "regularization": regularization_.hex(),
             }
         )
+    @property
+    def maximum_iterations(self) -> int:
+        return self.outer_iterations * self.inner_iterations
+
+    @property
+    def absolute_tolerance(self) -> float:
+        return self.tolerance
+
+    @property
+    def relative_tolerance(self) -> float:
+        return 0.0
+
+    @property
+    def relaxation(self) -> float:
+        return 1.0
+
+
 
 
 def _matrix(program):
@@ -197,38 +242,62 @@ def _cg_normal(matrix, right, maximum_iterations, tolerance):
     return value
 
 
-def _evidence(program, impulse, residual_norm, iterations, tolerance, plan_id):
-    post = (
-        program.effective_mass @ impulse.reshape((-1,))
+def _certified_result(
+    program,
+    candidate,
+    residual_norm,
+    iterations,
+    tolerance,
+    solver,
+):
+    (
+        candidate_law_velocity,
+        complementarity,
+        cone_defect,
+        minimum_normal,
+        minimum_velocity,
+        maximum_dissipation,
+        dissipated,
+        finite,
+    ) = _contact_law_diagnostics(program, candidate)
+    candidate_post = (
+        program.effective_mass @ candidate.reshape((-1,))
         + program.free_velocity.reshape((-1,))
-    ).reshape(impulse.shape)
-    normal = impulse[:, 0]
-    tangent = impulse[:, 1:]
-    tangent_norm = jnp.sqrt(jnp.sum(tangent * tangent, axis=-1))
-    cone_defect = jnp.max(
-        jnp.where(
-            program.valid,
-            jnp.maximum(tangent_norm - program.friction * normal, 0.0),
-            0.0,
-        ),
-        initial=0.0,
-    )
-    complementarity = jnp.max(
-        jnp.where(
-            program.valid,
-            jnp.abs(jnp.minimum(normal, post[:, 0])),
-            0.0,
-        ),
-        initial=0.0,
-    )
-    minimum_normal = jnp.min(jnp.where(program.valid, normal, jnp.inf), initial=0.0)
-    dissipated = -jnp.sum(tangent * program.free_velocity[:, 1:])
-    finite = jnp.all(jnp.isfinite(impulse)) & jnp.all(jnp.isfinite(post))
-    tolerance_ = jnp.asarray(tolerance, dtype=residual_norm.dtype)
+    ).reshape(candidate.shape)
+    tolerance_ = jnp.asarray(tolerance, dtype=candidate.dtype)
     converged = residual_norm <= tolerance_
-    successful = (
-        converged & finite & (minimum_normal >= 0.0) & (cone_defect <= tolerance_)
+    material_law_complete = jnp.all(
+        (~program.valid) | program.mechanical_available
     )
+    numeric_inputs_valid = (
+        jnp.all(program.compliance >= 0.0)
+        & jnp.all(program.static_friction >= 0.0)
+        & jnp.all(program.friction >= 0.0)
+        & jnp.all(program.friction <= program.static_friction)
+        & jnp.all((program.restitution >= 0.0) & (program.restitution <= 1.0))
+    )
+    dissipative = dissipated >= -tolerance_
+    successful = (
+        converged
+        & finite
+        & numeric_inputs_valid
+        & material_law_complete
+        & (complementarity <= tolerance_)
+        & (cone_defect <= tolerance_)
+        & (minimum_normal >= -tolerance_)
+        & (minimum_velocity >= -tolerance_)
+        & (maximum_dissipation <= tolerance_)
+        & dissipative
+    )
+    accepted = jnp.where(successful, candidate, jnp.zeros_like(candidate))
+    accepted_post = (
+        program.effective_mass @ accepted.reshape((-1,))
+        + program.free_velocity.reshape((-1,))
+    ).reshape(accepted.shape)
+    accepted_law_velocity = (
+        _matrix(program) @ accepted.reshape((-1,))
+        + program.free_velocity.reshape((-1,))
+    ).reshape(accepted.shape)
     evidence = ContactConeEvidence(
         converged,
         jnp.asarray(iterations, dtype=jnp.int32),
@@ -240,9 +309,23 @@ def _evidence(program, impulse, residual_norm, iterations, tolerance, plan_id):
         finite,
         successful,
         program.program_id,
-        plan_id,
+        solver.plan_id,
+        material_law_complete=material_law_complete,
+        minimum_normal_velocity=minimum_velocity,
+        maximum_dissipation_defect=maximum_dissipation,
+        certificate_tolerance=tolerance_,
+        dissipative=dissipative,
+        numeric_revision=_numeric_revision(program, solver),
     )
-    return ContactConeResult(impulse, post, evidence)
+    return ContactConeResult(
+        accepted,
+        accepted_post,
+        evidence,
+        candidate_impulse=candidate,
+        candidate_post_relative_velocity=candidate_post,
+        contact_law_velocity=accepted_law_velocity,
+        candidate_contact_law_velocity=candidate_law_velocity,
+    )
 
 
 def solve_contact_sap(
@@ -252,7 +335,11 @@ def solve_contact_sap(
     solver: SAPContactSolverPlan | None = None,
     initial_impulse=None,
 ) -> ContactConeResult:
+    if not isinstance(program, ContactConeProgram):
+        raise TypeError("program must be ContactConeProgram.")
     solver_ = SAPContactSolverPlan() if solver is None else solver
+    if not isinstance(solver_, SAPContactSolverPlan):
+        raise TypeError("solver must be SAPContactSolverPlan or None.")
     count = program.contact_count
     dimension = program.local_dimension
     impulse = (
@@ -260,6 +347,8 @@ def solve_contact_sap(
         if initial_impulse is None
         else jnp.asarray(initial_impulse, dtype=program.free_velocity.dtype)
     )
+    if impulse.shape != (count, dimension):
+        raise ValueError("initial_impulse has invalid shape.")
     matrix = _matrix(program)
     lipschitz = jnp.max(jnp.sum(jnp.abs(matrix), axis=1), initial=1.0)
     step = 1.0 / jnp.maximum(lipschitz, jnp.finfo(matrix.dtype).eps)
@@ -287,13 +376,13 @@ def solve_contact_sap(
         (impulse, previous, momentum),
     )
     residual_norm = jnp.sqrt(jnp.sum(_natural_residual(program, impulse) ** 2))
-    return _evidence(
+    return _certified_result(
         program,
         impulse,
         residual_norm,
         solver_.maximum_iterations,
         solver_.tolerance,
-        solver_.plan_id,
+        solver_,
     )
 
 
@@ -304,7 +393,11 @@ def solve_contact_semismooth(
     solver: SemismoothContactSolverPlan | None = None,
     initial_impulse=None,
 ) -> ContactConeResult:
+    if not isinstance(program, ContactConeProgram):
+        raise TypeError("program must be ContactConeProgram.")
     solver_ = SemismoothContactSolverPlan() if solver is None else solver
+    if not isinstance(solver_, SemismoothContactSolverPlan):
+        raise TypeError("solver must be SemismoothContactSolverPlan or None.")
     impulse = (
         jnp.zeros(
             (program.contact_count, program.local_dimension),
@@ -313,7 +406,14 @@ def solve_contact_semismooth(
         if initial_impulse is None
         else jnp.asarray(initial_impulse, dtype=program.free_velocity.dtype)
     )
-    impulse = project_coulomb_cone(impulse, program.friction)
+    expected_shape = (program.contact_count, program.local_dimension)
+    if impulse.shape != expected_shape:
+        raise ValueError("initial_impulse has invalid shape.")
+    impulse = jnp.where(
+        program.valid[:, None],
+        project_coulomb_cone(impulse, program.friction),
+        0.0,
+    )
     iterations = 0
     for iteration in range(solver_.maximum_iterations):
         residual = _natural_residual(program, impulse)
@@ -327,6 +427,35 @@ def solve_contact_semismooth(
             return _natural_residual(program, value.reshape(impulse.shape)).reshape((-1,))
 
         jacobian = jax.jacfwd(residual_flat)(flat)
+        law_velocity = (
+            _matrix(program) @ flat + program.free_velocity.reshape((-1,))
+        ).reshape(impulse.shape)
+        projection_argument = impulse - law_velocity
+        projection_tangent_norm = jnp.sqrt(
+            jnp.sum(projection_argument[:, 1:] ** 2, axis=-1)
+        )
+        projection_interior = (
+            program.valid
+            & (projection_argument[:, 0] > 0.0)
+            & (
+                projection_tangent_norm
+                < program.friction * projection_argument[:, 0]
+            )
+        )
+        interior_rows = jnp.repeat(
+            projection_interior,
+            program.local_dimension,
+        )
+        generalized_jacobian = jnp.where(
+            interior_rows[:, None],
+            _matrix(program),
+            jnp.eye(flat.size, dtype=flat.dtype),
+        )
+        jacobian = jnp.where(
+            jnp.isfinite(jacobian),
+            jacobian,
+            generalized_jacobian,
+        )
         normal_matrix = jacobian.T @ jacobian + solver_.regularization * jnp.eye(
             jacobian.shape[1], dtype=jacobian.dtype
         )
@@ -349,13 +478,13 @@ def solve_contact_semismooth(
             rate *= 0.5
         impulse = candidate
     residual_norm = jnp.sqrt(jnp.sum(_natural_residual(program, impulse) ** 2))
-    return _evidence(
+    return _certified_result(
         program,
         impulse,
         residual_norm,
         iterations,
         solver_.tolerance,
-        solver_.plan_id,
+        solver_,
     )
 
 
@@ -365,7 +494,11 @@ def solve_contact_primal_dual(
     *,
     solver: PrimalDualContactSolverPlan | None = None,
 ) -> ContactConeResult:
+    if not isinstance(program, ContactConeProgram):
+        raise TypeError("program must be ContactConeProgram.")
     solver_ = PrimalDualContactSolverPlan() if solver is None else solver
+    if not isinstance(solver_, PrimalDualContactSolverPlan):
+        raise TypeError("solver must be PrimalDualContactSolverPlan or None.")
     dtype = program.free_velocity.dtype
     normal = jnp.where(program.valid, 1.0e-3, 0.0)
     tangent = jnp.zeros((program.contact_count, program.tangent_dimension), dtype=dtype)
@@ -436,13 +569,13 @@ def solve_contact_primal_dual(
         barrier *= solver_.barrier_reduction
     impulse = project_coulomb_cone(impulse, program.friction)
     residual_norm = jnp.sqrt(jnp.sum(_natural_residual(program, impulse) ** 2))
-    return _evidence(
+    return _certified_result(
         program,
         impulse,
         residual_norm,
         iterations,
         solver_.tolerance,
-        solver_.plan_id,
+        solver_,
     )
 
 

@@ -127,9 +127,9 @@ periodic, source-free entropy-stable cases are the appropriate sign-check surfac
 Prepared geometry, equation systems, methods, and callables remain in the compiled
 runtime.
 
-`FiniteVolumeCaseSpec` records schema version, runtime/equation/discretization/method/
-boundary identities, execution policy, and `FiniteVolumePrecisionPolicy`. Unknown case
-fields are rejected rather than ignored.
+`FiniteVolumeCaseSpec` records the canonical case format and
+runtime/equation/discretization/method/boundary identities, execution policy, and
+`FiniteVolumePrecisionPolicy`. Unknown case fields are rejected rather than ignored.
 
 ## Checkpoint and output
 

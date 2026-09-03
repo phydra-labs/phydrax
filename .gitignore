@@ -41,6 +41,8 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/constraint_system.py
+!benchmarks/constraint_system.json
 !benchmarks/signal_profiles.py
 !benchmarks/signal_profiles.json
 !benchmarks/control_lq_nash.py
@@ -106,6 +108,9 @@ benchmarks/*
 !benchmarks/incompressible_channel_qualification.json
 !benchmarks/mac_incompressible_qualification.json
 !benchmarks/incompressible_flow_candidate_profile.json
+!benchmarks/incompressible_ou_qualification.json
+!benchmarks/immersed_commercial_qualification.json
+!benchmarks/lbm_commercial_qualification.json
 !benchmarks/unbounded_spectral.json
 !benchmarks/structured_flow.json
 !benchmarks/shallow_water.json

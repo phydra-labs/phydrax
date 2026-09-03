@@ -17,12 +17,14 @@ from ..discretization.finite_volume._incompressible import (
     PreparedMACOperators,
 )
 from ..linalg import (
-    ConjugateGradient,
+    DiagonalPreconditioner,
     FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
     OperatorProperties,
+    PCG,
+    PreconditioningPolicy,
     prepare,
     PreparedLinearSolve,
     refresh,
@@ -70,6 +72,8 @@ class MACVariableDensityProjectionResult(StrictModule):
     compatible_rhs: Array
     face_inverse_density: FaceVelocity
     gauge_defect: Array
+    coefficient_contrast: Array
+    preparation_id: str = eqx.field(static=True)
     residual_norm: Array
     divergence_norm: Array
     momentum_impulse_residual: Array
@@ -96,6 +100,8 @@ class MACVariableDensityRateProjectionResult(StrictModule):
     compatible_rhs: Array
     face_inverse_density: FaceVelocity
     gauge_defect: Array
+    coefficient_contrast: Array
+    preparation_id: str = eqx.field(static=True)
     residual_norm: Array
     divergence_norm: Array
     positive: Array
@@ -112,6 +118,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
 
     operators: PreparedMACOperators
     tolerance: float = eqx.field(static=True)
+    solve_method: str = eqx.field(static=True)
     linear_policy: LinearSolvePolicy
     linear_problem: LinearSystem
     prepared_linear: PreparedLinearSolve
@@ -126,6 +133,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1e-9,
         maximum_iterations: int = 500,
+        solve_method: str = "auto",
         linear_policy: LinearSolvePolicy | None = None,
     ):
         if not isinstance(operators, PreparedMACOperators):
@@ -134,6 +142,13 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         iterations = int(maximum_iterations)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0 or iterations <= 0:
             raise ValueError("Projection tolerance and maximum_iterations are invalid.")
+        if solve_method not in ("auto", "iterative", "direct"):
+            raise ValueError("solve_method must be 'auto', 'iterative', or 'direct'.")
+        if solve_method == "direct":
+            raise ValueError(
+                "Variable-density direct pressure solve is unsupported here; no "
+                "iterative fallback was taken."
+            )
         unit_face = tuple(
             jnp.ones(layout.shape, dtype=operators.pressure_space.dtype)
             for layout in operators.discretization.face_layouts
@@ -167,11 +182,29 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         problem = LinearSystem(pressure_operator, problem_id=problem_id)
         policy = (
             LinearSolvePolicy(
-                ConjugateGradient(),
+                PCG(),
                 tolerance=TolerancePolicy(
                     relative=tolerance_,
                     absolute=tolerance_,
                     max_steps=iterations,
+                ),
+                preconditioning=PreconditioningPolicy(
+                    DiagonalPreconditioner(
+                        jnp.ones(
+                            (operators.pressure_space.size,),
+                            dtype=operators.pressure_space.dtype,
+                        ),
+                        space=operators.pressure_space,
+                        positive_definite=True,
+                        preconditioner_id=canonical_fingerprint(
+                            {
+                                "kind": "mac-variable-density-constant-preconditioner",
+                                "operators": operators.prepared_id,
+                            }
+                        ),
+                    ),
+                    side="left",
+                    refresh="frozen",
                 ),
             )
             if linear_policy is None
@@ -186,11 +219,12 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
                 "operators": operators.prepared_id,
                 "tolerance": tolerance_,
                 "linear_plan": prepared.plan.plan_id,
-                "route": "iterative",
+                "route": "pcg",
             }
         )
         self.operators = operators
         self.tolerance = tolerance_
+        self.solve_method = "pcg"
         self.linear_policy = policy
         self.linear_problem = problem
         self.prepared_linear = prepared
@@ -300,6 +334,13 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
         divergence_candidate = self.operators.divergence(velocity_candidate)
         divergence_norm = jnp.sqrt(jnp.sum(volumes * divergence_candidate**2))
         gauge_defect = jnp.abs(jnp.sum(volumes * pressure_candidate))
+        coefficient_minimum = jnp.min(
+            jnp.stack(tuple(jnp.min(value) for value in inverse))
+        )
+        coefficient_maximum = jnp.max(
+            jnp.stack(tuple(jnp.max(value) for value in inverse))
+        )
+        coefficient_contrast = coefficient_maximum / coefficient_minimum
         impulse_residual = _maximum_abs(
             tuple(
                 candidate - original - impulse
@@ -371,6 +412,8 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             compatible_rhs=rhs,
             face_inverse_density=inverse,
             gauge_defect=gauge_defect,
+            coefficient_contrast=coefficient_contrast,
+            preparation_id=self.plan_id,
             residual_norm=residual_norm,
             divergence_norm=divergence_norm,
             momentum_impulse_residual=impulse_residual,
@@ -382,7 +425,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             linear=linear,
             converged=converged,
             successful=converged,
-            solve_method="iterative",
+            solve_method=self.solve_method,
             projection_id=self.plan_id,
         )
 
@@ -415,6 +458,8 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             compatible_rhs=projected.compatible_rhs,
             face_inverse_density=projected.face_inverse_density,
             gauge_defect=projected.gauge_defect,
+            coefficient_contrast=projected.coefficient_contrast,
+            preparation_id=projected.preparation_id,
             residual_norm=projected.residual_norm,
             divergence_norm=projected.divergence_norm,
             positive=projected.positive,
@@ -422,7 +467,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             linear=projected.linear,
             converged=projected.converged,
             successful=projected.successful,
-            solve_method="iterative",
+            solve_method=self.solve_method,
             projection_id=self.plan_id,
         )
 

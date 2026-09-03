@@ -10,11 +10,27 @@ from ._inspection import (
     HostInspectionFrame,
 )
 from ._report import (
+    AdapterCapability,
     AdapterError,
+    AdapterFormatProfile,
     AdapterLoss,
+    AdapterNegotiationResult,
     AdapterReport,
+    AdapterRequirement,
     AdapterStatus,
+    AdapterWaiver,
+    compose_adapter_reports,
+    negotiate_adapter,
     require_lossless,
+)
+from ._resource import (
+    account_bounded_resource,
+    bounded_resource_from_bytes,
+    BoundedResource,
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceManifest,
+    ResourceReadError,
 )
 
 
@@ -22,9 +38,23 @@ __all__ = [
     "HostInspectionConversion",
     "HostInspectionField",
     "HostInspectionFrame",
+    "AdapterCapability",
     "AdapterError",
+    "AdapterFormatProfile",
     "AdapterLoss",
+    "AdapterNegotiationResult",
     "AdapterReport",
     "AdapterStatus",
+    "AdapterRequirement",
     "require_lossless",
+    "AdapterWaiver",
+    "BoundedResource",
+    "ResourceLimits",
+    "ResourceManifest",
+    "ResourceReadError",
+    "account_bounded_resource",
+    "bounded_resource_from_bytes",
+    "read_bounded_resource",
+    "compose_adapter_reports",
+    "negotiate_adapter",
 ]

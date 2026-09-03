@@ -130,36 +130,48 @@ cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
 resource identities. Exact-sampling round-sphere spaces separately expose S2FFT mode
 layouts, physical area measure, scalar Laplace--Beltrami actions, complete-degree noise
 bases, and the prepared discretization consumed by SFNO.
-Local stencil programs, structured compact and transform-line solves,
-periodic/bounded SBP calculus, entropy-conservative SBP flux differencing, and
-compatible finite-volume MAC flow compose without conflating quadrature sites, mesh
-entities, and field DOFs. Constant-density separable all-Neumann MAC pressure may use
-a three-dimensional hybrid route: transforms on two uniform transverse axes plus a
-nonuniform physical Neumann line, with explicit compatibility and volume gauge.
-Variable-density, mixed/open, distributed, and sharded-line cases are excluded from
-that hybrid route, and MAC has no fixed-bulk-flux controller.
+Local stencil programs, structured compact/transform-line solves, periodic/bounded SBP
+calculus, entropy-conservative SBP flux differencing, and compatible finite-volume MAC
+flow compose without conflating quadrature sites, mesh entities, and field DOFs.
+`DistributedSpectralExecutionPlan` adds actual JAX-mesh full-complex slab and pencil
+FFTs plus a horizontal-partitioned channel action. It fixes every redistribution,
+padded/canonical layout, precision, collective, and byte bound and performs no host
+gather. The channel schedule replicates its Chebyshev axis and does not make the
+separate `ChannelStokesPlan` a distributed line solver.
+
+Partition-aware `DistributedLineSolvePlan` supports partitioned Thomas, bounded SPIKE,
+and balanced power-of-two PCR with explicit compatibility, gauge, residual, resource,
+and communication evidence. It operates on caller-provided arrays and is not itself a
+multi-device transport. `MultiblockExtrudedReductionPlan` solves the global
+block/mortar system iteratively; its direct block factors are preconditioners only.
+
+Generalized MAC pressure freezes the closure-aware
+`A p = -D(beta G_h p)` action, positive coefficient, Robin data, and geometry epoch.
+Uniform constant tensors and eligible three-dimensional all-Neumann line structure can
+use exact transform/hybrid routes with an explicitly supplied prepared direct action.
+Other symmetric positive cases use PCG with a constant preconditioner, while stabilized
+nonsymmetric traction uses FGMRES. `MACDistributedProjectionPlan` is a distinct
+collective CG owner; no direct route gathers shards.
+
+`MACFlowControlPlan` now owns prescribed pressure gradient, volume-weighted bulk
+velocity, and frozen-density mass-flux targets for SSPRK, IMEX-Euler, and SBDF2.
+Bulk/mass-flux feedback evaluates finite zero/unit method-stage responses, solves the
+dense control system, and atomically rejects rank, conditioning, residual, resource, or
+underlying-method failure. This is distinct from fixed
+`MACConstantPressureGradientForcing` and spectral channel zero-mode control.
 
 The broader MAC substrate includes dynamic wall/inflow/open closures,
-symmetry-preserving momentum, named scalar/Boussinesq and conservative
-variable-density dynamics, implicit diffusion, resolved face-marker coupling,
-sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
-bounded sensitivity modes. Its raw plane/wall statistic route centers staggered
-components to cells for exact-volume plane moments, retains native wall-normal
-boundary faces, and reports separate signed one-sided shears relative to explicit
-lower/upper wall velocities. WENO fluxes, fixed-capacity AMR, and distributed halo
-plans remain available to the wider finite-volume family.
-Route-specific periodic-spectral, channel, and structured-MAC production assemblers
-carry accepted PyTrees through bounded compiled segments to an absolute end
-time/capacity, with content-derived checkpoint IDs, exact-time scheduled output,
-typed trigger actions, and windowed/block moments.
-These capabilities do not constitute a universal DNS claim or distributed
-spectral/hybrid-line support.
+symmetry-preserving momentum, scalar/Boussinesq and conservative variable-density
+dynamics, implicit diffusion, resolved marker coupling, mapped/ALE geometry, remesh
+epochs, adaptive replay, bounded sensitivity, and route-specific statistics and
+production. `ImmersedDNSQualificationProfile` groups six exact owner support tuples,
+but remains an unsigned candidate with `released=false`; its two-phase runtime
+admission never substitutes an owner.
 
-Qualification remains route and case specific. When generated, separate
-periodic-spectral, spectral-channel, and MAC artifacts bind exact
-support/input/reference/configuration identities. Assembly of passed artifacts
-produces an unsigned `CapabilityProfile` candidate with `released=false`, not a
-library-wide badge.
+One-device execution is local. Spectral and selected MAC/LBM owners have explicit
+multi-device JAX or collective routes. Partition metadata, deployment records, and
+topology relations alone are not execution, and multi-host launch/scaling remains
+external and evidence-specific.
 
 
 The S1 isogeometric path binds two clamped isotropic B-spline grids to a
@@ -173,6 +185,14 @@ the sampled minimum denominator, orientation determinant, and reciprocal
 condition margins are not a global injectivity proof. These volume maps are not
 the repository's BRep surface geometry and do not imply trimming, CAD topology,
 shells, multipatch coupling, or three-dimensional solids.
+Explicit polygon H1 elements bind conformingly segmented, star-shaped planar
+polygons to a transported witness fan. A native discrete-harmonic condensation
+removes the private witness coordinate while retaining exact linear traces,
+partition of unity, affine reproduction, actual piecewise gradients, direct
+reconstruction, and dense matrix-free local functional execution. Qualification
+retains fan validity, factorization, rank, spectrum, conditioning, and
+reproduction evidence. Higher order, nonmatching T-junctions, sparse realization,
+and three-dimensional cells remain outside this surface.
 Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
 vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
 projections, explicit projector-kernel stabilization, matrix-free or sparse
@@ -231,9 +251,12 @@ share those identities. Bounded maximal profiles add fixed-layout scalar transfe
 global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
 merger products, stochastic star populations, two-level AMR, sparse occupied Morton
 point hierarchies, isolated Barnes--Hut, sparse occupied-level Cartesian FMM, and
-BH-short-range TreePM. Core discretization additionally provides fixed-resolution sparse
-voxel fields and covering, face-balanced dyadic cell topology with conservative
-adaptation and explicit-face finite-volume lowering. Every profile states unsupported
+BH-short-range TreePM. Core discretization additionally provides fixed-resolution
+sparse voxel fields; covering, face-balanced dyadic cell topology with conservative
+adaptation and explicit-face finite-volume lowering; and oriented finite-footprint
+surfels with physical surface measure, primitive bounds, ray queries, local voxel
+projection, atlas/mesh materialization, and branchwise differentiation. Every profile
+states unsupported
 species, topology, approximation, capacity, distribution, and communication branches;
 precision parity beyond qualified profiles, multilevel distributed AMR, distributed
 trees, production feedback, and full release coverage remain separate qualification
@@ -312,6 +335,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
 [Guide → Isogeometric analysis](guides_isogeometric_analysis.md),
+[Guide → Explicit polygon H1](guides_explicit_polygon_h1.md),
 [Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
@@ -325,6 +349,29 @@ sensitivities reuse the existing solver, discretization, and nonlinear substrate
 No communication, mesh, or fallback-solver stack is introduced. See
 [Guide → Partitioned multiphysics coupling](guides_partitioned_coupling.md) and
 [API → Solver → Partitioned coupling](api/solver/coupling.md).
+
+### Native robotics as a composition
+
+`phydrax.applications.robotics` adapts explicitly rooted, descriptor-bounded
+URDF 1.0 trees into COM-centred particle, rigid-body, joint, and
+reduced-articulation plans. Capability-associated loss negotiation, exact
+resource manifests, mandatory inertial reference rebasing, result-preserving
+discrete transitions, accepted-state task environments, and semantic
+provenance keep conversion and rollback visible. Local frame IK, fixed-work
+control, manifold defects, and reduced rods remain with their existing
+discretization, control, interchange, and solid-mechanics owners.
+
+Optional MJX-JAX requires a matching MuJoCo/MJX 3.12.x provider pair and binds a
+closed prepared-feature manifest, complete data schema, projection provenance,
+casewise rollback, and the `step → stale state → refresh → observe` lifecycle.
+Fixed-route articulated impact certifies material availability, Delassus
+positive-semidefiniteness, numeric revision, and contact law, but remains an
+operator utility over supplied routes. There is no collision discovery or
+atomic robot/contact step yet. The native tree scope is 3-D fixed-base
+fixed/hinge/prismatic; floating bases, ball joints, global IK, certified
+sampling robustness, hard real time, and universal MJX differentiability are
+not claimed. See [Guide → Native robotics](guides_robotics.md) and
+[API → Robotics applications](api/applications/robotics.md).
 
 ### Atomistic learning and conservative dynamics
 
@@ -357,8 +404,9 @@ unit systems, interaction-site coordinate maps and differentiable virtual sites,
 topology, native force-field bundles and adapters, dense/cell/Verlet and distributed
 execution, constrained NVE/NVT/NPT and rigid dynamics, polarization, implicit solvent,
 quantum-nuclear propagation, many-body and soft-matter models, H5MD/XYZ reporting and
-rerun, MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases,
-replica exchange, free-energy estimators, and committee uncertainty/acquisition. State,
+rerun, loss-audited ASE structure exchange, MDAnalysis, i-PI and PACKMOL boundaries,
+collective variables, adaptive biases, replica exchange, free-energy estimators, and
+committee uncertainty/acquisition. State,
 labels, bias history, transport resources, and analysis frames remain separate typed
 contracts. Every capacity, convergence, protocol, or physical failure is typed and
 fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
@@ -721,6 +769,22 @@ classical solver Jacobian. See
 [API → Native combinatorial optimization](api/combinatorial.md) and the
 [combinatorial learning cookbook](cookbook/combinatorial_learning.md).
 
+### Ordered scalar series and reconstruction
+
+`phydrax.series` factors the common one-dimensional support beneath trajectory
+data, sampled inputs, interval controls, and non-time parameter histories.
+`SeriesSupport` represents shared or per-series coordinates as a masked
+oriented line: node masks identify retained samples and edge masks identify
+admissible adjacency. `SampledSeries` places numerical PyTrees on nodes or
+edges, while `SeriesPairView` checks every intervening edge without
+materializing overlapping windows.
+
+Reconstruction remains an explicit numerical choice with bounds, knot side,
+derivative order, and causal capability. A disconnected support cannot be
+reconstructed as one curve. Dynamics trajectories, stochastic paths, solver
+meshes, and physical histories compose this substrate while retaining their
+own geometry, status, realization, and provenance contracts.
+
 ### Dynamical systems, identification, nonlinear analysis, and chaos
 
 `phydrax.dynamics` separates local system laws, pathwise numerical evolution,
@@ -960,6 +1024,57 @@ generalized entropy, mapped/ALE hydrostatic balance, and
 WENO/open/geostrophic/multilayer/Exner/shoreline/LPP mixed-precision routes.
 These are single-device, fixed-topology or fixed-combinatorics derivative
 envelopes rather than unrestricted distributed or topology-changing claims.
+
+
+The compressible application candidate binds one canonical all-species homogeneous
+Helmholtz gas to smooth tensor-DGSEM entropy/BR1, separate nodal-DG/LDG, or
+structured/mapped high-resolution finite-volume policy. All-speed HLL scales only
+numerical dissipation with relative Mach while retaining the unscaled acoustic CFL
+bound; pressure-sensor/admissibility failures select and record the canonical
+generic-HLL fallback. Temporal slow growth uses wall-normal dilation, while
+modeled-spatial slow growth requires supplied streamwise baseflow derivatives. Both
+freeze one snapshot per parent step and retain `claims_spatial_dns=false`; finite-x
+comparison is admission evidence, not a DNS relabel.
+
+Reacting flow uses the same canonical component catalog, phase-specific species schema
+with explicit gas standard pressure, homogeneous Helmholtz model, prepared mechanism,
+and all-species Euler state. Structured FV transport composes with fixed-schedule
+Strang or iterative trapezoidal chemistry and atomic rollback. Reaction sources update
+all species and retain zero total-energy source because chemical reference energy is
+already conserved; heat release is diagnostic. Mixture-averaged and bounded dense
+Stefan–Maxwell transport remain explicit alternatives. Cantera is a host-only import
+and reference boundary, never the execution provider.
+
+LBM commercial factories produce unsigned, unreleased C0/C1/C2/C3 and
+conjugate-thermal candidates. Exact operating envelopes bind method, nondimensional
+limits, hardware, deployment, dependencies, and per-device resources. Conjugate
+thermal exchanges passive sensible energy with equal-and-opposite interface heat
+rates; it is neither compressible total energy nor solid mechanics. An exact
+host/device record is not multi-host evidence.
+
+`phydrax.statistical_dynamics` closes finite real quadratic CE2 for QL and GCE2 for
+GQL without silently dropping a third cumulant from a different model. The barotropic
+beta-plane owner supplies exactly dealiased doubly periodic vorticity and independent
+real cumulant coordinates. Segmented NILSS differentiates a supplied step map and
+solves one constrained dense continuity problem; finite horizon results require their
+own refinement evidence. Statistical distributed layouts are logical shard/restart
+algebra, not a distributed solver.
+
+`phydrax.closure_data` keeps mesh/simulation ownership external while binding units,
+state/trajectory identities, filters, deterministic analysis lineage, complete chunk
+coverage, leakage-safe splits, and train-only normalization. Learned deployment binds
+the model artifact and ABI. A failed spectral drift produces explicit zero drift plus
+`SpectralFallbackArtifact`; it is never invisible.
+
+Qualification, lifecycle, and service remain separate platform owners. Exact support
+and evidence matrices form candidates; only the release index can admit a released
+profile. Resolved-run identity precedes execution, configuration migration uses
+explicit pure forward edges, repositories require declared POSIX or conditional-object
+durability, and topology-changing restart validates direct canonical range transfer.
+The in-process service is a reference orchestrator over injected storage, scheduler,
+identity, KMS, and transport providers. Asymmetric JWT/X.509 and Ed25519 use optional
+cryptography and fail when unavailable; no provider integration or global
+certification is implied.
 
 The bounded stochastic closure includes multiplicative and affine-Hausdorff
 SING with explicit surrogate/audit semantics; finite coupled SPDE and
@@ -1595,8 +1710,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   and [API → Advanced structural evidence](api/advanced_structural.md).
 - **Classical circuit networks and periodic analysis**: compose typed scattering
   networks, grounded MNA circuits, implicit device DAEs, operating points,
-  descriptors, macromodels, noise, calibration, and field coupling. Harmonic
-  balance plans fixed Fourier-collocation resources, prepares the native
+  descriptors, macromodels, noise, calibration, and field coupling. Independent
+  RMS-phasor MNA power ledgers retain supported RLC, source, and port axes without
+  confusing a wave identity with conservation. Transient and periodic ledgers keep
+  passive storage/dissipation separate from signed source and boundary power.
+  Harmonic balance plans fixed Fourier-collocation resources, prepares the native
   matrix-free nonlinear solve, and refreshes frequency and circuit coefficients
   without changing device equations. See
   [Guides → Circuit networks](guides_circuit_networks.md) and
@@ -1667,6 +1785,16 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.linalg` for paired vector spaces, composable operators, linear
   problems, solve policies, reusable plans and factorizations, general eigensolvers,
   diagnostics, and backend provenance.
+- `phydrax.qualification` for exact support tuples, evidence matrices, candidate
+  profiles, release indexes, and fail-closed admission.
+- `phydrax.lifecycle` for resolved runs, migration, provenance, repositories, and
+  topology-aware restart.
+- `phydrax.service` for reference orchestration, durable state, schedulers,
+  identity, observability, secrets, and trust.
+- `phydrax.closure_data` for closure datasets, filters, targets, lineage,
+  leakage-safe splits, normalization, and learned deployment bindings.
+- `phydrax.statistical_dynamics` for CE2/GCE2 cumulants, beta-plane coordinates,
+  NILSS, and logical shard/restart layouts.
 - `phydrax.backends` for explicit lazy PETSc, SLEPc, PyAMGCL, and NVIDIA AmgX
   lifecycle bridges with availability, transfer, convergence, and provenance evidence.
 - `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.

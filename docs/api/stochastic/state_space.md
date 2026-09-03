@@ -64,6 +64,11 @@ strictly increasing, and valid values must be finite. Masked suffix entries are
 capacity padding. The supported modes are exactly `"zero-order-hold"` and
 `"linear"`; zero-order hold is right-continuous at an interior knot, and linear
 interpolation includes both support endpoints.
+`SampledStateSpaceInput` composes a node-aligned `phydrax.series.SampledSeries`
+and explicit reconstruction. This shares ragged support, bounds, and
+breakpoint semantics without collapsing the state-space input ID or
+`InputEvaluation` validity contract.
+
 
 `BSplineStateSpaceInput` reuses `phydrax.nn.models.BSplineGrid` for its fixed knot grid
 and stores the case-indexed coefficients separately. Its support is the grid's

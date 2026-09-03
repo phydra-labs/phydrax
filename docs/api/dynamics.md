@@ -15,6 +15,13 @@ case axes, reset boundaries, weights, and optional controls or derivatives. Anal
 never infers a missing mask, changes an estimator after failure, or silently replaces a
 geometric state by flattened Euclidean coordinates.
 
+`TrajectoryData` composes the coordinate-neutral `phydrax.series` substrate.
+Its sampled state is node-aligned, while transition validity is the support's
+edge connectivity; long-lag pairs are valid only when every intervening edge
+is active. Reset reasons, weights, layouts, controls, derivatives, and source
+identity remain trajectory semantics. The substrate does not make numerical
+states implicitly interpolable.
+
 ## Choosing a path
 
 | Need | Public entry point | Result and boundary |
@@ -228,6 +235,40 @@ architecture hyperparameters.
 ::: phydrax.dynamics.identification.DiscreteModelFitResult
 
 ::: phydrax.dynamics.identification.fit_discrete_model
+
+## Variational kinetics
+
+Lagged variational estimators use reset-safe `TrajectoryData` transitions and an
+explicit weighting policy. VAMP retains distinct source and target singular functions;
+VAC/TICA uses a generalized self-adjoint covariance problem. Markov-state models accept
+hard or soft assignments and expose communicating-class, stationarity, and
+detailed-balance evidence.
+
+::: phydrax.dynamics.identification.LaggedPairWeighting
+
+::: phydrax.dynamics.identification.fit_vamp
+
+::: phydrax.dynamics.identification.VAMPResult
+
+::: phydrax.dynamics.identification.fit_vac
+
+::: phydrax.dynamics.identification.fit_tica
+
+::: phydrax.dynamics.identification.VACResult
+
+::: phydrax.dynamics.identification.fit_markov_state_model
+
+::: phydrax.dynamics.identification.MarkovStateModel
+
+::: phydrax.dynamics.identification.VariationalKineticTrainingPolicy
+
+::: phydrax.dynamics.identification.fit_variational_kinetic_model
+
+::: phydrax.dynamics.identification.VariationalKineticFitResult
+
+::: phydrax.dynamics.analysis.score_vamp
+
+::: phydrax.dynamics.analysis.validate_markov_models
 
 ## Feature libraries, DMD, and EDMD
 
@@ -526,15 +567,99 @@ forcing, an observable, optional observable derivatives, and optional neutral fl
 direction. `evaluate_shadowing_candidate` evaluates one externally supplied tangent path
 and time-dilation path. It returns dynamic defects, boundary residual, neutral-direction
 inner products, quadrature weights, directional observable response, masks, and status.
-`least_squares_residual()` supplies the residual vector needed by least-squares shadowing
-or NILSS implementations. No optimization, regularization, segment preconditioner, or
-convergence claim is hidden behind this evaluation call.
+`least_squares_residual()` supplies the residual vector for an external optimizer. It
+does not invoke the native segmented NILSS implementation below, and it hides no
+optimization, regularization, segment preconditioner, or convergence claim.
 
 ::: phydrax.dynamics.analysis.ShadowingSensitivityProblem
 
 ::: phydrax.dynamics.analysis.evaluate_shadowing_candidate
 
 ::: phydrax.dynamics.analysis.ShadowingCandidateResult
+
+## Statistical dynamics, beta-plane CE2/GCE2, and NILSS
+
+`BarotropicBetaPlane` owns doubly periodic modal vorticity with
+`zeta = Laplacian(psi)`, velocity `(-psi_y, psi_x)`, exact quadratic dealiasing, and
+
+```text
+partial_t zeta
+  = -J(psi, zeta) - beta partial_x psi
+    - r zeta - nu (-Laplacian)^p zeta .
+```
+
+The zero mean-vorticity mode is removed. `BetaPlaneBudgets` reports energy/enstrophy
+rates, nonlinear invariants, Hermitian reality, finiteness, and success.
+
+`StatisticalDynamicsPlan` accepts finite real quadratic dynamics
+`x_dot = c + A x + B[x,x]`. CE2 is exact only for an explicitly selected
+quasilinear partition; GCE2 is exact only for generalized-quasilinear selection:
+
+```text
+m_dot = P_m(c + A m + B[m,m] + B:C)
+C_dot = J_e(m) C + C J_e(m)^* + Q .
+```
+
+The covariance equation is the exact ensemble second moment of that selected linear
+eddy equation, not a DNS equation with a silently dropped third cumulant. Generic plan
+construction rejects constant/linear/low-low leakage into the eddy subspace and every
+eddy-eddy-to-eddy quadratic tensor entry before it exposes `closure_exact=True`; a
+caller-supplied full nonlinear tensor cannot acquire exactness by label alone.
+Dense/factor cumulant execution reports Hermitian and PSD evidence and never repairs a
+failed covariance silently.
+
+`BetaPlaneCumulantSystem` converts admissible Hermitian modes to independent real
+coordinates, materializes the QL- or GQL-selected quadratic tensor only inside the
+corresponding `prepare` call, and enforces explicit dimension and byte caps.
+
+`NILSSPlan.prepare()` differentiates a supplied real fixed-step map and scalar
+objective, estimates retained/workspace memory, and freezes dynamics/objective IDs,
+parameters, direction, and unstable basis. `PreparedNILSS.solve()` propagates
+homogeneous and inhomogeneous tangents, enforces QR-equivalent segment continuity in
+one constrained dense least-squares solve, and reports the directional average,
+continuity residual, orthogonality defect, linear status, and success. It is not a set
+of independent perturbation scores and is not evidence of converged infinite-time
+sensitivity without horizon/segment refinement.
+
+`DistributedBatchLayout`, `DistributedCovarianceLayout`, and
+`DistributedRestartRelation` describe balanced logical shards and topology-changing
+redistribution with unchanged semantic layout. Their `shard`, `assemble`, and
+`redistribute_*` methods slice/concatenate caller arrays in process; they are metadata
+and restart algebra, not a multi-device or multi-host statistical solver.
+
+::: phydrax.statistical_dynamics.BarotropicBetaPlane
+
+---
+
+::: phydrax.statistical_dynamics.BetaPlaneCumulantSystem
+
+---
+
+::: phydrax.statistical_dynamics.StatisticalDynamicsPlan
+
+---
+
+::: phydrax.statistical_dynamics.PreparedStatisticalDynamics
+
+---
+
+::: phydrax.statistical_dynamics.NILSSPlan
+
+---
+
+::: phydrax.statistical_dynamics.PreparedNILSS
+
+---
+
+::: phydrax.statistical_dynamics.NILSSResult
+
+---
+
+::: phydrax.statistical_dynamics.DistributedStatisticalLayout
+
+---
+
+::: phydrax.statistical_dynamics.DistributedRestartRelation
 
 ## Interoperability and hard boundaries
 

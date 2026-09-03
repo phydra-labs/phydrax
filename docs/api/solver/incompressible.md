@@ -91,18 +91,18 @@ method forbids step reduction, including output alignment and robust retry reduc
 
 ## Structured finite-volume MAC dynamics and projection
 
-The constant-density projection supports iterative, uniform tensor-transform, and
-hybrid transform-line routes. Hybrid pressure is eligible only for a three-dimensional
-all-Neumann closure with one explicit nonperiodic physical line and two uniform
-transform-compatible transverse axes. Transverse analysis precedes the batched
-nonuniform tridiagonal line solves; synthesis is applied in reverse axis order.
-Preparation certifies physical-action identity and resource capacity.
+`MACPressureOperatorSpec` freezes the generalized action
+`A p = -D(beta G_h p)` with one positive coefficient, boundary preparation, optional
+static Robin traces, route request, resource bound, and geometry epoch. Uniform
+constant coefficients can use the exact tensor `transform` route; three-dimensional
+all-Neumann constant or line-structured coefficients can use exact `hybrid`.
+Execution of either direct route requires its matching prepared transform action.
 
-The all-zero transverse mode is volume-compatibility projected, uses one pinned row
-only in the factorization, and returns a volume-zero-mean pressure. A runtime
-inverse-momentum diagonal, variable density, mixed/open closure, or ineligible tensor
-uses the iterative route. There is no distributed hybrid line and no MAC
-fixed-bulk-flux controller.
+Symmetric general coefficients and mixed/Robin closures select PCG with a frozen
+constant preconditioner; stabilized nonsymmetric traction selects FGMRES. Preparation
+and execution expose distinct coefficient, lift, symmetry, derivative, resource,
+residual, gauge, and boundary-power evidence. `MACDistributedProjectionPlan` remains
+a separate collective matrix-free CG owner; no direct route silently gathers shards.
 
 
 ::: phydrax.discretization.MACOperatorPlan
@@ -159,6 +159,27 @@ fixed-bulk-flux controller.
 
 ::: phydrax.equations.MACStepRestriction
 
+::: phydrax.solver.MACPressureRobinSide
+
+---
+
+::: phydrax.solver.MACPressureOperatorSpec
+
+---
+
+::: phydrax.solver.PreparedMACPressureOperator
+
+---
+
+::: phydrax.solver.MACPressureSolveResult
+
+---
+
+::: phydrax.solver.MACWeightedPressureAction
+
+---
+
+
 ## Incompressible production and statistics
 
 `ProductionRunPlan` binds an `AbstractFixedStepMethod`--including prepared ETDRK,
@@ -188,8 +209,32 @@ exact step from prepared SBDF2 and requires its horizon, outputs, and statistics
 window on that lattice.
 `StructuredMACProductionPlan` binds a fixed-step method, compiled MAC dynamics, and
 `MACPlaneWallStatisticsPlan`; optional `MACConstantPressureGradientForcing` must
-already be compiled with the same identity and is not feedback control. Each route
-prepares a checkpoint root before initialization.
+already be compiled with the same identity. General feedback is instead owned by
+`MACFlowControlPlan`: prepared SSPRK, IMEX-Euler, or SBDF2 steps control a prescribed
+pressure gradient, bulk velocity, or frozen-density mass flux through a finite
+method-stage response map, with complete continuation state and atomic rollback.
+Each production route prepares a checkpoint root before initialization.
+
+::: phydrax.applications.incompressible_flow.MACFlowControlTarget
+
+---
+
+::: phydrax.applications.incompressible_flow.MACFlowControlPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedMACFlowControl
+
+---
+
+::: phydrax.applications.incompressible_flow.MACFlowControlState
+
+---
+
+::: phydrax.applications.incompressible_flow.MACFlowControlStepResult
+
+---
+
 
 ::: phydrax.applications.incompressible_flow.PeriodicSpectralProductionPlan
 
@@ -508,3 +553,42 @@ candidate is a universal DNS or distributed-support claim.
 ---
 
 ::: phydrax.solver.MarkerFlowQualificationPlan
+
+## Immersed candidate profile and admission
+
+`ImmersedDNSQualificationProfile` is an unsigned, unreleased candidate covering six
+exact owner regimes: prescribed MAC markers, free rigid MAC markers, fixed-topology
+sharp MAC, deformable/contact MAC, LBM body forcing, and resolved CFD–DEM. These
+support tuples are not interchangeable. In particular, sharp and LBM-body routes do
+not admit distributed execution, contact changes derivative scope, and owner-computes
+marker reductions do not imply a general distributed DNS profile.
+
+`ImmersedBodyRegimePlan` binds an already prepared numerical owner to marker, geometry,
+route, motion, and topology epochs. `ImmersedReferenceCampaignPlan` consumes measured
+reference evidence without executing another solve. `ImmersedRuntimeAdmissionPlan`
+then has a two-phase `prepare(preflight)` / `prepared.admit(runtime)` boundary for
+qualification, rank, conditioning, resources, derivative mode, ownership, epochs,
+support truncation, distributed reduction, gap regime, sharp certificate, and load
+provenance. Admission does not change or retry the owner route.
+
+::: phydrax.applications.incompressible_flow.ImmersedDNSQualificationProfile
+
+---
+
+::: phydrax.applications.incompressible_flow.ImmersedBodyRegimePlan
+
+---
+
+::: phydrax.applications.incompressible_flow.ImmersedReferenceCampaignPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.ImmersedRuntimeAdmissionPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedImmersedRuntimeAdmission
+
+---
+
+::: phydrax.applications.incompressible_flow.ImmersedRuntimeAdmissionResult
