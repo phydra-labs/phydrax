@@ -32,22 +32,22 @@ from ..discretization.finite_volume._mac_marker_transfer import (
     PreparedMACMarkerTransfer,
 )
 from ..linalg import (
-    BlockFactorizationPreconditionerBuilder,
     BlockLinearOperator,
     BlockSpace,
     DifferentiationPolicy,
     FunctionLinearOperator,
     GMRES,
-    JacobiPreconditionerBuilder,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
     OperatorProperties,
-    PreconditioningPolicy,
     RankPolicy,
     solve,
     svd as svd_linalg,
     TolerancePolicy,
+)
+from ._mac_immersed_preconditioner import (
+    MACImmersedPressureBlockPreconditionerPlan,
 )
 from ._mac_stage_inverse_general import (
     MACOperatorStageInverseMomentum,
@@ -112,6 +112,7 @@ class MACImmersedBoundaryProjectionResult(StrictModule):
     status: Array
     finite: Array
     converged: Array
+    pressure_block_preconditioner_id: str = eqx.field(static=True)
     projection_id: str = eqx.field(static=True)
 
     @property
@@ -128,6 +129,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
     constraint_length: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     linear_policy: LinearSolvePolicy
+    pressure_block_preconditioner: MACImmersedPressureBlockPreconditionerPlan
     maximum_rank_check_size: int = eqx.field(static=True)
     condition_limit: float = eqx.field(static=True)
     require_rank_certification: bool = eqx.field(static=True)
@@ -147,6 +149,9 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
+        pressure_block_preconditioner: (
+            MACImmersedPressureBlockPreconditionerPlan | None
+        ) = None,
         maximum_rank_check_size: int = 256,
         condition_limit: float = 1.0e10,
         require_rank_certification: bool = True,
@@ -185,21 +190,24 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             or iterations <= 0
         ):
             raise ValueError("Constraint length, tolerance, and iterations are invalid.")
+        block_preconditioner = (
+            MACImmersedPressureBlockPreconditionerPlan()
+            if pressure_block_preconditioner is None
+            else pressure_block_preconditioner
+        )
+        if not isinstance(
+            block_preconditioner, MACImmersedPressureBlockPreconditionerPlan
+        ):
+            raise TypeError(
+                "pressure_block_preconditioner must be an immersed pressure-block plan."
+            )
         policy = (
             LinearSolvePolicy(
                 GMRES(restart=min(50, iterations)),
                 tolerance=TolerancePolicy(
                     relative=tolerance_, absolute=tolerance_, max_steps=iterations
                 ),
-                preconditioning=PreconditioningPolicy(
-                    BlockFactorizationPreconditionerBuilder(
-                        JacobiPreconditionerBuilder(),
-                        JacobiPreconditionerBuilder(),
-                        "diagonal",
-                    ),
-                    side="right",
-                    refresh="numeric",
-                ),
+                preconditioning=block_preconditioner.policy(),
                 differentiation=DifferentiationPolicy("mathematical"),
             )
             if linear_policy is None
@@ -235,6 +243,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         self.constraint_length = length
         self.tolerance = tolerance_
         self.linear_policy = policy
+        self.pressure_block_preconditioner = block_preconditioner
         self.maximum_rank_check_size = rank_limit
         self.condition_limit = condition_limit_
         self.require_rank_certification = bool(require_rank_certification)
@@ -249,6 +258,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
                 "maximum_rank_check_size": rank_limit,
                 "condition_limit": condition_limit_,
                 "require_rank_certification": bool(require_rank_certification),
+                "pressure_block_preconditioner": block_preconditioner.plan_id,
             }
         )
 
@@ -690,6 +700,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             status=status,
             finite=finite,
             converged=converged,
+            pressure_block_preconditioner_id=(self.pressure_block_preconditioner.plan_id),
             projection_id=self.plan_id,
         )
 

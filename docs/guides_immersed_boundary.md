@@ -196,22 +196,51 @@ schedule, or state-shape export.
 `MarkerFlowOutputPlan` writes accepted HDF5/XDMF time series and optional VTK point
 snapshots for Eulerian, marker, rigid, deformable, contact, and diagnostic fields.
 
-`MarkerFlowQualificationPlan` gates divergence/slip, force/torque/work/energy,
-spatial/temporal order, stochastic covariance, interface, lubrication/contact, and
-replay evidence. A method is production-qualified only after its profile passes
-independent refinement, conservation, failure-injection, and reproducibility runs.
+`MarkerFlowQualificationPlan` reports route-local divergence/slip,
+force/torque/work/energy, order, covariance, interface, lubrication/contact, and replay
+evidence. It does not publish a release. `ImmersedDNSQualificationProfile` is the
+current unsigned candidate envelope; its nested `CapabilityProfile` and the profile
+itself both retain `released=False`.
 
-## Method scope
+## Candidate regimes and runtime admission
 
-| Family | Implemented scope | Qualification state |
-| --- | --- | --- |
-| Regularized prescribed markers | 2-D/3-D, uniform/nonuniform Cartesian, physical boundaries, true stage inverse | production baseline; requalification required for a new kernel/coefficient policy |
-| Rigid accepted-time coupling | free bodies, midpoint/backward Euler, joints, hard contact, lubrication adapter | implemented; case-specific convergence/contact qualification required |
-| Deformable accepted-time coupling | FE marker map, nonlinear implicit structure, injected native contact residual | implemented; structural-model qualification required |
-| Mapped/ALE/remesh | mapped normal-face operators, accepted geometry, GCL/remesh contracts, mapped marker transfer | implemented; mapping-specific GCL and convergence qualification required |
-| AMR/distributed/topology epochs | finest-owner transfer, composite projection contract, owner-computes exchange, conservative epoch transfer | implemented; backend scaling and hierarchy qualification required |
-| Sharp cut-cell | qualified fixed-topology fluid measures, component-aware compatible projection, pressure jump, optional qualified traction, moving-epoch refresh | implemented substrate; each geometry realization and coupled FLIP/VOF profile requires independent measure/conservation qualification |
-| Stochastic inertial/FIB | factored fluctuating forcing, inertial update, overdamped mobility square root and drift | implemented; equilibrium/FDT statistical qualification required |
+| Candidate support tuple | Numerical owner and boundary |
+| --- | --- |
+| Prescribed marker | MAC pressure–marker KKT, prescribed motion, fixed marker identities, marker-reaction loads, fixed-route JVP/VJP |
+| Free rigid marker | Simultaneous fluid/rigid/marker KKT, optional hard contact, marker loads, fixed-route JVP/VJP only without active contact |
+| Fixed-topology sharp | Qualified absolute cut-cell measures, pressure/viscous traction, fixed active topology, fixed-topology JVP/VJP, no distributed admission |
+| Deformable/contact | Accepted-time monolithic FSI with explicit contact state and optional lubrication; derivatives only on fixed routes without active contact |
+| LBM body | Iterated direct forcing and its force ledger, fixed marker count, no derivative or distributed admission |
+| Resolved CFD–DEM | MAC penalty markers plus soft-sphere contact/lubrication ledgers, fixed-capacity contact graph, no derivative admission |
+
+`ImmersedBodyRegimePlan` never evaluates these owners. It binds the already prepared
+owner to exact marker, geometry, route, topology, motion, and geometry-epoch identities,
+plus an optional `DistributedMACMarkerTransfer` and lubrication policy where admitted.
+Its gap classifier only labels resolved-grid, lubrication, contact, or inadmissible
+separations; it does not apply a force.
+
+`ImmersedReferenceCampaignPlan` consumes measured reference values for the named
+manufactured-load, cylinder, sphere, added-mass, settling, flexible-contact, and sharp
+cases without rerunning a flow solve. `ImmersedRuntimeAdmissionPlan` then separates
+preflight from use:
+
+```python
+admission = phx.applications.incompressible_flow.ImmersedRuntimeAdmissionPlan(
+    profile,
+    regime,
+    maximum_resource_bytes=resource_limit,
+    derivative_mode="none",
+)
+prepared_admission = admission.prepare(preflight_evidence)
+decision = prepared_admission.admit(runtime_evidence)
+```
+
+Preflight gates campaign evidence, owner identity, marker rank and condition, memory,
+and derivative scope. Runtime admission additionally gates all epochs, route,
+untruncated support, distributed force/work reductions, gap classification, sharp
+certificate, frozen differentiation routes, and optional load provenance. Nothing
+falls back to another immersed owner. Owner-computes marker transfer is an explicit
+reduction path, not a claim of arbitrary multi-device or multi-host DNS support.
 
 ## Failure semantics
 

@@ -67,6 +67,9 @@ from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
 
+# Closure-data and statistical-dynamics packages depend on loaded numerical substrates.
+from . import closure_data, statistical_dynamics
+
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
 
@@ -78,6 +81,7 @@ __all__ = [
     "applications",
     "backends",
     "combinatorial",
+    "closure_data",
     "circuit",
     "conditions",
     "control",
@@ -122,6 +126,7 @@ __all__ = [
     "special",
     "solver",
     "stochastic",
+    "statistical_dynamics",
     "uq",
     "variational",
     "tensor_network",

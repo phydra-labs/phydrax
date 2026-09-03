@@ -155,3 +155,138 @@ The fixed discrete program is differentiable. Hard limiter decisions, HLL/HLLD w
 regions, fallback masks, positivity activation, table intervals, particle routes, and
 schedule validity are branchwise. Failed transport, elliptic, nonlinear, or stochastic
 primals do not define valid gradients.
+
+## Compressible-flow candidate ownership
+
+`phydrax.applications.compressible_flow` is the application facade for the current
+smooth and shock-resolving compressible candidates. `CompressibleFlowCaseSpec` binds
+dimension, Euler or Navier–Stokes physics, route, one canonical
+`HomogeneousHelmholtzPlan`, reference scales, density/pressure floors, thermal solve
+capacity, and an optional finite-x boundary-layer case independently of a
+discretization. Its `fidelity="dns-candidate"` value is a candidate identity:
+`claims_dns` remains false.
+
+The canonical all-species state is
+
+```text
+U = (rho_1, ..., rho_S, rho u_1, ..., rho u_d, rho E),
+rho = sum_s rho_s .
+```
+
+Primitive state is `(rho_1, ..., rho_S, u_1, ..., u_d, T)`.
+`ChemicalComponentCatalog`, phase-specific `ChemicalSpeciesSchema` with explicit gas
+standard pressure, species calorics, `IdealGasReferenceHelmholtzTerm`, and an ideal or
+residual Helmholtz term form one model identity. `HomogeneousMixtureEulerSystem` and
+`HomogeneousMixtureCompressibleNavierStokesSystem` delegate pressure, temperature,
+entropy, frozen-composition sound speed, state recovery, characteristics, and transport
+calorics to that model. Peng–Robinson roots, stability, and flash remain separate
+solver-owned equilibrium operations; they are never selected inside an Euler flux.
+
+### Smooth, all-speed, and shock routes
+
+`SmoothCompressibleProductionPlan` owns tensor DGSEM split volume flux, system-specific
+sampled entropy compatibility evidence, and entropy-BR1 viscosity.
+`NodalDGCompressibleProductionPlan` is a separate overintegrated nodal-DG route with
+LDG traces; evidence from one is not evidence for the other. Both bind prepared spatial
+dynamics through `prepare_explicit`, while the tensor route can bind an already
+constructed additive IMEX method through `prepare_imex`.
+
+`StructuredFVCompressibleProductionPlan` owns structured or mapped high-resolution
+finite volume with WENO-Z, TENO, or MP5 reconstruction and stage positivity.
+`ShockAwareAllSpeedFluxPlan` is the primary interface flux. Its
+`AllSpeedHLLFluxPlan` scales the HLL dissipative acoustic half-width with relative
+Mach, including ALE grid velocity, and uses the symmetric central limit when the
+scaled wave width is zero. `NumericalFluxResult.max_speed` retains the unscaled
+physical acoustic bound used by FV timestep admission. A pressure-jump sensor,
+inadmissible state, or nonfinite primary flux selects the canonical arbitrary-normal
+HLL fallback and records that decision. Stage positivity uses the same fallback.
+This remains a numerical shock model, never a hidden fallback or a smooth-DNS
+fidelity claim.
+
+```python
+from phydrax.applications import compressible_flow as cflow
+
+case = cflow.CompressibleFlowCaseSpec(
+    "channel-candidate",
+    3,
+    "navier_stokes",
+    "structured-fv",
+    homogeneous_thermodynamics,
+    fidelity="dns-candidate",
+)
+shock = cflow.ShockResolvingPolicy(
+    "weno_z",
+    all_speed=cflow.AllSpeedCompressiblePolicy(reference_mach=0.2),
+)
+route = cflow.StructuredFVCompressibleProductionPlan(
+    "structured",
+    shock=shock,
+)
+production = route.prepare_explicit(prepared_fv_dynamics)
+step_result = production.step(step_index, time, state, step_size, runtime_args)
+```
+
+The FV dynamics in the example must have been prepared with `route.method`;
+`prepare_explicit` checks that identity. `PreparedCompressibleProduction.checkpoint`
+binds method, route, topology, time, step, tree structure, and content. `restore`
+requires the same topology identity. These application assemblies are local fixed-step
+owners; distributed execution and topology-changing restart require separate exact
+plans and evidence.
+
+`CharacteristicNonreflectingBoundaryPlan` freezes incoming characteristics to a far
+field and passes outgoing waves. `CompressibleSpongePlan` relaxes conserved variables
+with mass, momentum, energy, and entropy ledgers. `FiniteXBoundaryLayerCaseSpec` owns
+finite streamwise extent, inflow, characteristic outflow, and no-slip thermal or
+adiabatic wall semantics; it is distinct from the slow-growth model below.
+
+## Slow-growth source model
+
+`CompressiblePlaneBaseflowPlan.evaluate()` forms one immutable,
+Favre-consistent wall-normal baseflow snapshot from homogeneous-plane statistics. A
+temporal model prepares the primitive source
+
+```text
+S_q^temporal(y) = -g (y - y_0) partial_y q_bar(y),
+```
+
+while `SpatialSlowGrowthModelPlan` prepares the explicitly modeled spatial source
+
+```text
+S_q^modeled-spatial(y) = -U_c partial_x q_bar(y).
+```
+
+The spatial form requires the caller to supply `streamwise_base_derivative` in the
+snapshot; it does not compute a finite-x streamwise solution. Both plans can impose
+declared displacement/momentum-thickness rates and adiabatic or isothermal wall source
+conditions. Conversion to conservative mass, momentum, total-energy, internal-energy,
+temperature, and entropy rates is exposed with algebraic, wall, integral, energy, and
+entropy evidence.
+
+```python
+baseflow = cflow.CompressiblePlaneBaseflowPlan(
+    case,
+    wall_normal_coordinates,
+    wall_normal_axis=1,
+)
+snapshot = baseflow.evaluate(conserved, sample_index=accepted_step)
+continuation = cflow.SlowGrowthContinuation(snapshot)
+source = cflow.TemporalSlowGrowthModelPlan(growth_rate).prepare(
+    snapshot,
+    continuation=continuation,
+)
+evaluation = source.evaluate(conserved)
+comparison = source.compare_finite_x(
+    conserved,
+    finite_x_reference_source,
+    reference_id="finite-x-reference",
+    relative_tolerance=0.05,
+)
+```
+
+One `PreparedSlowGrowthSource` is frozen before the parent step and reused unchanged by
+every RK or IMEX stage. `SlowGrowthContinuation.accept()` advances only with a new
+snapshot from the same baseflow plan; `reject()` preserves the exact parent snapshot
+and continuation identity. `compare_finite_x` reports L2, relative L2, maximum error,
+the admission threshold, and `admitted`; both the prepared model and comparison retain
+`claims_spatial_dns=False`. Supplied finite-x data are external evidence, not a
+fidelity relabel.

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from phydrax.lifecycle import (
         AnalysisPlan,
         ExecutionPlan,
+        ResolvedRunSpec,
         RunRecord,
     )
 
@@ -267,6 +268,7 @@ class JobSubmission:
     secret_handles: tuple[SecretHandle, ...] = ()
     retention_seconds: int = 86_400
     request_id: str = ""
+    resolved_run_spec: ResolvedRunSpec | None = None
     request_digest: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -286,6 +288,14 @@ class JobSubmission:
         handles = tuple(self.secret_handles)
         if len({handle.handle_id for handle in handles}) != len(handles):
             raise ValueError("Secret handles must be unique within a submission.")
+        resolved_run_spec = self.resolved_run_spec
+        if resolved_run_spec is not None:
+            if not hasattr(resolved_run_spec, "spec_id"):
+                raise TypeError("resolved_run_spec must be a ResolvedRunSpec.")
+            if self.profile_id not in resolved_run_spec.profile_ids:
+                raise ValueError(
+                    "Submission profile must be exactly bound by resolved_run_spec."
+                )
         parameters = _canonical_parameters(self.parameters)
         request_id = self.request_id.strip()
         digest_payload = {
@@ -299,8 +309,21 @@ class JobSubmission:
                 "memory_bytes": self.resources.memory_bytes,
                 "gpu_count": self.resources.gpu_count,
             },
-            "secret_handle_ids": [handle.handle_id for handle in handles],
+            "secret_handles": [
+                {
+                    "created_at": handle.created_at,
+                    "expires_at": getattr(handle, "expires_at", None),
+                    "handle_id": handle.handle_id,
+                    "key_version": handle.key_version,
+                    "scopes": sorted(getattr(handle, "scopes", ())),
+                    "tenant_id": handle.tenant_id,
+                }
+                for handle in handles
+            ],
             "retention_seconds": self.retention_seconds,
+            "resolved_run_spec_id": (
+                None if resolved_run_spec is None else resolved_run_spec.spec_id
+            ),
         }
         digest = hashlib.sha256(
             json.dumps(

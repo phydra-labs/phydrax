@@ -258,30 +258,37 @@ face contributions remain separate until conservative divergence.
 ## Incompressible projection
 
 `MACOperatorPlan` prepares geometry-only normal-face velocity and cell-pressure
-operators. `PreparedMACOperators` owns the compatible divergence, gradient,
-constant/variable-coefficient pressure actions, volume gauge, coefficient
-interpolation, weighted-adjoint evidence, and transform eligibility.
+operators. `PreparedMACOperators` owns compatible divergence and gradient, the volume
+gauge, coefficient interpolation, weighted-adjoint evidence, and transform eligibility.
+`MACPressureOperatorSpec` adds the frozen closure-aware action
+`A p = -D(beta G_h p)`, where the strictly positive cell coefficient is interpolated
+once to faces. Static Robin sides impose `alpha p + beta_r dp/dn = value`; wall,
+inflow, outlet, and stabilized traction semantics still come from the same
+`MACBoundaryPlan`.
 
-`phydrax.solver.MACPressureProjectionPlan` owns closure-aware pressure execution.
-The constant-density, constant inverse-momentum path chooses among three explicit
-routes. A fully uniform periodic/Neumann tensor may use the transform-diagonal
-route after an independent physical-action identity check. The `hybrid` route is
-three-dimensional and all-Neumann: the caller names one explicitly nonperiodic
-physical line, the other two axes must be uniform and transform-compatible, and
-preparation certifies the transform-plus-line action against the MAC positive
-Laplacian. Transverse axes are transformed in tensor-axis order, one nonuniform
-tridiagonal Neumann line is solved per transverse mode, and synthesis reverses the
-transform order.
+`spec.prepare()` certifies positivity/contrast, linearity, symmetry when applicable,
+affine boundary lift, JVP/VJP consistency, resource capacity, coefficient identity,
+and geometry epoch. `prepared.solve(...)` then returns the candidate, committed value,
+compatible right-hand side, residual, gauge defect, boundary power, convergence
+evidence, and the selected route. Frozen coefficient or geometry changes require a new
+preparation.
 
-For the single all-zero transverse mode, the hybrid route volume-projects the
-right-hand side, pins one line row only for factorization, then removes the
-volume-weighted pressure mean. The result reports compatibility defect, gauge defect,
-physical residual, factor evidence, resource counts, selected line axis, and
-action-identity defect. General positive coefficients, a runtime
-`inverse_momentum_diagonal`, variable density, mixed/open pressure closure, or an
-ineligible tensor use the prepared iterative route. Neither the hybrid pressure line
-nor the spectral channel line exposes a distributed line solve or communication
-path; the acted-on physical line must remain locally available.
+The direct routes remain exact representations, not generic sparse direct solvers.
+Uniform constant-coefficient periodic/Neumann tensors may select `transform`; a
+three-dimensional all-Neumann operator with a named nonperiodic line and constant or
+line-structured coefficient may select `hybrid`. Their zero mode compatibility-projects
+the right-hand side, pins one line row only in factorization, and returns a
+volume-zero-mean pressure. Execution requires the matching prepared transform action
+through `direct_solve`; there is no hidden dense solve.
+
+All other symmetric positive actions—including general positive coefficients and
+Robin or mixed closures—select native PCG with a frozen positive constant
+preconditioner. Stabilized nonsymmetric traction selects FGMRES without pretending the
+preconditioner is an exact inverse. Distributed projection is a separate collective
+PCG owner. `StructuredSolveTopologyPlan` and `DistributedLineSolvePlan` expose
+partition-aware line algorithms (`partitioned-thomas`, `spike`, or power-of-two
+balanced `pcr`), but they operate on caller-provided arrays and do not add a
+multi-device transport layer to the MAC hybrid route.
 
 ### Runtime liquid masks and atmospheric pressure
 
@@ -342,21 +349,59 @@ compiled = phx.equations.compile_mac_incompressible_flow(
 initial_state = compiled.project_state(face_velocity)
 ```
 
+For a generalized coefficient, prepare the operator separately from execution:
+
+```python
+pressure_operator = phx.solver.MACPressureOperatorSpec(
+    mac,
+    inverse_momentum,
+    boundaries=boundaries,
+    solve_method="iterative",
+).prepare()
+pressure_result = pressure_operator.solve(pressure_rhs)
+```
+
+Use `solve_method="direct"`, `"transform"`, or `"hybrid"` only when preparation
+accepts that exact representation, and pass its prepared transform solve as
+`direct_solve` at execution.
+
 `compile_mac_incompressible_flow` projects every temporal rate and exposes physical
 pressure, energy, boundary, divergence, residual, gauge, and step-restriction
 evidence. Explicit SSPRK, implicit-diffusion `MACIMEXEulerMethod`, and fixed-step
 `MACSBDF2Method` consume the same compiled state. `MACHelmholtzSolvePlan` supports
 iterative, certified uniform-transform, and resource-gated transform-line routes.
 
-MAC has no controller that adjusts a body force or pressure gradient to maintain a
-target bulk flux. `normal-flux` is a prescribed boundary condition, not a fixed-flux
-flow controller. Channel `ChannelMeanConstraint("bulk_flux", ...)` is a separate
-spectral zero-mode contract and does not transfer to MAC.
+`MACFlowControlTarget` distinguishes prescribed pressure gradient, volume-weighted
+bulk velocity, and frozen-density mass flux. The last freezes one positive density
+field into both its observable and its acceleration for the complete response map; it
+is not evolving variable-density control. Constant targets receive content identities,
+while callable schedules require `schedule_id`.
 
-`MACConstantPressureGradientForcing` is a fixed compiler-space acceleration
-`-pressure_gradient / density` on each face component. It has no feedback state.
-When supplied to `StructuredMACProductionPlan`, the compiled dynamics must already
-bind the same forcing identity; the production plan never inserts or retunes it.
+`MACFlowControlPlan(method, target).prepare()` accepts compiled MAC SSPRK,
+IMEX-Euler, or fixed-step SBDF2 methods. For bulk velocity or frozen-density mass flux,
+each attempted step evaluates the zero-control and unit-control method-stage maps,
+solves the finite dense response system, and rejects rank loss, poor conditioning,
+resource excess, response mismatch, boundary/projection/pressure residuals, or a
+failed underlying method. `PreparedMACFlowControl.initialize(...)` creates complete
+checkpoint state and `step(...)` atomically commits or rolls back it. Prescribed
+pressure-gradient targets bypass feedback but retain the same acceptance diagnostics.
+
+```python
+target = phx.applications.incompressible_flow.MACFlowControlTarget.bulk_velocity(
+    [1.0],
+    axes=(0,),
+)
+controller = phx.applications.incompressible_flow.MACFlowControlPlan(
+    fixed_step_method,
+    target,
+).prepare()
+control_state = controller.initialize(start_time, initial_state)
+control_step = controller.step(control_state, step_size=step_size)
+```
+
+`MACConstantPressureGradientForcing` remains the simpler fixed compiler-space
+acceleration `-pressure_gradient / density`; it has no feedback state and
+`StructuredMACProductionPlan` never inserts or retunes it.
 
 `MACPlaneWallStatisticsPlan` is an instantaneous raw-statistics route for a two- or
 three-dimensional MAC grid with one nonperiodic wall axis and periodic homogeneous
