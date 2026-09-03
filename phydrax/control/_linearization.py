@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
-from ..dynamics import DiscreteStepContext
+from ..dynamics._system import ContinuousSystem, DiscreteStepContext, DiscreteSystem
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 
 
@@ -172,37 +172,45 @@ def _linearize(
     def evaluate_dynamics(t, target_t, index, flat_state, flat_control):
         state_value = flat_state.reshape(state_shape)
         control_value = flat_control.reshape(control_shape)
-        value = (
-            system.evaluate(
+        if system_type == "discrete":
+            assert isinstance(system, DiscreteSystem)
+            result = system.evaluate_result(
                 DiscreteStepContext(t, target_t, index),
                 state_value,
                 args,
                 inputs=control_value,
             )
-            if system_type == "discrete"
-            else system.evaluate(
+            value = jnp.where(
+                result.successful,
+                result.accepted_state,
+                jnp.full_like(result.accepted_state, jnp.nan),
+            )
+            successful = result.successful
+        else:
+            assert isinstance(system, ContinuousSystem)
+            value = system.evaluate(
                 t,
                 state_value,
                 args,
                 inputs=control_value,
             )
-        )
+            successful = jnp.asarray(True)
         array = _inexact(value)
         if array.shape != state_shape:
             raise ValueError(
                 f"Control dynamics output must have shape {state_shape}; got {array.shape}."
             )
-        return array.reshape((state_size,))
+        return array.reshape((state_size,)), successful
 
-    dynamics_value = jax.vmap(evaluate_dynamics)(
+    dynamics_value, dynamics_successful = jax.vmap(evaluate_dynamics)(
         flat_times,
         flat_target_times,
         flat_step_indices,
         flat_states,
         flat_controls,
     )
-    state_matrix, control_matrix = jax.vmap(
-        jax.jacfwd(evaluate_dynamics, argnums=(3, 4))
+    (state_matrix, control_matrix), differentiated_successful = jax.vmap(
+        jax.jacfwd(evaluate_dynamics, argnums=(3, 4), has_aux=True)
     )(
         flat_times,
         flat_target_times,
@@ -278,6 +286,7 @@ def _linearize(
         output_offset,
     )
     valid = jnp.ones((case_count,), dtype=bool)
+    valid = valid & dynamics_successful & differentiated_successful
     for part in finite_parts:
         valid = valid & jnp.all(jnp.isfinite(part.reshape((case_count, -1))), axis=-1)
 
@@ -385,6 +394,10 @@ def linearize_control_dynamics(
     """Dispatch to the matching discrete or differential linearization."""
 
     if isinstance(dynamics, DiscreteControlDynamics):
+        if target_time is None or step_index is None:
+            raise ValueError(
+                "Discrete linearization requires target_time and step_index."
+            )
         return linearize_discrete_dynamics(
             dynamics,
             time,

@@ -123,6 +123,53 @@ def test_exact_boundary_continuity_path_and_terminal_defect_accounting():
     )
 
 
+def test_multiple_shooting_rejects_explicit_finite_rollback_segments():
+    failure_status = 67
+
+    def transition(context, state, control, args):
+        del context, args
+        return phx.dynamics.DiscreteTransitionResult(
+            state + control + 100.0,
+            state,
+            jnp.asarray(False),
+            jnp.asarray(failure_status, dtype=jnp.int32),
+        )
+
+    grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 1.0]),
+        time_id="multiple-shooting-finite-rollback",
+    )
+    dynamics = make_discrete_control_dynamics(
+        transition,
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="multiple-shooting-finite-rollback-dynamics",
+    )
+    problem = phx.control.ControlProblem(
+        dynamics,
+        grid,
+        jnp.asarray([2.0]),
+        running_cost=lambda time, state, control, args: control[0] ** 2,
+        problem_id="multiple-shooting-finite-rollback-problem",
+    )
+    states = jnp.asarray([[2.0], [2.0]])
+    controls = jnp.asarray([[1.0]])
+
+    local = phx.control.linearize_multiple_shooting(problem, states, controls)
+    np.testing.assert_array_equal(local.integration_valid, jnp.asarray([False]))
+    np.testing.assert_allclose(local.continuity_defects, jnp.asarray([[0.0]]))
+
+    result = phx.control.solve_multiple_shooting(
+        problem,
+        states,
+        controls,
+        max_iterations=1,
+    )
+    assert result.status == phx.control.MULTIPLE_SHOOTING_INTEGRATION_FAILED
+    assert result.last_qp_result is None
+    assert not bool(result.valid)
+
+
 def test_nonlinear_constrained_problem_converges_without_projection_or_repair():
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.0]), time_id="multiple-shooting-nonlinear"

@@ -22,6 +22,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..dynamics import DiscreteStepContext, TimeGrid
+from ..dynamics._system import DiscreteTransitionEvidence
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
@@ -393,11 +394,16 @@ def _flow_map(
             control: Array,
         ) -> Array:
             context = DiscreteStepContext(t0, t1, step_index)
-            return dynamics.system.evaluate(
+            result = dynamics.system.evaluate_result(
                 context,
                 state,
                 problem.args,
                 inputs=control,
+            )
+            return jnp.where(
+                result.successful,
+                result.accepted_state,
+                jnp.full_like(result.accepted_state, jnp.nan),
             )
 
         return discrete_step, problem.time_grid.time_id, "backend:jax:discrete-flow-jvp"
@@ -463,42 +469,95 @@ def _trajectory_cost(
     return total, valid
 
 
+def _evaluate_ilqr_flow(
+    problem: ControlProblem,
+    flow: ILQRFlow,
+    step: int,
+    state: Array,
+    control: Array,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    time = problem.time_grid.times[step]
+    target_time = problem.time_grid.times[step + 1]
+    step_index = jnp.asarray(step, dtype=jnp.int32)
+    if isinstance(problem.dynamics, DiscreteControlDynamics):
+        result = problem.dynamics.system.evaluate_result(
+            DiscreteStepContext(time, target_time, step_index),
+            state,
+            problem.args,
+            inputs=control,
+        )
+        return (
+            result.candidate_state,
+            result.accepted_state,
+            result.successful,
+            result.status,
+        )
+    value = jnp.asarray(flow(time, target_time, step_index, state, control))
+    return (
+        value,
+        value,
+        jnp.asarray(True),
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+
+
 def _open_loop_rollout(
     problem: ControlProblem,
     controls: Array,
     flow: ILQRFlow,
     /,
-) -> tuple[Array, Array, Array, Array, Array]:
+) -> tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    DiscreteTransitionEvidence | None,
+]:
     states: list[Array] = [problem.initial_state]
     valid: list[Array] = [jnp.all(jnp.isfinite(problem.initial_state))]
+    candidates: list[Array] = []
+    accepted: list[Array] = []
+    transition_successful: list[Array] = []
+    transition_status: list[Array] = []
     failed_step = -1
     active = _host_bool(valid[0])
     for step in range(problem.time_grid.num_steps):
         if active:
-            next_state = jnp.asarray(
-                flow(
-                    problem.time_grid.times[step],
-                    problem.time_grid.times[step + 1],
-                    jnp.asarray(step, dtype=jnp.int32),
-                    states[-1],
-                    controls[step],
-                )
+            candidate, next_state, successful, backend_status = _evaluate_ilqr_flow(
+                problem,
+                flow,
+                step,
+                states[-1],
+                controls[step],
             )
             if tuple(next_state.shape) != problem.state_shape:
                 raise ValueError(
                     "The selected iLQR flow must return exactly dynamics state_shape."
                 )
-            next_valid = jnp.all(jnp.isfinite(controls[step])) & jnp.all(
-                jnp.isfinite(next_state)
+            next_valid = (
+                jnp.all(jnp.isfinite(controls[step]))
+                & successful
+                & jnp.all(jnp.isfinite(next_state))
             )
             active = _host_bool(next_valid)
             if not active:
                 failed_step = step
         else:
+            candidate = jnp.full(
+                problem.state_shape, jnp.nan, dtype=problem.initial_state.dtype
+            )
             next_state = jnp.full(
                 problem.state_shape, jnp.nan, dtype=problem.initial_state.dtype
             )
+            successful = jnp.asarray(False)
+            backend_status = jnp.asarray(0, dtype=jnp.int32)
             next_valid = jnp.asarray(False)
+        candidates.append(candidate)
+        accepted.append(next_state)
+        transition_successful.append(successful)
+        transition_status.append(backend_status)
         states.append(next_state)
         valid.append(next_valid)
     state_array = jnp.stack(states)
@@ -510,12 +569,23 @@ def _open_loop_rollout(
         cost_valid = jnp.asarray(False)
     if not _host_bool(cost_valid):
         objective = jnp.asarray(jnp.inf, dtype=state_array.real.dtype)
+    evidence = (
+        DiscreteTransitionEvidence(
+            jnp.stack(candidates),
+            jnp.stack(accepted),
+            jnp.stack(transition_successful),
+            jnp.stack(transition_status),
+        )
+        if isinstance(problem.dynamics, DiscreteControlDynamics)
+        else None
+    )
     return (
         state_array,
         controls,
         valid_array,
         objective,
         jnp.asarray(failed_step, dtype=jnp.int32),
+        evidence,
     )
 
 
@@ -528,12 +598,23 @@ def _feedback_rollout(
     step_size: float,
     flow: ILQRFlow,
     /,
-) -> tuple[Array, Array, Array, Array, Array]:
+) -> tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    DiscreteTransitionEvidence | None,
+]:
     state_size = int(np.prod(problem.state_shape))
     control_size = int(np.prod(problem.control_shape))
     states: list[Array] = [problem.initial_state]
     controls: list[Array] = []
     valid: list[Array] = [jnp.all(jnp.isfinite(problem.initial_state))]
+    candidates: list[Array] = []
+    accepted: list[Array] = []
+    transition_successful: list[Array] = []
+    transition_status: list[Array] = []
     failed_step = -1
     active = _host_bool(valid[0])
     for step in range(problem.time_grid.num_steps):
@@ -546,21 +627,21 @@ def _feedback_rollout(
                 + step_size * feedforward[step]
                 + feedback[step] @ state_delta
             ).reshape(problem.control_shape)
-            next_state = jnp.asarray(
-                flow(
-                    problem.time_grid.times[step],
-                    problem.time_grid.times[step + 1],
-                    jnp.asarray(step, dtype=jnp.int32),
-                    states[-1],
-                    control,
-                )
+            candidate, next_state, successful, backend_status = _evaluate_ilqr_flow(
+                problem,
+                flow,
+                step,
+                states[-1],
+                control,
             )
             if tuple(next_state.shape) != problem.state_shape:
                 raise ValueError(
                     "The selected iLQR flow must return exactly dynamics state_shape."
                 )
-            next_valid = jnp.all(jnp.isfinite(control)) & jnp.all(
-                jnp.isfinite(next_state)
+            next_valid = (
+                jnp.all(jnp.isfinite(control))
+                & successful
+                & jnp.all(jnp.isfinite(next_state))
             )
             active = _host_bool(next_valid)
             if not active:
@@ -569,11 +650,20 @@ def _feedback_rollout(
             control = jnp.full(
                 problem.control_shape, jnp.nan, dtype=nominal_controls.dtype
             )
+            candidate = jnp.full(
+                problem.state_shape, jnp.nan, dtype=nominal_states.dtype
+            )
             next_state = jnp.full(
                 problem.state_shape, jnp.nan, dtype=nominal_states.dtype
             )
+            successful = jnp.asarray(False)
+            backend_status = jnp.asarray(0, dtype=jnp.int32)
             next_valid = jnp.asarray(False)
         controls.append(control)
+        candidates.append(candidate)
+        accepted.append(next_state)
+        transition_successful.append(successful)
+        transition_status.append(backend_status)
         states.append(next_state)
         valid.append(next_valid)
     state_array = jnp.stack(states)
@@ -586,12 +676,23 @@ def _feedback_rollout(
         cost_valid = jnp.asarray(False)
     if not _host_bool(cost_valid):
         objective = jnp.asarray(jnp.inf, dtype=state_array.real.dtype)
+    evidence = (
+        DiscreteTransitionEvidence(
+            jnp.stack(candidates),
+            jnp.stack(accepted),
+            jnp.stack(transition_successful),
+            jnp.stack(transition_status),
+        )
+        if isinstance(problem.dynamics, DiscreteControlDynamics)
+        else None
+    )
     return (
         state_array,
         control_array,
         valid_array,
         objective,
         jnp.asarray(failed_step, dtype=jnp.int32),
+        evidence,
     )
 
 
@@ -866,9 +967,14 @@ def solve_ilqr(
     if not jnp.issubdtype(controls.dtype, jnp.inexact):
         controls = controls.astype(float)
     flow, discretization_id, backend_id = _flow_map(problem, differential_flow)
-    states, controls, valid, objective, failed_step = _open_loop_rollout(
-        problem, controls, flow
-    )
+    (
+        states,
+        controls,
+        valid,
+        objective,
+        failed_step,
+        transition_evidence,
+    ) = _open_loop_rollout(problem, controls, flow)
 
     objective_history: list[Array] = [objective]
     gradient_history: list[Array] = []
@@ -926,6 +1032,7 @@ def solve_ilqr(
                     candidate_valid,
                     candidate_cost,
                     candidate_failure,
+                    candidate_evidence,
                 ) = _feedback_rollout(
                     problem,
                     states,
@@ -958,6 +1065,7 @@ def solve_ilqr(
                     controls = candidate_controls
                     valid = candidate_valid
                     objective = candidate_cost
+                    transition_evidence = candidate_evidence
                     objective_history.append(objective)
                     step_history.append(jnp.asarray(step_size, dtype=objective.dtype))
                     expected_history.append(expected_reduction)
@@ -999,13 +1107,19 @@ def solve_ilqr(
         CONTROL_SUCCESS if _host_bool(jnp.all(valid)) else CONTROL_DYNAMICS_FAILED,
         dtype=jnp.int32,
     )
+    trajectory_backend_status = (
+        transition_evidence.first_failure_status
+        if transition_evidence is not None
+        else trajectory_status
+    )
     trajectory = ControlTrajectory(
         time_grid=problem.time_grid,
         states=states,
         controls=controls,
         valid=valid,
         status=trajectory_status,
-        backend_status=trajectory_status,
+        backend_status=trajectory_backend_status,
+        transition_evidence=transition_evidence,
         case_shape=(),
         state_shape=problem.state_shape,
         control_shape=problem.control_shape,

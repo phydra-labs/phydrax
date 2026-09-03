@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -21,7 +22,11 @@ from ..dynamics import (
     EvolutionTangentStep,
     StateLayout,
 )
-from ..dynamics._system import DiscreteStepContext
+from ..dynamics._system import (
+    DiscreteStepContext,
+    DiscreteTransitionEvidence,
+    DiscreteTransitionResult,
+)
 
 
 HERMITIAN_COORDINATE_INVALID = -1
@@ -46,10 +51,49 @@ class _HermitianDiscreteTransition(StrictModule):
         context: DiscreteStepContext,
         values: Array,
         args: Any,
-    ) -> Array:
+    ) -> DiscreteTransitionResult:
         state = self.coordinates.from_real_coordinates(values)
-        following = self.system.evaluate(context, state, args)
-        return self.coordinates.to_real_coordinates(following)
+        result = self.system.evaluate_result(context, state, args)
+        return DiscreteTransitionResult(
+            self.coordinates.to_real_coordinates(
+                self.coordinates.project(result.candidate_state)
+            ),
+            self.coordinates.to_real_coordinates(
+                self.coordinates.project(result.accepted_state)
+            ),
+            result.successful,
+            result.status,
+        )
+
+
+def _coordinate_transition_evidence(
+    coordinates: HermitianSpectralCoordinates,
+    evidence: DiscreteTransitionEvidence | None,
+    /,
+) -> DiscreteTransitionEvidence | None:
+    if evidence is None:
+        return None
+    leading_shape = evidence.successful.shape
+    flat_candidates = evidence.candidate_states.reshape(
+        (-1,) + coordinates.state_shape
+    )
+    flat_accepted = evidence.accepted_states.reshape((-1,) + coordinates.state_shape)
+
+    def convert(state: Array) -> Array:
+        return coordinates.to_real_coordinates(coordinates.project(state))
+
+    candidate_coordinates = jax.vmap(convert)(flat_candidates).reshape(
+        leading_shape + (coordinates.coordinate_size,)
+    )
+    accepted_coordinates = jax.vmap(convert)(flat_accepted).reshape(
+        leading_shape + (coordinates.coordinate_size,)
+    )
+    return DiscreteTransitionEvidence(
+        candidate_coordinates,
+        accepted_coordinates,
+        evidence.successful,
+        evidence.status,
+    )
 
 
 class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
@@ -170,6 +214,10 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             backend_id=self.backend_id,
             discretization_id=self.discretization_id,
             approximation_id=self.approximation_id,
+            transition_evidence=_coordinate_transition_evidence(
+                self.coordinates,
+                result.transition_evidence,
+            ),
         )
 
     def tangent_action(
@@ -225,6 +273,10 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             backend_id=self.backend_id,
             discretization_id=self.discretization_id,
             approximation_id=self.approximation_id,
+            transition_evidence=_coordinate_transition_evidence(
+                self.coordinates,
+                result.primal.transition_evidence,
+            ),
         )
         propagated = self.coordinates.to_real_coordinates(
             self.coordinates.project(tangent_state)

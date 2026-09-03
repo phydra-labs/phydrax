@@ -104,8 +104,8 @@ notebooks = [
     "matplotlib>=3.10.8",
 ]
 robotics-mjx = [
-    "mujoco>=3.3,<4",
-    "mujoco-mjx>=3.3,<4",
+    "mujoco>=3.12,<3.13",
+    "mujoco-mjx>=3.12,<3.13",
 ]
 tests = [
     "mpmath>=1.3",

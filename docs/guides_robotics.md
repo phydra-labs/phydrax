@@ -12,24 +12,29 @@ optimization live in `phydrax.control`; articulated impact lives in
 
 The first native articulation scope is deliberately narrow: three-dimensional,
 fixed-base trees containing fixed, hinge, and prismatic joints. It does not
-provide floating bases or ball joints. Keeping that boundary explicit lets the
-native path expose stable layouts, operator duality, fail-closed status, and
-pure-JAX runtime actions without pretending to cover a more general mechanism.
+provide floating bases or ball joints. Fixed-route articulated contact is an
+operator utility over routes supplied by the caller; it is not collision
+discovery or an atomic robot/contact simulation step. Keeping those boundaries
+explicit lets the native path expose stable layouts, operator duality,
+fail-closed status, and pure-JAX runtime actions without making a broader
+simulation claim.
 
 ## Contract map
 
 | Concern | Public owner | Primary contracts |
 | --- | --- | --- |
 | URDF adaptation | `phydrax.applications.robotics` | `parse_urdf_text`, `parse_urdf_file`, `RobotAdaptation`, `URDFFormatEvidence` |
-| Reduced tree kinematics and dynamics | `phydrax.discretization` | `ReducedArticulationPlan`, `PreparedReducedArticulation`, `reduced_inverse_dynamics`, `reduced_forward_dynamics` |
-| Inertial design coordinates | `phydrax.discretization` | `RigidInertialParameterization`, `RigidInertialEvaluation`, `realize_rigid_body_plans` |
+| Bounded local resources | `phydrax.interchange` | `ResourceLimits`, `ResourceManifest`, `BoundedResource`, `read_bounded_resource` |
+| Reduced tree kinematics and dynamics | `phydrax.discretization` | `ReducedArticulationPlan`, `PreparedReducedArticulation`, `reduced_inverse_dynamics`, `reduced_forward_dynamics`, `reduced_semi_implicit_velocity_euler_step` |
+| Inertial design coordinates | `phydrax.discretization` | `RigidBodyMassProperties`, `RigidInertialParameterization`, `RigidInertialRealization`, `RigidBodyReferenceFrameRebase` |
 | Frame IK | `phydrax.applications.robotics` | `FramePositionTask`, `FrameOrientationTask`, `FramePoseTask`, `FrameInverseKinematicsPlan` |
-| Articulated impact | `phydrax.applications.contact` | `prepare_articulated_contact`, `solve_articulated_contact` |
+| Fixed-route articulated impact | `phydrax.applications.contact` | `prepare_articulated_contact`, `ContactConeNumericRevision`, `solve_articulated_contact` |
+| Result-preserving discrete evolution | `phydrax.dynamics` | `DiscreteTransitionResult`, `DiscreteTransitionEvidence`, `DiscreteEvolution` |
 | Status-aware rollout and MPC | `phydrax.control` | `DiscreteControlDynamics`, `ControlTrajectory`, `plan_sampling_mpc` |
 | Manifold transcription | `phydrax.control` | `manifold_radau_stages`, `manifold_radau_collocation_defects` |
 | Task environments | `phydrax.applications.robotics` | `AbstractRobotTask`, `AbstractRobotEnvironmentWrapper`, `PreparedRobotEnvironment` |
 | Reduced flexible members | `phydrax.applications.solid_mechanics` | `ReducedRodPlan`, `PreparedReducedRod`, `evaluate_reduced_rod` |
-| Optional provider execution | `phydrax.applications.robotics` | `RoboticsBackendProfile`, `RoboticsOperationRequirement`, `MJXAdapter` |
+| Optional provider execution | `phydrax.applications.robotics` | `RoboticsBackendProfile`, `RoboticsProjectionProvenance`, `MJXDataSchema`, `MJXAdapter` |
 
 Plans and prepared objects are immutable PyTrees. Stable IDs bind topology,
 layouts, reference frames, and provider projections. Runtime arrays remain
@@ -44,7 +49,7 @@ execute them. Preparation follows the ownership chain:
 ```python
 from phydrax.applications.robotics import parse_urdf_text
 
-adaptation = parse_urdf_text(urdf_text)
+adaptation = parse_urdf_text(urdf_text, root_policy="fixed_world")
 particles = adaptation.particles.prepare()
 bodies = adaptation.bodies.prepare(particles)
 graph = adaptation.joints.prepare(bodies, adaptation.reference)
@@ -63,15 +68,33 @@ The adapter also returns deterministic signed 64-bit name maps. Use
 Prepared `joint_ids`, `joint_configuration_slices`, and
 `joint_velocity_slices` identify the topological runtime order.
 
-## URDF security and semantic loss
+## URDF security, root policy, and semantic loss
 
-`parse_urdf_text` parses bounded UTF-8 text in memory and never resolves an
-external resource. `parse_urdf_file` additionally requires `allowed_root`; the
-normalized file must remain beneath that root and must fit `max_bytes`. Both
-paths are host-only. Network access, DTD/entity/notation/CDATA declarations,
-non-XML processing instructions, xacro/include expansion, and plugin execution
-are disabled. No visual, collision, transmission, mesh, or plugin asset is
-opened.
+Both URDF entry points require an explicit `root_policy`. Select
+`root_policy="fixed_world"` to attach the unique URDF root to the world.
+`root_policy="reject_unpinned"` rejects the source because URDF does not encode
+a world attachment for that root; there is no implicit default or inferred
+floating-base interpretation.
+
+`parse_urdf_text` bounds the exact UTF-8 bytes supplied in memory and never
+resolves an external resource. `parse_urdf_file` additionally requires
+`allowed_root`. It delegates to the generic `phydrax.interchange` bounded
+resource contract: the trusted root is opened as a no-follow directory, then
+each descendant component is opened descriptor-relative with no-follow
+semantics. Traversal and network locations are rejected, the final object must
+be a regular file, and directory/file identity is checked across the bounded
+read. Symlinks are not followed.
+`max_bytes`, `max_depth`, `max_nodes`, `max_attributes`, and `max_losses` are
+finite limits on the resource and its decode.
+
+Both paths are host-only. DTD/entity/notation/CDATA declarations, non-XML
+processing instructions, xacro/include expansion, and plugin execution are
+disabled. No visual, collision, transmission, mesh, or plugin asset is opened.
+`adaptation.evidence.source_bytes` retains the exact accepted bytes.
+`adaptation.evidence.resource_manifest` records their complete bounded-source
+identity: memory/file kind, source path, trusted-root and file identities where
+applicable, descriptor-relative components, byte size and SHA-256, configured
+limits, observed depth/node/attribute/loss counts, and a manifest identity.
 
 The accepted source is an unnamespaced URDF 1.0 connected tree with one root,
 positive link masses, physically admissible inertias, and fixed, revolute,
@@ -81,21 +104,23 @@ not silently installed as dynamics forces or constraints. Link-frame to
 COM-frame offsets and rotated inertia tensors are retained in
 `URDFLinkEvidence`.
 
-Every unsupported or dropped source field becomes an `AdapterLoss`. Visual
-geometry is a declared non-interpretation-changing loss. Collision geometry,
-transmissions, joint friction, and other dynamics-changing data are
-interpretation-changing losses and make adaptation fail closed unless the
-caller explicitly accepts the exact loss. A caller may supply an
-`AdapterWaiver` by loss identity or name exact entries through
-`waived_loss_paths`. Unknown paths, duplicate waivers, missing required
-semantics, malformed sources, and unwaived interpretation changes are errors.
-Inspect all of:
+Every unsupported or dropped source field becomes an `AdapterLoss` with exact
+`affected_capability_ids`. Visual geometry is a declared
+non-interpretation-changing loss. Collision geometry, transmissions, joint
+friction, and other dynamics-changing data are interpretation-changing losses.
+An interpretation-changing loss that affects a required capability is
+non-waivable: supplying its loss ID or path does not make negotiation valid.
+Only an otherwise eligible loss can be accepted by an exact `AdapterWaiver` or
+`waived_loss_paths` entry. Unknown or duplicate entries, stale or unused
+waivers, missing required semantics, malformed sources, and every unwaived or
+unwaivable interpretation change fail closed. Inspect all of:
 
 ```python
 adaptation.report.status
 adaptation.report.losses
 adaptation.negotiation.unwaived_losses
 adaptation.evidence.loss_paths
+adaptation.evidence.resource_manifest
 ```
 
 `require_lossless(adaptation.report)` is stricter: it rejects every declared
@@ -107,8 +132,8 @@ cumulative negotiation instead of concatenating prose.
 ## State, frame, and unit conventions
 
 The native adapter declares SI units. URDF lengths are metres, masses are
-kilograms, angles are radians, and inertia is kg·m² about the link COM. The
-unique root is fixed to the world.
+kilograms, angles are radians, and inertia is kg·m² about the link COM. A
+successful adaptation has explicitly selected the `fixed_world` root policy.
 
 For a prepared articulation:
 
@@ -160,7 +185,14 @@ Transpose actions are the covector pullbacks. For body loads,
 power and generalized power. This operator identity is the contract; forming a
 dense Jacobian is optional.
 
-## Inertial realization and reduced dynamics
+## COM-centred inertial realization and reduced dynamics
+
+`RigidBodyMassProperties` is the shared prepared contract for maximal and
+reduced rigid mechanics. Body position and linear velocity are evaluated at the
+centre of mass, `first_moments` is identically zero, and `inertia_com` is the
+rotational block of spatial inertia. The convenience `inertia_body` property
+also means body-coordinate inertia *about the COM*; it is not inertia about an
+arbitrary body-frame origin.
 
 `RigidInertialParameterization` binds unconstrained host coordinates to one
 prepared three-dimensional rigid-body set. Softplus mass coordinates and
@@ -169,11 +201,17 @@ realizable COM inertias. `evaluate` reports finite masks, SPD and principal
 moment checks, pseudo-inertia checks, condition numbers, reconstruction
 residuals, and distance from the source body data.
 
-Changing inertia is an identity boundary, not an in-place mutation.
-`realize_rigid_body_plans` returns fresh `ParticleSetPlan` and
-`RigidBodySetPlan` values plus `RigidInertialEvaluation`; the caller must
-prepare those plans and then reprepare dependent joints and articulation.
-`evaluation.requires_repreparation` is always explicit.
+Changing mass, COM, or inertia is an identity and reference-frame boundary.
+`realize_rigid_body_plans` returns one `RigidInertialRealization` containing
+fresh particle/body plans, the evaluation, and an identity-bound
+`RigidBodyReferenceFrameRebase`; dependent prepared objects cannot be reused.
+After preparing the realized plans, a nonzero COM offset requires both
+`reference_frame_rebase.rebase_kinematics(...)` for poses and twists and
+`reference_frame_rebase.rebase_local_points(...)` for every old-body-local
+joint, frame, or contact attachment. Dependent joints and articulation must then
+be prepared against that rebased reference. Ignoring either transfer changes
+the represented mechanism. `evaluation.requires_repreparation` and the rebase
+identity make this cutover explicit.
 
 Native reduced dynamics uses the convention
 `M(q) a + c(q, v) + g(q) = τ + Jᵀw`:
@@ -187,9 +225,17 @@ Native reduced dynamics uses the convention
   candidate acceleration by inverse reconstruction.
 - `reduced_energy` reports kinetic, potential, and total energy for an explicit
   world gravity vector.
-- `reduced_symplectic_step` proposes bounded symplectic Euler, checks dynamics,
-  inverse/forward reconstruction, step size, finiteness, and an energy-work
-  defect, then atomically accepts or returns the source state.
+- `reduced_semi_implicit_velocity_euler_step` performs bounded semi-implicit
+  velocity Euler on the fixed-base reduced articulation: it advances velocity,
+  integrates configuration with that candidate velocity, checks dynamics,
+  inverse/forward reconstruction, step size, finiteness, and the energy-work
+  defect, then atomically accepts the candidate or retains the source state.
+
+The step policy, diagnostics, and result are respectively
+`ReducedSemiImplicitVelocityEulerStepPolicy`,
+`ReducedSemiImplicitVelocityEulerStepDiagnostics`, and
+`ReducedSemiImplicitVelocityEulerStepResult`. This integrator is not a
+collision/contact discovery or coupled robot-contact step.
 
 Result objects distinguish candidate values from accepted values. Failed
 inverse dynamics returns zero accepted `generalized_effort`; failed forward
@@ -221,43 +267,79 @@ root. Orientation residuals use the principal SO(3) chart and reject targets at
 its singular margin. The IK layer is local least squares, not global IK, and it
 does not certify discovery of every solution.
 
-## Articulated contact
+## Fixed-route articulated contact
 
-Articulated impact reuses fixed-route contact kinematics and the native cone
-solver. `make_articulated_contact_participant` adapts an existing collision
-surface, configuration space, forward kinematics, velocity action, and force
-pullback. `build_contact_velocity_operator` produces the contact velocity
-operator `G`; the supplied inverse-mass operator must be an endomorphism of the
-same constrained generalized tangent space. `build_delassus_operator` composes
-`W = G M⁻¹ G*` without routing through unconstrained body response.
+Articulated impact reuses caller-supplied `ContactKinematicsEpoch` routes and
+the native cone solver. `make_articulated_contact_participant` adapts an
+existing collision surface, configuration space, forward kinematics, velocity
+action, and force pullback. `build_contact_velocity_operator` produces the
+contact velocity operator `G`; the supplied inverse-mass operator must be an
+endomorphism of the same constrained generalized tangent space.
+`build_delassus_operator` composes `W = G M⁻¹ G*` without routing through
+unconstrained body response.
 
-`prepare_articulated_contact` checks that recorded route velocities match the
-operator action, materializes the Delassus operator under an explicit policy,
-checks symmetry and nonnegative diagonal evidence, and builds the fixed cone
-program. `solve_articulated_contact` solves and applies an impulse through
-`G*` and `M⁻¹`. It reports cone defects, post-contact normal feasibility,
-contact/generalized power duality, and finiteness. If the certificate fails,
-the applied impulse and velocity update are zero and the free velocity is
-retained; `fail_closed` records that invariant.
+`prepare_articulated_contact` is certificate-bearing preparation, not just
+matrix assembly. It requires complete participant routes and a mechanical
+material law for every valid route; checks recorded route velocities against
+`G`; materializes the Delassus operator under an explicit policy; checks
+symmetry and nonnegative diagonal evidence; and obtains a full dense spectral
+certificate whose complete eigensystem residual and minimum eigenvalue support
+positive-semidefiniteness within tolerance. It then builds the fixed compliant
+Signorini--Coulomb cone program.
 
-This is an articulated Delassus impact path for declared fixed routes. It does
-not provide general gradients through contact-mode changes, nor does it turn an
-uncertified cone result into a valid transition.
+The cone result retains both paths. `ContactConeResult.candidate_impulse` and
+its candidate velocities diagnose the solver proposal;
+`ContactConeResult.impulse` is the accepted impulse and is exactly zero when
+material-law completeness, numeric-input validity, convergence,
+complementarity, cone, normal-velocity, or maximum-dissipation certification
+fails. `ContactConeNumericRevision` records
+the exact free velocity, effective mass, compliance, static/dynamic friction,
+restitution, route mask, material availability, solver parameters, and
+program/solver identities used to obtain that result.
 
-## Status-aware control rollout
+`apply_articulated_contact_impulse` re-certifies that numeric revision against
+the prepared program before applying anything. It also checks the cone law,
+contact equation, post-contact normal feasibility, contact/generalized power
+duality, and finiteness. Only the accepted impulse passes through `G*` and
+`M⁻¹`; otherwise the articulated result exposes zero applied/generalized
+impulse and velocity update, retains the free velocity, and records
+`fail_closed`.
 
-A robotics transition should return `DiscreteTransitionResult` with a candidate
-state, accepted state, scalar `successful`, and scalar integer `status`.
-`DiscreteControlDynamics.rollout` batches that contract over the declared case
-axes and runs it with `jax.lax.scan`. It feeds accepted states forward, never
-silently substitutes a failed candidate, preserves the first backend failure
-status, marks the trajectory invalid from a failed transition onward, and does
-not send nonfinite user controls into the plant.
+This is an operator-level articulated impact utility for already declared,
+fixed routes. It neither discovers collisions nor commits mechanics and contact
+as one atomic robot state transition, and it does not claim general gradients
+through contact-mode changes.
 
-`ControlTrajectory.status` is the control-level result; `backend_status` retains
-the plant status. Both are required when diagnosing a rollout. This same
-contract lets reduced symplectic mechanics, immutable environments, candidate
-search, and trajectory optimization share failure semantics.
+## Result-preserving discrete evolution and control rollout
+
+Robotics plants should return `DiscreteTransitionResult`: candidate state,
+accepted state, scalar `successful`, and scalar integer `status`.
+`DiscreteSystem.evaluate_result` preserves all four values, whereas
+`DiscreteSystem.evaluate` intentionally returns only the accepted state.
+`DiscreteEvolution.advance` and `evolve` preserve per-step candidates, accepted
+states, success, status, and deterministic first-failure summaries in
+`DiscreteTransitionEvidence`. Dynamic transition parameters passed as `args`
+flow unchanged through the input policy and plant transition.
+
+`DiscreteControlDynamics.rollout` applies that same result contract over the
+declared case axes with `jax.lax.scan` and forwards its `args` to every plant
+transition. It feeds accepted states forward, never substitutes a failed
+candidate, does not send nonfinite user controls into the plant, retains
+candidate/accepted/status evidence for every attempted transition, preserves
+the first backend failure status, and marks the trajectory invalid from a
+failed transition onward.
+
+`ControlProblem.rollout` supplies `problem.args` through this path, so
+higher-level control consumers use the same dynamic plant parameters and
+result-bearing trajectory rather than reconstructing a state-only rollout.
+
+`ControlTrajectory.status` is the control-level result;
+`ControlTrajectory.backend_status` retains the plant status, and
+`ControlTrajectory.transition_evidence` retains the plant's per-step result.
+All three are required when diagnosing a rollout. The same contract lets
+semi-implicit reduced mechanics, immutable environments, candidate search, and
+trajectory optimization share failure semantics without discarding the
+candidate evidence.
 
 ## Fixed-work sampling MPC
 
@@ -308,13 +390,27 @@ state, observation, reward-component names, termination, and descriptor.
 Wrappers own administrative state, action repetition, horizons, truncation, and
 optional auto-reset. They do not mutate the plant or hide task termination.
 
+Environment construction derives semantic `provenance_id` from the plant
+transition identity and step constraints, state/input layouts, initializer
+identity, task and wrapper configuration, array fingerprints, repetition and
+horizon policy, and PRNG representation. Runtime states carry both that
+provenance and `environment_id`; `step` rejects a state from a different
+semantic environment even if its arrays have compatible shapes.
+
 `reset` initializes the plant, task, wrappers, caller-derived PRNG stream, and
-clock. `step` performs the statically declared repeat count. Candidate plant,
-task, wrapper, reward, and PRNG state commit together only if every attempted
-mechanics substep succeeds. Otherwise the source state is returned, reward is
-zero, termination/truncation is suppressed, and rollback evidence records the
-failure. With auto-reset, `final_observation` remains the terminal observation
-while `observation` belongs to the reset state.
+clock. `step(..., args)` forwards dynamic parameters to each mechanics
+transition and performs the statically declared repeat count. The task receives
+both source and **accepted** mechanics state, and wrappers likewise receive the
+accepted plant state; neither consumes a rejected mechanics candidate.
+Candidate plant state remains separately visible in the environment result.
+
+Plant, task, wrapper, reward, clock, and PRNG state commit together only if
+every attempted mechanics substep succeeds and every output is finite.
+Otherwise `accepted_state` is the complete source state, reward is zero,
+termination/truncation is suppressed, and rollback evidence retains attempted
+steps, mechanics success/status, and source/candidate indices. With auto-reset,
+`final_observation` remains the accepted terminal observation while
+`observation` belongs to the reset state.
 
 Fixed work and immutable state improve compilation and auditability; they are
 not a hard real-time scheduling guarantee.
@@ -338,52 +434,85 @@ energy, strain reconstruction, quadrature, fixed-base, and virtual-power
 evidence. This is a reduced flexible-member model, not a ball-joint or
 floating-base extension of rigid articulation.
 
-## Optional backend capabilities and observation freshness
+## Optional MJX lifecycle, schema, and provenance
 
 Importing the robotics package does not require MuJoCo or MJX.
-`mjx_availability()` probes the optional provider through the shared backend
-boundary. `prepare_mjx_adapter` performs the lazy import and requires an already
-compiled public `mujoco.MjModel`; unavailability raises the shared explicit
-backend error rather than selecting a fallback.
+`mjx_availability()` probes both `mujoco` and `mujoco-mjx`; the two
+distributions must have exactly matching base releases in the qualified 3.12.x
+minor. `prepare_mjx_adapter` performs the lazy import and requires an already
+compiled public `mujoco.MjModel`. Missing, mismatched, or unsupported providers
+raise the shared explicit backend error rather than selecting a fallback.
 
 Before execution, negotiate exact `RoboticsOperationRequirement` values against
 a `RoboticsBackendProfile`. Requirements may constrain operation, device,
 dtype, minimum differentiability, solver, and contact feature. Profiles list
 one capability per operation plus exclusions. `profile.negotiate` returns all
-rejections; `profile.require` raises on the first unmet requirement. It never
-weakens a request.
+rejections; `profile.require` raises on the first unmet requirement and never
+weakens a request. `MJX_JAX_PROFILE` declares conditional—not
+guaranteed—differentiability. `MJX_WARP_PROFILE` is only a capability
+declaration; the prepared adapter in this release is MJX-JAX.
 
-`MJX_JAX_PROFILE` declares conditional—not guaranteed—differentiability and
-lists solver/contact exclusions. `MJX_WARP_PROFILE` is a capability declaration;
-the public prepared adapter in this release is the MJX-JAX adapter. MJX support
-is not universally differentiable.
+Preparation first builds `MJXPreparedModelManifest`, the closed feature set
+actually present in the accepted model: integrator, solver, cone and Jacobian
+mode; joint and geometry types; collision-pair features; actuator bias,
+dynamics, gain, and transmission types; equality and sensor types; tendon-wrap
+types; and enabled feature bits. Unsupported enum values, collision
+combinations, flexible bodies, plugin state, and the other declared exclusions
+fail before transfer instead of disappearing from a coarse profile.
 
-`MJXAdapter` owns a complete opaque `mjx.Data` state and rejects states from a
-different prepared adapter. Stable `RoboticsProjectionMap` values name complete
-`qpos`, `qvel`, control, and observation ranges. Observation projections carry
-one of three freshness labels:
+`MJXDataSchema` records the complete canonical `mjx.Data` PyTree definition,
+intrinsic `qpos` shape, and one `MJXArrayLeafSpec` per leaf with intrinsic shape,
+dtype, device set, and initial-finiteness evidence. Validation requires the same
+tree and leaf count, a single common set of leading case axes, and exact
+intrinsic shape, dtype, and devices for every JAX array leaf. `MJXState` also
+binds adapter ownership, this complete opaque data, state/sensor epochs, and
+`RoboticsProjectionProvenance`. That provenance records the compiled model and
+asset digest, exact compiler/provider releases, unit system, and frame
+convention; qpos, qvel, control, and observation maps all carry it.
 
-- `state-current`: projected directly from the supplied complete state;
-- `pre-step`: captured after installing control and before `mjx.step`;
-- `post-step-refreshed`: captured only after an explicit post-step
-  `mjx.forward` refresh.
+The normal sensor-bearing lifecycle uses an `MJXObservationRequest`:
 
-Request `observations="both"` when both times are required. A nonfinite MJX
-candidate causes complete-state rollback; the result reports `NONFINITE` and
-never commits a partially finite foreign state.
+```python
+stepped = adapter.step(state, control)
+stale_state = stepped.accepted_state
+refreshed = adapter.refresh(stale_state, request)
+fresh_state = refreshed.accepted_state
+observation = adapter.observe(fresh_state, request)
+```
+Inspect `stepped.successful/status` and `refreshed.successful/status`; only a
+successful refreshed case has current derived fields.
+
+`step` returns `MJXStepResult`; it accepts no observation request and returns no
+observation. Each successful case advances its state epoch while retaining its
+sensor epoch, so derived sensor data are stale. `observe` returns
+`MJXObservation` and derives freshness from those epochs; a sensor-bearing
+request on stale data reports `INVALID_STATE` instead of relabeling old
+samples. `refresh` runs `mjx.forward`, advances the sensor epoch only for
+accepted cases, and returns `MJXRefreshResult`, including the requested fresh
+observation as `refreshed.observation`.
+
+Step and refresh are casewise and complete-state fail closed. A case is accepted
+only when every dynamic floating leaf is finite. Failure retains that case's
+entire source `mjx.Data` and epochs—never a partially finite foreign state—and
+reports `NONFINITE`. A request that excludes sensors may still project current
+qpos, qvel, or control directly, but it does not make stale derived fields
+fresh.
 
 ## Limits to keep visible
 
 The delivered native tree is 3-D and fixed-base with fixed, hinge, and
 prismatic joints. Floating bases and ball joints are outside this reduced path.
-Frame IK is local, not global. Articulated contact is fixed-route and does not
-claim general contact-mode gradients. Sampling MPC reports finite sampled work,
-not certified robustness or global optimality. Immutable fixed-work execution
-is not hard real time. The MJX path is optional, capability-gated, and only
-conditionally differentiable for the operations its profile declares.
+Frame IK is local, not global. Fixed-route articulated contact requires
+caller-supplied routes: there is no collision discovery and no atomic
+robot/contact step yet, so this release does not claim a production robot
+collision/contact simulator. Sampling MPC reports finite sampled work, not
+certified robustness or global optimality. Immutable fixed-work execution is
+not hard real time. The MJX path is optional, capability-gated, tied to a
+matching 3.12.x provider pair, and only conditionally differentiable for the
+operations its prepared profile declares.
 
 See the [robotics API reference](api/applications/robotics.md), the
 `examples/robotics_articulation.py` workflow, and the standalone
-`tools/robotics_articulation_benchmarks.py` benchmark. The
-benchmark reports native timings and evidence only; it makes no crossover or
-speedup claim because it measures no reference implementation.
+`tools/robotics_articulation_benchmarks.py` benchmark. The benchmark reports
+native timings and evidence only; it makes no crossover or speedup claim
+because it measures no reference implementation.

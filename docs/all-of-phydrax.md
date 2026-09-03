@@ -352,19 +352,25 @@ No communication, mesh, or fallback-solver stack is introduced. See
 
 ### Native robotics as a composition
 
-`phydrax.applications.robotics` adapts bounded URDF 1.0 trees into the existing
-particle, rigid-body, joint, and reduced-articulation plans; adds local frame IK,
-immutable task environments, stable backend projections, and optional lazy MJX;
-and keeps capability, loss, freshness, status, and rollback evidence explicit.
-Reduced inverse/forward dynamics, articulated Delassus impact, status-aware
-rollouts, fixed-work sampling MPC, manifold Radau defects, inertial realization,
-and planar reduced rods remain with their existing discretization, contact,
-control, interchange, and solid-mechanics owners.
+`phydrax.applications.robotics` adapts explicitly rooted, descriptor-bounded
+URDF 1.0 trees into COM-centred particle, rigid-body, joint, and
+reduced-articulation plans. Capability-associated loss negotiation, exact
+resource manifests, mandatory inertial reference rebasing, result-preserving
+discrete transitions, accepted-state task environments, and semantic
+provenance keep conversion and rollback visible. Local frame IK, fixed-work
+control, manifold defects, and reduced rods remain with their existing
+discretization, control, interchange, and solid-mechanics owners.
 
-The native tree scope is 3-D fixed-base fixed/hinge/prismatic. It does not claim
-floating bases, ball joints, global IK, general contact-mode gradients, certified
-sampling robustness, hard real time, or universal MJX differentiability. See
-[Guide → Native robotics](guides_robotics.md) and
+Optional MJX-JAX requires a matching MuJoCo/MJX 3.12.x provider pair and binds a
+closed prepared-feature manifest, complete data schema, projection provenance,
+casewise rollback, and the `step → stale state → refresh → observe` lifecycle.
+Fixed-route articulated impact certifies material availability, Delassus
+positive-semidefiniteness, numeric revision, and contact law, but remains an
+operator utility over supplied routes. There is no collision discovery or
+atomic robot/contact step yet. The native tree scope is 3-D fixed-base
+fixed/hinge/prismatic; floating bases, ball joints, global IK, certified
+sampling robustness, hard real time, and universal MJX differentiability are
+not claimed. See [Guide → Native robotics](guides_robotics.md) and
 [API → Robotics applications](api/applications/robotics.md).
 
 ### Atomistic learning and conservative dynamics

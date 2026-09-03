@@ -486,6 +486,7 @@ def _evaluate_held_control(
         valid=valid_values,
         status=status,
         backend_status=tuple(backend_statuses),
+        transition_evidence=None,
         case_shape=problem.case_shape,
         state_shape=problem.state_shape,
         control_shape=problem.control_shape,
@@ -522,7 +523,7 @@ def _segment_state(
     time0 = problem.time_grid.times[segment]
     time1 = problem.time_grid.times[segment + 1]
     if isinstance(dynamics, DiscreteControlDynamics):
-        next_state = dynamics.system.evaluate(
+        result = dynamics.system.evaluate_result(
             DiscreteStepContext(
                 time0,
                 time1,
@@ -531,6 +532,11 @@ def _segment_state(
             state,
             problem.args,
             inputs=control,
+        )
+        next_state = jnp.where(
+            result.successful,
+            result.accepted_state,
+            jnp.full_like(result.accepted_state, jnp.nan),
         )
         if tuple(next_state.shape) != problem.state_shape:
             raise ValueError(
@@ -576,14 +582,21 @@ def _segment_state_and_validity(
 ) -> tuple[Array, Array]:
     dynamics = problem.dynamics
     if isinstance(dynamics, DiscreteControlDynamics):
-        next_state = _segment_state(
-            problem,
-            segment,
+        time0 = problem.time_grid.times[segment]
+        time1 = problem.time_grid.times[segment + 1]
+        result = dynamics.system.evaluate_result(
+            DiscreteStepContext(
+                time0,
+                time1,
+                jnp.asarray(segment, dtype=jnp.int32),
+            ),
             state,
-            control,
-            solver_options=solver_options,
+            problem.args,
+            inputs=control,
         )
-        return next_state, jnp.all(jnp.isfinite(next_state))
+        next_state = result.accepted_state
+        valid = result.successful & jnp.all(jnp.isfinite(next_state))
+        return next_state, valid
 
     time0 = problem.time_grid.times[segment]
     time1 = problem.time_grid.times[segment + 1]

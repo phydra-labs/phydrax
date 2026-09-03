@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import hashlib
+import os
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -70,7 +72,7 @@ def _link(name: str, *, body_mass: float = 1.0, inertia: str = "1 1 1") -> str:
 
 
 def test_two_link_urdf_builds_native_plans_reference_axis_and_zero_fk():
-    adaptation = parse_urdf_text(_TWO_LINK)
+    adaptation = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
 
     assert adaptation.report.status == AdapterStatus.LOSSLESS
     assert adaptation.report.valid
@@ -127,7 +129,7 @@ def test_com_recentering_and_inertial_frame_rotation_are_exact():
       </joint>
     </robot>
     """
-    adaptation = parse_urdf_text(text)
+    adaptation = parse_urdf_text(text, root_policy="fixed_world")
     child_id = int(adaptation.link_ids.id_for_name("child"))
 
     assert np.allclose(
@@ -149,8 +151,8 @@ def test_com_recentering_and_inertial_frame_rotation_are_exact():
 
 
 def test_name_maps_target_and_report_are_deterministic():
-    first = parse_urdf_text(_TWO_LINK)
-    second = parse_urdf_text(_TWO_LINK)
+    first = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
+    second = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
 
     assert first.link_name_to_id == second.link_name_to_id
     assert first.joint_name_to_id == second.joint_name_to_id
@@ -165,7 +167,7 @@ def test_visual_is_declared_optional_loss_but_collision_requires_explicit_waiver
         "<inertial>\n      <mass value=\"5\"/>",
         "<visual><geometry><box size=\"1 1 1\"/></geometry></visual>\n    <inertial>\n      <mass value=\"5\"/>",
     )
-    optional = parse_urdf_text(visual)
+    optional = parse_urdf_text(visual, root_policy="fixed_world")
     assert optional.report.status == AdapterStatus.DECLARED_LOSS
     assert optional.report.valid
     assert len(optional.report.losses) == 1
@@ -174,14 +176,16 @@ def test_visual_is_declared_optional_loss_but_collision_requires_explicit_waiver
 
     collision = visual.replace("visual", "collision")
     with pytest.raises(URDFImportError) as caught:
-        parse_urdf_text(collision)
+        parse_urdf_text(collision, root_policy="fixed_world")
     assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
     assert caught.value.report is not None
     assert not caught.value.report.valid
     assert caught.value.evidence is not None
 
     waived = parse_urdf_text(
-        collision, waived_loss_paths=("/robot/links/base/collision/0",)
+        collision,
+        root_policy="fixed_world",
+        waived_loss_paths=("/robot/links/base/collision/0",),
     )
     assert waived.report.status == AdapterStatus.DECLARED_LOSS
     assert waived.report.valid
@@ -200,11 +204,17 @@ def test_visual_is_declared_optional_loss_but_collision_requires_explicit_waiver
         '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="x">'
         + _link("base")
         + '<xacro:include filename="other.xacro"/></robot>',
+        '<robot name="x">'
+        + _link("base")
+        + '<gazebo><plugin filename="controller.so"/></gazebo></robot>',
+        '<robot name="x">'
+        + _link("base")
+        + '<visual><mesh filename="https://example.test/mesh.stl"/></visual></robot>',
     ),
 )
 def test_declarations_entities_processing_and_unwaived_extensions_fail_closed(unsafe):
     with pytest.raises(URDFImportError) as caught:
-        parse_urdf_text(unsafe)
+        parse_urdf_text(unsafe, root_policy="fixed_world")
     assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
 
 
@@ -216,27 +226,46 @@ def test_file_resolver_normalizes_within_root_and_rejects_traversal(tmp_path: Pa
     outside = tmp_path / "outside.urdf"
     outside.write_text(_TWO_LINK, encoding="utf-8")
 
-    loaded = parse_urdf_file("./arm.urdf", allowed_root=allowed)
+    loaded = parse_urdf_file(
+        "./arm.urdf", allowed_root=allowed, root_policy="fixed_world"
+    )
     assert loaded.evidence.source_path == str(source.resolve())
+    assert loaded.evidence.source_bytes == _TWO_LINK.encode("utf-8")
+    assert loaded.evidence.source_content_sha256 == hashlib.sha256(
+        loaded.evidence.source_bytes
+    ).hexdigest()
+    assert loaded.evidence.resource_manifest.relative_components == ("arm.urdf",)
+    assert loaded.evidence.resource_manifest.observed_nodes > 0
 
     with pytest.raises(URDFImportError) as caught:
-        parse_urdf_file("../outside.urdf", allowed_root=allowed)
+        parse_urdf_file(
+            "../outside.urdf", allowed_root=allowed, root_policy="fixed_world"
+        )
     assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
 
     with pytest.raises(URDFImportError) as network:
-        parse_urdf_file("https://example.test/arm.urdf", allowed_root=allowed)
+        parse_urdf_file(
+            "https://example.test/arm.urdf",
+            allowed_root=allowed,
+            root_policy="fixed_world",
+        )
     assert network.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
 
 
 def test_size_limit_is_enforced_for_text_and_files(tmp_path: Path):
     with pytest.raises(URDFImportError) as text_error:
-        parse_urdf_text(_TWO_LINK, max_bytes=16)
+        parse_urdf_text(_TWO_LINK, root_policy="fixed_world", max_bytes=16)
     assert text_error.value.status == AdapterStatus.MALFORMED_SOURCE
 
     source = tmp_path / "arm.urdf"
     source.write_text(_TWO_LINK, encoding="utf-8")
     with pytest.raises(URDFImportError) as file_error:
-        parse_urdf_file(source, allowed_root=tmp_path, max_bytes=16)
+        parse_urdf_file(
+            source,
+            allowed_root=tmp_path,
+            root_policy="fixed_world",
+            max_bytes=16,
+        )
     assert file_error.value.status == AdapterStatus.MALFORMED_SOURCE
 
 
@@ -255,7 +284,7 @@ def test_unsupported_joint_kinds_reject(joint_type):
     </robot>
     """
     with pytest.raises(URDFImportError) as caught:
-        parse_urdf_text(text)
+        parse_urdf_text(text, root_policy="fixed_world")
     assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
 
 
@@ -281,7 +310,9 @@ def test_unsupported_joint_kinds_reject(joint_type):
 )
 def test_invalid_mass_and_inertia_reject_as_malformed(body):
     with pytest.raises(URDFImportError) as caught:
-        parse_urdf_text(f'<robot name="bad">{body}</robot>')
+        parse_urdf_text(
+            f'<robot name="bad">{body}</robot>', root_policy="fixed_world"
+        )
     assert caught.value.status == AdapterStatus.MALFORMED_SOURCE
 
 
@@ -300,17 +331,113 @@ def test_invalid_mass_and_inertia_reject_as_malformed(body):
 def test_cyclic_and_disconnected_models_reject(topology):
     links = _link("a") + _link("b") + _link("c")
     with pytest.raises(URDFImportError) as caught:
-        parse_urdf_text(f'<robot name="bad-tree">{links}{topology}</robot>')
+        parse_urdf_text(
+            f'<robot name="bad-tree">{links}{topology}</robot>',
+            root_policy="fixed_world",
+        )
     assert caught.value.status == AdapterStatus.INCONSISTENT_SOURCE
 
 
 def test_duplicate_names_and_malformed_limits_reject():
     duplicate = f'<robot name="duplicate">{_link("same")}{_link("same")}</robot>'
     with pytest.raises(URDFImportError) as duplicate_error:
-        parse_urdf_text(duplicate)
+        parse_urdf_text(duplicate, root_policy="fixed_world")
     assert duplicate_error.value.status == AdapterStatus.INCONSISTENT_SOURCE
 
     malformed_limit = _TWO_LINK.replace('lower="-1"', 'lower="2"')
     with pytest.raises(URDFImportError) as limit_error:
-        parse_urdf_text(malformed_limit)
+        parse_urdf_text(malformed_limit, root_policy="fixed_world")
     assert limit_error.value.status == AdapterStatus.MALFORMED_SOURCE
+
+
+def test_root_policy_is_required_and_never_implicitly_fixes_the_root():
+    with pytest.raises(TypeError, match="root_policy"):
+        parse_urdf_text(_TWO_LINK)
+
+    fixed = parse_urdf_text(_TWO_LINK, root_policy="fixed_world")
+    root_id = int(fixed.link_ids.id_for_name(fixed.evidence.root_link))
+    assert bool(np.asarray(fixed.bodies.fixed_mask)[root_id])
+    assert fixed.evidence.root_policy == "fixed_world"
+    assert "fixed_world" in fixed.evidence.execution_policy[-1]
+
+    with pytest.raises(URDFImportError) as rejected:
+        parse_urdf_text(_TWO_LINK, root_policy="reject_unpinned")
+    assert rejected.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    assert "does not encode a world attachment" in str(rejected.value)
+
+
+def test_xml_depth_node_attribute_and_loss_limits_fail_closed():
+    deeply_nested = (
+        '<robot name="deep"><extension><a><b><c/></b></a></extension></robot>'
+    )
+    cases = (
+        (deeply_nested, {"max_depth": 4}),
+        (_TWO_LINK, {"max_nodes": 2}),
+        (_TWO_LINK, {"max_attributes": 0}),
+        (
+            _TWO_LINK.replace(
+                "<inertial>\n      <mass value=\"5\"/>",
+                "<visual/>\n    <inertial>\n      <mass value=\"5\"/>",
+            ),
+            {"max_losses": 0},
+        ),
+    )
+
+    for text, limits in cases:
+        with pytest.raises(URDFImportError) as caught:
+            parse_urdf_text(text, root_policy="fixed_world", **limits)
+        assert caught.value.status == AdapterStatus.MALFORMED_SOURCE
+
+
+def test_urdf_file_symlinks_and_special_files_fail_closed(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    source = outside / "arm.urdf"
+    source.write_text(_TWO_LINK, encoding="utf-8")
+    (root / "file-link.urdf").symlink_to(source)
+    (root / "directory-link").symlink_to(outside, target_is_directory=True)
+    fifo = root / "stream.urdf"
+    os.mkfifo(fifo)
+
+    for path in ("file-link.urdf", "directory-link/arm.urdf", "stream.urdf"):
+        with pytest.raises(URDFImportError) as caught:
+            parse_urdf_file(
+                path,
+                allowed_root=root,
+                root_policy="fixed_world",
+            )
+        assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+
+
+def test_required_joint_limit_loss_cannot_be_waived():
+    continuous = _TWO_LINK.replace('type="revolute"', 'type="continuous"')
+    paths = (
+        "/robot/joints/shoulder/limit/@lower",
+        "/robot/joints/shoulder/limit/@upper",
+    )
+
+    with pytest.raises(URDFImportError) as caught:
+        parse_urdf_text(
+            continuous,
+            root_policy="fixed_world",
+            waived_loss_paths=paths,
+        )
+
+    assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    assert caught.value.report is not None
+    assert caught.value.report.negotiation.waived_losses == ()
+    assert {
+        loss.path for loss in caught.value.report.negotiation.unwaived_losses
+    } == set(paths)
+
+
+def test_stale_urdf_loss_path_waiver_rejects():
+    with pytest.raises(URDFImportError) as caught:
+        parse_urdf_text(
+            _TWO_LINK,
+            root_policy="fixed_world",
+            waived_loss_paths=("/robot/links/base/missing",),
+        )
+    assert caught.value.status == AdapterStatus.INCONSISTENT_SOURCE
