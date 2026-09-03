@@ -8,6 +8,39 @@
   learned free-energy biases, immutable atomistic learning campaigns,
   non-element molecular coarse beads with fixed-map force matching, and exact
   targeted free-energy maps with FlowJAX and alchemical endpoint adapters.
+- Added a native robotics platform with bounded, fail-closed URDF adaptation;
+  fixed-base 3-D fixed/hinge/prismatic articulation, kinematics, dynamics, and
+  local frame IK; articulated Delassus impact; status-aware rollouts, sampling
+  MPC, and manifold defects; immutable task environments; physical inertial
+  realization and reduced rods; and capability/freshness-aware optional MJX.
+- Added first-class surfel discretizations with stable point ownership,
+  validated oriented tangent footprints, physical surface quadrature,
+  boundary-atlas and simplicial materialization, Morton primitive bounds,
+  bounded ray queries, and confidence-aware local sparse-voxel projection.
+- Added deterministic explicit lowest-order H1 elements on conformingly
+  segmented star-shaped polygons, with transported witness-fan condensation,
+  exact trace and affine-reproduction evidence, component-aware constraints,
+  reconstruction, differentiable geometry refresh, and capability-selected
+  dense matrix-free local functional execution.
+- Added the canonical `phydrax.applications.cardiovascular` platform with
+  explicit, duplicate-free anatomy, electrophysiology, mechanics, circulation,
+  hemodynamics, observations, and personalization facades; cross-domain
+  quantity/case, fixed-capacity execution, checkpoint/replay, distributed
+  reference, and fail-closed G0--G7 release contracts; harmonic cardiac
+  coordinates and ventricular microstructure; phenomenological and physical
+  monodomain, bidomain, eikonal, Purkinje/pacing, regional, and named cellular
+  electrophysiology routes; passive/active mechanics, electromechanics,
+  sarcomere, growth, and unloading workflows; 0D/1D circulation, coronary,
+  valve, device, oxygen, fixed-wall flow, ALE/immersed FSI, and leaflet routes;
+  observation, multimodal likelihood, inverse/design, cohort, surrogate
+  refusal, learning, and native reanalysis contracts; public generic ownership
+  for tensor diffusion, bounded array archives, and lifecycle support-bundle
+  authorization; a hard-failing public end-to-end example, focused
+  cross-domain integration tests, complete guide/API navigation, and bounded
+  qualification/benchmark indexes. All supported claims remain limited to the
+  exact declared research and engineering support tuple: no clinical,
+  diagnostic, treatment, regulated-device, regulatory, or commercial-readiness
+  claim is made.
 - Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
   traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
   FMM, brick-backed sparse voxel fields and qualified geometry sampling,

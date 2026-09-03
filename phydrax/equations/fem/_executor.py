@@ -46,6 +46,7 @@ from .._finite_element_variational import (
     PreparedOperatorAction,
     SIPGFacetAction,
     SourceAction,
+    TensorDiffusionAction,
 )
 from .._variational import VariationalCoefficient
 from ._ir import LocalActionIR
@@ -102,7 +103,7 @@ def _coefficient_values(
     context: FiniteElementExecutionContext,
     /,
     *,
-    value_shape: tuple[int, ...] = (),
+    value_shape: tuple[int, ...] | None = (),
     entity_indices: ArrayLike | None = None,
     dof_indices: ArrayLike | None = None,
     dof_orientations: ArrayLike | None = None,
@@ -129,6 +130,19 @@ def _coefficient_values(
         side=side if coefficient_.side != "none" else None,
     )
     point_shape = points.shape[:-1]
+    if value_shape is None:
+        if values.shape == ():
+            return jnp.broadcast_to(values, point_shape)
+        physical_dimension = points.shape[-1]
+        if values.shape == (physical_dimension, physical_dimension):
+            return jnp.broadcast_to(values, point_shape + values.shape)
+        if values.shape[: len(point_shape)] == point_shape:
+            return values
+        raise ValueError(
+            "Finite-element tensor coefficient must preserve point axes or return "
+            f"one constant ({physical_dimension}, {physical_dimension}) matrix; "
+            f"got point shape {point_shape} and coefficient shape {values.shape}."
+        )
     expected = point_shape + value_shape
     if values.shape == ():
         return jnp.broadcast_to(values, expected)
@@ -467,7 +481,7 @@ def _prepared_local_coefficient_values(
     context: FiniteElementExecutionContext,
     /,
     *,
-    value_shape: tuple[int, ...] = (),
+    value_shape: tuple[int, ...] | None = (),
 ) -> Array:
     gathers = dict(workset.gathers)
     dof_indices = None
@@ -536,7 +550,36 @@ def _prepared_local_volume_residual(
             scalar_weight.shape + (1,) * (values.ndim - scalar_weight.ndim)
         )
 
-    if isinstance(action, DiffusionAction):
+    if isinstance(action, TensorDiffusionAction):
+        if local_state.ndim != 2:
+            raise ValueError(
+                "TensorDiffusionAction requires a scalar finite-element field."
+            )
+        coefficient_values = _prepared_local_coefficient_values(
+            action.diffusivity,
+            discretization,
+            workset,
+            references,
+            metric,
+            context,
+            value_shape=None,
+        )
+        physical_gradient = metric.physical_gradient(
+            reference.reference_gradient(context.runtime, local_state)
+        )
+        tensor = action.physical_tensor(
+            coefficient_values,
+            metric.physical_dimension,
+            leading_shape=metric.points.shape[:-1],
+        )
+        physical_flux = ein.contract("cqde,cqe->cqd", tensor, physical_gradient)
+        local = reference.reference_gradient_transpose(
+            context.runtime,
+            metric.reference_gradient_transpose(
+                weighted(physical_flux, physical_weights)
+            ),
+        )
+    elif isinstance(action, DiffusionAction):
         coefficient_values = _prepared_local_coefficient_values(
             action.diffusivity,
             discretization,
@@ -1406,6 +1449,7 @@ def _full_residual(
                     action,
                     (
                         DiffusionAction,
+                        TensorDiffusionAction,
                         MassAction,
                         SourceAction,
                         CellEnergyAction,
@@ -1442,6 +1486,63 @@ def _full_residual(
                     metric,
                     context,
                 )
+            elif isinstance(action, TensorDiffusionAction):
+                if local_state.ndim != 2:
+                    raise ValueError(
+                        "TensorDiffusionAction requires a scalar finite-element field."
+                    )
+                values = _cell_coefficient_values(
+                    action.diffusivity,
+                    discretization,
+                    block_index,
+                    workset,
+                    gathers,
+                    physical_points,
+                    reference_points,
+                    context,
+                    work_cells,
+                    value_shape=None,
+                )
+                dimension = physical_points.shape[-1]
+                tensor = action.physical_tensor(
+                    values,
+                    dimension,
+                    leading_shape=physical_points.shape[:-1],
+                )
+                if (
+                    workset.signature.local_kernel in ("sum_factorized", "collocated")
+                    and reference is not None
+                    and reference.tensor_tabulation is not None
+                    and metric is not None
+                ):
+                    plan = SumFactorizationPlan(reference.tensor_tabulation)
+                    reference_gradient = _tensor_gradient(plan, local_state)
+                    qshape = plan.tabulation.evaluation_shape
+                    inverse_jacobian = metric.inverse_jacobian.reshape(
+                        (local_state.shape[0])
+                        + qshape
+                        + (plan.tabulation.dimension, dimension)
+                    )
+                    tensor_grid = tensor.reshape(
+                        (local_state.shape[0]) + qshape + (dimension, dimension)
+                    )
+                    weighted_measure = metric.weighted_measure.reshape(
+                        (local_state.shape[0]) + qshape
+                    )
+                    reference_tensor = ein.contract("...rd,...de,...se,...->...rs",
+                    inverse_jacobian,
+                    tensor_grid,
+                    inverse_jacobian,
+                    weighted_measure,)
+                    reference_flux = ein.contract("...rs,...s->...r", reference_tensor, reference_gradient)
+                    local = _tensor_gradient_transpose(plan, reference_flux, ())
+                else:
+                    field_gradient = ein.contract("cqid,ci->cqd", physical_gradients, local_state)
+                    local = ein.contract("cq,cqid,cqde,cqe->ci",
+                    physical_weights,
+                    physical_gradients,
+                    tensor,
+                    field_gradient,)
             elif isinstance(action, DiffusionAction):
                 values = _cell_coefficient_values(
                     action.diffusivity,

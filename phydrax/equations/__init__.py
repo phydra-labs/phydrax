@@ -563,6 +563,7 @@ from ._variational import (
     BoundaryLoadAction,
     coefficient,
     DiffusionAction,
+    TensorDiffusionAction,
     MassAction,
     SourceAction,
     VariationalCoefficient,
@@ -577,6 +578,7 @@ from ._weakly_compressible import (
     CompiledWeaklyCompressibleSPHProblem,
     WeaklyCompressibleFluidProblemIR,
 )
+from .advanced import GLMIdealMHDSystem, MultigroupM1RadiationSystem
 from .fem import FiniteElementMassPolicy
 from .trefftz import (
     AbstractTrefftzBasis,
@@ -670,6 +672,8 @@ from .vem import (
 
 __all__ = [
     "advanced",
+    "GLMIdealMHDSystem",
+    "MultigroupM1RadiationSystem",
     "vem",
     "CompiledVirtualElementProblem",
     "VirtualElementAction",
@@ -749,6 +753,7 @@ __all__ = [
     "compile_finite_element_problem",
     "CompiledFiniteElementProblem",
     "DiffusionAction",
+    "TensorDiffusionAction",
     "ExteriorFacetAction",
     "finite_element_form_from_functional",
     "FiniteElementAction",

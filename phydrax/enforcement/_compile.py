@@ -45,6 +45,15 @@ from ..operators.differential._hooks import (
     with_derivative_rule,
 )
 from ._ansatz import _enforcement_weight_fn, enforce_initial
+from ._lifecycle import (
+    EnforcementState,
+    PreparedEnforcementStep,
+    RealizationLifecycleState,
+)
+from ._realization import (
+    ConditionEvaluationContext,
+    RealizationStatus,
+)
 from ._spec import EnforcementSpec
 
 
@@ -1918,14 +1927,11 @@ class _FieldEnforcementPipeline(StrictModule):
 
 
 class EnforcementProgram(StrictModule):
-    """Compiled hard-enforcement program for one or more fields.
-
-    Specification dependencies form a directed acyclic graph. Field pipelines
-    run in topological order and consume already-enforced dependencies.
-    """
+    """Compiled local ansätze followed by atomic typed field realizations."""
 
     pipelines: frozendict[str, _FieldEnforcementPipeline]
     order: tuple[str, ...]
+    realization_specs: tuple[EnforcementSpec, ...]
 
     def __init__(
         self,
@@ -1933,20 +1939,25 @@ class EnforcementProgram(StrictModule):
         /,
         *,
         field_order: Sequence[str],
+        realization_specs: Sequence[EnforcementSpec] = (),
     ):
-        """Create a multi-field enforcement program.
-
-        `pipelines` maps field names to compiled field pipelines. `field_order`
-        provides deterministic tie-breaking for topological sorting.
-        """
+        typed = tuple(realization_specs)
+        if any(spec.realization is None for spec in typed):
+            raise TypeError(
+                "realization_specs must contain only typed realization specifications."
+            )
+        condition_ids = tuple(spec.condition.condition_id for spec in typed)
+        if len(set(condition_ids)) != len(condition_ids):
+            raise ValueError("Typed realization condition identifiers must be unique.")
         self.pipelines = frozendict(pipelines)
         self.order = _toposort(self.pipelines, field_order=tuple(field_order))
+        self.realization_specs = typed
 
     @classmethod
     def build(
         cls,
         *,
-        functions: Mapping[str, DomainFunction],
+        functions: Mapping[str, Any],
         specs: Sequence[EnforcementSpec] = (),
         interior: Sequence[InteriorAnchors] = (),
         evolution_var: str = "t",
@@ -1959,9 +1970,14 @@ class EnforcementProgram(StrictModule):
         key: Key[Array, ""] = DOC_KEY0,
     ) -> "EnforcementProgram":
         field_order = tuple(functions.keys())
+        resolved_specs = tuple(specs)
+        local_specs = tuple(spec for spec in resolved_specs if spec.realization is None)
+        realization_specs = tuple(
+            spec for spec in resolved_specs if spec.realization is not None
+        )
 
         by_field_specs: dict[str, list[EnforcementSpec]] = {}
-        for spec in specs:
+        for spec in local_specs:
             by_field_specs.setdefault(spec.field, []).append(spec)
 
         by_field_interior: dict[str, list[InteriorAnchors]] = {}
@@ -1989,29 +2005,135 @@ class EnforcementProgram(StrictModule):
                 key=key,
             )
 
-        return cls(pipelines, field_order=field_order)
+        return cls(
+            pipelines,
+            field_order=field_order,
+            realization_specs=realization_specs,
+        )
 
-    def apply(
-        self, functions: Mapping[str, DomainFunction], /
-    ) -> frozendict[str, DomainFunction]:
-        r"""Apply all pipelines and return an enforced field mapping.
-
-        Pipelines are applied in a dependency-respecting order. If a pipeline
-        for field $u$ requires co-variables $\{v\}$, then those $v$ are taken from
-        the *current* enforced mapping as the iteration proceeds.
-        """
-        out: dict[str, DomainFunction] = dict(functions)
+    def _apply_local(self, functions: Mapping[str, Any], /) -> frozendict[str, Any]:
+        out: dict[str, Any] = dict(functions)
 
         def get_field(name: str) -> DomainFunction:
-            if name in out:
-                return out[name]
-            raise KeyError(f"Unknown field {name!r}.")
+            if name not in out:
+                raise KeyError(f"Unknown field {name!r}.")
+            value = out[name]
+            if not isinstance(value, DomainFunction):
+                raise TypeError(f"Local ansatz field {name!r} must be a DomainFunction.")
+            return value
 
         for field in self.order:
             pipe = self.pipelines[field]
             u_base = functions[field]
+            if not isinstance(u_base, DomainFunction):
+                raise TypeError(f"Local ansatz field {field!r} must be a DomainFunction.")
             out[field] = pipe.apply(u_base, get_field=get_field)
         return frozendict(out)
+
+    def prepare_step(
+        self,
+        functions: Mapping[str, Any],
+        /,
+        *,
+        state: EnforcementState | None = None,
+        accepted_step: int = 0,
+        attempt: int = 0,
+        time: Any = None,
+        caller_sources: Mapping[str, Any] = frozendict(),
+        parameters: Mapping[str, Any] = frozendict(),
+        parameter_revision: int = 0,
+        adaptive_sources: frozenset[str] = frozenset(),
+        key: Any = DOC_KEY0,
+        exact_required: bool = True,
+    ) -> PreparedEnforcementStep:
+        """Prepare one atomic field-realization transaction without committing it."""
+        current = EnforcementState(functions) if state is None else state
+        out = self._apply_local(functions)
+        realization_states: dict[str, RealizationLifecycleState] = dict(
+            current.realizations
+        )
+        results = {}
+        for spec in self.realization_specs:
+            realization = spec.realization
+            if realization is None:
+                raise RuntimeError(
+                    "Typed realization specification lost its realization."
+                )
+            condition = spec.condition
+            condition_id = condition.condition_id
+            context = ConditionEvaluationContext(
+                condition,
+                accepted_step=accepted_step,
+                attempt=attempt,
+                time=time,
+                caller_sources=caller_sources,
+                parameters=parameters,
+                parameter_revision=parameter_revision,
+                adaptive_sources=adaptive_sources,
+                prng_key=key,
+                exact_required=exact_required,
+            )
+            result = realization.realize(
+                out,
+                realization_states.get(condition_id),
+                context=context,
+            )
+            results[condition_id] = result
+            if not result.successful:
+                return PreparedEnforcementStep.failure(
+                    result.status,
+                    state=current,
+                    accepted_step=accepted_step,
+                    message=result.message,
+                    results=results,
+                )
+            if result.fields is None:
+                raise RuntimeError("Successful realization lost its committed fields.")
+            out = frozendict(result.fields)
+            realization_states[condition_id] = result.state
+        unchanged = all(
+            result.status is RealizationStatus.UNCHANGED for result in results.values()
+        )
+        return PreparedEnforcementStep.success(
+            out,
+            realization_states,
+            state=current,
+            accepted_step=accepted_step,
+            results=results,
+            unchanged=unchanged,
+        )
+
+    def apply(
+        self,
+        functions: Mapping[str, Any],
+        /,
+        *,
+        accepted_step: int = 0,
+        attempt: int = 0,
+        time: Any = None,
+        caller_sources: Mapping[str, Any] = frozendict(),
+        parameters: Mapping[str, Any] = frozendict(),
+        parameter_revision: int = 0,
+        adaptive_sources: frozenset[str] = frozenset(),
+        key: Any = DOC_KEY0,
+        exact_required: bool = True,
+    ) -> frozendict[str, Any]:
+        """Apply local and typed realizations as one checked stateless transaction."""
+        prepared = self.prepare_step(
+            functions,
+            accepted_step=accepted_step,
+            attempt=attempt,
+            time=time,
+            caller_sources=caller_sources,
+            parameters=parameters,
+            parameter_revision=parameter_revision,
+            adaptive_sources=adaptive_sources,
+            key=key,
+            exact_required=exact_required,
+        )
+        if not prepared.successful or prepared.fields is None:
+            raise RuntimeError(prepared.message)
+        return prepared.fields
 
 
 def _toposort(

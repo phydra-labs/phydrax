@@ -19,6 +19,12 @@ temporal state. `ImmersedMarkerQuadraturePlan` materializes differentiable posit
 surface Jacobians, physical quadrature weights, and source-entity IDs from any
 `BoundaryAtlas`.
 
+`BoundaryAtlasSurfelPlan` preserves the same stable marker identity and physical
+quadrature while adding oriented tangent footprints. Its materialization can
+produce compatible marker kinematics for the immersed solve. Marker kernel
+support, surfel footprint, and physical quadrature weight remain independent;
+see [Surfels](guides_surfels.md).
+
 `PreparedMACMarkerTransfer.interpolation_operator(relation)` is J. Its Hilbert adjoint
 is S:
 

@@ -24,6 +24,7 @@ from .._core import (
 from .._integration_domain import IntegrationDomain
 from .._lifecycle import AbstractDiscretizationPlan, AbstractPreparedDiscretization
 from .._measure import DiscreteMeasure
+from .._polygon_domains import polygon_integration_domains
 from .._polygon_geometry import (
     evaluate_polygon_geometry,
     polygon_cubature,
@@ -329,7 +330,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             ),
         )
         self.cell_domain, self.exterior_facet_domain, self.interior_facet_domain = (
-            _integration_domains(mesh)
+            polygon_integration_domains(mesh)
         )
         projector_bytes = sum(
             int(
@@ -455,57 +456,6 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
     @property
     def field_space(self) -> DiscreteFieldSpace:
         return self.field_spaces[0]
-
-
-def _integration_domains(
-    mesh: CellMesh, /
-) -> tuple[IntegrationDomain, IntegrationDomain, IntegrationDomain]:
-    connectivity = mesh.connectivity
-    cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
-    valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
-    edge_count = int(connectivity.edges.shape[0])
-    owner = np.full((edge_count,), -1, dtype=np.int32)
-    neighbour = np.full((edge_count,), -1, dtype=np.int32)
-    owner_local = np.full((edge_count,), -1, dtype=np.int32)
-    neighbour_local = np.full((edge_count,), -1, dtype=np.int32)
-    for cell in range(cell_edges.shape[0]):
-        for local in range(cell_edges.shape[1]):
-            if not valid[cell, local]:
-                continue
-            edge = int(cell_edges[cell, local])
-            if owner[edge] < 0:
-                owner[edge] = cell
-                owner_local[edge] = local
-            else:
-                neighbour[edge] = cell
-                neighbour_local[edge] = local
-    exterior = np.flatnonzero(neighbour < 0).astype(np.int32)
-    interior = np.flatnonzero(neighbour >= 0).astype(np.int32)
-    cell_domain = IntegrationDomain(
-        "cell",
-        np.arange(connectivity.cell_count, dtype=np.int32),
-        mesh.support.support_id,
-        mesh.topology.entity_sets[2].entity_set_id,
-    )
-    exterior_domain = IntegrationDomain(
-        "exterior_facet",
-        exterior,
-        mesh.support.support_id,
-        mesh.topology.entity_sets[1].entity_set_id,
-        owner_cells=owner[exterior],
-        owner_local_entities=owner_local[exterior],
-    )
-    interior_domain = IntegrationDomain(
-        "interior_facet",
-        interior,
-        mesh.support.support_id,
-        mesh.topology.entity_sets[1].entity_set_id,
-        owner_cells=owner[interior],
-        neighbour_cells=neighbour[interior],
-        owner_local_entities=owner_local[interior],
-        neighbour_local_entities=neighbour_local[interior],
-    )
-    return cell_domain, exterior_domain, interior_domain
 
 
 __all__ = [

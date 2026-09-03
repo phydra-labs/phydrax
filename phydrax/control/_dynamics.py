@@ -69,17 +69,23 @@ def _batched_transition(
     state_shape: tuple[int, ...],
     control_shape: tuple[int, ...],
     /,
-) -> Array:
+) -> tuple[Array, Array, Array, Array]:
     count = 1
     for size in case_shape:
         count *= size
     flat_states = states.reshape((count,) + state_shape)
     flat_controls = controls.reshape((count,) + control_shape)
 
-    def apply(state: Array, control: Array) -> Array:
-        return system.evaluate(context, state, args, inputs=control)
+    def apply(state: Array, control: Array):
+        return system.evaluate_result(context, state, args, inputs=control)
 
-    return jax.vmap(apply)(flat_states, flat_controls).reshape(case_shape + state_shape)
+    result = jax.vmap(apply)(flat_states, flat_controls)
+    return (
+        result.candidate_state.reshape(case_shape + state_shape),
+        result.accepted_state.reshape(case_shape + state_shape),
+        result.successful.reshape(case_shape),
+        result.status.reshape(case_shape),
+    )
 
 
 class DiscreteControlDynamics(StrictModule):
@@ -144,15 +150,18 @@ class DiscreteControlDynamics(StrictModule):
         )
 
         def step(
-            carry: tuple[Array, Array], index: Array
-        ) -> tuple[tuple[Array, Array], tuple[Array, Array, Array]]:
+            carry: tuple[Array, Array, Array, Array], index: Array
+        ) -> tuple[
+            tuple[Array, Array, Array, Array],
+            tuple[Array, Array, Array],
+        ]:
             time = time_grid.times[index]
             context = DiscreteStepContext(
                 time,
                 time_grid.times[index + 1],
                 index,
             )
-            current, current_valid = carry
+            current, current_valid, current_backend_status, backend_failed = carry
             safe_current = _event_where(
                 current_valid,
                 current,
@@ -177,7 +186,12 @@ class DiscreteControlDynamics(StrictModule):
                 jnp.zeros_like(evaluated_control),
                 self.control_shape,
             )
-            candidate_state = _batched_transition(
+            (
+                _candidate_state,
+                accepted_state,
+                transition_successful,
+                transition_status,
+            ) = _batched_transition(
                 self.system,
                 context,
                 safe_current,
@@ -189,8 +203,8 @@ class DiscreteControlDynamics(StrictModule):
             )
             next_state = _event_where(
                 transition_valid,
-                candidate_state,
-                jnp.full_like(candidate_state, jnp.nan),
+                accepted_state,
+                jnp.full_like(accepted_state, jnp.nan),
                 self.state_shape,
             )
             control = _event_where(
@@ -199,12 +213,38 @@ class DiscreteControlDynamics(StrictModule):
                 jnp.full_like(evaluated_control, jnp.nan),
                 self.control_shape,
             )
-            next_valid = transition_valid & _event_finite(next_state, self.state_shape)
-            return (next_state, next_valid), (next_state, control, next_valid)
+            next_valid = (
+                transition_valid
+                & transition_successful
+                & _event_finite(next_state, self.state_shape)
+            )
+            record_backend = transition_valid & ~backend_failed
+            next_backend_status = jnp.where(
+                record_backend,
+                transition_status,
+                current_backend_status,
+            ).astype(jnp.int32)
+            next_backend_failed = backend_failed | (
+                transition_valid & ~transition_successful
+            )
+            return (
+                next_state,
+                next_valid,
+                next_backend_status,
+                next_backend_failed,
+            ), (next_state, control, next_valid)
 
-        (_, _), (next_states, applied_controls, next_valid) = jax.lax.scan(
+        (
+            (_, _, transition_status, backend_failed),
+            (next_states, applied_controls, next_valid),
+        ) = jax.lax.scan(
             step,
-            (state, initial_valid),
+            (
+                state,
+                initial_valid,
+                jnp.zeros(cases, dtype=jnp.int32),
+                jnp.zeros(cases, dtype=bool),
+            ),
             jnp.arange(time_grid.num_steps, dtype=jnp.int32),
         )
         state_time_axis = len(cases)
@@ -223,10 +263,16 @@ class DiscreteControlDynamics(StrictModule):
             ),
             axis=-1,
         )
+        all_valid = jnp.all(valid, axis=-1)
         status = jnp.where(
-            jnp.all(valid, axis=-1),
+            all_valid,
             CONTROL_SUCCESS,
             CONTROL_DYNAMICS_FAILED,
+        ).astype(jnp.int32)
+        backend_status = jnp.where(
+            backend_failed | all_valid,
+            transition_status,
+            status,
         ).astype(jnp.int32)
         return ControlTrajectory(
             time_grid=time_grid,
@@ -234,7 +280,7 @@ class DiscreteControlDynamics(StrictModule):
             controls=controls,
             valid=valid,
             status=status,
-            backend_status=status,
+            backend_status=backend_status,
             case_shape=cases,
             state_shape=self.state_shape,
             control_shape=self.control_shape,

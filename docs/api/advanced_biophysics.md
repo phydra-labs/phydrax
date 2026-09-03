@@ -14,6 +14,18 @@
       show_root_heading: true
       members_order: source
 
+## Cardiovascular platform
+
+The [cardiovascular application API](applications/cardiovascular.md) composes
+generic equation, discretization, solver, lifecycle, and qualification owners
+into bounded research workflows. Numerical success does not establish a
+clinical, diagnostic, treatment, regulatory, or commercial claim.
+
+::: phydrax.applications.cardiovascular
+    options:
+      show_root_heading: true
+      members_order: source
+
 ## Cellular mechanics
 
 ::: phydrax.applications.cellular_mechanics

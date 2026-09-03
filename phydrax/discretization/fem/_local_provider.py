@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -33,6 +34,15 @@ if TYPE_CHECKING:
     from ._generic import FiniteElementDiscretization
 
 
+def _tabulation_hessians(element, points: Array, /) -> Array:
+    """Differentiate the element's owned reference-gradient action."""
+
+    def point_gradient(point):
+        return element.tabulate(point[None, :])[1][0]
+
+    return jax.vmap(jax.jacfwd(point_gradient))(points)
+
+
 class FiniteElementReferenceActions(LocalReferenceActions):
     """Dense FE reference actions; runtime is intentionally ignored."""
 
@@ -44,6 +54,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
     kernel_modes: tuple[str, ...] = eqx.field(static=True)
     basis_values: Array
     basis_gradients: Array
+    basis_hessians: Array
 
     def __init__(
         self,
@@ -51,22 +62,32 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         basis_gradients: ArrayLike,
         /,
         *,
+        basis_hessians: ArrayLike | None = None,
         maximum_derivative_order: int,
         kernel_modes: Sequence[str],
         action_id: str | None = None,
     ):
         values = jnp.asarray(basis_values)
         gradients = jnp.asarray(basis_gradients)
+        hessians = (
+            jnp.empty((0,), dtype=gradients.dtype)
+            if basis_hessians is None
+            else jnp.asarray(basis_hessians)
+        )
         if values.ndim not in (2, 3) or gradients.ndim != values.ndim + 1:
             raise ValueError("FE reference values and gradients have invalid rank.")
         if values.shape != gradients.shape[:-1]:
             raise ValueError("FE reference values and gradients disagree.")
+        if hessians.size and hessians.shape != gradients.shape + (gradients.shape[-1],):
+            raise ValueError("FE reference Hessians have incompatible axes.")
         width = int(values.shape[-1])
         point_count = int(values.shape[-2])
         derivative_order = int(maximum_derivative_order)
         modes = tuple(dict.fromkeys(str(value) for value in kernel_modes))
-        if derivative_order < 0 or derivative_order > 1:
-            raise ValueError("FE reference actions support derivative order zero or one.")
+        if derivative_order < 0 or derivative_order > 2:
+            raise ValueError("FE reference actions support derivative orders zero to two.")
+        if derivative_order == 2 and not hessians.size:
+            raise ValueError("Second-order FE actions require reference Hessians.")
         if not modes or any(
             value not in ("dense", "partial", "sum_factorized", "collocated")
             for value in modes
@@ -78,6 +99,11 @@ class FiniteElementReferenceActions(LocalReferenceActions):
                     "kind": "finite-element-reference-actions",
                     "values": array_tree_fingerprint(values),
                     "gradients": array_tree_fingerprint(gradients),
+                    "hessians": (
+                        None
+                        if not hessians.size
+                        else array_tree_fingerprint(hessians)
+                    ),
                     "maximum_derivative_order": derivative_order,
                     "kernel_modes": modes,
                 }
@@ -95,6 +121,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         self.kernel_modes = modes
         self.basis_values = values
         self.basis_gradients = gradients
+        self.basis_hessians = hessians
 
     def realize_reference_actions(
         self, runtime: object, /
@@ -137,14 +164,24 @@ class FiniteElementReferenceActions(LocalReferenceActions):
     def reference_hessian(
         self, runtime: object, local_coefficients: ArrayLike, /
     ) -> Array:
-        del runtime, local_coefficients
-        raise ValueError("FE reference Hessian actions were not prepared.")
+        del runtime
+        if not self.basis_hessians.size:
+            raise ValueError("FE reference Hessian actions were not prepared.")
+        coefficients = jnp.asarray(local_coefficients)
+        if self.basis_hessians.ndim == 4:
+            return oe.contract("qirs,ci...->cq...rs", self.basis_hessians, coefficients)
+        return oe.contract("cqirs,ci...->cq...rs", self.basis_hessians, coefficients)
 
     def reference_hessian_transpose(
         self, runtime: object, hessians: ArrayLike, /
     ) -> Array:
-        del runtime, hessians
-        raise ValueError("FE reference Hessian transpose actions were not prepared.")
+        del runtime
+        if not self.basis_hessians.size:
+            raise ValueError("FE reference Hessian transpose actions were not prepared.")
+        values = jnp.asarray(hessians)
+        if self.basis_hessians.ndim == 4:
+            return oe.contract("qirs,cq...rs->ci...", self.basis_hessians, values)
+        return oe.contract("cqirs,cq...rs->ci...", self.basis_hessians, values)
 
     def trace(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         return self.interpolate(runtime, local_coefficients)
@@ -163,6 +200,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
     coordinate_basis: Array
     coordinate_gradients: Array
     coordinate_gathers: Array
+    coordinate_hessians: Array
     reference_weights: Array
 
     def __init__(
@@ -174,11 +212,18 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         coordinate_gathers: ArrayLike,
         reference_weights: ArrayLike,
         /,
+        *,
+        coordinate_hessians: ArrayLike | None = None,
     ):
         layout = str(runtime_layout_id)
         kind = str(domain_kind)
         basis = jnp.asarray(coordinate_basis)
         gradients = jnp.asarray(coordinate_gradients)
+        hessians = (
+            jnp.empty((0,), dtype=gradients.dtype)
+            if coordinate_hessians is None
+            else jnp.asarray(coordinate_hessians)
+        )
         gathers = jnp.asarray(coordinate_gathers, dtype=jnp.int32)
         weights = jnp.asarray(reference_weights)
         if (
@@ -187,6 +232,11 @@ class FiniteElementGeometryActions(LocalGeometryActions):
             or basis.ndim != 2
             or gradients.ndim != 3
             or gradients.shape[:2] != basis.shape
+            or (
+                hessians.size
+                and hessians.shape
+                != gradients.shape + (gradients.shape[-1],)
+            )
             or gathers.ndim != 2
             or gathers.shape[1] != basis.shape[1]
             or weights.shape != (basis.shape[0],)
@@ -198,6 +248,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         self.coordinate_basis = basis
         self.coordinate_gradients = gradients
         self.coordinate_gathers = gathers
+        self.coordinate_hessians = hessians
         self.reference_weights = weights
         self.action_id = canonical_fingerprint(
             {
@@ -207,6 +258,11 @@ class FiniteElementGeometryActions(LocalGeometryActions):
                 "coordinate_basis": array_tree_fingerprint(basis),
                 "coordinate_gradients": array_tree_fingerprint(gradients),
                 "coordinate_gathers": array_tree_fingerprint(gathers),
+                "coordinate_hessians": (
+                    None
+                    if not hessians.size
+                    else array_tree_fingerprint(hessians)
+                ),
                 "reference_weights": array_tree_fingerprint(weights),
             }
         )
@@ -229,11 +285,24 @@ class FiniteElementGeometryActions(LocalGeometryActions):
             "Finite-element metric determinant must be positive and finite.",
         )
         inverse = inverse_result.value
+        inverse_hessian = None
+        if self.coordinate_hessians.size:
+            mapping_hessian = oe.contract(
+                "qirs,cid->cqdrs", self.coordinate_hessians, coordinates
+            )
+            inverse_hessian = -oe.contract(
+                "cqrd,cqdst,cqsa,cqtb->cqrab",
+                inverse,
+                mapping_hessian,
+                inverse,
+                inverse,
+            )
         return LocalMetricResult(
             points,
             measure * self.reference_weights[None, :],
             jacobian,
             inverse,
+            inverse_hessian=inverse_hessian,
         )
 
 
@@ -261,7 +330,7 @@ class FiniteElementLocalProvider(StrictModule):
                 LocalVariationalOffer(
                     "prepared-local",
                     ("cell",),
-                    ("diffusion", "mass", "source"),
+                    ("diffusion", "tensor-diffusion", "mass", "source"),
                     ("value", "grad"),
                     ("value", "gradient"),
                     (
@@ -414,10 +483,16 @@ class FiniteElementLocalProvider(StrictModule):
                 field_index = discretization._field_index(name)
                 element = discretization.elements[field_index][block_index]
                 basis, gradients = element.tabulate(points)
+                hessians = (
+                    _tabulation_hessians(element, points)
+                    if maximum_derivative_order == 2
+                    else None
+                )
                 references.append(
                     FiniteElementReferenceActions(
                         basis,
                         gradients,
+                        basis_hessians=hessians,
                         maximum_derivative_order=maximum_derivative_order,
                         kernel_modes=(mode,),
                         action_id=canonical_fingerprint(
@@ -436,6 +511,11 @@ class FiniteElementLocalProvider(StrictModule):
                 )
             coordinate_element = discretization.coordinate_elements[block_index]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
+            coordinate_hessians = (
+                _tabulation_hessians(coordinate_element, points)
+                if maximum_derivative_order == 2
+                else None
+            )
             geometry = FiniteElementGeometryActions(
                 discretization.default_runtime.geometry_layout_id,
                 domain.kind,
@@ -443,6 +523,7 @@ class FiniteElementLocalProvider(StrictModule):
                 coordinate_gradients,
                 discretization.coordinate_dofs[block_index][selected],
                 weights,
+                coordinate_hessians=coordinate_hessians,
             )
             selected_domain = IntegrationDomain(
                 "cell",

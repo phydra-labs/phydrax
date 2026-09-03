@@ -41,6 +41,8 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/constraint_system.py
+!benchmarks/constraint_system.json
 !benchmarks/signal_profiles.py
 !benchmarks/signal_profiles.json
 !benchmarks/control_lq_nash.py

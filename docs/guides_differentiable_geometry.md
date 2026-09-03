@@ -55,6 +55,19 @@ piecewise-smooth. An optional `ExactSDFEnclosureCertificate` can certify cell
 sign only where its Lipschitz interval excludes zero; cells intersecting that
 interval remain unresolved.
 
+## Surfel geometry
+
+`SurfelGeometryPlan` validates current positions, unit normals, scaled tangent
+axes, and physical surface weights on stable point ownership. Those arrays
+remain differentiable while activation, Morton ownership, overlap routes, ray
+hit order, and footprint membership are fixed.
+
+`SurfelGeometryCertificate` separates numeric validity from source authority.
+It records position/normal accuracy, orientation scope, coverage scope,
+footprint meaning, and optional curvature/error bounds. Local tangent patches
+never acquire watertight or exact-SDF semantics implicitly. See
+[Surfels](guides_surfels.md).
+
 ## Implicit point projection
 
 `ImplicitPointProjectionPlan` binds fixed reference points to one compiled
