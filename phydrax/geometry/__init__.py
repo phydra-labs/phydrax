@@ -91,6 +91,11 @@ from ._sampling import (
     SamplingReport,
     SamplingResult,
 )
+from ._surfel_atlas import (
+    BoundaryAtlasSurfelMaterialization,
+    BoundaryAtlasSurfelPlan,
+    PreparedBoundaryAtlasSurfels,
+)
 from ._tetra_intersections import (
     intersect_tetrahedra,
     stable_tetra_pair_id,
@@ -245,9 +250,11 @@ from .simplicial import (
     planar_region_from_source,
     planar_region_from_triangles,
     PlanarMeshRegion,
+    PreparedSimplicialSurfels,
     SegmentMesh,
     SegmentQueryResult,
     SegmentTopology,
+    SimplicialSurfelPlan,
     triangle_arrays,
     TriangleBVH,
     TriangleMesh,
@@ -281,6 +288,9 @@ __all__ = [
     "ImmersedMarkerMaterialization",
     "ImmersedMarkerQuadraturePlan",
     "MarkerVelocityProvider",
+    "BoundaryAtlasSurfelMaterialization",
+    "BoundaryAtlasSurfelPlan",
+    "PreparedBoundaryAtlasSurfels",
     "IntersectionResult",
     "IntersectionStatus",
     "PredicateEvidence",
@@ -353,6 +363,8 @@ __all__ = [
     "DesignSearchResult",
     "Cone",
     "DDGOperators",
+    "PreparedSimplicialSurfels",
+    "SimplicialSurfelPlan",
     "DesignState",
     "DistanceSemantics",
     "ExactSDFEnclosureCertificate",

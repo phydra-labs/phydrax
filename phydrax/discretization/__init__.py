@@ -21,6 +21,7 @@ from . import (
     spatial as spatial,
     spectral,
     splatting,
+    surfel as surfel,
     vem,
     vortex,
 )
@@ -1855,6 +1856,8 @@ from .splatting import (
     TensorBSplineSplatAssignment,
     UniformGIMPSplatAssignment,
 )
+from .surfel import *  # noqa: F403
+from .surfel import __all__ as _surfel_all
 from .vem import (
     adapt_virtual_element_hp,
     adapt_virtual_element_p,
@@ -3722,6 +3725,7 @@ __all__ += [
         *_discrete_velocity_all,
         *_lattice_boltzmann_all,
         *_spatial_all,
+        *_surfel_all,
         *_vortex_all,
     )
     if name not in __all__

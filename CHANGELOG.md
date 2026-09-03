@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added first-class surfel discretizations with stable point ownership,
+  validated oriented tangent footprints, physical surface quadrature,
+  boundary-atlas and simplicial materialization, Morton primitive bounds,
+  bounded ray queries, and confidence-aware local sparse-voxel projection.
 - Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
   traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
   FMM, brick-backed sparse voxel fields and qualified geometry sampling,

@@ -145,14 +145,19 @@ reduction order, and balance evidence remain explicit. See
 
 `MortonAddressPlan` provides canonical integer addressing for one-, two-, and
 three-dimensional dyadic boxes. `MortonPointHierarchyPlan` binds moving points
-to occupied prefixes and contiguous leaf ranges. `SparseVoxelGridPlan` binds
-fixed-resolution voxel samples to aligned bricks. `AdaptiveDyadicGridPlan`
-binds mixed-resolution cells to atomic refinement/coarsening and optional 2:1
-balance. These representations share addresses but not physical semantics.
+to occupied prefixes and contiguous leaf ranges. `MortonPrimitiveBoundsPlan`
+adds conservative extended-item AABBs without changing center ownership.
+`SparseVoxelGridPlan` binds fixed-resolution voxel samples to aligned bricks.
+`AdaptiveDyadicGridPlan` binds mixed-resolution cells to atomic
+refinement/coarsening and optional 2:1 balance. These representations share
+addresses but not physical semantics.
 
-`DyadicCellTopology` is a supported `DiscreteTopology` value. It can therefore
-own a `DiscreteSupport` without materializing a complete cell complex. See
-[Sparse spatial hierarchies](guides_sparse_spatial_hierarchies.md).
+`SurfelSetPlan` prepares stable point ownership and reference surface measure
+for oriented finite-footprint surface elements. Current position, normal,
+tangent axes, and physical surface weight live in `SurfelGeometryState`.
+`DyadicCellTopology` remains a separate volumetric/control-volume topology.
+See [Sparse spatial hierarchies](guides_sparse_spatial_hierarchies.md) and
+[Surfels](guides_surfels.md).
 
 
 ## Spectral bases
