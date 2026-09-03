@@ -633,9 +633,9 @@ def test_committee_diversity_and_advanced_methods():
         )
         for score in (3.0, 2.0, 1.0)
     )
-    records = phx.atomistic.AcquisitionPlan(2).select(
-        frames, evidence, descriptors=[[0.0], [0.1], [10.0]]
-    )
+    records = phx.atomistic.AcquisitionPlan(
+        2, phx.atomistic.CommitteeAcquisitionScorePolicy(1.0, 1.0, 1.0)
+    ).select(frames, evidence, descriptors=[[0.0], [0.1], [10.0]])
     assert tuple(record.source_index for record in records) == (0, 2)
     fallback = phx.atomistic.SegmentFallbackPolicy("reference-provider").decide(
         evidence[0]

@@ -34,10 +34,13 @@ water = phx.atomistic.AtomicStructure(
 
 `AtomicStructure` prepares a `ParticleSetPlan`/`ParticleDiscretization`, so
 stable IDs, masses, and the active mask have the same semantics as other
-material-particle methods. Active atomic numbers are positive. Atomic number
-zero is reserved for inactive padding, and inactive entries must be zero.
-`AtomisticBatch.from_structures` pads without changing an active atom's ID or
-mass. All cases in one batch must have the same exact scale identity.
+material-particle methods. `AtomicStructure` contains elements only.
+`AtomisticBatch` and `AtomisticSystemPlan` additionally carry `element_mask`:
+active elements require positive atomic numbers, while active non-element
+particles and inactive padding use atomic number zero. `atom_type_ids` remains
+an independent interaction-species contract. `AtomisticBatch.from_structures`
+pads without changing an active atom's ID or mass. All cases in one batch must
+have the same exact scale identity.
 
 Cell and periodic-axis arrays can be preserved for provenance while parsing or
 moving data. `PaiNNPotential` and `NequIPPotential` reject any such metadata.
@@ -78,11 +81,12 @@ exposed. There is consequently no cell-list parity claim.
 
 ## PaiNN scalar/vector interactions
 
-`PaiNNPotential` embeds atomic number into invariant scalar features. Each
-interaction combines a smooth sinusoidal radial basis and cosine cutoff with
-scalar messages and Cartesian vector messages. Channel maps are native PhydraX
-`Linear` layers using the parameter-transform contract; contractions use
-`opt_einsum.contract`. Vector channels only undergo channel mixing, invariant
+`PaiNNPotential` embeds the declared `AtomisticSpeciesKind` into invariant
+scalar features. Atomic models use atomic numbers; molecular coarse models use
+explicit atom-type IDs. Each interaction combines a smooth sinusoidal radial
+basis and cosine cutoff with scalar messages and Cartesian vector messages.
+Channel maps are native PhydraX `Linear` layers using the parameter-transform
+contract; contractions use `opt_einsum.contract`. Vector channels only undergo
 inner products, scalar gating, and multiplication by relative unit directions.
 The total energy is a masked sum of invariant per-atom scalar readouts and is
 therefore translation-, rotation-, and atom-permutation-invariant.

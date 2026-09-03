@@ -51,6 +51,12 @@ from ._edge import (
     RecurrenceSeedMetric,
     track_basin_edge,
 )
+from ._kinetic_validation import (
+    MarkovValidationResult,
+    score_vamp,
+    validate_markov_models,
+    VAMPValidationResult,
+)
 from ._lyapunov import (
     finite_time_lyapunov_spectrum,
     kaplan_yorke_dimension,
@@ -173,6 +179,7 @@ __all__ = [
     "LyapunovSpectrumCheckpoint",
     "LyapunovSpectrumMethod",
     "LyapunovSpectrumResult",
+    "MarkovValidationResult",
     "MonodromyActionResult",
     "OrthogonalityPhaseCondition",
     "PERIODIC_EVOLUTION_FAILED",
@@ -211,6 +218,7 @@ __all__ = [
     "SurrogateAlternative",
     "SurrogateMethod",
     "SurrogateSignificanceResult",
+    "VAMPValidationResult",
     "ZeroOneTestResult",
     "correlation_dimension",
     "covariant_directions",
@@ -224,10 +232,12 @@ __all__ = [
     "periodic_nodes_from_state",
     "recurrence_quantification",
     "section_return_map",
+    "score_vamp",
     "summarize_chaos_uncertainty",
     "surrogate_significance",
     "solve_periodic_orbit",
     "recurrence_seed_candidates",
+    "validate_markov_models",
     "track_basin_edge",
     "zero_one_test",
 ]

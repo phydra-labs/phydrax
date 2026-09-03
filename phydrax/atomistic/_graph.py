@@ -118,6 +118,7 @@ def _edge_geometry(
 def _assemble_graph(
     *,
     atomic_numbers: Array,
+    atom_type_ids: Array,
     masses: Array,
     atom_mask: Array,
     atom_cases: Array,
@@ -154,6 +155,7 @@ def _assemble_graph(
     graph = GraphIR(
         nodes={
             "atomic_numbers": atomic_numbers,
+            "atom_type_ids": atom_type_ids,
             "masses": masses,
             "case_index": atom_cases,
         },
@@ -243,6 +245,7 @@ def realize_atomistic_graph(
     candidate_valid = flat_mask[senders] & flat_mask[receivers]
     return _assemble_graph(
         atomic_numbers=batch.atomic_numbers.reshape((-1,)),
+        atom_type_ids=batch.atom_type_ids.reshape((-1,)),
         masses=batch.masses.reshape((-1,)),
         atom_mask=flat_mask,
         atom_cases=batch.atom_cases,
@@ -295,6 +298,7 @@ def realize_particle_atomistic_graph(
     atom_cases = jnp.zeros((system.capacity,), dtype=jnp.int32)
     return _assemble_graph(
         atomic_numbers=system.plan.atomic_numbers,
+        atom_type_ids=system.plan.atom_type_ids,
         masses=system.plan.masses,
         atom_mask=system.active_mask,
         atom_cases=atom_cases,

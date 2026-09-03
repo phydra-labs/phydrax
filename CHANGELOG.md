@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added reset-safe VAMP/VAC/TICA and Markov-state kinetics, exact full-batch
+  variational encoders and model-backed collective variables, gauge-aligned
+  learned free-energy biases, immutable atomistic learning campaigns,
+  non-element molecular coarse beads with fixed-map force matching, and exact
+  targeted free-energy maps with FlowJAX and alchemical endpoint adapters.
 - Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
   traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
   FMM, brick-backed sparse voxel fields and qualified geometry sampling,

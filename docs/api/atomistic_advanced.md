@@ -7,8 +7,20 @@
 ::: phydrax.atomistic.CommitteeReductionPolicy
 
 ::: phydrax.atomistic.ConservativeUncertaintyBlend
+::: phydrax.atomistic.CommitteeAcquisitionScorePolicy
+
 
 ::: phydrax.atomistic.AcquisitionPlan
+::: phydrax.atomistic.AtomisticLabelSet
+
+::: phydrax.atomistic.AtomisticLearningCampaignPlan
+
+::: phydrax.atomistic.AtomisticLearningCampaignState
+::: phydrax.atomistic.AtomisticCampaignLifecycle
+
+
+::: phydrax.atomistic.run_atomistic_campaign_round
+
 
 ::: phydrax.atomistic.SegmentFallbackPolicy
 

@@ -31,6 +31,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
 
     particle_ids: Array
     atomic_numbers: Array
+    element_mask: Array
     atom_type_ids: Array
     masses: Array
     charges: Array
@@ -55,6 +56,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         /,
         *,
         atom_type_ids: ArrayLike | None = None,
+        element_mask: ArrayLike | None = None,
         charges: ArrayLike | None = None,
         active_mask: ArrayLike | None = None,
         mobile_mask: ArrayLike | None = None,
@@ -95,9 +97,16 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         )
         if active.shape != ids.shape or not np.any(active):
             raise ValueError("active_mask must select at least one particle.")
-        if np.any(numbers[active] <= 0) or np.any(numbers[~active] != 0):
+        elements = (
+            active.copy()
+            if element_mask is None
+            else np.asarray(element_mask, dtype=bool)
+        )
+        if elements.shape != ids.shape or np.any(elements & ~active):
+            raise ValueError("element_mask must be a subset of active_mask.")
+        if np.any(numbers[elements] <= 0) or np.any(numbers[~elements] != 0):
             raise ValueError(
-                "Active atoms require positive atomic numbers; padding uses zero."
+                "Element particles require positive atomic numbers; other particles use zero."
             )
         if np.any(~np.isfinite(mass[active])) or np.any(mass[active] <= 0.0):
             raise ValueError("Active masses must be finite and positive.")
@@ -163,6 +172,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
                 numbers,
                 atom_types,
                 charge,
+                element_mask=elements,
                 active_mask=active,
             )
             if coordinate_map is None
@@ -178,6 +188,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         arrays = {
             "particle_ids": ids,
             "atomic_numbers": numbers,
+            "element_mask": elements,
             "atom_type_ids": atom_types,
             "masses": mass,
             "charges": charge,

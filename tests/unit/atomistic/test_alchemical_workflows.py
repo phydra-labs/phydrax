@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.atomistic._alchemical import (
     AlchemicalEndpointPlan,
     AlchemicalTransformationPlan,
@@ -83,6 +84,34 @@ def test_endpoint_exactness_and_stable_mapping():
     np.testing.assert_array_equal(prepared.endpoint_particle_ids[:, 0], [10, 100])
     np.testing.assert_array_equal(prepared.endpoint_particle_ids[:, 1], [20, 200])
     np.testing.assert_array_equal(prepared.atom_type_ids[1], [2, 3])
+
+
+def test_alchemical_endpoint_reduced_potentials_feed_targeted_work():
+    transformation = _transformation()
+    source = phx.uq.AlchemicalEndpointReducedPotential(transformation, 0.0)
+    target = phx.uq.AlchemicalEndpointReducedPotential(transformation, 1.0)
+    mapping = phx.uq.TargetedMapPlan(
+        phx.uq.IdentityBijector(), source.event_shape, architecture_id="identity"
+    )
+    problem = phx.uq.TargetedFreeEnergyProblem(source, target, mapping)
+    positions = jnp.asarray(
+        [
+            [[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]],
+            [[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]],
+        ]
+    )
+
+    evaluation = phx.uq.evaluate_targeted_work(problem, positions)
+
+    assert bool(evaluation.valid)
+    assert jnp.all(jnp.isfinite(evaluation.forward_work))
+    expected = jax.vmap(
+        lambda value: (
+            transformation.evaluate(value, 1.0).energy
+            - transformation.evaluate(value, 0.0).energy
+        )
+    )(positions)
+    np.testing.assert_allclose(evaluation.forward_work, expected)
 
 
 def test_mapping_capacity_and_mapped_core_topology_rejection():

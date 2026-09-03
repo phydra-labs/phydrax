@@ -26,6 +26,8 @@ from ...atomistic._graph import (
 )
 from ...atomistic._potential import (
     AbstractAtomisticPotential,
+    AtomisticPotentialCapabilities,
+    AtomisticSpeciesKind,
     initialize_atomistic_potential_identity,
 )
 from ...atomistic._types import (
@@ -44,7 +46,8 @@ class _PaiNNConfiguration(StrictModule, NonTrainableState):
     feature_count: int = eqx.field(static=True)
     interaction_count: int = eqx.field(static=True)
     radial_basis_count: int = eqx.field(static=True)
-    maximum_atomic_number: int = eqx.field(static=True)
+    maximum_species_id: int = eqx.field(static=True)
+    species_kind: AtomisticSpeciesKind = eqx.field(static=True)
 
 
 class _PaiNNInteraction(StrictModule):
@@ -216,7 +219,8 @@ class PaiNNPotential(AbstractAtomisticPotential):
         feature_count: int = 64,
         interaction_count: int = 3,
         radial_basis_count: int = 20,
-        maximum_atomic_number: int = 118,
+        maximum_species_id: int = 118,
+        species_kind: AtomisticSpeciesKind = AtomisticSpeciesKind.ATOMIC_NUMBER,
         precision: AtomisticPrecisionPolicy | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ):
@@ -226,7 +230,7 @@ class PaiNNPotential(AbstractAtomisticPotential):
         features = int(feature_count)
         interactions = int(interaction_count)
         radial_count = int(radial_basis_count)
-        maximum_z = int(maximum_atomic_number)
+        maximum_z = int(maximum_species_id)
         if not math.isfinite(cutoff_value) or cutoff_value <= 0.0:
             raise ValueError("cutoff must be finite and positive.")
         if features <= 0 or interactions <= 0 or radial_count <= 0:
@@ -234,7 +238,9 @@ class PaiNNPotential(AbstractAtomisticPotential):
                 "PaiNN feature, interaction, and radial counts must be positive."
             )
         if maximum_z <= 0:
-            raise ValueError("maximum_atomic_number must be positive.")
+            raise ValueError("maximum_species_id must be positive.")
+        if not isinstance(species_kind, AtomisticSpeciesKind):
+            raise TypeError("species_kind must be AtomisticSpeciesKind.")
         precision_ = AtomisticPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, AtomisticPrecisionPolicy):
             raise TypeError("precision must be an AtomisticPrecisionPolicy or None.")
@@ -242,7 +248,6 @@ class PaiNNPotential(AbstractAtomisticPotential):
         embedding = jr.normal(
             keys[0], (maximum_z + 1, features), dtype=jnp.dtype(precision_.compute_dtype)
         ) / jnp.sqrt(jnp.asarray(features, dtype=precision_.compute_dtype))
-        embedding = embedding.at[0].set(0.0)
         interaction_modules = tuple(
             _PaiNNInteraction(features, radial_count, keys[index + 1])
             for index in range(interactions)
@@ -279,7 +284,8 @@ class PaiNNPotential(AbstractAtomisticPotential):
             feature_count=features,
             interaction_count=interactions,
             radial_basis_count=radial_count,
-            maximum_atomic_number=maximum_z,
+            maximum_species_id=maximum_z,
+            species_kind=species_kind,
         )
         self.scale = scale
         self.precision = precision_
@@ -292,7 +298,8 @@ class PaiNNPotential(AbstractAtomisticPotential):
                 "feature_count": features,
                 "interaction_count": interactions,
                 "radial_basis_count": radial_count,
-                "maximum_atomic_number": maximum_z,
+                "maximum_species_id": maximum_z,
+                "species_kind": species_kind.value,
             }
         )
         self.method_id = "negative-position-gradient-of-total-painn-energy"
@@ -300,6 +307,12 @@ class PaiNNPotential(AbstractAtomisticPotential):
             self.parameter_state_id,
             self.potential_id,
         ) = initialize_atomistic_potential_identity(self)
+
+    @property
+    def capabilities(self) -> AtomisticPotentialCapabilities:
+        return AtomisticPotentialCapabilities(
+            species_kind=self.configuration.species_kind
+        )
 
     def parameter_state_tree(self, /) -> Any:
         return {
@@ -344,7 +357,7 @@ class PaiNNPotential(AbstractAtomisticPotential):
 
     def graph_energy(
         self,
-        atomic_numbers: Array,
+        species_ids: Array,
         atom_mask: Array,
         atom_cases: Array,
         case_count: int,
@@ -352,11 +365,11 @@ class PaiNNPotential(AbstractAtomisticPotential):
         graph: AtomisticGraph,
         /,
     ) -> tuple[Array, Array]:
-        numbers = jnp.asarray(atomic_numbers).reshape((-1,))
+        numbers = jnp.asarray(species_ids).reshape((-1,))
         numbers = eqx.error_if(
             numbers,
-            jnp.any(numbers > self.configuration.maximum_atomic_number),
-            "Atomic number exceeds PaiNNPotential.maximum_atomic_number.",
+            jnp.any(numbers > self.configuration.maximum_species_id),
+            "Species ID exceeds PaiNNPotential.maximum_species_id.",
         )
         mask = jnp.asarray(atom_mask, dtype=bool).reshape((-1,))
         scalar = self.embedding[numbers].astype(self.precision.compute_dtype)
@@ -393,14 +406,25 @@ class PaiNNPotential(AbstractAtomisticPotential):
         /,
     ) -> tuple[Array, Array, AtomisticGraph]:
         coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
+        if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER:
+            coordinate = eqx.error_if(
+                coordinate,
+                jnp.any(batch.atom_mask & ~batch.element_mask),
+                "Atomic-number PaiNN cannot evaluate non-element particles.",
+            )
         graph = realize_atomistic_graph(
             batch,
             execution,
             cutoff=self.configuration.cutoff,
             positions=coordinate,
         )
+        species = (
+            batch.atomic_numbers
+            if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER
+            else batch.atom_type_ids
+        )
         energy, atom_energy = self.graph_energy(
-            batch.atomic_numbers,
+            species,
             batch.atom_mask,
             batch.atom_cases,
             batch.case_count,

@@ -277,21 +277,89 @@ class SegmentFallbackPolicy(StrictModule, NonTrainableState):
         return self.decide(uncertainty).use_fallback
 
 
+class AcquisitionAggregation(StrEnum):
+    MAXIMUM = "maximum"
+    EUCLIDEAN = "euclidean"
+
+
+class CommitteeAcquisitionScorePolicy(StrictModule, NonTrainableState):
+    energy_scale: float = eqx.field(static=True)
+    force_scale: float = eqx.field(static=True)
+    atom_scale: float = eqx.field(static=True)
+    aggregation: AcquisitionAggregation = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        energy_scale: float,
+        force_scale: float,
+        atom_scale: float,
+        /,
+        *,
+        aggregation: AcquisitionAggregation = AcquisitionAggregation.MAXIMUM,
+    ):
+        scales = float(energy_scale), float(force_scale), float(atom_scale)
+        if any(not np.isfinite(value) or value <= 0.0 for value in scales):
+            raise ValueError(
+                "Acquisition uncertainty scales must be finite and positive."
+            )
+        if not isinstance(aggregation, AcquisitionAggregation):
+            raise TypeError("aggregation must be AcquisitionAggregation.")
+        self.energy_scale, self.force_scale, self.atom_scale = scales
+        self.aggregation = aggregation
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "committee-acquisition-score",
+                "scales": [value.hex() for value in scales],
+                "aggregation": aggregation.value,
+            }
+        )
+
+    def score(self, evidence: AtomisticUncertaintyEvidence, /) -> tuple[Array, Array]:
+        if not isinstance(evidence, AtomisticUncertaintyEvidence):
+            raise TypeError("evidence must be AtomisticUncertaintyEvidence.")
+        components = jnp.asarray(
+            [
+                evidence.energy_standard_deviation / self.energy_scale,
+                evidence.maximum_force_standard_deviation / self.force_scale,
+                evidence.maximum_atom_standard_deviation / self.atom_scale,
+            ]
+        )
+        score = (
+            jnp.max(components)
+            if self.aggregation is AcquisitionAggregation.MAXIMUM
+            else jnp.sqrt(jnp.sum(components * components))
+        )
+        return score, components
+
+
 class AcquisitionPlan(StrictModule, NonTrainableState):
     maximum_frames: int = eqx.field(static=True)
     minimum_score: float = eqx.field(static=True)
+    scoring: CommitteeAcquisitionScorePolicy
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, maximum_frames: int, /, *, minimum_score: float = 0.0):
+    def __init__(
+        self,
+        maximum_frames: int,
+        scoring: CommitteeAcquisitionScorePolicy,
+        /,
+        *,
+        minimum_score: float = 0.0,
+    ):
         if int(maximum_frames) <= 0 or float(minimum_score) < 0.0:
             raise ValueError("Acquisition capacity or minimum score is invalid.")
+        if not isinstance(scoring, CommitteeAcquisitionScorePolicy):
+            raise TypeError("scoring must be CommitteeAcquisitionScorePolicy.")
         self.maximum_frames = int(maximum_frames)
         self.minimum_score = float(minimum_score)
+        self.scoring = scoring
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "atomistic-acquisition",
                 "maximum_frames": self.maximum_frames,
                 "minimum_score": self.minimum_score,
+                "scoring": scoring.policy_id,
             }
         )
 
@@ -300,16 +368,9 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
         evidence = tuple(uncertainty)
         if len(frame_values) != len(evidence):
             raise ValueError("Acquisition frames and evidence must align.")
-        scores = np.asarray(
-            [
-                float(
-                    item.energy_standard_deviation
-                    + item.maximum_force_standard_deviation
-                    + item.maximum_atom_standard_deviation
-                )
-                for item in evidence
-            ]
-        )
+        scored = tuple(self.scoring.score(item) for item in evidence)
+        scores = np.asarray([float(value[0]) for value in scored])
+        component_scores = tuple(value[1] for value in scored)
         descriptor = (
             np.stack(
                 tuple(
@@ -345,6 +406,7 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
             AcquisitionRecord(
                 frame_values[index],
                 jnp.asarray(descriptor[index]),
+                component_scores[index],
                 index,
                 float(scores[index]),
                 "committee-uncertainty-diversity",
@@ -358,6 +420,7 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
 class AcquisitionRecord(StrictModule, NonTrainableState):
     frame: AtomisticFrame
     descriptor: Array
+    component_scores: Array
     source_index: int = eqx.field(static=True)
     score: float = eqx.field(static=True)
     reason: str = eqx.field(static=True)
@@ -366,8 +429,10 @@ class AcquisitionRecord(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AcquisitionAggregation",
     "AcquisitionPlan",
     "AcquisitionRecord",
+    "CommitteeAcquisitionScorePolicy",
     "AtomisticUncertaintyEvidence",
     "CommitteeAtomisticPotential",
     "CommitteeEvaluation",
