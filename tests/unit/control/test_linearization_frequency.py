@@ -15,6 +15,7 @@ from phydrax.control import (
     linearize_differential_dynamics,
     linearize_discrete_dynamics,
 )
+from phydrax.dynamics._system import DiscreteTransitionResult
 from tests._control_systems import (
     make_differential_control_dynamics,
     make_discrete_control_dynamics,
@@ -91,6 +92,43 @@ def test_discrete_linearization_preserves_batched_operating_points():
     np.testing.assert_allclose(result.feedthrough_matrix[:, 0, 0], 0.0)
     assert bool(jnp.all(result.valid))
     assert result.provenance.system_type == "discrete"
+
+
+
+def test_discrete_linearization_rejects_finite_failed_rollbacks():
+    failure_status = 43
+
+    def transition(context, state, control, args):
+        del context, args
+        successful = control[0] >= 0.0
+        accepted = jnp.where(successful, state + control, state)
+        return DiscreteTransitionResult(
+            state + control + 100.0,
+            accepted,
+            successful,
+            jnp.where(successful, 0, failure_status),
+        )
+
+    dynamics = make_discrete_control_dynamics(
+        transition,
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="failed-rollback-linearization",
+    )
+    result = linearize_discrete_dynamics(
+        dynamics,
+        jnp.asarray([0.0, 0.0]),
+        jnp.asarray([[2.0], [3.0]]),
+        jnp.asarray([[1.0], [-1.0]]),
+        target_time=jnp.asarray([1.0, 1.0]),
+        step_index=jnp.asarray([0, 1]),
+    )
+
+    np.testing.assert_array_equal(result.valid, jnp.asarray([True, False]))
+    np.testing.assert_allclose(result.dynamics_value[0], jnp.asarray([3.0]))
+    assert bool(jnp.isnan(result.dynamics_value[1, 0]))
+    np.testing.assert_allclose(result.state_matrix[0], jnp.asarray([[1.0]]))
+    np.testing.assert_allclose(result.control_matrix[0], jnp.asarray([[1.0]]))
 
 
 def test_linearization_marks_nonfinite_operating_time_invalid():

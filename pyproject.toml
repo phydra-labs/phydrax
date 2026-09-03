@@ -74,6 +74,9 @@ atomistic-interop = [
 clarabel = [
     "clarabel==0.11.1",
 ]
+commercial = [
+  "cryptography>=44,<47",
+]
 cudss = [
   "spineax>=0.0.5,<0.1; python_version >= '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -100,6 +103,10 @@ docs = [
 notebooks = [
     "marimo>=0.15.2",
     "matplotlib>=3.10.8",
+]
+robotics-mjx = [
+    "mujoco>=3.12,<3.13",
+    "mujoco-mjx>=3.12,<3.13",
 ]
 tests = [
     "mpmath>=1.3",

@@ -28,6 +28,7 @@ from ..discretization.finite_volume._mac_ale import (
     PreparedMappedMACGeometry,
 )
 from ..discretization.finite_volume._structured import FiniteVolumeDiscretization
+from ._mac_pressure_operator import execute_weighted_pressure_iteration
 
 
 MACCoordinateMap = Callable[[Array, Array, Any], ArrayLike]
@@ -275,63 +276,60 @@ class MACALEStageGeometry(StrictModule, NonTrainableState):
         )
 
 
-def _pressure_cg(geometry, rhs, coefficient, initial, tolerance, steps, /):
-    rhs = geometry.compatibility_project(rhs)
-    pressure = geometry.gauge_project(initial)
-
-    def action(value):
-        return geometry.pressure_action(value, coefficient)
-
-    residual = rhs - action(pressure)
-    direction = residual
-    norm = _norm_squared(geometry.cell_volumes, residual)
-    rhs_norm = _norm_squared(geometry.cell_volumes, rhs)
-    threshold = tolerance**2 * jnp.maximum(rhs_norm, 1.0)
-    active = norm > threshold
-    failed = jnp.asarray(False)
-
-    def body(_, state):
-        value, residual_, direction_, norm_, active_, failed_ = state
-        image = action(direction_)
-        denominator = jnp.sum(geometry.cell_volumes * direction_ * image)
-        valid = active_ & jnp.isfinite(denominator) & (denominator > 0.0)
-        alpha = jnp.where(valid, norm_ / denominator, 0.0)
-        next_value = value + alpha * direction_
-        next_residual = residual_ - alpha * image
-        next_norm = _norm_squared(geometry.cell_volumes, next_residual)
-        running = valid & (next_norm > threshold)
-        beta = jnp.where(running & (norm_ > 0.0), next_norm / norm_, 0.0)
-        return (
-            next_value,
-            next_residual,
-            next_residual + beta * direction_,
-            next_norm,
-            running,
-            failed_ | (active_ & ~valid),
-        )
-
-    pressure, _, _, _, active, failed = jax.lax.fori_loop(
-        0, steps, body, (pressure, residual, direction, norm, active, failed)
+def _pressure_cg(
+    geometry,
+    rhs,
+    coefficient,
+    initial,
+    tolerance,
+    steps,
+    geometry_epoch,
+    gcl_residual,
+    metric_residual,
+    /,
+):
+    iteration = execute_weighted_pressure_iteration(
+        geometry,
+        rhs,
+        coefficient,
+        initial,
+        tolerance,
+        steps,
+        geometry_id=geometry.geometry_layout_id,
+        geometry_epoch=geometry_epoch,
+        prepared_geometry_epoch=geometry_epoch,
+        gcl_residual=gcl_residual,
+        metric_residual=metric_residual,
     )
-    pressure = geometry.gauge_project(pressure)
-    residual = action(pressure) - rhs
-    residual_norm = jnp.sqrt(_norm_squared(geometry.cell_volumes, residual))
-    success = (
-        ~active
-        & ~failed
-        & jnp.all(jnp.isfinite(pressure))
-        & (residual_norm <= tolerance * jnp.maximum(jnp.sqrt(rhs_norm), 1.0))
-    )
-    return pressure, residual, success
+    return iteration.pressure, iteration.residual, iteration.converged
 
 
-def _project(geometry, velocity, coefficient, pressure, tolerance, steps, /):
+def _project(
+    geometry,
+    velocity,
+    coefficient,
+    pressure,
+    tolerance,
+    steps,
+    geometry_epoch,
+    gcl_residual,
+    metric_residual,
+    /,
+):
     values = geometry.validate_velocity(velocity)
     face_coefficient = tuple(jnp.ones_like(value) * coefficient for value in values)
     before = geometry.divergence(values)
     rhs = -geometry.compatibility_project(before)
     increment, residual, converged = _pressure_cg(
-        geometry, rhs, face_coefficient, pressure, tolerance, steps
+        geometry,
+        rhs,
+        face_coefficient,
+        pressure,
+        tolerance,
+        steps,
+        geometry_epoch,
+        gcl_residual,
+        metric_residual,
     )
     gradient = geometry.gradient(increment)
     candidate = tuple(
@@ -371,6 +369,12 @@ class MACALEResult(StrictModule):
     geometry_passed: Array
     projection_converged: Array
     finite: Array
+    coefficient_contrast: Array
+    gauge_defect: Array
+    pressure_route: str = eqx.field(static=True)
+    pressure_route_reason: str = eqx.field(static=True)
+    geometry_epoch: int = eqx.field(static=True)
+    preconditioner_refreshed: bool = eqx.field(static=True)
     success: Array
     topology_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
@@ -386,6 +390,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
     mapping_id: str = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     maximum_iterations: int = eqx.field(static=True)
+    geometry_epoch: int = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -400,6 +405,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         mapping_id,
         tolerance=1e-9,
         maximum_iterations=500,
+        geometry_epoch=0,
     ):
         if not isinstance(reference, FiniteVolumeDiscretization):
             raise TypeError("MAC ALE requires structured reference FV geometry.")
@@ -408,10 +414,18 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         mapping = str(mapping_id)
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
+        epoch = int(geometry_epoch)
         if not mapping or mapping != mapping.strip():
             raise ValueError("mapping_id must be a canonical non-empty string.")
-        if not np.isfinite(tolerance_) or tolerance_ <= 0.0 or iterations <= 0:
-            raise ValueError("ALE tolerance and iteration count are invalid.")
+        if (
+            not np.isfinite(tolerance_)
+            or tolerance_ <= 0.0
+            or iterations <= 0
+            or epoch < 0
+        ):
+            raise ValueError(
+                "ALE tolerance, iteration count, or geometry epoch is invalid."
+            )
         layout_id = canonical_fingerprint(
             {
                 "kind": "mapped-mac-ale-layout",
@@ -426,6 +440,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         self.mapping_id = mapping
         self.tolerance = tolerance_
         self.maximum_iterations = iterations
+        self.geometry_epoch = epoch
         self.topology_id = reference.prepared_id
         self.geometry_layout_id = layout_id
         self.plan_id = canonical_fingerprint(
@@ -437,6 +452,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
                 "velocity_arrays": array_tree_fingerprint(grid_velocity),
                 "tolerance": tolerance_,
                 "iterations": iterations,
+                "geometry_epoch": epoch,
             }
         )
 
@@ -822,6 +838,14 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             geometry_passed=geometry.passed,
             projection_converged=converged,
             finite=finite,
+            coefficient_contrast=jnp.asarray(1.0, dtype=geometry.cell_volumes.dtype),
+            gauge_defect=jnp.abs(jnp.sum(geometry.cell_volumes * accepted_pressure)),
+            pressure_route="pcg",
+            pressure_route_reason=(
+                "shared mapped/ALE weighted action with geometry-epoch preconditioner"
+            ),
+            geometry_epoch=self.geometry_epoch,
+            preconditioner_refreshed=True,
             success=success,
             topology_id=self.topology_id,
             geometry_layout_id=self.geometry_layout_id,
@@ -854,6 +878,9 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
                 incoming,
                 self.tolerance,
                 self.maximum_iterations,
+                self.geometry_epoch,
+                geometry.maximum_gcl_residual,
+                geometry.mapped_adjoint_residual,
             ),
             lambda _: (values, zeros, zeros, zeros, zeros, jnp.asarray(False)),
             operand=None,
@@ -923,6 +950,9 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
                     incoming,
                     self.tolerance,
                     self.maximum_iterations,
+                    self.geometry_epoch,
+                    end.maximum_gcl_residual,
+                    end.mapped_adjoint_residual,
                 ),
             )
 
@@ -1202,6 +1232,9 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
                 incoming,
                 self.tolerance,
                 self.maximum_iterations,
+                0,
+                jnp.asarray(0.0, dtype=self.target.cell_volumes.dtype),
+                self.target.report.weighted_adjoint_residual,
             )
         )
         source_volume = self.source.cell_volumes.reshape((-1,))

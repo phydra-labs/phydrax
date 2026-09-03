@@ -14,10 +14,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._pairings import DiagonalPairing, EuclideanPairing
 from ._spaces import AbstractVectorSpace, ArraySpace, PyTreeSpace
 
 
@@ -433,9 +434,214 @@ class ComplexCartesianCoordinates(AbstractRealCoordinateMap, NonTrainableState):
         return jnp.zeros((), dtype=value.real.dtype)
 
 
+class HermitianInvolutionCoordinates(AbstractRealCoordinateMap, NonTrainableState):
+    """Independent real coordinates for a phase-weighted conjugate involution.
+
+    The prepared involution acts on flattened source coordinates as
+    ``J(z)[i] = phases[i] * conj(z[conjugate_indices[i]])``. The index map must
+    be an involution, the phases must make ``J²`` the identity, and the source
+    pairing must be invariant under ``J``.
+    """
+
+    conjugate_indices: Array
+    involution_phases: Array
+    fixed_indices: Array
+    representative_indices: Array
+    partner_indices: Array
+    fixed_half_phases: Array
+    reality_tolerance: float = eqx.field(static=True)
+    fixed_coordinate_count: int = eqx.field(static=True)
+    conjugate_pair_count: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source_space: ArraySpace,
+        conjugate_indices: ArrayLike,
+        /,
+        *,
+        phases: ArrayLike | None = None,
+        reality_tolerance: float = 1e-10,
+    ):
+        if not isinstance(source_space, ArraySpace):
+            raise TypeError("source_space must be an ArraySpace.")
+        if not jnp.issubdtype(source_space.dtype, jnp.complexfloating):
+            raise TypeError(
+                "Hermitian involution coordinates require a complex ArraySpace."
+            )
+        size = source_space.size
+        indices = np.asarray(conjugate_indices)
+        if indices.shape != (size,) or not np.issubdtype(indices.dtype, np.integer):
+            raise ValueError(
+                "conjugate_indices must be one integer index per source coordinate."
+            )
+        indices = indices.astype(np.int64, copy=False)
+        if np.any(indices < 0) or np.any(indices >= size):
+            raise ValueError("conjugate_indices contains an out-of-bounds index.")
+        canonical = np.arange(size, dtype=np.int64)
+        if not np.array_equal(indices[indices], canonical):
+            raise ValueError("conjugate_indices must define an involution.")
+        phase_values = (
+            np.ones((size,), dtype=source_space.dtype)
+            if phases is None
+            else np.asarray(phases, dtype=source_space.dtype)
+        )
+        if phase_values.shape != (size,):
+            raise ValueError("phases must contain one value per source coordinate.")
+        if not np.all(np.isfinite(phase_values)):
+            raise ValueError("Involution phases must be finite.")
+        real_dtype = jnp.empty((), dtype=source_space.dtype).real.dtype
+        epsilon = np.finfo(np.dtype(real_dtype)).eps
+        involution_tolerance = 256.0 * epsilon * max(size, 1)
+        involution_defect = np.max(
+            np.abs(phase_values * np.conj(phase_values[indices]) - 1.0),
+            initial=0.0,
+        )
+        if involution_defect > involution_tolerance:
+            raise ValueError("phases and conjugate_indices do not define an involution.")
+        tolerance = float(reality_tolerance)
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("reality_tolerance must be finite and non-negative.")
+        fixed = canonical[indices == canonical]
+        representatives = canonical[canonical < indices]
+        partners = indices[representatives]
+        half_phases = np.sqrt(phase_values[fixed]).astype(source_space.dtype, copy=False)
+        pairing = source_space.pairing
+        if isinstance(pairing, EuclideanPairing):
+            coordinate_pairing = EuclideanPairing()
+        elif isinstance(pairing, DiagonalPairing):
+            source_weights = np.asarray(pairing.weights).reshape((-1,))
+            if not np.allclose(
+                source_weights,
+                source_weights[indices],
+                rtol=256.0 * epsilon * max(size, 1),
+                atol=0.0,
+            ):
+                raise ValueError(
+                    "The source pairing must be invariant under the involution."
+                )
+            coordinate_weights = np.concatenate(
+                (
+                    source_weights[fixed],
+                    source_weights[representatives],
+                    source_weights[representatives],
+                )
+            )
+            coordinate_pairing = DiagonalPairing(
+                coordinate_weights.astype(real_dtype, copy=False)
+            )
+        else:
+            raise TypeError(
+                "Hermitian involution coordinates require a Euclidean or "
+                "coordinate-diagonal source pairing."
+            )
+        identifier = canonical_fingerprint(
+            {
+                "kind": "hermitian-involution-coordinates-v1",
+                "source_space": source_space.space_id,
+                "conjugate_indices": array_tree_fingerprint(indices),
+                "phases": array_tree_fingerprint(phase_values),
+                "reality_tolerance": tolerance,
+            }
+        )
+        coordinate_space = ArraySpace(
+            (size,),
+            dtype=real_dtype,
+            pairing=coordinate_pairing,
+            space_id=f"hermitian-involution-coordinates:{identifier}",
+        )
+        evidence = RealCoordinateEvidence(
+            domain_kind="constrained_subspace",
+            source_space_id=source_space.space_id,
+            coordinate_space_id=coordinate_space.space_id,
+            source_dtype=precision_dtype_name(source_space.dtype),
+            coordinate_dtype=precision_dtype_name(real_dtype),
+            source_shape=source_space.shape,
+            coordinate_shape=(size,),
+            norm_relation="isometry",
+            projection_kind="phase-weighted-hermitian-involution",
+            map_id=identifier,
+        )
+        self.source_space = source_space
+        self.coordinate_space = coordinate_space
+        self.evidence = evidence
+        self.coordinate_id = identifier
+        self.conjugate_indices = jnp.asarray(indices, dtype=jnp.int32)
+        self.involution_phases = jnp.asarray(phase_values, dtype=source_space.dtype)
+        self.fixed_indices = jnp.asarray(fixed, dtype=jnp.int32)
+        self.representative_indices = jnp.asarray(representatives, dtype=jnp.int32)
+        self.partner_indices = jnp.asarray(partners, dtype=jnp.int32)
+        self.fixed_half_phases = jnp.asarray(half_phases, dtype=source_space.dtype)
+        self.reality_tolerance = tolerance
+        self.fixed_coordinate_count = int(fixed.size)
+        self.conjugate_pair_count = int(representatives.size)
+
+    def validate_state(self, state: ArrayLike, /) -> Array:
+        return self.source_space.validate(state)
+
+    def validate_coordinates(self, coordinates: ArrayLike, /) -> Array:
+        return self.coordinate_space.validate(coordinates)
+
+    def involution(self, state: ArrayLike, /) -> Array:
+        value = self.validate_state(state)
+        flat = value.reshape((-1,))
+        transformed = self.involution_phases * jnp.conj(flat[self.conjugate_indices])
+        return transformed.reshape(self.source_space.shape)
+
+    def defect(self, state: ArrayLike, /) -> Array:
+        value = self.validate_state(state)
+        return jnp.max(jnp.abs(value - self.involution(value)), initial=0.0)
+
+    def project(self, state: ArrayLike, /) -> Array:
+        value = self.validate_state(state)
+        return 0.5 * (value + self.involution(value))
+
+    def to_real_coordinates(self, state: ArrayLike, /) -> Array:
+        value = self.validate_state(state)
+        defect = self.defect(value)
+        value = eqx.error_if(
+            value,
+            defect > self.reality_tolerance,
+            "State violates the prepared Hermitian involution.",
+        )
+        flat = value.reshape((-1,))
+        fixed = jnp.real(jnp.conj(self.fixed_half_phases) * flat[self.fixed_indices])
+        representatives = flat[self.representative_indices]
+        scale = jnp.sqrt(jnp.asarray(2.0, dtype=flat.real.dtype))
+        return jnp.concatenate(
+            (
+                fixed,
+                scale * jnp.real(representatives),
+                scale * jnp.imag(representatives),
+            )
+        )
+
+    def from_real_coordinates(self, coordinates: ArrayLike, /) -> Array:
+        values = self.validate_coordinates(coordinates)
+        fixed_count = self.fixed_coordinate_count
+        pair_count = self.conjugate_pair_count
+        fixed = values[:fixed_count]
+        real = values[fixed_count : fixed_count + pair_count]
+        imaginary = values[fixed_count + pair_count :]
+        scale = jnp.sqrt(jnp.asarray(2.0, dtype=values.dtype))
+        representatives = jax.lax.complex(real / scale, imaginary / scale)
+        flat = jnp.zeros((self.source_space.size,), dtype=self.source_space.dtype)
+        flat = flat.at[self.fixed_indices].set(
+            self.fixed_half_phases * fixed.astype(self.source_space.dtype)
+        )
+        flat = flat.at[self.representative_indices].set(
+            representatives.astype(self.source_space.dtype)
+        )
+        flat = flat.at[self.partner_indices].set(
+            self.involution_phases[self.partner_indices]
+            * jnp.conj(representatives).astype(self.source_space.dtype)
+        )
+        return flat.reshape(self.source_space.shape)
+
+
 __all__ = [
     "AbstractRealCoordinateMap",
     "ComplexCartesianCoordinates",
+    "HermitianInvolutionCoordinates",
     "PreparedRealCoordinateTree",
     "RealCoordinateDomainKind",
     "RealCoordinateEvidence",

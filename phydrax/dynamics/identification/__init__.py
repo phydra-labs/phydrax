@@ -46,6 +46,11 @@ from ._implicit import (
     ImplicitSINDyResult,
     PolynomialImplicitFeatureLibrary,
 )
+from ._markov_state import (
+    fit_markov_state_model,
+    MarkovStateDiagnostics,
+    MarkovStateModel,
+)
 from ._neural import (
     DiscreteModelFitHistory,
     DiscreteModelFitResult,
@@ -128,6 +133,26 @@ from ._symmetry import (
     LinearTransformedFeatureLibrary,
     SymmetryAveragedFeatureLibrary,
 )
+from ._variational_kinetics import (
+    fit_tica,
+    fit_vac,
+    fit_vamp,
+    LaggedKineticEvidence,
+    LaggedPairWeighting,
+    VACDiagnostics,
+    VACResult,
+    VAMPDiagnostics,
+    VAMPModel,
+    VAMPResult,
+)
+from ._variational_training import (
+    fit_variational_kinetic_model,
+    ModelFeatureLibrary,
+    VariationalCoordinateModel,
+    VariationalKineticFitHistory,
+    VariationalKineticFitResult,
+    VariationalKineticTrainingPolicy,
+)
 
 
 __all__ = [
@@ -168,6 +193,8 @@ __all__ = [
     "IDENTIFICATION_NONFINITE",
     "IDENTIFICATION_NOT_CONVERGED",
     "IDENTIFICATION_RANK_DEFICIENT",
+    "LaggedKineticEvidence",
+    "LaggedPairWeighting",
     "IDENTIFICATION_SUCCESS",
     "LinearCoefficientConstraint",
     "LinearTransformedFeatureLibrary",
@@ -177,7 +204,10 @@ __all__ = [
     "PDEIdentificationProblem",
     "PDEIdentificationResult",
     "PDELibraryTerm",
+    "MarkovStateDiagnostics",
+    "MarkovStateModel",
     "PolynomialImplicitFeatureLibrary",
+    "ModelFeatureLibrary",
     "LearnedMarginalTransition",
     "LearnedPathwiseTransition",
     "ReferenceBranchDiscreteModelObjective",
@@ -204,6 +234,15 @@ __all__ = [
     "SupervisedDiscreteModelObjective",
     "TargetDiscreteModelObjective",
     "WeakSINDyFormulation",
+    "VACDiagnostics",
+    "VACResult",
+    "VAMPDiagnostics",
+    "VAMPModel",
+    "VariationalCoordinateModel",
+    "VariationalKineticFitHistory",
+    "VariationalKineticFitResult",
+    "VariationalKineticTrainingPolicy",
+    "VAMPResult",
     "WindowBoundary",
     "WindowQuadrature",
     "SINDyResult",
@@ -217,10 +256,15 @@ __all__ = [
     "fit_implicit_sindy",
     "fit_discrete_model",
     "fit_pde_find",
+    "fit_markov_state_model",
     "fit_dmd",
     "fit_edmd",
     "fit_sindy",
+    "fit_tica",
+    "fit_vac",
+    "fit_vamp",
     "local_polynomial_derivative",
+    "fit_variational_kinetic_model",
     "trajectory_data_from_control",
     "trajectory_data_from_differential_solution",
     "trajectory_data_from_fixed_step",

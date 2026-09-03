@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias
 
 import numpy as np
 
@@ -19,11 +20,19 @@ from .._array_archive import (
     array_payload_byte_count,
     array_payload_digest,
     ArrayArchiveCorruptionError,
+    ArrayArchiveLimits,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
     read_array_archive,
     write_array_archive,
 )
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import canonical_fingerprint, canonical_json
 from ..diagnostics import Diagnostic, DiagnosticError
+from ._chunk_repository import (
+    ArtifactManifest,
+    ArtifactRepository,
+    RepositoryConflictError,
+)
+from ._migration import CompatibilityRegistry, MigrationReport
 from ._models import (
     AnalysisPlan,
     CheckpointManifest,
@@ -47,6 +56,23 @@ LifecycleRecord: TypeAlias = (
     | ResultManifest
     | ResultRevision
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalLogicalArrays:
+    """Canonical logical arrays whose payloads can be chunked independently."""
+
+    manifest: bytes
+    payloads: Mapping[str, bytes]
+    collection_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationLineageArtifact:
+    """One explicitly migrated configuration and its immutable repository commit."""
+
+    report: MigrationReport
+    manifest: ArtifactManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +103,55 @@ class LifecycleQuery:
     fields: tuple[SampledField, ...]
 
 
+SupportBundleDisclosure: TypeAlias = Literal[
+    "arrays", "payloads", "paths", "identifiers", "free-text", "secrets"
+]
+_FULL_SUPPORT_DISCLOSURE = frozenset(
+    {"arrays", "payloads", "paths", "identifiers", "free-text", "secrets"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SupportBundleAuthorization:
+    """Auditable data-owner authorization for a full-fidelity support payload."""
+
+    authorization_id: str
+    data_owner_id: str
+    source_archive_id: str
+    authorized_at: int
+    disclosures: frozenset[SupportBundleDisclosure]
+
+    def __post_init__(self) -> None:
+        identifiers = (
+            self.authorization_id,
+            self.data_owner_id,
+            self.source_archive_id,
+        )
+        if any(
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or any(ord(character) < 32 for character in value)
+            for value in identifiers
+        ):
+            raise ValueError(
+                "Support authorization identifiers must be non-empty stripped text."
+            )
+        if (
+            isinstance(self.authorized_at, bool)
+            or not isinstance(self.authorized_at, int)
+            or self.authorized_at < 0
+        ):
+            raise ValueError("Support authorization time must be a non-negative integer.")
+        disclosures = frozenset(self.disclosures)
+        if disclosures != _FULL_SUPPORT_DISCLOSURE:
+            raise ValueError(
+                "Full-archive support authorization must explicitly grant every "
+                "sensitive disclosure category."
+            )
+        object.__setattr__(self, "disclosures", disclosures)
+
+
 class SampledExporter(Protocol):
     """Extension point for provider-neutral sampled result export."""
 
@@ -99,6 +174,262 @@ def payload_byte_count(value: Any, /) -> int:
 def collection_digest(values: Mapping[str, Any], /) -> str:
     """Return one content identity for a named payload collection."""
     return array_collection_digest(values)
+
+
+def _reject_nonfinite_json(value: str, /) -> None:
+    raise ValueError(f"Non-finite JSON value {value!r} is not permitted.")
+
+
+def encode_logical_arrays(
+    values: Mapping[str, Any],
+    /,
+    *,
+    logical_prefix: str = "array",
+) -> CanonicalLogicalArrays:
+    """Encode named native arrays as deterministic, independently chunkable bytes."""
+
+    if not isinstance(values, Mapping) or not values:
+        raise TypeError("Logical arrays must be a non-empty mapping.")
+    prefix = str(logical_prefix)
+    if (
+        not prefix
+        or len(prefix) > 240
+        or not prefix[0].isalnum()
+        or any(not (character.isalnum() or character in "._:-") for character in prefix)
+    ):
+        raise ValueError("logical_prefix must be a path-safe repository identifier.")
+    normalized_values = {str(name): value for name, value in values.items()}
+    normalized_names = tuple(sorted(normalized_values))
+    if len(normalized_values) != len(values) or any(
+        not name for name in normalized_names
+    ):
+        raise ValueError("Logical array names must be unique and non-empty.")
+    records: list[dict[str, object]] = []
+    payloads: dict[str, bytes] = {}
+    for index, name in enumerate(normalized_names):
+        value = np.asarray(normalized_values[name])
+        if value.dtype.hasobject or value.dtype.fields is not None:
+            raise TypeError("Logical arrays must have native, non-object dtypes.")
+        dtype = value.dtype
+        if dtype.itemsize > 1 and dtype.byteorder != "|":
+            dtype = dtype.newbyteorder("<")
+        canonical = np.asarray(value, dtype=dtype)
+        if not canonical.flags.c_contiguous:
+            canonical = np.ascontiguousarray(canonical)
+        payload = canonical.tobytes(order="C")
+        logical_name = f"{prefix}-{index:06d}"
+        records.append(
+            {
+                "name": name,
+                "logical_name": logical_name,
+                "dtype": dtype.str,
+                "shape": list(canonical.shape),
+                "byte_count": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+        payloads[logical_name] = payload
+    content = {"kind": "canonical-logical-arrays", "arrays": records}
+    collection_id = canonical_fingerprint(content)
+    manifest = canonical_json({**content, "collection_id": collection_id}).encode("utf-8")
+    return CanonicalLogicalArrays(
+        manifest,
+        MappingProxyType(payloads),
+        collection_id,
+    )
+
+
+def decode_logical_arrays(
+    manifest: bytes | bytearray | memoryview,
+    payloads: Mapping[str, bytes | bytearray | memoryview],
+    /,
+) -> Mapping[str, np.ndarray]:
+    """Decode and content-verify canonical logical arrays without execution caches."""
+
+    try:
+        record = json.loads(
+            bytes(manifest).decode("utf-8"),
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Logical-array manifest is not canonical JSON.") from error
+    if (
+        not isinstance(record, Mapping)
+        or set(record) != {"kind", "arrays", "collection_id"}
+        or record["kind"] != "canonical-logical-arrays"
+        or not isinstance(record["arrays"], list)
+        or not record["arrays"]
+    ):
+        raise ValueError("Logical-array manifest schema is invalid.")
+    content = {"kind": record["kind"], "arrays": record["arrays"]}
+    if record["collection_id"] != canonical_fingerprint(content):
+        raise ValueError("Logical-array manifest content address is invalid.")
+    expected_logical_names: set[str] = set()
+    arrays: dict[str, np.ndarray] = {}
+    for item in record["arrays"]:
+        if not isinstance(item, Mapping) or set(item) != {
+            "name",
+            "logical_name",
+            "dtype",
+            "shape",
+            "byte_count",
+            "sha256",
+        }:
+            raise ValueError("Logical-array record schema is invalid.")
+        name = item["name"]
+        logical_name = item["logical_name"]
+        shape = item["shape"]
+        byte_count = item["byte_count"]
+        digest = item["sha256"]
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(logical_name, str)
+            or not logical_name
+            or not isinstance(shape, list)
+            or any(type(dimension) is not int or dimension < 0 for dimension in shape)
+            or type(byte_count) is not int
+            or byte_count < 0
+            or not isinstance(digest, str)
+            or len(digest) != 64
+        ):
+            raise ValueError("Logical-array record values are invalid.")
+        if name in arrays or logical_name in expected_logical_names:
+            raise ValueError("Logical-array names must be unique.")
+        try:
+            dtype = np.dtype(item["dtype"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("Logical-array dtype is invalid.") from error
+        if dtype.hasobject or dtype.fields is not None:
+            raise TypeError("Logical arrays must have native, non-object dtypes.")
+        if logical_name not in payloads:
+            raise ValueError("Logical-array payload collection is incomplete.")
+        payload = bytes(payloads[logical_name])
+        if (
+            len(payload) != byte_count
+            or hashlib.sha256(payload).hexdigest() != digest
+            or math.prod(shape) * dtype.itemsize != byte_count
+        ):
+            raise ValueError("Logical-array payload checksum or byte count failed.")
+        value = np.frombuffer(payload, dtype=dtype).reshape(tuple(shape)).copy()
+        value.setflags(write=False)
+        arrays[name] = value
+        expected_logical_names.add(logical_name)
+    if set(payloads) != expected_logical_names:
+        raise ValueError("Logical-array payload collection contains unknown members.")
+    return MappingProxyType(arrays)
+
+
+def migrate_configuration(
+    repository: ArtifactRepository,
+    registry: CompatibilityRegistry,
+    record: Mapping[str, object],
+    /,
+    *,
+    source_format_id: str,
+    writer_id: str,
+    lineage: Sequence[str] = (),
+    allow_lossy: bool = False,
+) -> ConfigurationLineageArtifact:
+    """Migrate and commit a new immutable configuration-lineage artifact."""
+
+    if not isinstance(registry, CompatibilityRegistry):
+        raise TypeError("registry must be CompatibilityRegistry.")
+    report = registry.resolve(
+        record,
+        source_format_id=source_format_id,
+        lineage=lineage,
+        allow_lossy=allow_lossy,
+    )
+    payload = canonical_json(
+        {
+            "kind": "configuration-lineage-artifact",
+            "report": report.to_record(),
+        }
+    ).encode("utf-8")
+    maximum = int(repository.maximum_chunk_bytes)
+    if maximum <= 0:
+        raise ValueError("Repository maximum_chunk_bytes must be positive.")
+    try:
+        transaction = repository.begin(
+            report.output_digest,
+            writer_id,
+            attempt_id=report.report_id,
+        )
+        chunks = tuple(
+            repository.write_chunk(
+                transaction,
+                "configuration",
+                index,
+                offset,
+                payload[offset : offset + maximum],
+            )
+            for index, offset in enumerate(range(0, len(payload), maximum))
+        )
+        committed = repository.commit(
+            transaction,
+            chunks,
+            metadata={
+                "kind": "configuration-lineage",
+                "format_id": report.output_format_id,
+                "parent_artifact_id": report.input_digest,
+                "report_id": report.report_id,
+            },
+        )
+    except RepositoryConflictError:
+        committed = repository.get_manifest(report.output_digest)
+    metadata = dict(committed.metadata)
+    if (
+        committed.artifact_id != report.output_digest
+        or metadata.get("kind") != "configuration-lineage"
+        or metadata.get("format_id") != report.output_format_id
+        or metadata.get("parent_artifact_id") != report.input_digest
+        or metadata.get("report_id") != report.report_id
+    ):
+        raise ValueError("Repository contains a conflicting configuration artifact.")
+    if any(chunk.logical_name != "configuration" for chunk in committed.chunks):
+        raise ValueError("Configuration artifact contains an unknown logical payload.")
+    stored_payload = b"".join(
+        repository.read_chunk(
+            committed,
+            chunk,
+            maximum_plaintext_bytes=maximum,
+        )
+        for chunk in sorted(committed.chunks, key=lambda value: value.index)
+    )
+    try:
+        stored = json.loads(
+            stored_payload.decode("utf-8"),
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Configuration lineage payload is not valid JSON.") from error
+    if (
+        not isinstance(stored, Mapping)
+        or set(stored) != {"kind", "report"}
+        or stored["kind"] != "configuration-lineage-artifact"
+        or not isinstance(stored["report"], Mapping)
+        or MigrationReport.from_record(stored["report"]).report_id != report.report_id
+    ):
+        raise ValueError("Repository configuration lineage payload is inconsistent.")
+    return ConfigurationLineageArtifact(report, committed)
+
+
+def rollback_configuration(
+    registry: CompatibilityRegistry,
+    artifact: ConfigurationLineageArtifact | MigrationReport,
+    /,
+) -> dict[str, object]:
+    """Select the immutable parent configuration; never reverse-transform a child."""
+
+    if not isinstance(registry, CompatibilityRegistry):
+        raise TypeError("registry must be CompatibilityRegistry.")
+    report = (
+        artifact.report
+        if isinstance(artifact, ConfigurationLineageArtifact)
+        else artifact
+    )
+    return registry.rollback(report)
 
 
 def create(
@@ -147,7 +478,7 @@ def create(
         },
         arrays=arrays_,
     )
-    return open(path, allow_incomplete=True)
+    return open(path, allow_incomplete=True, limits=None)
 
 
 def open(
@@ -155,11 +486,12 @@ def open(
     /,
     *,
     allow_incomplete: bool = False,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> LifecycleArchive:
     """Open a canonical archive, validating every identity and payload checksum."""
 
     source = Path(path)
-    container, arrays = read_array_archive(source)
+    container, arrays = read_array_archive(source, limits=limits)
     if container.get("kind") != "lifecycle-archive":
         raise ArrayArchiveCorruptionError("Archive is not a lifecycle archive.")
     record = container.get("record")
@@ -279,25 +611,130 @@ def export(
     return _EXPORTERS[key](query(source, fields=fields), Path(destination))
 
 
+_SUPPORT_RECORD_KINDS = frozenset(
+    {
+        "analysis-plan",
+        "checkpoint-manifest",
+        "execution-plan",
+        "model-manifest",
+        "numeric-revision",
+        "result-manifest",
+        "result-revision",
+        "run-record",
+    }
+)
+_SUPPORT_TELEMETRY_ALLOWLIST: Mapping[str, Any] = MappingProxyType(
+    {
+        "record": MappingProxyType({"kind": str, "complete": bool}),
+        "archive": MappingProxyType({"array_count": int, "array_bytes": int}),
+    }
+)
+
+
+def _allowlisted_support_mapping(
+    source: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    /,
+) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, rule in schema.items():
+        if key not in source:
+            continue
+        value = source[key]
+        if isinstance(rule, Mapping):
+            if not isinstance(value, Mapping):
+                raise TypeError(f"Support telemetry field {key!r} must be a mapping.")
+            sanitized[key] = _allowlisted_support_mapping(value, rule)
+        elif type(value) is not rule:
+            raise TypeError(
+                f"Support telemetry field {key!r} has an invalid scalar type."
+            )
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _sanitized_support_telemetry(archive: LifecycleArchive, /) -> dict[str, Any]:
+    record = _encode_record(archive.manifest)
+    telemetry = _allowlisted_support_mapping(
+        {
+            "record": record,
+            "archive": {
+                "array_count": len(archive.arrays),
+                "array_bytes": sum(value.nbytes for value in archive.arrays.values()),
+            },
+        },
+        _SUPPORT_TELEMETRY_ALLOWLIST,
+    )
+    record_kind = telemetry["record"]["kind"]
+    if record_kind not in _SUPPORT_RECORD_KINDS:
+        raise TypeError("Lifecycle record kind is not admitted to support telemetry.")
+    return telemetry
+
+
 def support_bundle(
     source: str | Path | LifecycleArchive,
     destination: str | Path,
     /,
+    *,
+    authorization: SupportBundleAuthorization | None = None,
+    archive_limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> Path:
-    """Create a deterministic support bundle containing the validated archive."""
+    """Create a sanitized support bundle, or an explicitly authorized full copy.
 
-    archive = _as_archive(source)
+    The default bundle contains only recursively allowlisted numeric/enum
+    telemetry. A full source archive can only be included with explicit,
+    auditable authorization from its data owner.
+    """
+    if authorization is not None and not isinstance(
+        authorization, SupportBundleAuthorization
+    ):
+        raise TypeError("authorization must be SupportBundleAuthorization or None.")
+    archive = _as_archive(source, limits=archive_limits)
+    telemetry = _sanitized_support_telemetry(archive)
+    if authorization is None:
+        return write_array_archive(
+            destination,
+            manifest={
+                "kind": "lifecycle-support-bundle",
+                "disclosure": "sanitized",
+                "telemetry": telemetry,
+                "audit": {"data_owner_authorized": False},
+            },
+            arrays={},
+        )
+    if authorization.source_archive_id != archive.archive_id:
+        raise ValueError("Support authorization is not bound to the source archive.")
+
     payload = archive.path.read_bytes()
     record = _encode_record(archive.manifest)
+    authorization_record = {
+        "authorization_id": authorization.authorization_id,
+        "data_owner_id": authorization.data_owner_id,
+        "source_archive_id": authorization.source_archive_id,
+        "authorized_at": authorization.authorized_at,
+        "disclosures": sorted(authorization.disclosures),
+    }
+    authorization_record["authorization_fingerprint"] = canonical_fingerprint(
+        authorization_record
+    )
     return write_array_archive(
         destination,
         manifest={
             "kind": "lifecycle-support-bundle",
-            "archive_id": archive.archive_id,
-            "record_kind": record["kind"],
-            "record_id": _record_id(archive.manifest),
-            "diagnostic_ids": list(_diagnostic_ids(archive.manifest)),
-            "archive_sha256": hashlib.sha256(payload).hexdigest(),
+            "disclosure": "data-owner-authorized",
+            "telemetry": telemetry,
+            "audit": {
+                "data_owner_authorized": True,
+                **authorization_record,
+            },
+            "source": {
+                "archive_id": archive.archive_id,
+                "record_kind": record["kind"],
+                "record_id": _record_id(archive.manifest),
+                "diagnostic_ids": list(_diagnostic_ids(archive.manifest)),
+                "archive_sha256": hashlib.sha256(payload).hexdigest(),
+            },
         },
         arrays={"archive": np.frombuffer(payload, dtype=np.uint8)},
     )
@@ -325,10 +762,15 @@ def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
     return destination
 
 
-def _as_archive(source: str | Path | LifecycleArchive, /) -> LifecycleArchive:
+def _as_archive(
+    source: str | Path | LifecycleArchive,
+    /,
+    *,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+) -> LifecycleArchive:
     if isinstance(source, LifecycleArchive):
         return source
-    return open(source)
+    return open(source, limits=limits)
 
 
 def _result_manifest(record: LifecycleRecord, /) -> ResultManifest | None:
@@ -633,19 +1075,27 @@ register_exporter("npz", _export_npz)
 
 
 __all__ = [
+    "CanonicalLogicalArrays",
+    "ConfigurationLineageArtifact",
     "LifecycleArchive",
     "LifecycleQuery",
     "LifecycleRecord",
+    "SupportBundleAuthorization",
+    "SupportBundleDisclosure",
     "SampledExporter",
     "SampledField",
+    "collection_digest",
     "create",
+    "decode_logical_arrays",
+    "encode_logical_arrays",
     "export",
     "list_fields",
-    "collection_digest",
+    "migrate_configuration",
+    "open",
     "payload_byte_count",
     "payload_digest",
-    "open",
     "query",
     "register_exporter",
+    "rollback_configuration",
     "support_bundle",
 ]

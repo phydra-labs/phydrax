@@ -6,8 +6,10 @@ It composes with `domain`, `geometry`, `integration`, `linalg`, `stochastic`,
 `equations`, and `solver` without replacing their scientific contracts.
 
 See [Guide → Discretization](../../guides_discretization.md) for lifecycle and
-method examples, [Guide → Virtual elements](../../guides_virtual_elements.md)
-for polygonal projection spaces, [Guide → Particle methods](../../guides_particle_methods.md)
+method examples, [Guide → Explicit polygon H1](../../guides_explicit_polygon_h1.md)
+for condensed point-value polygon bases,
+[Guide → Virtual elements](../../guides_virtual_elements.md) for polygonal
+projection spaces, [Guide → Particle methods](../../guides_particle_methods.md)
 for material entity and interaction contracts,
 [Guide → Particle-grid splatting](../../guides_particle_splatting.md) for
 measure-aware particle/grid transfer, [Guide → SPH](../../guides_sph.md)

@@ -11,6 +11,14 @@ import equinox as eqx
 from jaxtyping import ArrayLike
 
 from phydrax.conditions._base import AbstractCondition
+from phydrax.conditions._ir import Condition
+from phydrax.conditions._trace import (
+    equal,
+    field_jet,
+    FieldJet,
+    LinearTraceEquation,
+    LinearTraceExpression,
+)
 from phydrax.conditions.boundary import Absorbing, Dirichlet, Neumann, Robin
 from phydrax.conditions.initial import Initial
 from phydrax.domain import (
@@ -32,9 +40,10 @@ from ._ansatz import (
     enforce_robin,
     enforce_sommerfeld,
 )
+from ._realization import AbstractFieldRealization
 
 
-EnforcementStage = Literal["boundary", "initial", "interior"]
+EnforcementStage = Literal["boundary", "initial", "interior", "global"]
 EnforcementKind = Literal[
     "dirichlet",
     "neumann",
@@ -43,108 +52,8 @@ EnforcementKind = Literal[
     "graph",
     "traction",
     "initial",
+    "functional",
 ]
-
-
-class FieldJet(StrictModule):
-    field: str = eqx.field(static=True)
-    variable: str = eqx.field(static=True)
-    order: int = eqx.field(static=True)
-    normal: bool = eqx.field(static=True)
-
-    def __init__(self, field: str, variable: str, order: int = 0, normal: bool = False):
-        order_ = int(order)
-        if not field or not variable or order_ < 0:
-            raise ValueError("Field jets require names and nonnegative order.")
-        if normal and order_ != 1:
-            raise ValueError("Normal jets currently require order=1.")
-        self.field = str(field)
-        self.variable = str(variable)
-        self.order = order_
-        self.normal = bool(normal)
-
-    def __mul__(self, coefficient: Any):
-        return LinearTraceExpression(((coefficient, self),))
-
-    def __rmul__(self, coefficient: Any):
-        return self * coefficient
-
-    def __add__(self, other: Any):
-        return LinearTraceExpression(((1.0, self),)) + other
-
-    def __radd__(self, other: Any):
-        return self + other
-
-    def __sub__(self, other: Any):
-        return LinearTraceExpression(((1.0, self),)) - other
-
-
-class LinearTraceExpression(StrictModule):
-    terms: tuple[tuple[Any, FieldJet], ...]
-
-    def __init__(self, terms: Sequence[tuple[Any, FieldJet]]):
-        values = tuple(terms)
-        if not values or any(not isinstance(jet, FieldJet) for _, jet in values):
-            raise TypeError("Linear trace expressions require FieldJet terms.")
-        self.terms = values
-
-    def __add__(self, other: Any):
-        expression = _trace_expression(other)
-        return LinearTraceExpression((*self.terms, *expression.terms))
-
-    def __radd__(self, other: Any):
-        return self + other
-
-    def __sub__(self, other: Any):
-        expression = _trace_expression(other)
-        return LinearTraceExpression(
-            (*self.terms, *((-coefficient, jet) for coefficient, jet in expression.terms))
-        )
-
-    def __mul__(self, coefficient: Any):
-        return LinearTraceExpression(
-            tuple((coefficient * value, jet) for value, jet in self.terms)
-        )
-
-    def __rmul__(self, coefficient: Any):
-        return self * coefficient
-
-
-def _trace_expression(value: Any, /) -> LinearTraceExpression:
-    if isinstance(value, LinearTraceExpression):
-        return value
-    if isinstance(value, FieldJet):
-        return LinearTraceExpression(((1.0, value),))
-    raise TypeError("Trace equations are linear combinations of declared field jets.")
-
-
-class LinearTraceEquation(StrictModule):
-    lhs: LinearTraceExpression
-    rhs: Any
-
-    def __init__(self, lhs: FieldJet | LinearTraceExpression, rhs: Any):
-        expression = _trace_expression(lhs)
-        identities = tuple(
-            (jet.field, jet.variable, jet.order, jet.normal)
-            for _, jet in expression.terms
-        )
-        if len(set(identities)) != len(identities):
-            raise ValueError("Trace equation terms must be canonical and unique.")
-        self.lhs = expression
-        self.rhs = rhs
-
-
-def field_jet(
-    field: str,
-    variable: str,
-    order: int = 0,
-    normal: bool = False,
-) -> FieldJet:
-    return FieldJet(field, variable, order, normal)
-
-
-def equal(lhs: FieldJet | LinearTraceExpression, rhs: Any) -> LinearTraceEquation:
-    return LinearTraceEquation(lhs, rhs)
 
 
 class EnforcementProofObligations(StrictModule):
@@ -431,9 +340,9 @@ def _built_in_transform(
 
 
 class EnforcementSpec(StrictModule):
-    """Typed declaration of one hard condition transform."""
+    """Declaration of one local ansatz or one prepared field realization."""
 
-    condition: AbstractCondition
+    condition: AbstractCondition | Condition
     field: str = eqx.field(static=True)
     dependencies: tuple[str, ...] = eqx.field(static=True)
     stage: EnforcementStage = eqx.field(static=True)
@@ -441,12 +350,13 @@ class EnforcementSpec(StrictModule):
     derivative_requirements: tuple[DerivativeRequirement, ...]
     initial_derivative_order: int = eqx.field(static=True)
     evolution_var: str = eqx.field(static=True)
-    transform: AffineEnforcementTransform
+    transform: AffineEnforcementTransform | None
+    realization: AbstractFieldRealization | None
     options: frozendict[str, Any]
 
     def __init__(
         self,
-        condition: AbstractCondition,
+        condition: AbstractCondition | Condition,
         /,
         *,
         field: str | None = None,
@@ -457,12 +367,68 @@ class EnforcementSpec(StrictModule):
         initial_derivative_order: int | None = None,
         evolution_var: str = "t",
         transform: AffineEnforcementTransform | None = None,
+        realization: AbstractFieldRealization | None = None,
         options: Mapping[str, Any] | None = None,
     ):
+        resolved_options = {} if options is None else dict(options)
+        if isinstance(condition, Condition):
+            if not isinstance(realization, AbstractFieldRealization):
+                raise TypeError(
+                    "Typed Condition enforcement requires an AbstractFieldRealization."
+                )
+            if any(
+                value is not None
+                for value in (
+                    field,
+                    dependencies,
+                    stage,
+                    kind,
+                    derivative_requirements,
+                    initial_derivative_order,
+                    transform,
+                )
+            ):
+                raise ValueError(
+                    "Typed Condition enforcement derives fields and staging from its "
+                    "prepared realization."
+                )
+            sources = condition.fields.sources
+            if not sources:
+                raise ValueError("Typed enforcement requires at least one source field.")
+            self.condition = condition
+            self.field = sources[0]
+            self.dependencies = tuple(sources[1:])
+            self.stage = "global"
+            self.kind = "functional"
+            self.derivative_requirements = ()
+            self.initial_derivative_order = 0
+            self.evolution_var = str(evolution_var)
+            self.transform = None
+            self.realization = realization
+            self.options = frozendict(resolved_options)
+            return
+
         if not isinstance(condition, AbstractCondition):
-            raise TypeError("EnforcementSpec condition must be an AbstractCondition.")
+            raise TypeError(
+                "EnforcementSpec condition must be an AbstractCondition or Condition."
+            )
+        if realization is not None:
+            raise TypeError(
+                "Prepared realizations consume typed Condition declarations; call "
+                "condition.as_condition() before constructing this specification."
+            )
+        if transform is not None and not isinstance(
+            transform, AffineEnforcementTransform
+        ):
+            raise TypeError(
+                "transform must be an AffineEnforcementTransform; untyped callables "
+                "are not accepted."
+            )
         if isinstance(condition.on, ComponentSum):
-            raise TypeError("Hard enforcement requires one DomainComponent support.")
+            raise TypeError(
+                "Local ansatz enforcement requires one DomainComponent support; "
+                "ComponentSum conditions require a typed joint realization."
+            )
         if not isinstance(condition.on, DomainComponent):
             raise TypeError("Hard enforcement requires one DomainComponent support.")
         target_field = condition.fields[0] if field is None else str(field)
@@ -484,13 +450,8 @@ class EnforcementSpec(StrictModule):
             _stage(condition.on, str(evolution_var)) if stage is None else stage
         )
         if resolved_stage not in ("boundary", "initial", "interior"):
-            raise ValueError("stage must be 'boundary', 'initial', or 'interior'.")
-        if transform is not None and not isinstance(
-            transform, AffineEnforcementTransform
-        ):
-            raise TypeError(
-                "transform must be an AffineEnforcementTransform; untyped callables "
-                "are not accepted."
+            raise ValueError(
+                "Local ansatz stage must be 'boundary', 'initial', or 'interior'."
             )
         resolved_kind = (
             transform.lifting.kind
@@ -508,23 +469,25 @@ class EnforcementSpec(StrictModule):
             "graph",
             "traction",
         ):
-            raise ValueError("Unsupported enforcement transform kind.")
-        if derivative_requirements is None:
-            requirements = _default_requirements(condition, target_field)
-        else:
-            requirements = tuple(derivative_requirements)
+            raise ValueError("Unsupported local enforcement kind.")
+        requirements = (
+            _default_requirements(condition, target_field)
+            if derivative_requirements is None
+            else tuple(derivative_requirements)
+        )
         if any(not isinstance(value, DerivativeRequirement) for value in requirements):
             raise TypeError(
                 "derivative_requirements must contain DerivativeRequirement values."
             )
-        if initial_derivative_order is None:
-            initial_order = condition.order if isinstance(condition, Initial) else 0
-        else:
-            initial_order = int(initial_derivative_order)
+        initial_order = (
+            condition.order
+            if initial_derivative_order is None and isinstance(condition, Initial)
+            else 0
+            if initial_derivative_order is None
+            else int(initial_derivative_order)
+        )
         if initial_order < 0:
             raise ValueError("initial_derivative_order must be nonnegative.")
-
-        resolved_options = {} if options is None else dict(options)
         resolved_transform = (
             _built_in_transform(
                 condition,
@@ -539,9 +502,7 @@ class EnforcementSpec(StrictModule):
             jet.field for _, jet in resolved_transform.equation.lhs.terms
         )
         if target_field not in equation_fields:
-            raise ValueError(
-                "Typed enforcement equation does not contain its pivot field."
-            )
+            raise ValueError("Typed enforcement equation does not contain its field.")
         if not equation_fields.issubset(frozenset(condition.fields)):
             raise ValueError("Typed enforcement equation references undeclared fields.")
         self.condition = condition
@@ -553,10 +514,13 @@ class EnforcementSpec(StrictModule):
         self.initial_derivative_order = initial_order
         self.evolution_var = str(evolution_var)
         self.transform = resolved_transform
+        self.realization = None
         self.options = frozendict(resolved_options)
 
     @property
     def component(self) -> DomainComponent:
+        if not isinstance(self.condition, AbstractCondition):
+            raise TypeError("A typed joint realization has no single local component.")
         return cast(DomainComponent, self.condition.on)
 
     @property
@@ -575,7 +539,7 @@ class EnforcementSpec(StrictModule):
 
     @property
     def initial_target(self) -> DomainFunction | ArrayLike | None:
-        if self.stage != "initial":
+        if self.stage != "initial" or not isinstance(self.condition, AbstractCondition):
             return None
         if isinstance(self.condition, (Dirichlet, Initial)):
             return self.condition.target
@@ -587,6 +551,10 @@ class EnforcementSpec(StrictModule):
         get_field: Callable[[str], DomainFunction],
         /,
     ) -> DomainFunction:
+        if self.transform is None:
+            raise TypeError(
+                "Prepared joint realizations are applied by EnforcementProgram."
+            )
         return self.transform.apply(value, get_field, self.component, self.field)
 
 

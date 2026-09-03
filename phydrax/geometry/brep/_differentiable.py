@@ -24,6 +24,7 @@ from .._certificate import (
     SignReliability,
     ZeroSetAccuracy,
 )
+from .._closest_point import represented_mesh_closest_point, triangle_query_evidence
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
 from .._sampling import (
     bounded_rejection_sample,
@@ -272,6 +273,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
             {
                 GeometryCapability.REGION_QUERY,
                 GeometryCapability.SIGNED_DISTANCE,
+                GeometryCapability.CLOSEST_POINT,
                 GeometryCapability.BOUNDARY_NORMAL,
                 GeometryCapability.MEASURE,
                 GeometryCapability.INTERIOR_SAMPLING,
@@ -390,6 +392,39 @@ class _FixedTopologyBRepKernel(GeometryKernel):
 
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return self._query(state, points).normal
+
+    def closest_point(self, state: DesignState, points: Array, /):
+        points_ = jnp.asarray(points, dtype=float)
+        leading = points_.shape[:-1]
+        flat = points_.reshape((-1, 3))
+        triangles = self._triangles(state)
+        closest_by_face = jax.vmap(_closest_points_on_triangles, in_axes=(0, None))(
+            flat, triangles
+        )
+        query = self._query(state, flat)
+        unique, regular, margin = triangle_query_evidence(
+            flat,
+            triangles,
+            closest_by_face,
+            query.face_index,
+        )
+        return represented_mesh_closest_point(
+            points_,
+            closest_point=query.closest_point.reshape((*leading, 3)),
+            distance=query.distance.reshape(leading),
+            normal=query.normal.reshape((*leading, 3)),
+            source_entity_id=query.face_index.reshape(leading),
+            inside=self.contains(state, points_),
+            unique=unique.reshape(leading),
+            regular=regular.reshape(leading),
+            margin=margin.reshape(leading),
+            represented_geometry_id=(
+                f"{self.model.source_id}:fixed-topology-query:"
+                f"{self.model.source_revision}"
+            ),
+            physical_geometry_id=self.model.source_id,
+            exact_to_physical=False,
+        )
 
     def bounds(self, state: DesignState, /) -> Array:
         vertices = self.realize(state).vertices

@@ -1273,6 +1273,67 @@ Compare steady-state values only between reports with compatible `environment`
 and `configuration`; preparation and cold compilation are intentionally not
 presented as warmed execution.
 
+## Structured partition-aware line solves
+
+`StructuredSolveTopologyPlan` separates `transverse-batch` ownership of complete
+lines from `split-line` ownership of contiguous intervals, including uneven tails.
+Complete-line batches wrap an existing `PreparedTransformLineSolve` and remain exact
+local direct solves. Split lines select `partitioned-thomas`, `spike`, or `pcr`;
+SPIKE is bounded by the declared reduced-interface size and PCR requires balanced
+power-of-two partitions. `DistributedLineSolvePlan.prepare()` freezes coefficients,
+factors, pivot/reduced-interface evidence, communication counts, deterministic
+reductions, resources, and optional left/right null vectors. `solve()` returns
+compatibility correction, gauge and original-equation residuals; a failed candidate is
+not presented as a solution.
+
+These classes model partition algebra and communication evidence over caller-provided
+arrays. They do not allocate a JAX mesh or perform inter-device transport, so the
+current executable route is in-process unless a higher-level owner supplies the
+communication layer.
+
+`MultiblockExtrudedReductionPlan` requires a certified invariant extruded axis. It
+solves the coupled block/mortar system iteratively with PCG. Per-block tridiagonal
+factors and the mortar diagonal are **preconditioners only**; they are not an exact
+direct solution of the global multiblock operator.
+
+::: phydrax.linalg.StructuredSolveTopologyPlan
+
+---
+
+::: phydrax.linalg.StructuredLineNullspacePolicy
+
+---
+
+::: phydrax.linalg.DistributedLineSolvePlan
+
+---
+
+::: phydrax.linalg.PreparedDistributedLineSolve
+
+---
+
+::: phydrax.linalg.DistributedLineSolveResult
+
+---
+
+::: phydrax.linalg.PreparedTransverseBatchLineSolve
+
+---
+
+::: phydrax.linalg.ExtrudedAxisInvarianceCertificate
+
+---
+
+::: phydrax.linalg.MultiblockExtrudedReductionPlan
+
+---
+
+::: phydrax.linalg.PreparedMultiblockExtrudedReduction
+
+---
+
+::: phydrax.linalg.MultiblockExtrudedReductionResult
+
 ## Capability limitations
 
 Current boundaries are deliberate and reported before execution:
@@ -1297,9 +1358,9 @@ Current boundaries are deliberate and reported before execution:
   diagonal pairings;
 - Schur-complement operators expose only the supplied forward inverse action,
   not an invented transpose or adjoint;
-- distributed execution is not exposed without a reproducible multi-device
-  workload and benchmark environment; the current runtime has no local/ghost
-  vector abstraction;
+- generic distributed vector execution is not exposed without a reproducible
+  multi-device workload and benchmark environment; the structured line API above is
+  partition-aware in-process algebra and does not provide a local/ghost vector runtime;
 - sparse-direct provider extensibility remains deliberately static until a
   second concrete backend is selected; current providers are device JAX sparse
   and host SciPy SuperLU;

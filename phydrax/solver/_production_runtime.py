@@ -8,7 +8,8 @@ import json
 import math
 import os
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,10 +19,20 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
-from .._fingerprint import canonical_fingerprint
+from .._array_archive import pack_array_tree, unpack_array_tree
+from .._fingerprint import canonical_fingerprint, canonical_json
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
+from ..lifecycle._archive import decode_logical_arrays, encode_logical_arrays
+from ..lifecycle._chunk_repository import (
+    ArtifactManifest,
+    ArtifactRepository,
+    ChunkRecord,
+    RepositoryConflictError,
+)
+from ..lifecycle._migration import MigrationReport
+from ..lifecycle._resolved_run import ResolvedRunSpec
 from ._fixed_step import (
     _canonical_structured_state,
     _state_dtype,
@@ -36,8 +47,10 @@ from ._runtime_lifecycle import (
     ByteBoundedAsyncPublisher,
     ExactTimeSchedule,
     read_runtime_checkpoint,
+    restore_runtime_checkpoint_arrays,
     RuntimeCheckpointEncodingPlan,
     RuntimeCheckpointEnvelope,
+    RuntimeRestartRelation,
     StreamingMomentPlan,
     StreamingMomentState,
     write_runtime_checkpoint,
@@ -324,6 +337,652 @@ class DurableCheckpointStore:
         ):
             raise ValueError("Committed checkpoint pointer checksum is stale.")
         return envelope
+
+
+@dataclass(frozen=True, slots=True)
+class _RepositoryOutboxEvent:
+    event_id: str
+    cursor: int
+    state: Any
+    delivered: bool
+
+
+class ArtifactCheckpointStore:
+    """Repository-backed logical checkpoints with a transactional output outbox."""
+
+    transactional_outbox = True
+
+    def __init__(
+        self,
+        repository: ArtifactRepository,
+        manifest: ProductionCaseManifest,
+        policy: CheckpointGenerationPolicy,
+        resolved_run_spec: ResolvedRunSpec,
+        /,
+        *,
+        writer_id: str,
+        artifact_id: str | None = None,
+        encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
+    ):
+        if not isinstance(manifest, ProductionCaseManifest) or not isinstance(
+            policy, CheckpointGenerationPolicy
+        ):
+            raise TypeError("Artifact checkpoint store requires manifest and policy.")
+        if not isinstance(resolved_run_spec, ResolvedRunSpec):
+            raise TypeError("resolved_run_spec must be ResolvedRunSpec.")
+        required_methods = (
+            "begin",
+            "write_chunk",
+            "commit",
+            "get_manifest",
+            "read_chunk",
+        )
+        if any(
+            not callable(getattr(repository, name, None)) for name in required_methods
+        ):
+            raise TypeError("repository does not implement ArtifactRepository.")
+        if not hasattr(repository, "support_tuple"):
+            raise TypeError("repository does not expose its exact support tuple.")
+        provider_id = str(getattr(repository, "provider_id", ""))
+        if provider_id != resolved_run_spec.repository_id:
+            raise ValueError("Resolved repository identity does not match the provider.")
+        support_tuple_id = str(getattr(repository.support_tuple, "support_tuple_id", ""))
+        deployment_tuple_ids = tuple(
+            sorted(
+                dependency.support_tuple_id
+                for dependency in resolved_run_spec.deployment_dependencies
+            )
+        )
+        if not support_tuple_id or support_tuple_id not in deployment_tuple_ids:
+            raise ValueError(
+                "Repository support tuple was not admitted by deployment dependencies."
+            )
+        if resolved_run_spec.checkpoint_policy_id != policy.policy_id:
+            raise ValueError(
+                "Resolved checkpoint policy does not match the store policy."
+            )
+        maximum = int(getattr(repository, "maximum_chunk_bytes", 0))
+        if maximum <= 0:
+            raise ValueError("Repository maximum_chunk_bytes must be positive.")
+        encoding = (
+            RuntimeCheckpointEncodingPlan() if encoding_plan is None else encoding_plan
+        )
+        if not isinstance(encoding, RuntimeCheckpointEncodingPlan):
+            raise TypeError(
+                "encoding_plan must be RuntimeCheckpointEncodingPlan or None."
+            )
+        writer = str(writer_id)
+        if not writer:
+            raise ValueError("Repository checkpoint writer_id must be nonempty.")
+        artifact = (
+            canonical_fingerprint(
+                {
+                    "kind": "production-checkpoint-artifact",
+                    "case": manifest.manifest_id,
+                    "resolved_run": resolved_run_spec.spec_id,
+                }
+            )
+            if artifact_id is None
+            else str(artifact_id)
+        )
+        if not artifact:
+            raise ValueError("Repository checkpoint artifact_id must be nonempty.")
+        self.repository = repository
+        self.manifest = manifest
+        self.policy = policy
+        self.resolved_run_spec = resolved_run_spec
+        self.writer_id = writer
+        self.artifact_id = artifact
+        self.encoding_plan = encoding
+        self.repository_support_tuple_id = support_tuple_id
+        self.deployment_support_tuple_ids = deployment_tuple_ids
+        self.store_id = canonical_fingerprint(
+            {
+                "kind": "artifact-checkpoint-store",
+                "artifact": artifact,
+                "provider": provider_id,
+                "repository_support_tuple": support_tuple_id,
+                "deployment_support_tuples": deployment_tuple_ids,
+                "resolved_run": resolved_run_spec.spec_id,
+                "policy": policy.policy_id,
+                "encoding": encoding.encoding_id,
+            }
+        )
+        self._maximum_chunk_bytes = maximum
+        self._runtime_id: str | None = None
+        self._restart_relation: RuntimeRestartRelation | None = None
+        self._migration_report: MigrationReport | None = None
+        self._events: tuple[_RepositoryOutboxEvent, ...] = ()
+        self._last_envelope: RuntimeCheckpointEnvelope | None = None
+        self._last_repository_manifest: ArtifactManifest | None = None
+        self._last_generation = -1
+        self._terminal_payload: Mapping[str, Any] | None = None
+        self.last_replay_classification: str | None = None
+
+    def bind_runtime(
+        self,
+        runtime_id: str,
+        relation: RuntimeRestartRelation,
+        /,
+        *,
+        migration_report: MigrationReport | None = None,
+    ) -> None:
+        """Bind the one prepared runtime and its explicit restart admission."""
+
+        runtime = str(runtime_id)
+        if not runtime or not isinstance(relation, RuntimeRestartRelation):
+            raise TypeError("Repository runtime binding is invalid.")
+        if relation.target_topology_id != self.manifest.topology_id:
+            raise ValueError(
+                "Restart relation target does not match the prepared topology."
+            )
+        admitted = set(self.deployment_support_tuple_ids)
+        if any(value not in admitted for value in relation.support_tuple_ids):
+            raise ValueError("Restart relation cites an unadmitted support tuple.")
+        if migration_report is not None:
+            if not isinstance(migration_report, MigrationReport):
+                raise TypeError("migration_report must be MigrationReport or None.")
+            if (
+                migration_report.output_digest
+                != self.resolved_run_spec.prepared_configuration_id
+            ):
+                raise ValueError(
+                    "Configuration migration output does not match the resolved run."
+                )
+        if self._runtime_id is not None and (
+            self._runtime_id != runtime
+            or self._restart_relation.relation_id != relation.relation_id
+        ):
+            raise ValueError(
+                "Artifact checkpoint store is already bound to another runtime."
+            )
+        self._runtime_id = runtime
+        self._restart_relation = relation
+        self._migration_report = migration_report
+
+    @staticmethod
+    def _checkpoint_manifest(envelope: RuntimeCheckpointEnvelope, /) -> dict[str, Any]:
+        return {
+            "kind": "runtime-checkpoint",
+            "checkpoint_id": envelope.checkpoint_id,
+            "runtime_id": envelope.runtime_id,
+            "content_digest": envelope.content_digest,
+            "encoding_id": envelope.encoding_plan.encoding_id,
+            "mesh_id": envelope.mesh_id,
+            "method_id": envelope.method_id,
+            "precision_id": envelope.precision_id,
+            "topology_epoch_id": envelope.topology_epoch_id,
+            "partition_id": envelope.partition_id,
+            **envelope.archive_specs,
+        }
+
+    def _write_payload(
+        self,
+        transaction: Any,
+        logical_name: str,
+        payload: bytes,
+        /,
+    ) -> tuple[ChunkRecord, ...]:
+        offsets = tuple(range(0, len(payload), self._maximum_chunk_bytes))
+        if not offsets:
+            offsets = (0,)
+        return tuple(
+            self.repository.write_chunk(
+                transaction,
+                logical_name,
+                index,
+                offset,
+                payload[offset : offset + self._maximum_chunk_bytes],
+            )
+            for index, offset in enumerate(offsets)
+        )
+
+    def _snapshot_payloads(
+        self,
+        envelope: RuntimeCheckpointEnvelope,
+        /,
+    ) -> tuple[dict[str, bytes], dict[str, Any]]:
+        state_collection = encode_logical_arrays(
+            envelope.archive_arrays, logical_prefix="state"
+        )
+        payloads = {
+            "state-manifest": state_collection.manifest,
+            **dict(state_collection.payloads),
+        }
+        outbox_arrays: dict[str, Any] = {}
+        outbox_records = []
+        for event in self._events:
+            specification = pack_array_tree(
+                f"outbox/{event.cursor:016d}",
+                event.state,
+                outbox_arrays,
+            )
+            outbox_records.append(
+                {
+                    "event_id": event.event_id,
+                    "cursor": event.cursor,
+                    "delivered": event.delivered,
+                    "state": specification,
+                }
+            )
+        outbox_collection_id = None
+        if outbox_arrays:
+            outbox_collection = encode_logical_arrays(
+                outbox_arrays, logical_prefix="outbox"
+            )
+            payloads["outbox-manifest"] = outbox_collection.manifest
+            payloads.update(outbox_collection.payloads)
+            outbox_collection_id = outbox_collection.collection_id
+        relation = self._restart_relation
+        if self._runtime_id is None or relation is None:
+            raise RuntimeError("Artifact checkpoint store is not bound to a runtime.")
+        runtime_record = {
+            **self._checkpoint_manifest(envelope),
+            "generation": int(np.asarray(envelope.step_index)),
+            "state_collection_id": state_collection.collection_id,
+            "outbox_collection_id": outbox_collection_id,
+            "outbox": outbox_records,
+            "terminal": self._terminal_payload,
+            "resolved_run_spec": self.resolved_run_spec.to_record(),
+            "repository_support_tuple_id": self.repository_support_tuple_id,
+            "deployment_support_tuple_ids": list(self.deployment_support_tuple_ids),
+            "restart_relation": {
+                "source_topology_id": relation.source_topology_id,
+                "target_topology_id": relation.target_topology_id,
+                "classification": relation.classification,
+                "tolerance": relation.tolerance,
+                "support_tuple_ids": list(relation.support_tuple_ids),
+                "relation_id": relation.relation_id,
+            },
+            "migration_report": None
+            if self._migration_report is None
+            else self._migration_report.to_record(),
+        }
+        payloads["runtime"] = canonical_json(runtime_record).encode("utf-8")
+        return payloads, runtime_record
+
+    def _write_snapshot(
+        self,
+        envelope: RuntimeCheckpointEnvelope,
+        /,
+        *,
+        phase: str,
+    ) -> ArtifactManifest:
+        payloads, runtime_record = self._snapshot_payloads(envelope)
+        attempt_id = canonical_fingerprint(
+            {
+                "kind": "production-repository-attempt",
+                "checkpoint": envelope.checkpoint_id,
+                "phase": phase,
+                "outbox": tuple(
+                    (event.event_id, event.cursor, event.delivered)
+                    for event in self._events
+                ),
+                "terminal": None
+                if self._terminal_payload is None
+                else self._terminal_payload.get("terminal_id"),
+            }
+        )
+        try:
+            transaction = self.repository.begin(
+                self.artifact_id,
+                self.writer_id,
+                attempt_id=attempt_id,
+            )
+            chunks = tuple(
+                chunk
+                for logical_name, payload in sorted(payloads.items())
+                for chunk in self._write_payload(transaction, logical_name, payload)
+            )
+            committed = self.repository.commit(
+                transaction,
+                chunks,
+                metadata={
+                    "kind": "production-checkpoint",
+                    "phase": phase,
+                    "checkpoint_id": envelope.checkpoint_id,
+                    "generation": str(int(np.asarray(envelope.step_index))),
+                    "runtime_id": envelope.runtime_id,
+                    "resolved_run_spec_id": self.resolved_run_spec.spec_id,
+                    "relation_id": self._restart_relation.relation_id,
+                    "state_collection_id": runtime_record["state_collection_id"],
+                },
+            )
+        except RepositoryConflictError:
+            committed = self.repository.get_manifest(self.artifact_id)
+            metadata = dict(committed.metadata)
+            if (
+                metadata.get("checkpoint_id") != envelope.checkpoint_id
+                or metadata.get("phase") != phase
+            ):
+                raise
+        self._last_envelope = envelope
+        self._last_repository_manifest = committed
+        self._last_generation = int(np.asarray(envelope.step_index))
+        return committed
+
+    def _read_payloads(self, manifest: ArtifactManifest, /) -> dict[str, bytes]:
+        grouped: dict[str, list[ChunkRecord]] = {}
+        for chunk in manifest.chunks:
+            grouped.setdefault(chunk.logical_name, []).append(chunk)
+        payloads = {}
+        for logical_name, chunks in grouped.items():
+            ordered = tuple(sorted(chunks, key=lambda value: value.index))
+            payloads[logical_name] = b"".join(
+                self.repository.read_chunk(
+                    manifest,
+                    chunk,
+                    maximum_plaintext_bytes=self._maximum_chunk_bytes,
+                )
+                for chunk in ordered
+            )
+        return payloads
+
+    @staticmethod
+    def _json_object(payload: bytes, role: str, /) -> Mapping[str, Any]:
+        try:
+            value = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"Repository {role} is not valid JSON.") from error
+        if not isinstance(value, Mapping):
+            raise ValueError(f"Repository {role} must be a JSON object.")
+        return value
+
+    def _configuration_compatible(
+        self,
+        source: ResolvedRunSpec,
+        /,
+    ) -> None:
+        target = self.resolved_run_spec
+        if source.spec_id == target.spec_id:
+            return
+        source_record = source.to_record()
+        target_record = target.to_record()
+        for record in (source_record, target_record):
+            record.pop("spec_id")
+            record.pop("prepared_configuration_id")
+        if source_record != target_record:
+            raise ValueError(
+                "Resolved run changed outside an explicit configuration migration."
+            )
+        report = self._migration_report
+        if report is None or (
+            report.input_digest != source.prepared_configuration_id
+            or report.output_digest != target.prepared_configuration_id
+        ):
+            raise ValueError(
+                "Configuration changed without an explicit migration lineage."
+            )
+
+    def commit(
+        self,
+        generation: int,
+        envelope: RuntimeCheckpointEnvelope,
+        /,
+    ) -> ArtifactManifest:
+        if isinstance(generation, bool):
+            raise TypeError("Checkpoint generation must be an integer.")
+        generation_ = int(generation)
+        if generation_ < 0 or not isinstance(envelope, RuntimeCheckpointEnvelope):
+            raise ValueError("Checkpoint generation or envelope is invalid.")
+        if (
+            envelope.mesh_id != self.manifest.topology_id
+            or envelope.method_id != self.manifest.method_id
+            or envelope.precision_id != self.manifest.precision_id
+            or envelope.topology_epoch_id != self.manifest.geometry_layout_id
+            or envelope.encoding_plan.encoding_id != self.encoding_plan.encoding_id
+            or envelope.runtime_id != self._runtime_id
+            or int(np.asarray(envelope.step_index)) != generation_
+        ):
+            raise ValueError("Checkpoint envelope does not belong to this store.")
+        if self._last_envelope is not None:
+            if envelope.checkpoint_id == self._last_envelope.checkpoint_id:
+                if self._last_repository_manifest is None:
+                    raise RuntimeError(
+                        "Repository checkpoint bookkeeping is inconsistent."
+                    )
+                return self._last_repository_manifest
+            if generation_ <= self._last_generation:
+                raise ValueError("Checkpoint generations must increase monotonically.")
+        return self._write_snapshot(envelope, phase="checkpoint")
+
+    def stage_output(
+        self,
+        event_id: str,
+        cursor: int,
+        state: Any,
+        /,
+    ) -> None:
+        """Stage one immutable ordered output; duplicate event IDs are idempotent."""
+
+        identifier = str(event_id)
+        cursor_ = int(cursor)
+        if not identifier or cursor_ < 0:
+            raise ValueError("Repository output event identity or cursor is invalid.")
+        for event in self._events:
+            if event.event_id == identifier:
+                if event.cursor != cursor_:
+                    raise ValueError("Duplicate output event changed its cursor.")
+                return
+            if event.cursor == cursor_:
+                raise ValueError("Output cursor is already bound to another event.")
+        expected_cursor = len(self._events)
+        if cursor_ != expected_cursor:
+            raise ValueError("Repository output cursors must be contiguous and ordered.")
+        snapshot = jax.tree.map(
+            lambda leaf: np.asarray(jax.device_get(leaf)).copy(),
+            _canonical_structured_state(state),
+        )
+        self._events = self._events + (
+            _RepositoryOutboxEvent(identifier, cursor_, snapshot, False),
+        )
+
+    def dispatch_outbox(
+        self,
+        publisher: ByteBoundedAsyncPublisher | None,
+        /,
+    ) -> None:
+        """Deliver committed outbox entries in cursor order and durably acknowledge."""
+
+        pending = tuple(event for event in self._events if not event.delivered)
+        if not pending:
+            return
+        if publisher is None:
+            raise ValueError("A publisher is required to dispatch repository outputs.")
+        if self._last_envelope is None:
+            raise RuntimeError("Outbox entries cannot dispatch before checkpoint commit.")
+        for event in pending:
+            publisher.publish(event.event_id, event.state)
+        publisher.drain()
+        delivered_ids = {event.event_id for event in pending}
+        self._events = tuple(
+            _RepositoryOutboxEvent(
+                event.event_id,
+                event.cursor,
+                event.state,
+                event.delivered or event.event_id in delivered_ids,
+            )
+            for event in self._events
+        )
+        self._write_snapshot(self._last_envelope, phase="outbox-ack")
+
+    def latest(
+        self,
+        state_template: Any,
+        /,
+        *,
+        controller_template: Any = (),
+        observer_templates: Sequence[Any] = (),
+        rng_template: Any = (),
+        runtime_id: str | None = None,
+    ) -> RuntimeCheckpointEnvelope:
+        if self._runtime_id is None or self._restart_relation is None:
+            raise RuntimeError("Artifact checkpoint store is not bound to a runtime.")
+        if runtime_id is not None and str(runtime_id) != self._runtime_id:
+            raise ValueError(
+                "Requested runtime identity does not match the store binding."
+            )
+        repository_manifest = self.repository.get_manifest(self.artifact_id)
+        metadata = dict(repository_manifest.metadata)
+        if metadata.get("kind") != "production-checkpoint":
+            raise ValueError("Repository artifact is not a production checkpoint.")
+        payloads = self._read_payloads(repository_manifest)
+        unknown_payloads = {
+            name
+            for name in payloads
+            if name not in {"runtime", "state-manifest", "outbox-manifest"}
+            and not name.startswith(("state-", "outbox-"))
+        }
+        if unknown_payloads:
+            raise ValueError("Repository checkpoint contains unknown logical chunks.")
+        if "runtime" not in payloads or "state-manifest" not in payloads:
+            raise ValueError("Repository checkpoint is missing required logical chunks.")
+        runtime_record = self._json_object(payloads["runtime"], "runtime manifest")
+        source_spec_record = runtime_record.get("resolved_run_spec")
+        if not isinstance(source_spec_record, Mapping):
+            raise ValueError("Repository checkpoint has no resolved run specification.")
+        source_spec = ResolvedRunSpec.from_record(source_spec_record)
+        self._configuration_compatible(source_spec)
+        if (
+            runtime_record.get("repository_support_tuple_id")
+            != self.repository_support_tuple_id
+            or tuple(runtime_record.get("deployment_support_tuple_ids", ()))
+            != self.deployment_support_tuple_ids
+        ):
+            raise ValueError("Repository or deployment support-tuple identity changed.")
+        state_payloads = {
+            name: payload
+            for name, payload in payloads.items()
+            if name.startswith("state-") and name != "state-manifest"
+        }
+        state_arrays = decode_logical_arrays(payloads["state-manifest"], state_payloads)
+        state_collection_record = self._json_object(
+            payloads["state-manifest"], "state collection manifest"
+        )
+        if state_collection_record.get("collection_id") != runtime_record.get(
+            "state_collection_id"
+        ):
+            raise ValueError("Runtime manifest does not bind its logical state chunks.")
+        checkpoint_manifest = {
+            name: value
+            for name, value in runtime_record.items()
+            if name
+            in {
+                "kind",
+                "checkpoint_id",
+                "runtime_id",
+                "content_digest",
+                "encoding_id",
+                "mesh_id",
+                "method_id",
+                "precision_id",
+                "topology_epoch_id",
+                "partition_id",
+                "state",
+                "controller",
+                "rng",
+                "observers",
+            }
+        }
+        envelope, source_checkpoint_id = restore_runtime_checkpoint_arrays(
+            checkpoint_manifest,
+            state_arrays,
+            state_template=state_template,
+            controller_template=controller_template,
+            observer_templates=observer_templates,
+            rng_template=rng_template,
+            target_mesh_id=self.manifest.topology_id,
+            target_method_id=self.manifest.method_id,
+            target_precision_id=self.manifest.precision_id,
+            target_topology_epoch_id=self.manifest.geometry_layout_id,
+            target_runtime_id=self._runtime_id,
+            restart_relation=self._restart_relation,
+            encoding_plan=self.encoding_plan,
+        )
+        outbox_records = runtime_record.get("outbox")
+        if not isinstance(outbox_records, list):
+            raise ValueError("Repository checkpoint outbox schema is invalid.")
+        if outbox_records:
+            if "outbox-manifest" not in payloads:
+                raise ValueError("Repository checkpoint outbox arrays are missing.")
+            outbox_payloads = {
+                name: payload
+                for name, payload in payloads.items()
+                if name.startswith("outbox-") and name != "outbox-manifest"
+            }
+            outbox_arrays = decode_logical_arrays(
+                payloads["outbox-manifest"], outbox_payloads
+            )
+            outbox_collection_record = self._json_object(
+                payloads["outbox-manifest"], "outbox collection manifest"
+            )
+            if outbox_collection_record.get("collection_id") != runtime_record.get(
+                "outbox_collection_id"
+            ):
+                raise ValueError("Runtime manifest does not bind its outbox chunks.")
+        else:
+            if (
+                runtime_record.get("outbox_collection_id") is not None
+                or "outbox-manifest" in payloads
+                or any(name.startswith("outbox-") for name in payloads)
+            ):
+                raise ValueError("Empty checkpoint outbox has unexpected logical chunks.")
+            outbox_arrays = {}
+        events = []
+        seen_ids = set()
+        for expected_cursor, record in enumerate(outbox_records):
+            if not isinstance(record, Mapping) or set(record) != {
+                "event_id",
+                "cursor",
+                "delivered",
+                "state",
+            }:
+                raise ValueError("Repository checkpoint outbox record is invalid.")
+            event_id = record["event_id"]
+            cursor = record["cursor"]
+            delivered = record["delivered"]
+            if (
+                not isinstance(event_id, str)
+                or not event_id
+                or event_id in seen_ids
+                or type(cursor) is not int
+                or cursor != expected_cursor
+                or type(delivered) is not bool
+            ):
+                raise ValueError("Repository output cursor ordering is invalid.")
+            event_state = unpack_array_tree(
+                record["state"], outbox_arrays, state_template
+            )
+            events.append(
+                _RepositoryOutboxEvent(event_id, cursor, event_state, delivered)
+            )
+            seen_ids.add(event_id)
+        controller = envelope.controller_state
+        if (
+            not isinstance(controller, tuple)
+            or len(controller) != 3
+            or int(np.asarray(controller[2])) != len(events)
+        ):
+            raise ValueError("Checkpoint output cursor does not match its outbox.")
+        self._events = tuple(events)
+        self._last_envelope = envelope
+        self._last_repository_manifest = repository_manifest
+        self._last_generation = int(np.asarray(envelope.step_index))
+        terminal = runtime_record.get("terminal")
+        self._terminal_payload = terminal if isinstance(terminal, Mapping) else None
+        self.last_replay_classification = self._restart_relation.classification
+        if envelope.checkpoint_id != source_checkpoint_id:
+            self._terminal_payload = None
+            self._write_snapshot(envelope, phase="restart-lineage")
+        return envelope
+
+    def commit_terminal(self, payload: Mapping[str, Any], /) -> ArtifactManifest:
+        """Commit terminal metadata against the last complete logical checkpoint."""
+
+        if self._last_envelope is None:
+            raise RuntimeError("Terminal metadata requires a committed checkpoint.")
+        self._terminal_payload = dict(payload)
+        return self._write_snapshot(self._last_envelope, phase="terminal")
 
 
 class ProductionFailureRecord(StrictModule, NonTrainableState):
@@ -670,17 +1329,22 @@ class PreparedProductionRun:
         self,
         manifest: ProductionCaseManifest,
         plan: ProductionRunPlan,
-        checkpoint_store: DurableCheckpointStore,
+        checkpoint_store: DurableCheckpointStore | ArtifactCheckpointStore,
         /,
         *,
         args: Any = None,
         args_id: str | None = None,
         publisher: ByteBoundedAsyncPublisher | None = None,
+        resolved_run_spec: ResolvedRunSpec | None = None,
+        restart_relation: RuntimeRestartRelation | None = None,
+        migration_report: MigrationReport | None = None,
     ):
         if (
             not isinstance(manifest, ProductionCaseManifest)
             or not isinstance(plan, ProductionRunPlan)
-            or not isinstance(checkpoint_store, DurableCheckpointStore)
+            or not isinstance(
+                checkpoint_store, (DurableCheckpointStore, ArtifactCheckpointStore)
+            )
             or checkpoint_store.manifest.manifest_id != manifest.manifest_id
         ):
             raise TypeError("Prepared production run inputs are incompatible.")
@@ -703,22 +1367,81 @@ class PreparedProductionRun:
             args_identifier = str(args_id)
             if not args_identifier:
                 raise ValueError("args_id must be nonempty when supplied.")
+        if isinstance(checkpoint_store, ArtifactCheckpointStore):
+            resolved = checkpoint_store.resolved_run_spec
+            if resolved_run_spec is not None and (
+                not isinstance(resolved_run_spec, ResolvedRunSpec)
+                or resolved_run_spec.spec_id != resolved.spec_id
+            ):
+                raise ValueError(
+                    "Prepared resolved run does not match the repository store binding."
+                )
+            relation = (
+                RuntimeRestartRelation.identity(manifest.topology_id)
+                if restart_relation is None
+                else restart_relation
+            )
+            if not isinstance(relation, RuntimeRestartRelation):
+                raise TypeError(
+                    "restart_relation must be RuntimeRestartRelation or None."
+                )
+            persistence_identity = {
+                "kind": "artifact",
+                "store": checkpoint_store.store_id,
+                "resolved_run": resolved.spec_id,
+                "repository_support_tuple": (
+                    checkpoint_store.repository_support_tuple_id
+                ),
+                "deployment_support_tuples": (
+                    checkpoint_store.deployment_support_tuple_ids
+                ),
+                "restart_relation": relation.relation_id,
+                "replay_classification": relation.classification,
+                "migration_report": None
+                if migration_report is None
+                else migration_report.report_id,
+            }
+        else:
+            if resolved_run_spec is not None and not isinstance(
+                resolved_run_spec, ResolvedRunSpec
+            ):
+                raise TypeError("resolved_run_spec must be ResolvedRunSpec or None.")
+            if restart_relation is not None or migration_report is not None:
+                raise ValueError(
+                    "Topology and configuration migration require an artifact repository."
+                )
+            resolved = resolved_run_spec
+            relation = RuntimeRestartRelation.identity(manifest.topology_id)
+            persistence_identity = None
         self.manifest = manifest
         self.plan = plan
         self.checkpoint_store = checkpoint_store
         self.args = args
         self.args_id = args_identifier
         self.publisher = publisher
-        self.run_id = canonical_fingerprint(
-            {
-                "kind": "prepared-production-run",
-                "manifest": manifest.manifest_id,
-                "plan": plan.plan_id,
-                "checkpoint_policy": checkpoint_store.policy.policy_id,
-                "checkpoint_encoding": checkpoint_store.encoding_plan.encoding_id,
-                "args": args_identifier,
-            }
-        )
+        self.resolved_run_spec = resolved
+        self.restart_relation = relation
+        self.migration_report = migration_report
+        identity = {
+            "kind": "prepared-production-run",
+            "manifest": manifest.manifest_id,
+            "plan": plan.plan_id,
+            "checkpoint_policy": checkpoint_store.policy.policy_id,
+            "checkpoint_encoding": checkpoint_store.encoding_plan.encoding_id,
+            "args": args_identifier,
+        }
+        if persistence_identity is not None:
+            identity["persistence"] = persistence_identity
+        elif resolved is not None:
+            identity["resolved_run"] = resolved.spec_id
+        self.run_id = canonical_fingerprint(identity)
+        if isinstance(checkpoint_store, ArtifactCheckpointStore):
+            checkpoint_store.bind_runtime(
+                self.run_id,
+                relation,
+                migration_report=migration_report,
+            )
+        self.last_replay_classification: str | None = None
         self._compiled_segment = self._compile_segment(plan.segment_steps)
         self._compiled_one_step = self._compile_segment(1)
 
@@ -996,6 +1719,11 @@ class PreparedProductionRun:
             rng_template=template.rng_state,
             runtime_id=self.run_id,
         )
+        if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
+            self.last_replay_classification = (
+                self.checkpoint_store.last_replay_classification
+            )
+            self.checkpoint_store.dispatch_outbox(self.publisher)
         controller, triggers, output_cursor = envelope.controller_state
         self._preflight_horizon(envelope.time, envelope.step_index)
         expected_cursor = (
@@ -1029,9 +1757,12 @@ class PreparedProductionRun:
             state.last_checkpoint_id,
             None if failure is None else failure.failure_id,
         )
-        _write_json_atomic(
-            self.checkpoint_store.root / "terminal.json", terminal.payload()
-        )
+        if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
+            self.checkpoint_store.commit_terminal(terminal.payload())
+        else:
+            _write_json_atomic(
+                self.checkpoint_store.root / "terminal.json", terminal.payload()
+            )
         return terminal
 
     @staticmethod
@@ -1073,11 +1804,20 @@ class PreparedProductionRun:
             last_checkpoint_id,
         )
 
-    def _publish(self, event_id: str, state: PyTree[Array], /) -> str | None:
+    def _publish(
+        self,
+        event_id: str,
+        cursor: int,
+        state: PyTree[Array],
+        /,
+    ) -> str | None:
         if self.publisher is None:
             return "No publisher is bound."
         try:
-            self.publisher.publish(event_id, state)
+            if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
+                self.checkpoint_store.stage_output(event_id, cursor, state)
+            else:
+                self.publisher.publish(event_id, state)
         except Exception as error:
             return f"{type(error).__name__}: {error}"
         return None
@@ -1086,7 +1826,10 @@ class PreparedProductionRun:
         if self.publisher is None:
             return None
         try:
-            self.publisher.drain()
+            if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
+                self.checkpoint_store.dispatch_outbox(self.publisher)
+            else:
+                self.publisher.drain()
         except Exception as error:
             return f"{type(error).__name__}: {error}"
         return None
@@ -1107,6 +1850,7 @@ class PreparedProductionRun:
             np.asarray(value, dtype=bool) for value in records.trigger_fires
         )
         last_checkpoint = source.last_checkpoint_id
+        event_cursor = int(np.asarray(source.output_cursor))
         for index in np.flatnonzero(attempted):
             snapshot_segment = self._index_tree(records.state, int(index))
             snapshot = self._production_state(
@@ -1141,7 +1885,11 @@ class PreparedProductionRun:
                             "cursor": cursor,
                         }
                     )
-                    detail = self._publish(event_id, snapshot.accepted_state)
+                    detail = self._publish(
+                        event_id, event_cursor, snapshot.accepted_state
+                    )
+                    if detail is None:
+                        event_cursor += 1
                     if detail is not None:
                         failed = _replace_run_metadata(snapshot, status="failed")
                         return failed, ProductionFailureRecord(
@@ -1170,7 +1918,11 @@ class PreparedProductionRun:
                             "fire_count": fire_count,
                         }
                     )
-                    detail = self._publish(event_id, snapshot.accepted_state)
+                    detail = self._publish(
+                        event_id, event_cursor, snapshot.accepted_state
+                    )
+                    if detail is None:
+                        event_cursor += 1
                     if detail is not None:
                         failed = _replace_run_metadata(snapshot, status="failed")
                         return failed, ProductionFailureRecord(
@@ -1180,8 +1932,20 @@ class PreparedProductionRun:
                             detail,
                             last_checkpoint,
                         )
+            if event_cursor != int(np.asarray(snapshot.output_cursor)):
+                raise RuntimeError(
+                    "Production output cursor diverged from ordered output events."
+                )
             if checkpoint_due[index] or trigger_checkpoint:
-                detail = self._drain_outputs()
+                if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
+                    snapshot = self.checkpoint(snapshot)
+                    last_checkpoint = snapshot.last_checkpoint_id
+                    detail = self._drain_outputs()
+                else:
+                    detail = self._drain_outputs()
+                    if detail is None:
+                        snapshot = self.checkpoint(snapshot)
+                        last_checkpoint = snapshot.last_checkpoint_id
                 if detail is not None:
                     failed = _replace_run_metadata(snapshot, status="failed")
                     return failed, ProductionFailureRecord(
@@ -1191,8 +1955,6 @@ class PreparedProductionRun:
                         detail,
                         last_checkpoint,
                     )
-                snapshot = self.checkpoint(snapshot)
-                last_checkpoint = snapshot.last_checkpoint_id
         status: RunStatus
         tolerance = 32.0 * np.finfo(np.asarray(final_segment.time).dtype).eps
         if not bool(np.asarray(final_segment.running)):
@@ -1247,8 +2009,15 @@ class PreparedProductionRun:
                 "cancelled",
             ):
                 break
-        drain_detail = self._drain_outputs()
         publication_failed = failure is not None and failure.category == "output-failed"
+        if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
+            if not publication_failed:
+                current = self.checkpoint(current)
+                drain_detail = self._drain_outputs()
+            else:
+                drain_detail = None
+        else:
+            drain_detail = self._drain_outputs()
         if drain_detail is not None:
             prior_detail = (
                 ""
@@ -1264,7 +2033,9 @@ class PreparedProductionRun:
                 current.last_checkpoint_id,
             )
             publication_failed = True
-        if not publication_failed:
+        if not publication_failed and not isinstance(
+            self.checkpoint_store, ArtifactCheckpointStore
+        ):
             current = self.checkpoint(current)
         self._commit_terminal(current, failure)
         return ProductionRunResult(
@@ -1276,6 +2047,7 @@ class PreparedProductionRun:
 
 
 __all__ = [
+    "ArtifactCheckpointStore",
     "CheckpointGenerationPolicy",
     "ProductionCaseManifest",
     "ProductionFailureRecord",

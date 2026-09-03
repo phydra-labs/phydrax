@@ -357,6 +357,45 @@ def test_differential_ilqr_requires_selected_flow_and_propagates_failed_integrat
     assert not bool(result.control_result.sampled_loss.valid)
 
 
+
+def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence():
+    failure_status = 59
+
+    def transition(context, state, control, args):
+        del context, args
+        return phx.dynamics.DiscreteTransitionResult(
+            state + control + 100.0,
+            state,
+            jnp.asarray(False),
+            jnp.asarray(failure_status, dtype=jnp.int32),
+        )
+
+    problem = _problem(
+        transition,
+        jnp.asarray([0.0, 1.0, 2.0]),
+        jnp.asarray([2.0]),
+        lambda time, state, control, args: state[0] ** 2 + control[0] ** 2,
+        None,
+        state_shape=(1,),
+        control_shape=(1,),
+        problem_id="ilqr-finite-rollback",
+    )
+    result = solve_ilqr(problem, jnp.asarray([[1.0], [2.0]]))
+
+    assert int(result.status) == ILQRStatus.INITIAL_ROLLOUT_FAILED
+    assert int(result.diagnostics.failed_step) == 0
+    assert not bool(result.trajectory.successful)
+    assert float(result.trajectory.states[1, 0]) == 2.0
+    assert bool(jnp.isnan(result.trajectory.states[2, 0]))
+    assert int(result.trajectory.backend_status) == failure_status
+    evidence = result.trajectory.transition_evidence
+    assert evidence is not None
+    np.testing.assert_allclose(evidence.candidate_states[0], jnp.asarray([103.0]))
+    np.testing.assert_allclose(evidence.accepted_states[0], jnp.asarray([2.0]))
+    assert int(evidence.first_failure_step) == 0
+    assert int(evidence.first_failure_status) == failure_status
+
+
 def test_ilqr_reports_line_search_rejection_without_changing_nominal_controls():
     problem = _problem(
         lambda time, state, control, args: state,

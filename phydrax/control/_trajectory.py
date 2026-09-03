@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
+from ..dynamics._system import DiscreteTransitionEvidence
 from ._constraints import SampledControlFeasibility
 from ._cost import SampledControlLoss
 from ._problem import _identifier
@@ -33,6 +34,7 @@ class ControlTrajectory(StrictModule):
     valid: Array
     status: Array
     backend_status: Any
+    transition_evidence: DiscreteTransitionEvidence | None
     case_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
@@ -53,6 +55,7 @@ class ControlTrajectory(StrictModule):
         valid: ArrayLike,
         status: ArrayLike,
         backend_status: Any,
+        transition_evidence: DiscreteTransitionEvidence | None = None,
         case_shape: Sequence[int],
         state_shape: Sequence[int],
         control_shape: Sequence[int],
@@ -98,12 +101,32 @@ class ControlTrajectory(StrictModule):
                 f"ControlTrajectory status must have case shape {cases}; "
                 f"got {status_.shape}."
             )
+        if transition_evidence is not None:
+            if not isinstance(transition_evidence, DiscreteTransitionEvidence):
+                raise TypeError(
+                    "transition_evidence must be DiscreteTransitionEvidence or None."
+                )
+            expected_steps = cases + (time_grid.num_steps,)
+            expected_transition_states = expected_steps + states_shape
+            if transition_evidence.successful.shape != expected_steps:
+                raise ValueError(
+                    "ControlTrajectory transition evidence successful must have "
+                    f"shape {expected_steps}; got "
+                    f"{transition_evidence.successful.shape}."
+                )
+            if transition_evidence.candidate_states.shape != expected_transition_states:
+                raise ValueError(
+                    "ControlTrajectory transition evidence states must have "
+                    f"shape {expected_transition_states}; got "
+                    f"{transition_evidence.candidate_states.shape}."
+                )
         self.time_grid = time_grid
         self.states = states_
         self.controls = controls_
         self.valid = valid_
         self.status = status_
         self.backend_status = backend_status
+        self.transition_evidence = transition_evidence
         self.case_shape = cases
         self.state_shape = states_shape
         self.control_shape = controls_shape

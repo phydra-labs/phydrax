@@ -66,6 +66,29 @@ from ._colour_gradient import (
     ColourGradientStepResult,
     PreparedColourGradientLBMDynamics,
 )
+from ._commercial_qualification import (
+    c0_guo_baseline_profiles,
+    c1_collision_native_forcing_profile,
+    c2_binary_interface_profiles,
+    c2_dynamic_wetting_profile,
+    c3_passive_transport_profiles,
+    conjugate_thermal_qualification_profile,
+    LatticeBoltzmannCommercialEvidence,
+    LatticeBoltzmannCommercialTier,
+    LatticeBoltzmannDeploymentCompatibility,
+    LatticeBoltzmannDeploymentRecord,
+    LatticeBoltzmannQualificationClaim,
+    LatticeBoltzmannQualificationError,
+    LatticeBoltzmannQualificationProfile,
+    reference_lattice_boltzmann_hardware,
+)
+from ._conjugate_thermal import (
+    ConjugateThermalInterfaceFlux,
+    ConjugateThermalPlan,
+    ConjugateThermalStepResult,
+    PreparedConjugateThermalPlan,
+    SolidThermalEnergyState,
+)
 from ._discretization import LatticeBoltzmannDiscretization, LatticeBoltzmannPlan
 from ._distributed import (
     LatticeBoltzmannHaloRoute,
@@ -142,6 +165,19 @@ from ._implicit_forcing import (
     VelocityDependentAccelerationProblem,
     VelocityDependentAccelerationResult,
 )
+from ._interfacial import (
+    constitutive_dynamic_contact_angle_normal,
+    ConstitutiveDynamicWettingPlan,
+    continuum_surface_force,
+    DynamicWettingEvaluation,
+    InterfacialFields,
+    isotropic_divergence,
+    isotropic_gradient,
+    isotropic_laplacian,
+    natural_wetting_gradient,
+    normalized_gradient,
+    static_contact_angle_normal,
+)
 from ._lattice import (
     certified_nearest_neighbor_velocity_set,
     D2Q9,
@@ -189,6 +225,15 @@ from ._multiblock import (
     LatticeBoltzmannMultiblockExchangeEvidence,
     LatticeBoltzmannMultiblockExchangeResult,
     LatticeBoltzmannMultiblockState,
+)
+from ._operating_envelope import (
+    LatticeBoltzmannEnvelopeAdmission,
+    LatticeBoltzmannEnvelopeError,
+    LatticeBoltzmannHardwareTarget,
+    LatticeBoltzmannOperatingEnvelopePlan,
+    LatticeBoltzmannOperatingPoint,
+    LatticeBoltzmannResourceEstimate,
+    PreparedLatticeBoltzmannOperatingEnvelope,
 )
 from ._precision import LatticeBoltzmannPrecisionPolicy
 from ._program import (

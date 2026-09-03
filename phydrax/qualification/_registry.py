@@ -15,6 +15,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._evidence import SupportDependency
 
 
 SupportValue = str | int | bool
@@ -216,7 +217,7 @@ class CapabilityProfile(StrictModule, NonTrainableState):
     provider: str = eqx.field(static=True)
     version: str = eqx.field(static=True)
     support_tuples: tuple[SupportTuple, ...]
-    dependencies: tuple[str, ...] = eqx.field(static=True)
+    dependencies: tuple[str | SupportDependency, ...] = eqx.field(static=True)
     required_gates: tuple[str, ...] = eqx.field(static=True)
     release_evidence: tuple[ReleaseGateEvidence, ...]
     released: bool = eqx.field(static=True)
@@ -230,7 +231,7 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         support_tuples: Sequence[SupportTuple],
         /,
         *,
-        dependencies: Sequence[str] = (),
+        dependencies: Sequence[str | SupportDependency] = (),
         required_gates: Sequence[str] = (),
         release_evidence: Sequence[ReleaseGateEvidence] = (),
         released: bool = False,
@@ -247,8 +248,22 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         capabilities = {item.capability for item in tuples_}
         if len(capabilities) != 1:
             raise ValueError("A capability profile must describe one capability family.")
-        dependencies_ = tuple(
-            sorted(_identifier(item, "dependency profile ID") for item in dependencies)
+        dependencies_: list[str | SupportDependency] = []
+        for item in dependencies:
+            if isinstance(item, SupportDependency):
+                dependencies_.append(item)
+            elif isinstance(item, str):
+                dependencies_.append(_identifier(item, "dependency profile ID"))
+            else:
+                raise TypeError(
+                    "dependencies must contain profile IDs or SupportDependency values."
+                )
+        dependencies_.sort(
+            key=lambda item: (
+                item if isinstance(item, str) else item.profile_id,
+                "" if isinstance(item, str) else item.support_tuple_id,
+                "" if isinstance(item, str) else item.dependency_id,
+            )
         )
         gates = tuple(
             sorted(_identifier(item, "required gate") for item in required_gates)
@@ -256,7 +271,13 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         evidence = tuple(release_evidence)
         if any(not isinstance(item, ReleaseGateEvidence) for item in evidence):
             raise TypeError("release_evidence must contain ReleaseGateEvidence values.")
-        if len(set(dependencies_)) != len(dependencies_):
+        dependency_keys = tuple(
+            ("profile", item)
+            if isinstance(item, str)
+            else ("support", item.dependency_id)
+            for item in dependencies_
+        )
+        if len(set(dependency_keys)) != len(dependency_keys):
             raise ValueError("Capability profile dependencies must be unique.")
         if len(set(gates)) != len(gates):
             raise ValueError("Capability profile required gates must be unique.")
@@ -276,7 +297,7 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         self.support_tuples = tuple(
             sorted(tuples_, key=lambda item: item.support_tuple_id)
         )
-        self.dependencies = dependencies_
+        self.dependencies = tuple(dependencies_)
         self.required_gates = gates
         self.release_evidence = tuple(
             sorted(evidence, key=lambda item: (item.gate, item.evidence_id))
@@ -303,7 +324,10 @@ class CapabilityProfile(StrictModule, NonTrainableState):
             "provider": self.provider,
             "version": self.version,
             "support_tuples": [item.to_record() for item in self.support_tuples],
-            "dependencies": list(self.dependencies),
+            "dependencies": [
+                item if isinstance(item, str) else item.to_record()
+                for item in self.dependencies
+            ],
             "required_gates": list(self.required_gates),
             "release_evidence": [item.to_record() for item in self.release_evidence],
             "released": self.released,
@@ -339,7 +363,12 @@ class CapabilityProfile(StrictModule, NonTrainableState):
             str(record["provider"]),
             str(record["version"]),
             tuple(SupportTuple.from_record(item) for item in tuple_records),
-            dependencies=tuple(str(item) for item in dependencies),
+            dependencies=tuple(
+                SupportDependency.from_record(item)
+                if isinstance(item, Mapping)
+                else str(item)
+                for item in dependencies
+            ),
             required_gates=tuple(str(item) for item in required_gates),
             release_evidence=tuple(
                 ReleaseGateEvidence.from_record(item) for item in evidence_records
@@ -606,22 +635,30 @@ def _profile_rejection_reasons(
     profiles_by_id: Mapping[str, CapabilityProfile],
     policy: ReleaseTrustPolicy,
     at_time: int,
-    support_tuple: SupportTuple | None,
+    support_tuple_id: str | None,
     ancestry: tuple[str, ...],
     /,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
     if not profile.released:
         reasons.append("profile-unreleased")
-    if support_tuple is not None and not profile.supports(support_tuple):
-        reasons.append(f"unsupported-tuple:{support_tuple.support_tuple_id}")
+    if support_tuple_id is not None and all(
+        item.support_tuple_id != support_tuple_id for item in profile.support_tuples
+    ):
+        reasons.append(f"unsupported-tuple:{support_tuple_id}")
     evidence_by_gate = {item.gate: item for item in profile.release_evidence}
     for gate in profile.required_gates:
         if gate not in evidence_by_gate:
             reasons.append(f"missing-evidence:{gate}")
         elif not policy.accepts_evidence(evidence_by_gate[gate], at_time):
             reasons.append(f"rejected-or-stale-evidence:{gate}")
-    for dependency_id in profile.dependencies:
+    for dependency in profile.dependencies:
+        if isinstance(dependency, SupportDependency):
+            dependency_id = dependency.profile_id
+            dependency_tuple_id = dependency.support_tuple_id
+        else:
+            dependency_id = dependency
+            dependency_tuple_id = None
         if dependency_id not in profiles_by_id:
             reasons.append(f"missing-dependency:{dependency_id}")
         elif dependency_id in ancestry:
@@ -632,7 +669,7 @@ def _profile_rejection_reasons(
                 profiles_by_id,
                 policy,
                 at_time,
-                None,
+                dependency_tuple_id,
                 ancestry + (dependency_id,),
             )
             reasons.extend(
@@ -664,7 +701,7 @@ def discover_profiles(
             profiles_by_id,
             trust_policy,
             at_time,
-            support_tuple,
+            support_tuple.support_tuple_id,
             (profile.profile_id,),
         )
     )
@@ -703,7 +740,7 @@ def require_profile(
         profiles_by_id,
         trust_policy,
         at_time,
-        support_tuple,
+        support_tuple.support_tuple_id,
         (identifier,),
     )
     if reasons:
@@ -722,6 +759,7 @@ __all__ = [
     "ReleaseSigner",
     "ReleaseTrustPolicy",
     "SupportTuple",
+    "SupportDependency",
     "discover_profiles",
     "require_profile",
 ]

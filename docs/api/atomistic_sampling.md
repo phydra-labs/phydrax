@@ -1,6 +1,8 @@
 # Atomistic sampling and free energy
 
 ## Collective variables
+::: phydrax.atomistic.sampling.AbstractCollectiveVariableProgram
+
 
 ::: phydrax.atomistic.sampling.CollectiveVariableMetric
 
@@ -9,6 +11,8 @@
 ::: phydrax.atomistic.sampling.PreparedCollectiveVariable
 
 ::: phydrax.atomistic.sampling.CollectiveVariableProgram
+::: phydrax.atomistic.sampling.ModelCollectiveVariableProgram
+
 
 ::: phydrax.atomistic.sampling.CollectiveVariableEvaluation
 
@@ -27,6 +31,16 @@
 ::: phydrax.atomistic.sampling.write_biased_dynamics_checkpoint
 
 ::: phydrax.atomistic.sampling.read_biased_dynamics_checkpoint
+::: phydrax.atomistic.sampling.LearnedFreeEnergyBiasPlan
+
+::: phydrax.atomistic.sampling.PreparedLearnedFreeEnergyBias
+
+::: phydrax.atomistic.sampling.RestrainedMeanForcePlan
+
+::: phydrax.atomistic.sampling.estimate_restrained_free_energy_gradient
+
+::: phydrax.atomistic.sampling.fit_free_energy_model
+
 
 ## Replica exchange
 
@@ -51,3 +65,11 @@
 ::: phydrax.uq.bennett_acceptance_ratio
 
 ::: phydrax.uq.multistate_bennett_acceptance_ratio
+
+::: phydrax.uq.TargetedMapPlan
+
+::: phydrax.uq.TargetedFreeEnergyProblem
+
+::: phydrax.uq.evaluate_targeted_work
+
+::: phydrax.uq.fit_targeted_free_energy_map

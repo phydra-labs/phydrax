@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import abc
 from enum import StrEnum
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from ..._array_archive import (
     write_array_archive,
 )
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import StrictModule
+from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
 from .._dynamics import (
@@ -29,7 +30,7 @@ from .._dynamics import (
     AtomisticForceState,
     PreparedAtomisticDynamics,
 )
-from ._collective_variable import CollectiveVariableProgram
+from ._collective_variable import AbstractCollectiveVariableProgram
 
 
 class BiasKind(StrEnum):
@@ -46,9 +47,23 @@ class BiasKind(StrEnum):
 _BIASED_CHECKPOINT_FORMAT = "phydrax-biased-atomistic-dynamics-checkpoint"
 
 
-class AtomisticBiasPlan(StrictModule, NonTrainableState):
+class AbstractAtomisticBiasState(StrictModule):
+    successful: AbstractAttribute[Array]
+    bias_id: AbstractAttribute[str]
+
+
+class AbstractAtomisticBiasPlan(StrictModule, NonTrainableState):
+    variables: AbstractAttribute[AbstractCollectiveVariableProgram]
+    bias_id: AbstractAttribute[str]
+
+    @abc.abstractmethod
+    def initialize(self, dtype=jnp.float64) -> AbstractAtomisticBiasState:
+        raise NotImplementedError
+
+
+class AtomisticBiasPlan(AbstractAtomisticBiasPlan):
     kind: BiasKind = eqx.field(static=True)
-    variables: CollectiveVariableProgram
+    variables: AbstractCollectiveVariableProgram
     center: Array
     stiffness: Array
     width: Array
@@ -62,7 +77,7 @@ class AtomisticBiasPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         kind: BiasKind,
-        variables: CollectiveVariableProgram,
+        variables: AbstractCollectiveVariableProgram,
         /,
         *,
         center: ArrayLike = 0.0,
@@ -75,7 +90,7 @@ class AtomisticBiasPlan(StrictModule, NonTrainableState):
         grid_bins: int = 64,
     ):
         if not isinstance(kind, BiasKind) or not isinstance(
-            variables, CollectiveVariableProgram
+            variables, AbstractCollectiveVariableProgram
         ):
             raise TypeError("Bias requires kind and collective-variable program.")
         bins = int(grid_bins)
@@ -84,7 +99,7 @@ class AtomisticBiasPlan(StrictModule, NonTrainableState):
             bins <= 1
             or hills < 0
             or (kind is BiasKind.METADYNAMICS and hills == 0)
-            or (kind is BiasKind.ABF and len(variables.variables) != 1)
+            or (kind is BiasKind.ABF and variables.output_size != 1)
         ):
             raise ValueError("Bias grid, hill capacity, or CV dimensionality is invalid.")
         self.kind = kind
@@ -105,7 +120,7 @@ class AtomisticBiasPlan(StrictModule, NonTrainableState):
             self.grid_minimum,
             self.grid_maximum,
         )
-        dimension = len(variables.variables)
+        dimension = variables.output_size
         if any(value.size not in (1, dimension) for value in arrays[:4]):
             raise ValueError("Bias vectors must be scalar or align with the CV program.")
         if kind is BiasKind.ABF and any(value.size != 1 for value in arrays[4:]):
@@ -133,23 +148,23 @@ class AtomisticBiasPlan(StrictModule, NonTrainableState):
         )
 
     def initialize(self, dtype=jnp.float64) -> "AtomisticBiasState":
-        dimension = len(self.variables.variables)
+        dimension = self.variables.output_size
         return AtomisticBiasState(
-            jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
-            jnp.zeros((self.maximum_hills,), dtype=dtype),
-            jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
-            jnp.zeros((self.maximum_hills,), dtype=bool),
-            jnp.zeros((), dtype=jnp.int32),
-            jnp.zeros((self.grid_bins,), dtype=jnp.int32),
-            jnp.zeros((self.grid_bins,), dtype=dtype),
-            jnp.zeros((self.grid_bins,), dtype=dtype),
-            jnp.zeros((), dtype=jnp.int32),
-            jnp.asarray(True),
-            self.bias_id,
+            hill_centers=jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
+            hill_heights=jnp.zeros((self.maximum_hills,), dtype=dtype),
+            hill_widths=jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
+            hill_valid=jnp.zeros((self.maximum_hills,), dtype=bool),
+            hill_count=jnp.zeros((), dtype=jnp.int32),
+            abf_counts=jnp.zeros((self.grid_bins,), dtype=jnp.int32),
+            abf_force_sums=jnp.zeros((self.grid_bins,), dtype=dtype),
+            abf_potential=jnp.zeros((self.grid_bins,), dtype=dtype),
+            update_epoch=jnp.zeros((), dtype=jnp.int32),
+            successful=jnp.asarray(True),
+            bias_id=self.bias_id,
         )
 
 
-class AtomisticBiasState(StrictModule):
+class AtomisticBiasState(AbstractAtomisticBiasState):
     hill_centers: Array
     hill_heights: Array
     hill_widths: Array
@@ -169,11 +184,49 @@ class AtomisticBiasEvaluation(StrictModule):
     variables: Array
     successful: Array
     variable_gradients: Array
-    state: AtomisticBiasState
+    uncertainty: Array
+    trust: Array
+    state: AbstractAtomisticBiasState
     bias_id: str = eqx.field(static=True)
 
 
-class PreparedAtomisticBias(StrictModule):
+class AbstractPreparedAtomisticBias(StrictModule):
+    plan: AbstractAttribute[AbstractAtomisticBiasPlan]
+    dynamics: AbstractAttribute[PreparedAtomisticDynamics]
+    prepared_id: AbstractAttribute[str]
+
+    @abc.abstractmethod
+    def energy(
+        self,
+        positions: Array,
+        state: AbstractAtomisticBiasState,
+        time: Array,
+        /,
+    ):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def evaluate(
+        self,
+        positions: Array,
+        state: AbstractAtomisticBiasState,
+        time: Array,
+        /,
+    ) -> AtomisticBiasEvaluation:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def update(
+        self,
+        state: AbstractAtomisticBiasState,
+        evaluation: AtomisticBiasEvaluation,
+        physical_forces: Array,
+        /,
+    ) -> AbstractAtomisticBiasState:
+        raise NotImplementedError
+
+
+class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
     plan: AtomisticBiasPlan
     dynamics: PreparedAtomisticDynamics
     prepared_id: str = eqx.field(static=True)
@@ -270,6 +323,8 @@ class PreparedAtomisticBias(StrictModule):
             values,
             successful,
             variable_gradients,
+            jnp.zeros((), dtype=energy.dtype),
+            jnp.ones((), dtype=energy.dtype),
             state,
             self.prepared_id,
         )
@@ -358,7 +413,7 @@ class PreparedAtomisticBias(StrictModule):
 
 class BiasedDynamicsState(StrictModule):
     base: AtomisticDynamicsState
-    bias: AtomisticBiasState
+    bias: AbstractAtomisticBiasState
     physical_force: AtomisticForceState
     prepared_id: str = eqx.field(static=True)
 
@@ -371,10 +426,17 @@ class BiasedDynamicsReplayResult(StrictModule):
 
 class PreparedBiasedDynamics(StrictModule):
     base: PreparedAtomisticDynamics
-    bias: PreparedAtomisticBias
+    bias: AbstractPreparedAtomisticBias
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, base: PreparedAtomisticDynamics, bias: PreparedAtomisticBias, /):
+    def __init__(
+        self,
+        base: PreparedAtomisticDynamics,
+        bias: AbstractPreparedAtomisticBias,
+        /,
+    ):
+        if not isinstance(bias, AbstractPreparedAtomisticBias):
+            raise TypeError("bias must implement AbstractPreparedAtomisticBias.")
         if bias.dynamics.prepared_id != base.prepared_id:
             raise ValueError("Bias belongs to another dynamics runtime.")
         self.base = base
@@ -656,6 +718,9 @@ def read_biased_dynamics_checkpoint(
 
 
 __all__ = [
+    "AbstractAtomisticBiasPlan",
+    "AbstractAtomisticBiasState",
+    "AbstractPreparedAtomisticBias",
     "AtomisticBiasEvaluation",
     "AtomisticBiasPlan",
     "AtomisticBiasState",

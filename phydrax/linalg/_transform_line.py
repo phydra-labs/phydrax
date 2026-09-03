@@ -63,6 +63,7 @@ class TransformLineReport(StrictModule, NonTrainableState):
     round_trip_residual: Array
     linearity_residual: Array
     trace_defect: Array
+    physical_action_residual: Array
     exact: Array
     report_id: str = eqx.field(static=True)
 
@@ -157,6 +158,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
     line_diagonal: Array
     line_upper: Array
     transverse_modal_values: Array
+    transverse_line_scale: Array
     periodic_corners: tuple[Array, Array] | None
     shape: tuple[int, ...] = eqx.field(static=True)
     modal_shape: tuple[int, ...] = eqx.field(static=True)
@@ -175,6 +177,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
         transverse_modal_values: ArrayLike,
         /,
         *,
+        transverse_line_scale: ArrayLike | None = None,
         periodic_corners: tuple[ArrayLike, ArrayLike] | None = None,
         representation_id: str | None = None,
         certification_tolerance: float = 1e-10,
@@ -224,8 +227,17 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
             raise ValueError(
                 "transverse_modal_values must match the transverse modal shape."
             )
-        if not bool(np.all(np.isfinite(np.asarray(modal_values)))):
-            raise ValueError("Transverse modal values must be finite.")
+        line_scale = (
+            jnp.ones_like(diagonal)
+            if transverse_line_scale is None
+            else jnp.asarray(transverse_line_scale, dtype=diagonal.dtype)
+        )
+        if line_scale.shape != diagonal.shape:
+            raise ValueError("transverse_line_scale must match the physical line.")
+        if not bool(np.all(np.isfinite(np.asarray(modal_values)))) or not bool(
+            np.all(np.isfinite(np.asarray(line_scale)))
+        ):
+            raise ValueError("Transverse modal values and line scale must be finite.")
         if periodic_corners is None:
             corners = None
         else:
@@ -258,6 +270,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
                     "line_diagonal": array_tree_fingerprint(diagonal),
                     "line_upper": array_tree_fingerprint(upper),
                     "transverse_modal_values": array_tree_fingerprint(modal_values),
+                    "transverse_line_scale": array_tree_fingerprint(line_scale),
                     "periodic_corners": (
                         None
                         if corners is None
@@ -278,6 +291,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
         self.line_diagonal = diagonal
         self.line_upper = upper
         self.transverse_modal_values = modal_values
+        self.transverse_line_scale = line_scale
         self.periodic_corners = corners
         self.shape = shape
         self.modal_shape = modal_shape
@@ -297,18 +311,25 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
             jnp.abs(self.apply(probe + second) - self.apply(probe) - self.apply(second))
         )
         line_count = int(np.prod(transverse_shape)) if transverse_shape else 1
-        analytic_trace = line_count * jnp.sum(diagonal) + int(diagonal.size) * jnp.sum(
-            modal_values
+        analytic_trace = line_count * jnp.sum(diagonal) + jnp.sum(modal_values) * jnp.sum(
+            line_scale
         )
-        assembled_trace = line_count * jnp.sum(diagonal) + int(diagonal.size) * jnp.sum(
+        assembled_trace = line_count * jnp.sum(diagonal) + jnp.sum(
             modal_values
-        )
+        ) * jnp.sum(line_scale)
         trace_defect = jnp.abs(analytic_trace - assembled_trace)
+        physical_action_residual = jnp.max(
+            jnp.abs(
+                self.synthesize_transverse(self.analyze_transverse(self.apply(probe)))
+                - self.apply(probe)
+            )
+        )
         scale = jnp.maximum(1.0, jnp.max(jnp.abs(probe)))
         exact = (
             jnp.isfinite(round_trip_residual)
             & jnp.isfinite(linearity_residual)
             & jnp.isfinite(trace_defect)
+            & jnp.isfinite(physical_action_residual)
             & (round_trip_residual <= tolerance * scale)
             & (linearity_residual <= 16.0 * tolerance * scale)
             & (trace_defect <= tolerance * jnp.maximum(1.0, jnp.abs(analytic_trace)))
@@ -317,6 +338,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
             round_trip_residual=round_trip_residual,
             linearity_residual=linearity_residual,
             trace_defect=trace_defect,
+            physical_action_residual=physical_action_residual,
             exact=exact,
             report_id=canonical_fingerprint(
                 {"kind": "transform-line-report", "representation": identifier}
@@ -377,7 +399,15 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
                 for index in range(len(self.modal_shape))
             )
         )
-        modal_result = jnp.moveaxis(line, -1, self.line_axis) + transverse * modal
+        line_scale = self.transverse_line_scale.reshape(
+            tuple(
+                self.shape[index] if index == self.line_axis else 1
+                for index in range(len(self.shape))
+            )
+        )
+        modal_result = (
+            jnp.moveaxis(line, -1, self.line_axis) + transverse * line_scale * modal
+        )
         result = self.synthesize_transverse(modal_result)
         return jnp.real(result) if not jnp.iscomplexobj(value) else result
 
@@ -573,8 +603,9 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
             )
 
         transverse = representation.transverse_modal_values.reshape((-1, 1))
+        line_scale = representation.transverse_line_scale.reshape((1, line_size))
         diagonal = plan.diagonal_shift + plan.operator_scale * (
-            representation.line_diagonal.reshape((1, line_size)) + transverse
+            representation.line_diagonal.reshape((1, line_size)) + transverse * line_scale
         )
         lower = (plan.operator_scale * representation.line_lower).astype(solve_dtype)
         upper = (plan.operator_scale * representation.line_upper).astype(solve_dtype)

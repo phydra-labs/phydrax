@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
+from enum import StrEnum
 from typing import Any, cast, TypeVar
 
 import equinox as eqx
@@ -16,6 +17,11 @@ from .._trainable import NonTrainableState
 
 
 _AtomisticPotentialT = TypeVar("_AtomisticPotentialT", bound="AbstractAtomisticPotential")
+
+
+class AtomisticSpeciesKind(StrEnum):
+    ATOMIC_NUMBER = "atomic-number"
+    ATOM_TYPE_ID = "atom-type-id"
 
 
 class AtomisticPotentialCapabilities(StrictModule, NonTrainableState):
@@ -29,6 +35,7 @@ class AtomisticPotentialCapabilities(StrictModule, NonTrainableState):
     local_energy: bool = eqx.field(static=True)
     local_energy_delta: bool = eqx.field(static=True)
     dynamic_species: bool = eqx.field(static=True)
+    species_kind: AtomisticSpeciesKind = eqx.field(static=True)
     capabilities_id: str = eqx.field(static=True)
 
     def __init__(
@@ -42,7 +49,10 @@ class AtomisticPotentialCapabilities(StrictModule, NonTrainableState):
         local_energy: bool = True,
         local_energy_delta: bool = False,
         dynamic_species: bool = False,
+        species_kind: AtomisticSpeciesKind = AtomisticSpeciesKind.ATOMIC_NUMBER,
     ):
+        if not isinstance(species_kind, AtomisticSpeciesKind):
+            raise TypeError("species_kind must be AtomisticSpeciesKind.")
         values = {
             "conservative_energy": bool(conservative_energy),
             "finite_geometry": bool(finite_geometry),
@@ -52,6 +62,7 @@ class AtomisticPotentialCapabilities(StrictModule, NonTrainableState):
             "local_energy": bool(local_energy),
             "local_energy_delta": bool(local_energy_delta),
             "dynamic_species": bool(dynamic_species),
+            "species_kind": species_kind,
         }
         for name, value in values.items():
             setattr(self, name, value)
@@ -152,7 +163,7 @@ class AbstractAtomisticPotential(StrictModule):
     @abstractmethod
     def graph_energy(
         self,
-        atomic_numbers: Any,
+        species_ids: Any,
         atom_mask: Any,
         atom_cases: Any,
         case_count: int,
@@ -228,6 +239,7 @@ __all__ = [
     "AbstractAtomisticPotential",
     "AbstractPreparedAtomisticPotential",
     "AtomisticPotentialCapabilities",
+    "AtomisticSpeciesKind",
     "AtomisticPotentialRequirements",
     "checkpoint_atomistic_potential",
 ]

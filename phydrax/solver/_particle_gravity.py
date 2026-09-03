@@ -308,30 +308,7 @@ class ParticleOctreePlan3D(StrictModule, NonTrainableState):
         sorted_active = hierarchy.sorted_active
         node_capacity = hierarchy.node_active.size
         point_capacity = position.shape[0]
-        node_slots = jnp.arange(node_capacity, dtype=jnp.int32)
-        leaf_slots = jnp.nonzero(
-            hierarchy.node_is_leaf,
-            size=node_capacity,
-            fill_value=node_capacity,
-        )[0].astype(jnp.int32)
-        leaf_valid = node_slots < hierarchy.evidence.active_leaves
-        safe_leaf_slots = jnp.minimum(leaf_slots, node_capacity - 1)
-        leaf_starts = jnp.where(
-            leaf_valid,
-            hierarchy.node_item_starts[safe_leaf_slots],
-            point_capacity,
-        )
-        leaf_order = jnp.argsort(leaf_starts, stable=True)
-        ordered_leaf_slots = leaf_slots[leaf_order]
-        ordered_leaf_starts = leaf_starts[leaf_order]
-        storage_slots = jnp.arange(point_capacity, dtype=jnp.int32)
-        leaf_rank = jnp.searchsorted(ordered_leaf_starts, storage_slots, side="right") - 1
-        safe_leaf_rank = jnp.maximum(leaf_rank, 0)
-        sorted_leaf_indices = jnp.where(
-            sorted_active,
-            ordered_leaf_slots[safe_leaf_rank],
-            -1,
-        ).astype(jnp.int32)
+        sorted_leaf_indices = hierarchy.sorted_point_leaf_slots
         safe_point_leaf = jnp.maximum(sorted_leaf_indices, 0)
         safe_mass = jnp.where(sorted_active, sorted_mass, 0.0)
         node_mass = (
@@ -392,11 +369,7 @@ class ParticleOctreePlan3D(StrictModule, NonTrainableState):
             node_quadrupole = jnp.where(
                 internal[:, None, None], parent_quadrupole, node_quadrupole
             )
-        leaf_indices = (
-            jnp.full((point_capacity,), -1, dtype=jnp.int32)
-            .at[hierarchy.storage_to_logical]
-            .set(sorted_leaf_indices)
-        )
+        leaf_indices = hierarchy.logical_point_leaf_slots
         morton_keys = hierarchy.sorted_codes[hierarchy.logical_to_storage]
         return PreparedParticleOctree3D(
             positions=position,
@@ -1285,33 +1258,11 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             self.expansion, self.gravitational_constant, self.softening
         )
         node_capacity = hierarchy.node_active.size
-        node_slots = jnp.arange(node_capacity, dtype=jnp.int32)
         sorted_logical = hierarchy.storage_to_logical
         sorted_position = tree.positions[sorted_logical]
         sorted_mass = tree.masses[sorted_logical]
         sorted_active = hierarchy.sorted_active
-        leaf_slots = jnp.nonzero(
-            hierarchy.node_is_leaf,
-            size=node_capacity,
-            fill_value=node_capacity,
-        )[0].astype(jnp.int32)
-        leaf_valid = node_slots < hierarchy.evidence.active_leaves
-        safe_leaf_slots = jnp.minimum(leaf_slots, node_capacity - 1)
-        leaf_starts = jnp.where(
-            leaf_valid,
-            hierarchy.node_item_starts[safe_leaf_slots],
-            point_capacity,
-        )
-        leaf_order = jnp.argsort(leaf_starts, stable=True)
-        ordered_leaf_slots = leaf_slots[leaf_order]
-        ordered_leaf_starts = leaf_starts[leaf_order]
-        storage_slots = jnp.arange(point_capacity, dtype=jnp.int32)
-        leaf_rank = jnp.searchsorted(ordered_leaf_starts, storage_slots, side="right") - 1
-        point_leaf = jnp.where(
-            sorted_active,
-            ordered_leaf_slots[jnp.maximum(leaf_rank, 0)],
-            -1,
-        ).astype(jnp.int32)
+        point_leaf = hierarchy.sorted_point_leaf_slots
         safe_point_leaf = jnp.maximum(point_leaf, 0)
         relative = sorted_position - hierarchy.node_centers[safe_point_leaf]
         safe_mass = jnp.where(sorted_active, sorted_mass, 0.0)

@@ -14,9 +14,9 @@ import numpy as np
 from jaxtyping import Array, Key
 
 from .._atlas import BoundaryAtlas
-from .._capabilities import GeometryCapability
+from .._capabilities import ClosestPointProvider, GeometryCapability
 from .._certificate import FieldCertificate, sharp_union_certificate
-from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._contracts import ClosestPointResult, GeometryKernel, GeometryKind, GeometrySource
 from .._cubature import CubatureAtlas, CubatureComponent
 from .._sampling import (
     bounded_rejection_sample,
@@ -70,16 +70,24 @@ class Translation(GeometrySource):
             self.offset,
             role="position_offset",
         )
-        return _TranslationKernel(child, offset)
+        return _TranslationKernel(child, offset, source_id=self.feature_id)
 
 
 class _TranslationKernel(GeometryKernel):
     child: GeometryKernel
     offset: ParameterBinding = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
 
-    def __init__(self, child: GeometryKernel, offset: ParameterBinding):
+    def __init__(
+        self,
+        child: GeometryKernel,
+        offset: ParameterBinding,
+        *,
+        source_id: str,
+    ):
         self.child = child
         self.offset = offset
+        self.source_id = source_id
 
     @property
     def ambient_dimension(self) -> int:
@@ -117,6 +125,31 @@ class _TranslationKernel(GeometryKernel):
         return self.child.boundary_normal(
             state,
             jnp.asarray(points) - self._offset(state),
+        )
+
+    def closest_point(self, state: DesignState, points: Array, /):
+        if not isinstance(self.child, ClosestPointProvider):
+            raise TypeError("Translated child lacks a closest-point provider.")
+        offset = self._offset(state)
+        result = self.child.closest_point(state, jnp.asarray(points) - offset)
+        if not isinstance(result, ClosestPointResult):
+            raise TypeError("Child closest-point query returned an invalid result.")
+        return ClosestPointResult(
+            closest_point=result.closest_point + offset,
+            normal_coordinate=result.normal_coordinate,
+            oriented_normal=result.oriented_normal,
+            source_entity_id=result.source_entity_id,
+            unique=result.unique,
+            regular=result.regular,
+            margin=result.margin,
+            normal_coordinate_valid=result.normal_coordinate_valid,
+            represented_geometry_id=self.source_id,
+            physical_geometry_id=(
+                self.source_id
+                if result.exact_to_physical
+                else result.physical_geometry_id
+            ),
+            exact_to_physical=result.exact_to_physical,
         )
 
     def bounds(self, state: DesignState, /) -> Array:

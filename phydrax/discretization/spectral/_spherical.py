@@ -453,6 +453,41 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
     def resource_evidence_id(self) -> str:
         return self.preparation.report_id
 
+    def real_coordinates(
+        self,
+        /,
+        *,
+        component_shape: Sequence[int] = (),
+        reality_tolerance: float = 1e-10,
+        maximum_coordinate_size: int = 10_000_000,
+    ):
+        """Return independent signed-Hermitian coordinates for a real spin field."""
+        if not self.layout.reality:
+            raise ValueError("Complex spherical fields do not have a real-field involution.")
+        from ._signed_coordinates import SignedHermitianSpectralCoordinates
+
+        limit, width = self.coefficient_shape
+        order_partners = np.asarray(self.layout.conjugate_indices, dtype=np.int64)
+        partners = (
+            np.arange(limit, dtype=np.int64)[:, None] * width
+            + order_partners[None, :]
+        )
+        signs = np.broadcast_to(
+            np.asarray(self.layout.conjugate_signs)[None, :],
+            self.coefficient_shape,
+        )
+        return SignedHermitianSpectralCoordinates(
+            self.coefficient_shape,
+            partners,
+            signs,
+            valid_mask=self.layout.valid_mask,
+            component_shape=component_shape,
+            coefficient_dtype=self.modal_space.vector_space.dtype,
+            layout_id=self.layout.layout_id,
+            reality_tolerance=reality_tolerance,
+            maximum_coordinate_size=maximum_coordinate_size,
+        )
+
     def _validate_physical(self, values: ArrayLike, name: str, /) -> Array:
         array = jnp.asarray(values)
         if array.ndim < 2 or tuple(array.shape[:2]) != self.sample_shape:

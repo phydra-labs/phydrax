@@ -9,6 +9,20 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.lifecycle._archive import migrate_configuration, rollback_configuration
+from phydrax.lifecycle._migration import CompatibilityRegistry, MigrationEdge
+from phydrax.lifecycle._repository import (
+    HPCFilesystemProfile,
+    POSIXArtifactRepository,
+    POSIXRepositoryPolicy,
+)
+from phydrax.lifecycle._resolved_run import ResolvedRunSpec
+from phydrax.qualification._evidence import SupportDependency
+from phydrax.solver._production_runtime import ArtifactCheckpointStore
+from phydrax.solver._runtime_lifecycle import (
+    RuntimeRestartRelation,
+    UnsupportedReplayError,
+)
 
 
 def _manifest(method):
@@ -242,3 +256,415 @@ def test_output_failure_never_checkpoints_advanced_cursor(tmp_path):
     assert not (store.root / "latest.json").exists()
     terminal = json.loads((store.root / "terminal.json").read_text())
     assert terminal["status"] == "failed"
+
+
+def _repository_policy(provider_id="production-posix"):
+    profile = HPCFilesystemProfile(
+        provider_id,
+        "test-filesystem",
+        atomic_rename_same_filesystem=True,
+        file_fsync=True,
+        directory_fsync=True,
+        advisory_locking=True,
+        attempt_private_staging=True,
+    )
+    return POSIXRepositoryPolicy(
+        profile,
+        maximum_chunk_bytes=128,
+        maximum_metadata_bytes=1024 * 1024,
+    )
+
+
+def _artifact_bindings(
+    root,
+    method,
+    /,
+    *,
+    topology_id="repository-topology",
+    geometry_layout_id="repository-layout",
+    artifact_id="production-checkpoint",
+    repository_policy=None,
+    prepared_configuration_id="prepared-configuration",
+    failure_injector=None,
+):
+    repository_policy = (
+        _repository_policy() if repository_policy is None else repository_policy
+    )
+    repository = POSIXArtifactRepository(
+        root,
+        repository_policy,
+        failure_injector=failure_injector,
+    )
+    checkpoint_policy = phx.solver.CheckpointGenerationPolicy(3)
+    dependency = SupportDependency(
+        "repository-profile", repository.support_tuple.support_tuple_id
+    )
+    resolved = ResolvedRunSpec(
+        (),
+        (dependency,),
+        release_index_id="release-index",
+        profile_ids=(dependency.profile_id,),
+        trust_policy_id="trust-policy",
+        valid_at=10,
+        valid_from=0,
+        valid_until=20,
+        prepared_configuration_id=prepared_configuration_id,
+        precision_policy_id="precision-policy",
+        resource_policy_id="resource-policy",
+        checkpoint_policy_id=checkpoint_policy.policy_id,
+        output_policy_id="output-policy",
+        repository_id=repository.provider_id,
+        scheduler_id="scheduler",
+        auth_policy_id="auth-policy",
+    )
+    manifest = phx.solver.ProductionCaseManifest(
+        problem_id="repository-growth",
+        method_id=method.method_id,
+        precision_id="native-precision",
+        topology_id=topology_id,
+        geometry_layout_id=geometry_layout_id,
+        dtype=str(jnp.asarray(0.0).dtype),
+    )
+    store = ArtifactCheckpointStore(
+        repository,
+        manifest,
+        checkpoint_policy,
+        resolved,
+        writer_id="production-worker",
+        artifact_id=artifact_id,
+    )
+    return repository, manifest, store, resolved, checkpoint_policy, repository_policy
+
+
+def _repository_plan(method, *, end_time=0.2, output_schedule=None):
+    return phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=0),
+        step_size=0.1,
+        end_time=end_time,
+        maximum_steps=max(1, int(round(end_time / 0.1))),
+        checkpoint_interval=1,
+        segment_steps=1,
+        output_schedule=output_schedule,
+    )
+
+
+def test_artifact_repository_checkpoint_outbox_resume_and_cache_rebuild(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    repository, manifest, store, resolved, _, repository_policy = _artifact_bindings(
+        tmp_path / "repository", method
+    )
+    plan = _repository_plan(
+        method,
+        output_schedule=phx.solver.ExactTimeSchedule(jnp.asarray((0.1, 0.2))),
+    )
+    published = []
+    publisher = phx.solver.ByteBoundedAsyncPublisher(
+        lambda event_id, snapshot: published.append(
+            (event_id, np.asarray(snapshot).copy())
+        ),
+        maximum_pending=2,
+        maximum_pending_bytes=1024,
+    )
+    prepared = phx.solver.PreparedProductionRun(
+        manifest,
+        plan,
+        store,
+        publisher=publisher,
+        resolved_run_spec=resolved,
+    )
+    initial = prepared.initial_state(jnp.asarray((0.0,)))
+    result = prepared.run(initial)
+    assert result.successful
+    assert result.state.output_cursor == 2
+    assert tuple(event.cursor for event in store._events) == (0, 1)
+    assert all(event.delivered for event in store._events)
+    assert len({event.event_id for event in store._events}) == 2
+    assert len(published) == 2
+
+    committed = repository.get_manifest(store.artifact_id)
+    logical_names = {chunk.logical_name for chunk in committed.chunks}
+    assert "runtime" in logical_names
+    assert "state-manifest" in logical_names
+    assert "outbox-manifest" in logical_names
+    assert any(name.startswith("state-") for name in logical_names)
+    assert any(name.startswith("outbox-") for name in logical_names)
+    assert all("cache" not in name for name in logical_names)
+
+    duplicate = store._events[0]
+    store.stage_output(duplicate.event_id, duplicate.cursor, jnp.asarray((99.0,)))
+    assert len(store._events) == 2
+
+    reopened, _, resumed_store, reopened_spec, _, _ = _artifact_bindings(
+        tmp_path / "repository",
+        method,
+        repository_policy=repository_policy,
+    )
+    replayed = []
+    resumed_publisher = phx.solver.ByteBoundedAsyncPublisher(
+        lambda event_id, snapshot: replayed.append(event_id),
+        maximum_pending=2,
+        maximum_pending_bytes=1024,
+    )
+    resumed_runtime = phx.solver.PreparedProductionRun(
+        resumed_store.manifest,
+        plan,
+        resumed_store,
+        publisher=resumed_publisher,
+        resolved_run_spec=reopened_spec,
+    )
+    resumed = resumed_runtime.resume(resumed_runtime.initial_state(jnp.asarray((0.0,))))
+    np.testing.assert_allclose(resumed.accepted_state, result.state.accepted_state)
+    assert resumed.output_cursor == 2
+    assert resumed_runtime.last_replay_classification == "bitwise"
+    assert replayed == []
+    assert reopened.get_manifest(resumed_store.artifact_id).complete
+
+
+@pytest.mark.parametrize(
+    "failure_point", ("before_manifest", "after_manifest", "before_pointer")
+)
+def test_artifact_repository_crash_never_exposes_partial_checkpoint(
+    tmp_path, failure_point
+):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    repository, manifest, store, resolved, _, repository_policy = _artifact_bindings(
+        tmp_path / failure_point, method
+    )
+    plan = _repository_plan(method, end_time=0.3)
+    prepared = phx.solver.PreparedProductionRun(
+        manifest, plan, store, resolved_run_spec=resolved
+    )
+    initial = prepared.initial_state(jnp.asarray((0.0,)))
+    committed_state, _ = prepared.step(initial)
+    stable_manifest_id = repository.get_manifest(store.artifact_id).manifest_id
+
+    def fail(point):
+        if point == failure_point:
+            raise RuntimeError(f"crash at {point}")
+
+    repository.failure_injector = fail
+    with pytest.raises(RuntimeError, match="crash at"):
+        prepared.step(committed_state)
+
+    _, _, reopened_store, reopened_spec, _, _ = _artifact_bindings(
+        tmp_path / failure_point,
+        method,
+        repository_policy=repository_policy,
+    )
+    reopened_runtime = phx.solver.PreparedProductionRun(
+        reopened_store.manifest,
+        plan,
+        reopened_store,
+        resolved_run_spec=reopened_spec,
+    )
+    restored = reopened_runtime.resume(initial)
+    assert int(restored.step_index) == 1
+    assert (
+        reopened_store.repository.get_manifest(reopened_store.artifact_id).manifest_id
+        == stable_manifest_id
+    )
+
+
+def test_artifact_repository_admitted_topology_restart_and_rejections(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    repository, source_manifest, source_store, resolved, _, repository_policy = (
+        _artifact_bindings(
+            tmp_path / "topology",
+            method,
+            topology_id="topology-a",
+            geometry_layout_id="layout-a",
+            artifact_id="topology-restart",
+        )
+    )
+    plan = _repository_plan(method, end_time=0.1)
+    source_runtime = phx.solver.PreparedProductionRun(
+        source_manifest, plan, source_store, resolved_run_spec=resolved
+    )
+    source = source_runtime.initial_state(jnp.asarray((1.0, 2.0)))
+    source_runtime.checkpoint(source)
+    parent_manifest_id = repository.get_manifest(source_store.artifact_id).manifest_id
+
+    _, target_manifest, target_store, target_spec, _, _ = _artifact_bindings(
+        tmp_path / "topology",
+        method,
+        topology_id="topology-b",
+        geometry_layout_id="layout-b",
+        artifact_id="topology-restart",
+        repository_policy=repository_policy,
+    )
+    unsupported_relation = RuntimeRestartRelation(
+        "topology-a",
+        "topology-b",
+        classification="unsupported",
+        relation_id="unsupported-topology-replay",
+    )
+    unsupported_runtime = phx.solver.PreparedProductionRun(
+        target_manifest,
+        plan,
+        target_store,
+        resolved_run_spec=target_spec,
+        restart_relation=unsupported_relation,
+    )
+    with pytest.raises(UnsupportedReplayError):
+        unsupported_runtime.resume(unsupported_runtime.initial_state(jnp.asarray((0.0,))))
+    _, target_manifest, target_store, target_spec, _, _ = _artifact_bindings(
+        tmp_path / "topology",
+        method,
+        topology_id="topology-b",
+        geometry_layout_id="layout-b",
+        artifact_id="topology-restart",
+        repository_policy=repository_policy,
+    )
+
+    def aggregate(source_arrays, source_specification, template, encoding):
+        del encoding
+        source_leaf = np.asarray(source_arrays[source_specification["arrays"][0]])
+        return jnp.asarray((source_leaf.sum(),), dtype=jnp.asarray(template).dtype)
+
+    relation = RuntimeRestartRelation(
+        "topology-a",
+        "topology-b",
+        classification="tolerance",
+        tolerance=1.0e-12,
+        relation_id="admitted-topology-aggregation",
+        restorer=aggregate,
+    )
+    target_runtime = phx.solver.PreparedProductionRun(
+        target_manifest,
+        plan,
+        target_store,
+        resolved_run_spec=target_spec,
+        restart_relation=relation,
+    )
+    resumed = target_runtime.resume(target_runtime.initial_state(jnp.asarray((0.0,))))
+    np.testing.assert_allclose(resumed.accepted_state, (3.0,))
+    assert target_runtime.last_replay_classification == "tolerance"
+    lineage_manifest = repository.get_manifest(target_store.artifact_id)
+    assert lineage_manifest.base_manifest_id == parent_manifest_id
+
+    _, rejected_manifest, rejected_store, rejected_spec, _, _ = _artifact_bindings(
+        tmp_path / "topology",
+        method,
+        topology_id="topology-c",
+        geometry_layout_id="layout-c",
+        artifact_id="topology-restart",
+        repository_policy=repository_policy,
+    )
+    rejected_relation = RuntimeRestartRelation(
+        "wrong-source",
+        "topology-c",
+        classification="unsupported",
+        relation_id="rejected-topology-relation",
+    )
+    rejected_runtime = phx.solver.PreparedProductionRun(
+        rejected_manifest,
+        plan,
+        rejected_store,
+        resolved_run_spec=rejected_spec,
+        restart_relation=rejected_relation,
+    )
+    with pytest.raises((ValueError, UnsupportedReplayError)):
+        rejected_runtime.resume(rejected_runtime.initial_state(jnp.asarray((0.0,))))
+
+
+def test_configuration_migration_commits_lineage_and_rollback_selects_parent(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    repository, _, _, _, _, _ = _artifact_bindings(tmp_path / "configuration", method)
+    edge = MigrationEdge(
+        "configuration-v1",
+        "configuration-v2",
+        lambda record: {"coefficient": record["coefficient"], "scheme": "current"},
+        migration_id="configuration-v1-to-v2",
+    )
+    registry = CompatibilityRegistry("configuration-v2", (edge,))
+    artifact = migrate_configuration(
+        repository,
+        registry,
+        {"coefficient": 2},
+        source_format_id="configuration-v1",
+        writer_id="configuration-writer",
+    )
+    assert artifact.manifest.artifact_id == artifact.report.output_digest
+    assert artifact.manifest.base_manifest_id is None
+    parent = rollback_configuration(registry, artifact)
+    assert parent["artifact_id"] == artifact.report.input_digest
+    assert parent["record"] == {"coefficient": 2}
+    assert parent["lineage"] == [artifact.report.input_digest]
+
+
+def test_runtime_configuration_migration_requires_lineage_and_commits_child(tmp_path):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    edge = MigrationEdge(
+        "runtime-configuration-v1",
+        "runtime-configuration-v2",
+        lambda record: {"coefficient": record["coefficient"], "current": True},
+        migration_id="runtime-configuration-upgrade",
+    )
+    registry = CompatibilityRegistry("runtime-configuration-v2", (edge,))
+    report = registry.resolve(
+        {"coefficient": 3},
+        source_format_id="runtime-configuration-v1",
+    )
+    repository, source_manifest, source_store, source_spec, _, repository_policy = (
+        _artifact_bindings(
+            tmp_path / "runtime-configuration",
+            method,
+            artifact_id="runtime-configuration-checkpoint",
+            prepared_configuration_id=report.input_digest,
+        )
+    )
+    plan = _repository_plan(method, end_time=0.1)
+    source_runtime = phx.solver.PreparedProductionRun(
+        source_manifest,
+        plan,
+        source_store,
+        resolved_run_spec=source_spec,
+    )
+    source_runtime.checkpoint(source_runtime.initial_state(jnp.asarray((4.0,))))
+    parent_manifest_id = repository.get_manifest(source_store.artifact_id).manifest_id
+
+    _, target_manifest, target_store, target_spec, _, _ = _artifact_bindings(
+        tmp_path / "runtime-configuration",
+        method,
+        artifact_id="runtime-configuration-checkpoint",
+        repository_policy=repository_policy,
+        prepared_configuration_id=report.output_digest,
+    )
+    rejected_runtime = phx.solver.PreparedProductionRun(
+        target_manifest,
+        plan,
+        target_store,
+        resolved_run_spec=target_spec,
+    )
+    with pytest.raises(ValueError, match="without an explicit migration"):
+        rejected_runtime.resume(rejected_runtime.initial_state(jnp.asarray((0.0,))))
+    _, target_manifest, target_store, target_spec, _, _ = _artifact_bindings(
+        tmp_path / "runtime-configuration",
+        method,
+        artifact_id="runtime-configuration-checkpoint",
+        repository_policy=repository_policy,
+        prepared_configuration_id=report.output_digest,
+    )
+    target_runtime = phx.solver.PreparedProductionRun(
+        target_manifest,
+        plan,
+        target_store,
+        resolved_run_spec=target_spec,
+        migration_report=report,
+    )
+    resumed = target_runtime.resume(target_runtime.initial_state(jnp.asarray((0.0,))))
+    np.testing.assert_allclose(resumed.accepted_state, (4.0,))
+    child = repository.get_manifest(target_store.artifact_id)
+    assert child.base_manifest_id == parent_manifest_id
+    assert dict(child.metadata)["phase"] == "restart-lineage"

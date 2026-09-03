@@ -38,7 +38,9 @@ frame = phx.atomistic.AtomisticFrame(
     unit_system_id=system.plan.units.unit_system_id,
     source_id="committee-frame",
 )
-records = phx.atomistic.AcquisitionPlan(1).select((frame,), (result.uncertainty,))
+records = phx.atomistic.AcquisitionPlan(
+    1, phx.atomistic.CommitteeAcquisitionScorePolicy(1.0, 1.0, 1.0)
+).select((frame,), (result.uncertainty,))
 if (
     not bool(result.successful)
     or not bool(jnp.isfinite(blend_energy))

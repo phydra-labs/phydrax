@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 from ._closure import CosmologyRealizationSignature, DifferentiationContract
 from ._scales import CosmologyScaleContract
 
@@ -174,8 +175,7 @@ def _validate_common(
 class ExpansionHistory(StrictModule):
     """Tabulated Hubble expansion with explicit realization and provenance."""
 
-    scale_factors: Array
-    hubble_values: Array
+    reconstruction: SampledSeriesReconstruction
     scale: CosmologyScaleContract
     provenance: CosmologyProductProvenance
     realization: CosmologyRealizationSignature
@@ -200,26 +200,43 @@ class ExpansionHistory(StrictModule):
             "ExpansionHistory Hubble values must be finite and positive.",
         )
         policy = provenance.differentiation
-        self.scale_factors = _stored(nodes, policy)
-        self.hubble_values = _stored(hubble, policy)
+        support = SeriesSupport(
+            _stored(nodes, policy),
+            coordinate_name="scale_factor",
+            coordinate_id=f"scale-factor:{provenance.provenance_id}",
+        )
+        series = SampledSeries(
+            support,
+            _stored(hubble, policy),
+            series_id=f"expansion-history:{provenance.provenance_id}",
+        )
+        self.reconstruction = SampledSeriesReconstruction(
+            series,
+            interpolation="linear",
+            bounds="error",
+        )
         self.scale = scale
         self.provenance = provenance
         self.realization = realization
 
+    @property
+    def scale_factors(self) -> Array:
+        return self.reconstruction.series.support.coordinates
+
+    @property
+    def hubble_values(self) -> Array:
+        return self.reconstruction.series.values
+
     def hubble(self, scale_factor: ArrayLike, /) -> Array:
         query = _validated_query(scale_factor, self.scale_factors, "ExpansionHistory")
-        values = jnp.interp(query, self.scale_factors, self.hubble_values)
+        values = self.reconstruction.evaluate(query).values
         return _evaluated(values, self.provenance.differentiation)
 
 
 class LagrangianGrowthHistory(StrictModule):
     """First- and second-order Lagrangian growth and logarithmic rates."""
 
-    scale_factors: Array
-    first_order_growth: Array
-    first_order_rate: Array
-    second_order_growth: Array
-    second_order_rate: Array
+    reconstruction: SampledSeriesReconstruction
     scale: CosmologyScaleContract
     provenance: CosmologyProductProvenance
     realization: CosmologyRealizationSignature
@@ -258,31 +275,51 @@ class LagrangianGrowthHistory(StrictModule):
             "Lagrangian growth values must be finite with positive D1 and D2.",
         )
         policy = provenance.differentiation
-        stacked = _stored(stacked, policy)
-        self.scale_factors = _stored(nodes, policy)
-        (
-            self.first_order_growth,
-            self.first_order_rate,
-            self.second_order_growth,
-            self.second_order_rate,
-        ) = tuple(stacked[index] for index in range(4))
+        stored = _stored(stacked, policy)
+        support = SeriesSupport(
+            _stored(nodes, policy),
+            coordinate_name="scale_factor",
+            coordinate_id=f"scale-factor:{provenance.provenance_id}",
+        )
+        series = SampledSeries(
+            support,
+            tuple(stored[index] for index in range(4)),
+            series_id=f"lagrangian-growth:{provenance.provenance_id}",
+        )
+        self.reconstruction = SampledSeriesReconstruction(
+            series,
+            interpolation="linear",
+            bounds="error",
+        )
         self.scale = scale
         self.provenance = provenance
         self.realization = realization
+
+    @property
+    def scale_factors(self) -> Array:
+        return self.reconstruction.series.support.coordinates
+
+    @property
+    def first_order_growth(self) -> Array:
+        return self.reconstruction.series.values[0]
+
+    @property
+    def first_order_rate(self) -> Array:
+        return self.reconstruction.series.values[1]
+
+    @property
+    def second_order_growth(self) -> Array:
+        return self.reconstruction.series.values[2]
+
+    @property
+    def second_order_rate(self) -> Array:
+        return self.reconstruction.series.values[3]
 
     def evaluate(self, scale_factor: ArrayLike, /) -> tuple[Array, Array, Array, Array]:
         query = _validated_query(
             scale_factor, self.scale_factors, "LagrangianGrowthHistory"
         )
-        values = tuple(
-            jnp.interp(query, self.scale_factors, values)
-            for values in (
-                self.first_order_growth,
-                self.first_order_rate,
-                self.second_order_growth,
-                self.second_order_rate,
-            )
-        )
+        values = self.reconstruction.evaluate(query).values
         return tuple(
             _evaluated(value, self.provenance.differentiation) for value in values
         )

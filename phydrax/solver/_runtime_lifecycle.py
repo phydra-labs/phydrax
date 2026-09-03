@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal
 
 import equinox as eqx
@@ -29,6 +30,13 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..linalg._real_coordinates import RealCoordinateEvidence
+
+
+ReplayClassification = Literal["bitwise", "tolerance", "unsupported"]
+
+
+class UnsupportedReplayError(ValueError):
+    """Raised when an explicitly bound restart relation forbids replay."""
 
 
 def _host_array_tree(tree: Any, role: str, /) -> Any:
@@ -118,6 +126,134 @@ class RuntimeCheckpointEncodingPlan(StrictModule, NonTrainableState):
             if binding.leaf_index == leaf_index:
                 return binding
         return None
+
+
+class RuntimeRestartRelation(StrictModule, NonTrainableState):
+    """Explicit admitted source-to-destination topology restore relation."""
+
+    source_topology_id: str = eqx.field(static=True)
+    target_topology_id: str = eqx.field(static=True)
+    classification: ReplayClassification = eqx.field(static=True)
+    tolerance: float | None = eqx.field(static=True)
+    support_tuple_ids: tuple[str, ...] = eqx.field(static=True)
+    restorer: Callable | None = eqx.field(static=True, repr=False)
+    relation_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source_topology_id: str,
+        target_topology_id: str,
+        /,
+        *,
+        classification: ReplayClassification,
+        relation_id: str | None = None,
+        tolerance: float | None = None,
+        support_tuple_ids: Sequence[str] = (),
+        restorer: Callable | None = None,
+    ):
+        source = str(source_topology_id)
+        target = str(target_topology_id)
+        if not source or not target:
+            raise ValueError("Restart relation topology identities must be nonempty.")
+        if classification not in ("bitwise", "tolerance", "unsupported"):
+            raise ValueError("Restart replay classification is unsupported.")
+        tolerance_ = None if tolerance is None else float(tolerance)
+        if classification == "tolerance":
+            if tolerance_ is None or not math.isfinite(tolerance_) or tolerance_ < 0.0:
+                raise ValueError(
+                    "Tolerance replay requires a finite nonnegative tolerance."
+                )
+        elif tolerance_ is not None:
+            raise ValueError("Only tolerance replay can declare a replay tolerance.")
+        supports = tuple(sorted(str(value) for value in support_tuple_ids))
+        if any(not value for value in supports) or len(set(supports)) != len(supports):
+            raise ValueError("Restart relation support-tuple IDs must be unique.")
+        if source != target and classification != "unsupported" and restorer is None:
+            raise ValueError("Topology-changing replay requires an explicit restorer.")
+        if restorer is not None and not callable(restorer):
+            raise TypeError("Restart relation restorer must be callable.")
+        if relation_id is None:
+            if source != target or restorer is not None:
+                raise ValueError(
+                    "Non-identity restart relations require a stable relation_id."
+                )
+            identifier = canonical_fingerprint(
+                {
+                    "kind": "identity-runtime-restart-relation",
+                    "topology": source,
+                    "classification": classification,
+                }
+            )
+        else:
+            identifier = str(relation_id)
+            if not identifier:
+                raise ValueError("Restart relation identity must be nonempty.")
+        self.source_topology_id = source
+        self.target_topology_id = target
+        self.classification = classification
+        self.tolerance = tolerance_
+        self.support_tuple_ids = supports
+        self.restorer = restorer
+        self.relation_id = identifier
+
+    @classmethod
+    def identity(cls, topology_id: str, /) -> RuntimeRestartRelation:
+        """Construct the exact same-topology bitwise replay relation."""
+
+        return cls(topology_id, topology_id, classification="bitwise")
+
+    def restore_state(
+        self,
+        source_arrays: Mapping[str, Any],
+        source_specification: Mapping[str, Any],
+        destination_template: Any,
+        encoding: RuntimeCheckpointEncodingPlan,
+        /,
+    ) -> Any:
+        """Restore directly into the destination tree and its bound sharding."""
+
+        if self.classification == "unsupported":
+            raise UnsupportedReplayError(
+                f"Restart relation {self.relation_id!r} classifies replay as unsupported."
+            )
+        if self.restorer is None:
+            restored = _unpack_state_tree(
+                source_specification,
+                source_arrays,
+                destination_template,
+                encoding,
+            )
+        else:
+            restored = self.restorer(
+                MappingProxyType(dict(source_arrays)),
+                dict(source_specification),
+                destination_template,
+                encoding,
+            )
+        restored_leaves, restored_tree = jax.tree_util.tree_flatten(restored)
+        template_leaves, template_tree = jax.tree_util.tree_flatten(destination_template)
+        if restored_tree != template_tree or len(restored_leaves) != len(template_leaves):
+            raise ValueError(
+                "Restart relation changed the destination state-tree structure."
+            )
+        destination_leaves = []
+        for value, template in zip(restored_leaves, template_leaves, strict=True):
+            source_value = jnp.asarray(value)
+            expected = jnp.asarray(template)
+            if (
+                source_value.shape != expected.shape
+                or source_value.dtype != expected.dtype
+            ):
+                raise ValueError(
+                    "Restart relation output changed a destination leaf shape or dtype."
+                )
+            sharding = getattr(template, "sharding", None)
+            destination_leaves.append(
+                source_value
+                if sharding is None
+                else jax.device_put(source_value, sharding)
+            )
+        return jax.tree_util.tree_unflatten(template_tree, destination_leaves)
 
 
 def _pack_state_tree(
@@ -224,7 +360,8 @@ def _unpack_state_tree(
         expected = jnp.asarray(template_leaf)
         if value.shape != expected.shape or value.dtype != expected.dtype:
             raise ValueError("Archived state leaf shape or dtype changed.")
-        leaves.append(value)
+        sharding = getattr(template_leaf, "sharding", None)
+        leaves.append(value if sharding is None else jax.device_put(value, sharding))
     return jax.tree_util.tree_unflatten(treedef, leaves)
 
 
@@ -481,6 +618,123 @@ def read_runtime_checkpoint(
     ):
         raise ValueError("Runtime checkpoint content identity is inconsistent.")
     return envelope
+
+
+def restore_runtime_checkpoint_arrays(
+    manifest: Mapping[str, Any],
+    arrays: Mapping[str, Any],
+    /,
+    *,
+    state_template: Any,
+    controller_template: Any = (),
+    observer_templates: Sequence[Any] = (),
+    rng_template: Any = (),
+    target_mesh_id: str,
+    target_method_id: str,
+    target_precision_id: str,
+    target_topology_epoch_id: str,
+    target_runtime_id: str,
+    restart_relation: RuntimeRestartRelation,
+    partition_id: str | None = None,
+    encoding_plan: RuntimeCheckpointEncodingPlan | None = None,
+) -> tuple[RuntimeCheckpointEnvelope, str]:
+    """Verify logical checkpoint arrays and restore into the destination binding."""
+
+    if not isinstance(manifest, Mapping) or manifest.get("kind") != "runtime-checkpoint":
+        raise ValueError("Runtime checkpoint manifest schema is invalid.")
+    if not isinstance(restart_relation, RuntimeRestartRelation):
+        raise TypeError("restart_relation must be RuntimeRestartRelation.")
+    encoding = RuntimeCheckpointEncodingPlan() if encoding_plan is None else encoding_plan
+    if not isinstance(encoding, RuntimeCheckpointEncodingPlan):
+        raise TypeError("encoding_plan must be RuntimeCheckpointEncodingPlan or None.")
+    source_mesh = str(manifest.get("mesh_id", ""))
+    if (
+        source_mesh != restart_relation.source_topology_id
+        or str(target_mesh_id) != restart_relation.target_topology_id
+    ):
+        raise ValueError("Restart relation does not bind the checkpoint topology change.")
+    source_partition = manifest.get("partition_id")
+    partition = None if partition_id is None else str(partition_id)
+    if source_partition != partition:
+        raise ValueError(
+            "Checkpoint partition identity changed without an admitted relation."
+        )
+    if manifest.get("encoding_id") != encoding.encoding_id:
+        raise ValueError("Runtime checkpoint encoding identity changed.")
+    tree_specs = {
+        "state": manifest.get("state"),
+        "controller": manifest.get("controller"),
+        "rng": manifest.get("rng"),
+        "observers": manifest.get("observers"),
+    }
+    observer_specs = tree_specs["observers"]
+    templates = tuple(observer_templates)
+    if not isinstance(observer_specs, list) or len(observer_specs) != len(templates):
+        raise ValueError("Runtime checkpoint observer state count changed.")
+    content_digest = manifest.get("content_digest")
+    if not isinstance(content_digest, str) or len(content_digest) != 64:
+        raise ValueError("Runtime checkpoint content digest is invalid.")
+    if array_collection_digest(arrays) != content_digest:
+        raise ValueError("Runtime checkpoint logical arrays changed content.")
+    source_runtime = str(manifest.get("runtime_id", ""))
+    source_checkpoint_id = str(manifest.get("checkpoint_id", ""))
+    source_method = str(manifest.get("method_id", ""))
+    source_precision = str(manifest.get("precision_id", ""))
+    source_epoch = str(manifest.get("topology_epoch_id", ""))
+    expected_checkpoint_id = canonical_fingerprint(
+        {
+            "kind": "runtime-checkpoint-envelope",
+            "runtime": source_runtime,
+            "mesh": source_mesh,
+            "method": source_method,
+            "precision": source_precision,
+            "topology_epoch": source_epoch,
+            "partition": source_partition,
+            "encoding": encoding.encoding_id,
+            "content": content_digest,
+            "trees": tree_specs,
+        }
+    )
+    if not source_runtime or source_checkpoint_id != expected_checkpoint_id:
+        raise ValueError("Runtime checkpoint content identity is inconsistent.")
+    if source_method != str(target_method_id) or source_precision != str(
+        target_precision_id
+    ):
+        raise ValueError("Method or precision changed without an admitted migration.")
+    if (
+        source_epoch != str(target_topology_epoch_id)
+        and restart_relation.source_topology_id == restart_relation.target_topology_id
+    ):
+        raise ValueError("Topology epoch changed without an admitted topology relation.")
+    state = restart_relation.restore_state(
+        arrays,
+        tree_specs["state"],
+        state_template,
+        encoding,
+    )
+    controller = unpack_array_tree(tree_specs["controller"], arrays, controller_template)
+    rng = unpack_array_tree(tree_specs["rng"], arrays, rng_template)
+    observers = tuple(
+        unpack_array_tree(specification, arrays, template)
+        for specification, template in zip(observer_specs, templates, strict=True)
+    )
+    envelope = RuntimeCheckpointEnvelope(
+        state,
+        time=arrays["runtime/time"],
+        step_index=arrays["runtime/step_index"],
+        schedule_cursor=arrays["runtime/schedule_cursor"],
+        mesh_id=target_mesh_id,
+        method_id=target_method_id,
+        precision_id=target_precision_id,
+        topology_epoch_id=target_topology_epoch_id,
+        controller_state=controller,
+        observer_states=observers,
+        rng_state=rng,
+        partition_id=partition,
+        runtime_id=target_runtime_id,
+        encoding_plan=encoding,
+    )
+    return envelope, source_checkpoint_id
 
 
 class ExactTimeSchedule(StrictModule, NonTrainableState):
@@ -1180,16 +1434,20 @@ __all__ = [
     "AcceptedStepTriggerGraph",
     "AcceptedStepTriggerGraphState",
     "BoundedAsyncPublisher",
-    "ExactTimeSchedule",
     "ByteBoundedAsyncPublisher",
+    "ExactTimeSchedule",
     "MomentWeighting",
+    "ReplayClassification",
     "RuntimeCheckpointEncodingPlan",
     "RuntimeCheckpointEnvelope",
     "RuntimeCheckpointLeafBinding",
-    "StreamingObservablePlan",
-    "StreamingObservableState",
-    "read_runtime_checkpoint",
+    "RuntimeRestartRelation",
     "StreamingMomentPlan",
     "StreamingMomentState",
+    "StreamingObservablePlan",
+    "StreamingObservableState",
+    "UnsupportedReplayError",
+    "read_runtime_checkpoint",
+    "restore_runtime_checkpoint_arrays",
     "write_runtime_checkpoint",
 ]

@@ -49,6 +49,12 @@ class AbstractContactParticipant(StrictModule, NonTrainableState):
         raise NotImplementedError
 
     @property
+    def tangent_space(self) -> AbstractVectorSpace:
+        """Velocity/effort space; legacy participants use ``source_space``."""
+        return self.source_space
+
+
+    @property
     @abc.abstractmethod
     def surface_plan(self) -> CollisionSurfacePlan:
         raise NotImplementedError
@@ -91,12 +97,12 @@ class AbstractContactParticipant(StrictModule, NonTrainableState):
         /,
     ) -> ParticipantDualityEvidence:
         state_ = self.source_space.validate(state)
-        direction_ = self.source_space.validate(direction)
-        force = jnp.asarray(surface_force)
-        _, position_direction = jax.jvp(self.positions, (state_,), (direction_,))
-        pulled = self.force_pullback(state_, force)
+        direction_ = self.tangent_space.validate(direction)
+        position_direction = self.velocities(state_, direction_)
+        pulled = self.force_pullback(state_, surface_force)
+        force = jnp.asarray(surface_force, dtype=position_direction.dtype)
         position_pairing = jnp.sum(position_direction * force)
-        state_pairing = self.source_space.inner(direction_, pulled)
+        state_pairing = self.tangent_space.inner(direction_, pulled)
         residual = position_pairing - state_pairing
         scale = jnp.maximum(
             1.0,
@@ -197,6 +203,7 @@ class FunctionContactParticipant(AbstractContactParticipant):
 
     plan: CollisionSurfacePlan
     space: AbstractVectorSpace
+    tangent: AbstractVectorSpace
     position_action: Callable[[PyTree[Any]], Array] = eqx.field(static=True)
     velocity_action: Callable[[PyTree[Any], PyTree[Any]], Array] | None = eqx.field(
         static=True
@@ -217,6 +224,7 @@ class FunctionContactParticipant(AbstractContactParticipant):
         position_action: Callable[[PyTree[Any]], Array],
         /,
         *,
+        tangent_space: AbstractVectorSpace | None = None,
         velocity_action: (Callable[[PyTree[Any], PyTree[Any]], Array] | None) = None,
         pullback_action: (Callable[[PyTree[Any], Array], PyTree[Array]] | None) = None,
         bounds_action: (
@@ -228,14 +236,35 @@ class FunctionContactParticipant(AbstractContactParticipant):
             raise TypeError("plan must be CollisionSurfacePlan.")
         if not isinstance(source_space, AbstractVectorSpace):
             raise TypeError("source_space must be AbstractVectorSpace.")
+        tangent = source_space if tangent_space is None else tangent_space
+        if not isinstance(tangent, AbstractVectorSpace):
+            raise TypeError("tangent_space must be AbstractVectorSpace or None.")
         if not callable(position_action):
             raise TypeError("position_action must be callable.")
+        if velocity_action is not None and not callable(velocity_action):
+            raise TypeError("velocity_action must be callable or None.")
+        if pullback_action is not None and not callable(pullback_action):
+            raise TypeError("pullback_action must be callable or None.")
+        if bounds_action is not None and not callable(bounds_action):
+            raise TypeError("bounds_action must be callable or None.")
+        if not tangent.compatible(source_space) and (
+            velocity_action is None or pullback_action is None
+        ):
+            raise ValueError(
+                "Distinct configuration and tangent spaces require explicit "
+                "velocity_action and pullback_action."
+            )
         identifier = (
             canonical_fingerprint(
                 {
                     "kind": "function-contact-participant",
                     "surface": plan.topology_id,
                     "space": source_space.space_id,
+                    **(
+                        {}
+                        if tangent_space is None
+                        else {"tangent_space": tangent.space_id}
+                    ),
                     "position_action": position_action,
                     "velocity_action": velocity_action,
                     "pullback_action": pullback_action,
@@ -256,6 +285,7 @@ class FunctionContactParticipant(AbstractContactParticipant):
             capabilities |= ContactCapability.NONLINEAR_TRAJECTORY
         self.plan = plan
         self.space = source_space
+        self.tangent = tangent
         self.position_action = position_action
         self.velocity_action = velocity_action
         self.pullback_action = pullback_action
@@ -266,6 +296,11 @@ class FunctionContactParticipant(AbstractContactParticipant):
     @property
     def source_space(self) -> AbstractVectorSpace:
         return self.space
+
+    @property
+    def tangent_space(self) -> AbstractVectorSpace:
+        return self.tangent
+
 
     @property
     def surface_plan(self) -> CollisionSurfacePlan:
@@ -292,20 +327,31 @@ class FunctionContactParticipant(AbstractContactParticipant):
 
     def velocities(self, state: PyTree[Any], rates: PyTree[Any], /) -> Array:
         state_ = self.source_space.validate(state)
-        rates_ = self.source_space.validate(rates)
+        rates_ = self.tangent_space.validate(rates)
         if self.velocity_action is not None:
-            return jnp.asarray(self.velocity_action(state_, rates_))
-        return jax.jvp(self.positions, (state_,), (rates_,))[1]
+            value = jnp.asarray(self.velocity_action(state_, rates_))
+        else:
+            value = jax.jvp(self.positions, (state_,), (rates_,))[1]
+        expected = (
+            self.surface_plan.vertex_count,
+            self.surface_plan.ambient_dimension,
+        )
+        if value.shape != expected:
+            raise ValueError(f"Nonlinear contact velocities must have shape {expected}.")
+        return value
 
     def force_pullback(
         self, state: PyTree[Any], surface_force: ArrayLike, /
     ) -> PyTree[Array]:
         state_ = self.source_space.validate(state)
-        force = jnp.asarray(surface_force)
+        positions = self.positions(state_)
+        force = jnp.asarray(surface_force, dtype=positions.dtype)
+        if force.shape != positions.shape:
+            raise ValueError("Nonlinear contact surface force has invalid shape.")
         if self.pullback_action is not None:
-            return self.source_space.validate(self.pullback_action(state_, force))
+            return self.tangent_space.validate(self.pullback_action(state_, force))
         _, pullback = jax.vjp(self.positions, state_)
-        return pullback(force)[0]
+        return self.tangent_space.validate(pullback(force)[0])
 
     def trajectory_bounds(
         self, start_state: PyTree[Any], end_state: PyTree[Any], /

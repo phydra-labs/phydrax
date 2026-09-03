@@ -218,7 +218,10 @@ from ._finite_volume_verification import (
 )
 from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
 from ._flip_inspection import flip_inspection_frames
-from ._gas_dynamics import HomogeneousMixtureEulerSystem
+from ._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 from ._homogeneous_thermodynamics import (
     AbstractMolarHelmholtzTerm,
     DensityEnergyStateResult,
@@ -565,6 +568,7 @@ from ._variational import (
     DiffusionAction,
     MassAction,
     SourceAction,
+    TensorDiffusionAction,
     VariationalCoefficient,
 )
 from ._vortex_particles import (
@@ -577,6 +581,7 @@ from ._weakly_compressible import (
     CompiledWeaklyCompressibleSPHProblem,
     WeaklyCompressibleFluidProblemIR,
 )
+from .advanced import GLMIdealMHDSystem
 from .fem import FiniteElementMassPolicy
 from .trefftz import (
     AbstractTrefftzBasis,
@@ -670,6 +675,8 @@ from .vem import (
 
 __all__ = [
     "advanced",
+    "GLMIdealMHDSystem",
+    "MultigroupM1RadiationSystem",
     "vem",
     "CompiledVirtualElementProblem",
     "VirtualElementAction",
@@ -749,6 +756,7 @@ __all__ = [
     "compile_finite_element_problem",
     "CompiledFiniteElementProblem",
     "DiffusionAction",
+    "TensorDiffusionAction",
     "ExteriorFacetAction",
     "finite_element_form_from_functional",
     "FiniteElementAction",
@@ -1095,6 +1103,7 @@ __all__ = [
     "NASASpeciesThermodynamicsPlan",
     "PolynomialSpeciesThermodynamicsPlan",
     "SpeciesThermodynamicEvaluation",
+    "HomogeneousMixtureCompressibleNavierStokesSystem",
     "HomogeneousMixtureEulerSystem",
     "UNIVERSAL_GAS_CONSTANT",
     "AbstractMolarHelmholtzTerm",

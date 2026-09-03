@@ -35,6 +35,11 @@ def test_point_hierarchy_partitions_active_points() -> None:
     )
     assert leaf_count >= 3
     assert leaf_items == points.shape[0]
+    assert bool(jnp.all(hierarchy.logical_point_leaf_slots >= 0))
+    np.testing.assert_array_equal(
+        hierarchy.sorted_point_leaf_slots,
+        hierarchy.logical_point_leaf_slots[hierarchy.storage_to_logical],
+    )
     active_children = hierarchy.node_children[hierarchy.node_active]
     assert bool(
         jnp.all((active_children < 0) | (active_children < hierarchy.node_active.size))

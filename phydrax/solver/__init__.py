@@ -10,9 +10,11 @@
 Solvers aggregate numerical terms and attached model losses for training or
 evaluation. `FunctionalSolver` consumes one ordered `terms` collection.
 
-Hard `EnforcementSpec` declarations may also compile boundary, initial, and
-interior requirements into an `EnforcementProgram` that transforms fields before
-term evaluation.
+Hard `EnforcementSpec` declarations compile local boundary/initial ansätze and
+joint typed field realizations into an `EnforcementProgram`. Finite, fiberwise,
+coefficient, kernel, nonlinear, and feasibility routes are applied once before
+term evaluation. Dynamic realization state advances only at accepted-step
+boundaries.
 
 !!! example
     ```python
@@ -997,6 +999,10 @@ from ._mac_immersed_newmark import (
     MACDeformableImmersedNewmarkResult,
     MACDeformableImmersedNewmarkState,
 )
+from ._mac_immersed_preconditioner import (
+    MACImmersedPressureBlockPreconditionerEvidence,
+    MACImmersedPressureBlockPreconditionerPlan,
+)
 from ._mac_immersed_rigid import (
     MACRigidImmersedBackwardEulerMethod,
     MACRigidImmersedEnergyLedger,
@@ -1026,6 +1032,22 @@ from ._mac_penalty_ib_cfd_dem import (
     MACPenaltyIBCouplingState,
     MACPenaltyIBMacroStepResult,
     MACPenaltyIBWindowStatus,
+)
+from ._mac_pressure_operator import (
+    execute_weighted_pressure_iteration,
+    MACPressureCoefficientKind,
+    MACPressureCoefficientReport,
+    MACPressureExecutionEvidence,
+    MACPressureOperatorSpec,
+    MACPressurePreconditionerKind,
+    MACPressurePreparationEvidence,
+    MACPressureRobinSide,
+    MACPressureRouteKind,
+    MACPressureRouteRequest,
+    MACPressureSolveResult,
+    MACWeightedPressureAction,
+    MACWeightedPressureIterationResult,
+    PreparedMACPressureOperator,
 )
 from ._mac_sensitivity import (
     MACDerivativeMode,
@@ -1501,6 +1523,7 @@ from ._production_resources import (
     ProductionResourceForecast,
 )
 from ._production_runtime import (
+    ArtifactCheckpointStore,
     CheckpointGenerationPolicy,
     DurableCheckpointStore,
     PreparedProductionRun,
@@ -1774,13 +1797,17 @@ from ._runtime_lifecycle import (
     ExactTimeSchedule,
     MomentWeighting,
     read_runtime_checkpoint,
+    ReplayClassification,
+    restore_runtime_checkpoint_arrays,
     RuntimeCheckpointEncodingPlan,
     RuntimeCheckpointEnvelope,
     RuntimeCheckpointLeafBinding,
+    RuntimeRestartRelation,
     StreamingMomentPlan,
     StreamingMomentState,
     StreamingObservablePlan,
     StreamingObservableState,
+    UnsupportedReplayError,
     write_runtime_checkpoint,
 )
 from ._scalar_boundary3d import *  # noqa: F403
@@ -1888,6 +1915,9 @@ from ._stinespring_tomography import (
 from ._stokes_boundary import *  # noqa: F403
 from ._stokes_boundary import __all__ as _stokes_boundary_all
 from ._structured_incompressible import (
+    MACPressureClosureReport,
+    MACPressureCompatibilityKind,
+    MACPressureGaugeKind,
     MACPressureProjectionPlan,
     MACPressureProjectionResult,
     MACPressureSolveMethod,
@@ -2376,6 +2406,7 @@ __all__ = [
     "prepare_element_block_preconditioner",
     "TimeSlabFluxLedger",
     "ProductionResourceBudget",
+    "ArtifactCheckpointStore",
     "CheckpointGenerationPolicy",
     "ProductionCaseManifest",
     "ProductionFailureRecord",
@@ -2595,6 +2626,23 @@ __all__ = [
     "MACNamedRateLimit",
     "MACNeutralMode",
     "MACRateProjectionResult",
+    "MACPressureClosureReport",
+    "MACPressureCoefficientKind",
+    "MACPressureCoefficientReport",
+    "MACPressureCompatibilityKind",
+    "MACPressureExecutionEvidence",
+    "MACPressureGaugeKind",
+    "MACPressureOperatorSpec",
+    "MACPressurePreconditionerKind",
+    "MACPressurePreparationEvidence",
+    "MACPressureRobinSide",
+    "MACPressureRouteKind",
+    "MACPressureRouteRequest",
+    "MACPressureSolveResult",
+    "MACWeightedPressureAction",
+    "MACWeightedPressureIterationResult",
+    "PreparedMACPressureOperator",
+    "execute_weighted_pressure_iteration",
     "MACPressureProjectionPlan",
     "MACPressureProjectionResult",
     "MACPressureSolveMethod",
@@ -2622,6 +2670,8 @@ __all__ = [
     "MACImmersedBoundaryProjectionPlan",
     "MACImmersedBoundaryProjectionResult",
     "MACImmersedBoundaryProjectionStatus",
+    "MACImmersedPressureBlockPreconditionerEvidence",
+    "MACImmersedPressureBlockPreconditionerPlan",
     "MACImmersedBoundarySBDF2Method",
     "MACImmersedBoundarySBDF2Result",
     "MACImmersedBoundarySBDF2State",
@@ -3113,10 +3163,14 @@ __all__ = [
     "ByteBoundedAsyncPublisher",
     "ExactTimeSchedule",
     "MomentWeighting",
+    "ReplayClassification",
     "read_runtime_checkpoint",
     "RuntimeCheckpointEnvelope",
     "RuntimeCheckpointEncodingPlan",
     "RuntimeCheckpointLeafBinding",
+    "RuntimeRestartRelation",
+    "UnsupportedReplayError",
+    "restore_runtime_checkpoint_arrays",
     "StreamingObservablePlan",
     "StreamingObservableState",
     "StreamingMomentPlan",
