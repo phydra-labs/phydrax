@@ -266,6 +266,7 @@ nav:
         - Spectral elements: "guides_spectral_elements.md"
         - Complete spectral hp: "guides_complete_spectral_hp.md"
         - Finite-element applications: "guides_fem_applications.md"
+        - Crystal plasticity: "guides_crystal_plasticity.md"
         - Differentiable fixed-topology geometry: "guides_differentiable_geometry.md"
         - Force-density form-finding: "guides_force_density.md"
         - Member-network structural verification: "guides_member_network_structures.md"

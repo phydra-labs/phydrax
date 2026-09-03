@@ -114,10 +114,32 @@ two-terminal current; it does not execute arbitrary source code.
 ## Scientific evidence
 
 A successful circuit result requires finite values, native linear-solve success, and
-absolute and scale-safe relative residuals of the original equations. Whole-matrix
-passivity and reciprocity audits require a materialized complete matrix and compatible
-power-normalized bases; selected columns cannot certify either property. Active linear
-components are supported but never inferred passive.
+absolute and scale-safe relative residuals of the original equations.
+`MNADiagnostics` therefore reports solve and equation evidence only. It does not report
+a port-power balance: wave power and terminal power reconstructed from the same port
+voltage/current pair are an identity, not independent conservation evidence.
+
+`evaluate_mna_power_ledger` is an explicit, opt-in conservation audit. MNA voltages and
+currents are RMS phasors. Port current is positive into the circuit, while each element
+terminal current is positive into that element; consequently the retained port
+contribution is power absorbed by the external port. The `MNAPowerLedger` keeps every
+port and supported RLC element real/reactive contribution separately and then assesses
+their complex-power closure. With `exp(-i ω t)`, reactive power is
+`imag(V conj(I))`; ideal capacitors therefore contribute positive reactive power and
+ideal inductors negative reactive power under this convention. Source contribution
+axes are also separate, but ordinary MNA has no independent-source forcing stamp, so
+it never infers source power from an incident wave.
+
+Controlled, source-like, and black-box admittance/impedance elements do not acquire a
+power model merely because their terminal solution is available. Their IDs and reasons
+make the ledger unavailable, with closure residuals left undefined. A retained ledger
+can be independently reassessed with `assess_mna_power_ledger`; changing one contribution
+therefore changes closure rather than being hidden by a second port identity.
+
+Whole-matrix passivity and reciprocity audits remain distinct: they require a
+materialized complete matrix and compatible power-normalized bases, and selected
+columns cannot certify either property. Scattering contractivity is not MNA power
+closure. Active linear components are supported but never inferred passive.
 
 Gradients are real derivatives of real objectives through complex arithmetic and the
 native implicit solve. Topology, port order/type, mode selection, frequency-array shape,

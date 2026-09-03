@@ -33,6 +33,16 @@
       "minimum_tip_radius": 0.04070079187812531,
       "passed": true
     },
+    "member_network": {
+      "energy_balance_defect": 0.0,
+      "force_energy_gradient_error": 5.916553088658547e-15,
+      "mass_orthogonality_error": 2.220446049250313e-16,
+      "minimum_mass_eigenvalue": 1.0,
+      "modal_residual": 5.170066723706134e-16,
+      "objectivity_error": 0.0,
+      "passed": true,
+      "tangent_energy_hessian_error": 0.0
+    },
     "mixed_incompressibility": {
       "augmented_pressure": 0.40000000000000036,
       "exact_constraint_defect": 0.0,
@@ -41,8 +51,8 @@
     },
     "plane_stress": {
       "passed": true,
-      "residual": 1.4260814751310136e-13,
-      "tangent_error": 3.552713678800501e-15,
+      "residual": 1.4060974606877608e-13,
+      "tangent_error": 7.105427357601002e-15,
       "thickness_stretch": 0.976295748516597
     },
     "topology": {

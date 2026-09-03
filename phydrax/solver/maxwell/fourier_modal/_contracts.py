@@ -29,13 +29,15 @@ class AbstractFourierFactorizationPlan(StrictModule, NonTrainableState):
 
 
 class FrequencyMaxwellMaterial(StrictModule):
-    """Sampled frequency-domain permittivity and permeability."""
+    """Sampled frequency-domain constitutive data in one logical material slot."""
 
     permittivity: Array
     permeability: Array
     magnetoelectric_xi: Array
     magnetoelectric_zeta: Array
     material_id: str = eqx.field(static=True)
+    material_role: Literal["physical", "artificial_pml"] = eqx.field(static=True)
+    origin_evidence_id: str = eqx.field(static=True)
     passive: bool | None = eqx.field(static=True)
     reciprocal: bool | None = eqx.field(static=True)
 
@@ -47,7 +49,9 @@ class FrequencyMaxwellMaterial(StrictModule):
         magnetoelectric_xi: ArrayLike = 0.0,
         magnetoelectric_zeta: ArrayLike = 0.0,
         *,
-        material_id: str | None = None,
+        material_id: str,
+        material_role: Literal["physical", "artificial_pml"] = "physical",
+        origin_evidence_id: str | None = None,
         passive: bool | None = None,
         reciprocal: bool | None = None,
     ):
@@ -60,26 +64,21 @@ class FrequencyMaxwellMaterial(StrictModule):
             for value in (epsilon, mu, xi, zeta)
         ):
             raise TypeError("Maxwell constitutive blocks must be numeric arrays.")
-        identity = (
-            canonical_fingerprint(
-                {
-                    "kind": "frequency-maxwell-material",
-                    "epsilon_shape": list(epsilon.shape),
-                    "mu_shape": list(mu.shape),
-                    "xi_shape": list(xi.shape),
-                    "zeta_shape": list(zeta.shape),
-                }
-            )
-            if material_id is None
-            else str(material_id)
-        )
-        if not identity:
+        identifier = str(material_id)
+        if not identifier:
             raise ValueError("material_id must be non-empty.")
+        if material_role not in ("physical", "artificial_pml"):
+            raise ValueError("material_role must be 'physical' or 'artificial_pml'.")
+        origin = identifier if origin_evidence_id is None else str(origin_evidence_id)
+        if not origin:
+            raise ValueError("origin_evidence_id must be non-empty.")
         self.permittivity = epsilon
         self.permeability = mu
         self.magnetoelectric_xi = xi
         self.magnetoelectric_zeta = zeta
-        self.material_id = identity
+        self.material_id = identifier
+        self.material_role = material_role
+        self.origin_evidence_id = origin
         self.passive = None if passive is None else bool(passive)
         self.reciprocal = None if reciprocal is None else bool(reciprocal)
 

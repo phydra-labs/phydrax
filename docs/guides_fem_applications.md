@@ -20,11 +20,16 @@ free-energy splitting is not inferred.
 
 ## Crystal plasticity
 
-`phydrax.applications.crystal_plasticity` provides finite-strain multiplicative
-crystal plasticity with oriented slip systems, power-law slip, isotropic
-hardening, an implicit local slip root, first-Piola stress, candidate material
-state, admissibility, and a suggested substep factor. The topology, grain map,
-and accepted material state remain fixed during one global nonlinear attempt.
+`phydrax.applications.crystal_plasticity` provides a finite-strain
+multiplicative crystal law with explicit crystal-to-sample SO(3) rotations,
+volume-preserving slip, a differentiable implicit local root, first-Piola
+stress, hardening storage, incremental dissipation evidence, and separate
+convergence and admissibility decisions. `CrystalPlasticityRoute` binds one
+phase-homogeneous model and one static, support-bound orientation field to every
+three-dimensional cell block; its ragged route-local states share one atomic
+`MaterialTransaction`. See the
+[crystal-plasticity guide](guides_crystal_plasticity.md) for the qualified
+envelope and cutback/checkpoint contracts.
 
 ## Contact
 

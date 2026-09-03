@@ -64,6 +64,7 @@ def main():
                     prepared, incident
                 )
             )
+            power = phx.circuit.evaluate_mna_power_ledger(prepared, result)
             _, warm_distribution = measure_repeated(
                 lambda prepared=prepared, incident=incident: phx.circuit.solve_mna(
                     prepared, incident
@@ -85,6 +86,16 @@ def main():
                     "warm_solve_seconds": warm_distribution.median_seconds,
                     "original_residual": float(result.diagnostics.original_residual),
                     "relative_residual": float(result.diagnostics.relative_residual),
+                    "power_closure_tolerance": power.closure_tolerance,
+                    "power_evidence_available": bool(power.available),
+                    "power_real_closed": bool(jnp.all(power.real_power_closed)),
+                    "power_reactive_closed": bool(jnp.all(power.reactive_power_closed)),
+                    "power_phasor_amplitude_convention": (
+                        power.phasor_amplitude_convention
+                    ),
+                    "power_current_orientation": power.current_orientation,
+                    "power_unsupported_element_ids": list(power.unsupported_element_ids),
+                    "power_unavailable_reasons": list(power.unavailable_reasons),
                     "successful": bool(result.diagnostics.successful),
                 }
             )
