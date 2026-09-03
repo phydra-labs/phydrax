@@ -73,6 +73,17 @@ from ._diagnostics import (
     PreparedSpectralModalDiagnostics,
     SpectralModalDiagnosticsPlan,
 )
+from ._distributed import (
+    DistributedSpectralExecutionPlan,
+    DistributedSpectralPreparationReport,
+    SpectralExecutionResult,
+    SpectralGlobalDiagnostics,
+    SpectralLayout,
+    SpectralMeshTopology,
+    SpectralResourceError,
+    SpectralResourceReport,
+    SpectralTranspose,
+)
 from ._eigen_verification import (
     compare_spectral_eigen_resolutions,
     SpectralEigenResolutionPolicy,
@@ -297,6 +308,15 @@ __all__ = [
     "spectral_laplacian_operator",
     "spherical_laplacian_operator",
     "spherical_coordinate_derivative",
+    "DistributedSpectralExecutionPlan",
+    "DistributedSpectralPreparationReport",
+    "SpectralExecutionResult",
+    "SpectralGlobalDiagnostics",
+    "SpectralLayout",
+    "SpectralMeshTopology",
+    "SpectralResourceError",
+    "SpectralResourceReport",
+    "SpectralTranspose",
     "WignerLaguerrePlan",
     "WignerTransformPlan",
 ]

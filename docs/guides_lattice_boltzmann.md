@@ -19,6 +19,10 @@ Evidence is graduated rather than inferred: **invariant-complete**,
 **deployment-qualified** are independent claims. A capability advances only when the
 corresponding named artifact records its configuration and tolerances.
 
+These labels describe numerical evidence, not release status. The commercial profiles
+described below are constructed with `signed=False` and `released=False`; a passing
+profile evaluation remains a candidate for one exact operating/deployment tuple.
+
 ## Capability matrix
 
 | Capability | Status | Contract |
@@ -262,3 +266,60 @@ Qualification artifacts record software/hardware identity, parameters, tolerance
 errors, conservation defects, throughput, compiler memory evidence, and explicit
 pass/fail status. A passing artifact qualifies only the recorded configuration; it
 is not a universal stability theorem.
+
+## Commercial candidate envelope
+
+`LatticeBoltzmannOperatingEnvelopePlan` binds the lattice, collision, optional Guo
+forcing, precision policy, exact hardware target, physics/boundary labels, and finite
+limits for relaxation, Mach and Knudsen numbers, density and density ratio, force,
+interface/wall resolution, viscosity ratio, Cahn/capillary numbers, mass drift, and
+spurious currents. `preflight()` counts state, temporary, halo, checkpoint, and output
+bytes per device. `prepare(...)` refuses an over-budget allocation; the resulting
+`PreparedLatticeBoltzmannOperatingEnvelope.execute(point)` returns every named margin
+and predicate without changing the numerical method.
+`LatticeBoltzmannQualificationProfile` rejects continuum-DNS method labels: these are
+lattice-kinetic operating envelopes, not direct numerical simulation profiles.
+
+
+The profile factories create only unsigned candidates:
+
+- `c0_guo_baseline_profiles`: D2Q9/D3Q19 crossed with BGK/TRT and
+  population-space Guo forcing;
+- `c1_collision_native_forcing_profile`: D3Q27 central-moment collision with
+  collision-native Guo forcing;
+- `c2_binary_interface_profiles`: selected D2Q9/TRT free-energy and colour-gradient
+  interfaces, with dynamic wetting only when an explicit
+  `ConstitutiveDynamicWettingPlan` is bound;
+- `c3_passive_transport_profiles`: passive sensible energy, passive Fickian species,
+  and fixed Strang reactive thermal/species models;
+- `conjugate_thermal_qualification_profile`: a real `ConjugateThermalPlan` bound to
+  its passive-energy candidate.
+
+`LatticeBoltzmannQualificationProfile.evaluate()` conjuncts current evidence coverage,
+operating admission, exact deployment compatibility, parity evidence, and support
+dependencies. `LatticeBoltzmannCommercialEvidence.require()` fails with the specific
+missing gates; it never promotes `profile.released`.
+
+`ConjugateThermalPlan` is passive sensible-energy coupling, not compressible total
+energy. Preparation freezes one-to-one interface distance, measure, conductivity, heat
+capacity, contact resistance, and conductance. For fluid and solid interface
+temperatures it evaluates
+
+```text
+q = (T_fluid - T_solid)
+    / (d_fluid / k_fluid + R_contact + d_solid / k_solid),
+Q = q A,
+dE_fluid/dt = -Q,  dE_solid/dt = Q.
+```
+
+`PreparedConjugateThermalPlan.execute()` returns candidate and accepted fluid/solid
+energy state, equal-and-opposite rates, conservation residual, and atomic rollback.
+It does not provide a solid momentum solver, volumetric solid mesh transport, or
+compressible energy closure.
+
+`LatticeBoltzmannHardwareTarget` and `LatticeBoltzmannDeploymentRecord` name host and
+per-host device counts exactly. The reference factory defaults to one host and one
+device. JAX `NamedSharding` supplies the actual fixed multi-device execution route;
+the record and envelope alone do not launch hosts or prove multi-host scaling. A
+topology-changing restart requires an explicit topology-restart relation rather than an
+implicit redistribution.

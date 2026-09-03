@@ -204,7 +204,7 @@ def test_pressure_hybrid_rhs_jvp_and_vjp_obey_the_adjoint_identity():
     )
 
 
-def test_execution_supplied_pressure_diagonal_always_selects_iterative():
+def test_execution_supplied_line_coefficient_retains_certified_hybrid_route():
     _, operators = _operators()
     plan = phx.solver.MACPressureProjectionPlan(
         operators,
@@ -213,16 +213,29 @@ def test_execution_supplied_pressure_diagonal_always_selects_iterative():
         tolerance=1e-9,
     )
     pressure = _pressure_probe(operators)
-    velocity = operators.gradient(pressure)
+    beta = (
+        0.15
+        + 0.05 * jnp.arange(operators.discretization.cell_shape[1], dtype=pressure.dtype)
+    ).reshape((1, -1, 1))
+    beta = jnp.broadcast_to(beta, operators.discretization.cell_shape)
+    face_beta = operators.interpolate_inverse_momentum(beta)
+    velocity = tuple(
+        coefficient * derivative
+        for coefficient, derivative in zip(
+            face_beta, operators.gradient(pressure), strict=True
+        )
+    )
     result = plan.project(
         velocity,
         0.2,
-        inverse_momentum_diagonal=jnp.full(operators.discretization.cell_shape, 0.2),
+        inverse_momentum_diagonal=beta,
     )
 
-    assert result.solve_method == "iterative"
-    assert result.linear is not None
-    assert result.hybrid is None and result.transform is None
+    assert result.solve_method == "hybrid"
+    assert result.linear is None
+    assert result.hybrid is not None and result.transform is None
+    assert result.hybrid_action_defect < 2e-8
+    assert result.converged
 
 
 def test_pressure_hybrid_rejects_every_uncertified_preparation_predicate():

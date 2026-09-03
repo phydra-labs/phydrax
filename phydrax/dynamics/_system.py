@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
+from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 from ._layout import InputLayout, StateLayout
 
 
@@ -527,8 +528,7 @@ class CallableInputPolicy(AbstractInputPolicy):
 class HeldInputPolicy(AbstractInputPolicy):
     """State-independent interval values on one strictly increasing time grid."""
 
-    times: Array
-    values: Array
+    reconstruction: SampledSeriesReconstruction
     input_layout: InputLayout
     node_side: Literal["left", "right"] = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -547,6 +547,7 @@ class HeldInputPolicy(AbstractInputPolicy):
             raise TypeError("input_layout must be an InputLayout.")
         if node_side not in ("left", "right"):
             raise ValueError("node_side must be 'left' or 'right'.")
+        identifier = _identifier(policy_id, "HeldInputPolicy policy_id")
         times_ = _inexact(times)
         values_ = _inexact(values)
         if times_.ndim != 1 or int(times_.size) < 2:
@@ -566,11 +567,34 @@ class HeldInputPolicy(AbstractInputPolicy):
             jnp.any(~jnp.isfinite(values_)),
             "HeldInputPolicy values must be finite.",
         )
-        self.times = times_
-        self.values = values_
+        support = SeriesSupport(
+            times_,
+            coordinate_name="time",
+            coordinate_id=f"{identifier}:time",
+        )
+        series = SampledSeries(
+            support,
+            values_,
+            alignment="edge",
+            series_id=f"{identifier}:values",
+        )
+        self.reconstruction = SampledSeriesReconstruction(
+            series,
+            interpolation="interval_hold",
+            bounds="error",
+            node_side=node_side,
+        )
         self.input_layout = input_layout
         self.node_side = node_side
-        self.policy_id = _identifier(policy_id, "HeldInputPolicy policy_id")
+        self.policy_id = identifier
+
+    @property
+    def times(self) -> Array:
+        return self.reconstruction.series.support.coordinates
+
+    @property
+    def values(self) -> Array:
+        return self.reconstruction.series.values
 
     def evaluate(
         self,
@@ -588,9 +612,7 @@ class HeldInputPolicy(AbstractInputPolicy):
             ~jnp.isfinite(time) | (time < self.times[0]) | (time > self.times[-1]),
             "HeldInputPolicy coordinate lies outside its time grid.",
         )
-        side = "left" if self.node_side == "left" else "right"
-        index = jnp.searchsorted(self.times, time, side=side) - 1
-        return self.values[jnp.clip(index, 0, int(self.values.shape[0]) - 1)]
+        return self.reconstruction.evaluate(time).values
 
     def evaluate_step(
         self,

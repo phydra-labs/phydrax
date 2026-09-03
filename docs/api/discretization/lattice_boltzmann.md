@@ -344,6 +344,73 @@
 
 ::: phydrax.discretization.FusedLatticeBoltzmannExecutionPlan
 
+## Operating envelope, CHT, and candidate qualification
+
+Operating admission and release status are separate. An
+`LatticeBoltzmannOperatingEnvelopePlan` freezes the exact numerical/hardware tuple and
+nondimensional limits, then `prepare(...)` performs a per-device resource preflight.
+`PreparedLatticeBoltzmannOperatingEnvelope.execute(point)` returns named checks and
+margins. Commercial factory profiles remain unsigned and unreleased even after their
+coverage, point, deployment, parity, and dependency evidence passes.
+
+`ConjugateThermalPlan` prepares a resolved resistance interface and exchanges passive
+sensible energy with exactly equal-and-opposite fluid/solid heat rates. It is not a
+compressible total-energy or solid-mechanics model.
+
+::: phydrax.discretization.LatticeBoltzmannHardwareTarget
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannOperatingPoint
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannOperatingEnvelopePlan
+
+---
+
+::: phydrax.discretization.PreparedLatticeBoltzmannOperatingEnvelope
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannQualificationProfile
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannCommercialEvidence
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannDeploymentRecord
+
+---
+
+::: phydrax.discretization.c0_guo_baseline_profiles
+
+---
+
+::: phydrax.discretization.c1_collision_native_forcing_profile
+
+---
+
+::: phydrax.discretization.c2_binary_interface_profiles
+
+---
+
+::: phydrax.discretization.c3_passive_transport_profiles
+
+---
+
+::: phydrax.discretization.ConjugateThermalPlan
+
+---
+
+::: phydrax.discretization.PreparedConjugateThermalPlan
+
+---
+
+::: phydrax.discretization.ConjugateThermalStepResult
+
 ## Equation compilation
 
 ::: phydrax.equations.LatticeBoltzmannProblem

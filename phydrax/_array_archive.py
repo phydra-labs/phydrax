@@ -24,6 +24,12 @@ import jax.numpy as jnp
 import numpy as np
 
 
+_DEFAULT_MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+_DEFAULT_MAX_ARRAY_BYTES = 4 * 1024 * 1024 * 1024
+_DEFAULT_MAX_TOTAL_BYTES = 16 * 1024 * 1024 * 1024
+_DEFAULT_MAX_MEMBERS = 100_001
+
+
 class ArrayArchiveError(RuntimeError):
     """Base class for portable array-archive failures."""
 
@@ -611,7 +617,7 @@ def read_array_archive(
                 manifest = json.loads(manifest_text)
             except (json.JSONDecodeError, RecursionError) as error:
                 raise ArrayArchiveCorruptionError(
-                    "Archive manifest is invalid JSON."
+                    "Archive manifest is invalid finite JSON."
                 ) from error
             if not isinstance(manifest, dict):
                 raise ArrayArchiveCorruptionError("Archive manifest must be an object.")
@@ -712,6 +718,62 @@ def read_array_archive(
         raise ArrayArchiveCorruptionError(
             f"Cannot read array archive {source}."
         ) from error
+
+
+def _read_zip_member(
+    archive: zipfile.ZipFile,
+    name: str,
+    maximum_bytes: int,
+    /,
+) -> bytes:
+    information = archive.getinfo(name)
+    if information.file_size > maximum_bytes:
+        raise ArrayArchiveCorruptionError(
+            f"Archive member {name!r} exceeds its configured byte bound."
+        )
+    with archive.open(information, mode="r") as stream:
+        payload = stream.read(maximum_bytes + 1)
+    if len(payload) > maximum_bytes or len(payload) != information.file_size:
+        raise ArrayArchiveCorruptionError(
+            f"Archive member {name!r} changed size while reading."
+        )
+    return payload
+
+
+def _canonical_member_name(name: str, /) -> bool:
+    if name == "manifest.json":
+        return True
+    parts = name.split("/")
+    return (
+        len(parts) == 2
+        and parts[0] == "arrays"
+        and len(parts[1]) == 10
+        and parts[1].endswith(".npy")
+        and parts[1][:6].isdigit()
+    )
+
+
+def _unique_json_object(
+    pairs: list[tuple[str, object]],
+    /,
+) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for name, item in pairs:
+        if name in value:
+            raise ValueError(f"Duplicate JSON member {name!r} is forbidden.")
+        value[name] = item
+    return value
+
+
+def _reject_json_constant(value: str, /) -> object:
+    raise ValueError(f"Non-finite JSON constant {value!r} is forbidden.")
+
+
+def _positive_archive_limit(value: int, name: str, /) -> int:
+    normalized = int(value)
+    if normalized <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return normalized
 
 
 __all__ = [

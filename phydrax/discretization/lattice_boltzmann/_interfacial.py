@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ._lattice import LatticeBoltzmannVelocitySet
 
 
@@ -185,6 +188,164 @@ def _fallback_tangent(wall_normal: Array, /) -> Array:
     raise ValueError("Static wetting is defined only in dimension two or three.")
 
 
+class DynamicWettingEvaluation(StrictModule, NonTrainableState):
+    """Constitutive contact-angle observation and envelope predicate."""
+
+    contact_angle: Array
+    capillary_number: Array
+    successful: Array
+    plan_id: str = eqx.field(static=True)
+
+
+class ConstitutiveDynamicWettingPlan(StrictModule, NonTrainableState):
+    """Signed Cox--Voinov contact-line law with explicit validity bounds.
+
+    The law is evaluated without clipping. A capillary number or predicted
+    angle outside the selected range is rejected, so a caller cannot silently
+    turn the model into static or saturated-angle wetting.
+    """
+
+    equilibrium_contact_angle: float = eqx.field(static=True)
+    receding_contact_angle: float = eqx.field(static=True)
+    advancing_contact_angle: float = eqx.field(static=True)
+    microscopic_length: float = eqx.field(static=True)
+    macroscopic_length: float = eqx.field(static=True)
+    logarithmic_length_ratio: float = eqx.field(static=True)
+    maximum_absolute_capillary_number: float = eqx.field(static=True)
+    model_label: str = "cox-voinov"
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        equilibrium_contact_angle: float,
+        receding_contact_angle: float,
+        advancing_contact_angle: float,
+        /,
+        *,
+        microscopic_length: float,
+        macroscopic_length: float,
+        maximum_absolute_capillary_number: float,
+    ):
+        equilibrium = float(equilibrium_contact_angle)
+        receding = float(receding_contact_angle)
+        advancing = float(advancing_contact_angle)
+        microscopic = float(microscopic_length)
+        macroscopic = float(macroscopic_length)
+        maximum_capillary = float(maximum_absolute_capillary_number)
+        if (
+            not np.isfinite(equilibrium)
+            or not np.isfinite(receding)
+            or not np.isfinite(advancing)
+            or not (0.0 < receding <= equilibrium <= advancing < np.pi)
+        ):
+            raise ValueError(
+                "Dynamic contact angles must satisfy 0 < receding <= equilibrium "
+                "<= advancing < pi."
+            )
+        if (
+            not np.isfinite(microscopic)
+            or not np.isfinite(macroscopic)
+            or microscopic <= 0.0
+            or macroscopic <= microscopic
+        ):
+            raise ValueError(
+                "Cox--Voinov lengths require 0 < microscopic_length < macroscopic_length."
+            )
+        if not np.isfinite(maximum_capillary) or maximum_capillary <= 0.0:
+            raise ValueError(
+                "maximum_absolute_capillary_number must be finite and positive."
+            )
+        logarithmic_ratio = float(np.log(macroscopic / microscopic))
+        self.equilibrium_contact_angle = equilibrium
+        self.receding_contact_angle = receding
+        self.advancing_contact_angle = advancing
+        self.microscopic_length = microscopic
+        self.macroscopic_length = macroscopic
+        self.logarithmic_length_ratio = logarithmic_ratio
+        self.maximum_absolute_capillary_number = maximum_capillary
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "constitutive-dynamic-wetting",
+                "model": self.model_label,
+                "equilibrium_contact_angle": equilibrium,
+                "receding_contact_angle": receding,
+                "advancing_contact_angle": advancing,
+                "microscopic_length": microscopic,
+                "macroscopic_length": macroscopic,
+                "logarithmic_length_ratio": logarithmic_ratio,
+                "maximum_absolute_capillary_number": maximum_capillary,
+            }
+        )
+
+    def evaluate(
+        self,
+        contact_line_speed: ArrayLike,
+        dynamic_viscosity: ArrayLike,
+        surface_tension: ArrayLike,
+        /,
+    ) -> DynamicWettingEvaluation:
+        speed = jnp.asarray(contact_line_speed)
+        viscosity = jnp.asarray(dynamic_viscosity, dtype=speed.dtype)
+        tension = jnp.asarray(surface_tension, dtype=speed.dtype)
+        if speed.shape != () or viscosity.shape != () or tension.shape != ():
+            raise ValueError("Dynamic wetting inputs must be scalar.")
+        capillary = viscosity * speed / tension
+        angle_cube = (
+            self.equilibrium_contact_angle**3
+            + 9.0 * capillary * self.logarithmic_length_ratio
+        )
+        candidate = jnp.cbrt(angle_cube)
+        successful = (
+            jnp.isfinite(speed)
+            & jnp.isfinite(viscosity)
+            & (viscosity > 0.0)
+            & jnp.isfinite(tension)
+            & (tension > 0.0)
+            & jnp.isfinite(capillary)
+            & (jnp.abs(capillary) <= self.maximum_absolute_capillary_number)
+            & jnp.isfinite(candidate)
+            & (candidate >= self.receding_contact_angle)
+            & (candidate <= self.advancing_contact_angle)
+        )
+        return DynamicWettingEvaluation(candidate, capillary, successful, self.plan_id)
+
+
+def constitutive_dynamic_contact_angle_normal(
+    interface_normal: ArrayLike,
+    wall_normal: ArrayLike,
+    wetting_mask: ArrayLike,
+    contact_line_speed: ArrayLike,
+    dynamic_viscosity: ArrayLike,
+    surface_tension: ArrayLike,
+    plan: ConstitutiveDynamicWettingPlan,
+    /,
+    *,
+    epsilon: ArrayLike = 1.0e-14,
+) -> tuple[Array, DynamicWettingEvaluation]:
+    """Apply the selected dynamic law or fail instead of clipping its angle."""
+
+    if not isinstance(plan, ConstitutiveDynamicWettingPlan):
+        raise TypeError("plan must be a ConstitutiveDynamicWettingPlan.")
+    evaluation = plan.evaluate(
+        contact_line_speed,
+        dynamic_viscosity,
+        surface_tension,
+    )
+    angle = eqx.error_if(
+        evaluation.contact_angle,
+        ~evaluation.successful,
+        "Dynamic wetting observation is outside its constitutive envelope.",
+    )
+    normal = static_contact_angle_normal(
+        interface_normal,
+        wall_normal,
+        angle,
+        wetting_mask,
+        epsilon=epsilon,
+    )
+    return normal, evaluation
+
+
 def static_contact_angle_normal(
     interface_normal: ArrayLike,
     wall_normal: ArrayLike,
@@ -334,7 +495,10 @@ def natural_wetting_gradient(
 
 
 __all__ = [
+    "ConstitutiveDynamicWettingPlan",
+    "DynamicWettingEvaluation",
     "InterfacialFields",
+    "constitutive_dynamic_contact_angle_normal",
     "continuum_surface_force",
     "isotropic_divergence",
     "isotropic_gradient",
