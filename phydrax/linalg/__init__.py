@@ -58,7 +58,16 @@ from ._certificates import (
     SpectralInterval,
     StabilityLowerBound,
 )
-from ._constraints import ConstraintMap
+from ._constraint_operators import (
+    ConstraintFactorizationKind,
+    ConstraintOperatorEvidence,
+    ConstraintOperatorKind,
+    ConstraintOperatorPlan,
+    prepare_constraint_operator,
+    PreparedConstraintOperator,
+    refresh_constraint_operator,
+)
+from ._constraints import compose_constraint_maps, ConstraintMap
 from ._costs import (
     LinearCostEstimate,
     OperatorActionCostEstimate,
@@ -347,6 +356,7 @@ from ._rational_functions import (
 from ._real_coordinates import (
     AbstractRealCoordinateMap,
     ComplexCartesianCoordinates,
+    HermitianInvolutionCoordinates,
     prepare_real_coordinate_tree,
     PreparedRealCoordinateTree,
     RealCoordinateDomainKind,
@@ -578,6 +588,14 @@ __all__ = [
     "LocalEliminationPlan",
     "LocalEliminationResult",
     "ConstraintMap",
+    "compose_constraint_maps",
+    "ConstraintFactorizationKind",
+    "ConstraintOperatorEvidence",
+    "ConstraintOperatorKind",
+    "ConstraintOperatorPlan",
+    "prepare_constraint_operator",
+    "PreparedConstraintOperator",
+    "refresh_constraint_operator",
     "HermitianFunctionResult",
     "HermitianSpectrum",
     "HermitianPrecisionPolicy",
@@ -637,6 +655,7 @@ __all__ = [
     "CertificateScope",
     "ConjugateGradient",
     "ComplexCartesianCoordinates",
+    "HermitianInvolutionCoordinates",
     "PreparedAlgebraCoordinates",
     "CoordaxSpace",
     "ChebyshevBoundsSource",

@@ -68,6 +68,23 @@ class AbstractCondition(StrictModule):
     on: AbstractAttribute[ConditionSupport]
     label: AbstractAttribute[str | None]
 
+    def as_condition(
+        self,
+        *,
+        fields: Any = None,
+        codomain: Any = None,
+        condition_id: str | None = None,
+    ):
+        """Lower this legacy declaration to the typed condition IR."""
+        from ._lowering import lower_condition
+
+        return lower_condition(
+            self,
+            fields=fields,
+            codomain=codomain,
+            condition_id=condition_id,
+        )
+
 
 class AbstractResidualCondition(AbstractCondition):
     """Condition represented by a pointwise residual field."""

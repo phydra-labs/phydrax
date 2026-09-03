@@ -26,6 +26,7 @@ from ..geometry import (
     RejectionSamplingPlan,
     SamplingResult,
 )
+from ..geometry._contracts import ClosestPointResult
 from ..geometry._sampling import require_complete
 from ._base import _make_compact_boundary_factor, AbstractGeometry
 
@@ -123,6 +124,13 @@ class GeometryDomain(AbstractGeometry):
         if points_.ndim == 0:
             points_ = jnp.repeat(points_[None], self.spatial_dim)
         return self.geometry.boundary_field(points_)
+
+    def closest_point(self, points: Array, /) -> ClosestPointResult:
+        """Evaluate a capability-certified closest-point map."""
+        points_ = jnp.asarray(points, dtype=float)
+        if points_.ndim == 0:
+            points_ = jnp.repeat(points_[None], self.spatial_dim)
+        return self.geometry.closest_point(points_)
 
     @property
     def boundary_ansatz_factor(self) -> Callable[[Array], Array]:

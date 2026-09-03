@@ -23,8 +23,8 @@ from ...linalg import (
     ArraySpace,
     BlockSpace,
     ConstraintMap,
-    FunctionLinearOperator,
 )
+from ...sparse import EdgeRelation, SparseCoordinateOperator
 from ._identity import InterfaceId
 
 
@@ -600,7 +600,7 @@ def _lower_c0_constraint_map(
         if representative not in reduced_by_representative:
             reduced_by_representative[representative] = len(reduced_by_representative)
         full_to_reduced.append(reduced_by_representative[representative])
-    route = jnp.asarray(full_to_reduced, dtype=jnp.int32)
+    route = np.asarray(full_to_reduced, dtype=np.int32)
     reduced_space = ArraySpace(
         (len(reduced_by_representative),),
         dtype=left_dtype,
@@ -613,23 +613,17 @@ def _lower_c0_constraint_map(
             }
         ),
     )
-
-    def prolong(reduced):
-        return full_space.unflatten(reduced[route])
-
-    def transpose(full):
-        coordinates = full_space.flatten(full)
-        return (
-            jnp.zeros((reduced_space.size,), dtype=coordinates.dtype)
-            .at[route]
-            .add(coordinates)
-        )
-
-    operator = FunctionLinearOperator(
-        prolong,
+    relation = EdgeRelation(
+        route,
+        np.arange(full_size, dtype=np.int32),
+        source_size=reduced_space.size,
+        target_size=full_size,
+    )
+    operator = SparseCoordinateOperator(
+        relation,
+        jnp.ones((full_size,), dtype=left_dtype),
         source=reduced_space,
         target=full_space,
-        transpose_action=transpose,
         operator_id=canonical_fingerprint(
             {
                 "kind": "iga-c0-prolongation",

@@ -17,10 +17,12 @@ from jaxtyping import Array, ArrayLike
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._strict import StrictModule
+from ._constraint_conditioning import (
+    ConstraintLikelihoodTerm,
+    LinearGaussianConstraintConditioner,
+)
 from ._gp_actions import AbstractGaussianProcessActionPolicy
 from ._gp_backend import (
-    exact_gp_conditioner_from_covariances,
-    exact_gp_log_probability,
     fitc_factors_from_covariances,
     sparse_gp_conditioner_from_covariances,
     sparse_gp_log_probability_from_factors,
@@ -633,14 +635,19 @@ class FunctionalGaussianProcessDiscrepancy(StrictModule):
         noise = state.observation_noise(self.design)
         residual = self.residual(physical_mean)
         if state.inducing_design is None:
-            covariance = functional_kernel_matrix(
-                state.kernel,
-                self.design,
-                self.design,
-            ) + jnp.diag(noise * noise + state.jitter)
-            return exact_gp_log_probability(
+            likelihood = ConstraintLikelihoodTerm(
                 residual,
-                jnp.linalg.cholesky(covariance),
+                noise_scale=noise,
+                likelihood_id="functional-gp-constraint",
+            )
+            conditioner = LinearGaussianConstraintConditioner(
+                numerical_jitter=state.jitter,
+                rank_tolerance=state.jitter,
+            )
+            return conditioner.log_evidence_from_covariance(
+                jnp.zeros_like(residual),
+                functional_kernel_matrix(state.kernel, self.design, self.design),
+                likelihood,
             )
         features, diagonal, correction_cholesky, _ = _functional_fitc_factors(
             state,
@@ -673,24 +680,38 @@ class FunctionalGaussianProcessDiscrepancy(StrictModule):
         residual = self.residual(physical_mean)
         noise = state.observation_noise(self.design)
         if state.inducing_design is None:
-            observation_covariance = functional_kernel_matrix(
-                state.kernel,
-                self.design,
-                self.design,
-            ) + jnp.diag(noise * noise + state.jitter)
-            projection, covariance, variance = exact_gp_conditioner_from_covariances(
-                jnp.linalg.cholesky(observation_covariance),
+            likelihood = ConstraintLikelihoodTerm(
+                residual,
+                noise_scale=noise,
+                likelihood_id="functional-gp-constraint",
+            )
+            conditioner = LinearGaussianConstraintConditioner(
+                numerical_jitter=state.jitter,
+                rank_tolerance=state.jitter,
+            )
+            conditioned = conditioner.condition_from_covariances(
+                jnp.zeros((resolved_query.num_observations,), dtype=residual.dtype),
                 functional_kernel_matrix(
                     state.kernel,
                     resolved_query,
+                    resolved_query,
+                ),
+                jnp.zeros_like(residual),
+                functional_kernel_matrix(
+                    state.kernel,
+                    self.design,
                     self.design,
                 ),
                 functional_kernel_matrix(
                     state.kernel,
                     resolved_query,
-                    resolved_query,
+                    self.design,
                 ),
+                likelihood,
             )
+            mean = conditioned.posterior_mean
+            covariance = conditioned.posterior_covariance
+            variance = jnp.maximum(jnp.diag(covariance), 0.0)
         else:
             features, diagonal, correction_cholesky, inducing_cholesky = (
                 _functional_fitc_factors(state, self.design, noise)
@@ -707,9 +728,10 @@ class FunctionalGaussianProcessDiscrepancy(StrictModule):
                 correction_cholesky=correction_cholesky,
                 inducing_cholesky=inducing_cholesky,
             )
+            mean = projection @ residual
         return FunctionalGaussianProcessCondition(
             design=resolved_query,
-            mean=projection @ residual,
+            mean=mean,
             covariance=covariance,
             variance=variance,
         )

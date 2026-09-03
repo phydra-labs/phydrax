@@ -27,6 +27,49 @@ but do not sample, integrate, weight, or choose soft versus exact treatment.
             - __init__
             - residual
 
+## Typed operator conditions
+
+The typed condition IR separates four facts:
+
+1. ordered input fields (`FieldSpec` and `ProductFieldSpec`);
+2. a finite, field, or product codomain;
+3. a complete operator action and its certified capabilities;
+4. an equality, inequality, cone, complementarity, or noisy-observation
+   relation with a deterministic, samplewise, almost-sure, expectation, or
+   chance quantifier.
+
+`bind_condition` binds external field names exactly once and rejects missing,
+extra, reordered, shape-changing, or dtype-changing values. A callable operator
+is apply-only by default; it cannot opt itself into exact linear realization.
+
+`PointJetAction`, `LinearReductionAction`, `MatrixLinearFunctional`, and
+`LinearFunctional` provide the finite linear route. `PointJet` and `TraceJet`
+retain geometric derivative declarations. A `PreparedLinearReduction` is the
+only accepted hard moment action because it freezes explicit nodes, coefficients,
+axes, precision, and provenance.
+
+::: phydrax.conditions.Condition
+
+---
+
+::: phydrax.conditions.LinearFunctional
+
+---
+
+::: phydrax.conditions.MatrixLinearFunctional
+
+---
+
+::: phydrax.conditions.PointJetAction
+
+---
+
+::: phydrax.conditions.LinearReductionAction
+
+---
+
+::: phydrax.conditions.bind_condition
+
 ## Generic penalties
 
 Residual and observation penalties integrate a squared pointwise mismatch.
