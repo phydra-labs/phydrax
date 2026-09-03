@@ -7,6 +7,7 @@
 from . import (
     astrodynamics,
     astrophysics,
+    cardiovascular,
     cellular_mechanics,
     compact_objects,
     contact,
@@ -38,6 +39,7 @@ from .contact import (
 __all__ = [
     "astrodynamics",
     "astrophysics",
+    "cardiovascular",
     "cellular_mechanics",
     "compact_objects",
     "contact",

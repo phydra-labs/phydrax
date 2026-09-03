@@ -265,6 +265,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         *,
         action_kind: TensorProductAction,
         valid: ArrayLike | None = None,
+        properties: OperatorProperties | None = None,
     ):
         if not isinstance(plan, SumFactorizationPlan):
             raise TypeError("plan must be SumFactorizationPlan.")
@@ -301,14 +302,21 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         self.valid = valid_
         self.action_kind = kind
         self.global_size = size
-        self.properties = OperatorProperties(
-            self_adjoint=True,
-            positive_semidefinite=True,
-            evidence={
-                "self_adjoint": "construction",
-                "positive_semidefinite": "construction",
-            },
+        properties_ = (
+            OperatorProperties(
+                self_adjoint=True,
+                positive_semidefinite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_semidefinite": "construction",
+                },
+            )
+            if properties is None
+            else properties
         )
+        if not isinstance(properties_, OperatorProperties):
+            raise TypeError("properties must be OperatorProperties or None.")
+        self.properties = properties_
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "tensor-product-partial-assembly",
@@ -344,7 +352,62 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         )
 
     def transpose_mv(self, value: ArrayLike, /) -> Array:
-        return self.mv(value)
+        value_ = jnp.asarray(value)
+        if value_.shape != (self.global_size,):
+            raise ValueError("Tensor-product input shape is incompatible.")
+        nodal_shape = self.plan.tabulation.nodal_shape
+        local = value_[self.gathers].reshape((self.gathers.shape[0],) + nodal_shape)
+        if self.action_kind == "mass":
+            quadrature = self.plan.interpolate(local)
+            local_output = self.plan.interpolate_transpose(
+                self.quadrature_data * quadrature
+            )
+        else:
+            gradient = self.plan.gradient(local)
+            flux = ein.contract("...ba,...b->...a", self.quadrature_data, gradient)
+            local_output = self.plan.gradient_transpose(flux)
+        contribution = local_output.reshape(self.gathers.shape)
+        contribution = jnp.where(self.valid[:, None], contribution, 0.0)
+        return (
+            jnp.zeros((self.global_size,), dtype=contribution.dtype)
+            .at[self.gathers]
+            .add(contribution)
+        )
+
+    def as_element_tensor(self, /) -> ElementTensorOperator:
+        local_width = self.gathers.shape[1]
+        identity = jnp.eye(local_width, dtype=self.quadrature_data.dtype).reshape(
+            (local_width,) + self.plan.tabulation.nodal_shape
+        )
+        if self.action_kind == "mass":
+            basis = self.plan.interpolate(identity).reshape((local_width, -1))
+            data = self.quadrature_data.reshape((self.gathers.shape[0], -1))
+            local = ein.contract("cq,iq,jq->cij", data, basis, basis)
+        else:
+            gradients = self.plan.gradient(identity).reshape(
+                (local_width, -1, self.plan.tabulation.dimension)
+            )
+            data = self.quadrature_data.reshape(
+                (
+                    self.gathers.shape[0],
+                    -1,
+                    self.plan.tabulation.dimension,
+                    self.plan.tabulation.dimension,
+                )
+            )
+            local = ein.contract("cqab,iqa,jqb->cij", data, gradients, gradients)
+        return ElementTensorOperator(
+            local,
+            self.gathers,
+            self.gathers,
+            self.global_size,
+            self.global_size,
+            valid=self.valid,
+            properties=self.properties,
+        )
+
+    def as_sparse_coordinate(self, /) -> SparseCoordinateOperator:
+        return self.as_element_tensor().as_sparse_coordinate()
 
     def as_linear_operator(self, /) -> FunctionLinearOperator:
         space = ArraySpace((self.global_size,), dtype=self.quadrature_data.dtype)
