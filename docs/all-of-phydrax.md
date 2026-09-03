@@ -239,9 +239,12 @@ share those identities. Bounded maximal profiles add fixed-layout scalar transfe
 global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
 merger products, stochastic star populations, two-level AMR, sparse occupied Morton
 point hierarchies, isolated Barnes--Hut, sparse occupied-level Cartesian FMM, and
-BH-short-range TreePM. Core discretization additionally provides fixed-resolution sparse
-voxel fields and covering, face-balanced dyadic cell topology with conservative
-adaptation and explicit-face finite-volume lowering. Every profile states unsupported
+BH-short-range TreePM. Core discretization additionally provides fixed-resolution
+sparse voxel fields; covering, face-balanced dyadic cell topology with conservative
+adaptation and explicit-face finite-volume lowering; and oriented finite-footprint
+surfels with physical surface measure, primitive bounds, ray queries, local voxel
+projection, atlas/mesh materialization, and branchwise differentiation. Every profile
+states unsupported
 species, topology, approximation, capacity, distribution, and communication branches;
 precision parity beyond qualified profiles, multilevel distributed AMR, distributed
 trees, production feedback, and full release coverage remain separate qualification

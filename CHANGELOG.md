@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added first-class surfel discretizations with stable point ownership,
+  validated oriented tangent footprints, physical surface quadrature,
+  boundary-atlas and simplicial materialization, Morton primitive bounds,
+  bounded ray queries, and confidence-aware local sparse-voxel projection.
 - Added deterministic explicit lowest-order H1 elements on conformingly
   segmented star-shaped polygons, with transported witness-fan condensation,
   exact trace and affine-reproduction evidence, component-aware constraints,

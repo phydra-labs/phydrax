@@ -239,31 +239,6 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             correction = correction + jacobian @ first_moment[component]
         return value - correction
 
-    @staticmethod
-    def _point_leaf_nodes(hierarchy, point_capacity: int):
-        node_capacity = hierarchy.node_active.size
-        node_slots = jnp.arange(node_capacity, dtype=jnp.int32)
-        leaf_slots = jnp.nonzero(
-            hierarchy.node_is_leaf,
-            size=node_capacity,
-            fill_value=node_capacity,
-        )[0].astype(jnp.int32)
-        leaf_valid = node_slots < hierarchy.evidence.active_leaves
-        safe_leaf = jnp.minimum(leaf_slots, node_capacity - 1)
-        starts = jnp.where(
-            leaf_valid, hierarchy.node_item_starts[safe_leaf], point_capacity
-        )
-        order = jnp.argsort(starts, stable=True)
-        ordered_slots = leaf_slots[order]
-        ordered_starts = starts[order]
-        storage = jnp.arange(point_capacity, dtype=jnp.int32)
-        rank = jnp.searchsorted(ordered_starts, storage, side="right") - 1
-        return jnp.where(
-            hierarchy.sorted_active,
-            ordered_slots[jnp.maximum(rank, 0)],
-            -1,
-        ).astype(jnp.int32)
-
     def _moments(self, source, hierarchy, point_leaf, sorted_logical):
         node_capacity = hierarchy.node_active.size
         combined_capacity = sorted_logical.shape[0]
@@ -406,7 +381,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             stable_ids=jnp.arange(combined_capacity, dtype=jnp.int64),
         )
         hierarchy = level_tree.hierarchy
-        point_leaf = self._point_leaf_nodes(hierarchy, combined_capacity)
+        point_leaf = hierarchy.sorted_point_leaf_slots
         sorted_logical = hierarchy.storage_to_logical
         monopole, first_moment = self._moments(
             source, hierarchy, point_leaf, sorted_logical

@@ -34,6 +34,11 @@ from ._point_hierarchy import (
     MortonPointHierarchyPlan,
     MortonPointHierarchyState,
 )
+from ._primitive_bounds import (
+    MortonPrimitiveBoundsEvidence,
+    MortonPrimitiveBoundsPlan,
+    MortonPrimitiveBoundsState,
+)
 from ._voxel import (
     PreparedSparseVoxelGrid,
     SparseVoxelBuildEvidence,
@@ -60,6 +65,9 @@ __all__ = [
     "MortonHierarchyTransition",
     "MortonPointHierarchyPlan",
     "MortonPointHierarchyState",
+    "MortonPrimitiveBoundsEvidence",
+    "MortonPrimitiveBoundsPlan",
+    "MortonPrimitiveBoundsState",
     "PreparedSparseVoxelGrid",
     "SparseVoxelBuildEvidence",
     "SparseVoxelDepositResult",

@@ -131,6 +131,7 @@ nav:
         - Differentiable signal processing: "guides_signal_processing.md"
         - Discretization: "guides_discretization.md"
         - Sparse spatial hierarchies: "guides_sparse_spatial_hierarchies.md"
+        - Surfels: "guides_surfels.md"
         - Computational topology: "guides_computational_topology.md"
         - Advanced topology: "guides_advanced_topology.md"
         - Particle methods: "guides_particle_methods.md"

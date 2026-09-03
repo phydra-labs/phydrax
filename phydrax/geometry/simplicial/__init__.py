@@ -18,6 +18,7 @@ from ._regions import (
     SegmentQueryResult,
     TriangleSurface,
 )
+from ._surfels import PreparedSimplicialSurfels, SimplicialSurfelPlan
 from ._topology import SegmentTopology, TriangleTopology
 
 
@@ -26,12 +27,14 @@ __all__ = [
     "MeshQueryResult",
     "MeshRegion",
     "mesh_region_from_source",
+    "PreparedSimplicialSurfels",
     "PlanarMeshRegion",
     "planar_region_from_source",
     "planar_region_from_triangles",
     "SegmentMesh",
     "discrete_operators",
     "SegmentQueryResult",
+    "SimplicialSurfelPlan",
     "SegmentTopology",
     "TriangleBVH",
     "TriangleMesh",

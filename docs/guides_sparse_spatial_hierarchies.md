@@ -72,6 +72,11 @@ the target and evaluate near leaves directly. `opening_angle=0` is the direct
 leaf authority. The reported opening indicator is geometric; it is not
 presented as a relative-force error certificate.
 
+Extended point primitives use `MortonPrimitiveBoundsPlan`. It keeps center
+ownership unchanged while reducing per-item AABBs through leaves and internal
+nodes. Surfels use this view because a tangent footprint may cross its center's
+Morton cell. See [Surfels](guides_surfels.md).
+
 ## Sparse voxel fields
 
 ```python
@@ -151,10 +156,10 @@ adaptation boundary begins a new topology epoch; it is not smoothed implicitly.
 
 Use a dense tensor grid for dense regular stencils. Use a flat cell list for
 uniform short-range particle interactions. Use LBVH for dynamic primitive broad
-phase. Use a Morton point hierarchy for clustered or long-range particles. Use
-a sparse voxel grid for sparse fixed-resolution fields. Use a dyadic topology
-when physical cell resolution and conservative coarse/fine interfaces are part
-of the model.
+phase. Use a Morton point hierarchy for clustered or long-range particles. Add
+primitive bounds for finite-support points such as surfels. Use a sparse voxel
+grid for sparse fixed-resolution fields. Use a dyadic topology when physical
+cell resolution and conservative coarse/fine interfaces are part of the model.
 
 ## Qualification tools
 
@@ -164,6 +169,10 @@ of the model.
   support coverage, and sampling timing for dense and narrow-band layouts.
 - `tools/dyadic_amr_benchmarks.py` records adaptation and balance work,
   coarse/fine face lowering, finite-volume timing, and constant-state defect.
+- `tools/surfel_substrate_benchmarks.py` records surfel realization, hierarchy,
+  primitive-bound refit, and ray-query behavior.
+- `tools/surfel_voxel_benchmarks.py` records bounded overlap routes, local
+  implicit reconstruction, and plane error.
 
 Small systems should continue to use direct or dense authorities when the
 measured crossover favors them.
