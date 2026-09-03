@@ -86,6 +86,12 @@ Most workflows are composing a few primitives:
   exact construction-order search, standards clauses, reliability, calibration,
   evidence acquisition, and immutable digital-twin ancestry extend member-network
   mechanics without erasing model fidelity or applicability.
+- **Native robotics**: secure loss-negotiated URDF adaptation, fixed-base
+  hinge/prismatic kinematics and dynamics, local frame IK, articulated Delassus
+  contact, status-aware control, immutable environments, reduced rods, and
+  capability-gated optional MJX execution retain explicit evidence and rollback.
+  See the [robotics guide](docs/guides_robotics.md) and
+  [robotics API](docs/api/applications/robotics.md).
 - **Atomistic learning, force fields, and sampling**: scale-identified structures,
   interaction-site coordinate maps, stable-ID topology, classical/learned/many-body
   energy programs, polarization, dense/cell/Verlet and distributed execution,

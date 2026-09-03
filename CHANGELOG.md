@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added a native robotics platform with bounded, fail-closed URDF adaptation;
+  fixed-base 3-D fixed/hinge/prismatic articulation, kinematics, dynamics, and
+  local frame IK; articulated Delassus impact; status-aware rollouts, sampling
+  MPC, and manifold defects; immutable task environments; physical inertial
+  realization and reduced rods; and capability/freshness-aware optional MJX.
 - Added first-class surfel discretizations with stable point ownership,
   validated oriented tangent footprints, physical surface quadrature,
   boundary-atlas and simplicial materialization, Morton primitive bounds,

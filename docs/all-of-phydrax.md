@@ -338,6 +338,23 @@ No communication, mesh, or fallback-solver stack is introduced. See
 [Guide → Partitioned multiphysics coupling](guides_partitioned_coupling.md) and
 [API → Solver → Partitioned coupling](api/solver/coupling.md).
 
+### Native robotics as a composition
+
+`phydrax.applications.robotics` adapts bounded URDF 1.0 trees into the existing
+particle, rigid-body, joint, and reduced-articulation plans; adds local frame IK,
+immutable task environments, stable backend projections, and optional lazy MJX;
+and keeps capability, loss, freshness, status, and rollback evidence explicit.
+Reduced inverse/forward dynamics, articulated Delassus impact, status-aware
+rollouts, fixed-work sampling MPC, manifold Radau defects, inertial realization,
+and planar reduced rods remain with their existing discretization, contact,
+control, interchange, and solid-mechanics owners.
+
+The native tree scope is 3-D fixed-base fixed/hinge/prismatic. It does not claim
+floating bases, ball joints, global IK, general contact-mode gradients, certified
+sampling robustness, hard real time, or universal MJX differentiability. See
+[Guide → Native robotics](guides_robotics.md) and
+[API → Robotics applications](api/applications/robotics.md).
+
 ### Atomistic learning and conservative dynamics
 
 `phydrax.atomistic` specializes the existing material-particle and `GraphIR`
