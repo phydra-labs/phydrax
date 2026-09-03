@@ -100,6 +100,10 @@ notebooks = [
     "marimo>=0.15.2",
     "matplotlib>=3.10.8",
 ]
+robotics-mjx = [
+    "mujoco>=3.3,<4",
+    "mujoco-mjx>=3.3,<4",
+]
 tests = [
     "mpmath>=1.3",
     "PyWavelets>=1.8,<2",

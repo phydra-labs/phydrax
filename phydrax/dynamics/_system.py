@@ -17,20 +17,6 @@ from .._strict import AbstractAttribute, StrictModule
 from ._layout import InputLayout, StateLayout
 
 
-AutonomousContinuousVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
-InputContinuousVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
-AutonomousDiscreteTransition: TypeAlias = Callable[
-    ["DiscreteStepContext", Array, Any], ArrayLike
-]
-InputDiscreteTransition: TypeAlias = Callable[
-    ["DiscreteStepContext", Array, Array, Any], ArrayLike
-]
-SystemVectorField: TypeAlias = (
-    AutonomousContinuousVectorField | InputContinuousVectorField
-)
-SystemTransition: TypeAlias = AutonomousDiscreteTransition | InputDiscreteTransition
-
-
 def _identifier(value: str, owner: str, /) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{owner} must be a non-empty string.")
@@ -40,6 +26,55 @@ def _identifier(value: str, owner: str, /) -> str:
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+
+
+class DiscreteTransitionResult(StrictModule):
+    """Candidate and accepted states with explicit transition termination evidence."""
+
+    candidate_state: Array
+    accepted_state: Array
+    successful: Array
+    status: Array
+
+    def __init__(
+        self,
+        candidate_state: ArrayLike,
+        accepted_state: ArrayLike,
+        successful: ArrayLike,
+        status: ArrayLike,
+    ):
+        candidate = _inexact(candidate_state)
+        accepted = _inexact(accepted_state)
+        successful_array = jnp.asarray(successful, dtype=bool)
+        status_array = jnp.asarray(status, dtype=jnp.int32)
+        if candidate.shape != accepted.shape:
+            raise ValueError(
+                "Discrete transition candidate_state and accepted_state must "
+                "have matching shapes."
+            )
+        if successful_array.shape != ():
+            raise ValueError("Discrete transition successful must be scalar.")
+        if status_array.shape != ():
+            raise ValueError("Discrete transition status must be scalar.")
+        self.candidate_state = candidate
+        self.accepted_state = accepted
+        self.successful = successful_array
+        self.status = status_array
+
+
+AutonomousContinuousVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
+InputContinuousVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
+AutonomousDiscreteTransition: TypeAlias = Callable[
+    ["DiscreteStepContext", Array, Any], ArrayLike | DiscreteTransitionResult
+]
+InputDiscreteTransition: TypeAlias = Callable[
+    ["DiscreteStepContext", Array, Array, Any],
+    ArrayLike | DiscreteTransitionResult,
+]
+SystemVectorField: TypeAlias = (
+    AutonomousContinuousVectorField | InputContinuousVectorField
+)
+SystemTransition: TypeAlias = AutonomousDiscreteTransition | InputDiscreteTransition
 
 
 class DiscreteStepContext(StrictModule):
@@ -155,7 +190,9 @@ class ContinuousSystem(StrictModule):
 class DiscreteSystem(StrictModule):
     """A discrete transition law independent of rollout and analysis policy."""
 
-    transition: Callable[..., ArrayLike]
+    transition: Callable[..., ArrayLike | DiscreteTransitionResult] = eqx.field(
+        static=True
+    )
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)
@@ -225,7 +262,7 @@ class DiscreteSystem(StrictModule):
         self.minimum_step_size = minimum_step
         self.maximum_step_size = maximum_step
 
-    def evaluate(
+    def evaluate_result(
         self,
         context: DiscreteStepContext,
         state: ArrayLike,
@@ -233,7 +270,8 @@ class DiscreteSystem(StrictModule):
         /,
         *,
         inputs: ArrayLike | None = None,
-    ) -> Array:
+    ) -> DiscreteTransitionResult:
+        """Evaluate one transition without discarding candidate/status evidence."""
         state_array = _inexact(state)
         if state_array.shape != self.state_layout.shape:
             raise ValueError(
@@ -278,13 +316,46 @@ class DiscreteSystem(StrictModule):
                     f"inputs must have shape {self.input_layout.shape}; got {input_array.shape}."
                 )
             value = self.transition(context, state_array, input_array, args)
+        if isinstance(value, DiscreteTransitionResult):
+            if value.candidate_state.shape != self.state_layout.shape:
+                raise ValueError(
+                    "DiscreteSystem transition candidate_state has shape "
+                    f"{value.candidate_state.shape}; expected {self.state_layout.shape}."
+                )
+            if value.accepted_state.shape != self.state_layout.shape:
+                raise ValueError(
+                    "DiscreteSystem transition accepted_state has shape "
+                    f"{value.accepted_state.shape}; expected {self.state_layout.shape}."
+                )
+            return value
         output = _inexact(value)
         if output.shape != self.state_layout.shape:
             raise ValueError(
                 "DiscreteSystem transition returned shape "
                 f"{output.shape}; expected {self.state_layout.shape}."
             )
-        return output
+        return DiscreteTransitionResult(
+            output,
+            output,
+            jnp.asarray(True),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+
+    def evaluate(
+        self,
+        context: DiscreteStepContext,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+        *,
+        inputs: ArrayLike | None = None,
+    ) -> Array:
+        return self.evaluate_result(
+            context,
+            state,
+            args,
+            inputs=inputs,
+        ).accepted_state
 
     def __call__(
         self,
@@ -339,13 +410,13 @@ class AbstractInputPolicy(StrictModule):
 class CallableInputPolicy(AbstractInputPolicy):
     """Callable input policy with an explicit layout and identity."""
 
-    policy: Callable[[Array, Array, Any], ArrayLike]
+    policy: Callable[..., ArrayLike]
     input_layout: InputLayout
     policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        policy: Callable[[Array, Array, Any], ArrayLike],
+        policy: Callable[..., ArrayLike],
         /,
         *,
         input_layout: InputLayout,
@@ -475,6 +546,7 @@ __all__ = [
     "ContinuousSystem",
     "DiscreteStepContext",
     "DiscreteSystem",
+    "DiscreteTransitionResult",
     "InputContinuousVectorField",
     "InputDiscreteTransition",
     "SystemTransition",

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added a native robotics platform with bounded, fail-closed URDF adaptation;
+  fixed-base 3-D fixed/hinge/prismatic articulation, kinematics, dynamics, and
+  local frame IK; articulated Delassus impact; status-aware rollouts, sampling
+  MPC, and manifold defects; immutable task environments; physical inertial
+  realization and reduced rods; and capability/freshness-aware optional MJX.
 - Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
   traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
   FMM, brick-backed sparse voxel fields and qualified geometry sampling,
