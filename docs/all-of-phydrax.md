@@ -173,6 +173,14 @@ the sampled minimum denominator, orientation determinant, and reciprocal
 condition margins are not a global injectivity proof. These volume maps are not
 the repository's BRep surface geometry and do not imply trimming, CAD topology,
 shells, multipatch coupling, or three-dimensional solids.
+Explicit polygon H1 elements bind conformingly segmented, star-shaped planar
+polygons to a transported witness fan. A native discrete-harmonic condensation
+removes the private witness coordinate while retaining exact linear traces,
+partition of unity, affine reproduction, actual piecewise gradients, direct
+reconstruction, and dense matrix-free local functional execution. Qualification
+retains fan validity, factorization, rank, spectrum, conditioning, and
+reproduction evidence. Higher order, nonmatching T-junctions, sparse realization,
+and three-dimensional cells remain outside this surface.
 Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
 vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
 projections, explicit projector-kernel stabilization, matrix-free or sparse
@@ -312,6 +320,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
 [Guide → Isogeometric analysis](guides_isogeometric_analysis.md),
+[Guide → Explicit polygon H1](guides_explicit_polygon_h1.md),
 [Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).

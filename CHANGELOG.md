@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added deterministic explicit lowest-order H1 elements on conformingly
+  segmented star-shaped polygons, with transported witness-fan condensation,
+  exact trace and affine-reproduction evidence, component-aware constraints,
+  reconstruction, differentiable geometry refresh, and capability-selected
+  dense matrix-free local functional execution.
 - Added the canonical `phydrax.applications.cardiovascular` platform with
   explicit, duplicate-free anatomy, electrophysiology, mechanics, circulation,
   hemodynamics, observations, and personalization facades; cross-domain
