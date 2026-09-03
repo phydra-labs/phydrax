@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, PyTree
 
 from .._bounds import Bounds
+from .._cone import AbstractConvexCone
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, tree_norm, validate_real_inexact_tree
@@ -242,6 +243,340 @@ class VariationalInequalityProblem(StrictModule):
                 else f"{self.problem_id}/{formulation}"
             ),
         )
+
+
+ProjectionDerivativeMode: TypeAlias = Literal["reject-ambiguous", "selected-generalized"]
+ConeVariationalInequalityFeasibility: TypeAlias = Literal[
+    "allow-infeasible", "preserve-cone"
+]
+
+
+class ProjectionDerivativePolicy(StrictModule):
+    """Derivative semantics for a closed-set projection at branch boundaries."""
+
+    mode: ProjectionDerivativeMode = eqx.field(static=True)
+    branch_tolerance: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mode: ProjectionDerivativeMode = "reject-ambiguous",
+        /,
+        *,
+        branch_tolerance: float = 1e-7,
+    ):
+        tolerance = float(branch_tolerance)
+        if mode not in ("reject-ambiguous", "selected-generalized"):
+            raise ValueError("mode must be 'reject-ambiguous' or 'selected-generalized'.")
+        if not isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("branch_tolerance must be finite and positive.")
+        self.mode = mode
+        self.branch_tolerance = tolerance
+
+    def derivative_status(self, branch_margin: Any, /) -> Array:
+        """Return 0 for smooth, 1 for a selected derivative, and 2 for rejection."""
+        margin = jnp.asarray(branch_margin)
+        ambiguous = jnp.isnan(margin) | (margin <= self.branch_tolerance)
+        return jnp.where(
+            ambiguous,
+            1 if self.mode == "selected-generalized" else 2,
+            0,
+        ).astype(jnp.int32)
+
+
+class ConeVariationalInequalityProblem(StrictModule):
+    """Variational inequality over one represented closed convex cone.
+
+    Only the natural residual is used for a general cone.  Componentwise
+    Fischer--Burmeister formulas are deliberately confined to box and orthant
+    problems.
+    """
+
+    operator: Callable[[Array, Any], Array]
+    cone: AbstractConvexCone
+    problem_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        operator: Callable[[Array, Any], Array],
+        cone: AbstractConvexCone,
+        /,
+        *,
+        problem_id: str = "cone-variational-inequality",
+    ):
+        if not callable(operator):
+            raise TypeError("operator must be callable.")
+        if not isinstance(cone, AbstractConvexCone):
+            raise TypeError("cone must be an AbstractConvexCone.")
+        identifier = str(problem_id)
+        if not identifier:
+            raise ValueError("problem_id must be non-empty.")
+        self.operator = operator
+        self.cone = cone
+        self.problem_id = identifier
+
+    def validate_state(self, state: Any, /) -> Array:
+        value = jnp.asarray(state)
+        if value.ndim != 1 or int(value.shape[0]) != self.cone.dimension:
+            raise ValueError(
+                "Cone VI state must have shape "
+                f"({self.cone.dimension},); got {value.shape}."
+            )
+        if not jnp.issubdtype(value.dtype, jnp.floating):
+            raise TypeError("Cone VI state must be a real floating-point array.")
+        return value
+
+    def evaluate(self, state: Any, args: Any = None, /) -> Array:
+        value = self.validate_state(state)
+        operator_value = jnp.asarray(self.operator(value, args))
+        if operator_value.shape != value.shape:
+            raise ValueError(
+                "Cone VI operator output must have the same shape as the state."
+            )
+        if not jnp.issubdtype(operator_value.dtype, jnp.floating):
+            raise TypeError("Cone VI operator output must be real floating point.")
+        return operator_value.astype(value.dtype)
+
+    def natural_residual(self, state: Any, args: Any = None, /) -> Array:
+        value = self.validate_state(state)
+        operator_value = self.evaluate(value, args)
+        return value - self.cone.project(value - operator_value)
+
+    def as_nonlinear_problem(
+        self,
+        /,
+        *,
+        project_trials: bool = False,
+    ) -> NonlinearSystemProblem:
+        def residual(state, args):
+            raw = self.validate_state(state)
+            value = self.cone.project(raw) if project_trials else raw
+            physical = self.evaluate(value, args)
+            return value - self.cone.project(value - physical), physical
+
+        return NonlinearSystemProblem(
+            residual,
+            has_aux=True,
+            problem_id=(
+                f"{self.problem_id}/natural/projected"
+                if project_trials
+                else f"{self.problem_id}/natural"
+            ),
+        )
+
+
+class ConeComplementarityCertificate(StrictModule):
+    """Independent conic feasibility and natural-map evidence."""
+
+    primal_feasibility_violation: Array
+    dual_feasibility_violation: Array
+    complementarity_residual: Array
+    natural_residual_norm: Array
+    primal_interior_margin: Array
+    projection_branch_margin: Array
+    derivative_status: Array
+    finite: Array
+    primal_feasible: Array
+    dual_feasible: Array
+    complementary: Array
+    derivative_certified: Array
+    certified: Array
+    cone_id: str = eqx.field(static=True)
+    derivative_id: str = eqx.field(static=True)
+
+
+class ConeVariationalInequalityResult(StrictModule):
+    """Native nonlinear result paired with a conic complementarity certificate."""
+
+    nonlinear_result: NonlinearResult
+    certificate: ConeComplementarityCertificate
+
+    @property
+    def state(self) -> Array:
+        return self.nonlinear_result.state
+
+    @property
+    def successful(self) -> Array:
+        return self.nonlinear_result.successful
+
+
+class ConeSemismoothNewton(StrictModule):
+    """Natural-map semismooth Newton method for a represented convex cone."""
+
+    newton: NewtonKrylov
+    feasibility: ConeVariationalInequalityFeasibility = eqx.field(static=True)
+    derivative_policy: ProjectionDerivativePolicy
+    certification_tolerance: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        newton: NewtonKrylov | None = None,
+        feasibility: ConeVariationalInequalityFeasibility = "allow-infeasible",
+        derivative_policy: ProjectionDerivativePolicy | None = None,
+        certification_tolerance: float = 1e-7,
+    ):
+        newton_ = NewtonKrylov() if newton is None else newton
+        policy = (
+            ProjectionDerivativePolicy("selected-generalized")
+            if derivative_policy is None
+            else derivative_policy
+        )
+        tolerance = float(certification_tolerance)
+        if not isinstance(newton_, NewtonKrylov):
+            raise TypeError("newton must be NewtonKrylov or None.")
+        if feasibility not in ("allow-infeasible", "preserve-cone"):
+            raise ValueError("feasibility must be 'allow-infeasible' or 'preserve-cone'.")
+        if not isinstance(policy, ProjectionDerivativePolicy):
+            raise TypeError(
+                "derivative_policy must be ProjectionDerivativePolicy or None."
+            )
+        if not isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("certification_tolerance must be finite and positive.")
+        self.newton = newton_
+        self.feasibility = feasibility
+        self.derivative_policy = policy
+        self.certification_tolerance = tolerance
+
+    def solve(
+        self,
+        problem: ConeVariationalInequalityProblem,
+        initial_state: Any,
+        /,
+        *,
+        termination: NonlinearTermination | None = None,
+        args: Any = None,
+    ) -> ConeVariationalInequalityResult:
+        if not isinstance(problem, ConeVariationalInequalityProblem):
+            raise TypeError("problem must be a ConeVariationalInequalityProblem.")
+        termination_ = NonlinearTermination() if termination is None else termination
+        if not isinstance(termination_, NonlinearTermination):
+            raise TypeError("termination must be NonlinearTermination or None.")
+        initial = problem.validate_state(initial_state)
+        preserve = self.feasibility == "preserve-cone"
+        initial = problem.cone.project(initial) if preserve else initial
+        nonlinear_problem = problem.as_nonlinear_problem(project_trials=preserve)
+        native = self.newton.solve(
+            nonlinear_problem,
+            initial,
+            termination=termination_,
+            args=args,
+        )
+        state = problem.cone.project(native.state) if preserve else native.state
+        transformed, physical = nonlinear_problem.evaluate(state, args)
+        certificate = cone_complementarity_certificate(
+            problem,
+            state,
+            args=args,
+            tolerance=self.certification_tolerance,
+            derivative_policy=self.derivative_policy,
+        )
+        status = jnp.where(
+            (native.status == int(NonlinearStatus.SUCCESS)) & ~certificate.certified,
+            int(NonlinearStatus.RESIDUAL_STAGNATION),
+            native.status,
+        ).astype(jnp.int32)
+        diagnostics = eqx.tree_at(
+            lambda value: (
+                value.final_residual_norm,
+                value.residual_evaluations,
+            ),
+            native.diagnostics,
+            (
+                jnp.linalg.norm(transformed),
+                native.diagnostics.residual_evaluations + 1,
+            ),
+        )
+        provenance = NonlinearProvenance(
+            problem_id=nonlinear_problem.problem_id,
+            method_id=native.provenance.method_id,
+            derivative_id=(
+                "smooth-or-selected-cone-projection"
+                if self.derivative_policy.mode == "selected-generalized"
+                else "smooth-cone-projection-only"
+            ),
+            globalization_id=native.provenance.globalization_id,
+            linear_plan_id=native.provenance.linear_plan_id,
+            notes=f"cone={problem.cone.cone_id};feasibility={self.feasibility}",
+        )
+        result = NonlinearResult(
+            state=state,
+            residual=transformed,
+            auxiliary=physical,
+            status=status,
+            diagnostics=diagnostics,
+            provenance=provenance,
+            attempts=native.attempts,
+        )
+        return ConeVariationalInequalityResult(result, certificate)
+
+
+def cone_complementarity_certificate(
+    problem: ConeVariationalInequalityProblem,
+    state: Any,
+    /,
+    *,
+    args: Any = None,
+    tolerance: float = 1e-7,
+    derivative_policy: ProjectionDerivativePolicy | None = None,
+) -> ConeComplementarityCertificate:
+    """Certify primal/dual cone membership and complementarity independently."""
+    if not isinstance(problem, ConeVariationalInequalityProblem):
+        raise TypeError("problem must be a ConeVariationalInequalityProblem.")
+    tolerance_ = float(tolerance)
+    policy = (
+        ProjectionDerivativePolicy() if derivative_policy is None else derivative_policy
+    )
+    if not isfinite(tolerance_) or tolerance_ <= 0.0:
+        raise ValueError("tolerance must be finite and positive.")
+    if not isinstance(policy, ProjectionDerivativePolicy):
+        raise TypeError("derivative_policy must be ProjectionDerivativePolicy or None.")
+    value = problem.validate_state(state)
+    operator_value = problem.evaluate(value, args)
+    trial = value - operator_value
+    primal_violation = problem.cone.residual(value)
+    dual_violation = problem.cone.dual_residual(operator_value)
+    complementarity = jnp.abs(problem.cone.complementarity(value, operator_value))
+    natural_norm = jnp.linalg.norm(value - problem.cone.project(trial))
+    interior_margin = problem.cone.interior_margin(value)
+    branch_margin = problem.cone.projection_smoothness_margin(trial)
+    derivative_status = policy.derivative_status(branch_margin)
+    finite = jnp.all(
+        jnp.asarray(
+            (
+                jnp.isfinite(primal_violation),
+                jnp.isfinite(dual_violation),
+                jnp.isfinite(complementarity),
+                jnp.isfinite(natural_norm),
+                jnp.isfinite(interior_margin),
+                ~jnp.isnan(branch_margin),
+            )
+        )
+    )
+    primal_feasible = finite & (primal_violation <= tolerance_)
+    dual_feasible = finite & (dual_violation <= tolerance_)
+    complementary = (
+        finite & (complementarity <= tolerance_) & (natural_norm <= tolerance_)
+    )
+    derivative_certified = derivative_status != 2
+    return ConeComplementarityCertificate(
+        primal_feasibility_violation=primal_violation,
+        dual_feasibility_violation=dual_violation,
+        complementarity_residual=complementarity,
+        natural_residual_norm=natural_norm,
+        primal_interior_margin=interior_margin,
+        projection_branch_margin=branch_margin,
+        derivative_status=derivative_status,
+        finite=finite,
+        primal_feasible=primal_feasible,
+        dual_feasible=dual_feasible,
+        complementary=complementary,
+        derivative_certified=derivative_certified,
+        certified=(
+            primal_feasible & dual_feasible & complementary & derivative_certified
+        ),
+        cone_id=problem.cone.cone_id,
+        derivative_id=policy.mode,
+    )
 
 
 class ComplementarityCertificate(StrictModule):
@@ -1197,6 +1532,14 @@ def complementarity_certificate(
 __all__ = [
     "ComplementarityCertificate",
     "ComplementarityFormulation",
+    "ConeComplementarityCertificate",
+    "ConeSemismoothNewton",
+    "ConeVariationalInequalityFeasibility",
+    "ConeVariationalInequalityProblem",
+    "ConeVariationalInequalityResult",
+    "ProjectionDerivativeMode",
+    "ProjectionDerivativePolicy",
+    "cone_complementarity_certificate",
     "PreparedVariationalInequalitySolve",
     "GeneralizedDerivativePolicy",
     "SemismoothNewton",

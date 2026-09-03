@@ -17,7 +17,8 @@ from ..._interpolation._bspline import bspline_jet_stencil
 from ..._interpolation._bspline_grid import BSplineGrid
 from ..._interpolation._rational_spline import RationalSplineJet
 from ..._interpolation._tensor_bspline import TensorBSplineJetPlan
-from ...linalg import ArraySpace, BlockSpace, ConstraintMap, FunctionLinearOperator
+from ...linalg import ArraySpace, BlockSpace, ConstraintMap
+from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -295,6 +296,13 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
             raise ValueError(
                 "IGA field bases must have the geometry parameter dimension and axis names."
             )
+        if any(
+            field.weights_from_geometry and field.basis.layout_id != basis.layout_id
+            for field in field_values
+        ):
+            raise ValueError(
+                "Geometry-owned field weights require the geometry tensor layout."
+            )
         if not isinstance(quadrature_policy, IsogeometricQuadraturePolicy):
             raise TypeError("quadrature_policy must be explicit for S1 IGA.")
         precision = (
@@ -371,7 +379,11 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         return cls(
             basis,
             geometry,
-            IsogeometricFieldSpec(field_name, basis, weights=geometry.weights),
+            IsogeometricFieldSpec(
+                field_name,
+                basis,
+                weights_from_geometry=True,
+            ),
             quadrature_policy=quadrature_policy,
             precision_policy=precision_policy,
             qualification_policy=qualification_policy,
@@ -745,6 +757,9 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                     maximum_derivative_order=order,
                     structural_id=domain.domain_id,
                     is_trace=False,
+                    field_weights_from_geometry=self.fields[
+                        self._field_index(name)
+                    ].weights_from_geometry,
                 )
                 for name in names
             )
@@ -820,6 +835,9 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                     maximum_derivative_order=order,
                     structural_id=group_domain.domain_id,
                     is_trace=True,
+                    field_weights_from_geometry=self.fields[
+                        self._field_index(name)
+                    ].weights_from_geometry,
                 )
                 for name in names
             )
@@ -884,9 +902,13 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         realized = self.default_runtime if runtime is None else runtime
         self.validate_local_runtime(realized)
         weights = (
-            jnp.ones(field.basis.control_shape)
-            if field.weights is None
-            else field.weights
+            realized.weights
+            if field.weights_from_geometry
+            else (
+                jnp.ones(field.basis.control_shape)
+                if field.weights is None
+                else field.weights
+            )
         )
         return RationalSplineJet(tensor, weights).apply(values)
 
@@ -926,27 +948,17 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         reduced_space = ArraySpace(
             (free.size,), dtype=self.precision_policy.evaluation_dtype
         )
-        free_indices = jnp.asarray(free)
-
-        def prolong(values):
-            flat = jnp.zeros(
-                (field.basis.coefficient_count * component_count,), dtype=values.dtype
-            )
-            return (
-                flat.at[free_indices]
-                .set(values)
-                .reshape(field.basis.control_shape + field.component_shape)
-            )
-
-        def transpose(values):
-            return jnp.asarray(values).reshape((-1,))[free_indices]
-
-        operator = FunctionLinearOperator(
-            prolong,
+        relation = EdgeRelation(
+            np.arange(free.size, dtype=np.int32),
+            free,
+            source_size=free.size,
+            target_size=full_space.size,
+        )
+        operator = SparseCoordinateOperator(
+            relation,
+            jnp.ones((free.size,), dtype=full_space.dtype),
             source=reduced_space,
             target=full_space,
-            transpose_action=transpose,
-            closure_convert=False,
             operator_id=canonical_fingerprint(
                 {
                     "kind": "isogeometric-homogeneous-trace-prolongation",

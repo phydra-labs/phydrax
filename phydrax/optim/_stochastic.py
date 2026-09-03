@@ -324,6 +324,170 @@ class ChanceConstraint(StrictModule):
             constraint_id=self.constraint_id,
         )
 
+    def certify(
+        self,
+        parameters: PyTree[Any],
+        batch: SampleBatch,
+        /,
+        *,
+        policy: "ChanceCertificatePolicy",
+        args: Any = None,
+    ) -> "ChanceConstraintCertificate":
+        return certify_chance_constraint(
+            self,
+            parameters,
+            batch,
+            policy=policy,
+            args=args,
+        )
+
+
+ChanceCertificateMethod = Literal["exact-enumeration", "weighted-hoeffding"]
+ChanceSamplingProvenance = Literal[
+    "exact-enumeration", "independent", "correlated", "unknown"
+]
+
+
+class ChanceCertificatePolicy(StrictModule):
+    """Conservative final-event certification for one frozen scenario batch.
+
+    Sampling provenance is an input to the claim, not inferred from weights or
+    sample values.  Exact enumeration and independent weighted Monte Carlo are
+    the only certifiable modes.
+    """
+
+    method: ChanceCertificateMethod = eqx.field(static=True)
+    sampling_provenance: ChanceSamplingProvenance = eqx.field(static=True)
+    confidence: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        method: ChanceCertificateMethod = "weighted-hoeffding",
+        /,
+        *,
+        sampling_provenance: ChanceSamplingProvenance = "unknown",
+        confidence: float = 0.95,
+    ):
+        confidence_ = float(confidence)
+        if method not in ("exact-enumeration", "weighted-hoeffding"):
+            raise ValueError(
+                "method must be 'exact-enumeration' or 'weighted-hoeffding'."
+            )
+        if sampling_provenance not in (
+            "exact-enumeration",
+            "independent",
+            "correlated",
+            "unknown",
+        ):
+            raise ValueError("Unknown chance sampling provenance.")
+        if not isfinite(confidence_) or not 0.0 < confidence_ < 1.0:
+            raise ValueError("confidence must lie strictly between zero and one.")
+        self.method = method
+        self.sampling_provenance = sampling_provenance
+        self.confidence = confidence_
+
+
+class ChanceConstraintCertificate(StrictModule):
+    """Unsmoothed chance-event evidence at a fixed represented realization."""
+
+    empirical_violation_probability: Array
+    upper_violation_probability: Array
+    empirical_satisfaction_probability: Array
+    lower_satisfaction_probability: Array
+    required_satisfaction_probability: Array
+    confidence_radius: Array
+    confidence: Array
+    effective_sample_size: Array
+    squared_weight_sum: Array
+    maximum_weight: Array
+    finite: Array
+    provenance_qualified: Array
+    certified: Array
+    constraint_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    sampling_provenance: str = eqx.field(static=True)
+
+
+def certify_chance_constraint(
+    constraint: ChanceConstraint,
+    parameters: PyTree[Any],
+    batch: SampleBatch,
+    /,
+    *,
+    policy: ChanceCertificatePolicy,
+    args: Any = None,
+) -> ChanceConstraintCertificate:
+    """Certify a chance constraint from unsmoothed events on a frozen batch."""
+    if not isinstance(constraint, ChanceConstraint):
+        raise TypeError("constraint must be a ChanceConstraint.")
+    if not isinstance(batch, SampleBatch):
+        raise TypeError("batch must be a SampleBatch.")
+    if not isinstance(policy, ChanceCertificatePolicy):
+        raise TypeError("policy must be a ChanceCertificatePolicy.")
+    events = jax.vmap(lambda scenario: constraint.event(parameters, scenario, args))(
+        batch.scenarios
+    )
+    if events.shape != (batch.size,):
+        raise ValueError("A chance event must return one scalar per scenario.")
+    if not jnp.issubdtype(events.dtype, jnp.floating):
+        raise TypeError("Chance events must be real floating-point values.")
+    weights = batch.weights
+    violations = events > 0.0
+    empirical_violation = jnp.vdot(weights, violations).real
+    squared_weight_sum = jnp.sum(jnp.square(weights))
+    effective_sample_size = jnp.reciprocal(squared_weight_sum)
+    maximum_weight = jnp.max(weights)
+    if policy.method == "exact-enumeration":
+        radius = jnp.asarray(0.0, dtype=weights.dtype)
+        qualified = policy.sampling_provenance == "exact-enumeration"
+    else:
+        tail_probability = jnp.asarray(1.0 - policy.confidence, dtype=weights.dtype)
+        radius = jnp.sqrt(-0.5 * squared_weight_sum * jnp.log(tail_probability))
+        qualified = policy.sampling_provenance == "independent"
+    certificate_confidence = (
+        1.0 if policy.method == "exact-enumeration" else policy.confidence
+    )
+    upper_violation = jnp.minimum(
+        jnp.asarray(1.0, dtype=weights.dtype),
+        empirical_violation + radius,
+    )
+    empirical_satisfaction = 1.0 - empirical_violation
+    lower_satisfaction = 1.0 - upper_violation
+    required_satisfaction = jnp.asarray(
+        1.0 - constraint.maximum_probability,
+        dtype=weights.dtype,
+    )
+    finite = (
+        jnp.all(jnp.isfinite(events))
+        & jnp.isfinite(empirical_violation)
+        & jnp.isfinite(radius)
+        & jnp.isfinite(effective_sample_size)
+    )
+    provenance_qualified = jnp.asarray(qualified)
+    certified = (
+        finite
+        & provenance_qualified
+        & (upper_violation <= constraint.maximum_probability)
+    )
+    return ChanceConstraintCertificate(
+        empirical_violation_probability=empirical_violation,
+        upper_violation_probability=upper_violation,
+        empirical_satisfaction_probability=empirical_satisfaction,
+        lower_satisfaction_probability=lower_satisfaction,
+        required_satisfaction_probability=required_satisfaction,
+        confidence_radius=radius,
+        confidence=jnp.asarray(certificate_confidence, dtype=weights.dtype),
+        effective_sample_size=effective_sample_size,
+        squared_weight_sum=squared_weight_sum,
+        maximum_weight=maximum_weight,
+        finite=finite,
+        provenance_qualified=provenance_qualified,
+        certified=certified,
+        constraint_id=constraint.constraint_id,
+        method_id=policy.method,
+        sampling_provenance=policy.sampling_provenance,
+    )
+
 
 class StochasticProblem(StrictModule):
     """Scenario loss, sampling policy, risk measure, bounds, and chance constraints."""

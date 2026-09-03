@@ -219,8 +219,8 @@ def test_enforce_traction_enforces_zero_boundary():
     spec = EnforcementSpec(
         condition,
         transform=phx.enforcement.AffineEnforcementTransform(
-            phx.enforcement.equal(
-                phx.enforcement.field_jet("u", "x", 1, normal=True),
+            phx.conditions.equal(
+                phx.conditions.field_jet("u", "x", 1, normal=True),
                 jnp.array([0.0, 0.0]),
             ),
             phx.enforcement.TraceLifting(

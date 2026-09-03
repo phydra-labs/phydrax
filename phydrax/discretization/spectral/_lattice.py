@@ -384,6 +384,29 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
     def sample_shape(self) -> tuple[int, ...]:
         return self.plan.sample_shape
 
+    def real_coordinates(
+        self,
+        /,
+        *,
+        component_shape: tuple[int, ...] = (),
+        reality_tolerance: float = 1e-10,
+        maximum_coordinate_size: int = 10_000_000,
+    ):
+        """Return independent Hermitian coordinates for a real lattice field."""
+        from ._signed_coordinates import SignedHermitianSpectralCoordinates
+
+        layout = self.plan.layout
+        return SignedHermitianSpectralCoordinates(
+            (layout.harmonic_count,),
+            layout.conjugate_indices,
+            np.ones((layout.harmonic_count,), dtype=np.int8),
+            component_shape=component_shape,
+            coefficient_dtype=self.modal_space.dtype,
+            layout_id=layout.layout_id,
+            reality_tolerance=reality_tolerance,
+            maximum_coordinate_size=maximum_coordinate_size,
+        )
+
     def in_plane_wavevectors(self, bloch_wavevector: ArrayLike, /) -> Array:
         bloch = jnp.asarray(
             bloch_wavevector,

@@ -441,7 +441,7 @@ class NeuralGalerkinProblem(StrictModule):
     def ansatz(self, flat_parameters: Array, /) -> frozendict[str, DomainFunction]:
         functions = self.parameter_subspace.reconstruct_vector(flat_parameters)
         if self.enforcement is not None:
-            functions = self.enforcement.apply(functions)
+            functions = self.enforcement.apply(functions, key=self.evaluation_key)
         return frozendict(functions)
 
 

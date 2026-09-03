@@ -337,11 +337,22 @@ class FunctionalSolver(StrictModule):
             updated.precision_evidence,
         )
 
-    def ansatz_functions(self) -> frozendict[str, DomainFunction]:
+    def ansatz_functions(
+        self,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        accepted_step: int = 0,
+        parameter_revision: int = 0,
+    ) -> frozendict[str, DomainFunction]:
         r"""Return the current field mapping after applying enforcement (if configured)."""
         if self.enforcement is None:
             return self.functions
-        return self.enforcement.apply(self.functions)
+        return self.enforcement.apply(
+            self.functions,
+            key=key,
+            accepted_step=accepted_step,
+            parameter_revision=parameter_revision,
+        )
 
     def __getitem__(self, var: str) -> DomainFunction:
         """Convenience accessor: return the (ansatz) field named `var`."""

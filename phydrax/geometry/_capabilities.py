@@ -5,12 +5,16 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 from jaxtyping import Array
 
 from ._atlas import BoundaryAtlas
 from ._cubature import CubatureAtlasProvider
+
+
+if TYPE_CHECKING:
+    from ._contracts import ClosestPointResult, ContactCurvatureResult
 
 
 class GeometryCapability(str, Enum):
@@ -19,6 +23,7 @@ class GeometryCapability(str, Enum):
     REGION_QUERY = "region_query"
     SIGNED_DISTANCE = "signed_distance"
     BOUNDARY_NORMAL = "boundary_normal"
+    CLOSEST_POINT = "closest_point"
     CONTACT_CURVATURE = "contact_curvature"
     SUPPORT_MAP = "support_map"
     MEASURE = "measure"
@@ -33,7 +38,16 @@ class GeometryCapability(str, Enum):
 class ContactCurvatureProvider(Protocol):
     """Provider of certified principal boundary curvatures."""
 
-    def contact_curvature(self, state: Any, points: Array, /) -> Any: ...
+    def contact_curvature(
+        self, state: Any, points: Array, /
+    ) -> ContactCurvatureResult: ...
+
+
+@runtime_checkable
+class ClosestPointProvider(Protocol):
+    """Provider of a closest-point map with explicit uniqueness evidence."""
+
+    def closest_point(self, state: Any, points: Array, /) -> ClosestPointResult: ...
 
 
 @runtime_checkable
@@ -62,6 +76,7 @@ class SeamDiagnosticsProvider(Protocol):
 
 __all__ = [
     "BoundaryAtlasProvider",
+    "ClosestPointProvider",
     "ContactCurvatureProvider",
     "CubatureAtlasProvider",
     "GeometryCapability",

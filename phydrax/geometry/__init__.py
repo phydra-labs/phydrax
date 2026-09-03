@@ -33,6 +33,7 @@ from ._bvh_overlap import (
 )
 from ._capabilities import (
     BoundaryAtlasProvider,
+    ClosestPointProvider,
     ContactCurvatureProvider,
     GeometryCapability,
     SeamDiagnosticsProvider,
@@ -48,7 +49,15 @@ from ._certificate import (
     ZeroSetAccuracy,
 )
 from ._certified_implicit import CertifiedImplicitCover, CertifiedImplicitTopology
+from ._closest_point import (
+    box_closest_point,
+    radial_closest_point,
+    represented_mesh_closest_point,
+    segment_query_evidence,
+    triangle_query_evidence,
+)
 from ._contracts import (
+    ClosestPointResult,
     CompiledGeometry,
     ContactCurvatureResult,
     GeometryKernel,
@@ -465,6 +474,13 @@ __all__ = [
     "PreparedCSGContinuation",
     "prepare_csg_continuation",
     "solve_csg_continuation",
+    "ClosestPointProvider",
+    "ClosestPointResult",
+    "box_closest_point",
+    "radial_closest_point",
+    "represented_mesh_closest_point",
+    "segment_query_evidence",
+    "triangle_query_evidence",
 ]
 
 __all__ += [name for name in _surface_all if name not in __all__]

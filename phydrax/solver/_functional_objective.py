@@ -285,6 +285,20 @@ def _prepare_slots(
     )
 
 
+def _apply_prepared_enforcement(
+    prepared: _PreparedObjective,
+    functions: Any,
+    /,
+) -> Any:
+    if prepared.enforcement is None:
+        return functions
+    with derivative_runtime_context():
+        return prepared.enforcement.apply(
+            functions,
+            key=prepared.model_loss_key,
+        )
+
+
 def evaluate_prepared_objective(
     prepared: _PreparedObjective,
     functions: Any,
@@ -293,11 +307,7 @@ def evaluate_prepared_objective(
     include_model_losses: bool = True,
 ) -> _ObjectiveValues:
     """Evaluate one prepared objective without rematerializing stochastic payloads."""
-    enforced = (
-        functions
-        if prepared.enforcement is None
-        else prepared.enforcement.apply(functions)
-    )
+    enforced = _apply_prepared_enforcement(prepared, functions)
     term_values: list[Any] = []
     total = jnp.asarray(0.0, dtype=float)
     scale = jnp.asarray(prepared.selection.scale, dtype=float).reshape(())
@@ -341,11 +351,7 @@ def evaluate_prepared_scalar_remainder(
 ) -> Any:
     """Evaluate non-residual terms and model losses on one frozen realization."""
 
-    enforced = (
-        functions
-        if prepared.enforcement is None
-        else prepared.enforcement.apply(functions)
-    )
+    enforced = _apply_prepared_enforcement(prepared, functions)
     total = jnp.asarray(0.0, dtype=float)
     scale = jnp.asarray(prepared.selection.scale, dtype=float).reshape(())
     with derivative_runtime_context():
@@ -375,11 +381,7 @@ def prepared_data_metrics(
     /,
 ) -> tuple[dict[str, Any], ...]:
     """Evaluate diagnostics from exactly the payloads used by the objective."""
-    enforced = (
-        functions
-        if prepared.enforcement is None
-        else prepared.enforcement.apply(functions)
-    )
+    enforced = _apply_prepared_enforcement(prepared, functions)
     metrics = []
     with derivative_runtime_context():
         for prepared_term in prepared.terms:
@@ -566,7 +568,9 @@ class _FunctionalObjective(StrictModule):
         iter_: Any,
     ) -> "_FunctionalObjective":
         enforced = (
-            functions if self.enforcement is None else self.enforcement.apply(functions)
+            functions
+            if self.enforcement is None
+            else self.enforcement.apply(functions, key=key)
         )
         keys = jr.split(key, len(self.training))
         updated = []
@@ -597,7 +601,9 @@ class _FunctionalObjective(StrictModule):
         iter_: Any,
     ) -> "_FunctionalObjective":
         enforced = (
-            functions if self.enforcement is None else self.enforcement.apply(functions)
+            functions
+            if self.enforcement is None
+            else self.enforcement.apply(functions, key=key)
         )
         keys = jr.split(key, len(self.training))
         updated = []

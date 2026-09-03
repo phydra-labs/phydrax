@@ -565,6 +565,7 @@ from ._weakly_compressible import (
     CompiledWeaklyCompressibleSPHProblem,
     WeaklyCompressibleFluidProblemIR,
 )
+from .advanced import GLMIdealMHDSystem, MultigroupM1RadiationSystem
 from .fem import FiniteElementMassPolicy
 from .trefftz import (
     AbstractTrefftzBasis,
@@ -658,6 +659,8 @@ from .vem import (
 
 __all__ = [
     "advanced",
+    "GLMIdealMHDSystem",
+    "MultigroupM1RadiationSystem",
     "vem",
     "CompiledVirtualElementProblem",
     "VirtualElementAction",

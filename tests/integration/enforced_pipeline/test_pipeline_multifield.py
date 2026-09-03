@@ -51,8 +51,8 @@ def test_multifield_pipeline_uses_enforced_covars():
         u_condition,
         field="u",
         transform=phx.enforcement.AffineEnforcementTransform(
-            phx.enforcement.equal(
-                phx.enforcement.field_jet("u", "x") - phx.enforcement.field_jet("v", "x"),
+            phx.conditions.equal(
+                phx.conditions.field_jet("u", "x") - phx.conditions.field_jet("v", "x"),
                 0.0,
             ),
             phx.enforcement.TraceLifting("dirichlet", "x"),
@@ -104,8 +104,8 @@ def test_multifield_pipeline_cycle_error():
         u_condition,
         field="u",
         transform=phx.enforcement.AffineEnforcementTransform(
-            phx.enforcement.equal(
-                phx.enforcement.field_jet("u", "x") - phx.enforcement.field_jet("v", "x"),
+            phx.conditions.equal(
+                phx.conditions.field_jet("u", "x") - phx.conditions.field_jet("v", "x"),
                 0.0,
             ),
             phx.enforcement.TraceLifting("dirichlet", "x"),
@@ -120,8 +120,8 @@ def test_multifield_pipeline_cycle_error():
         v_condition,
         field="v",
         transform=phx.enforcement.AffineEnforcementTransform(
-            phx.enforcement.equal(
-                phx.enforcement.field_jet("v", "x") - phx.enforcement.field_jet("u", "x"),
+            phx.conditions.equal(
+                phx.conditions.field_jet("v", "x") - phx.conditions.field_jet("u", "x"),
                 0.0,
             ),
             phx.enforcement.TraceLifting("dirichlet", "x"),
