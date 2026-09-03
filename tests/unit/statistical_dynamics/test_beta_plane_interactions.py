@@ -121,9 +121,11 @@ def test_hermitian_masks_close_and_ql_gql_reach_exact_limits():
 
 
 def test_beta_plane_coordinates_drive_exact_prepared_gce2_owner():
-    problem = _problem(4, beta=0.0)
-    partition = InteractionPartition.zonal_mean(
+    problem = _problem(6, beta=0.0)
+    partition = InteractionPartition.from_wavenumber_cutoff(
         problem.discretization,
+        1,
+        axes=(0, 1),
         admissibility_mask=problem.admissibility_mask,
     )
     system = BetaPlaneCumulantSystem(problem, partition)
@@ -131,6 +133,21 @@ def test_beta_plane_coordinates_drive_exact_prepared_gce2_owner():
         jnp.zeros((system.layout.eddy_dimension, system.layout.eddy_dimension))
     )
     prepared = system.prepare(forcing, closure="gce2", time_step=1.0e-3)
+    values = jnp.linspace(-0.2, 0.3, system.coordinates.coordinate_size)
+    vorticity = system.coordinates.from_coordinates(values)
+    expected_selected = system.coordinates.to_coordinates(
+        partition.select(
+            problem.bilinear_tendency,
+            vorticity,
+            model="gql",
+        )
+    )
+    actual_selected = prepared.plan.dynamics(values)
+    full_nonlinear = system.coordinates.to_coordinates(
+        problem.bilinear_tendency(vorticity, vorticity)
+    )
+    np.testing.assert_allclose(actual_selected, expected_selected, atol=2.0e-11)
+    assert float(jnp.max(jnp.abs(actual_selected - full_nonlinear))) > 1.0e-12
     state = DenseCumulantState(
         jnp.zeros((system.layout.mean_dimension,)),
         jnp.zeros((system.layout.eddy_dimension, system.layout.eddy_dimension)),

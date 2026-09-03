@@ -94,6 +94,21 @@ def test_ce2_and_gce2_equal_the_corresponding_symmetric_ensemble_moments():
         )
 
 
+def test_generic_second_cumulant_rejects_eddy_eddy_to_eddy_dynamics():
+    layout = SecondCumulantLayout(2, [0])
+    quadratic = jnp.zeros((2, 2, 2)).at[1, 1, 1].set(1.0)
+    dynamics = QuadraticDynamics(jnp.zeros(2), jnp.zeros((2, 2)), quadratic)
+    with pytest.raises(ValueError, match="eddy-eddy"):
+        StatisticalDynamicsPlan(
+            layout,
+            dynamics,
+            ForcingCovariance(jnp.zeros((1, 1))),
+            closure="ce2",
+            interaction_model="ql",
+            time_step=0.01,
+        )
+
+
 def test_psd_hermitian_and_rank_gates_are_fail_closed_without_repair():
     layout, _ = _coupled_plan()
     wrong_layout = DenseCumulantState(

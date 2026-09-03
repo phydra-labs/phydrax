@@ -13,13 +13,10 @@ from phydrax.applications.reacting_flow._cantera import (
     CanteraYAMLAdapter,
 )
 from phydrax.applications.reacting_flow._low_mach import LowMachReactingFormulation
-from phydrax.applications.reacting_flow._mechanism import ChemicalMechanismCompiler
-from phydrax.applications.reacting_flow._state import ReactiveConservedLayout
 from phydrax.applications.reacting_flow._statistics import (
     ReactiveClosureTargetPlan,
     ReactiveFlowStatisticsPlan,
 )
-from phydrax.applications.reacting_flow._thermodynamics import ReactingGasModel
 from phydrax.equations._chemical_mechanism import (
     ChemicalMechanismIR,
     ChemicalReactionSpec,
@@ -36,22 +33,30 @@ from phydrax.equations._chemical_species import ChemicalPhaseKind, ChemicalSpeci
 from phydrax.equations._chemical_thermodynamics import (
     PolynomialSpeciesThermodynamicsPlan,
 )
+from phydrax.equations._gas_dynamics import HomogeneousMixtureEulerSystem
+from phydrax.equations._homogeneous_thermodynamics import (
+    HomogeneousHelmholtzPlan,
+    IdealGasReferenceHelmholtzTerm,
+    ZeroResidualHelmholtzTerm,
+)
 from phydrax.solver._chemical_reactor import ChemicalReactorKind, ChemicalReactorPlan
 
 
 def _mechanism():
-    schema = ChemicalSpeciesSchema(
+    schema = ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
         jnp.asarray((0.01, 0.01)),
         ("E",),
         jnp.asarray(((1, 1),), dtype=jnp.int32),
         jnp.asarray((1, 1), dtype=jnp.int32),
+        gas_standard_pressure=1.0e5,
+        provenance="reacting-mechanism-test",
     )
-    thermo = PolynomialSpeciesThermodynamicsPlan(
+    species_thermodynamics = PolynomialSpeciesThermodynamicsPlan(
         schema,
         jnp.asarray((20.0, 20.0)),
-        jnp.asarray((0.0, 0.0)),
+        jnp.asarray((0.0, -5.0e4)),
         reference_temperature=300.0,
         minimum_temperature=200.0,
         maximum_temperature=3000.0,
@@ -86,69 +91,72 @@ def _mechanism():
         )
         for index, rate in enumerate(rates)
     )
-    ir = ChemicalMechanismIR("all-gas-features", schema, thermo, reactions)
-    gas = ReactingGasModel(
-        schema,
-        thermo,
-        formation_molar_enthalpies=jnp.asarray((0.0, -5.0e4)),
+    prepared = ChemicalMechanismIR(
+        "all-gas-features", schema, species_thermodynamics, reactions
+    ).prepare()
+    thermodynamics = HomogeneousHelmholtzPlan(
+        IdealGasReferenceHelmholtzTerm(schema, species_thermodynamics),
+        ZeroResidualHelmholtzTerm(schema),
     )
-    return gas, ChemicalMechanismCompiler().compile(ir, gas_model=gas)
+    return thermodynamics, prepared, HomogeneousMixtureEulerSystem(thermodynamics, 1)
 
 
-def test_compiler_reports_arrhenius_third_body_falloff_and_pressure_dependence():
-    _, mechanism = _mechanism()
-    counts = dict(mechanism.features.rate_kind_counts)
+def test_prepared_mechanism_owns_all_canonical_rate_plans_and_exact_schema():
+    thermodynamics, mechanism, _ = _mechanism()
+    kinds = tuple(reaction.forward_rate.kind.value for reaction in mechanism.reactions)
 
-    assert counts == {
-        "arrhenius": 1,
-        "third_body": 1,
-        "lindemann": 1,
-        "troe": 1,
-        "plog": 1,
-        "chebyshev": 1,
-    }
-    assert mechanism.features.third_body_reaction_count == 1
-    assert mechanism.features.falloff_reaction_count == 2
-    assert mechanism.features.pressure_dependent_reaction_count == 2
+    assert kinds == (
+        "arrhenius",
+        "third_body",
+        "lindemann",
+        "troe",
+        "plog",
+        "chebyshev",
+    )
+    assert mechanism.reaction_count == 6
+    assert mechanism.preparation_evidence.balanced
+    assert mechanism.schema.schema_id == thermodynamics.schema.schema_id
+    assert (
+        mechanism.thermodynamics.thermodynamics_id
+        == thermodynamics.thermodynamics.thermodynamics_id
+    )
 
 
-def test_compiled_sources_preserve_element_charge_mass_and_energy_bookkeeping():
-    gas, mechanism = _mechanism()
+def test_canonical_sources_preserve_element_charge_mass_and_total_energy():
+    _, mechanism, system = _mechanism()
     result = mechanism.evaluate(
         jnp.asarray((2.0, 1.0)),
         jnp.asarray(900.0),
         jnp.asarray(101325.0),
     )
-
-    assert result.evidence.successful
-    np.testing.assert_allclose(result.evidence.element_residual, 0.0, atol=1.0e-12)
-    np.testing.assert_allclose(result.evidence.charge_residual, 0.0, atol=1.0e-12)
-    np.testing.assert_allclose(result.evidence.energy_residual, 0.0, atol=1.0e-12)
-    np.testing.assert_allclose(
-        jnp.sum(result.species_mass_production_rate), 0.0, atol=1.0e-12
+    mass_rate = result.species_amount_rate * mechanism.schema.molar_masses
+    conservative_source = (
+        jnp.zeros((system.component_count,)).at[: system.species_count].set(mass_rate)
     )
-    expected_heat = -jnp.sum(
-        result.species_molar_production_rate
-        * (
-            gas.thermodynamics.evaluate(jnp.asarray(900.0)).molar_enthalpy
-            + gas.formation_molar_enthalpies
-        )
+    heat_release = -jnp.sum(
+        result.species_amount_rate * result.thermodynamics.molar_enthalpy
     )
-    np.testing.assert_allclose(result.heat_release_rate, expected_heat)
+
+    assert result.successful
+    np.testing.assert_allclose(result.element_residual, 0.0, atol=1.0e-12)
+    np.testing.assert_allclose(result.charge_residual, 0.0, atol=1.0e-12)
+    np.testing.assert_allclose(jnp.sum(mass_rate), 0.0, atol=1.0e-12)
+    np.testing.assert_array_equal(conservative_source[-1], 0.0)
+    assert heat_release > 0.0
 
 
-def test_constant_volume_and_pressure_reactor_states_use_correct_constraints():
-    _, mechanism = _mechanism()
+def test_constant_volume_and_pressure_reactors_consume_prepared_mechanism():
+    _, mechanism, _ = _mechanism()
     amounts = jnp.asarray((2.0, 1.0))
     constant_volume = ChemicalReactorPlan(
-        mechanism.prepared,
+        mechanism,
         ChemicalReactorKind.ADIABATIC_CONSTANT_VOLUME,
         fixed_volume=1.0,
     )
     volume_state = constant_volume.initial_state(amounts, jnp.asarray(800.0))
     volume_evaluation = constant_volume.evaluate(volume_state)
     constant_pressure = ChemicalReactorPlan(
-        mechanism.prepared,
+        mechanism,
         ChemicalReactorKind.ISOTHERMAL_CONSTANT_PRESSURE,
         fixed_temperature=800.0,
         fixed_pressure=101325.0,
@@ -162,58 +170,74 @@ def test_constant_volume_and_pressure_reactor_states_use_correct_constraints():
     np.testing.assert_allclose(pressure_evaluation.temperature, 800.0)
 
 
-def test_low_mach_divergence_source_keeps_thermodynamic_pressure_separate():
-    gas, mechanism = _mechanism()
-    formulation = LowMachReactingFormulation(gas, 2, mechanism=mechanism)
+def test_low_mach_uses_full_species_and_canonical_thermodynamic_derivatives():
+    thermodynamics, mechanism, _ = _mechanism()
+    formulation = LowMachReactingFormulation(thermodynamics, 2, mechanism=mechanism)
     mass = jnp.asarray((0.3, 0.7))
     mass_rate = jnp.asarray((-0.02, 0.02))
+    temperature = jnp.asarray(1000.0)
+    pressure = jnp.asarray(2.0e5)
+    pressure_rate = jnp.asarray(1000.0)
     evidence = formulation.divergence_source(
-        jnp.asarray(1000.0),
+        temperature,
         mass,
         jnp.asarray(20.0),
         mass_rate,
-        jnp.asarray(2.0e5),
-        thermodynamic_pressure_rate=jnp.asarray(1000.0),
+        pressure,
+        thermodynamic_pressure_rate=pressure_rate,
+    )
+    state = formulation.initial_state(
+        jnp.asarray((0.0, 0.0)), temperature, mass, pressure
+    )
+    chemistry = formulation.evaluate_chemistry(state)
+    expected = (
+        evidence.thermal_expansion
+        + evidence.compositional_expansion
+        + evidence.pressure_expansion
     )
 
-    expected = 20.0 / 1000.0 - 1000.0 / 2.0e5
+    assert state.mass_fractions.shape == (mechanism.schema.species_count,)
     assert evidence.successful
+    assert chemistry.divergence.successful
+    assert chemistry.successful
     np.testing.assert_allclose(evidence.compositional_expansion, 0.0, atol=1.0e-15)
     np.testing.assert_allclose(evidence.divergence_source, expected)
+    np.testing.assert_allclose(evidence.thermal_expansion, 20.0 / 1000.0)
+    np.testing.assert_allclose(evidence.pressure_expansion, -1000.0 / 2.0e5)
+    np.testing.assert_allclose(
+        jnp.sum(chemistry.species_mass_production_rate), 0.0, atol=1.0e-12
+    )
+    assert chemistry.diagnostic_heat_release_rate > 0.0
 
 
 def test_reactive_favre_species_element_energy_and_closure_statistics():
-    gas, _ = _mechanism()
-    layout = ReactiveConservedLayout(gas, 1)
-    first = layout.from_thermodynamic_state(
-        jnp.asarray(1.0), jnp.asarray((2.0,)), jnp.asarray(700.0), jnp.asarray((0.8, 0.2))
-    )
-    second = layout.from_thermodynamic_state(
-        jnp.asarray(2.0),
-        jnp.asarray((-1.0,)),
-        jnp.asarray(900.0),
-        jnp.asarray((0.2, 0.8)),
-    )
+    _, _, system = _mechanism()
+    first = system.primitive_to_conserved(jnp.asarray((0.8, 0.2, 2.0, 700.0)))
+    second = system.primitive_to_conserved(jnp.asarray((0.4, 1.6, -1.0, 900.0)))
     conserved = jnp.stack((first, second))
-    targets = ReactiveClosureTargetPlan(layout).build(
+    targets = ReactiveClosureTargetPlan(system).build(
         jnp.asarray(((-1.0, 1.0), (-2.0, 2.0))),
         jnp.asarray((3.0, 5.0)),
         jnp.asarray((((1.0,), (-1.0,)), ((2.0,), (-2.0,)))),
         jnp.asarray(((0.5,), (1.5,))),
         jnp.asarray((0.2, 0.4)),
     )
-    statistics = ReactiveFlowStatisticsPlan(layout).evaluate(
+    statistics = ReactiveFlowStatisticsPlan(system).evaluate(
         conserved,
         jnp.asarray((1.0, 1.0)),
         closure_targets=targets,
     )
 
+    assert targets.successful.all()
+    np.testing.assert_array_equal(targets.energy_source, 0.0)
+    np.testing.assert_allclose(targets.element_source, 0.0, atol=1.0e-12)
+    np.testing.assert_allclose(targets.charge_source, 0.0, atol=1.0e-12)
     assert statistics.successful
     np.testing.assert_allclose(statistics.mean_density, 1.5)
     np.testing.assert_allclose(statistics.favre_velocity, 0.0)
     np.testing.assert_allclose(statistics.favre_species_mass_fractions, (0.4, 0.6))
     np.testing.assert_allclose(statistics.mean_element_amount_per_mass, 100.0)
-    np.testing.assert_allclose(statistics.mean_heat_release_rate, 4.0)
+    np.testing.assert_allclose(statistics.mean_diagnostic_heat_release_rate, 4.0)
     assert jnp.all(jnp.linalg.eigvalsh(statistics.favre_species_covariance) >= -1.0e-12)
 
 
@@ -244,7 +268,7 @@ reactions: []
         reference.evaluate(jnp.asarray(300.0), 101325.0, np.asarray((1.0,)))
 
 
-def test_cantera_host_yaml_import_and_reference_state_are_explicit(tmp_path):
+def test_cantera_host_yaml_builds_catalog_gas_schema_thermo_and_mechanism(tmp_path):
     source = tmp_path / "gas.yaml"
     source.write_text(
         """description: supported-gas
@@ -281,7 +305,13 @@ reactions:
     imported = CanteraYAMLAdapter("gas").import_mechanism(source)
     assert imported.report.supported
     assert not imported.report.differentiable
-    assert imported.mechanism.prepare().reaction_count == 1
+    assert imported.catalog.catalog_id == imported.schema.catalog.catalog_id
+    assert imported.schema.phase_count == 1
+    assert imported.schema.phase_specs[0].kind is ChemicalPhaseKind.GAS
+    assert imported.schema.phase_specs[0].standard_pressure == 101325.0
+    assert imported.thermodynamics.schema.schema_id == imported.schema.schema_id
+    assert imported.mechanism.schema.schema_id == imported.schema.schema_id
+    assert imported.mechanism.reaction_count == 1
 
     class _ReferenceSolution:
         X = np.asarray((0.25, 0.75))
@@ -302,3 +332,4 @@ reactions:
     assert reference.density == 0.4
     assert reference.mean_molar_mass == 0.01
     assert reference.species_molar_production_rate == (-2.0, 2.0)
+    assert reference.diagnostic_heat_release_rate == 4.0e4

@@ -31,12 +31,6 @@ from ._forcing import (
     CompressibleForcingPlan,
     CompressibleForcingResult,
 )
-from ._materials import (
-    EOSConvexityCertificate,
-    EOSDerivativeCertificate,
-    ResearchRealGasMaterial,
-    ThermallyPerfectGasMaterial,
-)
 from ._production import (
     AdditiveIMEXCompressibleFixedStepAdapter,
     CompressibleProductionRestart,
@@ -69,10 +63,6 @@ from ._slow_growth import (
     SpatialSlowGrowthModelPlan,
     TemporalSlowGrowthModelPlan,
 )
-from ._system import (
-    MaterialCompressibleNavierStokesSystem,
-    MaterialEulerSystem,
-)
 
 
 __all__ = [
@@ -100,20 +90,15 @@ __all__ = [
     "CompressibleSpongeLedger",
     "CompressibleSpongePlan",
     "CompressibleSpongeResult",
-    "EOSConvexityCertificate",
-    "EOSDerivativeCertificate",
     "ExplicitCompressibleFixedStepAdapter",
     "FiniteVolumeRuntimeFixedStepAdapter",
     "FiniteXBoundaryLayerCaseSpec",
     "FiniteXBoundaryLayerInflowPlan",
     "ManufacturedViscousNSEvidence",
     "ManufacturedViscousNSPlan",
-    "MaterialCompressibleNavierStokesSystem",
-    "MaterialEulerSystem",
     "NodalDGCompressibleProductionPlan",
     "PreparedCompressibleProduction",
     "PreparedSlowGrowthSource",
-    "ResearchRealGasMaterial",
     "ShockAwareAllSpeedFluxPlan",
     "ShockResolvingPolicy",
     "ShockRouteLedger",
@@ -129,5 +114,4 @@ __all__ = [
     "SpatialSlowGrowthModelPlan",
     "StructuredFVCompressibleProductionPlan",
     "TemporalSlowGrowthModelPlan",
-    "ThermallyPerfectGasMaterial",
 ]

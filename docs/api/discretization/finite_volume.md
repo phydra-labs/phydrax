@@ -644,24 +644,17 @@ Every profile is route-exact; `dns-candidate` does not make `claims_dns` true.
 
 ::: phydrax.applications.compressible_flow.SlowGrowthFiniteXEvidence
 
-`phydrax.applications.reacting_flow` stores total density, `S-1` species densities,
-momentum, and total energy. It keeps ideal-mixture thermodynamics, mechanism
-compilation, structured/mapped FV transport, Strang/IMEX chemistry, low-Mach
-constraint, and host-only Cantera reference boundaries separate.
+`phydrax.applications.reacting_flow` consumes the canonical all-species
+`HomogeneousHelmholtzPlan`, `HomogeneousMixtureEulerSystem`, and
+`PreparedChemicalMechanism`. It owns transport, Strang/IMEX scheduling, low-Mach
+constraint, statistics/closure targets, and host-only Cantera boundaries—not a second
+EOS, state layout, mechanism compiler, Euler system, or FV runtime.
 
-::: phydrax.applications.reacting_flow.ReactingGasModel
-
----
-
-::: phydrax.applications.reacting_flow.ReactiveConservedLayout
+::: phydrax.equations.HomogeneousMixtureEulerSystem
 
 ---
 
-::: phydrax.applications.reacting_flow.ChemicalMechanismCompiler
-
----
-
-::: phydrax.applications.reacting_flow.ReactiveStructuredFiniteVolumePlan
+::: phydrax.equations.HomogeneousMixtureCompressibleNavierStokesSystem
 
 ---
 

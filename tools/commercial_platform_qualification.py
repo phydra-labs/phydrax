@@ -51,6 +51,8 @@ ROUTE_BOUNDARIES: dict[str, tuple[str, ...]] = {
         "s3.stale-writer",
         "s3.bounded-read",
         "s3.object-corruption",
+        "s3.metadata-guard-conflict",
+        "s3.externally-fenced-guard-recovery",
     ),
     "hpc-filesystem": (
         "hpc.directory-fsync-required",
@@ -96,6 +98,8 @@ ROUTE_BOUNDARIES: dict[str, tuple[str, ...]] = {
         "service.conflicting-duplicate-request",
         "service.stale-execution-attempt",
         "service.execution-lease-expiry",
+        "service.execution-heartbeat-renewal",
+        "service.attempt-version-fenced-completion",
         "service.cross-tenant-denial",
         "service.append-only-audit",
         "service.outbox-claim-lease",

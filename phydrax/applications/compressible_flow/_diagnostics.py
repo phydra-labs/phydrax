@@ -15,6 +15,10 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 
 
 def _sum_axes(value: Array, axes: tuple[int, ...], /) -> Array:
@@ -32,11 +36,13 @@ def _weighted_sum(value: Array, weights: Array, axes: tuple[int, ...], /) -> Arr
 
 class CompressibleBudget(StrictModule):
     mass: Array
+    species_mass: Array
     momentum: Array
     total_energy: Array
     kinetic_energy: Array
     internal_energy: Array
     mass_rate: Array
+    species_mass_rate: Array
     momentum_rate: Array
     total_energy_rate: Array
     kinetic_energy_rate: Array
@@ -59,24 +65,39 @@ class CompressibleBudget(StrictModule):
 class CompressibleBudgetPlan(StrictModule, NonTrainableState):
     """Conservative compressible totals and a complete named work ledger."""
 
+    system: (
+        HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
+    )
     dimension: int = eqx.field(static=True)
+    species_count: int = eqx.field(static=True)
     accumulation: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, dimension: int, /, *, accumulation: str = "deterministic"):
-        dimension_ = int(dimension)
+    def __init__(
+        self,
+        system: HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem,
+        /,
+        *,
+        accumulation: str = "deterministic",
+    ):
         accumulation_ = str(accumulation)
-        if dimension_ not in (1, 2, 3) or accumulation_ not in (
-            "deterministic",
-            "compensated",
-        ):
+        if not isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ) or accumulation_ not in ("deterministic", "compensated"):
             raise ValueError("Compressible budget plan is invalid.")
-        self.dimension = dimension_
+        self.system = system
+        self.dimension = system.dimension
+        self.species_count = system.species_count
         self.accumulation = accumulation_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "compressible-budget-plan",
-                "dimension": dimension_,
+                "system": system.system_id,
                 "accumulation": accumulation_,
                 "terms": (
                     "mass",
@@ -102,7 +123,6 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
         self,
         conserved: ArrayLike,
         total_rate: ArrayLike,
-        pressure: ArrayLike,
         /,
         *,
         weights: ArrayLike | None = None,
@@ -119,17 +139,19 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
     ) -> CompressibleBudget:
         state = jnp.asarray(conserved)
         rate = jnp.asarray(total_rate)
-        pressure_ = jnp.asarray(pressure)
-        if state.shape != rate.shape or state.shape[-1:] != (self.dimension + 2,):
+        if state.shape != rate.shape or state.shape[-1:] != (
+            self.system.component_count,
+        ):
             raise ValueError("Compressible budget state/rate shapes are incompatible.")
+        pressure_ = self.system.pressure(state)
         spatial_shape = state.shape[:-1]
-        if pressure_.shape != spatial_shape:
-            raise ValueError("Pressure must match the budget spatial shape.")
         state = eqx.error_if(
             state,
-            jnp.any(~jnp.isfinite(state) | (state[..., :1] <= 0.0))
+            jnp.any(~jnp.isfinite(state))
+            | jnp.any(state[..., : self.species_count] < 0.0)
+            | jnp.any(jnp.sum(state[..., : self.species_count], axis=-1) <= 0.0)
             | jnp.any(~jnp.isfinite(pressure_)),
-            "Compressible budget inputs must be finite with positive density.",
+            "Compressible budget inputs must be finite with positive total density.",
         )
         weights_ = (
             jnp.ones(spatial_shape, dtype=state.dtype)
@@ -139,15 +161,21 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
         if weights_.shape != spatial_shape:
             raise ValueError("Budget weights must match the spatial shape.")
         axes = tuple(range(len(spatial_shape)))
-        density = state[..., 0]
-        momentum_density = state[..., 1 : 1 + self.dimension]
+        species_density = state[..., : self.species_count]
+        density = jnp.sum(species_density, axis=-1)
+        momentum_density = state[
+            ..., self.species_count : self.species_count + self.dimension
+        ]
         total_density = state[..., -1]
         velocity = momentum_density / density[..., None]
         speed_squared = oe.contract("...d,...d->...", velocity, velocity, backend="jax")
         kinetic_density = 0.5 * density * speed_squared
         internal_density = total_density - kinetic_density
-        mass_rate_density = rate[..., 0]
-        momentum_rate_density = rate[..., 1 : 1 + self.dimension]
+        species_rate_density = rate[..., : self.species_count]
+        mass_rate_density = jnp.sum(species_rate_density, axis=-1)
+        momentum_rate_density = rate[
+            ..., self.species_count : self.species_count + self.dimension
+        ]
         total_rate_density = rate[..., -1]
         kinetic_rate_density = (
             oe.contract("...d,...d->...", velocity, momentum_rate_density, backend="jax")
@@ -165,7 +193,7 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
 
         def boundary_term(value: ArrayLike | None) -> Array:
             if value is None:
-                return jnp.zeros((self.dimension + 2,), dtype=state.dtype)
+                return jnp.zeros((self.system.component_count,), dtype=state.dtype)
             array = jnp.asarray(value, dtype=state.dtype)
             if array.shape == spatial_shape:
                 return _weighted_sum(array, weights_, axes)
@@ -197,11 +225,13 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
             )
             viscous = _weighted_sum(viscous_density, weights_, axes)
         mass = _weighted_sum(density, weights_, axes)
+        species_mass = _weighted_sum(species_density, weights_, axes)
         momentum = _weighted_sum(momentum_density, weights_, axes)
         total = _weighted_sum(total_density, weights_, axes)
         kinetic = _weighted_sum(kinetic_density, weights_, axes)
         internal = _weighted_sum(internal_density, weights_, axes)
         mass_rate_total = _weighted_sum(mass_rate_density, weights_, axes)
+        species_mass_rate = _weighted_sum(species_rate_density, weights_, axes)
         momentum_rate_total = _weighted_sum(momentum_rate_density, weights_, axes)
         total_rate_total = _weighted_sum(total_rate_density, weights_, axes)
         kinetic_rate = _weighted_sum(kinetic_rate_density, weights_, axes)
@@ -220,11 +250,13 @@ class CompressibleBudgetPlan(StrictModule, NonTrainableState):
         )
         return CompressibleBudget(
             mass,
+            species_mass,
             momentum,
             total,
             kinetic,
             internal,
             mass_rate_total,
+            species_mass_rate,
             momentum_rate_total,
             total_rate_total,
             kinetic_rate,
@@ -316,6 +348,7 @@ class CompressiblePlaneStatistics(StrictModule):
     wall_friction_velocity: Array
     wall_viscous_length: Array
     wall_y_plus: Array
+    wall_units_available: Array
     favre_identity_residual: Array
     finite: Array
     plan_id: str = eqx.field(static=True)
@@ -324,8 +357,12 @@ class CompressiblePlaneStatistics(StrictModule):
 class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
     """Plane Reynolds/Favre statistics, mode split, and wall thermal units."""
 
+    system: (
+        HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
+    )
     wall_normal_coordinates: Array | None
     dimension: int = eqx.field(static=True)
+    species_count: int = eqx.field(static=True)
     wall_normal_axis: int | None = eqx.field(static=True)
     plane_axes: tuple[int, ...] = eqx.field(static=True)
     periodic_lengths: tuple[float, ...] = eqx.field(static=True)
@@ -334,7 +371,8 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        dimension: int,
+        system: HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem,
         /,
         *,
         wall_normal_axis: int | None = None,
@@ -343,7 +381,15 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
         periodic_lengths: Sequence[float] | None = None,
         characteristic_length: float = 1.0,
     ):
-        dimension_ = int(dimension)
+        if not isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ):
+            raise TypeError("system must be a canonical homogeneous-mixture gas system.")
+        dimension_ = system.dimension
         wall_axis = None if wall_normal_axis is None else int(wall_normal_axis)
         axes = (
             tuple(axis for axis in range(dimension_) if axis != wall_axis)
@@ -387,6 +433,8 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
             values = np.asarray(coordinates)
             if not np.all(np.isfinite(values)) or not np.all(np.diff(values) > 0.0):
                 raise ValueError("Wall-normal coordinates must be finite and increasing.")
+        self.system = system
+        self.species_count = system.species_count
         self.dimension = dimension_
         self.wall_normal_axis = wall_axis
         self.wall_normal_coordinates = coordinates
@@ -395,7 +443,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
         self.characteristic_length = length
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "compressible-plane-statistics",
+                "system": system.system_id,
                 "dimension": dimension_,
                 "wall_normal_axis": wall_axis,
                 "wall_normal_coordinates": None
@@ -472,36 +520,51 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
     def evaluate(
         self,
         conserved: ArrayLike,
-        pressure: ArrayLike,
-        temperature: ArrayLike,
-        sound_speed: ArrayLike,
-        dynamic_viscosity: ArrayLike,
+        dynamic_viscosity: ArrayLike | None = None,
         /,
         *,
         weights: ArrayLike | None = None,
         velocity_gradient: ArrayLike | None = None,
         thermal_conductivity: ArrayLike | None = None,
         temperature_gradient: ArrayLike | None = None,
+        args=None,
     ) -> CompressiblePlaneStatistics:
         state = jnp.asarray(conserved)
-        if state.ndim != self.dimension + 1 or state.shape[-1] != self.dimension + 2:
+        if (
+            state.ndim != self.dimension + 1
+            or state.shape[-1] != self.system.component_count
+        ):
             raise ValueError("Statistics state must have one grid axis per dimension.")
         spatial_shape = state.shape[:-1]
-        scalar_fields = tuple(
-            jnp.asarray(value, dtype=state.dtype)
-            for value in (pressure, temperature, sound_speed, dynamic_viscosity)
-        )
-        if any(value.shape != spatial_shape for value in scalar_fields):
-            raise ValueError("Thermodynamic statistics fields must match the grid.")
-        pressure_, temperature_, sound, viscosity = scalar_fields
+        recovered = self.system.recover_thermodynamics(state)
+        pressure_ = recovered.state.pressure
+        temperature_ = recovered.state.temperature
+        sound = jnp.sqrt(recovered.state.frozen_sound_speed_squared)
+        if dynamic_viscosity is None:
+            if not isinstance(
+                self.system, HomogeneousMixtureCompressibleNavierStokesSystem
+            ):
+                raise ValueError(
+                    "Euler statistics require an explicit dynamic_viscosity field."
+                )
+            viscosity = self.system.transport.properties(
+                temperature_, state, args
+            ).dynamic_viscosity
+        else:
+            viscosity = jnp.asarray(dynamic_viscosity, dtype=state.dtype)
+        if viscosity.shape != spatial_shape:
+            raise ValueError("Dynamic viscosity must match the statistics grid.")
         state = eqx.error_if(
             state,
-            jnp.any(~jnp.isfinite(state) | (state[..., :1] <= 0.0))
+            jnp.any(~jnp.isfinite(state))
+            | jnp.any(state[..., : self.species_count] < 0.0)
+            | jnp.any(jnp.sum(state[..., : self.species_count], axis=-1) <= 0.0)
+            | jnp.any(~recovered.successful)
             | jnp.any(~jnp.isfinite(pressure_))
             | jnp.any(~jnp.isfinite(temperature_))
             | jnp.any(~jnp.isfinite(sound) | (sound <= 0.0))
             | jnp.any(~jnp.isfinite(viscosity) | (viscosity <= 0.0)),
-            "Statistics fields must be finite with positive density, sound speed, and viscosity.",
+            "Statistics fields require successful canonical recovery and positive viscosity.",
         )
         weights_ = (
             jnp.ones(spatial_shape, dtype=state.dtype)
@@ -515,8 +578,14 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
             jnp.any(~jnp.isfinite(weights_) | (weights_ < 0.0)),
             "Statistics weights must be finite and nonnegative.",
         )
-        density = state[..., 0]
-        velocity = state[..., 1 : 1 + self.dimension] / density[..., None]
+        density = jnp.sum(state[..., : self.species_count], axis=-1)
+        velocity = (
+            state[
+                ...,
+                self.species_count : self.species_count + self.dimension,
+            ]
+            / density[..., None]
+        )
         axes = self.plane_axes
         weight_sum = _sum_axes(weights_, axes)
         weight_sum = eqx.error_if(
@@ -573,6 +642,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
             friction_velocity = jnp.zeros((0,), dtype=state.dtype)
             viscous_length = jnp.zeros((0,), dtype=state.dtype)
             wall_y_plus = jnp.zeros((0, 0), dtype=state.dtype)
+            wall_units_available = jnp.zeros((0,), dtype=bool)
         else:
             if (
                 velocity_gradient is None
@@ -616,6 +686,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
             heat_values = []
             friction_values = []
             length_values = []
+            availability_values = []
             for index, outward_sign in ((0, -1.0), (-1, 1.0)):
                 traction = outward_sign * stress[..., :, wall_axis]
                 traction = traction.at[..., wall_axis].set(0.0)
@@ -631,21 +702,46 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
                     )
                 )
                 friction = jnp.sqrt(shear_magnitude / density_wall)
+                available = friction > jnp.sqrt(jnp.finfo(friction.dtype).tiny)
                 shear_values.append(mean_traction)
                 heat_values.append(mean_heat)
                 friction_values.append(friction)
-                length_values.append(viscosity_wall / (density_wall * friction))
+                length_values.append(
+                    jnp.where(
+                        available,
+                        viscosity_wall / (density_wall * friction),
+                        jnp.zeros_like(friction),
+                    )
+                )
+                availability_values.append(available)
             wall_shear = jnp.stack(shear_values)
             wall_heat_flux = jnp.stack(heat_values)
             friction_velocity = jnp.stack(friction_values)
             viscous_length = jnp.stack(length_values)
+            wall_units_available = jnp.stack(availability_values)
             coordinates = self.wall_normal_coordinates.astype(state.dtype)
             lower_distance = coordinates - coordinates[0]
             upper_distance = coordinates[-1] - coordinates
             wall_y_plus = jnp.stack(
                 (
-                    lower_distance / viscous_length[0],
-                    upper_distance / viscous_length[1],
+                    jnp.where(
+                        wall_units_available[0],
+                        lower_distance
+                        / jnp.maximum(
+                            viscous_length[0],
+                            jnp.finfo(viscous_length.dtype).tiny,
+                        ),
+                        jnp.zeros_like(lower_distance),
+                    ),
+                    jnp.where(
+                        wall_units_available[1],
+                        upper_distance
+                        / jnp.maximum(
+                            viscous_length[1],
+                            jnp.finfo(viscous_length.dtype).tiny,
+                        ),
+                        jnp.zeros_like(upper_distance),
+                    ),
                 )
             )
         finite = jnp.all(
@@ -691,6 +787,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
             friction_velocity,
             viscous_length,
             wall_y_plus,
+            wall_units_available,
             favre_residual,
             finite,
             self.plan_id,

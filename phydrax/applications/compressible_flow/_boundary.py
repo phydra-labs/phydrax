@@ -13,10 +13,11 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations._hyperbolic_systems import (
-    AbstractEntropySystem,
-    AbstractNormalCharacteristicSystem,
+from ...equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
 )
+from ...equations._hyperbolic_systems import AbstractNormalCharacteristicSystem
 
 
 class CharacteristicReflectionLedger(StrictModule):
@@ -153,6 +154,7 @@ class CompressibleSpongeLedger(StrictModule):
     profile: Array
     conservative_rate: Array
     mass_rate: Array
+    species_mass_rate: Array
     momentum_rate: Array
     total_energy_rate: Array
     entropy_rate: Array
@@ -172,6 +174,9 @@ class CompressibleSpongeResult(StrictModule):
 class CompressibleSpongePlan(StrictModule, NonTrainableState):
     """Conserved-variable relaxation with conservative and entropy ledgers."""
 
+    system: (
+        HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
+    )
     target_state: Array
     strength: float = eqx.field(static=True)
     start_coordinate: float = eqx.field(static=True)
@@ -181,6 +186,8 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
+        system: HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem,
         target_state: ArrayLike,
         /,
         *,
@@ -195,8 +202,15 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
         end = float(end_coordinate)
         power = float(profile_power)
         if (
-            target.ndim != 1
-            or target.shape[0] not in (3, 4, 5)
+            not isinstance(
+                system,
+                (
+                    HomogeneousMixtureEulerSystem,
+                    HomogeneousMixtureCompressibleNavierStokesSystem,
+                ),
+            )
+            or target.ndim != 1
+            or target.shape[0] != system.component_count
             or not np.all(np.isfinite(np.asarray(target)))
             or not np.isfinite(strength_)
             or strength_ <= 0.0
@@ -207,6 +221,9 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
             or power <= 0.0
         ):
             raise ValueError("Compressible sponge parameters are invalid.")
+        if not bool(system.admissible(target)):
+            raise ValueError("Compressible sponge target must be canonically admissible.")
+        self.system = system
         self.target_state = target
         self.strength = strength_
         self.start_coordinate = start
@@ -215,6 +232,7 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "compressible-conservative-sponge",
+                "system": system.system_id,
                 "target": array_tree_fingerprint(target),
                 "strength": strength_,
                 "start_coordinate": start,
@@ -225,7 +243,7 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return self.target_state.shape[0] - 2
+        return self.system.dimension
 
     def profile(self, coordinate: ArrayLike, /) -> Array:
         value = jnp.asarray(coordinate)
@@ -239,7 +257,6 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
 
     def apply(
         self,
-        system: AbstractEntropySystem,
         conserved: ArrayLike,
         coordinate: ArrayLike,
         /,
@@ -247,10 +264,9 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
         step_size: ArrayLike = 0.0,
         weights: ArrayLike | None = None,
     ) -> CompressibleSpongeResult:
-        if not isinstance(system, AbstractEntropySystem):
-            raise TypeError("Sponge entropy ledger requires AbstractEntropySystem.")
+        system = self.system
         state = jnp.asarray(conserved)
-        if state.ndim < 1 or state.shape[-1] != self.target_state.shape[0]:
+        if state.ndim < 1 or state.shape[-1] != system.component_count:
             raise ValueError("Sponge state has the wrong component count.")
         spatial_shape = state.shape[:-1]
         coordinate_ = jnp.asarray(coordinate, dtype=state.dtype)
@@ -317,8 +333,9 @@ class CompressibleSpongePlan(StrictModule, NonTrainableState):
         ledger = CompressibleSpongeLedger(
             profile,
             integrated,
-            integrated[0],
-            integrated[1:-1],
+            jnp.sum(integrated[: system.species_count]),
+            integrated[: system.species_count],
+            integrated[system.species_count : -1],
             integrated[-1],
             entropy_integral,
             before,

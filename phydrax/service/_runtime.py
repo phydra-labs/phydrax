@@ -117,6 +117,7 @@ class ExecutionContext(Protocol):
     def job_id(self) -> str: ...
 
     def cancellation_point(self) -> None: ...
+    def heartbeat(self) -> None: ...
 
     def checkpoint(self, manifest: CheckpointManifest, /) -> str: ...
 
@@ -161,21 +162,52 @@ class _Job:
     failure: FailureEvidence | None = None
 
 
+class _ExecutionSuperseded(RuntimeError):
+    """Raised when an expired execution attempt has been durably replaced."""
+
+
 class _ProviderContext:
-    def __init__(self, service: InProcessReferenceService, job: _Job):
+    def __init__(
+        self,
+        service: InProcessReferenceService,
+        job: _Job,
+        attempt: int,
+        durable_version: int | None,
+    ):
         self._service = service
         self._job = job
+        self._attempt = int(attempt)
+        self._durable_version = durable_version
 
     @property
     def job_id(self) -> str:
         return self._job.job_id
 
     def cancellation_point(self) -> None:
-        if self._job.state is JobState.CANCELLING:
-            raise CancellationRequested("The job was cancelled.")
+        with self._service._lock:
+            if self._job.attempt != self._attempt or self._job.state not in (
+                JobState.RUNNING,
+                JobState.CANCELLING,
+            ):
+                raise _ExecutionSuperseded(
+                    "Execution attempt has been replaced or is no longer active."
+                )
+            if self._job.state is JobState.CANCELLING:
+                raise CancellationRequested("The job was cancelled.")
+            self._service._require_execution_fence(
+                self._job, self._attempt, self._durable_version
+            )
+
+    def heartbeat(self) -> None:
+        self._durable_version = self._service._heartbeat_execution(
+            self._job, self._attempt, self._durable_version
+        )
 
     def checkpoint(self, manifest: CheckpointManifest, /) -> str:
-        return self._service._record_checkpoint(self._job, manifest)
+        self.heartbeat()
+        return self._service._record_checkpoint(
+            self._job, manifest, expected_attempt=self._attempt
+        )
 
 
 class InProcessReferenceService:
@@ -420,7 +452,8 @@ class InProcessReferenceService:
             return self._status(job)
 
     def execute(self, token: str, job_id: str, /) -> JobStatus:
-        """Execute one queued job synchronously using its registered provider."""
+        """Execute one queued job synchronously using a fenced renewable attempt."""
+
         principal = self._authenticate(token)
         self._authorize(principal, "service:execute", principal.tenant_id)
         with self._lock:
@@ -429,76 +462,148 @@ class InProcessReferenceService:
             if job.state is not JobState.QUEUED:
                 raise InvalidTransition("Only a queued job can be executed.")
             binding = self._require_profile(job.submission.profile_id)
-            # Re-admission at worker bootstrap closes the queue-time revocation window.
             self._admit_submission(job.submission, binding)
             job.state = JobState.RUNNING
             job.started_at = self._clock.now()
             job.run_record = self._run_record(
                 job_id, job.submission, "running", job.recovered_checkpoint_id
             )
-            self._sync_durable_job(
-                job, lease_expires_at=job.started_at + self._execution_lease_seconds
+            execution_attempt = job.attempt
+            durable_version = self._sync_durable_job(
+                job,
+                lease_expires_at=(job.started_at + self._execution_lease_seconds),
             )
+            context = _ProviderContext(self, job, execution_attempt, durable_version)
         try:
-            result = binding.provider(job.submission, _ProviderContext(self, job))
+            result = binding.provider(job.submission, context)
             if not isinstance(result, ProviderResult):
                 raise IntegrityError("Provider must return a ProviderResult.")
             with self._lock:
                 if job.state is JobState.CANCELLING:
                     raise CancellationRequested("The job was cancelled.")
-                job.state = JobState.SUCCEEDED
-                job.finished_at = self._clock.now()
-                job.run_record = self._run_record(
+                self._require_execution_fence(
+                    job, execution_attempt, context._durable_version
+                )
+                finished_at = self._clock.now()
+                run_record = self._run_record(
                     job_id,
                     job.submission,
                     "completed",
                     job.checkpoint_ids[-1] if job.checkpoint_ids else None,
                     result,
                 )
-                self._sync_durable_job(job)
-                self._audit_event(
-                    principal, "execute", "job", job_id, "allowed", "completed", ""
+                committed_job = replace(
+                    job,
+                    state=JobState.SUCCEEDED,
+                    finished_at=finished_at,
+                    run_record=run_record,
                 )
+                self._sync_durable_job(
+                    committed_job,
+                    expected_attempt=execution_attempt,
+                    expected_version=context._durable_version,
+                )
+                job.state = JobState.SUCCEEDED
+                job.finished_at = finished_at
+                job.run_record = run_record
+                self._audit_event(
+                    principal,
+                    "execute",
+                    "job",
+                    job_id,
+                    "allowed",
+                    "completed",
+                    "",
+                )
+        except _ExecutionSuperseded:
+            pass
         except CancellationRequested:
             with self._lock:
-                job.state = JobState.CANCELLED
-                job.finished_at = self._clock.now()
-                job.run_record = self._run_record(
+                if job.attempt != execution_attempt:
+                    return self._status(job)
+                current_version = self._current_execution_version(job, execution_attempt)
+                finished_at = self._clock.now()
+                run_record = self._run_record(
                     job_id,
                     job.submission,
                     "cancelled",
                     job.checkpoint_ids[-1] if job.checkpoint_ids else None,
                 )
-                self._sync_durable_job(job)
+                committed_job = replace(
+                    job,
+                    state=JobState.CANCELLED,
+                    finished_at=finished_at,
+                    run_record=run_record,
+                )
+                self._sync_durable_job(
+                    committed_job,
+                    expected_attempt=execution_attempt,
+                    expected_version=current_version,
+                )
+                job.state = JobState.CANCELLED
+                job.finished_at = finished_at
+                job.run_record = run_record
                 self._audit_event(
-                    principal, "execute", "job", job_id, "allowed", "cancelled", ""
+                    principal,
+                    "execute",
+                    "job",
+                    job_id,
+                    "allowed",
+                    "cancelled",
+                    "",
                 )
         except Exception as error:
             with self._lock:
-                job.state = JobState.FAILED
-                job.finished_at = self._clock.now()
+                try:
+                    self._require_execution_fence(
+                        job, execution_attempt, context._durable_version
+                    )
+                except _ExecutionSuperseded:
+                    return self._status(job)
+                finished_at = self._clock.now()
                 redacted_message = SecretRedactor().redact(
                     str(error) or type(error).__name__,
                     field_name="provider_error",
                 )
                 if not isinstance(redacted_message, str):
                     redacted_message = "<redacted>"
-                job.failure = FailureEvidence(
+                failure = FailureEvidence(
                     "provider_failure",
                     type(error).__name__,
                     redacted_message,
                     False,
-                    job.attempt,
+                    execution_attempt,
                 )
-                job.run_record = self._run_record(
+                run_record = self._run_record(
                     job_id,
                     job.submission,
                     "failed",
                     job.checkpoint_ids[-1] if job.checkpoint_ids else None,
                 )
-                self._sync_durable_job(job)
+                committed_job = replace(
+                    job,
+                    state=JobState.FAILED,
+                    finished_at=finished_at,
+                    failure=failure,
+                    run_record=run_record,
+                )
+                self._sync_durable_job(
+                    committed_job,
+                    expected_attempt=execution_attempt,
+                    expected_version=context._durable_version,
+                )
+                job.state = JobState.FAILED
+                job.finished_at = finished_at
+                job.failure = failure
+                job.run_record = run_record
                 self._audit_event(
-                    principal, "execute", "job", job_id, "failed", "provider failure", ""
+                    principal,
+                    "execute",
+                    "job",
+                    job_id,
+                    "failed",
+                    "provider failure",
+                    "",
                 )
         with self._lock:
             return self._status(job)
@@ -913,21 +1018,98 @@ class InProcessReferenceService:
             )
             transaction.enqueue(message)
 
+    def _current_execution_version(self, job: _Job, attempt: int, /) -> int | None:
+        if job.attempt != attempt or job.state not in (
+            JobState.RUNNING,
+            JobState.CANCELLING,
+        ):
+            raise _ExecutionSuperseded(
+                "Execution attempt has been replaced or is no longer active."
+            )
+        if self._durable_store is None:
+            return None
+        with self._durable_store.transaction() as transaction:
+            current = transaction.get_job(job.tenant_id, job.job_id)
+            if (
+                current is None
+                or current.attempt != attempt
+                or current.state not in (JobState.RUNNING, JobState.CANCELLING)
+            ):
+                raise _ExecutionSuperseded("Durable execution attempt was superseded.")
+            return current.version
+
+    def _require_execution_fence(
+        self,
+        job: _Job,
+        attempt: int,
+        durable_version: int | None,
+        /,
+    ) -> None:
+        current_version = self._current_execution_version(job, attempt)
+        if self._durable_store is None:
+            return
+        if durable_version is None or current_version != durable_version:
+            raise _ExecutionSuperseded(
+                "Durable execution attempt/version fence was superseded."
+            )
+
+    def _heartbeat_execution(
+        self,
+        job: _Job,
+        attempt: int,
+        durable_version: int | None,
+        /,
+    ) -> int | None:
+        with self._lock:
+            self._require_execution_fence(job, attempt, durable_version)
+            if self._durable_store is None:
+                return None
+            if durable_version is None:
+                raise _ExecutionSuperseded(
+                    "Durable heartbeat is missing its version fence."
+                )
+            now = self._clock.now()
+            with self._durable_store.transaction() as transaction:
+                current = transaction.get_job(job.tenant_id, job.job_id)
+                if (
+                    current is None
+                    or current.attempt != attempt
+                    or current.version != durable_version
+                    or current.state not in (JobState.RUNNING, JobState.CANCELLING)
+                ):
+                    raise _ExecutionSuperseded(
+                        "Durable heartbeat lost its attempt/version fence."
+                    )
+                updated = replace(
+                    current,
+                    updated_at=now,
+                    lease_expires_at=now + self._execution_lease_seconds,
+                    version=current.version + 1,
+                )
+                transaction.update_job(updated, expected_version=current.version)
+                return updated.version
+
     def _sync_durable_job(
         self,
         job: _Job,
         *,
+        expected_attempt: int | None = None,
+        expected_version: int | None = None,
         lease_expires_at: int | None = None,
         enqueue: bool = False,
         reserve: bool = False,
-    ) -> None:
+    ) -> int | None:
         if self._durable_store is None:
-            return
+            return None
         now = self._clock.now()
         with self._durable_store.transaction() as transaction:
             current = transaction.get_job(job.tenant_id, job.job_id)
             if current is None:
                 raise IntegrityError("Durable job disappeared during orchestration.")
+            if expected_attempt is not None and current.attempt != expected_attempt:
+                raise _ExecutionSuperseded("Durable job attempt changed before commit.")
+            if expected_version is not None and current.version != expected_version:
+                raise _ExecutionSuperseded("Durable job version changed before commit.")
             updated = replace(
                 current,
                 state=job.state,
@@ -937,6 +1119,9 @@ class InProcessReferenceService:
                 version=current.version + 1,
             )
             transaction.update_job(updated, expected_version=current.version)
+            durable = transaction.get_job(job.tenant_id, job.job_id)
+            if durable is None:
+                raise IntegrityError("Durable job disappeared after update.")
             if job.state.terminal:
                 transaction.release_quota(job.tenant_id, job.job_id)
             if reserve:
@@ -958,9 +1143,20 @@ class InProcessReferenceService:
                         now,
                     )
                 )
+            return durable.version
 
-    def _record_checkpoint(self, job: _Job, manifest: CheckpointManifest) -> str:
+    def _record_checkpoint(
+        self,
+        job: _Job,
+        manifest: CheckpointManifest,
+        *,
+        expected_attempt: int,
+    ) -> str:
         with self._lock:
+            if job.attempt != expected_attempt:
+                raise _ExecutionSuperseded(
+                    "Checkpoint belongs to a superseded execution attempt."
+                )
             if job.state not in (JobState.RUNNING, JobState.CANCELLING):
                 raise InvalidTransition(
                     "Checkpoints can only be recorded during execution."

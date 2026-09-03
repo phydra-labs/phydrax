@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -603,3 +604,90 @@ def test_runtime_admits_exact_support_before_allocation_and_bootstrap():
     ]
     assert store.quota_usage("tenant").active_jobs == 0
     assert len(store.claim_outbox("dispatcher", 10)) == 1
+
+
+def test_execution_heartbeat_and_attempt_fence_reject_stale_completion():
+    class Validator:
+        def validate(self, token: str, /) -> ValidatedPrincipal:
+            return ValidatedPrincipal(
+                "subject",
+                token,
+                "issuer",
+                "audience",
+                "client",
+                f"token-{token}",
+                frozenset({"service:execute", "service:status", "service:submit"}),
+                0,
+                100,
+            )
+
+    clock = _Clock(10)
+    store = SQLiteServiceStore()
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def provider(submission, context):
+        nonlocal calls
+        del submission
+        calls += 1
+        if calls == 1:
+            started.set()
+            assert release.wait(timeout=5.0)
+        else:
+            context.heartbeat()
+        return ProviderResult((f"attempt-{calls}",))
+
+    service = InProcessReferenceService(
+        Validator(),
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+        clock=clock,
+        durable_store=store,
+        execution_lease_seconds=1,
+    )
+    service.register_provider("profile", provider, support_tuple_id="provider-tuple")
+    submission = JobSubmission(
+        AnalysisPlan(
+            "analysis",
+            "provider-plan",
+            "discretization",
+            ("layout",),
+        ),
+        ExecutionPlan("execution", "cpu", "float64", "direct"),
+        "revision",
+        "profile",
+        {},
+        ResourceRequest(1, 1024),
+        request_id="fenced-request",
+    )
+    queued = service.submit("tenant", submission)
+    stale_results = []
+    worker = threading.Thread(
+        target=lambda: stale_results.append(service.execute("tenant", queued.job_id))
+    )
+    worker.start()
+    assert started.wait(timeout=5.0)
+
+    clock.value = 12
+    recovered = service.recover_stale_attempts()
+    assert recovered[0].attempt == 2
+    assert recovered[0].state is JobState.QUEUED
+    release.set()
+    worker.join(timeout=5.0)
+    assert not worker.is_alive()
+
+    current = service.status("tenant", queued.job_id)
+    assert current.attempt == 2
+    assert current.state is JobState.QUEUED
+    assert stale_results[0].attempt == 2
+    assert stale_results[0].state is JobState.QUEUED
+
+    completed = service.execute("tenant", queued.job_id)
+    assert completed.attempt == 2
+    assert completed.state is JobState.SUCCEEDED
+    with store.transaction() as transaction:
+        durable = transaction.get_job("tenant", queued.job_id)
+    assert durable is not None
+    assert durable.attempt == 2
+    assert durable.state is JobState.SUCCEEDED

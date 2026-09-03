@@ -18,15 +18,11 @@ from ...discretization.finite_volume._riemann import (
     HLLFluxPlan,
     NumericalFluxResult,
 )
-from ...equations._hyperbolic_systems import (
-    CompressibleNavierStokesSystem,
-    EulerSystem,
+from ...equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
 )
 from ._contracts import AllSpeedCompressiblePolicy, ShockResolvingPolicy
-from ._system import (
-    MaterialCompressibleNavierStokesSystem,
-    MaterialEulerSystem,
-)
 
 
 def _hll_flux(
@@ -36,6 +32,7 @@ def _hll_flux(
     right_flux: Array,
     lower: Array,
     upper: Array,
+    stability_speed: Array,
     /,
 ) -> NumericalFluxResult:
     lower_ = jnp.minimum(jnp.asarray(lower), 0.0)
@@ -54,7 +51,7 @@ def _hll_flux(
         jnp.where((upper_ <= 0.0)[..., None], right_flux, middle),
     )
     flux = jnp.where(zero_width[..., None], central, upwind)
-    return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower_), jnp.abs(upper_)))
+    return NumericalFluxResult(flux, jnp.asarray(stability_speed))
 
 
 class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainableState):
@@ -116,6 +113,7 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainable
             system.physical_flux(right_, int(axis), args),
             scaled_lower,
             scaled_upper,
+            jnp.maximum(jnp.abs(lower), jnp.abs(upper)),
         )
 
     def normal_face_flux(
@@ -139,6 +137,7 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainable
             system.physical_normal_flux(right_, normal_, args),
             scaled_lower,
             scaled_upper,
+            jnp.maximum(jnp.abs(lower), jnp.abs(upper)),
         )
 
     def normal_ale_face_flux(
@@ -173,17 +172,20 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainable
             - grid_velocity[..., None] * right_,
             scaled_lower,
             scaled_upper,
+            jnp.maximum(
+                jnp.abs(jnp.asarray(lower) - grid_velocity),
+                jnp.abs(jnp.asarray(upper) - grid_velocity),
+            ),
         )
 
 
 class ShockAwareAllSpeedFluxPlan(
     AbstractArbitraryNormalNumericalFluxPlan, NonTrainableState
 ):
-    """All-speed primary flux with explicit pressure-sensor Einfeldt dispatch."""
+    """All-speed primary flux with explicit pressure-sensor generic-HLL dispatch."""
 
     policy: ShockResolvingPolicy
     primary: AllSpeedHLLFluxPlan
-    generic_fallback: HLLFluxPlan
     flux_id: str = eqx.field(static=True)
     differentiability: str = eqx.field(static=True)
 
@@ -192,7 +194,6 @@ class ShockAwareAllSpeedFluxPlan(
             raise TypeError("policy must be ShockResolvingPolicy.")
         self.policy = policy
         self.primary = AllSpeedHLLFluxPlan(policy.all_speed)
-        self.generic_fallback = HLLFluxPlan()
         self.differentiability = "branchwise"
         self.flux_id = canonical_fingerprint(
             {
@@ -200,22 +201,22 @@ class ShockAwareAllSpeedFluxPlan(
                 "policy": policy.policy_id,
                 "primary": self.primary.flux_id,
                 "fallback": policy.fallback_flux.flux_id,
-                "generic_fallback": self.generic_fallback.flux_id,
                 "sensor": "relative-pressure-jump",
             }
         )
 
-    def _fallback_plan(self, system: Any, /):
-        if isinstance(system, (EulerSystem, CompressibleNavierStokesSystem)):
-            return self.policy.fallback_flux
-        if isinstance(
+    def _fallback_plan(self, system: Any, /) -> HLLFluxPlan:
+        if not isinstance(
             system,
-            (MaterialEulerSystem, MaterialCompressibleNavierStokesSystem),
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
         ):
-            return self.generic_fallback
-        raise TypeError(
-            "Shock-aware all-speed flux requires a supported compressible system."
-        )
+            raise TypeError(
+                "Shock-aware all-speed flux requires a canonical homogeneous-mixture system."
+            )
+        return self.policy.fallback_flux
 
     @staticmethod
     def _sensor(system: Any, left: Array, right: Array, /) -> Array:

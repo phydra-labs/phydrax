@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -63,9 +64,11 @@ def _trapezoid(value: Array, coordinates: Array, /) -> Array:
     )
 
 
-def _integral_thicknesses(primitive: Array, coordinates: Array, /) -> tuple[Array, Array]:
-    density = primitive[:, 0]
-    streamwise_velocity = primitive[:, 1]
+def _integral_thicknesses(
+    primitive: Array, coordinates: Array, species_count: int, /
+) -> tuple[Array, Array]:
+    density = jnp.sum(primitive[:, :species_count], axis=-1)
+    streamwise_velocity = primitive[:, species_count]
     edge_mass_flux = density[-1] * streamwise_velocity[-1]
     valid = jnp.abs(edge_mass_flux) > 64.0 * jnp.finfo(primitive.dtype).eps
     safe_edge_mass_flux = jnp.where(valid, edge_mass_flux, jnp.ones_like(edge_mass_flux))
@@ -87,10 +90,11 @@ def _integral_thickness_rates(
     primitive: Array,
     primitive_source: Array,
     coordinates: Array,
+    species_count: int,
     /,
 ) -> tuple[Array, Array]:
     _, rates = jax.jvp(
-        lambda value: jnp.stack(_integral_thicknesses(value, coordinates)),
+        lambda value: jnp.stack(_integral_thicknesses(value, coordinates, species_count)),
         (primitive,),
         (primitive_source,),
     )
@@ -103,19 +107,26 @@ def _thermal_rates(
     primitive_source: Array,
     /,
 ) -> tuple[Array, Array, Array, Array]:
-    density = primitive[..., 0]
-    pressure = primitive[..., -1]
-    density_source = primitive_source[..., 0]
-    pressure_source = primitive_source[..., -1]
-    internal, internal_source = jax.jvp(
-        case.material.specific_internal_energy,
-        (density, pressure),
-        (density_source, pressure_source),
-    )
-    temperature, temperature_source = jax.jvp(
-        case.material.temperature,
-        (density, pressure),
-        (density_source, pressure_source),
+    species_count = case.species_count
+
+    def thermal_state(value):
+        species_density = value[..., :species_count]
+        density = jnp.sum(species_density, axis=-1)
+        temperature = value[..., -1]
+        evaluation = case.thermodynamics.evaluate_density_temperature(
+            species_density, temperature
+        )
+        molar_density = jnp.sum(
+            species_density / case.thermodynamics.schema.molar_masses.astype(value.dtype),
+            axis=-1,
+        )
+        specific_internal_energy = (
+            molar_density * evaluation.molar_internal_energy / density
+        )
+        return specific_internal_energy, temperature
+
+    (internal, temperature), (internal_source, temperature_source) = jax.jvp(
+        thermal_state, (primitive,), (primitive_source,)
     )
     return internal, internal_source, temperature, temperature_source
 
@@ -156,22 +167,12 @@ def _apply_wall_thermal_condition(
     normalized = _normalize_wall_indices(wall_indices, primitive.shape[0])
     for index in normalized:
         neighbor = 1 if index == 0 else primitive.shape[0] - 2
-        _, _, _, temperature_source = _thermal_rates(case, primitive, result)
         desired = (
-            jnp.zeros_like(temperature_source[index])
+            jnp.zeros_like(result[index, -1])
             if mode == "isothermal"
-            else temperature_source[neighbor]
+            else result[neighbor, -1]
         )
-        density = primitive[:, 0]
-        pressure = primitive[:, -1]
-        pressure_direction = jnp.ones_like(pressure)
-        pressure_sensitivity = jax.jvp(
-            lambda value: case.material.temperature(density, value),
-            (pressure,),
-            (pressure_direction,),
-        )[1]
-        correction = (desired - temperature_source[index]) / pressure_sensitivity[index]
-        result = result.at[index, -1].add(correction)
+        result = result.at[index, -1].set(desired)
     _, _, _, temperature_source = _thermal_rates(case, primitive, result)
     residuals = []
     for index in normalized:
@@ -195,10 +196,11 @@ def _apply_integral_constraints(
     coordinates: Array,
     displacement_target: float | None,
     momentum_target: float | None,
+    species_count: int,
     /,
 ) -> tuple[Array, Array, Array, Array, Array]:
     displacement_rate, momentum_rate = _integral_thickness_rates(
-        primitive, primitive_source, coordinates
+        primitive, primitive_source, coordinates, species_count
     )
     constrained = tuple(
         index
@@ -218,14 +220,20 @@ def _apply_integral_constraints(
     eta = (coordinates - coordinates[0]) / extent
     bubble = 4.0 * eta * (1.0 - eta)
     velocity_scale = jnp.maximum(
-        jnp.abs(primitive[-1, 1]), jnp.asarray(1.0, primitive.dtype)
+        jnp.abs(primitive[-1, species_count]), jnp.asarray(1.0, primitive.dtype)
     )
-    direction_0 = jnp.zeros_like(primitive).at[:, 1].set(velocity_scale * bubble)
-    direction_1 = jnp.zeros_like(primitive).at[:, 1].set(velocity_scale * eta)
+    direction_0 = (
+        jnp.zeros_like(primitive).at[:, species_count].set(velocity_scale * bubble)
+    )
+    direction_1 = jnp.zeros_like(primitive).at[:, species_count].set(velocity_scale * eta)
     columns = []
     for direction in (direction_0, direction_1):
         columns.append(
-            jnp.stack(_integral_thickness_rates(primitive, direction, coordinates))
+            jnp.stack(
+                _integral_thickness_rates(
+                    primitive, direction, coordinates, species_count
+                )
+            )
         )
     jacobian = jnp.stack(columns, axis=1)
     current = jnp.stack((displacement_rate, momentum_rate))
@@ -244,7 +252,7 @@ def _apply_integral_constraints(
         primitive_source + coefficients[0] * direction_0 + coefficients[1] * direction_1
     )
     displacement_rate, momentum_rate = _integral_thickness_rates(
-        primitive, corrected, coordinates
+        primitive, corrected, coordinates, species_count
     )
     return corrected, displacement_rate, momentum_rate, target[0], target[1]
 
@@ -358,7 +366,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
         state = jnp.asarray(conserved)
         if (
             state.ndim != self.dimension + 1
-            or state.shape[-1] != self.dimension + 2
+            or state.shape[-1] != self.case.component_count
             or state.shape[self.wall_normal_axis] != self.coordinates.shape[0]
         ):
             raise ValueError("Compressible baseflow state has the wrong shape.")
@@ -375,13 +383,22 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
                 "Compressible baseflow weights do not broadcast to the state."
             ) from error
         primitive = self.case.conserved_to_primitive(state)
-        density = primitive[..., 0]
-        velocity = primitive[..., 1 : 1 + self.dimension]
-        pressure = primitive[..., -1]
-        temperature = self.case.material.temperature(density, pressure)
+        species_density = primitive[..., : self.case.species_count]
+        density = jnp.sum(species_density, axis=-1)
+        velocity = primitive[
+            ...,
+            self.case.species_count : self.case.species_count + self.dimension,
+        ]
+        system = self.case.prepare_inviscid_system()
+        recovered = system.recover_thermodynamics(state)
+        pressure = recovered.state.pressure
+        temperature = recovered.state.temperature
         mean_density = _weighted_mean(density, weights_, self.homogeneous_axes)
         mean_density_squared = _weighted_mean(
             density * density, weights_, self.homogeneous_axes
+        )
+        mean_species_density = _weighted_mean(
+            species_density, weights_, self.homogeneous_axes
         )
         reynolds_velocity = _weighted_mean(velocity, weights_, self.homogeneous_axes)
         mean_momentum = _weighted_mean(
@@ -417,7 +434,8 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
         mean_temperature = _weighted_mean(temperature, weights_, self.homogeneous_axes)
         mean_conserved = _weighted_mean(state, weights_, self.homogeneous_axes)
         base_primitive = jnp.concatenate(
-            (mean_density[..., None], favre_velocity, mean_pressure[..., None]), axis=-1
+            (mean_species_density, favre_velocity, mean_temperature[..., None]),
+            axis=-1,
         )
         base_conserved = self.case.primitive_to_conserved(base_primitive)
         wall_derivative = _profile_gradient(base_primitive, self.coordinates)
@@ -433,7 +451,9 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Streamwise base derivatives must match the primitive baseflow."
             )
-        displacement, momentum = _integral_thicknesses(base_primitive, self.coordinates)
+        displacement, momentum = _integral_thicknesses(
+            base_primitive, self.coordinates, self.case.species_count
+        )
         plane_weight = _sum_axes(weights_, self.homogeneous_axes)
         finite = (
             jnp.all(jnp.isfinite(state))
@@ -448,7 +468,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule, NonTrainableState):
                 else jnp.all(jnp.isfinite(streamwise_derivative))
             )
         )
-        admissible = jnp.all(self.case.material.admissible(density, pressure))
+        admissible = jnp.all(recovered.successful & system.admissible(state))
         index = int(sample_index)
         time = None if sample_time is None else float(sample_time)
         location = None if streamwise_location is None else float(streamwise_location)
@@ -514,11 +534,12 @@ class SlowGrowthSource(StrictModule):
     primitive: Array
     conservative: Array
     mass: Array
+    species_mass: Array
     momentum: Array
     total_energy: Array
     specific_internal_energy: Array
     temperature: Array
-    specific_entropy: Array
+    entropy_density: Array
     finite: Array
     prepared_id: str = eqx.field(static=True)
 
@@ -527,6 +548,7 @@ class SlowGrowthBudget(StrictModule):
     """Mass, momentum, energy, and integral-thickness source ledger."""
 
     profile_mass_rate: Array
+    profile_species_mass_rate: Array
     profile_momentum_rate: Array
     profile_total_energy_rate: Array
     displacement_thickness_rate: Array
@@ -613,7 +635,7 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
     def _check_state(self, conserved: Array, /) -> None:
         if (
             conserved.ndim != self.snapshot.dimension + 1
-            or conserved.shape[-1] != self.snapshot.dimension + 2
+            or conserved.shape[-1] != self.snapshot.case.component_count
             or conserved.shape[self.snapshot.wall_normal_axis]
             != self.snapshot.coordinates.shape[0]
         ):
@@ -648,11 +670,16 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
         internal, internal_source, temperature, temperature_source = _thermal_rates(
             self.snapshot.case, primitive, primitive_source
         )
-        density = primitive[..., 0]
-        velocity = primitive[..., 1 : 1 + self.snapshot.dimension]
-        pressure = primitive[..., -1]
-        density_source = primitive_source[..., 0]
-        velocity_source = primitive_source[..., 1 : 1 + self.snapshot.dimension]
+        species_count = self.snapshot.case.species_count
+        system = self.snapshot.case.prepare_inviscid_system()
+        species_density = primitive[..., :species_count]
+        density = jnp.sum(species_density, axis=-1)
+        velocity = primitive[..., species_count : species_count + self.snapshot.dimension]
+        species_density_source = primitive_source[..., :species_count]
+        density_source = jnp.sum(species_density_source, axis=-1)
+        velocity_source = primitive_source[
+            ..., species_count : species_count + self.snapshot.dimension
+        ]
         kinetic_source = 0.5 * jnp.sum(
             velocity * velocity, axis=-1
         ) * density_source + density * jnp.sum(velocity * velocity_source, axis=-1)
@@ -660,14 +687,14 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
             internal * density_source + density * internal_source + kinetic_source
         )
         energy_residual = conservative_source[..., -1] - expected_energy_source
-        entropy_source = (
-            internal_source - pressure * density_source / (density * density)
-        ) / temperature
-        entropy_residual = (
-            temperature * entropy_source
-            - internal_source
-            + pressure * density_source / (density * density)
+        entropy_source = oe.contract(
+            "...i,...i->...",
+            system.entropy_variables(state),
+            conservative_source,
+            backend="jax",
         )
+        entropy_jvp = jax.jvp(system.entropy, (state,), (conservative_source,))[1]
+        entropy_residual = entropy_source - entropy_jvp
         base_check = _conservative_source(
             self.snapshot.case,
             self.snapshot.base_primitive,
@@ -694,11 +721,15 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
             if self.zero_source_expected
             else jnp.asarray(0.0, dtype=state.dtype)
         )
-        profile_mass = _trapezoid(
-            self.base_conservative_source_profile[:, 0], self.snapshot.coordinates
+        profile_species_mass = _trapezoid(
+            self.base_conservative_source_profile[:, :species_count],
+            self.snapshot.coordinates,
         )
+        profile_mass = jnp.sum(profile_species_mass)
         profile_momentum = _trapezoid(
-            self.base_conservative_source_profile[:, 1 : 1 + self.snapshot.dimension],
+            self.base_conservative_source_profile[
+                :, species_count : species_count + self.snapshot.dimension
+            ],
             self.snapshot.coordinates,
         )
         profile_energy = _trapezoid(
@@ -711,7 +742,7 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
             jnp.max(jnp.abs(energy_residual)), jnp.max(jnp.abs(entropy_residual))
         )
         state_admissible = jnp.all(
-            self.snapshot.case.material.admissible(density, pressure)
+            system.admissible(state) & system.entropy_evidence(state)
         )
         admissible = (
             finite
@@ -727,8 +758,11 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
         source = SlowGrowthSource(
             primitive_source,
             conservative_source,
-            conservative_source[..., 0],
-            conservative_source[..., 1 : 1 + self.snapshot.dimension],
+            jnp.sum(conservative_source[..., :species_count], axis=-1),
+            conservative_source[..., :species_count],
+            conservative_source[
+                ..., species_count : species_count + self.snapshot.dimension
+            ],
             conservative_source[..., -1],
             internal_source,
             temperature_source,
@@ -738,6 +772,7 @@ class PreparedSlowGrowthSource(StrictModule, NonTrainableState):
         )
         budget = SlowGrowthBudget(
             profile_mass,
+            profile_species_mass,
             profile_momentum,
             profile_energy,
             self.displacement_thickness_rate,
@@ -1082,6 +1117,7 @@ def _prepare_source(
         snapshot.coordinates,
         displacement_thickness_rate,
         momentum_thickness_rate,
+        snapshot.case.species_count,
     )
     _, _, _, wall_temperature_source = _thermal_rates(
         snapshot.case, snapshot.base_primitive, constrained_source

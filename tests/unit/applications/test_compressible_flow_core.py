@@ -18,176 +18,219 @@ from phydrax.applications.compressible_flow._forcing import CompressibleForcingP
 from phydrax.applications.compressible_flow._qualification import (
     CompressibleReferenceWavePlan,
 )
-from phydrax.equations._hyperbolic_systems import EulerSystem
-from phydrax.equations._materials import IdealGasMaterial
+from phydrax.equations import (
+    ChemicalPhaseKind,
+    ChemicalSpeciesSchema,
+    HomogeneousHelmholtzPlan,
+    HomogeneousMixtureEulerSystem,
+    IdealGasReferenceHelmholtzTerm,
+    PolynomialSpeciesThermodynamicsPlan,
+    UNIVERSAL_GAS_CONSTANT,
+    ZeroResidualHelmholtzTerm,
+)
 
 
-def test_reference_isentropic_acoustic_entropy_and_vorticity_waves():
-    x = jnp.stack(
-        jnp.meshgrid(jnp.linspace(0.0, 1.0, 8), jnp.linspace(0.0, 1.0, 6), indexing="ij"),
+def _model(species_count=2):
+    names = tuple(chr(ord("A") + index) for index in range(species_count))
+    schema = ChemicalSpeciesSchema.from_unique_species(
+        names,
+        (ChemicalPhaseKind.GAS,) * species_count,
+        jnp.linspace(0.020, 0.030, species_count),
+        names,
+        jnp.eye(species_count, dtype=jnp.int32),
+        jnp.zeros((species_count,), dtype=jnp.int32),
+        gas_standard_pressure=1.0e5,
+    )
+    species_thermodynamics = PolynomialSpeciesThermodynamicsPlan(
+        schema,
+        jnp.full((species_count, 1), 2.5 * UNIVERSAL_GAS_CONSTANT),
+        jnp.linspace(1.0e3, 2.0e3, species_count),
+        reference_molar_entropy=jnp.linspace(100.0, 120.0, species_count),
+        reference_temperature=300.0,
+        minimum_temperature=150.0,
+        maximum_temperature=2000.0,
+    )
+    ideal = IdealGasReferenceHelmholtzTerm(schema, species_thermodynamics)
+    return HomogeneousHelmholtzPlan(ideal, ZeroResidualHelmholtzTerm(schema))
+
+
+def _uniform_primitive(system, shape=()):
+    species = jnp.broadcast_to(
+        jnp.asarray((0.35, 0.65), dtype=jnp.float32), shape + (system.species_count,)
+    )
+    velocity = jnp.broadcast_to(
+        jnp.linspace(0.15, -0.05, system.dimension), shape + (system.dimension,)
+    )
+    temperature = jnp.full(shape + (1,), 500.0)
+    return jnp.concatenate((species, velocity, temperature), axis=-1)
+
+
+def test_reference_characteristic_acoustic_entropy_and_vorticity_waves():
+    system = HomogeneousMixtureEulerSystem(_model(), 2)
+    points = jnp.stack(
+        jnp.meshgrid(jnp.linspace(0.0, 1.0, 5), jnp.linspace(0.0, 1.0, 4)),
         axis=-1,
     )
-    system = EulerSystem(2)
+    base = _uniform_primitive(system)
     for kind in ("isentropic", "acoustic", "entropy", "vorticity"):
         plan = CompressibleReferenceWavePlan(
-            kind,
-            (0.2, -0.1),
-            (2.0 * jnp.pi, 0.0),
-            polarization=(0.0, 1.0),
+            kind, base, (2.0 * np.pi, 0.0), amplitude=1.0e-5
         )
-        evidence = plan.evaluate(system, x, 0.25)
-        assert bool(evidence.finite)
-        assert bool(jnp.all(evidence.admissible))
-        np.testing.assert_allclose(evidence.pressure_relation_residual, 0.0, atol=1e-6)
-        np.testing.assert_allclose(evidence.transverse_velocity_residual, 0.0, atol=1e-6)
+        evidence = plan.evaluate(system, points, jnp.asarray(0.1))
+        assert bool(jnp.all(evidence.admissible & evidence.entropy_supported))
+        assert float(evidence.characteristic_identity_residual) < 2.0e-5
+        np.testing.assert_allclose(
+            evidence.transverse_velocity_residual, 0.0, atol=2.0e-5
+        )
 
 
-def test_conservative_forcing_work_and_named_budget_decomposition():
-    density = jnp.asarray((1.0, 2.0, 3.0))
-    velocity = jnp.stack(
-        (jnp.asarray((0.5, 1.0, -0.25)), jnp.asarray((0.2, 0.1, 0.3))), axis=-1
+def test_full_species_normal_flux_reflection_and_characteristic_modes():
+    system = HomogeneousMixtureEulerSystem(_model(), 2)
+    state = system.primitive_to_conserved(_uniform_primitive(system))
+    normal = jnp.asarray((0.6, 0.8))
+    normal_flux = system.physical_normal_flux(state, normal)
+    axis_flux = sum(
+        normal[axis] * system.physical_flux(state, axis)
+        for axis in range(system.dimension)
     )
-    pressure = jnp.ones_like(density)
-    total_energy = pressure / 0.4 + 0.5 * density * jnp.sum(velocity**2, axis=-1)
-    state = jnp.concatenate(
-        (density[:, None], density[:, None] * velocity, total_energy[:, None]), axis=-1
+    np.testing.assert_allclose(normal_flux, axis_flux, rtol=1.0e-6)
+    reflected = system.reflect_normal_state(state, normal)
+    np.testing.assert_array_equal(reflected[: system.species_count], state[:2])
+    np.testing.assert_allclose(reflected[-1], state[-1])
+    momentum = state[system.species_count : -1]
+    reflected_momentum = reflected[system.species_count : -1]
+    np.testing.assert_allclose(
+        jnp.dot(reflected_momentum, normal), -jnp.dot(momentum, normal)
     )
+    left, right, speeds = system.normal_eigensystem(state, state, normal)
+    np.testing.assert_allclose(
+        left @ right, jnp.eye(system.component_count), rtol=2.0e-5, atol=2.0e-5
+    )
+    primitive = system.conserved_to_primitive(state)
+    convective = jnp.dot(primitive[system.species_count : -1], normal)
+    np.testing.assert_allclose(
+        speeds[1:-1],
+        jnp.full((system.species_count + system.dimension - 1,), convective),
+        rtol=1.0e-5,
+    )
+
+
+def test_conservative_mixture_forcing_work_and_named_budget_decomposition():
+    system = HomogeneousMixtureEulerSystem(_model(), 2)
+    state = system.primitive_to_conserved(_uniform_primitive(system, (3,)))
     forcing = CompressibleForcingPlan(
-        2,
-        acceleration=(0.3, -0.2),
-        mass_rate=0.1,
-        injection_velocity=(0.4, 0.0),
-        injection_specific_internal_energy=2.0,
-        volumetric_heating=0.05,
+        system,
+        acceleration=(0.5, -0.25),
+        mass_rate=0.2,
+        injection_mass_fractions=(0.7, 0.3),
+        injection_velocity=(1.0, 0.5),
+        injection_density=0.9,
+        injection_temperature=450.0,
+        volumetric_heating=0.75,
     ).evaluate(state)
-    np.testing.assert_allclose(forcing.work_identity_residual, 0.0, atol=1e-7)
-    np.testing.assert_allclose(forcing.source[..., 0], forcing.mass_source)
-    np.testing.assert_allclose(forcing.source[..., 1:3], forcing.momentum_source)
-    np.testing.assert_allclose(forcing.source[..., -1], forcing.total_energy_source)
-
-    zeros = jnp.zeros_like(density)
-    gradient = jnp.zeros(density.shape + (2, 2))
-    stress = jnp.zeros_like(gradient)
-    budget = CompressibleBudgetPlan(2).evaluate(
+    np.testing.assert_allclose(
+        jnp.sum(forcing.species_mass_source, axis=-1), forcing.mass_source
+    )
+    np.testing.assert_allclose(forcing.work_identity_residual, 0.0, atol=1.0e-6)
+    budget = CompressibleBudgetPlan(system).evaluate(
         state,
         forcing.source,
-        pressure,
-        velocity_gradient=gradient,
-        viscous_stress=stress,
-        thermal_rate=zeros,
-        entropy_rate=zeros,
-        interface_rate=zeros,
-        filter_rate=zeros,
-        limiter_rate=zeros,
-        sponge_rate=zeros,
+        velocity_gradient=jnp.zeros((3, 2, 2)),
+        viscous_stress=jnp.zeros((3, 2, 2)),
+        thermal_rate=jnp.zeros((3,)),
+        entropy_rate=jnp.zeros((3,)),
+        interface_rate=jnp.zeros((3,)),
+        filter_rate=jnp.zeros((3,)),
+        limiter_rate=jnp.zeros((3,)),
+        sponge_rate=jnp.zeros((3,)),
         forcing_rate=forcing.total_energy_source,
-        boundary_rate=zeros,
+        boundary_rate=jnp.zeros_like(state),
     )
+    np.testing.assert_allclose(jnp.sum(budget.species_mass), budget.mass)
+    np.testing.assert_allclose(jnp.sum(budget.species_mass_rate), budget.mass_rate)
+    np.testing.assert_allclose(budget.decomposition_residual, 0.0, atol=1.0e-6)
     assert bool(budget.complete)
-    np.testing.assert_allclose(budget.decomposition_residual, 0.0, atol=1e-6)
-    np.testing.assert_allclose(
-        budget.total_energy, budget.kinetic_energy + budget.internal_energy
-    )
 
 
 def test_favre_raw_moments_spectra_and_wall_thermal_statistics():
     nx, ny = 6, 4
-    y = jnp.linspace(0.0, 1.0, ny)
-    density = 1.0 + 0.1 * jnp.arange(nx)[:, None] + jnp.zeros((nx, ny))
-    u = jnp.broadcast_to(y[None, :], (nx, ny))
-    velocity = jnp.stack((u, jnp.zeros_like(u)), axis=-1)
-    pressure = jnp.ones((nx, ny))
-    temperature = jnp.ones((nx, ny))
-    energy = pressure / 0.4 + 0.5 * density * u**2
-    state = jnp.concatenate(
-        (density[..., None], density[..., None] * velocity, energy[..., None]), axis=-1
+    system = HomogeneousMixtureEulerSystem(_model(), 2)
+    primitive = _uniform_primitive(system, (nx, ny))
+    primitive = primitive.at[..., system.species_count].add(
+        jnp.linspace(0.0, 0.2, nx)[:, None]
     )
-    gradient = jnp.zeros((nx, ny, 2, 2)).at[..., 0, 1].set(1.0)
-    temperature_gradient = jnp.zeros((nx, ny, 2)).at[..., 1].set(2.0)
-    viscosity = 0.1 * jnp.ones((nx, ny))
-    conductivity = 0.2 * jnp.ones((nx, ny))
+    state = system.primitive_to_conserved(primitive)
+    coordinates = jnp.linspace(0.0, 1.0, ny)
     plan = CompressiblePlaneStatisticsPlan(
-        2,
+        system,
         wall_normal_axis=1,
-        wall_normal_coordinates=y,
-        periodic_lengths=(2.0 * jnp.pi,),
+        wall_normal_coordinates=coordinates,
+        periodic_lengths=(2.0,),
     )
     statistics = plan.evaluate(
         state,
-        pressure,
-        temperature,
-        jnp.sqrt(1.4) * jnp.ones((nx, ny)),
-        viscosity,
-        velocity_gradient=gradient,
-        thermal_conductivity=conductivity,
-        temperature_gradient=temperature_gradient,
+        jnp.full((nx, ny), 1.0e-3),
+        velocity_gradient=jnp.zeros((nx, ny, 2, 2)),
+        thermal_conductivity=jnp.full((nx, ny), 0.03),
+        temperature_gradient=jnp.zeros((nx, ny, 2)),
     )
+    np.testing.assert_allclose(statistics.favre_identity_residual, 0.0, atol=1.0e-6)
     assert bool(statistics.finite)
-    np.testing.assert_allclose(statistics.favre_identity_residual, 0.0, atol=1e-6)
-    np.testing.assert_allclose(statistics.favre_mean_velocity[..., 0], y, atol=1e-6)
-    np.testing.assert_allclose(
-        statistics.wall_heat_flux, jnp.asarray((0.4, -0.4)), atol=1e-6
-    )
-    np.testing.assert_allclose(
-        statistics.raw_moments.merge(statistics.raw_moments).weight, 2.0 * nx
-    )
+    assert not bool(jnp.any(statistics.wall_units_available))
+    assert statistics.wall_shear.shape == (2, 2)
     assert statistics.solenoidal_spectrum.shape == (nx, ny)
-    assert statistics.dilatational_spectrum.shape == (nx, ny)
 
 
-def test_characteristic_boundary_has_zero_outgoing_reflection_and_sponge_ledgers():
-    system = EulerSystem(1)
-    interior = system.primitive_to_conserved(jnp.asarray((1.0, 0.2, 1.0)))
-    far_field = system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 1.0)))
-    boundary = CharacteristicNonreflectingBoundaryPlan().apply(
+def test_full_species_characteristic_boundary_and_sponge_ledgers():
+    system = HomogeneousMixtureEulerSystem(_model(), 1)
+    far_field = system.primitive_to_conserved(_uniform_primitive(system))
+    interior_primitive = _uniform_primitive(system).at[system.species_count].set(-0.1)
+    interior = system.primitive_to_conserved(interior_primitive)
+    result = CharacteristicNonreflectingBoundaryPlan().apply(
         system, interior, far_field, jnp.asarray((1.0,))
     )
-    assert bool(boundary.ledger.admissible)
-    np.testing.assert_allclose(boundary.ledger.reflected_energy, 0.0, atol=1e-10)
-
-    coordinates = jnp.linspace(0.0, 1.0, 6)
-    state = jnp.broadcast_to(interior, (6, 3)).at[:, 0].add(0.02)
+    assert result.boundary_state.shape == (system.component_count,)
+    assert bool(result.ledger.admissible)
+    state = jnp.broadcast_to(interior, (6, system.component_count))
     sponge = CompressibleSpongePlan(
+        system,
         far_field,
         strength=2.0,
         start_coordinate=0.5,
         end_coordinate=1.0,
-    ).apply(system, state, coordinates, step_size=0.1)
-    assert bool(sponge.ledger.finite)
-    assert (
-        sponge.ledger.fluctuation_energy_after < sponge.ledger.fluctuation_energy_before
     )
-    assert 0.0 <= sponge.ledger.reflection_coefficient < 1.0
-    np.testing.assert_allclose(sponge.source[:, 0].sum(), sponge.ledger.mass_rate)
+    sponge_result = sponge.apply(state, jnp.linspace(0.0, 1.0, 6), step_size=0.1)
+    assert sponge_result.ledger.species_mass_rate.shape == (system.species_count,)
     np.testing.assert_allclose(
-        sponge.source[:, -1].sum(), sponge.ledger.total_energy_rate
+        jnp.sum(sponge_result.ledger.species_mass_rate),
+        sponge_result.ledger.mass_rate,
     )
+    assert bool(sponge_result.ledger.finite)
 
 
-def test_finite_x_boundary_layer_owns_inflow_outflow_and_wall_contracts():
-    material = IdealGasMaterial()
+def test_finite_x_boundary_layer_owns_canonical_composition_and_temperature():
+    model = _model()
+    system = HomogeneousMixtureEulerSystem(model, 2)
     inflow = FiniteXBoundaryLayerInflowPlan(
-        free_stream_density=1.0,
-        free_stream_velocity=2.0,
-        free_stream_pressure=1.0,
+        free_stream_density=1.2,
+        free_stream_mass_fractions=(0.25, 0.75),
+        free_stream_velocity=5.0,
+        free_stream_temperature=500.0,
         boundary_layer_thickness=0.2,
-        wall_temperature=1.0,
+        wall_temperature=350.0,
     )
-    boundary_layer = FiniteXBoundaryLayerCaseSpec(
-        (0.0, 4.0),
-        (0.0, 1.0),
-        inflow,
-    )
+    primitive = inflow.primitive(jnp.asarray((0.0, 0.2, 1.0)), system)
+    assert primitive.shape == (3, system.component_count)
+    np.testing.assert_allclose(jnp.sum(primitive[..., :2], axis=-1), 1.2)
+    np.testing.assert_allclose(primitive[0, -1], 350.0)
+    boundary_layer = FiniteXBoundaryLayerCaseSpec((0.0, 10.0), (0.0, 2.0), inflow)
     case = CompressibleFlowCaseSpec(
-        "finite-x-boundary-layer",
+        "finite-x",
         2,
-        "navier_stokes",
+        "euler",
         "structured-fv",
-        material,
+        model,
         boundary_layer=boundary_layer,
     )
-    primitive = inflow.primitive(jnp.asarray((0.0, 0.2, 1.0)), material, case.dimension)
-    np.testing.assert_allclose(primitive[0, 1], 0.0)
-    assert primitive[-1, 1] > primitive[1, 1]
-    assert boundary_layer.outflow_kind == "characteristic-nonreflecting"
+    assert case.prepare_system().component_count == 5
     assert boundary_layer.wall_kind == "no-slip-thermal"

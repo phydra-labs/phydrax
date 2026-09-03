@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +10,38 @@ from phydrax.applications.compressible_flow._slow_growth import (
     SpatialSlowGrowthModelPlan,
     TemporalSlowGrowthModelPlan,
 )
-from phydrax.equations._materials import IdealGasMaterial
+from phydrax.equations import (
+    ChemicalPhaseKind,
+    ChemicalSpeciesSchema,
+    HomogeneousHelmholtzPlan,
+    IdealGasReferenceHelmholtzTerm,
+    PolynomialSpeciesThermodynamicsPlan,
+    UNIVERSAL_GAS_CONSTANT,
+    ZeroResidualHelmholtzTerm,
+)
+
+
+def _model():
+    schema = ChemicalSpeciesSchema.from_unique_species(
+        ("A", "B"),
+        (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
+        jnp.asarray((0.020, 0.030)),
+        ("A", "B"),
+        jnp.eye(2, dtype=jnp.int32),
+        jnp.zeros((2,), dtype=jnp.int32),
+        gas_standard_pressure=1.0e5,
+    )
+    calorics = PolynomialSpeciesThermodynamicsPlan(
+        schema,
+        jnp.full((2, 1), 2.5 * UNIVERSAL_GAS_CONSTANT),
+        jnp.asarray((1.0e3, 2.0e3)),
+        reference_molar_entropy=jnp.asarray((100.0, 110.0)),
+        reference_temperature=300.0,
+        minimum_temperature=100.0,
+        maximum_temperature=1500.0,
+    )
+    ideal = IdealGasReferenceHelmholtzTerm(schema, calorics)
+    return HomogeneousHelmholtzPlan(ideal, ZeroResidualHelmholtzTerm(schema))
 
 
 def _case() -> CompressibleFlowCaseSpec:
@@ -18,20 +50,21 @@ def _case() -> CompressibleFlowCaseSpec:
         2,
         "navier_stokes",
         "structured-fv",
-        IdealGasMaterial(),
+        _model(),
     )
 
 
 def _profile(y, *, offset=0.0):
     density = 1.0 + offset + 0.15 * y
     streamwise_velocity = 1.0 - jnp.exp(-4.0 * y) + 0.1
-    pressure = 1.0 + 0.08 * y + 0.04 * y * y + 0.5 * offset
+    temperature = 500.0 + 8.0 * y + 4.0 * y * y + 5.0 * offset
     return jnp.stack(
         (
-            density,
+            0.4 * density,
+            0.6 * density,
             streamwise_velocity,
             jnp.zeros_like(y),
-            pressure,
+            temperature,
         ),
         axis=-1,
     )
@@ -59,11 +92,12 @@ def test_density_weighted_baseflow_and_zero_growth_reduction():
     y = jnp.linspace(0.0, 1.0, 7)
     x = jnp.arange(3.0)[:, None]
     density = 1.0 + 0.2 * y[None, :] + 0.1 * x
+    species_density = jnp.stack((0.4 * density, 0.6 * density), axis=-1)
     velocity_x = 0.25 + y[None, :] + 0.2 * x
     velocity = jnp.stack((velocity_x, jnp.zeros_like(velocity_x)), axis=-1)
-    pressure = jnp.ones_like(density)
+    temperature = jnp.full_like(density, 500.0)
     primitive = jnp.concatenate(
-        (density[..., None], velocity, pressure[..., None]), axis=-1
+        (species_density, velocity, temperature[..., None]), axis=-1
     )
     conserved = case.primitive_to_conserved(primitive)
     snapshot = CompressiblePlaneBaseflowPlan(case, y, wall_normal_axis=1).evaluate(
@@ -71,7 +105,7 @@ def test_density_weighted_baseflow_and_zero_growth_reduction():
     )
     expected_favre = jnp.mean(density * velocity_x, axis=0) / jnp.mean(density, axis=0)
     np.testing.assert_allclose(snapshot.favre_mean_velocity[:, 0], expected_favre)
-    np.testing.assert_allclose(snapshot.base_primitive[:, 1], expected_favre)
+    np.testing.assert_allclose(snapshot.base_primitive[:, 2], expected_favre)
 
     prepared = TemporalSlowGrowthModelPlan(0.0).prepare(snapshot)
     result = prepared.evaluate(conserved)
@@ -86,10 +120,11 @@ def test_temporal_manufactured_base_uses_only_temporal_dilation_derivative():
     y = jnp.linspace(0.0, 1.0, 6)
     primitive_profile = jnp.stack(
         (
-            1.0 + 0.2 * y,
+            0.4 * (1.0 + 0.2 * y),
+            0.6 * (1.0 + 0.2 * y),
             0.5 + 0.3 * y,
             -0.1 + 0.05 * y,
-            1.1 + 0.4 * y,
+            500.0 + 0.4 * y,
         ),
         axis=-1,
     )
@@ -101,7 +136,7 @@ def test_temporal_manufactured_base_uses_only_temporal_dilation_derivative():
     )
     growth_rate = 0.125
     prepared = TemporalSlowGrowthModelPlan(growth_rate, wall_indices=()).prepare(snapshot)
-    expected = -growth_rate * y[:, None] * jnp.asarray((0.2, 0.3, 0.05, 0.4))
+    expected = -growth_rate * y[:, None] * jnp.asarray((0.08, 0.12, 0.3, 0.05, 0.4))
     np.testing.assert_allclose(prepared.primitive_source_profile, expected, atol=1e-12)
     assert prepared.coordinate == "temporal"
 
@@ -113,7 +148,8 @@ def test_modeled_spatial_requires_and_uses_supplied_streamwise_derivatives():
 
     derivative = jnp.stack(
         (
-            0.02 * jnp.ones_like(y),
+            0.008 * jnp.ones_like(y),
+            0.012 * jnp.ones_like(y),
             -0.03 * (1.0 + y),
             jnp.zeros_like(y),
             0.01 * y,
@@ -134,22 +170,30 @@ def test_primitive_and_conservative_source_forms_are_algebraically_equal():
     prepared = TemporalSlowGrowthModelPlan(0.08, wall_indices=()).prepare(snapshot)
     result = prepared.evaluate(conserved)
     primitive = case.conserved_to_primitive(conserved)
-    density = primitive[..., 0]
-    velocity = primitive[..., 1:3]
     primitive_source = result.source.primitive
-    expected_mass = primitive_source[..., 0]
-    expected_momentum = (
-        density[..., None] * primitive_source[..., 1:3]
-        + velocity * expected_mass[..., None]
+    expected_conservative = jax.jvp(
+        case.primitive_to_conserved,
+        (primitive,),
+        (primitive_source,),
+    )[1]
+    np.testing.assert_allclose(
+        result.source.species_mass,
+        expected_conservative[..., : case.species_count],
+        atol=1e-6,
     )
-    expected_energy = (
-        primitive_source[..., -1] / (case.material.gamma - 1.0)
-        + 0.5 * jnp.sum(velocity * velocity, axis=-1) * expected_mass
-        + density * jnp.sum(velocity * primitive_source[..., 1:3], axis=-1)
+    np.testing.assert_allclose(
+        result.source.mass,
+        jnp.sum(expected_conservative[..., : case.species_count], axis=-1),
+        atol=1e-6,
     )
-    np.testing.assert_allclose(result.source.mass, expected_mass, atol=1e-12)
-    np.testing.assert_allclose(result.source.momentum, expected_momentum, atol=1e-12)
-    np.testing.assert_allclose(result.source.total_energy, expected_energy, atol=1e-12)
+    np.testing.assert_allclose(
+        result.source.momentum,
+        expected_conservative[..., case.species_count : -1],
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        result.source.total_energy, expected_conservative[..., -1], atol=1e-6
+    )
     primitive_result = prepared.evaluate_primitive(primitive)
     np.testing.assert_allclose(
         primitive_result.source.conservative, result.source.conservative, atol=1e-12
@@ -200,7 +244,7 @@ def test_all_stages_share_frozen_snapshot_and_acceptance_advances_it():
     model = TemporalSlowGrowthModelPlan(0.05, wall_indices=())
     prepared = model.prepare(snapshot, continuation=continuation)
     stage_one = prepared.evaluate(conserved)
-    stage_state = conserved.at[..., 1].add(0.01)
+    stage_state = conserved.at[..., case.species_count].add(0.01)
     stage_two = prepared.evaluate(stage_state)
     np.testing.assert_allclose(
         stage_one.source.primitive, stage_two.source.primitive, atol=0.0
@@ -270,7 +314,8 @@ def test_energy_entropy_base_residuals_and_finite_x_admission_keep_labels_separa
     _, y, conserved, _, _ = _state_and_snapshot()
     derivative = jnp.stack(
         (
-            0.01 * jnp.ones_like(y),
+            0.004 * jnp.ones_like(y),
+            0.006 * jnp.ones_like(y),
             -0.02 * y,
             jnp.zeros_like(y),
             0.015 * y,

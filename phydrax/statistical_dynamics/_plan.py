@@ -153,6 +153,7 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
     closure: ClosureKind = eqx.field(static=True)
     interaction_model: str = eqx.field(static=True)
     closure_exact: bool = eqx.field(static=True)
+    closure_structure_defect: float = eqx.field(static=True)
     exactness: str = eqx.field(static=True)
     time_step: float = eqx.field(static=True)
     hermitian_tolerance: float = eqx.field(static=True)
@@ -218,12 +219,35 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
                 "Exact quadratic cumulants require independent real coordinates; "
                 "convert Hermitian spectral states before preparing CE2/GCE2."
             )
+        mean_indices = np.asarray(layout.mean_indices)
+        eddy_indices = np.asarray(layout.eddy_indices)
+        mean_to_eddy = np.asarray(dynamics.linear)[np.ix_(eddy_indices, mean_indices)]
+        constant_eddy = np.asarray(dynamics.constant)[eddy_indices]
+        mean_mean_to_eddy = np.asarray(dynamics.quadratic)[
+            np.ix_(eddy_indices, mean_indices, mean_indices)
+        ]
+        eddy_eddy_to_eddy = np.asarray(dynamics.quadratic)[
+            np.ix_(eddy_indices, eddy_indices, eddy_indices)
+        ]
+        closure_structure_defect = max(
+            float(np.max(np.abs(mean_to_eddy), initial=0.0)),
+            float(np.max(np.abs(constant_eddy), initial=0.0)),
+            float(np.max(np.abs(mean_mean_to_eddy), initial=0.0)),
+            float(np.max(np.abs(eddy_eddy_to_eddy), initial=0.0)),
+        )
+        if closure_structure_defect > hermitian:
+            raise ValueError(
+                "The declared low/mean subspace or eddy closure is not invariant "
+                "under constant, linear, low-low, and eddy-eddy dynamics; exact "
+                "QL/GQL second-cumulant closure is unavailable."
+            )
         self.layout = layout
         self.dynamics = dynamics
         self.forcing = forcing
         self.closure = closure
         self.interaction_model = interaction_model
         self.closure_exact = True
+        self.closure_structure_defect = closure_structure_defect
         self.exactness = f"{closure}-exact-for-{interaction_model}"
         self.time_step = step
         self.hermitian_tolerance = hermitian
@@ -239,6 +263,7 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
                 "closure": closure,
                 "interaction_model": interaction_model,
                 "exactness": f"{closure}-exact-for-{interaction_model}",
+                "closure_structure_defect": closure_structure_defect,
                 "time_step": step,
                 "hermitian_tolerance": hermitian,
                 "psd_tolerance": psd,
@@ -270,25 +295,6 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
             raise MemoryError(
                 "Statistical-dynamics RK workspace exceeds maximum_workspace_bytes."
             )
-        mean_indices = np.asarray(self.layout.mean_indices)
-        eddy_indices = np.asarray(self.layout.eddy_indices)
-        mean_to_eddy = np.asarray(self.dynamics.linear)[
-            np.ix_(eddy_indices, mean_indices)
-        ]
-        constant_eddy = np.asarray(self.dynamics.constant)[eddy_indices]
-        mean_mean_to_eddy = np.asarray(self.dynamics.quadratic)[
-            np.ix_(eddy_indices, mean_indices, mean_indices)
-        ]
-        invariant_defect = max(
-            float(np.max(np.abs(mean_to_eddy), initial=0.0)),
-            float(np.max(np.abs(constant_eddy), initial=0.0)),
-            float(np.max(np.abs(mean_mean_to_eddy), initial=0.0)),
-        )
-        if invariant_defect > self.hermitian_tolerance:
-            raise ValueError(
-                "The declared low/mean subspace is not invariant under constant, linear, "
-                "and low-low dynamics; exact QL/GQL closure is unavailable."
-            )
         cost = StatisticalDynamicsCost(
             state_dimension=self.layout.state_size,
             mean_dimension=self.layout.mean_dimension,
@@ -301,7 +307,7 @@ class StatisticalDynamicsPlan(StrictModule, NonTrainableState):
         return PreparedStatisticalDynamics(
             self,
             cost,
-            invariant_defect=jnp.asarray(invariant_defect),
+            invariant_defect=jnp.asarray(self.closure_structure_defect),
         )
 
 

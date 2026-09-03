@@ -29,10 +29,12 @@ from ...discretization.finite_volume._positivity import FluxPositivityPlan
 from ...discretization.finite_volume._riemann import (
     AbstractArbitraryNormalNumericalFluxPlan,
     AbstractSymmetricTwoPointFluxPlan,
-    EntropyStableEulerFluxPlan,
-    EntropyStableFluxPlan,
 )
 from ...discretization.finite_volume._viscous import ViscousFluxPlan
+from ...equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
+)
 from ...equations.fem._conservation import (
     DGSEMConservationMethodPlan,
     DGSEMSampledFluxCompatibilityEvidence,
@@ -447,7 +449,7 @@ class PreparedCompressibleProduction(StrictModule, NonTrainableState):
 
 
 class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
-    """Tensor DGSEM split form with entropy-stable interface and entropy BR1."""
+    """Tensor DGSEM enabled only by canonical sampled entropy evidence."""
 
     method: DGSEMConservationMethodPlan
     route_label: str = eqx.field(static=True)
@@ -463,11 +465,15 @@ class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
         viscous: ViscousDGPlan | None = None,
         accumulation: str = "deterministic",
     ):
-        if not isinstance(
-            interface_flux, (EntropyStableFluxPlan, EntropyStableEulerFluxPlan)
+        if (
+            not isinstance(compatibility, DGSEMSampledFluxCompatibilityEvidence)
+            or compatibility.volume_flux_id != volume_flux.flux_id
+            or compatibility.interface_flux_id != interface_flux.flux_id
+            or not compatibility.volume_entropy_conservative
+            or not compatibility.interface_entropy_stable
         ):
             raise TypeError(
-                "Smooth tensor DGSEM requires an entropy-stable interface flux."
+                "Smooth tensor DGSEM requires passing system-specific sampled entropy evidence."
             )
         viscous_ = (
             ViscousDGPlan(formulation="entropy_br1") if viscous is None else viscous
@@ -484,7 +490,7 @@ class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
             viscous=viscous_,
             accumulation=accumulation,
         )
-        route = "smooth:tensor-dgsem:split-volume:entropy-interface:entropy-br1"
+        route = "smooth:tensor-dgsem:canonical-entropy-evidence:entropy-br1"
         self.method = method
         self.route_label = route
         self.plan_id = canonical_fingerprint(
@@ -506,6 +512,19 @@ class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
             raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
+        if (
+            not isinstance(
+                dynamics.system,
+                (
+                    HomogeneousMixtureEulerSystem,
+                    HomogeneousMixtureCompressibleNavierStokesSystem,
+                ),
+            )
+            or dynamics.system.system_id != self.method.compatibility.system_id
+        ):
+            raise ValueError(
+                "Prepared DGSEM dynamics lack exact canonical entropy-system evidence."
+            )
         temporal = ExplicitCompressibleFixedStepAdapter(
             dynamics, dynamics.dynamics_id, order=order
         )
@@ -526,6 +545,19 @@ class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
             raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
+        if (
+            not isinstance(
+                dynamics.system,
+                (
+                    HomogeneousMixtureEulerSystem,
+                    HomogeneousMixtureCompressibleNavierStokesSystem,
+                ),
+            )
+            or dynamics.system.system_id != self.method.compatibility.system_id
+        ):
+            raise ValueError(
+                "Prepared DGSEM dynamics lack exact canonical entropy-system evidence."
+            )
         temporal = AdditiveIMEXCompressibleFixedStepAdapter(
             method,
             explicit_operator_id=explicit_operator_id,
@@ -543,6 +575,11 @@ class SmoothCompressibleProductionPlan(StrictModule, NonTrainableState):
         if not isinstance(case, CompressibleFlowCaseSpec) or case.route != "tensor-dgsem":
             raise ValueError("Smooth qualification requires a tensor-DGSEM case.")
         compatibility = self.method.compatibility
+        canonical_system = case.prepare_inviscid_system()
+        if compatibility is None or compatibility.system_id != canonical_system.system_id:
+            raise ValueError(
+                "Smooth qualification requires entropy evidence for the exact canonical gas system."
+            )
         return CompressibleQualificationEvidence(
             case.case_id,
             self.route_label,
@@ -597,7 +634,7 @@ class NodalDGCompressibleProductionPlan(StrictModule, NonTrainableState):
             viscous=viscous_,
             accumulation=accumulation,
         )
-        route = "smooth:nodal-dg:overintegrated:ldg"
+        route = "nodal-dg:overintegrated:ldg"
         self.method = method
         self.route_label = route
         self.plan_id = canonical_fingerprint(
@@ -617,6 +654,16 @@ class NodalDGCompressibleProductionPlan(StrictModule, NonTrainableState):
     ) -> PreparedCompressibleProduction:
         if not isinstance(dynamics, PreparedNodalDGConservationDynamics):
             raise TypeError("Nodal production requires prepared nodal-DG dynamics.")
+        if not isinstance(
+            dynamics.system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ):
+            raise TypeError(
+                "Nodal production requires a canonical homogeneous-mixture system."
+            )
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared nodal dynamics do not belong to this plan.")
         temporal = ExplicitCompressibleFixedStepAdapter(
@@ -628,7 +675,7 @@ class NodalDGCompressibleProductionPlan(StrictModule, NonTrainableState):
 
 
 class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
-    """Structured/mapped high-resolution FV with exact Einfeldt stage fallback."""
+    """Structured/mapped high-resolution FV with generic canonical HLL fallback."""
 
     shock: ShockResolvingPolicy
     method: FiniteVolumeMethodPlan
@@ -678,7 +725,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
         stage_positivity = FluxPositivityPlan(
             positivity_iterations, fallback_flux=shock_.fallback_flux
         )
-        route = f"shock:{geometry_route}-fv:{shock_.reconstruction}:{type(interface).__name__}->einfeldt-hll"
+        route = f"shock:{geometry_route}-fv:{shock_.reconstruction}:{type(interface).__name__}->generic-hll"
         self.geometry_route = geometry_route
         self.shock = shock_
         self.method = method
@@ -704,6 +751,16 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
     ) -> PreparedFiniteVolumeRuntime:
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("Structured FV production requires prepared FV dynamics.")
+        if not isinstance(
+            dynamics.system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ):
+            raise TypeError(
+                "Structured FV production requires a canonical homogeneous-mixture system."
+            )
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError(
                 "Prepared FV dynamics do not belong to this production plan."
@@ -757,7 +814,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule, NonTrainableState):
                     isinstance(self.positivity, FluxPositivityPlan),
                 ),
                 (
-                    "einfeldt-fallback",
+                    "canonical-generic-hll-fallback",
                     self.positivity.fallback_flux.flux_id
                     == self.shock.fallback_flux.flux_id,
                 ),

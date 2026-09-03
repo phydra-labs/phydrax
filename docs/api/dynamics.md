@@ -531,14 +531,16 @@ C_dot = J_e(m) C + C J_e(m)^* + Q .
 ```
 
 The covariance equation is the exact ensemble second moment of that selected linear
-eddy equation, not a DNS equation with a silently dropped third cumulant. Preparation
-gates mean-subspace invariance and dense state/workspace cost. Dense/factor cumulant
-execution reports Hermitian and PSD evidence; it does not repair a failed covariance
-silently.
+eddy equation, not a DNS equation with a silently dropped third cumulant. Generic plan
+construction rejects constant/linear/low-low leakage into the eddy subspace and every
+eddy-eddy-to-eddy quadratic tensor entry before it exposes `closure_exact=True`; a
+caller-supplied full nonlinear tensor cannot acquire exactness by label alone.
+Dense/factor cumulant execution reports Hermitian and PSD evidence and never repairs a
+failed covariance silently.
 
 `BetaPlaneCumulantSystem` converts admissible Hermitian modes to independent real
-coordinates and materializes the finite quadratic tensor under explicit dimension and
-byte caps. Its `prepare(..., closure="ce2"|"gce2")` selects the matching QL/GQL owner.
+coordinates, materializes the QL- or GQL-selected quadratic tensor only inside the
+corresponding `prepare` call, and enforces explicit dimension and byte caps.
 
 `NILSSPlan.prepare()` differentiates a supplied real fixed-step map and scalar
 objective, estimates retained/workspace memory, and freezes dynamics/objective IDs,

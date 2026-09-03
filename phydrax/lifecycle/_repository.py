@@ -239,6 +239,81 @@ class ObjectPreconditionError(RepositoryConflictError):
     """Raised when an object conditional write or delete loses a race."""
 
 
+class ArtifactGuardRecoveryAuthorization(StrictModule, NonTrainableState):
+    """Externally fenced authorization to recover one abandoned metadata guard."""
+
+    provider_id: str = eqx.field(static=True)
+    artifact_id: str = eqx.field(static=True)
+    guard_etag: str = eqx.field(static=True)
+    authority_id: str = eqx.field(static=True)
+    fencing_evidence_id: str = eqx.field(static=True)
+    issued_at: int = eqx.field(static=True)
+    worker_fenced: bool = eqx.field(static=True)
+    authorization_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        provider_id: str,
+        artifact_id: str,
+        guard_etag: str,
+        authority_id: str,
+        fencing_evidence_id: str,
+        issued_at: int,
+        /,
+        *,
+        worker_fenced: bool,
+    ):
+        if worker_fenced is not True:
+            raise ValueError(
+                "Artifact guard recovery requires external worker-fencing evidence."
+            )
+        self.provider_id = _identifier(provider_id, "provider_id")
+        self.artifact_id = _identifier(artifact_id, "artifact_id")
+        self.guard_etag = _identifier(guard_etag, "guard_etag")
+        self.authority_id = _identifier(authority_id, "authority_id")
+        self.fencing_evidence_id = _identifier(fencing_evidence_id, "fencing_evidence_id")
+        self.issued_at = _nonnegative(issued_at, "issued_at")
+        self.worker_fenced = True
+        self.authorization_id = canonical_fingerprint(self._content_record())
+
+    def _content_record(self) -> dict[str, object]:
+        return {
+            "kind": "artifact-guard-recovery-authorization",
+            "provider_id": self.provider_id,
+            "artifact_id": self.artifact_id,
+            "guard_etag": self.guard_etag,
+            "authority_id": self.authority_id,
+            "fencing_evidence_id": self.fencing_evidence_id,
+            "issued_at": self.issued_at,
+            "worker_fenced": self.worker_fenced,
+        }
+
+    def to_record(self) -> dict[str, object]:
+        return {
+            **self._content_record(),
+            "authorization_id": self.authorization_id,
+        }
+
+    @classmethod
+    def from_record(
+        cls, record: Mapping[str, object], /
+    ) -> ArtifactGuardRecoveryAuthorization:
+        if record.get("kind") != "artifact-guard-recovery-authorization":
+            raise ValueError("Record is not an artifact guard authorization.")
+        value = cls(
+            str(record.get("provider_id", "")),
+            str(record.get("artifact_id", "")),
+            str(record.get("guard_etag", "")),
+            str(record.get("authority_id", "")),
+            str(record.get("fencing_evidence_id", "")),
+            record.get("issued_at"),
+            worker_fenced=record.get("worker_fenced"),
+        )
+        if record.get("authorization_id") != value.authorization_id:
+            raise ValueError("Artifact guard authorization identity mismatch.")
+        return value
+
+
 class ConditionalObjectClient(Protocol):
     """Narrow whole-object API required from an S3-compatible client adapter."""
 
@@ -1193,6 +1268,7 @@ class S3ArtifactRepository:
                 "transport": "s3-compatible",
                 "profile_id": profile.profile_id,
                 "maximum_chunk_bytes": maximum,
+                "guard_recovery": "explicit-external-worker-fence",
             },
         )
 
@@ -1708,6 +1784,43 @@ class S3ArtifactRepository:
         except ObjectNotFoundError:
             return None
 
+    def artifact_guard_metadata(self, artifact_id: str, /) -> ObjectMetadata:
+        """Return the exact conditional token for an abandoned metadata guard."""
+
+        artifact = _identifier(artifact_id, "artifact_id")
+        value = self.client.read_object(
+            self._guard_key(artifact),
+            maximum_bytes=self.maximum_metadata_bytes,
+        )
+        record = _json_record(value.data)
+        if (
+            record.get("kind") != "artifact-metadata-guard"
+            or record.get("provider_id") != self.provider_id
+            or record.get("artifact_id") != artifact
+            or not isinstance(record.get("token"), str)
+            or type(record.get("acquired_at")) is not int
+        ):
+            raise RepositoryCorruptionError("Artifact metadata guard is invalid.")
+        return value.metadata
+
+    def recover_artifact_guard(
+        self, authorization: ArtifactGuardRecoveryAuthorization, /
+    ) -> None:
+        """Release an abandoned guard only after an external worker fence."""
+
+        if not isinstance(authorization, ArtifactGuardRecoveryAuthorization):
+            raise TypeError("authorization must be ArtifactGuardRecoveryAuthorization.")
+        if authorization.provider_id != self.provider_id:
+            raise RepositoryConflictError(
+                "Artifact guard authorization targets another provider."
+            )
+        metadata = self.artifact_guard_metadata(authorization.artifact_id)
+        if metadata.etag != authorization.guard_etag:
+            raise RepositoryConflictError(
+                "Artifact guard changed after external fencing evidence."
+            )
+        self.client.delete_object(metadata.key, expected_etag=authorization.guard_etag)
+
     def _acquire_artifact_guard(self, artifact_id: str, /) -> ObjectMetadata:
         artifact = _identifier(artifact_id, "artifact_id")
         key = self._guard_key(artifact)
@@ -2202,6 +2315,7 @@ def _object_prefix(value: str, /) -> str:
 
 
 __all__ = [
+    "ArtifactGuardRecoveryAuthorization",
     "ArtifactManifest",
     "ArtifactRepository",
     "ChunkEncoding",

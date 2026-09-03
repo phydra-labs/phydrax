@@ -14,6 +14,7 @@ from phydrax.lifecycle._chunk_repository import (
     UnsupportedRepositoryProfileError,
 )
 from phydrax.lifecycle._repository import (
+    ArtifactGuardRecoveryAuthorization,
     HPCFilesystemProfile,
     InMemoryConditionalObjectClient,
     ObjectNotFoundError,
@@ -280,7 +281,44 @@ def test_s3_metadata_guard_serializes_lease_and_garbage_collection() -> None:
         repository.read_bytes("checkpoint-guarded", "state", maximum_bytes=32)
         == b"guarded-state"
     )
-    repository._release_artifact_guard(guard)
+    metadata = repository.artifact_guard_metadata("checkpoint-guarded")
+    with pytest.raises(ValueError, match="worker-fencing evidence"):
+        ArtifactGuardRecoveryAuthorization(
+            repository.provider_id,
+            "checkpoint-guarded",
+            metadata.etag,
+            "operator",
+            "fence-evidence",
+            30,
+            worker_fenced=False,
+        )
+    wrong = ArtifactGuardRecoveryAuthorization(
+        repository.provider_id,
+        "checkpoint-guarded",
+        metadata.etag + "-stale",
+        "operator",
+        "fence-evidence",
+        30,
+        worker_fenced=True,
+    )
+    with pytest.raises(RepositoryConflictError, match="changed after external fencing"):
+        repository.recover_artifact_guard(wrong)
+    authorization = ArtifactGuardRecoveryAuthorization(
+        repository.provider_id,
+        "checkpoint-guarded",
+        metadata.etag,
+        "operator",
+        "fence-evidence",
+        30,
+        worker_fenced=True,
+    )
+    assert (
+        ArtifactGuardRecoveryAuthorization.from_record(
+            authorization.to_record()
+        ).authorization_id
+        == authorization.authorization_id
+    )
+    repository.recover_artifact_guard(authorization)
 
     lease = repository.acquire_lease(
         "checkpoint-guarded",

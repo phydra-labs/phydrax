@@ -47,28 +47,31 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "thermo-energy-inversion",
                 "scientific",
-                "Mixture temperature inversion closes the internal-energy residual.",
+                "Canonical Helmholtz density-energy recovery closes its residual.",
             ),
             _gate(
-                "thermo-enthalpy-consistency",
+                "thermo-standard-state-identity",
                 "scientific",
-                "Species and mixture enthalpy retain formation-energy consistency.",
+                "Catalog, gas phase, species calorics, and explicit standard "
+                "pressure retain one identity.",
             ),
             _gate(
                 "thermo-derivatives",
                 "scientific",
-                "Caloric and ideal-mixture derivatives match the governed reference.",
+                "Canonical caloric, mixing, response, and sound-speed derivatives "
+                "match the governed reference.",
             ),
             _RESOURCE_GATE,
             _gate(
                 "thermo-domain-admission",
                 "operational",
-                "Every evaluated state lies in the exact species thermodynamic domain.",
+                "Every evaluated state has successful canonical domain evidence.",
             ),
         ),
         (
-            "phydrax.applications.reacting_flow._thermodynamics:ReactingGasModel",
-            "phydrax.applications.reacting_flow._thermodynamics:TemperatureInversionEvidence",
+            "phydrax.equations._chemical_components:ChemicalComponentCatalog",
+            "phydrax.equations._chemical_species:ChemicalSpeciesSchema",
+            "phydrax.equations._homogeneous_thermodynamics:HomogeneousHelmholtzPlan",
         ),
     ),
     "transport": RouteDefinition(
@@ -118,7 +121,8 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "mechanism-energy",
                 "scientific",
-                "Species production closes the chemical energy source.",
+                "Full chemical total energy remains unchanged by the zero-energy "
+                "reaction source.",
             ),
             _gate(
                 "mechanism-reference-rates",
@@ -133,9 +137,8 @@ ROUTES: dict[str, RouteDefinition] = {
             ),
         ),
         (
-            "phydrax.applications.reacting_flow._mechanism:ChemicalMechanismCompiler",
-            "phydrax.applications.reacting_flow._mechanism:CompiledMechanismEvidence",
-            "phydrax.applications.reacting_flow._mechanism:ChemicalMechanismFeatureReport",
+            "phydrax.equations._chemical_mechanism:PreparedChemicalMechanism",
+            "phydrax.solver._thermochemistry:ThermochemistryProcessPlan",
         ),
     ),
     "state": RouteDefinition(
@@ -144,25 +147,27 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "state-species-closure",
                 "scientific",
-                "S-1 independent species reconstruct total density and all mass fractions.",
+                "All species densities own total density and composition without "
+                "dependent-species reconstruction.",
             ),
             _gate(
                 "state-energy-closure",
                 "scientific",
-                "Primitive-conserved round-trip closes total and internal energy.",
+                "Canonical primitive-conserved round-trip closes full chemical "
+                "total and internal energy.",
             ),
             _gate(
                 "state-admissibility",
                 "scientific",
-                "Density, species densities, pressure, and temperature remain admissible.",
+                "Species densities, pressure, temperature, and Helmholtz-domain "
+                "evidence remain admissible.",
             ),
             _RESOURCE_GATE,
             _RESTART_GATE,
         ),
         (
-            "phydrax.applications.reacting_flow._state:ReactiveConservedLayout",
-            "phydrax.applications.reacting_flow._state:ReactiveConservedEvidence",
-            "phydrax.applications.reacting_flow._state:ReactiveEulerSystem",
+            "phydrax.equations._gas_dynamics:HomogeneousMixtureEulerSystem",
+            "phydrax.equations._homogeneous_thermodynamics:DensityEnergyStateResult",
         ),
     ),
     "strang": RouteDefinition(
@@ -299,7 +304,8 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "reactive-closure-targets",
                 "scientific",
-                "Instantaneous closure targets preserve species mass and chemical energy.",
+                "Instantaneous closure targets preserve full-species mass and "
+                "diagnostic heat-release semantics without an energy source.",
             ),
             _RESOURCE_GATE,
             _gate(

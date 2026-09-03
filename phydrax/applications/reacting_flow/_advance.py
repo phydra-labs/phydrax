@@ -11,19 +11,30 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+from opt_einsum import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.finite_volume._dynamics import PreparedFiniteVolumeDynamics
+from ...equations._chemical_mechanism import PreparedChemicalMechanism
 from ...equations._chemical_rates import ChemicalRateRuntime
+from ...equations._gas_dynamics import HomogeneousMixtureEulerSystem
 from ...solver._finite_volume_content import FiniteVolumeConservativeContentState
 from ...solver._finite_volume_runtime import (
     FiniteVolumeRuntimeState,
     PreparedFiniteVolumeRuntime,
 )
-from ._mechanism import CompiledChemicalMechanism
-from ._state import ReactiveConservedLayout, ReactiveEulerSystem
+
+
+@eqx.filter_jit
+def _advance_finite_volume_runtime(
+    runtime: PreparedFiniteVolumeRuntime,
+    state: FiniteVolumeRuntimeState,
+    step: Array,
+    args: Any,
+    /,
+):
+    return runtime.advance_prescribed(state, step, args)
 
 
 class ReactiveAdvanceState(StrictModule):
@@ -76,6 +87,9 @@ class ReactiveAdvanceEvidence(StrictModule):
     final_cell_successful: Array
     maximum_element_defect: Array
     maximum_charge_defect: Array
+    maximum_mass_defect: Array
+    maximum_energy_defect: Array
+    maximum_diagnostic_heat_release: Array
     state_change_norm: Array
     rolled_back: Array
     accepted: Array
@@ -91,8 +105,8 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
     """Fixed-schedule Strang split with atomic FV/runtime macro-step commit."""
 
     transport: PreparedFiniteVolumeRuntime
-    mechanism: CompiledChemicalMechanism
-    layout: ReactiveConservedLayout
+    mechanism: PreparedChemicalMechanism
+    system: HomogeneousMixtureEulerSystem
     schedule_substeps: int = eqx.field(static=True)
     transport_substeps: int = eqx.field(static=True)
     chemistry_substeps: int = eqx.field(static=True)
@@ -101,7 +115,7 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         transport: PreparedFiniteVolumeRuntime,
-        mechanism: CompiledChemicalMechanism,
+        mechanism: PreparedChemicalMechanism,
         /,
         *,
         schedule_substeps: int = 1,
@@ -110,15 +124,17 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(transport, PreparedFiniteVolumeRuntime):
             raise TypeError("transport must be PreparedFiniteVolumeRuntime.")
-        if not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):
-            raise TypeError("Reactive transport requires structured FV dynamics.")
-        if not isinstance(transport.dynamics.system, ReactiveEulerSystem):
-            raise TypeError("Reactive transport must bind a ReactiveEulerSystem.")
-        if not isinstance(mechanism, CompiledChemicalMechanism):
-            raise TypeError("mechanism must be CompiledChemicalMechanism.")
-        layout = transport.dynamics.system.layout
-        if layout.gas_model.model_id != mechanism.gas_model.model_id:
-            raise ValueError("Transport and chemistry must bind the same gas model.")
+        system = transport.dynamics.system
+        if not isinstance(system, HomogeneousMixtureEulerSystem):
+            raise TypeError("Reactive transport must bind HomogeneousMixtureEulerSystem.")
+        if not isinstance(mechanism, PreparedChemicalMechanism):
+            raise TypeError("mechanism must be PreparedChemicalMechanism.")
+        if (
+            system.thermodynamics.schema.schema_id != mechanism.schema.schema_id
+            or system.thermodynamics.thermodynamics.thermodynamics_id
+            != mechanism.thermodynamics.thermodynamics_id
+        ):
+            raise ValueError("Transport thermodynamics and chemistry must match exactly.")
         schedule = int(schedule_substeps)
         transport_count = int(transport_substeps)
         chemistry = int(chemistry_substeps)
@@ -126,7 +142,7 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
             raise ValueError("All fixed schedule counts must be positive.")
         self.transport = transport
         self.mechanism = mechanism
-        self.layout = layout
+        self.system = system
         self.schedule_substeps = schedule
         self.transport_substeps = transport_count
         self.chemistry_substeps = chemistry
@@ -134,16 +150,13 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
             {
                 "kind": "reactive-fixed-schedule-strang",
                 "transport_runtime": transport.runtime_id,
+                "system": system.system_id,
                 "mechanism": mechanism.mechanism_id,
                 "schedule_substeps": schedule,
                 "transport_substeps": transport_count,
                 "chemistry_substeps": chemistry,
             }
         )
-
-    @property
-    def dynamics(self) -> PreparedFiniteVolumeDynamics:
-        return self.transport.dynamics
 
     def _runtime_average(self, runtime_state: FiniteVolumeRuntimeState, /) -> Array:
         return runtime_state.cell_average().reshape(
@@ -192,8 +205,7 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
         value = jnp.asarray(conserved)
         if value.shape != self.transport.dynamics.discretization.state_shape:
             raise ValueError("Initial reactive state does not match FV geometry.")
-        evidence = self.layout.evidence(value)
-        if not bool(jnp.all(evidence.successful)):
+        if not bool(jnp.all(self.system.admissible(value))):
             raise ValueError("Initial reactive state is inadmissible.")
         runtime_state = self.transport.initialize_state(
             value,
@@ -226,7 +238,9 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
         minimum_margin = jnp.asarray(jnp.inf, dtype=step.dtype)
         status = runtime_state.last_status
         for _ in range(self.transport_substeps):
-            scheduled = self.transport.advance_prescribed(state, stage_step, args)
+            scheduled = _advance_finite_volume_runtime(
+                self.transport, state, stage_step, args
+            )
             state = scheduled.runtime_state
             successful = successful & scheduled.accepted
             minimum_margin = jnp.minimum(minimum_margin, scheduled.stability_margin)
@@ -238,26 +252,45 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
         conserved: Array,
         runtime: ChemicalRateRuntime | None,
         /,
-    ) -> tuple[Array, Array, Array, Array]:
-        fields = self.layout.split(conserved)
-        primitive = self.layout.primitive(conserved)
-        chemical = self.mechanism.source_from_density_mass_fractions(
-            fields.density,
-            primitive.temperature,
-            primitive.pressure,
-            fields.mass_fractions,
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+        species_count = self.system.species_count
+        species_density = conserved[..., :species_count]
+        recovered = self.system.recover_thermodynamics(conserved)
+        concentration = species_density / self.mechanism.schema.molar_masses.astype(
+            conserved.dtype
+        )
+        rates = self.mechanism.evaluate(
+            concentration,
+            recovered.state.temperature,
+            recovered.state.pressure,
             runtime=runtime,
         )
-        source = self.layout.assemble(
-            jnp.zeros_like(fields.density),
-            chemical.species_mass_production_rate[..., :-1],
-            jnp.zeros_like(fields.momentum),
-            jnp.zeros_like(fields.density),
+        species_mass_rate = (
+            rates.species_amount_rate
+            * self.mechanism.schema.molar_masses.astype(conserved.dtype)
         )
-        successful = primitive.evidence.successful & chemical.evidence.successful
-        element = jnp.max(jnp.abs(chemical.evidence.element_residual), axis=-1)
-        charge = jnp.abs(chemical.evidence.charge_residual)
-        return source, successful, element, charge
+        source = jnp.zeros_like(conserved).at[..., :species_count].set(species_mass_rate)
+        element = jnp.max(jnp.abs(rates.element_residual), axis=-1, initial=0.0)
+        charge = jnp.abs(rates.charge_residual)
+        mass = jnp.abs(jnp.sum(species_mass_rate, axis=-1))
+        energy = jnp.abs(source[..., -1])
+        heat_release = -contract(
+            "...s,...s->...",
+            rates.species_amount_rate,
+            rates.thermodynamics.molar_enthalpy,
+            backend="jax",
+        )
+        mass_scale = jnp.maximum(jnp.max(jnp.abs(species_mass_rate), axis=-1), 1.0)
+        successful = (
+            recovered.successful
+            & rates.successful
+            & jnp.all(jnp.isfinite(species_mass_rate), axis=-1)
+            & (mass <= 512.0 * jnp.finfo(conserved.dtype).eps * mass_scale)
+            & (energy == 0.0)
+            & jnp.isfinite(heat_release)
+        )
+        heat_release = jnp.abs(heat_release)
+        return source, successful, element, charge, mass, energy, heat_release
 
     def _chemistry_step(
         self,
@@ -265,40 +298,32 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
         step: Array,
         runtime: ChemicalRateRuntime | None,
         /,
-    ) -> tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         stage_step = step / self.chemistry_substeps
         value = conserved
         successful = jnp.asarray(True)
-        maximum_element = jnp.asarray(0.0, dtype=value.dtype)
-        maximum_charge = jnp.asarray(0.0, dtype=value.dtype)
+        maxima = [jnp.asarray(0.0, dtype=value.dtype) for _ in range(5)]
         for _ in range(self.chemistry_substeps):
-            first, first_valid, first_element, first_charge = self._chemistry_source(
-                value, runtime
-            )
-            midpoint = value + 0.5 * stage_step * first
-            midpoint_valid = self.layout.evidence(midpoint).successful
-            second, second_valid, second_element, second_charge = self._chemistry_source(
-                midpoint, runtime
-            )
-            candidate = value + stage_step * second
-            candidate_valid = self.layout.evidence(candidate).successful
+            first = self._chemistry_source(value, runtime)
+            midpoint = value + 0.5 * stage_step * first[0]
+            midpoint_valid = self.system.admissible(midpoint)
+            second = self._chemistry_source(midpoint, runtime)
+            candidate = value + stage_step * second[0]
+            candidate_valid = self.system.admissible(candidate)
             successful = (
                 successful
-                & jnp.all(first_valid)
+                & jnp.all(first[1])
                 & jnp.all(midpoint_valid)
-                & jnp.all(second_valid)
+                & jnp.all(second[1])
                 & jnp.all(candidate_valid)
             )
-            maximum_element = jnp.maximum(
-                maximum_element,
-                jnp.maximum(jnp.max(first_element), jnp.max(second_element)),
-            )
-            maximum_charge = jnp.maximum(
-                maximum_charge,
-                jnp.maximum(jnp.max(first_charge), jnp.max(second_charge)),
-            )
+            for index in range(5):
+                maxima[index] = jnp.maximum(
+                    maxima[index],
+                    jnp.maximum(jnp.max(first[index + 2]), jnp.max(second[index + 2])),
+                )
             value = candidate
-        return value, successful, maximum_element, maximum_charge
+        return value, successful, *maxima
 
     def advance(
         self,
@@ -321,8 +346,7 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
         chemistry_success = jnp.asarray(True)
         minimum_margin = jnp.asarray(jnp.inf, dtype=candidate.dtype)
         runtime_status = candidate_runtime.last_status
-        maximum_element = jnp.asarray(0.0, dtype=candidate.dtype)
-        maximum_charge = jnp.asarray(0.0, dtype=candidate.dtype)
+        maxima = [jnp.asarray(0.0, dtype=candidate.dtype) for _ in range(5)]
         for _ in range(self.schedule_substeps):
             candidate, candidate_runtime, first_transport, status, margin = (
                 self._transport_step(
@@ -331,9 +355,8 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
                     transport_args,
                 )
             )
-            candidate, chemical, element, charge = self._chemistry_step(
-                candidate, schedule_step, chemistry_runtime
-            )
+            chemistry = self._chemistry_step(candidate, schedule_step, chemistry_runtime)
+            candidate = chemistry[0]
             candidate_runtime = self._replace_runtime_average(
                 candidate_runtime,
                 candidate,
@@ -347,14 +370,14 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
                 )
             )
             transport_success = transport_success & first_transport & second_transport
-            chemistry_success = chemistry_success & chemical
+            chemistry_success = chemistry_success & chemistry[1]
             minimum_margin = jnp.minimum(
                 minimum_margin, jnp.minimum(margin, second_margin)
             )
             runtime_status = status
-            maximum_element = jnp.maximum(maximum_element, element)
-            maximum_charge = jnp.maximum(maximum_charge, charge)
-        final_cells = self.layout.evidence(candidate).successful
+            for index in range(5):
+                maxima[index] = jnp.maximum(maxima[index], chemistry[index + 2])
+        final_cells = self.system.admissible(candidate)
         time_scale = jnp.maximum(jnp.abs(state.time + step_), 1.0)
         time_consistent = (
             jnp.abs(candidate_runtime.time - (state.time + step_))
@@ -381,15 +404,18 @@ class ReactiveStrangPlan(StrictModule, NonTrainableState):
             lambda new, old: jnp.where(accepted, new, old), committed, state
         )
         evidence = ReactiveAdvanceEvidence(
-            state.time,
+            state.time + step_,
             step_,
             transport_success,
             runtime_status,
             minimum_margin,
             chemistry_success,
             final_cells,
-            maximum_element,
-            maximum_charge,
+            maxima[0],
+            maxima[1],
+            maxima[2],
+            maxima[3],
+            maxima[4],
             jnp.sqrt(jnp.sum((candidate - state.conserved) ** 2)),
             ~accepted,
             accepted,
@@ -409,7 +435,7 @@ class ReactiveIMEXPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         transport: PreparedFiniteVolumeRuntime,
-        mechanism: CompiledChemicalMechanism,
+        mechanism: PreparedChemicalMechanism,
         /,
         *,
         nonlinear_iterations: int = 12,
@@ -426,6 +452,7 @@ class ReactiveIMEXPlan(StrictModule, NonTrainableState):
             {
                 "kind": "coupled-reactive-imex",
                 "transport_runtime": transport.runtime_id,
+                "system": self.strang.system.system_id,
                 "mechanism": mechanism.mechanism_id,
                 "nonlinear_iterations": iterations,
                 "nonlinear_tolerance": tolerance,
@@ -470,25 +497,24 @@ class ReactiveIMEXPlan(StrictModule, NonTrainableState):
             transport_args,
         )
         explicit_base = self.strang._runtime_average(scheduled.runtime_state)
-        chemistry_start, chemistry_start_valid, element, charge = (
-            self.strang._chemistry_source(start, chemistry_runtime)
-        )
-        candidate = explicit_base + step_ * chemistry_start
-        chemistry_success = jnp.all(chemistry_start_valid)
-        maximum_element = jnp.max(element)
-        maximum_charge = jnp.max(charge)
+        chemistry_start = self.strang._chemistry_source(start, chemistry_runtime)
+        candidate = explicit_base + step_ * chemistry_start[0]
+        chemistry_success = jnp.all(chemistry_start[1])
+        maxima = [jnp.max(value) for value in chemistry_start[2:]]
         nonlinear_residual = jnp.asarray(jnp.inf, dtype=start.dtype)
         for _ in range(self.nonlinear_iterations):
-            chemistry_end, chemistry_valid, element, charge = (
-                self.strang._chemistry_source(candidate, chemistry_runtime)
+            chemistry_end = self.strang._chemistry_source(candidate, chemistry_runtime)
+            updated = explicit_base + 0.5 * step_ * (
+                chemistry_start[0] + chemistry_end[0]
             )
-            updated = explicit_base + 0.5 * step_ * (chemistry_start + chemistry_end)
             nonlinear_residual = jnp.sqrt(jnp.sum((updated - candidate) ** 2))
             candidate = updated
-            chemistry_success = chemistry_success & jnp.all(chemistry_valid)
-            maximum_element = jnp.maximum(maximum_element, jnp.max(element))
-            maximum_charge = jnp.maximum(maximum_charge, jnp.max(charge))
-        final_cells = self.strang.layout.evidence(candidate).successful
+            chemistry_success = chemistry_success & jnp.all(chemistry_end[1])
+            for index in range(5):
+                maxima[index] = jnp.maximum(
+                    maxima[index], jnp.max(chemistry_end[index + 2])
+                )
+        final_cells = self.strang.system.admissible(candidate)
         scale = jnp.maximum(jnp.sqrt(jnp.sum(candidate**2)), 1.0)
         converged = nonlinear_residual <= self.nonlinear_tolerance * scale
         candidate_runtime = self.strang._replace_runtime_average(
@@ -515,15 +541,18 @@ class ReactiveIMEXPlan(StrictModule, NonTrainableState):
             lambda new, old: jnp.where(accepted, new, old), committed, state
         )
         evidence = ReactiveAdvanceEvidence(
-            state.time,
+            state.time + step_,
             step_,
             scheduled.accepted,
             scheduled.runtime_state.last_status,
             scheduled.stability_margin,
             chemistry_success & converged,
             final_cells,
-            maximum_element,
-            maximum_charge,
+            maxima[0],
+            maxima[1],
+            maxima[2],
+            maxima[3],
+            maxima[4],
             jnp.sqrt(jnp.sum((candidate - start) ** 2)),
             ~accepted,
             accepted,

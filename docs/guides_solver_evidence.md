@@ -103,9 +103,11 @@ requires a caller-supplied `ConditionalObjectClient` whose declared
 listing, bounded whole objects, and no multipart object assumption. Neither repository
 contains a vendor SDK fallback. S3 pointer commits, leases, legal holds, retention,
 tombstones, and garbage collection share one non-expiring per-artifact conditional
-guard. A crashed guard fails closed and requires an externally fenced operator recovery;
-time alone never permits another writer to overtake destructive collection. Immutable
-chunk checksums and garbage-collection reports remain explicit.
+guard. A crashed guard fails closed; after the old worker is externally fenced,
+`ArtifactGuardRecoveryAuthorization` binds the exact provider, artifact, guard ETag,
+authority, and fencing evidence consumed by `recover_artifact_guard`. Time alone never
+permits another writer to overtake destructive collection. Immutable chunk checksums
+and garbage-collection reports remain explicit.
 
 `TopologyRestartRelation` and `TopologyRestartPolicy` decide exact versus
 topology-changing restart before I/O. `prepare_direct_restore` validates complete
@@ -119,10 +121,13 @@ without a global payload gather. A semantic change is not topology migration.
 network server. It authenticates before resource lookup, authorizes tenant-scoped
 operations, admits exact support dependencies, enforces quotas and job transitions,
 keeps provider selection server-side, and commits complete checkpoint/artifact/audit
-state or fails closed. `SQLiteServiceStore` supplies the local durable job, quota,
-hash-chained audit, and replay-safe outbox implementation. Slurm and Kubernetes
-schedulers are explicit adapters over `CommandExecutor` and `HTTPTransport`;
-infrastructure credentials, retries, and deployment remain provider responsibilities.
+state or fails closed. Each provider execution captures an immutable attempt/version
+fence; `ExecutionContext.heartbeat()` renews its durable lease through compare-and-swap,
+and checkpoint/terminal commits reject superseded attempts. `SQLiteServiceStore`
+supplies the local durable job, quota, hash-chained audit, and replay-safe outbox
+implementation. Slurm and Kubernetes schedulers are explicit adapters over
+`CommandExecutor` and `HTTPTransport`; infrastructure credentials, retry cadence, and
+deployment remain provider responsibilities.
 
 `OIDCJWKSTokenValidator` accepts only configured algorithms and uses an injected
 `JWKSProvider`; `HTTPSJWKSProvider` owns bounded HTTPS retrieval and caching.

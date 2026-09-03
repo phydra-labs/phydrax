@@ -934,21 +934,24 @@ These are single-device, fixed-topology or fixed-combinatorics derivative
 envelopes rather than unrestricted distributed or topology-changing claims.
 
 
-The compressible application candidate binds Euler/Navier–Stokes cases to smooth
-tensor-DGSEM entropy/BR1, separate nodal-DG/LDG, or structured/mapped high-resolution
-finite-volume owners. All-speed dissipation is an explicit O(M) numerical policy;
-shock sensors and Einfeldt fallback are recorded, not hidden. Temporal slow growth uses
-wall-normal dilation, while modeled-spatial slow growth requires supplied streamwise
-baseflow derivatives. Both freeze one snapshot per parent step and retain
-`claims_spatial_dns=false`; finite-x comparison is admission evidence, not a DNS
-relabel.
+The compressible application candidate binds one canonical all-species homogeneous
+Helmholtz gas to smooth tensor-DGSEM entropy/BR1, separate nodal-DG/LDG, or
+structured/mapped high-resolution finite-volume policy. All-speed HLL scales only
+numerical dissipation with relative Mach while retaining the unscaled acoustic CFL
+bound; pressure-sensor/admissibility failures select and record the canonical
+generic-HLL fallback. Temporal slow growth uses wall-normal dilation, while
+modeled-spatial slow growth requires supplied streamwise baseflow derivatives. Both
+freeze one snapshot per parent step and retain `claims_spatial_dns=false`; finite-x
+comparison is admission evidence, not a DNS relabel.
 
-Reacting flow stores total density, `S-1` independent species densities, momentum, and
-total energy under ideal-mixture thermodynamics with formation enthalpies. Structured
-FV transport composes with fixed-schedule Strang or iterative trapezoidal chemistry and
-atomic rollback. Mixture-averaged and bounded dense Stefan–Maxwell transport remain
-distinct. Cantera import/reference is host-only, feature-gated, non-differentiable, and
-never the execution provider.
+Reacting flow uses the same canonical component catalog, phase-specific species schema
+with explicit gas standard pressure, homogeneous Helmholtz model, prepared mechanism,
+and all-species Euler state. Structured FV transport composes with fixed-schedule
+Strang or iterative trapezoidal chemistry and atomic rollback. Reaction sources update
+all species and retain zero total-energy source because chemical reference energy is
+already conserved; heat release is diagnostic. Mixture-averaged and bounded dense
+Stefan–Maxwell transport remain explicit alternatives. Cantera is a host-only import
+and reference boundary, never the execution provider.
 
 LBM commercial factories produce unsigned, unreleased C0/C1/C2/C3 and
 conjugate-thermal candidates. Exact operating envelopes bind method, nondimensional

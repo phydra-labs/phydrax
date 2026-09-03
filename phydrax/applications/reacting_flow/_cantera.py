@@ -17,7 +17,12 @@ from jaxtyping import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations._chemical_mechanism import ChemicalMechanismIR, ChemicalReactionSpec
+from ...equations._chemical_components import ChemicalComponentCatalog
+from ...equations._chemical_mechanism import (
+    ChemicalMechanismIR,
+    ChemicalReactionSpec,
+    PreparedChemicalMechanism,
+)
 from ...equations._chemical_rates import (
     ArrheniusRatePlan,
     ChebyshevRatePlan,
@@ -26,11 +31,20 @@ from ...equations._chemical_rates import (
     ThirdBodyRatePlan,
     TroeRatePlan,
 )
-from ...equations._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
+from ...equations._chemical_species import (
+    ChemicalPhaseKind,
+    ChemicalPhaseSpec,
+    ChemicalSpeciesSchema,
+)
 from ...equations._chemical_thermodynamics import (
     NASAPolynomialKind,
     NASASpeciesThermodynamicsPlan,
     UNIVERSAL_GAS_CONSTANT,
+)
+from ...equations._homogeneous_thermodynamics import (
+    HomogeneousHelmholtzPlan,
+    IdealGasReferenceHelmholtzTerm,
+    ZeroResidualHelmholtzTerm,
 )
 
 
@@ -48,6 +62,8 @@ _ATOMIC_MASS = {
     "Cl": 35.453,
     "Ar": 39.948,
 }
+
+_CANTERA_STANDARD_PRESSURE = 101325.0
 
 
 class CanteraAdapterError(RuntimeError):
@@ -80,7 +96,11 @@ class CanteraImportFeatureReport(StrictModule, NonTrainableState):
 
 
 class CanteraMechanismImport(StrictModule, NonTrainableState):
-    mechanism: ChemicalMechanismIR
+    catalog: ChemicalComponentCatalog
+    schema: ChemicalSpeciesSchema
+    species_thermodynamics: NASASpeciesThermodynamicsPlan
+    thermodynamics: HomogeneousHelmholtzPlan
+    mechanism: PreparedChemicalMechanism
     report: CanteraImportFeatureReport
     source_path: str = eqx.field(static=True)
     import_id: str = eqx.field(static=True)
@@ -98,7 +118,7 @@ class CanteraReferenceState(StrictModule, NonTrainableState):
     specific_enthalpy: float = eqx.field(static=True)
     specific_internal_energy: float = eqx.field(static=True)
     species_molar_production_rate: tuple[float, ...] = eqx.field(static=True)
-    heat_release_rate: float = eqx.field(static=True)
+    diagnostic_heat_release_rate: float = eqx.field(static=True)
     reference_id: str = eqx.field(static=True)
 
 
@@ -265,15 +285,32 @@ class CanteraYAMLAdapter(StrictModule, NonTrainableState):
                     f"Species {names[species_index]!r} has nonintegral charge."
                 )
             charges[species_index] = int(charge)
-        schema = ChemicalSpeciesSchema(
+        catalog = ChemicalComponentCatalog(
             names,
-            (ChemicalPhaseKind.GAS,) * len(names),
             masses,
             elements,
             composition,
-            charges,
+            charges=charges,
+            provenance="cantera-yaml",
         )
-        thermodynamics = _cantera_thermodynamics(schema, selected)
+        gas_phase = ChemicalPhaseSpec(
+            self.phase_name,
+            ChemicalPhaseKind.GAS,
+            3,
+            standard_pressure=_CANTERA_STANDARD_PRESSURE,
+        )
+        schema = ChemicalSpeciesSchema(
+            catalog,
+            names,
+            np.arange(len(names), dtype=np.int32),
+            (gas_phase,),
+            np.zeros(len(names), dtype=np.int32),
+        )
+        species_thermodynamics = _cantera_thermodynamics(schema, selected)
+        thermodynamics = HomogeneousHelmholtzPlan(
+            IdealGasReferenceHelmholtzTerm(schema, species_thermodynamics),
+            ZeroResidualHelmholtzTerm(schema),
+        )
         reactions = tuple(
             _cantera_reaction(value, names, reaction_index)
             for reaction_index, value in enumerate(
@@ -285,19 +322,27 @@ class CanteraYAMLAdapter(StrictModule, NonTrainableState):
         mechanism = ChemicalMechanismIR(
             str(payload.get("description", source.stem)),
             schema,
-            thermodynamics,
+            species_thermodynamics,
             reactions,
-        )
+        ).prepare()
         import_id = canonical_fingerprint(
             {
                 "kind": "cantera-mechanism-import",
                 "adapter": self.adapter_id,
                 "report": report.report_id,
                 "source": canonical_fingerprint(payload),
+                "catalog": catalog.catalog_id,
                 "schema": schema.schema_id,
+                "species_thermodynamics": species_thermodynamics.thermodynamics_id,
+                "thermodynamics": thermodynamics.model_id,
+                "mechanism": mechanism.mechanism_id,
             }
         )
         return CanteraMechanismImport(
+            catalog,
+            schema,
+            species_thermodynamics,
+            thermodynamics,
             mechanism,
             report,
             str(source),

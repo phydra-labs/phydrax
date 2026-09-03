@@ -184,17 +184,21 @@
   resources, derivative scope, motion/topology/geometry epochs, distributed
   reductions, gap state, sharp measures, and load provenance without route fallback.
 - Added smooth, finite-volume, all-speed, shock-resolving, and slow-growth
-  compressible-flow application owners. DGSEM/BR1, nodal-DG/LDG, and
-  structured/mapped WENO-Z/TENO/MP5 routes remain distinct; Einfeldt fallback is
-  explicit in the shock ledger. Temporal and modeled-spatial slow growth freeze one
-  baseflow snapshot per parent step, expose conservative/thermal/integral evidence,
-  and retain `claims_spatial_dns=false` even when supplied finite-x comparison data
-  meet their admission threshold.
-- Added reacting-flow ideal-mixture state, thermodynamics, mechanism compilation,
-  mixture-averaged and bounded dense Stefan–Maxwell transport, structured/mapped FV
-  binding, fixed-schedule Strang and iterative-trapezoidal chemistry with atomic
-  rollback, and a separate low-Mach divergence constraint. Cantera import/reference
-  is an explicit host-only, non-differentiable, feature-gated boundary.
+  compressible-flow application policy over the canonical all-species homogeneous
+  Helmholtz gas state. Added canonical mixture Navier–Stokes transport, normal
+  characteristics, entropy evidence, full-species forcing/budgets/Favre statistics,
+  relative-Mach all-speed HLL, and pressure-sensor/admissibility generic-HLL fallback.
+  DGSEM/BR1, nodal-DG/LDG, structured/mapped WENO-Z/TENO/MP5, and Peng–Robinson
+  phase-equilibrium ownership remain distinct. Temporal and modeled-spatial slow
+  growth freeze one baseflow snapshot per parent step and retain
+  `claims_spatial_dns=false`.
+- Added reacting-flow mixture-averaged and bounded dense Stefan–Maxwell transport,
+  fixed-schedule Strang and iterative-trapezoidal chemistry with atomic rollback,
+  full-species reactive statistics/closure targets, and a separate low-Mach divergence
+  constraint over the canonical component/schema/Helmholtz/mechanism/Euler owners.
+  Chemical sources preserve full chemical total energy with a zero energy RHS; heat
+  release is diagnostic. Cantera import/reference is an explicit host-only,
+  non-differentiable, feature-gated boundary with explicit gas standard pressure.
 - Added LBM nondimensional operating envelopes, per-device resource preflight,
   exact deployment compatibility, C0/C1/C2/C3 and conjugate-thermal unsigned
   candidate profiles, and passive sensible-energy CHT with equal-and-opposite

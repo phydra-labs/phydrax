@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations._barotropic_beta_plane import BarotropicBetaPlane
@@ -143,10 +143,12 @@ class BetaPlaneStatisticalCoordinates(StrictModule, NonTrainableState):
 
 
 class BetaPlaneCumulantSystem(StrictModule, NonTrainableState):
-    """Materialized exact quadratic owner joining beta-plane and CE2/GCE2."""
+    """Quadratic beta-plane owner materialized for one declared closure."""
 
+    problem: BarotropicBetaPlane
+    partition: InteractionPartition
     coordinates: BetaPlaneStatisticalCoordinates
-    dynamics: QuadraticDynamics
+    linear: Array
     tensor_bytes: int = eqx.field(static=True)
     maximum_tensor_bytes: int = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
@@ -184,36 +186,20 @@ class BetaPlaneCumulantSystem(StrictModule, NonTrainableState):
             vorticity = coordinates.from_coordinates(values)
             return coordinates.to_coordinates(problem.linear_tendency(vorticity))
 
-        def quadratic_action(values: Array) -> Array:
-            vorticity = coordinates.from_coordinates(values)
-            return coordinates.to_coordinates(
-                problem.bilinear_tendency(vorticity, vorticity)
-            )
-
         linear = jax.jacfwd(linear_action)(zero)
-        quadratic = 0.5 * jax.jacfwd(jax.jacfwd(quadratic_action))(zero)
-        dynamics = QuadraticDynamics(
-            jnp.zeros((dimension,), dtype=dtype),
-            linear,
-            quadratic,
-            dynamics_id=canonical_fingerprint(
-                {
-                    "kind": "beta-plane-quadratic-coordinates",
-                    "problem": problem.problem_id,
-                    "partition": partition.partition_id,
-                    "coordinates": coordinates.coordinate_id,
-                }
-            ),
-        )
+        self.problem = problem
+        self.partition = partition
         self.coordinates = coordinates
-        self.dynamics = dynamics
+        self.linear = linear
         self.tensor_bytes = tensor_bytes
         self.maximum_tensor_bytes = maximum_bytes
         self.system_id = canonical_fingerprint(
             {
                 "kind": "beta-plane-cumulant-system",
+                "problem": problem.problem_id,
+                "partition": partition.partition_id,
                 "coordinates": coordinates.coordinate_id,
-                "dynamics": dynamics.dynamics_id,
+                "linear": array_tree_fingerprint(linear),
                 "tensor_bytes": tensor_bytes,
             }
         )
@@ -240,9 +226,34 @@ class BetaPlaneCumulantSystem(StrictModule, NonTrainableState):
             interaction_model = "gql"
         else:
             raise ValueError("closure must be 'ce2' or 'gce2'.")
+        dtype = self.linear.dtype
+        zero = jnp.zeros((self.coordinates.coordinate_size,), dtype=dtype)
+
+        def selected_quadratic_action(values: Array) -> Array:
+            vorticity = self.coordinates.from_coordinates(values)
+            selected = self.partition.select(
+                self.problem.bilinear_tendency,
+                vorticity,
+                model=interaction_model,
+            )
+            return self.coordinates.to_coordinates(selected)
+
+        quadratic = 0.5 * jax.jacfwd(jax.jacfwd(selected_quadratic_action))(zero)
+        dynamics = QuadraticDynamics(
+            jnp.zeros_like(zero),
+            self.linear,
+            quadratic,
+            dynamics_id=canonical_fingerprint(
+                {
+                    "kind": "beta-plane-selected-quadratic-coordinates",
+                    "system": self.system_id,
+                    "interaction_model": interaction_model,
+                }
+            ),
+        )
         return StatisticalDynamicsPlan(
             self.layout,
-            self.dynamics,
+            dynamics,
             forcing,
             closure=closure,
             interaction_model=interaction_model,

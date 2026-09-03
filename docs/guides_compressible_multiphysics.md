@@ -159,30 +159,32 @@ primals do not define valid gradients.
 
 `phydrax.applications.compressible_flow` is the application facade for the current
 smooth and shock-resolving compressible candidates. `CompressibleFlowCaseSpec` binds
-dimension, Euler or Navier–Stokes physics, route, material, reference scales, and an
-optional finite-x boundary-layer case independently of a discretization. Its
-`fidelity="dns-candidate"` value is a candidate identity: `claims_dns` remains false,
-and no route, shock policy, slow-growth model, or passed local diagnostic turns it into
-a released DNS claim.
+dimension, Euler or Navier–Stokes physics, route, one canonical
+`HomogeneousHelmholtzPlan`, reference scales, density/pressure floors, thermal solve
+capacity, and an optional finite-x boundary-layer case independently of a
+discretization. Its `fidelity="dns-candidate"` value is a candidate identity:
+`claims_dns` remains false.
 
-The conservative state is
+The canonical all-species state is
 
 ```text
-U = (rho, rho u_1, ..., rho u_d, rho E)
-rho E = rho e(rho, p) + 1/2 rho |u|^2 .
+U = (rho_1, ..., rho_S, rho u_1, ..., rho u_d, rho E),
+rho = sum_s rho_s .
 ```
 
-`IdealGasMaterial` remains the standard material. `ThermallyPerfectGasMaterial`
-provides polynomial heat capacity with bounded caloric inversion.
-`ResearchRealGasMaterial` is restricted to non-characteristic structured or mapped
-finite volume and requires caller-supplied pressure/internal-energy/sound-speed
-providers plus exact derivative and convexity certificates. Phydrax does not download
-or silently substitute an external EOS.
+Primitive state is `(rho_1, ..., rho_S, u_1, ..., u_d, T)`.
+`ChemicalComponentCatalog`, phase-specific `ChemicalSpeciesSchema` with explicit gas
+standard pressure, species calorics, `IdealGasReferenceHelmholtzTerm`, and an ideal or
+residual Helmholtz term form one model identity. `HomogeneousMixtureEulerSystem` and
+`HomogeneousMixtureCompressibleNavierStokesSystem` delegate pressure, temperature,
+entropy, frozen-composition sound speed, state recovery, characteristics, and transport
+calorics to that model. Peng–Robinson roots, stability, and flash remain separate
+solver-owned equilibrium operations; they are never selected inside an Euler flux.
 
 ### Smooth, all-speed, and shock routes
 
-`SmoothCompressibleProductionPlan` owns tensor DGSEM split volume flux, an
-entropy-stable interface, and entropy-BR1 viscosity.
+`SmoothCompressibleProductionPlan` owns tensor DGSEM split volume flux, system-specific
+sampled entropy compatibility evidence, and entropy-BR1 viscosity.
 `NodalDGCompressibleProductionPlan` is a separate overintegrated nodal-DG route with
 LDG traces; evidence from one is not evidence for the other. Both bind prepared spatial
 dynamics through `prepare_explicit`, while the tensor route can bind an already
@@ -190,17 +192,15 @@ constructed additive IMEX method through `prepare_imex`.
 
 `StructuredFVCompressibleProductionPlan` owns structured or mapped high-resolution
 finite volume with WENO-Z, TENO, or MP5 reconstruction and stage positivity.
-`ShockAwareAllSpeedFluxPlan` is the route's primary interface flux. Its
-`AllSpeedHLLFluxPlan` applies `AllSpeedCompressiblePolicy` to the HLL acoustic
-half-width as `min(1, max(M_min, M_relative / M_ref))`; ALE uses velocity relative
-to the moving grid. This is an O(M) smooth low-Mach correction, not an
-incompressible projection. A pressure-jump sensor, inadmissible primary state, or
-nonfinite primary flux selects the declared robust fallback and records it in the flux
-result. Ideal-gas Euler/Navier–Stokes routes use `EinfeldtHLLFluxPlan`; general
-certified material systems use the arbitrary-normal `HLLFluxPlan` because they do not
-expose an ideal-gas Roe eigensystem. The finite-volume stage positivity route can also
-invoke its declared fallback. This remains a numerical shock model, never a hidden
-fallback or a smooth-DNS fidelity claim.
+`ShockAwareAllSpeedFluxPlan` is the primary interface flux. Its
+`AllSpeedHLLFluxPlan` scales the HLL dissipative acoustic half-width with relative
+Mach, including ALE grid velocity, and uses the symmetric central limit when the
+scaled wave width is zero. `NumericalFluxResult.max_speed` retains the unscaled
+physical acoustic bound used by FV timestep admission. A pressure-jump sensor,
+inadmissible state, or nonfinite primary flux selects the canonical arbitrary-normal
+HLL fallback and records that decision. Stage positivity uses the same fallback.
+This remains a numerical shock model, never a hidden fallback or a smooth-DNS
+fidelity claim.
 
 ```python
 from phydrax.applications import compressible_flow as cflow
@@ -210,7 +210,7 @@ case = cflow.CompressibleFlowCaseSpec(
     3,
     "navier_stokes",
     "structured-fv",
-    material,
+    homogeneous_thermodynamics,
     fidelity="dns-candidate",
 )
 shock = cflow.ShockResolvingPolicy(

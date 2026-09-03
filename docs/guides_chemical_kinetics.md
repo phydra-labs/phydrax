@@ -58,65 +58,63 @@ or nonlinear solve rejects the complete attempted update.
 
 ## Reacting-flow application facade
 
-`phydrax.applications.reacting_flow` owns the current gas-phase reacting-flow
-candidate. `ReactiveConservedLayout` stores
+`phydrax.applications.reacting_flow` composes the canonical chemical and homogeneous
+gas owners. `ChemicalComponentCatalog` owns component identity, molar masses,
+elements, charge, and provenance. `ChemicalSpeciesSchema` owns phase-specific species
+occurrences and an explicit gas standard pressure. Species calorics feed
+`IdealGasReferenceHelmholtzTerm`; ideal mixing and any residual term form one
+`HomogeneousHelmholtzPlan`.
+
+The canonical gas state is
 
 ```text
-U = (rho, rho Y_1, ..., rho Y_(S-1), rho u_1, ..., rho u_d, rho E),
-rho Y_S = rho - sum_(s=1)^(S-1) rho Y_s .
+U = (rho_1, ..., rho_S, rho u_1, ..., rho u_d, rho E),
+rho = sum_s rho_s .
 ```
 
-`ReactingGasModel` evaluates ideal-mixture thermodynamics with explicit formation
-enthalpies and bounded temperature inversion. `ChemicalMechanismCompiler` accepts a
-prepared gas-phase mechanism and returns immutable compiled arrays with element,
-charge, and energy evidence. `MixtureAveragedTransportPlan` applies Wilke mixture
-properties and a conservative correction velocity. `StefanMaxwellTransportPlan` is a
-bounded dense research route; it is not silently selected from the mixture-averaged
-plan.
+There is no dependent-species reconstruction and no separate density component.
+`HomogeneousMixtureEulerSystem` owns primitive/conserved conversion, density-energy
+recovery, pressure, temperature, frozen-composition sound speed, fluxes, reflection,
+and admissibility. `PreparedChemicalMechanism` owns reaction-rate and stoichiometric
+identity. Reaction sources write `M_s omega_s` into every species slot and exactly zero
+into momentum and total energy: reference and formation chemical energy already live
+inside `rho E`. Heat release is diagnostic and is never added again as an energy source.
 
-`ReactiveStructuredFiniteVolumePlan` binds `ReactiveEulerSystem` to prepared structured
-or mapped finite-volume geometry. `prepare_runtime()` uses the existing SSPRK runtime
-with an explicit Rusanov positivity fallback. `ReactiveStrangPlan.advance()` executes
-transport half-step, chemistry step, transport half-step on its fixed substep schedule
-and commits the complete FV runtime tree only when every stage and final cell is
-admissible. `ReactiveIMEXPlan` instead uses explicit FV transport and a fixed-count
-implicit-trapezoidal chemistry iteration; a failed nonlinear residual rolls back the
-macro step.
+`MixtureAveragedTransportPlan` applies Wilke mixture properties and a conservative
+correction velocity. `StefanMaxwellTransportPlan` is a bounded dense research route;
+it is never silently selected. Both use the canonical homogeneous state, produce all
+`S` species fluxes with zero total diffusive mass flux, and add full species-enthalpy
+transport to the energy flux.
 
-```python
-from phydrax.applications import reacting_flow
+`ReactiveStrangPlan` and `ReactiveIMEXPlan` consume an existing
+`PreparedFiniteVolumeRuntime`, the exact canonical gas system bound by that runtime,
+and a matching `PreparedChemicalMechanism`. They own only schedule, complete
+accepted-state rollback/restart, and evidence:
 
-layout = reacting_flow.ReactiveConservedLayout(gas_model, 3)
-compiled_mechanism = reacting_flow.ChemicalMechanismCompiler().compile(
-    mechanism,
-    gas_model=gas_model,
-)
-transport = reacting_flow.ReactiveStructuredFiniteVolumePlan(
-    layout,
-    fv_method,
-    boundaries,
-).prepare_runtime(fv_discretization)
-advance = reacting_flow.ReactiveStrangPlan(transport, compiled_mechanism)
-state = advance.initial_state(initial_conserved)
-result = advance.advance(state, step_size)
-```
+Preparation order is explicit: construct the canonical homogeneous system; compile it
+with the selected finite-volume discretization and method; build the existing
+`PreparedFiniteVolumeRuntime`; prepare the canonical mechanism; then pass those two
+prepared owners to `ReactiveStrangPlan` or `ReactiveIMEXPlan`. No application-local
+Euler, mechanism compiler, or finite-volume wrapper participates.
 
-`ReactiveClosureTargetPlan.build()` accepts explicit species source, heat-release,
-species/heat flux, and scalar-dissipation arrays and reports species-source and
-diffusive-mass closure; it does not infer targets from a trajectory.
+`ReactiveClosureTargetPlan.build()` accepts explicit full-species source and flux
+arrays, diagnostic heat release, heat flux, and scalar dissipation. It reports
+species-source and diffusive-mass closure and cannot inject chemical energy.
 `ReactiveFlowStatisticsPlan.evaluate()` applies caller-supplied positive cell weights
 and reports Reynolds/Favre velocity, temperature/species covariances, element amount,
-internal energy, enthalpy, and optional closure-target heat release.
+canonical internal energy/enthalpy, and optional closure-target heat release.
 
-`LowMachReactingFormulation` is a separate divergence-constraint formulation with
-thermodynamic pressure; it deliberately does not inherit incompressible MAC projection
-semantics. It is neither the compressible Euler/FV route above nor an automatic
-all-speed switch.
+`LowMachReactingFormulation` is a separate full-species divergence-constraint model at
+uniform thermodynamic pressure. It uses canonical thermodynamic response derivatives
+and deliberately does not inherit incompressible MAC projection semantics. It is
+neither the compressible Euler/FV route nor an automatic all-speed switch.
 
 `CanteraYAMLAdapter` is a host-only importer for an explicit ideal-gas, SI-mol,
-NASA-7/NASA-9 gas-phase subset and selected elementary, three-body, falloff, PLOG, and
-Chebyshev reactions. Unsupported features are reported before import.
+NASA-7/NASA-9 single-gas-phase subset and selected elementary, three-body, falloff,
+PLOG, and Chebyshev reactions. It builds the canonical component catalog, gas phase
+with explicit standard pressure, schema, homogeneous Helmholtz model, and prepared
+mechanism. Unsupported or ambiguous standard-state features fail before import.
 `CanteraReferenceAdapter` accepts one host scalar state at a time and rejects JAX
-arrays/tracers; it is a non-differentiable reference provider, not the execution
+arrays/tracers; it is a non-differentiable reference provider, not execution
 thermodynamics. No Cantera package, file, mechanism, or reference result is supplied
 implicitly.

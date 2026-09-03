@@ -15,8 +15,12 @@ from opt_einsum import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...equations._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
+from ...equations._homogeneous_thermodynamics import (
+    HomogeneousHelmholtzPlan,
+    ZeroResidualHelmholtzTerm,
+)
 from ...linalg._dense_inverse import dense_inverse
-from ._thermodynamics import ReactingGasModel
 
 
 class ReactiveTransportEvaluation(StrictModule):
@@ -31,6 +35,7 @@ class ReactiveTransportEvaluation(StrictModule):
     total_heat_flux: Array
     net_mass_flux: Array
     composition_residual: Array
+    density_residual: Array
     successful: Array
     transport_id: str = eqx.field(static=True)
 
@@ -57,6 +62,7 @@ class StefanMaxwellTransportEvaluation(StrictModule):
     total_heat_flux: Array
     net_mass_flux: Array
     composition_residual: Array
+    density_residual: Array
     successful: Array
     transport_id: str = eqx.field(static=True)
     evidence: StefanMaxwellEvidence
@@ -105,14 +111,29 @@ def _wilke_mixture(
     phi = (1.0 + jnp.sqrt(ratio_property) * ratio_mass**0.25) ** 2 / jnp.sqrt(
         8.0 * (1.0 + 1.0 / ratio_mass)
     )
-    denominator = contract("...j,...ij->...i", mole_fractions, phi)
+    denominator = contract("...j,...ij->...i", mole_fractions, phi, backend="jax")
     return jnp.sum(mole_fractions * properties / denominator, axis=-1)
 
 
-class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
-    """Mixture-averaged gas transport with conservative correction velocity."""
+def _ideal_pressure_state(
+    thermodynamics: HomogeneousHelmholtzPlan,
+    temperature: Array,
+    pressure: Array,
+    mass_fractions: Array,
+    /,
+):
+    molar_masses = thermodynamics.schema.molar_masses.astype(mass_fractions.dtype)
+    reciprocal_molar_mass = jnp.sum(mass_fractions / molar_masses, axis=-1)
+    mixture_molar_mass = 1.0 / reciprocal_molar_mass
+    mole_fractions = mass_fractions * mixture_molar_mass[..., None] / molar_masses
+    molar_density = pressure / (UNIVERSAL_GAS_CONSTANT * temperature)
+    return thermodynamics.evaluate(temperature, molar_density, mole_fractions)
 
-    gas_model: ReactingGasModel
+
+class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
+    """Mixture-averaged ideal-gas transport with conservative species fluxes."""
+
+    thermodynamics: HomogeneousHelmholtzPlan
     reference_binary_diffusion: Array
     reference_species_viscosity: Array
     reference_species_conductivity: Array
@@ -126,7 +147,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        gas_model: ReactingGasModel,
+        thermodynamics: HomogeneousHelmholtzPlan,
         binary_diffusion_coefficients: ArrayLike,
         species_viscosities: ArrayLike,
         species_thermal_conductivities: ArrayLike,
@@ -139,9 +160,13 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         conductivity_temperature_exponent: float = 0.7,
         conservation_tolerance: float = 1.0e-10,
     ):
-        if not isinstance(gas_model, ReactingGasModel):
-            raise TypeError("gas_model must be ReactingGasModel.")
-        species_count = gas_model.schema.species_count
+        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
+            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
+        if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
+            raise TypeError(
+                "Gas transport currently requires ideal-mixture thermodynamics."
+            )
+        species_count = thermodynamics.schema.species_count
         if species_count < 2:
             raise ValueError("Mixture transport requires at least two species.")
         diffusion = _validated_binary_diffusion(
@@ -173,7 +198,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             or scalars[5] <= 0.0
         ):
             raise ValueError("Transport references, exponents, or tolerance are invalid.")
-        self.gas_model = gas_model
+        self.thermodynamics = thermodynamics
         self.reference_binary_diffusion = jnp.asarray(diffusion)
         self.reference_species_viscosity = jnp.asarray(viscosity)
         self.reference_species_conductivity = jnp.asarray(conductivity)
@@ -186,7 +211,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         self.transport_id = canonical_fingerprint(
             {
                 "kind": "mixture-averaged-reacting-transport",
-                "gas_model": gas_model.model_id,
+                "thermodynamics": thermodynamics.model_id,
                 "binary_diffusion": array_tree_fingerprint(diffusion),
                 "species_viscosity": array_tree_fingerprint(viscosity),
                 "species_conductivity": array_tree_fingerprint(conductivity),
@@ -230,7 +255,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         mass = jnp.asarray(mass_fractions, dtype=temperature_.dtype)
         gradient = jnp.asarray(mass_fraction_gradient, dtype=temperature_.dtype)
         cell_shape = temperature_.shape
-        species_count = self.gas_model.schema.species_count
+        species_count = self.thermodynamics.schema.species_count
         if pressure_.shape not in ((), cell_shape) or density_.shape not in (
             (),
             cell_shape,
@@ -245,7 +270,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         if (
             gradient.ndim != mass.ndim + 1
             or gradient.shape[:-2] != cell_shape
-            or (gradient.shape[-2] != species_count)
+            or gradient.shape[-2] != species_count
         ):
             raise ValueError(
                 "mass_fraction_gradient must have trailing species and spatial axes."
@@ -259,9 +284,9 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             )
             if temperature_gradient_.shape != cell_shape + (dimension,):
                 raise ValueError("temperature_gradient has an invalid shape.")
-        thermo = self.gas_model.evaluate_pressure(temperature_, pressure_, mass)
+        thermo = _ideal_pressure_state(self.thermodynamics, temperature_, pressure_, mass)
         binary = self.binary_diffusion(temperature_, pressure_)
-        mole = thermo.mole_fractions
+        mole = thermo.mole_fraction
         off_diagonal = ~jnp.eye(species_count, dtype=bool)
         resistance = jnp.where(
             off_diagonal,
@@ -273,26 +298,29 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         raw_flux = -density_[..., None, None] * mixture_diffusion[..., :, None] * gradient
         correction = jnp.sum(raw_flux, axis=-2)
         species_flux = raw_flux - mass[..., :, None] * correction[..., None, :]
-        velocities = species_flux / (density_[..., None, None] * mass[..., :, None])
+        velocities = jnp.where(
+            mass[..., :, None] > 0.0,
+            species_flux / (density_[..., None, None] * mass[..., :, None]),
+            0.0,
+        )
         viscosity_species, conductivity_species = self.species_properties(temperature_)
-        viscosity = _wilke_mixture(
-            mole, viscosity_species, self.gas_model.schema.molar_masses
-        )
-        conductivity = _wilke_mixture(
-            mole, conductivity_species, self.gas_model.schema.molar_masses
-        )
+        molar_masses = self.thermodynamics.schema.molar_masses.astype(mass.dtype)
+        viscosity = _wilke_mixture(mole, viscosity_species, molar_masses)
+        conductivity = _wilke_mixture(mole, conductivity_species, molar_masses)
         conductive_heat = -conductivity[..., None] * temperature_gradient_
-        species_thermo = self.gas_model.thermodynamics.evaluate(temperature_)
-        species_enthalpy = (
-            species_thermo.molar_enthalpy + self.gas_model.formation_molar_enthalpies
-        ) / self.gas_model.schema.molar_masses
-        enthalpy_flux = contract("...sd,...s->...d", species_flux, species_enthalpy)
+        species_thermo = self.thermodynamics.thermodynamics.evaluate(temperature_)
+        species_enthalpy = species_thermo.molar_enthalpy / molar_masses
+        enthalpy_flux = contract(
+            "...sd,...s->...d", species_flux, species_enthalpy, backend="jax"
+        )
         total_heat = conductive_heat + enthalpy_flux
         net_mass = jnp.sum(species_flux, axis=-2)
-        composition_residual = jnp.sum(gradient, axis=-2)
+        composition_residual = jnp.sum(mass, axis=-1) - 1.0
+        density_residual = density_ - thermo.mass_density
         flux_scale = jnp.maximum(jnp.max(jnp.abs(species_flux), axis=(-2, -1)), 1.0)
+        density_scale = jnp.maximum(jnp.abs(density_), 1.0)
         valid = (
-            thermo.successful
+            thermo.evidence.successful
             & jnp.isfinite(density_)
             & (density_ > 0.0)
             & jnp.all(jnp.isfinite(gradient), axis=(-2, -1))
@@ -306,10 +334,8 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
                 jnp.abs(net_mass) <= self.conservation_tolerance * flux_scale[..., None],
                 axis=-1,
             )
-            & jnp.all(
-                jnp.abs(composition_residual) <= self.gas_model.composition_tolerance,
-                axis=-1,
-            )
+            & (jnp.abs(composition_residual) <= self.thermodynamics.composition_tolerance)
+            & (jnp.abs(density_residual) <= self.conservation_tolerance * density_scale)
         )
         return ReactiveTransportEvaluation(
             viscosity,
@@ -323,6 +349,7 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
             total_heat,
             net_mass,
             composition_residual,
+            density_residual,
             valid,
             self.transport_id,
         )
@@ -339,7 +366,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        gas_model: ReactingGasModel,
+        thermodynamics: HomogeneousHelmholtzPlan,
         binary_diffusion_coefficients: ArrayLike,
         species_viscosities: ArrayLike,
         species_thermal_conductivities: ArrayLike,
@@ -356,7 +383,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
     ):
         bound = int(maximum_species)
         condition = float(maximum_condition)
-        species_count = gas_model.schema.species_count
+        species_count = thermodynamics.schema.species_count
         if bound < 2 or species_count < 2 or species_count > bound:
             raise ValueError(
                 "Stefan-Maxwell research tier requires 2..maximum_species species."
@@ -364,7 +391,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
         if not isfinite(condition) or condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
         base = MixtureAveragedTransportPlan(
-            gas_model,
+            thermodynamics,
             binary_diffusion_coefficients,
             species_viscosities,
             species_thermal_conductivities,
@@ -390,8 +417,8 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
         )
 
     @property
-    def gas_model(self) -> ReactingGasModel:
-        return self.base.gas_model
+    def thermodynamics(self) -> HomogeneousHelmholtzPlan:
+        return self.base.thermodynamics
 
     @property
     def conservation_tolerance(self) -> float:
@@ -424,12 +451,14 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
         density_ = jnp.asarray(density, dtype=temperature_.dtype)
         mass = jnp.asarray(mass_fractions, dtype=temperature_.dtype)
         gradient = jnp.asarray(mass_fraction_gradient, dtype=temperature_.dtype)
-        species_count = self.gas_model.schema.species_count
-        molar_mass = self.gas_model.schema.molar_masses
-        mixture_molar_mass = self.gas_model.mixture_molar_mass(mass)
+        species_count = self.thermodynamics.schema.species_count
+        molar_mass = self.thermodynamics.schema.molar_masses.astype(mass.dtype)
+        reciprocal_mixture_mass = jnp.sum(mass / molar_mass, axis=-1)
+        mixture_molar_mass = 1.0 / reciprocal_mixture_mass
         mole = mass * mixture_molar_mass[..., None] / molar_mass
-        reciprocal_mixture_mass = 1.0 / mixture_molar_mass
-        reciprocal_gradient = contract("...sd,s->...d", gradient, 1.0 / molar_mass)
+        reciprocal_gradient = contract(
+            "...sd,s->...d", gradient, 1.0 / molar_mass, backend="jax"
+        )
         mole_gradient = (
             gradient / (molar_mass[..., None] * reciprocal_mixture_mass[..., None, None])
             - mole[..., :, None]
@@ -452,10 +481,12 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
         right = -mole_gradient / mole[..., :, None]
         right = right.at[..., -1, :].set(0.0)
         inverse = dense_inverse(matrix)
-        velocities = contract("...ij,...jd->...id", inverse, right)
+        velocities = contract("...ij,...jd->...id", inverse, right, backend="jax")
         species_flux = density_[..., None, None] * mass[..., :, None] * velocities
         net_mass = jnp.sum(species_flux, axis=-2)
-        residual = contract("...ij,...jd->...id", matrix, velocities) - right
+        residual = (
+            contract("...ij,...jd->...id", matrix, velocities, backend="jax") - right
+        )
         matrix_norm = jnp.max(jnp.sum(jnp.abs(matrix), axis=-1), axis=-1)
         inverse_norm = jnp.max(jnp.sum(jnp.abs(inverse), axis=-1), axis=-1)
         condition = matrix_norm * inverse_norm
@@ -463,7 +494,6 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
         mass_scale = jnp.maximum(jnp.max(jnp.abs(species_flux), axis=(-2, -1)), 1.0)
         successful = (
             mixture.successful
-            & self.gas_model.composition_valid(mass)
             & jnp.all(mass > 0.0, axis=-1)
             & jnp.all(jnp.isfinite(matrix), axis=(-2, -1))
             & jnp.all(jnp.isfinite(velocities), axis=(-2, -1))
@@ -479,11 +509,11 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
                 axis=-1,
             )
         )
-        species_thermo = self.gas_model.thermodynamics.evaluate(temperature_)
-        species_enthalpy = (
-            species_thermo.molar_enthalpy + self.gas_model.formation_molar_enthalpies
-        ) / molar_mass
-        enthalpy_flux = contract("...sd,...s->...d", species_flux, species_enthalpy)
+        species_thermo = self.thermodynamics.thermodynamics.evaluate(temperature_)
+        species_enthalpy = species_thermo.molar_enthalpy / molar_mass
+        enthalpy_flux = contract(
+            "...sd,...s->...d", species_flux, species_enthalpy, backend="jax"
+        )
         total_heat = mixture.conductive_heat_flux + enthalpy_flux
         evidence = StefanMaxwellEvidence(
             matrix,
@@ -506,6 +536,7 @@ class StefanMaxwellTransportPlan(StrictModule, NonTrainableState):
             total_heat,
             net_mass,
             mixture.composition_residual,
+            mixture.density_residual,
             successful,
             self.transport_id,
             evidence,

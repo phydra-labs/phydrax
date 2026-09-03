@@ -368,7 +368,8 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "shock-fallback-ledger",
                 "scientific",
-                "Every primary rejection and Einfeldt fallback is explicitly recorded.",
+                "Every pressure-sensor, primary-admissibility, and robust HLL "
+                "fallback decision is explicitly recorded.",
             ),
             _gate(
                 "shock-reference-error",
@@ -391,31 +392,44 @@ ROUTES: dict[str, RouteDefinition] = {
         "material",
         (
             _gate(
-                "material-caloric-inversion",
+                "material-schema-standard-state",
                 "scientific",
-                "Temperature and internal-energy inversion close over the admitted domain.",
+                "Component, species, phase, ordering, and gas standard pressure "
+                "have one canonical identity.",
             ),
             _gate(
-                "material-derivative-certificate",
+                "material-density-energy-inversion",
                 "scientific",
-                "EOS derivatives match the exact governed derivative certificate.",
+                "Canonical density-energy recovery closes with successful domain evidence.",
             ),
             _gate(
-                "material-convexity-certificate",
+                "material-sound-entropy-characteristics",
                 "scientific",
-                "Sound speed and fundamental derivative satisfy the convexity certificate.",
+                "Frozen-composition sound speed, entropy variables, and "
+                "characteristics derive from the same Helmholtz model.",
+            ),
+            _gate(
+                "material-real-fluid-provenance",
+                "scientific",
+                "Real-fluid parameters, roots, stability, and phase-equilibrium "
+                "evidence retain canonical provenance.",
             ),
             _RESOURCE_GATE,
             _gate(
                 "material-domain-admission",
                 "operational",
-                "The exact thermodynamic material and certified domain are admitted.",
+                "The exact homogeneous model, domain, gas system, and phase "
+                "boundary are admitted.",
             ),
         ),
         (
-            "phydrax.applications.compressible_flow._materials:ThermallyPerfectGasMaterial",
-            "phydrax.applications.compressible_flow._materials:EOSDerivativeCertificate",
-            "phydrax.applications.compressible_flow._materials:EOSConvexityCertificate",
+            "phydrax.equations._chemical_components:ChemicalComponentCatalog",
+            "phydrax.equations._chemical_species:ChemicalSpeciesSchema",
+            "phydrax.equations._chemical_thermodynamics:PolynomialSpeciesThermodynamicsPlan",
+            "phydrax.equations._homogeneous_thermodynamics:HomogeneousHelmholtzPlan",
+            "phydrax.equations._peng_robinson:PengRobinsonResidualHelmholtzTerm",
+            "phydrax.equations._gas_dynamics:HomogeneousMixtureEulerSystem",
+            "phydrax.solver._phase_equilibrium:FixedTwoPhaseTPFlashPlan",
         ),
     ),
 }

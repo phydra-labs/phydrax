@@ -366,26 +366,28 @@ def test_ou_method_uses_continuation_time_with_fixed_step_scheduler_roundoff():
     realization = phx.stochastic.OrnsteinUhlenbeckRealization(
         jax.random.key(31),
         (basis.coordinate_size,),
-        support=(0.0, 1.0),
+        support=(0.0, 200.0),
         tolerance=1.0e-6,
     )
     prepared = flow.prepare_ou_forced_periodic_method(method, forcing, realization)
-    state = prepared.initial_state(initial_velocity, 0.0)
+    initial = prepared.initial_state(initial_velocity, 0.0)
 
-    for step_index in range(8):
+    def body(step_index, carry):
+        current, successful = carry
         result = prepared.step(
-            jnp.asarray(step_index, dtype=jnp.int32),
-            jnp.asarray(0.1 * step_index),
-            state,
+            step_index,
+            step_index.astype(initial_velocity.real.dtype) * 0.1,
+            current,
             jnp.asarray(0.1),
             None,
         )
-        assert bool(result.successful)
-        state = result.accepted_state
+        return result.accepted_state, successful & result.successful
 
-    np.testing.assert_allclose(state.forcing_state.time, 0.8)
+    state, successful = jax.lax.fori_loop(0, 1024, body, (initial, jnp.asarray(True)))
+    assert bool(successful)
+    np.testing.assert_allclose(state.forcing_state.time, 102.4)
     mismatched = prepared.step(
-        jnp.asarray(8, dtype=jnp.int32),
+        jnp.asarray(1024, dtype=jnp.int32),
         state.forcing_state.time + 1.0e-6,
         state,
         jnp.asarray(0.1),

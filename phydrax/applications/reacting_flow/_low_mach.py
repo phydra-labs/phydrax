@@ -14,14 +14,22 @@ from opt_einsum import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._mechanism import CompiledChemicalMechanism, CompiledMechanismEvaluation
-from ._thermodynamics import IdealMixtureThermodynamicState, ReactingGasModel
+from ...equations._chemical_mechanism import (
+    ChemicalRateEvaluation,
+    PreparedChemicalMechanism,
+)
+from ...equations._chemical_thermodynamics import UNIVERSAL_GAS_CONSTANT
+from ...equations._homogeneous_thermodynamics import (
+    HomogeneousHelmholtzPlan,
+    HomogeneousThermodynamicEvaluation,
+    ZeroResidualHelmholtzTerm,
+)
 
 
 class LowMachReactiveState(StrictModule):
     velocity: Array
     temperature: Array
-    independent_mass_fractions: Array
+    mass_fractions: Array
     thermodynamic_pressure: Array
     state_id: str = eqx.field(static=True)
 
@@ -33,43 +41,46 @@ class LowMachConstraintEvidence(StrictModule):
     pressure_expansion: Array
     density: Array
     mass_fraction_closure: Array
+    mass_fraction_rate_closure: Array
     successful: Array
     formulation_id: str = eqx.field(static=True)
 
 
 class LowMachReactiveEvaluation(StrictModule):
     mass_fractions: Array
-    thermodynamics: IdealMixtureThermodynamicState
+    thermodynamics: HomogeneousThermodynamicEvaluation
     divergence: LowMachConstraintEvidence
-    chemistry: CompiledMechanismEvaluation | None
+    chemistry: ChemicalRateEvaluation
+    species_mass_production_rate: Array
+    diagnostic_heat_release_rate: Array
+    successful: Array
     formulation_id: str = eqx.field(static=True)
 
 
 class LowMachReactingFormulation(StrictModule, NonTrainableState):
-    """Low-Mach reacting constraint with a separate thermodynamic pressure.
+    """Variable-density low-Mach constraint at uniform thermodynamic pressure."""
 
-    This formulation deliberately does not inherit the incompressible MAC
-    equation: density follows the reacting ideal-mixture EOS and velocity is
-    constrained by the thermochemical divergence source.
-    """
-
-    gas_model: ReactingGasModel
-    mechanism: CompiledChemicalMechanism | None
+    thermodynamics: HomogeneousHelmholtzPlan
+    mechanism: PreparedChemicalMechanism | None
     dimension: int = eqx.field(static=True)
     constraint_tolerance: float = eqx.field(static=True)
     formulation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        gas_model: ReactingGasModel,
+        thermodynamics: HomogeneousHelmholtzPlan,
         dimension: int,
         /,
         *,
-        mechanism: CompiledChemicalMechanism | None = None,
+        mechanism: PreparedChemicalMechanism | None = None,
         constraint_tolerance: float = 1.0e-10,
     ):
-        if not isinstance(gas_model, ReactingGasModel):
-            raise TypeError("gas_model must be ReactingGasModel.")
+        if not isinstance(thermodynamics, HomogeneousHelmholtzPlan):
+            raise TypeError("thermodynamics must be HomogeneousHelmholtzPlan.")
+        if not isinstance(thermodynamics.residual, ZeroResidualHelmholtzTerm):
+            raise TypeError(
+                "Low-Mach reacting flow currently requires ideal-mixture thermodynamics."
+            )
         dimension_ = int(dimension)
         tolerance = float(constraint_tolerance)
         if dimension_ not in (1, 2, 3):
@@ -77,18 +88,24 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("constraint_tolerance must be finite and positive.")
         if mechanism is not None:
-            if not isinstance(mechanism, CompiledChemicalMechanism):
-                raise TypeError("mechanism must be CompiledChemicalMechanism or None.")
-            if mechanism.gas_model.model_id != gas_model.model_id:
-                raise ValueError("Low-Mach chemistry and gas model must match exactly.")
-        self.gas_model = gas_model
+            if not isinstance(mechanism, PreparedChemicalMechanism):
+                raise TypeError("mechanism must be PreparedChemicalMechanism or None.")
+            if (
+                mechanism.schema.schema_id != thermodynamics.schema.schema_id
+                or mechanism.thermodynamics.thermodynamics_id
+                != thermodynamics.thermodynamics.thermodynamics_id
+            ):
+                raise ValueError(
+                    "Low-Mach chemistry and thermodynamics must match exactly."
+                )
+        self.thermodynamics = thermodynamics
         self.mechanism = mechanism
         self.dimension = dimension_
         self.constraint_tolerance = tolerance
         self.formulation_id = canonical_fingerprint(
             {
                 "kind": "low-mach-reacting-formulation",
-                "gas_model": gas_model.model_id,
+                "thermodynamics": thermodynamics.model_id,
                 "mechanism": None if mechanism is None else mechanism.mechanism_id,
                 "dimension": dimension_,
                 "constraint_tolerance": tolerance,
@@ -100,21 +117,21 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         self,
         velocity: ArrayLike,
         temperature: ArrayLike,
-        independent_mass_fractions: ArrayLike,
+        mass_fractions: ArrayLike,
         thermodynamic_pressure: ArrayLike,
         /,
     ) -> LowMachReactiveState:
         velocity_ = jnp.asarray(velocity)
         temperature_ = jnp.asarray(temperature, dtype=velocity_.dtype)
-        independent = jnp.asarray(independent_mass_fractions, dtype=velocity_.dtype)
+        mass = jnp.asarray(mass_fractions, dtype=velocity_.dtype)
         pressure = jnp.asarray(thermodynamic_pressure, dtype=velocity_.dtype)
         if velocity_.ndim < 1 or velocity_.shape[-1] != self.dimension:
             raise ValueError("velocity must end in the formulation dimension.")
         cell_shape = velocity_.shape[:-1]
         if temperature_.shape != cell_shape:
             raise ValueError("temperature must match velocity cell shape.")
-        if independent.shape != cell_shape + (self.gas_model.schema.species_count - 1,):
-            raise ValueError("independent_mass_fractions has an invalid shape.")
+        if mass.shape != cell_shape + (self.thermodynamics.schema.species_count,):
+            raise ValueError("mass_fractions must contain every species slot.")
         if pressure.shape != ():
             raise ValueError(
                 "thermodynamic_pressure must be one spatially uniform scalar."
@@ -126,18 +143,23 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
                 "cell_shape": list(cell_shape),
             }
         )
-        return LowMachReactiveState(
-            velocity_, temperature_, independent, pressure, identifier
-        )
+        return LowMachReactiveState(velocity_, temperature_, mass, pressure, identifier)
 
-    def complete_mass_fractions(self, independent_mass_fractions: ArrayLike, /) -> Array:
-        independent = jnp.asarray(independent_mass_fractions)
-        if independent.ndim < 1 or (
-            independent.shape[-1] != self.gas_model.schema.species_count - 1
-        ):
-            raise ValueError("independent_mass_fractions has an invalid species axis.")
-        dependent = 1.0 - jnp.sum(independent, axis=-1)
-        return jnp.concatenate((independent, dependent[..., None]), axis=-1)
+    def _pressure_state(
+        self,
+        temperature: Array,
+        pressure: Array,
+        mass_fractions: Array,
+        /,
+    ) -> HomogeneousThermodynamicEvaluation:
+        molar_masses = self.thermodynamics.schema.molar_masses.astype(
+            mass_fractions.dtype
+        )
+        reciprocal_molar_mass = jnp.sum(mass_fractions / molar_masses, axis=-1)
+        mixture_molar_mass = 1.0 / reciprocal_molar_mass
+        mole_fraction = mass_fractions * mixture_molar_mass[..., None] / molar_masses
+        molar_density = pressure / (UNIVERSAL_GAS_CONSTANT * temperature)
+        return self.thermodynamics.evaluate(temperature, molar_density, mole_fraction)
 
     def divergence_source(
         self,
@@ -157,7 +179,7 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         pressure = jnp.asarray(thermodynamic_pressure, dtype=temperature_.dtype)
         pressure_rate = jnp.asarray(thermodynamic_pressure_rate, dtype=temperature_.dtype)
         cell_shape = temperature_.shape
-        species_count = self.gas_model.schema.species_count
+        species_count = self.thermodynamics.schema.species_count
         if mass.shape != cell_shape + (species_count,) or mass_rate.shape != mass.shape:
             raise ValueError("Mass fractions/rates have invalid cell or species shape.")
         if temperature_rate_.shape != cell_shape:
@@ -166,30 +188,33 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Thermodynamic pressure and its rate must be spatially uniform scalars."
             )
-        mixture_molar_mass = self.gas_model.mixture_molar_mass(mass)
-        thermal = temperature_rate_ / temperature_
-        composition = mixture_molar_mass * contract(
-            "...s,s->...", mass_rate, 1.0 / self.gas_model.schema.molar_masses
+        thermo = self._pressure_state(temperature_, pressure, mass)
+        molar_masses = self.thermodynamics.schema.molar_masses.astype(mass.dtype)
+        thermal = thermo.thermal_expansion * temperature_rate_
+        composition = thermo.molar_mass * contract(
+            "...s,s->...", mass_rate, 1.0 / molar_masses, backend="jax"
         )
-        pressure_expansion = -pressure_rate / pressure
+        pressure_expansion = -thermo.isothermal_compressibility * pressure_rate
         source = thermal + composition + pressure_expansion
-        thermo = self.gas_model.evaluate_pressure(temperature_, pressure, mass)
-        closure = jnp.sum(mass_rate, axis=-1)
+        mass_closure = jnp.sum(mass, axis=-1) - 1.0
+        rate_closure = jnp.sum(mass_rate, axis=-1)
         successful = (
-            thermo.successful
+            thermo.evidence.successful
             & jnp.isfinite(temperature_rate_)
             & jnp.all(jnp.isfinite(mass_rate), axis=-1)
             & jnp.isfinite(pressure_rate)
             & jnp.isfinite(source)
-            & (jnp.abs(closure) <= self.constraint_tolerance)
+            & (jnp.abs(mass_closure) <= self.constraint_tolerance)
+            & (jnp.abs(rate_closure) <= self.constraint_tolerance)
         )
         return LowMachConstraintEvidence(
             source,
             thermal,
             composition,
             pressure_expansion,
-            thermo.density,
-            closure,
+            thermo.mass_density,
+            mass_closure,
+            rate_closure,
             successful,
             self.formulation_id,
         )
@@ -204,22 +229,36 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
         if not isinstance(state, LowMachReactiveState):
             raise TypeError("state must be LowMachReactiveState.")
         if self.mechanism is None:
-            raise ValueError("Chemistry evaluation requires a compiled mechanism.")
-        mass = self.complete_mass_fractions(state.independent_mass_fractions)
-        thermo = self.gas_model.evaluate_pressure(
+            raise ValueError("Chemistry evaluation requires a prepared mechanism.")
+        mass = state.mass_fractions
+        thermo = self._pressure_state(
             state.temperature, state.thermodynamic_pressure, mass
         )
-        chemistry = self.mechanism.source_from_density_mass_fractions(
-            thermo.density,
+        species_density = thermo.mass_density[..., None] * mass
+        concentrations = species_density / self.mechanism.schema.molar_masses.astype(
+            mass.dtype
+        )
+        chemistry = self.mechanism.evaluate(
+            concentrations,
             state.temperature,
-            state.thermodynamic_pressure,
-            mass,
+            jnp.broadcast_to(state.thermodynamic_pressure, state.temperature.shape),
         )
-        mass_fraction_rate = (
-            chemistry.species_mass_production_rate / thermo.density[..., None]
+        species_mass_rate = (
+            chemistry.species_amount_rate
+            * self.mechanism.schema.molar_masses.astype(mass.dtype)
         )
-        temperature_rate = chemistry.heat_release_rate / (
-            thermo.density * thermo.specific_heat_capacity_pressure
+        mass_fraction_rate = species_mass_rate / thermo.mass_density[..., None]
+        heat_release = -contract(
+            "...s,...s->...",
+            chemistry.species_amount_rate,
+            chemistry.thermodynamics.molar_enthalpy,
+            backend="jax",
+        )
+        specific_heat_capacity_pressure = (
+            thermo.molar_heat_capacity_pressure / thermo.molar_mass
+        )
+        temperature_rate = heat_release / (
+            thermo.mass_density * specific_heat_capacity_pressure
         )
         divergence = self.divergence_source(
             state.temperature,
@@ -229,11 +268,22 @@ class LowMachReactingFormulation(StrictModule, NonTrainableState):
             state.thermodynamic_pressure,
             thermodynamic_pressure_rate=thermodynamic_pressure_rate,
         )
+        mass_defect = jnp.abs(jnp.sum(species_mass_rate, axis=-1))
+        mass_scale = jnp.maximum(jnp.max(jnp.abs(species_mass_rate), axis=-1), 1.0)
+        successful = (
+            chemistry.successful
+            & divergence.successful
+            & jnp.isfinite(heat_release)
+            & (mass_defect <= self.constraint_tolerance * mass_scale)
+        )
         return LowMachReactiveEvaluation(
             mass,
             thermo,
             divergence,
             chemistry,
+            species_mass_rate,
+            heat_release,
+            successful,
             self.formulation_id,
         )
 

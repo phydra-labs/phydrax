@@ -15,19 +15,14 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.finite_volume._positivity import EinfeldtHLLFluxPlan
-from ...equations._hyperbolic_systems import (
-    CompressibleNavierStokesSystem,
-    EulerSystem,
+from ...discretization.finite_volume._riemann import HLLFluxPlan
+from ...equations._gas_dynamics import (
+    HomogeneousMixtureCompressibleNavierStokesSystem,
+    HomogeneousMixtureEulerSystem,
 )
-from ...equations._materials import AbstractThermodynamicMaterial, IdealGasMaterial
+from ...equations._homogeneous_thermodynamics import HomogeneousHelmholtzPlan
 from ...equations._transport_closures import AbstractTransportClosure
 from ...qualification._evidence import QualificationEvidence, SupportDependency
-from ._materials import ThermallyPerfectGasMaterial
-from ._system import (
-    MaterialCompressibleNavierStokesSystem,
-    MaterialEulerSystem,
-)
 
 
 CompressibleEquation: TypeAlias = Literal["euler", "navier_stokes"]
@@ -42,11 +37,12 @@ ShockReconstruction: TypeAlias = Literal["weno_z", "teno", "mp5"]
 
 
 class FiniteXBoundaryLayerInflowPlan(StrictModule, NonTrainableState):
-    """Finite-x compressible boundary-layer inflow in primitive variables."""
+    """Finite-x boundary-layer inflow in canonical mixture primitive variables."""
 
     free_stream_density: float = eqx.field(static=True)
+    free_stream_mass_fractions: tuple[float, ...] = eqx.field(static=True)
     free_stream_velocity: float = eqx.field(static=True)
-    free_stream_pressure: float = eqx.field(static=True)
+    free_stream_temperature: float = eqx.field(static=True)
     boundary_layer_thickness: float = eqx.field(static=True)
     velocity_exponent: float = eqx.field(static=True)
     wall_temperature: float | None = eqx.field(static=True)
@@ -57,24 +53,29 @@ class FiniteXBoundaryLayerInflowPlan(StrictModule, NonTrainableState):
         /,
         *,
         free_stream_density: float,
+        free_stream_mass_fractions: Sequence[float],
         free_stream_velocity: float,
-        free_stream_pressure: float,
+        free_stream_temperature: float,
         boundary_layer_thickness: float,
         velocity_exponent: float = 1.0,
         wall_temperature: float | None = None,
     ):
         density = float(free_stream_density)
+        mass_fractions = tuple(float(value) for value in free_stream_mass_fractions)
         velocity = float(free_stream_velocity)
-        pressure = float(free_stream_pressure)
+        temperature = float(free_stream_temperature)
         thickness = float(boundary_layer_thickness)
         exponent = float(velocity_exponent)
         wall_temperature_ = None if wall_temperature is None else float(wall_temperature)
-        scalars = (density, velocity, pressure, thickness, exponent)
+        scalars = (density, velocity, temperature, thickness, exponent)
         if (
-            any(not np.isfinite(value) for value in scalars)
+            not mass_fractions
+            or any(not np.isfinite(value) or value < 0.0 for value in mass_fractions)
+            or not np.isclose(sum(mass_fractions), 1.0)
+            or any(not np.isfinite(value) for value in scalars)
             or density <= 0.0
             or velocity <= 0.0
-            or pressure <= 0.0
+            or temperature <= 0.0
             or thickness <= 0.0
             or exponent <= 0.0
             or (
@@ -84,8 +85,9 @@ class FiniteXBoundaryLayerInflowPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Finite-x boundary-layer inflow parameters are invalid.")
         self.free_stream_density = density
+        self.free_stream_mass_fractions = mass_fractions
         self.free_stream_velocity = velocity
-        self.free_stream_pressure = pressure
+        self.free_stream_temperature = temperature
         self.boundary_layer_thickness = thickness
         self.velocity_exponent = exponent
         self.wall_temperature = wall_temperature_
@@ -93,8 +95,9 @@ class FiniteXBoundaryLayerInflowPlan(StrictModule, NonTrainableState):
             {
                 "kind": "finite-x-compressible-boundary-layer-inflow",
                 "free_stream_density": density,
+                "free_stream_mass_fractions": mass_fractions,
                 "free_stream_velocity": velocity,
-                "free_stream_pressure": pressure,
+                "free_stream_temperature": temperature,
                 "boundary_layer_thickness": thickness,
                 "velocity_exponent": exponent,
                 "wall_temperature": wall_temperature_,
@@ -104,17 +107,24 @@ class FiniteXBoundaryLayerInflowPlan(StrictModule, NonTrainableState):
     def primitive(
         self,
         wall_distance: ArrayLike,
-        material: AbstractThermodynamicMaterial,
-        dimension: int,
+        system: HomogeneousMixtureEulerSystem
+        | HomogeneousMixtureCompressibleNavierStokesSystem,
         /,
     ) -> Array:
-        if not isinstance(material, AbstractThermodynamicMaterial):
-            raise TypeError("material must implement AbstractThermodynamicMaterial.")
-        dimension_ = int(dimension)
-        if dimension_ not in (2, 3):
+        if not isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        ):
+            raise TypeError("system must be a canonical homogeneous-mixture gas system.")
+        if system.dimension not in (2, 3):
             raise ValueError(
                 "Finite-x boundary-layer inflow requires two or three dimensions."
             )
+        if len(self.free_stream_mass_fractions) != system.species_count:
+            raise ValueError("Inflow composition must contain one value per species.")
         distance = jnp.asarray(wall_distance)
         distance = eqx.error_if(
             distance,
@@ -123,26 +133,30 @@ class FiniteXBoundaryLayerInflowPlan(StrictModule, NonTrainableState):
         )
         eta = distance / self.boundary_layer_thickness
         profile = jnp.tanh(eta) ** self.velocity_exponent
-        streamwise = self.free_stream_velocity * profile
-        velocity = jnp.zeros(distance.shape + (dimension_,), dtype=distance.dtype)
-        velocity = velocity.at[..., 0].set(streamwise)
-        density = jnp.full_like(distance, self.free_stream_density)
-        pressure = jnp.full_like(distance, self.free_stream_pressure)
+        velocity = (
+            jnp.zeros(distance.shape + (system.dimension,), dtype=distance.dtype)
+            .at[..., 0]
+            .set(self.free_stream_velocity * profile)
+        )
+        composition = jnp.asarray(self.free_stream_mass_fractions, dtype=distance.dtype)
+        species_density = (
+            jnp.full_like(distance, self.free_stream_density)[..., None] * composition
+        )
+        temperature = jnp.full_like(distance, self.free_stream_temperature)
         if self.wall_temperature is not None:
-            free_temperature = material.temperature(density, pressure)
             temperature = self.wall_temperature + profile * (
-                free_temperature - self.wall_temperature
+                self.free_stream_temperature - self.wall_temperature
             )
-            if isinstance(material, (IdealGasMaterial, ThermallyPerfectGasMaterial)):
-                pressure = density * material.gas_constant * temperature
-            else:
-                pressure = eqx.error_if(
-                    pressure,
-                    jnp.asarray(True),
-                    "Real-gas wall-temperature inflow requires an explicit pressure closure.",
-                )
-        return jnp.concatenate(
-            (density[..., None], velocity, pressure[..., None]), axis=-1
+        primitive = jnp.concatenate(
+            (species_density, velocity, temperature[..., None]), axis=-1
+        )
+        thermodynamic_state = system.thermodynamics.evaluate_density_temperature(
+            species_density, temperature
+        )
+        return eqx.error_if(
+            primitive,
+            jnp.any(~thermodynamic_state.evidence.successful),
+            "Boundary-layer inflow lies outside canonical thermodynamic evidence.",
         )
 
 
@@ -221,9 +235,9 @@ class FiniteXBoundaryLayerCaseSpec(StrictModule, NonTrainableState):
 
 
 class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
-    """Physical application case independent of a discretization and runtime."""
+    """Physical application case over one canonical homogeneous gas model."""
 
-    material: AbstractThermodynamicMaterial
+    thermodynamics: HomogeneousHelmholtzPlan
     boundary_layer: FiniteXBoundaryLayerCaseSpec | None
     name: str = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
@@ -232,6 +246,9 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
     characteristic_length: float = eqx.field(static=True)
     reference_density: float = eqx.field(static=True)
     reference_velocity: float = eqx.field(static=True)
+    density_floor: float = eqx.field(static=True)
+    pressure_floor: float = eqx.field(static=True)
+    maximum_thermal_iterations: int = eqx.field(static=True)
     fidelity: CompressibleFidelity = eqx.field(static=True)
     case_id: str = eqx.field(static=True)
 
@@ -241,12 +258,15 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
         dimension: int,
         equation: CompressibleEquation,
         route: CompressibleRoute,
-        material: AbstractThermodynamicMaterial,
+        thermodynamics: HomogeneousHelmholtzPlan,
         /,
         *,
         characteristic_length: float = 1.0,
         reference_density: float = 1.0,
         reference_velocity: float = 1.0,
+        density_floor: float = 1.0e-12,
+        pressure_floor: float = 1.0e-12,
+        maximum_thermal_iterations: int = 80,
         fidelity: CompressibleFidelity = "unqualified",
         boundary_layer: FiniteXBoundaryLayerCaseSpec | None = None,
     ):
@@ -255,6 +275,9 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
         length = float(characteristic_length)
         density = float(reference_density)
         velocity = float(reference_velocity)
+        density_floor_ = float(density_floor)
+        pressure_floor_ = float(pressure_floor)
+        iterations = int(maximum_thermal_iterations)
         if (
             not name_
             or dimension_ not in (1, 2, 3)
@@ -266,11 +289,18 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
                 "structured-fv",
                 "mapped-fv",
             )
-            or not isinstance(material, AbstractThermodynamicMaterial)
+            or not isinstance(thermodynamics, HomogeneousHelmholtzPlan)
             or any(
                 not np.isfinite(value) or value <= 0.0
-                for value in (length, density, velocity)
+                for value in (
+                    length,
+                    density,
+                    velocity,
+                    density_floor_,
+                    pressure_floor_,
+                )
             )
+            or iterations <= 0
             or fidelity not in ("unqualified", "dns-candidate")
             or (
                 boundary_layer is not None
@@ -281,13 +311,6 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError("Compressible-flow case specification is invalid.")
-        if not isinstance(material, IdealGasMaterial) and route not in (
-            "structured-fv",
-            "mapped-fv",
-        ):
-            raise ValueError(
-                "General caloric materials require a non-characteristic finite-volume route."
-            )
         if boundary_layer is not None and route not in (
             "tensor-dgsem",
             "structured-fv",
@@ -298,10 +321,13 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
         self.dimension = dimension_
         self.equation = equation
         self.route = route
-        self.material = material
+        self.thermodynamics = thermodynamics
         self.characteristic_length = length
         self.reference_density = density
         self.reference_velocity = velocity
+        self.density_floor = density_floor_
+        self.pressure_floor = pressure_floor_
+        self.maximum_thermal_iterations = iterations
         self.fidelity = fidelity
         self.boundary_layer = boundary_layer
         self.case_id = canonical_fingerprint(
@@ -311,10 +337,13 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
                 "dimension": dimension_,
                 "equation": equation,
                 "route": route,
-                "material": material.material_id,
+                "thermodynamics": thermodynamics.model_id,
                 "characteristic_length": length,
                 "reference_density": density,
                 "reference_velocity": velocity,
+                "density_floor": density_floor_,
+                "pressure_floor": pressure_floor_,
+                "maximum_thermal_iterations": iterations,
                 "fidelity": fidelity,
                 "boundary_layer": None
                 if boundary_layer is None
@@ -323,64 +352,60 @@ class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
         )
 
     @property
+    def species_count(self) -> int:
+        return self.thermodynamics.schema.species_count
+
+    @property
+    def component_count(self) -> int:
+        return self.species_count + self.dimension + 1
+
+    @property
     def claims_dns(self) -> bool:
         return False
 
-    def primitive_to_conserved(self, primitive: ArrayLike, /) -> Array:
-        value = jnp.asarray(primitive)
-        if value.shape[-1:] != (self.dimension + 2,):
-            raise ValueError("Primitive state has the wrong component count.")
-        density = value[..., 0]
-        velocity = value[..., 1 : 1 + self.dimension]
-        pressure = value[..., -1]
+    def prepare_inviscid_system(self) -> HomogeneousMixtureEulerSystem:
+        return HomogeneousMixtureEulerSystem(
+            self.thermodynamics,
+            self.dimension,
+            density_floor=self.density_floor,
+            pressure_floor=self.pressure_floor,
+            maximum_thermal_iterations=self.maximum_thermal_iterations,
+        )
 
-        internal = self.material.specific_internal_energy(density, pressure)
-        kinetic = 0.5 * density * jnp.sum(velocity * velocity, axis=-1)
-        return jnp.concatenate(
-            (
-                density[..., None],
-                density[..., None] * velocity,
-                (density * internal + kinetic)[..., None],
-            ),
-            axis=-1,
+    def primitive_to_conserved(self, primitive: ArrayLike, /) -> Array:
+        return self.prepare_inviscid_system().primitive_to_conserved(
+            jnp.asarray(primitive)
         )
 
     def prepare_system(
         self,
         transport: AbstractTransportClosure | None = None,
         /,
-    ):
-        """Prepare the exact physical system supported by the declared route."""
-
+        *,
+        species_diffusivities: ArrayLike | None = None,
+    ) -> HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem:
+        """Prepare the canonical physical system supported by the declared route."""
         if self.equation == "euler":
-            if transport is not None:
+            if transport is not None or species_diffusivities is not None:
                 raise ValueError("Euler case preparation does not accept transport.")
-            if isinstance(self.material, IdealGasMaterial):
-                return EulerSystem(self.dimension, material=self.material)
-            return MaterialEulerSystem(self.material, self.dimension)
+            return self.prepare_inviscid_system()
         if not isinstance(transport, AbstractTransportClosure):
             raise TypeError(
                 "Navier-Stokes case preparation requires an AbstractTransportClosure."
             )
-        if isinstance(self.material, IdealGasMaterial):
-            return CompressibleNavierStokesSystem(
-                transport, self.dimension, material=self.material
-            )
-        return MaterialCompressibleNavierStokesSystem(
-            self.material, transport, self.dimension
+        return HomogeneousMixtureCompressibleNavierStokesSystem(
+            self.thermodynamics,
+            transport,
+            self.dimension,
+            species_diffusivities=species_diffusivities,
+            density_floor=self.density_floor,
+            pressure_floor=self.pressure_floor,
+            maximum_thermal_iterations=self.maximum_thermal_iterations,
         )
 
     def conserved_to_primitive(self, conserved: ArrayLike, /) -> Array:
-        value = jnp.asarray(conserved)
-        if value.shape[-1:] != (self.dimension + 2,):
-            raise ValueError("Conserved state has the wrong component count.")
-        density = value[..., 0]
-        momentum = value[..., 1 : 1 + self.dimension]
-        velocity = momentum / density[..., None]
-        internal = value[..., -1] / density - 0.5 * jnp.sum(velocity * velocity, axis=-1)
-        pressure = self.material.pressure(density, internal)
-        return jnp.concatenate(
-            (density[..., None], velocity, pressure[..., None]), axis=-1
+        return self.prepare_inviscid_system().conserved_to_primitive(
+            jnp.asarray(conserved)
         )
 
 
@@ -457,10 +482,10 @@ class ShockRouteLedger(StrictModule):
 
 
 class ShockResolvingPolicy(StrictModule, NonTrainableState):
-    """Exact shock-route label and fail-closed Einfeldt fallback decision."""
+    """Exact shock-route label and generic admissibility-preserving HLL fallback."""
 
     all_speed: AllSpeedCompressiblePolicy
-    fallback_flux: EinfeldtHLLFluxPlan
+    fallback_flux: HLLFluxPlan
     reconstruction: ShockReconstruction = eqx.field(static=True)
     sensor_threshold: float = eqx.field(static=True)
     route_label: str = eqx.field(static=True)
@@ -473,20 +498,20 @@ class ShockResolvingPolicy(StrictModule, NonTrainableState):
         *,
         sensor_threshold: float = 0.05,
         all_speed: AllSpeedCompressiblePolicy | None = None,
-        fallback_flux: EinfeldtHLLFluxPlan | None = None,
+        fallback_flux: HLLFluxPlan | None = None,
     ):
         threshold = float(sensor_threshold)
         all_speed_ = AllSpeedCompressiblePolicy() if all_speed is None else all_speed
-        fallback = EinfeldtHLLFluxPlan() if fallback_flux is None else fallback_flux
+        fallback = HLLFluxPlan() if fallback_flux is None else fallback_flux
         if (
             reconstruction not in ("weno_z", "teno", "mp5")
             or not np.isfinite(threshold)
             or threshold <= 0.0
             or not isinstance(all_speed_, AllSpeedCompressiblePolicy)
-            or not isinstance(fallback, EinfeldtHLLFluxPlan)
+            or not isinstance(fallback, HLLFluxPlan)
         ):
             raise ValueError("Shock-resolving policy is invalid.")
-        label = f"shock-resolving:{reconstruction}:all-speed->robust-hll"
+        label = f"shock-resolving:{reconstruction}:all-speed->generic-hll"
         self.reconstruction = reconstruction
         self.sensor_threshold = threshold
         self.all_speed = all_speed_

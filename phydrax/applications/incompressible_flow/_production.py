@@ -363,10 +363,11 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
         schedule_valid = jnp.isfinite(scheduled_start) & (
             schedule_defect <= schedule_tolerance
         )
+        end = jnp.where(schedule_valid, scheduled_start + step, start + step)
         advance = self.forcing.advance(
             state.forcing_state,
             start,
-            start + step,
+            end,
             self.realization,
         )
         stages = (

@@ -81,6 +81,7 @@ from ._provenance import (
     spdx_json,
 )
 from ._repository import (
+    ArtifactGuardRecoveryAuthorization,
     ConditionalObjectClient,
     HPCFilesystemProfile,
     InMemoryConditionalObjectClient,
@@ -116,6 +117,7 @@ from ._restart_topology import (
 
 __all__ = [
     "AmbiguousMigrationError",
+    "ArtifactGuardRecoveryAuthorization",
     "AnalysisPlan",
     "ArtifactManifest",
     "ArtifactRepository",
