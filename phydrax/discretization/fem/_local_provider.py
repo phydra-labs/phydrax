@@ -261,7 +261,7 @@ class FiniteElementLocalProvider(StrictModule):
                 LocalVariationalOffer(
                     "prepared-local",
                     ("cell",),
-                    ("diffusion", "mass", "source"),
+                    ("diffusion", "tensor-diffusion", "mass", "source"),
                     ("value", "grad"),
                     ("value", "gradient"),
                     (

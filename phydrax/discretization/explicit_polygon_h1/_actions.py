@@ -311,6 +311,7 @@ class ExplicitPolygonH1LocalProvider(StrictModule):
                     ("cell",),
                     (
                         "diffusion",
+                        "tensor-diffusion",
                         "mass",
                         "source",
                         "cell-residual",

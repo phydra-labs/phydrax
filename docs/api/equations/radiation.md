@@ -1,6 +1,6 @@
 # Radiation
 
-::: phydrax.equations.MultigroupM1RadiationSystem
+::: phydrax.equations.advanced.MultigroupM1RadiationSystem
 
 ::: phydrax.equations.RadiationScaleContract
 

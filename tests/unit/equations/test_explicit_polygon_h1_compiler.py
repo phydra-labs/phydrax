@@ -58,6 +58,42 @@ def test_auto_capability_selects_dense_matrix_free_and_affine_patch_solves():
     )
 
 
+def test_tensor_diffusion_uses_prepared_polygon_capability():
+    space = _space()
+    state = jnp.linspace(-0.4, 0.7, space.dof_map.global_dof_count)
+    scalar = phx.equations.compile_finite_element_problem(
+        phx.equations.FiniteElementForm(
+            "scalar-polygon-diffusion",
+            "u",
+            (phx.equations.DiffusionAction("u", 2.0),),
+        ),
+        space,
+    )
+    tensor = phx.equations.compile_finite_element_problem(
+        phx.equations.FiniteElementForm(
+            "tensor-polygon-diffusion",
+            "u",
+            (
+                phx.equations.TensorDiffusionAction(
+                    "u", 2.0 * jnp.eye(2), action_id="polygon-tensor-diffusion"
+                ),
+            ),
+        ),
+        space,
+    )
+
+    assert jnp.allclose(
+        tensor.full_residual(state, None),
+        scalar.full_residual(state, None),
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert all(
+        workset.signature.provider_selection_id is not None
+        for workset in tensor._workset_program.worksets
+    )
+
+
 def test_cell_actions_and_exact_transposes_use_the_same_basis():
     space = _space(component_shape=(2,))
     region = space.prepare_local_regions(

@@ -61,6 +61,7 @@ from . import (
     weighting,
 )
 from . import artifacts, events, observation
+from ._array_archive import ArrayArchiveLimits
 from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
@@ -124,6 +125,7 @@ __all__ = [
     "tensor_network",
     "tensor_train",
     "weighting",
+    "ArrayArchiveLimits",
     "DimensionalScaleContract",
     "LengthCoordinateKind",
 ]

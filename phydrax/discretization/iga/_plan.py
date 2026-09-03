@@ -604,7 +604,13 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 LocalVariationalOffer(
                     "prepared-local",
                     ("cell",),
-                    ("diffusion", "mass", "source", "functional"),
+                    (
+                        "diffusion",
+                        "tensor-diffusion",
+                        "mass",
+                        "source",
+                        "functional",
+                    ),
                     ("value", "grad", "hessian"),
                     ("value", "gradient", "hessian"),
                     ("sum_factorized",),
