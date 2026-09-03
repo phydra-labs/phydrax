@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias
 
 import numpy as np
 
@@ -19,6 +19,8 @@ from .._array_archive import (
     array_payload_byte_count,
     array_payload_digest,
     ArrayArchiveCorruptionError,
+    ArrayArchiveLimits,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
     read_array_archive,
     write_array_archive,
 )
@@ -75,6 +77,55 @@ class LifecycleQuery:
 
     archive: LifecycleArchive
     fields: tuple[SampledField, ...]
+
+
+SupportBundleDisclosure: TypeAlias = Literal[
+    "arrays", "payloads", "paths", "identifiers", "free-text", "secrets"
+]
+_FULL_SUPPORT_DISCLOSURE = frozenset(
+    {"arrays", "payloads", "paths", "identifiers", "free-text", "secrets"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SupportBundleAuthorization:
+    """Auditable data-owner authorization for a full-fidelity support payload."""
+
+    authorization_id: str
+    data_owner_id: str
+    source_archive_id: str
+    authorized_at: int
+    disclosures: frozenset[SupportBundleDisclosure]
+
+    def __post_init__(self) -> None:
+        identifiers = (
+            self.authorization_id,
+            self.data_owner_id,
+            self.source_archive_id,
+        )
+        if any(
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or any(ord(character) < 32 for character in value)
+            for value in identifiers
+        ):
+            raise ValueError(
+                "Support authorization identifiers must be non-empty stripped text."
+            )
+        if (
+            isinstance(self.authorized_at, bool)
+            or not isinstance(self.authorized_at, int)
+            or self.authorized_at < 0
+        ):
+            raise ValueError("Support authorization time must be a non-negative integer.")
+        disclosures = frozenset(self.disclosures)
+        if disclosures != _FULL_SUPPORT_DISCLOSURE:
+            raise ValueError(
+                "Full-archive support authorization must explicitly grant every "
+                "sensitive disclosure category."
+            )
+        object.__setattr__(self, "disclosures", disclosures)
 
 
 class SampledExporter(Protocol):
@@ -147,7 +198,7 @@ def create(
         },
         arrays=arrays_,
     )
-    return open(path, allow_incomplete=True)
+    return open(path, allow_incomplete=True, limits=None)
 
 
 def open(
@@ -155,11 +206,12 @@ def open(
     /,
     *,
     allow_incomplete: bool = False,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> LifecycleArchive:
     """Open a canonical archive, validating every identity and payload checksum."""
 
     source = Path(path)
-    container, arrays = read_array_archive(source)
+    container, arrays = read_array_archive(source, limits=limits)
     if container.get("kind") != "lifecycle-archive":
         raise ArrayArchiveCorruptionError("Archive is not a lifecycle archive.")
     record = container.get("record")
@@ -279,25 +331,130 @@ def export(
     return _EXPORTERS[key](query(source, fields=fields), Path(destination))
 
 
+_SUPPORT_RECORD_KINDS = frozenset(
+    {
+        "analysis-plan",
+        "checkpoint-manifest",
+        "execution-plan",
+        "model-manifest",
+        "numeric-revision",
+        "result-manifest",
+        "result-revision",
+        "run-record",
+    }
+)
+_SUPPORT_TELEMETRY_ALLOWLIST: Mapping[str, Any] = MappingProxyType(
+    {
+        "record": MappingProxyType({"kind": str, "complete": bool}),
+        "archive": MappingProxyType({"array_count": int, "array_bytes": int}),
+    }
+)
+
+
+def _allowlisted_support_mapping(
+    source: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    /,
+) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, rule in schema.items():
+        if key not in source:
+            continue
+        value = source[key]
+        if isinstance(rule, Mapping):
+            if not isinstance(value, Mapping):
+                raise TypeError(f"Support telemetry field {key!r} must be a mapping.")
+            sanitized[key] = _allowlisted_support_mapping(value, rule)
+        elif type(value) is not rule:
+            raise TypeError(
+                f"Support telemetry field {key!r} has an invalid scalar type."
+            )
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _sanitized_support_telemetry(archive: LifecycleArchive, /) -> dict[str, Any]:
+    record = _encode_record(archive.manifest)
+    telemetry = _allowlisted_support_mapping(
+        {
+            "record": record,
+            "archive": {
+                "array_count": len(archive.arrays),
+                "array_bytes": sum(value.nbytes for value in archive.arrays.values()),
+            },
+        },
+        _SUPPORT_TELEMETRY_ALLOWLIST,
+    )
+    record_kind = telemetry["record"]["kind"]
+    if record_kind not in _SUPPORT_RECORD_KINDS:
+        raise TypeError("Lifecycle record kind is not admitted to support telemetry.")
+    return telemetry
+
+
 def support_bundle(
     source: str | Path | LifecycleArchive,
     destination: str | Path,
     /,
+    *,
+    authorization: SupportBundleAuthorization | None = None,
+    archive_limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> Path:
-    """Create a deterministic support bundle containing the validated archive."""
+    """Create a sanitized support bundle, or an explicitly authorized full copy.
 
-    archive = _as_archive(source)
+    The default bundle contains only recursively allowlisted numeric/enum
+    telemetry. A full source archive can only be included with explicit,
+    auditable authorization from its data owner.
+    """
+    if authorization is not None and not isinstance(
+        authorization, SupportBundleAuthorization
+    ):
+        raise TypeError("authorization must be SupportBundleAuthorization or None.")
+    archive = _as_archive(source, limits=archive_limits)
+    telemetry = _sanitized_support_telemetry(archive)
+    if authorization is None:
+        return write_array_archive(
+            destination,
+            manifest={
+                "kind": "lifecycle-support-bundle",
+                "disclosure": "sanitized",
+                "telemetry": telemetry,
+                "audit": {"data_owner_authorized": False},
+            },
+            arrays={},
+        )
+    if authorization.source_archive_id != archive.archive_id:
+        raise ValueError("Support authorization is not bound to the source archive.")
+
     payload = archive.path.read_bytes()
     record = _encode_record(archive.manifest)
+    authorization_record = {
+        "authorization_id": authorization.authorization_id,
+        "data_owner_id": authorization.data_owner_id,
+        "source_archive_id": authorization.source_archive_id,
+        "authorized_at": authorization.authorized_at,
+        "disclosures": sorted(authorization.disclosures),
+    }
+    authorization_record["authorization_fingerprint"] = canonical_fingerprint(
+        authorization_record
+    )
     return write_array_archive(
         destination,
         manifest={
             "kind": "lifecycle-support-bundle",
-            "archive_id": archive.archive_id,
-            "record_kind": record["kind"],
-            "record_id": _record_id(archive.manifest),
-            "diagnostic_ids": list(_diagnostic_ids(archive.manifest)),
-            "archive_sha256": hashlib.sha256(payload).hexdigest(),
+            "disclosure": "data-owner-authorized",
+            "telemetry": telemetry,
+            "audit": {
+                "data_owner_authorized": True,
+                **authorization_record,
+            },
+            "source": {
+                "archive_id": archive.archive_id,
+                "record_kind": record["kind"],
+                "record_id": _record_id(archive.manifest),
+                "diagnostic_ids": list(_diagnostic_ids(archive.manifest)),
+                "archive_sha256": hashlib.sha256(payload).hexdigest(),
+            },
         },
         arrays={"archive": np.frombuffer(payload, dtype=np.uint8)},
     )
@@ -325,10 +482,15 @@ def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
     return destination
 
 
-def _as_archive(source: str | Path | LifecycleArchive, /) -> LifecycleArchive:
+def _as_archive(
+    source: str | Path | LifecycleArchive,
+    /,
+    *,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+) -> LifecycleArchive:
     if isinstance(source, LifecycleArchive):
         return source
-    return open(source)
+    return open(source, limits=limits)
 
 
 def _result_manifest(record: LifecycleRecord, /) -> ResultManifest | None:
@@ -636,6 +798,8 @@ __all__ = [
     "LifecycleArchive",
     "LifecycleQuery",
     "LifecycleRecord",
+    "SupportBundleAuthorization",
+    "SupportBundleDisclosure",
     "SampledExporter",
     "SampledField",
     "create",

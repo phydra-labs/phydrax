@@ -4,15 +4,20 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import io
 import json
+import math
 import os
+import struct
 import tempfile
 import zipfile
 from collections.abc import Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, Iterator
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +30,67 @@ class ArrayArchiveError(RuntimeError):
 
 class ArrayArchiveCorruptionError(ArrayArchiveError):
     """Raised when an array archive is incomplete, corrupt, or noncanonical."""
+
+
+@dataclass(frozen=True, slots=True)
+class ArrayArchiveLimits:
+    """Pre-allocation admission limits for one untrusted array archive."""
+
+    max_container_bytes: int = 1_073_741_824
+    max_aggregate_bytes: int = 1_073_741_824
+    max_member_bytes: int = 268_435_456
+    max_manifest_bytes: int = 1_048_576
+    max_members: int = 257
+    max_central_directory_bytes: int = 1_048_576
+    max_npy_header_bytes: int = 65_536
+    max_npy_header_nesting: int = 16
+    max_array_rank: int = 8
+    max_axis_length: int = 67_108_864
+    max_array_elements: int = 67_108_864
+    max_total_array_elements: int = 268_435_456
+    max_dtype_itemsize: int = 16
+    max_manifest_nesting: int = 16
+    allow_structured_dtypes: bool = False
+    allowed_dtype_kinds: frozenset[str] = frozenset({"b", "i", "u", "f", "c"})
+
+    def __post_init__(self) -> None:
+        integer_limits = (
+            self.max_container_bytes,
+            self.max_aggregate_bytes,
+            self.max_member_bytes,
+            self.max_manifest_bytes,
+            self.max_members,
+            self.max_central_directory_bytes,
+            self.max_npy_header_bytes,
+            self.max_npy_header_nesting,
+            self.max_array_rank,
+            self.max_axis_length,
+            self.max_array_elements,
+            self.max_total_array_elements,
+            self.max_dtype_itemsize,
+            self.max_manifest_nesting,
+        )
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in integer_limits
+        ):
+            raise ValueError("Array archive limits must be positive integers.")
+        if not isinstance(self.allow_structured_dtypes, bool):
+            raise ValueError("allow_structured_dtypes must be boolean.")
+        if (
+            not isinstance(self.allowed_dtype_kinds, frozenset)
+            or not self.allowed_dtype_kinds
+            or any(
+                not isinstance(kind, str) or len(kind) != 1
+                for kind in self.allowed_dtype_kinds
+            )
+        ):
+            raise ValueError(
+                "allowed_dtype_kinds must be a non-empty frozenset of dtype kinds."
+            )
+
+
+DEFAULT_ARRAY_ARCHIVE_LIMITS = ArrayArchiveLimits()
 
 
 def array_payload_digest(value: Any, /) -> str:
@@ -205,76 +271,440 @@ def write_array_archive(
     return destination
 
 
+_END_OF_CENTRAL_DIRECTORY = struct.Struct("<4s4H2LH")
+_ZIP_END_SIGNATURE = b"PK\x05\x06"
+_NPY_MAGIC = b"\x93NUMPY"
+_HASH_CHUNK_BYTES = 1_048_576
+
+
+def _validate_zip_container(
+    stream: BinaryIO,
+    limits: ArrayArchiveLimits,
+    /,
+) -> None:
+    file_size = os.fstat(stream.fileno()).st_size
+    if file_size > limits.max_container_bytes:
+        raise ArrayArchiveCorruptionError("Archive exceeds the container byte limit.")
+    if file_size < _END_OF_CENTRAL_DIRECTORY.size:
+        raise ArrayArchiveCorruptionError("Archive ZIP directory is missing.")
+    tail_size = min(file_size, 65_557)
+    stream.seek(file_size - tail_size)
+    tail = stream.read(tail_size)
+    offset = tail.rfind(_ZIP_END_SIGNATURE)
+    if offset < 0 or len(tail) - offset < _END_OF_CENTRAL_DIRECTORY.size:
+        raise ArrayArchiveCorruptionError("Archive ZIP directory is missing.")
+    (
+        signature,
+        disk_number,
+        directory_disk,
+        entries_on_disk,
+        entry_count,
+        directory_size,
+        directory_offset,
+        comment_size,
+    ) = _END_OF_CENTRAL_DIRECTORY.unpack_from(tail, offset)
+    if (
+        signature != _ZIP_END_SIGNATURE
+        or disk_number != 0
+        or directory_disk != 0
+        or entries_on_disk != entry_count
+        or comment_size != len(tail) - offset - _END_OF_CENTRAL_DIRECTORY.size
+    ):
+        raise ArrayArchiveCorruptionError("Archive ZIP directory is noncanonical.")
+    if entry_count == 0xFFFF or directory_size == 0xFFFFFFFF:
+        raise ArrayArchiveCorruptionError("ZIP64 array archives are not accepted.")
+    if entry_count > limits.max_members:
+        raise ArrayArchiveCorruptionError("Archive exceeds the member count limit.")
+    if directory_size > limits.max_central_directory_bytes:
+        raise ArrayArchiveCorruptionError(
+            "Archive exceeds the central-directory byte limit."
+        )
+    if directory_offset + directory_size > file_size - _END_OF_CENTRAL_DIRECTORY.size:
+        raise ArrayArchiveCorruptionError("Archive ZIP directory is invalid.")
+    stream.seek(0)
+
+
+@contextmanager
+def _preflight_zip_container(
+    source: Path,
+    limits: ArrayArchiveLimits,
+    /,
+) -> Iterator[BinaryIO]:
+    with source.open("rb") as stream:
+        _validate_zip_container(stream, limits)
+        yield stream
+
+
+def _preflight_members(
+    archive: zipfile.ZipFile,
+    limits: ArrayArchiveLimits,
+    /,
+) -> tuple[list[zipfile.ZipInfo], zipfile.ZipInfo]:
+    members = archive.infolist()
+    if len(members) > limits.max_members:
+        raise ArrayArchiveCorruptionError("Archive exceeds the member count limit.")
+    member_names = [member.filename for member in members]
+    if len(set(member_names)) != len(member_names):
+        raise ArrayArchiveCorruptionError("Archive contains duplicate members.")
+    if any(
+        member.compress_type != zipfile.ZIP_STORED
+        or member.file_size != member.compress_size
+        or member.flag_bits & 0x1
+        or member.is_dir()
+        for member in members
+    ):
+        raise ArrayArchiveCorruptionError(
+            "Archive members must use canonical stored, unencrypted encoding."
+        )
+    if sum(member.file_size for member in members) > limits.max_aggregate_bytes:
+        raise ArrayArchiveCorruptionError(
+            "Archive exceeds the aggregate member byte limit."
+        )
+    manifests = [member for member in members if member.filename == "manifest.json"]
+    if len(manifests) != 1:
+        raise ArrayArchiveCorruptionError("Archive manifest is missing or duplicated.")
+    manifest_info = manifests[0]
+    if any(
+        member.file_size > limits.max_member_bytes
+        for member in members
+        if member is not manifest_info
+    ):
+        raise ArrayArchiveCorruptionError("Archive member exceeds the member byte limit.")
+    if manifest_info.file_size > limits.max_manifest_bytes:
+        raise ArrayArchiveCorruptionError(
+            "Archive manifest exceeds the manifest byte limit."
+        )
+    return members, manifest_info
+
+
+def _validate_json_nesting(payload: str, maximum: int, /) -> None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in payload:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > maximum:
+                raise ArrayArchiveCorruptionError(
+                    "Archive manifest exceeds the nesting limit."
+                )
+        elif character in "]}":
+            depth -= 1
+            if depth < 0:
+                raise ArrayArchiveCorruptionError(
+                    "Archive manifest JSON nesting is invalid."
+                )
+
+
+def _validate_npy_header_nesting(payload: str, maximum: int, /) -> None:
+    depth = 0
+    quote = ""
+    escaped = False
+    pairs = {")": "(", "]": "[", "}": "{"}
+    openers: list[str] = []
+    for character in payload:
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = ""
+        elif character in "\"'":
+            quote = character
+        elif character in "([{":
+            openers.append(character)
+            depth += 1
+            if depth > maximum:
+                raise ArrayArchiveCorruptionError(
+                    "Archive NPY header exceeds the nesting limit."
+                )
+        elif character in ")]}":
+            if not openers or openers.pop() != pairs[character]:
+                raise ArrayArchiveCorruptionError(
+                    "Archive NPY header nesting is invalid."
+                )
+            depth -= 1
+
+
+def _validate_json_values(value: Any, /) -> None:
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            if any(not isinstance(key, str) or not key for key in current):
+                raise ArrayArchiveCorruptionError(
+                    "Archive manifest keys must be non-empty strings."
+                )
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+        elif isinstance(current, float) and not math.isfinite(current):
+            raise ArrayArchiveCorruptionError("Archive manifest numbers must be finite.")
+        elif current is not None and not isinstance(current, (bool, int, float, str)):
+            raise ArrayArchiveCorruptionError(
+                "Archive manifest contains a non-JSON value."
+            )
+
+
+def _read_exact(stream: BinaryIO, size: int, /) -> bytes:
+    payload = stream.read(size)
+    if len(payload) != size:
+        raise ArrayArchiveCorruptionError("Archive NPY header is truncated.")
+    return payload
+
+
+def _read_npy_metadata(
+    stream: BinaryIO,
+    member_size: int,
+    limits: ArrayArchiveLimits,
+    /,
+) -> tuple[np.dtype[Any], tuple[int, ...], int]:
+    if _read_exact(stream, len(_NPY_MAGIC)) != _NPY_MAGIC:
+        raise ArrayArchiveCorruptionError("Archive array has invalid NPY magic.")
+    major, minor = _read_exact(stream, 2)
+    version = (major, minor)
+    if version == (1, 0):
+        header_size = struct.unpack("<H", _read_exact(stream, 2))[0]
+        encoding = "latin1"
+    elif version in ((2, 0), (3, 0)):
+        header_size = struct.unpack("<I", _read_exact(stream, 4))[0]
+        encoding = "utf-8" if version == (3, 0) else "latin1"
+    else:
+        raise ArrayArchiveCorruptionError("Archive array NPY version is unsupported.")
+    if header_size > limits.max_npy_header_bytes:
+        raise ArrayArchiveCorruptionError(
+            "Archive array exceeds the NPY header byte limit."
+        )
+    try:
+        header_text = _read_exact(stream, header_size).decode(encoding)
+        _validate_npy_header_nesting(header_text, limits.max_npy_header_nesting)
+        header = ast.literal_eval(header_text)
+    except (RecursionError, SyntaxError, UnicodeDecodeError, ValueError) as error:
+        raise ArrayArchiveCorruptionError(
+            "Archive array NPY header is invalid."
+        ) from error
+    if not isinstance(header, dict) or set(header) != {
+        "descr",
+        "fortran_order",
+        "shape",
+    }:
+        raise ArrayArchiveCorruptionError("Archive array NPY header is noncanonical.")
+    shape = header["shape"]
+    if (
+        not isinstance(shape, tuple)
+        or any(
+            isinstance(extent, bool) or not isinstance(extent, int) or extent < 0
+            for extent in shape
+        )
+        or not isinstance(header["fortran_order"], bool)
+    ):
+        raise ArrayArchiveCorruptionError("Archive array shape metadata is invalid.")
+    if len(shape) > limits.max_array_rank:
+        raise ArrayArchiveCorruptionError("Archive array exceeds the rank limit.")
+    elements = 1
+    for extent in shape:
+        if extent > limits.max_axis_length:
+            raise ArrayArchiveCorruptionError(
+                "Archive array shape exceeds the axis-length limit."
+            )
+        if extent and elements > limits.max_array_elements // extent:
+            raise ArrayArchiveCorruptionError("Archive array exceeds the element limit.")
+        elements *= extent
+    try:
+        dtype = np.dtype(header["descr"])
+    except (TypeError, ValueError) as error:
+        raise ArrayArchiveCorruptionError(
+            "Archive array dtype metadata is invalid."
+        ) from error
+    if (
+        dtype.hasobject
+        or (
+            (dtype.fields is not None or dtype.subdtype is not None)
+            and not limits.allow_structured_dtypes
+        )
+        or dtype.metadata is not None
+        or dtype.kind not in limits.allowed_dtype_kinds
+        or dtype.itemsize > limits.max_dtype_itemsize
+    ):
+        raise ArrayArchiveCorruptionError(
+            "Archive array dtype is not admitted by policy."
+        )
+    expected_size = stream.tell() + elements * dtype.itemsize
+    if expected_size != member_size:
+        raise ArrayArchiveCorruptionError(
+            "Archive array byte size is inconsistent with its NPY metadata."
+        )
+    return dtype, shape, elements
+
+
+def _member_sha256(
+    archive: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    /,
+) -> str:
+    digest = hashlib.sha256()
+    with archive.open(member, mode="r") as stream:
+        while chunk := stream.read(_HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def read_array_archive(
     path: str | os.PathLike[str],
     /,
+    *,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
-    """Read and checksum-validate one canonical pickle-free array archive."""
+    """Read one archive after bounded preflight and checksum validation.
+
+    The default limits admit untrusted archives conservatively. Pass ``None``
+    explicitly only for a trusted local archive that must retain legacy,
+    effectively unbounded size limits.
+    """
     source = Path(path)
+    policy = limits
+    if policy is not None and not isinstance(policy, ArrayArchiveLimits):
+        raise TypeError("limits must be ArrayArchiveLimits or None.")
+    if policy is None:
+        policy = ArrayArchiveLimits(
+            max_container_bytes=2**63 - 1,
+            max_aggregate_bytes=2**63 - 1,
+            max_member_bytes=2**63 - 1,
+            max_manifest_bytes=2**63 - 1,
+            max_members=2**31 - 1,
+            max_central_directory_bytes=2**63 - 1,
+            max_npy_header_bytes=2**31 - 1,
+            max_npy_header_nesting=2**31 - 1,
+            max_array_rank=2**31 - 1,
+            max_axis_length=2**63 - 1,
+            max_array_elements=2**63 - 1,
+            max_total_array_elements=2**63 - 1,
+            max_dtype_itemsize=2**31 - 1,
+            max_manifest_nesting=2**31 - 1,
+            allowed_dtype_kinds=frozenset("?biufcmMUSV"),
+            allow_structured_dtypes=True,
+        )
     try:
-        with zipfile.ZipFile(source, mode="r") as archive:
-            members = archive.infolist()
-            member_names = [member.filename for member in members]
-            if len(set(member_names)) != len(member_names):
-                raise ArrayArchiveCorruptionError("Archive contains duplicate members.")
-            if any(
-                member.compress_type != zipfile.ZIP_STORED
-                or member.file_size != member.compress_size
-                for member in members
-            ):
-                raise ArrayArchiveCorruptionError(
-                    "Archive members must use canonical stored encoding."
-                )
-            if archive.testzip() is not None:
-                raise ArrayArchiveCorruptionError("Archive CRC validation failed.")
-            names = set(member_names)
-            if "manifest.json" not in names:
-                raise ArrayArchiveCorruptionError("Archive manifest is missing.")
+        with (
+            _preflight_zip_container(source, policy) as container,
+            zipfile.ZipFile(container, mode="r") as archive,
+        ):
+            members, manifest_info = _preflight_members(archive, policy)
             try:
-                manifest = json.loads(archive.read("manifest.json"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                manifest_text = archive.read(manifest_info).decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise ArrayArchiveCorruptionError(
+                    "Archive manifest is invalid UTF-8."
+                ) from error
+            _validate_json_nesting(manifest_text, policy.max_manifest_nesting)
+            try:
+                manifest = json.loads(manifest_text)
+            except (json.JSONDecodeError, RecursionError) as error:
                 raise ArrayArchiveCorruptionError(
                     "Archive manifest is invalid JSON."
                 ) from error
             if not isinstance(manifest, dict):
                 raise ArrayArchiveCorruptionError("Archive manifest must be an object.")
+            _validate_json_values(manifest)
             inventory = manifest.get("arrays")
             if not isinstance(inventory, dict):
                 raise ArrayArchiveCorruptionError("Archive array inventory is missing.")
+            member_by_name = {member.filename: member for member in members}
             expected_members = {"manifest.json"}
-            values: dict[str, np.ndarray] = {}
+            admitted: dict[
+                str, tuple[zipfile.ZipInfo, np.dtype[Any], tuple[int, ...]]
+            ] = {}
+            total_elements = 0
             for logical_name, record in inventory.items():
-                if not isinstance(logical_name, str) or not isinstance(record, dict):
+                if (
+                    not isinstance(logical_name, str)
+                    or not logical_name
+                    or not isinstance(record, dict)
+                    or set(record) != {"member", "shape", "dtype", "sha256"}
+                ):
                     raise ArrayArchiveCorruptionError(
                         "Archive array inventory is invalid."
                     )
-                member = record.get("member")
-                if not isinstance(member, str) or member not in names:
+                member_name = record["member"]
+                if (
+                    not isinstance(member_name, str)
+                    or member_name == "manifest.json"
+                    or member_name not in member_by_name
+                    or member_name in expected_members
+                ):
                     raise ArrayArchiveCorruptionError(
-                        f"Archive member for array {logical_name!r} is missing."
+                        f"Archive member for array {logical_name!r} is invalid."
                     )
-                expected_members.add(member)
-                payload = archive.read(member)
-                if hashlib.sha256(payload).hexdigest() != record.get("sha256"):
+                checksum = record["sha256"]
+                if (
+                    not isinstance(checksum, str)
+                    or len(checksum) != 64
+                    or any(character not in "0123456789abcdef" for character in checksum)
+                ):
+                    raise ArrayArchiveCorruptionError(
+                        f"Archive checksum for array {logical_name!r} is invalid."
+                    )
+                member = member_by_name[member_name]
+                with archive.open(member, mode="r") as stream:
+                    dtype, shape, elements = _read_npy_metadata(
+                        stream, member.file_size, policy
+                    )
+                record_shape = record["shape"]
+                record_dtype = record["dtype"]
+                if (
+                    not isinstance(record_shape, list)
+                    or any(type(extent) is not int for extent in record_shape)
+                    or not isinstance(record_dtype, str)
+                    or record_shape != list(shape)
+                    or record_dtype != dtype.str
+                ):
+                    raise ArrayArchiveCorruptionError(
+                        f"Archive array {logical_name!r} metadata is inconsistent."
+                    )
+                if total_elements > policy.max_total_array_elements - elements:
+                    raise ArrayArchiveCorruptionError(
+                        "Archive arrays exceed the aggregate element limit."
+                    )
+                total_elements += elements
+                expected_members.add(member_name)
+                admitted[logical_name] = (member, dtype, shape)
+            if set(member_by_name) != expected_members:
+                raise ArrayArchiveCorruptionError("Archive contains unexpected members.")
+
+            values: dict[str, np.ndarray] = {}
+            for logical_name, record in inventory.items():
+                member, dtype, shape = admitted[logical_name]
+                if _member_sha256(archive, member) != record["sha256"]:
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} checksum failed."
                     )
                 try:
-                    value = np.load(io.BytesIO(payload), allow_pickle=False)
-                except (OSError, ValueError) as error:
+                    with archive.open(member, mode="r") as stream:
+                        value = np.load(
+                            stream,
+                            allow_pickle=False,
+                            max_header_size=policy.max_npy_header_bytes,
+                        )
+                except (EOFError, OSError, ValueError) as error:
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} is invalid."
                     ) from error
-                if list(value.shape) != record.get(
-                    "shape"
-                ) or value.dtype.str != record.get("dtype"):
+                if value.shape != shape or value.dtype != dtype:
                     raise ArrayArchiveCorruptionError(
-                        f"Archive array {logical_name!r} metadata is inconsistent."
+                        f"Archive array {logical_name!r} metadata changed while loading."
                     )
                 value.setflags(write=False)
                 values[logical_name] = value
-            if names != expected_members:
-                raise ArrayArchiveCorruptionError("Archive contains unexpected members.")
             return manifest, values
     except ArrayArchiveError:
         raise
@@ -290,6 +720,8 @@ __all__ = [
     "array_payload_digest",
     "ArrayArchiveCorruptionError",
     "ArrayArchiveError",
+    "ArrayArchiveLimits",
+    "DEFAULT_ARRAY_ARCHIVE_LIMITS",
     "read_array_archive",
     "pack_array_tree",
     "unpack_array_tree",

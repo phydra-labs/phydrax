@@ -288,6 +288,18 @@ models. Every discrete binding or topology change is transactional, and every
 continuous derivative is conditioned on the accepted fixed event program. See
 the [advanced-biophysics API](docs/api/advanced_biophysics.md) and its guides.
 
+The canonical cardiovascular platform is
+`phydrax.applications.cardiovascular`, with explicit anatomy,
+electrophysiology, mechanics, circulation, hemodynamics, observations, and
+personalization subpackages plus cross-domain quantity, case, execution,
+checkpoint/replay, and release-evidence contracts. It supports bounded
+research workflows and fail-closed evidence; it does not claim clinical
+validation, diagnosis, treatment guidance, medical-device status, regulatory
+clearance, or commercial readiness. Start with the
+[cardiovascular API](docs/api/applications/cardiovascular.md), the
+[core guide](docs/guides_cardiovascular_core.md), or the runnable
+[`cardiovascular_platform.py`](examples/cardiovascular_platform.py) example.
+
 ## Example
 
 This example trains a neural field $u_\theta(x,y)$ to satisfy

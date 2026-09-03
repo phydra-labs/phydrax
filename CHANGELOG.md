@@ -3,6 +3,25 @@
 ## Unreleased
 
 ### Added
+- Added the canonical `phydrax.applications.cardiovascular` platform with
+  explicit, duplicate-free anatomy, electrophysiology, mechanics, circulation,
+  hemodynamics, observations, and personalization facades; cross-domain
+  quantity/case, fixed-capacity execution, checkpoint/replay, distributed
+  reference, and fail-closed G0--G7 release contracts; harmonic cardiac
+  coordinates and ventricular microstructure; phenomenological and physical
+  monodomain, bidomain, eikonal, Purkinje/pacing, regional, and named cellular
+  electrophysiology routes; passive/active mechanics, electromechanics,
+  sarcomere, growth, and unloading workflows; 0D/1D circulation, coronary,
+  valve, device, oxygen, fixed-wall flow, ALE/immersed FSI, and leaflet routes;
+  observation, multimodal likelihood, inverse/design, cohort, surrogate
+  refusal, learning, and native reanalysis contracts; public generic ownership
+  for tensor diffusion, bounded array archives, and lifecycle support-bundle
+  authorization; a hard-failing public end-to-end example, focused
+  cross-domain integration tests, complete guide/API navigation, and bounded
+  qualification/benchmark indexes. All supported claims remain limited to the
+  exact declared research and engineering support tuple: no clinical,
+  diagnostic, treatment, regulated-device, regulatory, or commercial-readiness
+  claim is made.
 - Added content-identified homogeneous Helmholtz thermodynamics with canonical
   component/phase-occurrence identity, explicit gas reference pressure,
   ideal-mixture calorics, Peng--Robinson residual properties and exhaustive

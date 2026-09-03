@@ -28,6 +28,7 @@ from .._cell_complex import (
     IntervalConnectivity,
     PolygonalConnectivity,
     PolyhedralConnectivity,
+    TetrahedralConnectivity,
 )
 from .._cell_mesh import CellBlock, CellMesh
 from .._core import (
@@ -59,6 +60,7 @@ from .._support import DiscreteSupport
 from .._topology import EntitySelection
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec, lagrange_element
+from ._reference_topology import reference_cell_topology
 
 
 class FiniteElementFieldSpec(StrictModule, NonTrainableState):
@@ -251,6 +253,90 @@ _HEXAHEDRAL_EDGE_BY_VERTICES = {
     frozenset(edge): index for index, edge in enumerate(_HEXAHEDRAL_EDGES)
 }
 
+_TETRAHEDRAL_TOPOLOGY = reference_cell_topology("tetrahedron")
+_TETRAHEDRAL_EDGES = _TETRAHEDRAL_TOPOLOGY.entities[1]
+_TETRAHEDRAL_FACES = _TETRAHEDRAL_TOPOLOGY.entities[2]
+
+
+def _tetrahedral_entity_routes(
+    connectivity: TetrahedralConnectivity,
+    cells: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    edge_by_vertices = {
+        tuple(int(value) for value in edge): index
+        for index, edge in enumerate(np.asarray(connectivity.edges))
+    }
+    face_by_vertices = {
+        tuple(int(value) for value in face): index
+        for index, face in enumerate(np.asarray(connectivity.faces))
+    }
+    edge_routes = np.empty((cells.shape[0], len(_TETRAHEDRAL_EDGES)), dtype=np.int32)
+    edge_signs = np.empty_like(edge_routes, dtype=float)
+    face_routes = np.empty((cells.shape[0], len(_TETRAHEDRAL_FACES)), dtype=np.int32)
+    for cell, vertices in enumerate(cells):
+        for local_edge, (start, stop) in enumerate(_TETRAHEDRAL_EDGES):
+            oriented = (int(vertices[start]), int(vertices[stop]))
+            canonical = tuple(sorted(oriented))
+            edge_routes[cell, local_edge] = edge_by_vertices[canonical]
+            edge_signs[cell, local_edge] = 1.0 if oriented == canonical else -1.0
+        for local_face, local_vertices in enumerate(_TETRAHEDRAL_FACES):
+            canonical = tuple(sorted(int(vertices[index]) for index in local_vertices))
+            face_routes[cell, local_face] = face_by_vertices[canonical]
+    return edge_routes, edge_signs, face_routes
+
+
+def _tetrahedral_face_dof_positions(
+    element: FiniteElementSpec,
+    local_face: int,
+    local_vertices: tuple[int, ...],
+    canonical_vertices: tuple[int, ...],
+    /,
+) -> np.ndarray:
+    face_dofs = element.entity_dofs[2][local_face]
+    if not face_dofs:
+        return np.empty((0,), dtype=np.int32)
+    reference_vertices = _TETRAHEDRAL_FACES[local_face]
+    vertex_dofs = element.entity_dofs[0]
+    if any(len(vertex_dofs[vertex]) != 1 for vertex in reference_vertices):
+        raise ValueError("H1 nodal vertices require one DOF per vertex.")
+    nodes = np.asarray(element.reference_nodes, dtype=float)
+    corners = nodes[
+        np.asarray(
+            [vertex_dofs[vertex][0] for vertex in reference_vertices],
+            dtype=np.int32,
+        )
+    ]
+    augmented_corners = np.concatenate(
+        (corners.T, np.ones((1, len(reference_vertices)))),
+        axis=0,
+    )
+    face_nodes = nodes[np.asarray(face_dofs, dtype=np.int32)]
+    augmented_nodes = np.concatenate(
+        (face_nodes.T, np.ones((1, len(face_dofs)))),
+        axis=0,
+    )
+    barycentric = np.linalg.lstsq(augmented_corners, augmented_nodes, rcond=None)[0].T
+    if not np.allclose(
+        barycentric @ corners,
+        face_nodes,
+        rtol=1.0e-10,
+        atol=1.0e-12,
+    ):
+        raise ValueError("Tetrahedral face DOFs are not on their declared face.")
+    canonical_barycentric = np.empty_like(barycentric)
+    for local_position, vertex in enumerate(local_vertices):
+        canonical_position = canonical_vertices.index(vertex)
+        canonical_barycentric[:, canonical_position] = barycentric[:, local_position]
+    keys = tuple(
+        tuple(float(value) for value in np.round(row, decimals=12))
+        for row in canonical_barycentric
+    )
+    order = sorted(range(len(keys)), key=keys.__getitem__)
+    positions = np.empty((len(keys),), dtype=np.int32)
+    positions[np.asarray(order, dtype=np.int32)] = np.arange(len(keys), dtype=np.int32)
+    return positions
+
 
 def _has_nonvertex_dofs(element: FiniteElementSpec, /) -> bool:
     return any(
@@ -404,6 +490,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         edge_widths = None
         edge_starts = None
         face_shapes = None
+        face_widths = None
         face_starts = None
         cell_widths = None
         cell_starts = None
@@ -433,19 +520,27 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
             else:
                 if not isinstance(
                     connectivity,
-                    (PolygonalConnectivity, HexahedralConnectivity),
+                    (
+                        PolygonalConnectivity,
+                        TetrahedralConnectivity,
+                        HexahedralConnectivity,
+                    ),
                 ):
                     raise ValueError(
-                        "High-order H1 entity routing requires polygonal or "
-                        "hexahedral connectivity."
+                        "High-order H1 entity routing requires polygonal, "
+                        "tetrahedral, or hexahedral connectivity."
                     )
                 association = "entity"
                 edge_count = int(connectivity.edges.shape[0])
                 edge_widths = np.full((edge_count,), -1, dtype=np.int32)
                 total_cell_count = sum(block.cell_count for block in mesh.blocks)
                 cell_widths = np.empty((total_cell_count,), dtype=np.int32)
-                if isinstance(connectivity, HexahedralConnectivity):
+                if isinstance(
+                    connectivity, (TetrahedralConnectivity, HexahedralConnectivity)
+                ):
                     face_count = int(connectivity.faces.shape[0])
+                    face_widths = np.full((face_count,), -1, dtype=np.int32)
+                if isinstance(connectivity, HexahedralConnectivity):
                     face_shapes = np.full((face_count, 2), -1, dtype=np.int32)
 
                 cell_offset = 0
@@ -459,22 +554,31 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                             "H1 nodal vertex entities must match the cell vertices."
                         )
                     local_edge_count = len(element.entity_dofs[1])
-                    expected_edge_count = (
-                        block.arity
-                        if isinstance(connectivity, PolygonalConnectivity)
-                        else len(_HEXAHEDRAL_EDGES)
-                    )
+                    if isinstance(connectivity, PolygonalConnectivity):
+                        expected_edge_count = block.arity
+                    elif isinstance(connectivity, TetrahedralConnectivity):
+                        expected_edge_count = len(_TETRAHEDRAL_EDGES)
+                    else:
+                        expected_edge_count = len(_HEXAHEDRAL_EDGES)
                     if local_edge_count != expected_edge_count:
                         raise ValueError(
                             "H1 edge entities must match the reference cell edges."
                         )
-                    block_cell_edges = np.asarray(
-                        connectivity.cell_edges,
-                        dtype=np.int32,
-                    )[
-                        cell_offset : cell_offset + block.cell_count,
-                        :local_edge_count,
-                    ]
+                    if isinstance(connectivity, TetrahedralConnectivity):
+                        block_cell_edges, _, block_cell_faces = (
+                            _tetrahedral_entity_routes(
+                                connectivity,
+                                np.asarray(block.vertices, dtype=np.int32),
+                            )
+                        )
+                    else:
+                        block_cell_edges = np.asarray(
+                            connectivity.cell_edges,
+                            dtype=np.int32,
+                        )[
+                            cell_offset : cell_offset + block.cell_count,
+                            :local_edge_count,
+                        ]
                     for local_edge, edge_dofs in enumerate(element.entity_dofs[1]):
                         width = len(edge_dofs)
                         for edge in np.unique(block_cell_edges[:, local_edge]):
@@ -523,6 +627,30 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                                         "incompatible; a mortar is required."
                                     )
                                 face_shapes[face] = canonical_shape
+                                if face_widths is None:
+                                    raise RuntimeError(
+                                        "Hexahedral H1 routing requires face widths."
+                                    )
+                                face_widths[face] = prod(canonical_shape)
+                    elif isinstance(connectivity, TetrahedralConnectivity):
+                        if face_widths is None:
+                            raise RuntimeError(
+                                "Tetrahedral H1 routing requires allocated face widths."
+                            )
+                        if len(element.entity_dofs[2]) != len(_TETRAHEDRAL_FACES):
+                            raise ValueError(
+                                "H1 face entities must match the tetrahedron faces."
+                            )
+                        for local_face, face_dofs in enumerate(element.entity_dofs[2]):
+                            width = len(face_dofs)
+                            for face in np.unique(block_cell_faces[:, local_face]):
+                                existing = face_widths[int(face)]
+                                if existing >= 0 and existing != width:
+                                    raise ValueError(
+                                        "Shared H1 triangular trace widths are "
+                                        "incompatible; a mortar is required."
+                                    )
+                                face_widths[int(face)] = width
 
                     top_entities = element.entity_dofs[topological_dimension]
                     if len(top_entities) != 1:
@@ -536,7 +664,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
 
                 if np.any(edge_widths < 0):
                     raise ValueError("High-order H1 routing left unassigned edges.")
-                if face_shapes is not None and np.any(face_shapes < 0):
+                if face_widths is not None and np.any(face_widths < 0):
                     raise ValueError("High-order H1 routing left unassigned faces.")
 
                 cursor = vertex_count
@@ -547,11 +675,11 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 edge_dof_count = cursor - vertex_count
 
                 face_dof_count = 0
-                if face_shapes is not None:
-                    face_starts = np.empty((len(face_shapes),), dtype=np.int32)
-                    for face, shape in enumerate(face_shapes):
+                if face_widths is not None:
+                    face_starts = np.empty((len(face_widths),), dtype=np.int32)
+                    for face, width in enumerate(face_widths):
                         face_starts[face] = cursor
-                        cursor += int(prod(tuple(int(value) for value in shape)))
+                        cursor += int(width)
                     face_dof_count = cursor - vertex_count - edge_dof_count
 
                 cell_starts = np.empty_like(cell_widths)
@@ -570,9 +698,10 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 counts = [vertex_count, edge_dof_count]
                 per_entity = [1, _uniform_entity_width(edge_widths)]
                 if topological_dimension == 3:
-                    if face_shapes is None:
-                        raise TypeError("Hexahedral H1 routing requires face shapes.")
-                    face_widths = np.prod(face_shapes, axis=1)
+                    if face_widths is None:
+                        raise TypeError(
+                            "Three-dimensional H1 routing requires face widths."
+                        )
                     counts.append(face_dof_count)
                     per_entity.append(_uniform_entity_width(face_widths))
                 counts.append(cell_dof_count)
@@ -617,7 +746,11 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
             elif association == "entity":
                 if not isinstance(
                     connectivity,
-                    (PolygonalConnectivity, HexahedralConnectivity),
+                    (
+                        PolygonalConnectivity,
+                        TetrahedralConnectivity,
+                        HexahedralConnectivity,
+                    ),
                 ):
                     raise RuntimeError(
                         "High-order H1 routing lost compatible connectivity."
@@ -635,20 +768,27 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     local[:, entity_dofs[0]] = vertices[:, local_vertex]
 
                 local_edge_count = len(element.entity_dofs[1])
-                block_cell_edges = np.asarray(
-                    connectivity.cell_edges,
-                    dtype=np.int32,
-                )[
-                    cell_offset : cell_offset + block.cell_count,
-                    :local_edge_count,
-                ]
-                block_cell_signs = np.asarray(
-                    connectivity.cell_edge_signs,
-                    dtype=float,
-                )[
-                    cell_offset : cell_offset + block.cell_count,
-                    :local_edge_count,
-                ]
+                if isinstance(connectivity, TetrahedralConnectivity):
+                    (
+                        block_cell_edges,
+                        block_cell_signs,
+                        block_cell_faces,
+                    ) = _tetrahedral_entity_routes(connectivity, vertices)
+                else:
+                    block_cell_edges = np.asarray(
+                        connectivity.cell_edges,
+                        dtype=np.int32,
+                    )[
+                        cell_offset : cell_offset + block.cell_count,
+                        :local_edge_count,
+                    ]
+                    block_cell_signs = np.asarray(
+                        connectivity.cell_edge_signs,
+                        dtype=float,
+                    )[
+                        cell_offset : cell_offset + block.cell_count,
+                        :local_edge_count,
+                    ]
                 for local_edge, entity_dofs in enumerate(element.entity_dofs[1]):
                     width = len(entity_dofs)
                     if width == 0:
@@ -694,6 +834,33 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                                 cell,
                                 np.asarray(face_dofs, dtype=np.int32),
                             ] = face_starts[face] + tensor_permutation[grid_positions]
+                elif isinstance(connectivity, TetrahedralConnectivity):
+                    if face_starts is None:
+                        raise TypeError("Tetrahedral H1 face offsets are unavailable.")
+                    canonical_faces = np.asarray(connectivity.faces, dtype=np.int32)
+                    for local_face, face_dofs in enumerate(element.entity_dofs[2]):
+                        if not face_dofs:
+                            continue
+                        reference_vertices = _TETRAHEDRAL_FACES[local_face]
+                        for cell in range(block.cell_count):
+                            face = int(block_cell_faces[cell, local_face])
+                            local_vertices = tuple(
+                                int(vertices[cell, vertex])
+                                for vertex in reference_vertices
+                            )
+                            canonical_vertices = tuple(
+                                int(value) for value in canonical_faces[face]
+                            )
+                            positions = _tetrahedral_face_dof_positions(
+                                element,
+                                local_face,
+                                local_vertices,
+                                canonical_vertices,
+                            )
+                            local[
+                                cell,
+                                np.asarray(face_dofs, dtype=np.int32),
+                            ] = face_starts[face] + positions
 
                 interior_dofs = element.entity_dofs[topological_dimension][0]
                 for cell in range(block.cell_count):
@@ -763,17 +930,16 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 ):
                     start = int(edge_starts[edge])
                     boundary[start : start + int(edge_widths[edge])] = True
-                if isinstance(connectivity, HexahedralConnectivity):
-                    if face_starts is None or face_shapes is None:
+                if isinstance(
+                    connectivity, (TetrahedralConnectivity, HexahedralConnectivity)
+                ):
+                    if face_starts is None or face_widths is None:
                         raise TypeError("High-order H1 face offsets are unavailable.")
                     for face in np.flatnonzero(
                         np.asarray(connectivity.boundary_faces, dtype=bool)
                     ):
                         start = int(face_starts[face])
-                        boundary[
-                            start : start
-                            + prod(tuple(int(value) for value in face_shapes[face]))
-                        ] = True
+                        boundary[start : start + int(face_widths[face])] = True
                 accumulated = np.zeros(
                     (global_count, mesh.ambient_dimension),
                     dtype=np.asarray(mesh.coordinates).dtype,
@@ -1739,6 +1905,46 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             ),
         )
 
+    def assemble_cell_operator(
+        self,
+        field_name: str,
+        local_values: Sequence[ArrayLike],
+        /,
+        *,
+        operator_id: str,
+        properties: OperatorProperties | None = None,
+    ) -> SparseLinearMap:
+        """Assemble fixed-topology cell matrices without owning equation semantics."""
+        field_index = self._field_index(field_name)
+        values = tuple(jnp.asarray(value) for value in local_values)
+        identifier = str(operator_id)
+        if not identifier:
+            raise ValueError("Cell operator_id must be non-empty.")
+        if len(values) != len(self.mesh.blocks):
+            raise ValueError("Cell operator requires one local tensor per mesh block.")
+        dof_map = self.dof_maps[field_index]
+        for block_index, (block, value) in enumerate(
+            zip(self.mesh.blocks, values, strict=True)
+        ):
+            width = dof_map.cell_dofs[block_index].shape[1]
+            expected = (block.cell_count, width, width)
+            if value.shape != expected:
+                raise ValueError(
+                    "Cell operator tensor shape must be "
+                    f"{expected!r}; got {value.shape!r}."
+                )
+        properties_ = OperatorProperties() if properties is None else properties
+        if not isinstance(properties_, OperatorProperties):
+            raise TypeError("properties must be OperatorProperties or None.")
+        return _assemble_local_operator(
+            dof_map,
+            values,
+            identifier,
+            positive_definite=False,
+            component_shape=dof_map.component_shape,
+            properties=properties_,
+        )
+
 
 def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
     if geometry.basis_values.ndim == 2:
@@ -2034,6 +2240,7 @@ def _assemble_local_operator(
     *,
     positive_definite: bool,
     component_shape: Sequence[int] = (),
+    properties: OperatorProperties | None = None,
 ) -> SparseLinearMap:
     source_parts = []
     target_parts = []
@@ -2070,20 +2277,26 @@ def _assemble_local_operator(
         source_size=dof_map.global_dof_count * component_count,
         target_size=dof_map.global_dof_count * component_count,
     )
-    properties = OperatorProperties(
-        self_adjoint=True,
-        positive_definite=positive_definite,
-        positive_semidefinite=True,
-        evidence={
-            "self_adjoint": "construction",
-            "positive_semidefinite": "construction",
-            **({"positive_definite": "construction"} if positive_definite else {}),
-        },
+    properties_ = (
+        OperatorProperties(
+            self_adjoint=True,
+            positive_definite=positive_definite,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+                **({"positive_definite": "construction"} if positive_definite else {}),
+            },
+        )
+        if properties is None
+        else properties
     )
+    if not isinstance(properties_, OperatorProperties):
+        raise TypeError("properties must be OperatorProperties or None.")
     return SparseLinearMap(
         relation,
         jnp.concatenate(tuple(coefficient_parts)),
-        properties=properties,
+        properties=properties_,
         operator_id=canonical_fingerprint({"kind": kind, "dof_map": dof_map.dof_map_id}),
     )
 
