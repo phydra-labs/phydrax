@@ -1,0 +1,4639 @@
+{
+  "all_valid": true,
+  "benchmark": "control-lqg-state-feedback",
+  "cases": [
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "7858d7c1ac67a0bb53f356586e6e51d29ef88cfb902887536afdeb0946b71069",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                16,
+                4,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.258743083
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 4,
+        "horizon": 16,
+        "noise_size": 3,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "642c34a038d82299ee00af2691211be729bdf724b579368b4e048a907562ab3d",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              16,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.414243042
+      },
+      "memory": {
+        "compiler_argument_bytes": 27840,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 34930,
+        "compiler_temporary_bytes": 55688,
+        "logical_input_bytes": 27840,
+        "logical_output_bytes": 34618,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "baseline",
+      "run": {
+        "count": 3,
+        "max_ms": 1.016458,
+        "mean_ms": 0.9140693333333333,
+        "median_ms": 0.9472499999999999,
+        "min_ms": 0.7785,
+        "samples_ms": [
+          1.016458,
+          0.9472499999999999,
+          0.7785
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.09993904782860849
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 445846,
+        "compiler_flops": 60354,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": true,
+          "expected_cost": 1.1972530302699045,
+          "maximum_defect": 2.220446049250313e-16,
+          "method": "degree-2-spherical-radial-cubature-rollout",
+          "point_count": 40,
+          "unavailable_reason": null
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "6075cdcbf3e15c47994e6da0cc2303000e466562afc9a0d1035d23cce543f180",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                4,
+                4,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                5,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                5,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                5,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                5,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                4,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.254691125
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 4,
+        "horizon": 4,
+        "noise_size": 3,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "540e2d8eef65e93be60dfc1612301dbd4e17c954f0bd54f896c4ba6b5306817e",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              4,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              4,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              4,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              4,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              4,
+              8,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              4,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.286416959
+      },
+      "memory": {
+        "compiler_argument_bytes": 7776,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 10354,
+        "compiler_temporary_bytes": 16328,
+        "logical_input_bytes": 7776,
+        "logical_output_bytes": 10042,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "horizon-4",
+      "run": {
+        "count": 3,
+        "max_ms": 0.712291,
+        "mean_ms": 0.664597,
+        "median_ms": 0.6521250000000001,
+        "min_ms": 0.629375,
+        "samples_ms": [
+          0.6521250000000001,
+          0.712291,
+          0.629375
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.034980269219470936
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 141622,
+        "compiler_flops": 21258,
+        "riccati_stages": 4,
+        "trace_contractions": 4
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "2c5e89706fac1397e3b480dc05ddae84feb7846ffeb9e4fbd69cd5844c996ee8",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                64,
+                4,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                64,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                65,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                65,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                65,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                65,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                64,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.339208333
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 4,
+        "horizon": 64,
+        "noise_size": 3,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "35f353dc2260902b18b397ff99a79299a6275a263abd4bc011a8250219dd82ac",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              64,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              64,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              64,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              64,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              64,
+              8,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              64,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.28235725
+      },
+      "memory": {
+        "compiler_argument_bytes": 108096,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 133234,
+        "compiler_temporary_bytes": 209224,
+        "logical_input_bytes": 108096,
+        "logical_output_bytes": 132922,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "horizon-64",
+      "run": {
+        "count": 3,
+        "max_ms": 1.721583,
+        "mean_ms": 1.6457500000000003,
+        "median_ms": 1.648833,
+        "min_ms": 1.566834,
+        "samples_ms": [
+          1.721583,
+          1.566834,
+          1.648833
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.06321361623890853
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 1984448,
+        "compiler_flops": 219078,
+        "riccati_stages": 64,
+        "trace_contractions": 64
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "eb7d721fd5da5e1263ee2b8643a61fa6e972384dbc21d93039af269a92d25678",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                16,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                17,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                17,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                16,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.241656542
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 4,
+        "horizon": 16,
+        "noise_size": 3,
+        "state_size": 4
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "4829f2617615255e05a91d2ad6a3aadf970396984dcf48f50941d70c0b525555",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              4,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              16,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              4,
+              4
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.253744875
+      },
+      "memory": {
+        "compiler_argument_bytes": 11168,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 12178,
+        "compiler_temporary_bytes": 25544,
+        "logical_input_bytes": 11168,
+        "logical_output_bytes": 11866,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "state-4",
+      "run": {
+        "count": 3,
+        "max_ms": 0.88475,
+        "mean_ms": 0.8201390000000001,
+        "median_ms": 0.8060419999999999,
+        "min_ms": 0.769625,
+        "samples_ms": [
+          0.8060419999999999,
+          0.88475,
+          0.769625
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.04804501682797085
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 180326,
+        "compiler_flops": 23322,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "54d135334e25a7cd05b80de59fbe9313f290d20c5fe8ee38af76efee5aa57e08",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                16,
+                4,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                17,
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                17,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                17,
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                17,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                16,
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.290674125
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 4,
+        "horizon": 16,
+        "noise_size": 3,
+        "state_size": 16
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "ba3c94e5052fc02fc2417946930e70781bd18d2e18c52696f24329a8158216e8",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              16,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              16,
+              16,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              16,
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              16,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              16,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              16
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              16,
+              16
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.282603
+      },
+      "memory": {
+        "compiler_argument_bytes": 87296,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 119602,
+        "compiler_temporary_bytes": 155016,
+        "logical_input_bytes": 87296,
+        "logical_output_bytes": 119290,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "state-16",
+      "run": {
+        "count": 3,
+        "max_ms": 1.029375,
+        "mean_ms": 0.9660553333333333,
+        "median_ms": 0.9757499999999999,
+        "min_ms": 0.893041,
+        "samples_ms": [
+          1.029375,
+          0.9757499999999999,
+          0.893041
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.05607869357925123
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 1401934,
+        "compiler_flops": 199922,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "39c12b0c5d0dbda4b0e9dda4371474efd9d5911a54f3925168846cfe9453b1c7",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                16,
+                2,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                16,
+                2
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.280811333
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 2,
+        "horizon": 16,
+        "noise_size": 3,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "a74c6f2a87811e4a4198ed88edb7262902045971746c4e2e99da39fb4ba2808e",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              16,
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              16,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.434087875
+      },
+      "memory": {
+        "compiler_argument_bytes": 24256,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 32626,
+        "compiler_temporary_bytes": 42632,
+        "logical_input_bytes": 24256,
+        "logical_output_bytes": 32314,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "control-2",
+      "run": {
+        "count": 3,
+        "max_ms": 0.7894589999999999,
+        "mean_ms": 0.6902223333333334,
+        "median_ms": 0.6693330000000001,
+        "min_ms": 0.6118750000000001,
+        "samples_ms": [
+          0.7894589999999999,
+          0.6693330000000001,
+          0.6118750000000001
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.07398780282061505
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 381806,
+        "compiler_flops": 51250,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "9be15e4facaf9d89f477d7194811e3d4dc2472802719c9a4c3eaeffba685f00c",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                16,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.250470708
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 8,
+        "horizon": 16,
+        "noise_size": 3,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "f3a985e9178664fbcc36e4696fb2cd398489c2eea45a9cd864e22c3e076de17a",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              16,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.196445167
+      },
+      "memory": {
+        "compiler_argument_bytes": 38080,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 39538,
+        "compiler_temporary_bytes": 89480,
+        "logical_input_bytes": 38080,
+        "logical_output_bytes": 39226,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "control-8",
+      "run": {
+        "count": 3,
+        "max_ms": 1.0145,
+        "mean_ms": 0.9753333333333334,
+        "median_ms": 0.993,
+        "min_ms": 0.9185000000000001,
+        "samples_ms": [
+          0.993,
+          1.0145,
+          0.9185000000000001
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.04113460289774961
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 625814,
+        "compiler_flops": 84026,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "7f5ea8e113102cf933b7dd0a1eb3268dce3fb284f3031f26aeb87968bfdc04b5",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                16,
+                4,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.270961083
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 4,
+        "horizon": 16,
+        "noise_size": 1,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "98c58c0bf88d63e1a8e93b2618f2a528912fd7583b98143f37b4f45af1f506cf",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8,
+              1
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              16,
+              1,
+              1
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.124702
+      },
+      "memory": {
+        "compiler_argument_bytes": 24768,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 34930,
+        "compiler_temporary_bytes": 53128,
+        "logical_input_bytes": 24768,
+        "logical_output_bytes": 34618,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "noise-1",
+      "run": {
+        "count": 3,
+        "max_ms": 0.746625,
+        "mean_ms": 0.7213609999999999,
+        "median_ms": 0.715208,
+        "min_ms": 0.7022499999999999,
+        "samples_ms": [
+          0.7022499999999999,
+          0.715208,
+          0.746625
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.01863115156576929
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 411224,
+        "compiler_flops": 51650,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "cee5e4c891efad60aa6b00ec1b0a6fdb12ac45b0588a70bd0a222f4395d9ace5",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                16,
+                4,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            }
+          ]
+        },
+        "status": 0
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.2685525
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_size": 4,
+        "horizon": 16,
+        "noise_size": 8,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "bd7729ae0a565a797d63642567e12f062d081c9d49ac437216e49eb94c8a3c20",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.125908542
+      },
+      "memory": {
+        "compiler_argument_bytes": 40000,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 34930,
+        "compiler_temporary_bytes": 67848,
+        "logical_input_bytes": 40000,
+        "logical_output_bytes": 34618,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "noise-8",
+      "run": {
+        "count": 3,
+        "max_ms": 0.902041,
+        "mean_ms": 0.8363606666666666,
+        "median_ms": 0.8052079999999999,
+        "min_ms": 0.8018329999999999,
+        "samples_ms": [
+          0.902041,
+          0.8052079999999999,
+          0.8018329999999999
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.04646344295130196
+      },
+      "work": {
+        "batched_cases": 1,
+        "compiler_bytes_accessed": 543766,
+        "compiler_flops": 96834,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "d7707ee2c79f2798c477ec31b8aa0d8f7bc127cd127a5027cb853b0d2d71759b",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                8,
+                16,
+                4,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                8,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                8,
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                8,
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                8,
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                8,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                8,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                8,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                8,
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                8,
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                8,
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                8,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                8,
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                8,
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                8,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                8,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                8,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": [
+                8
+              ]
+            }
+          ]
+        },
+        "status": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.424264375
+      },
+      "dimensions": {
+        "case_shape": [
+          8
+        ],
+        "control_size": 4,
+        "horizon": 16,
+        "noise_size": 3,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "b9ee7fe379d7cc096a7243a4548f4defa415d7d7727b02366f0c581609155ee2",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              8,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              8,
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              8,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              8,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              8,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              8,
+              16,
+              8,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              8,
+              16,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              8,
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.424756916
+      },
+      "memory": {
+        "compiler_argument_bytes": 222720,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 274400,
+        "compiler_temporary_bytes": 545624,
+        "logical_input_bytes": 222720,
+        "logical_output_bytes": 274088,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "cases-8",
+      "run": {
+        "count": 3,
+        "max_ms": 1.919459,
+        "mean_ms": 1.87532,
+        "median_ms": 1.900084,
+        "min_ms": 1.806417,
+        "samples_ms": [
+          1.919459,
+          1.806417,
+          1.900084
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.04935966783383648
+      },
+      "work": {
+        "batched_cases": 8,
+        "compiler_bytes_accessed": 4473674,
+        "compiler_flops": 482682,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    },
+    {
+      "certificate": {
+        "all_valid": true,
+        "certificate_tolerance": 1e-10,
+        "claim": "exact-additive-zero-mean-lqg-state-feedback-for-declared-arrays",
+        "expected_cost_oracle": {
+          "available": false,
+          "expected_cost": null,
+          "maximum_defect": null,
+          "method": null,
+          "point_count": null,
+          "unavailable_reason": "cubature is reserved for the designated horizon-4 case"
+        },
+        "maximum_covariance_symmetry_residual": 0.0,
+        "maximum_initial_expected_cost_defect": 0.0,
+        "maximum_process_covariance_defect": 0.0,
+        "maximum_reverse_accumulation_defect": 0.0,
+        "maximum_trace_identity_defect": 0.0,
+        "maximum_value_constant_defect": 0.0,
+        "method": "certainty-equivalent-additive-noise",
+        "minimum_covariance_eigenvalue": 0.15,
+        "not_claimed": [
+          "state-dependent-noise optimality",
+          "action-dependent-noise optimality",
+          "non-Gaussian distributional guarantees beyond second-moment value identities"
+        ],
+        "output_fingerprint": {
+          "sha256": "bfca7b1a1b1caaaf08449f70b9644cd652883bffdf55a351d918f29c495d0873",
+          "signature": [
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedback_gain",
+              "shape": [
+                32,
+                16,
+                4,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.feedforward",
+              "shape": [
+                32,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.policy.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.matrices",
+              "shape": [
+                32,
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.linear",
+              "shape": [
+                32,
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.constants",
+              "shape": [
+                32,
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.riccati_residuals",
+              "shape": [
+                32,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.kkt_residuals",
+              "shape": [
+                32,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.control_condition_numbers",
+              "shape": [
+                32,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_riccati_residual",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_kkt_residual",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".deterministic_result.diagnostics.maximum_control_condition_number",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.finite",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.diagnostics.converged",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.diagnostics.status",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".deterministic_result.valid",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".deterministic_result.status",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.matrices",
+              "shape": [
+                32,
+                17,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.linear",
+              "shape": [
+                32,
+                17,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.constants",
+              "shape": [
+                32,
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".trace_increments",
+              "shape": [
+                32,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".process_covariances",
+              "shape": [
+                32,
+                16,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".value_constant_corrections",
+              "shape": [
+                32,
+                17
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_mean",
+              "shape": [
+                32,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance",
+              "shape": [
+                32,
+                8,
+                8
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_cost",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_expected_cost",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_symmetry_residuals",
+              "shape": [
+                32,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".covariance_minimum_eigenvalues",
+              "shape": [
+                32,
+                16
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_symmetry_residual",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f8",
+              "path": ".initial_covariance_minimum_eigenvalue",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".covariance_finite",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".initial_covariance_finite",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": [
+                32
+              ]
+            }
+          ]
+        },
+        "status": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.359693291
+      },
+      "dimensions": {
+        "case_shape": [
+          32
+        ],
+        "control_size": 4,
+        "horizon": 16,
+        "noise_size": 3,
+        "state_size": 8
+      },
+      "dtype": "float64",
+      "input_fingerprint": {
+        "sha256": "37c21289027dfc7bfd29a96b065eac97d5c076646c6b73160828bba12c022182",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": "[0]",
+            "shape": [
+              32,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[1]",
+            "shape": [
+              32,
+              16,
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]",
+            "shape": [
+              32,
+              16,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[3]",
+            "shape": [
+              32,
+              16,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[4]",
+            "shape": [
+              32,
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[5]",
+            "shape": [
+              32,
+              16,
+              8,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[6]",
+            "shape": [
+              32,
+              16,
+              3,
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[7]",
+            "shape": [
+              32,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[8]",
+            "shape": [
+              32,
+              8,
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit host lowering",
+        "seconds": 0.451400417
+      },
+      "memory": {
+        "compiler_argument_bytes": 890880,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 1095440,
+        "compiler_temporary_bytes": 2176856,
+        "logical_input_bytes": 890880,
+        "logical_output_bytes": 1095128,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "cases-32",
+      "run": {
+        "count": 3,
+        "max_ms": 5.812708,
+        "mean_ms": 5.682208,
+        "median_ms": 5.672041,
+        "min_ms": 5.561875,
+        "samples_ms": [
+          5.672041,
+          5.812708,
+          5.561875
+        ],
+        "scope": "synchronized compiled solve",
+        "std_ms": 0.10265419098117722
+      },
+      "work": {
+        "batched_cases": 32,
+        "compiler_bytes_accessed": 17887586,
+        "compiler_flops": 1930530,
+        "riccati_stages": 16,
+        "trace_contractions": 16
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "2a52e8f8e125c0d9c193af56e5456f94754ebc2a7f2a42bb2fef73e0fc11c069",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "c26dd929f11e2e66bcb486deba57838a31c1f6d5534b27b079d66ef7244a0eaa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

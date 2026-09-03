@@ -1,4 +1,4 @@
-import jax
+import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -28,7 +28,7 @@ def test_prepared_ilqr_preserves_two_dimensional_case_axes_and_statuses():
     controls = jnp.zeros(problem.case_shape + (2, 1))
     plan = plan_ilqr(problem, max_iterations=8)
     prepared = prepare_ilqr(plan, problem, controls)
-    result = jax.jit(solve_prepared_ilqr)(prepared)
+    result = eqx.filter_jit(solve_prepared_ilqr)(prepared)
     assert result.trajectory.states.shape == problem.case_shape + (3, 1)
     assert result.policy.feedback.shape == problem.case_shape + (2, 1, 1)
     assert result.diagnostics.status.shape == problem.case_shape

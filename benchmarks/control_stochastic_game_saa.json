@@ -1,0 +1,5508 @@
+{
+  "all_valid": true,
+  "benchmark": "control-stochastic-policy-game-saa",
+  "cases": [
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "holdout_saa_costs": [
+          5.693433195119724e-05,
+          4.42538621427957e-05
+        ],
+        "maximum_analytic_parameter_defect": 7.450580596923828e-09,
+        "maximum_descriptive_cluster_standard_error": 5.344588316802401e-06,
+        "maximum_stationarity_residual": 1.0710209608078003e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "cb26626c652c391356dc90b0552abb2a0935dc18c8ed280739b77b73a6eb55e5",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.720798625
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 8,
+        "holdout_paths": 32,
+        "horizon": 8,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "973a3b61492b5ce3cd390cf364aa0e14294413790980c8f592332ee857730cd6",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.436215042
+      },
+      "memory": {
+        "compiler_argument_bytes": 16915,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 3283,
+        "compiler_temporary_bytes": 32400,
+        "logical_input_bytes": 10062,
+        "logical_output_bytes": 2891,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "baseline",
+      "provenance_fingerprint": "fdfe5809741a0b6c09fd1befac5dae6691ff39c860e50f047d26290b1a3f6b94",
+      "run": {
+        "count": 3,
+        "max_ms": 1.476083,
+        "mean_ms": 1.326333,
+        "median_ms": 1.444416,
+        "min_ms": 1.0585,
+        "samples_ms": [
+          1.476083,
+          1.444416,
+          1.0585
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.1898272664626098
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 232551,
+        "compiler_flops": 65086,
+        "complete_path_gradient_entries": 256,
+        "holdout_cluster_player_costs": 16,
+        "holdout_path_player_costs": 64,
+        "training_path_parameters": 128
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "holdout_cluster_weights": [
+          0.25,
+          0.25,
+          0.25,
+          0.25
+        ],
+        "holdout_saa_costs": [
+          0.00010365551133872941,
+          8.05691524874419e-05
+        ],
+        "maximum_analytic_parameter_defect": 3.725290298461914e-09,
+        "maximum_descriptive_cluster_standard_error": 1.5205675481411163e-05,
+        "maximum_stationarity_residual": 4.6566128730773926e-09,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "d518ed4e80d746c00482ff81a11701b09880a72379440f264da233f62adf9f39",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                8,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                8,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                4,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                4,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.590785834
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 4,
+        "holdout_paths": 8,
+        "horizon": 8,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 8
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "6600e7d162d592ac346e1509f64e6508381aa152fb5929e205f38db26329ee6a",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              8,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              8,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              8
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.348139125
+      },
+      "memory": {
+        "compiler_argument_bytes": 4523,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 1291,
+        "compiler_temporary_bytes": 17296,
+        "logical_input_bytes": 2590,
+        "logical_output_bytes": 899,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "paths-8",
+      "provenance_fingerprint": "f81cb3013964fdb56a8e96a8d30d06726ff9dc8d26a701f69acb656f410afb4f",
+      "run": {
+        "count": 3,
+        "max_ms": 1.389042,
+        "mean_ms": 1.0649583333333335,
+        "median_ms": 0.914833,
+        "min_ms": 0.891,
+        "samples_ms": [
+          1.389042,
+          0.891,
+          0.914833
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.22936821956893297
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 75615,
+        "compiler_flops": 17978,
+        "complete_path_gradient_entries": 64,
+        "holdout_cluster_player_costs": 8,
+        "holdout_path_player_costs": 16,
+        "training_path_parameters": 32
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125
+        ],
+        "holdout_saa_costs": [
+          5.011861867387779e-05,
+          3.8956062780926004e-05
+        ],
+        "maximum_analytic_parameter_defect": 1.4901161193847656e-08,
+        "maximum_descriptive_cluster_standard_error": 8.183068530343007e-06,
+        "maximum_stationarity_residual": 1.557054929435253e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "90b5dd64791f7a7ab28b7323ad9af461c0ba85b81c0e0e8b9fa0d53ff9160823",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                128,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                128,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                128,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                128,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                128
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                128
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                128
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                128
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 1.357393167
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 32,
+        "holdout_paths": 128,
+        "horizon": 8,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 128
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "699637acc4808b616021f45d7dfc3870169c8f7a372874e3eb1ed3f5df7ef65a",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              128,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              128
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              128
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              128,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              128
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              128
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              128
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              128
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.692350625
+      },
+      "memory": {
+        "compiler_argument_bytes": 78259,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 11395,
+        "compiler_temporary_bytes": 114192,
+        "logical_input_bytes": 51726,
+        "logical_output_bytes": 11003,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "paths-128",
+      "provenance_fingerprint": "91c4e8029b49c2261a36e7770e6516d627481a03d7845a11ca60a4ea124f189f",
+      "run": {
+        "count": 3,
+        "max_ms": 1.3164170000000002,
+        "mean_ms": 1.2249860000000001,
+        "median_ms": 1.2294999999999998,
+        "min_ms": 1.129041,
+        "samples_ms": [
+          1.3164170000000002,
+          1.129041,
+          1.2294999999999998
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.07656249513088428
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 946166,
+        "compiler_flops": 284582,
+        "complete_path_gradient_entries": 1024,
+        "holdout_cluster_player_costs": 64,
+        "holdout_path_player_costs": 256,
+        "training_path_parameters": 512
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "holdout_saa_costs": [
+          4.5894721552031115e-05,
+          3.567294334061444e-05
+        ],
+        "maximum_analytic_parameter_defect": 1.4901161193847656e-08,
+        "maximum_descriptive_cluster_standard_error": 4.944693955621915e-06,
+        "maximum_stationarity_residual": 1.1874362826347351e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "78fb59d2d23be83be5cef84f383e743ed983e92bf2e21034da7d74c4fdb76c1b",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.600339417
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 8,
+        "holdout_paths": 32,
+        "horizon": 2,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "df52c7cf48553f8324dd5052fe7ac5931bb289455d1fac0407a725fc503bb0d1",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.843732709
+      },
+      "memory": {
+        "compiler_argument_bytes": 12307,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 3283,
+        "compiler_temporary_bytes": 32400,
+        "logical_input_bytes": 6990,
+        "logical_output_bytes": 2891,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "horizon-2",
+      "provenance_fingerprint": "11571a1bc672f2529e260b42bb094ef7e57975a80501680cb8f2402bdea36285",
+      "run": {
+        "count": 3,
+        "max_ms": 1.430167,
+        "mean_ms": 1.2300283333333333,
+        "median_ms": 1.2065839999999999,
+        "min_ms": 1.053334,
+        "samples_ms": [
+          1.430167,
+          1.2065839999999999,
+          1.053334
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.15473203729099613
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 220263,
+        "compiler_flops": 60478,
+        "complete_path_gradient_entries": 256,
+        "holdout_cluster_player_costs": 16,
+        "holdout_path_player_costs": 64,
+        "training_path_parameters": 128
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "holdout_saa_costs": [
+          3.632048219515127e-06,
+          2.8231568194314605e-06
+        ],
+        "maximum_analytic_parameter_defect": 2.2351741790771484e-08,
+        "maximum_descriptive_cluster_standard_error": 3.091929556831019e-07,
+        "maximum_stationarity_residual": 2.2584572434425354e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "b6274490f9b65fb8442977782e99a9d052ae0b6c0da1c5b5a406af2ceb8e0a86",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.61934225
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 8,
+        "holdout_paths": 32,
+        "horizon": 32,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "ae3d0fa1423636c25a59b3b1717b6bd124204c5c48d6cefafd2a93aaba6f2eb9",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              32,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              32,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.347913
+      },
+      "memory": {
+        "compiler_argument_bytes": 35347,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 3283,
+        "compiler_temporary_bytes": 32400,
+        "logical_input_bytes": 22350,
+        "logical_output_bytes": 2891,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "horizon-32",
+      "provenance_fingerprint": "1f8e42ec2adfae360c66a3c59aadb314b0ebaf975111859ad6f08ab462258c40",
+      "run": {
+        "count": 3,
+        "max_ms": 1.446834,
+        "mean_ms": 1.2431666666666665,
+        "median_ms": 1.170166,
+        "min_ms": 1.1125,
+        "samples_ms": [
+          1.446834,
+          1.170166,
+          1.1125
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.14592607463902926
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 281703,
+        "compiler_flops": 83518,
+        "complete_path_gradient_entries": 256,
+        "holdout_cluster_player_costs": 16,
+        "holdout_path_player_costs": 64,
+        "training_path_parameters": 128
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "holdout_saa_costs": [
+          3.205327448085882e-05,
+          2.4880931960069574e-05
+        ],
+        "maximum_analytic_parameter_defect": 2.2351741790771484e-08,
+        "maximum_descriptive_cluster_standard_error": 3.00894362226245e-06,
+        "maximum_stationarity_residual": 2.561137080192566e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "3aa53f5df61bd4d3706230f442840efb2eb206c9d4cfe54d07ebae656a8d9259",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                2,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.568309709
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          1,
+          1
+        ],
+        "holdout_independent_clusters": 8,
+        "holdout_paths": 32,
+        "horizon": 8,
+        "joint_parameter_size": 2,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "0ba7c6a2c5c43662b6fb519934bb99612d70b8e0ef862aac6478ee25a5dcfc90",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.360758083
+      },
+      "memory": {
+        "compiler_argument_bytes": 10555,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 2483,
+        "compiler_temporary_bytes": 18064,
+        "logical_input_bytes": 6918,
+        "logical_output_bytes": 2091,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "parameters-1-1",
+      "provenance_fingerprint": "aac01b99a84ca2561b0ede0a28ac3b0aa70b5f421db65e92e06126816ece744c",
+      "run": {
+        "count": 3,
+        "max_ms": 1.163667,
+        "mean_ms": 1.0668333333333335,
+        "median_ms": 1.0766250000000002,
+        "min_ms": 0.9602080000000001,
+        "samples_ms": [
+          1.163667,
+          1.0766250000000002,
+          0.9602080000000001
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.08334985991723214
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 113111,
+        "compiler_flops": 29778,
+        "complete_path_gradient_entries": 128,
+        "holdout_cluster_player_costs": 16,
+        "holdout_path_player_costs": 64,
+        "training_path_parameters": 64
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "holdout_saa_costs": [
+          0.0002273142454214394,
+          0.00021367945009842515
+        ],
+        "maximum_analytic_parameter_defect": 1.4901161193847656e-08,
+        "maximum_descriptive_cluster_standard_error": 2.1338550141081214e-05,
+        "maximum_stationarity_residual": 1.4901161193847656e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "88d5bc221a5ffa5ee5e9dcb8b81adfabe4a42ad486835ddae9c037855f2b2674",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                2,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.616251792
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          8,
+          8
+        ],
+        "holdout_independent_clusters": 8,
+        "holdout_paths": 32,
+        "horizon": 8,
+        "joint_parameter_size": 16,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "ab836ce5132a9676023eda30052f960cf8653fa9f44b3a5ea99ed5481dcb581e",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              16
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              16
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              16
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              16
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.33839425
+      },
+      "memory": {
+        "compiler_argument_bytes": 141091,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 8083,
+        "compiler_temporary_bytes": 343120,
+        "logical_input_bytes": 71934,
+        "logical_output_bytes": 7691,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "parameters-8-8",
+      "provenance_fingerprint": "bf6f66452a0557fbc91012157f4013e31b0e4199707a4d217ad7f04174220dd5",
+      "run": {
+        "count": 3,
+        "max_ms": 1.2045409999999999,
+        "mean_ms": 1.1899579999999998,
+        "median_ms": 1.191833,
+        "min_ms": 1.1735,
+        "samples_ms": [
+          1.2045409999999999,
+          1.191833,
+          1.1735
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.012741602175550714
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 2153415,
+        "compiler_flops": 660814,
+        "complete_path_gradient_entries": 1024,
+        "holdout_cluster_player_costs": 16,
+        "holdout_path_player_costs": 64,
+        "training_path_parameters": 512
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "holdout_saa_costs": [
+          3.2053339964477345e-05,
+          2.488098652975168e-05,
+          2.1013185687479563e-05,
+          2.3240676455316134e-05
+        ],
+        "maximum_analytic_parameter_defect": 7.450580596923828e-09,
+        "maximum_descriptive_cluster_standard_error": 3.0089368010521866e-06,
+        "maximum_stationarity_residual": 1.0710209608078003e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "75aaf663ca4c166ab6d7f185bc9d87a08a439d34804c3ca31a351b46aae186d2",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                8,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                8,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.651624208
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "holdout_independent_clusters": 8,
+        "holdout_paths": 32,
+        "horizon": 8,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 4,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "0099e9e2d0b0250595dd3d93c5df4b86bbe41171676bbccafb6ec6ac3bd0475f",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.291362125
+      },
+      "memory": {
+        "compiler_argument_bytes": 17171,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 4915,
+        "compiler_temporary_bytes": 31888,
+        "logical_input_bytes": 10126,
+        "logical_output_bytes": 4523,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "players-4",
+      "provenance_fingerprint": "9e1486b3d7ebe6b70fca2b6876335d0d7286ca690ddee38b4729c9774c6a55e7",
+      "run": {
+        "count": 3,
+        "max_ms": 1.133292,
+        "mean_ms": 1.0064026666666666,
+        "median_ms": 0.980208,
+        "min_ms": 0.905708,
+        "samples_ms": [
+          1.133292,
+          0.980208,
+          0.905708
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.09473907917831773
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 284711,
+        "compiler_flops": 97410,
+        "complete_path_gradient_entries": 512,
+        "holdout_cluster_player_costs": 32,
+        "holdout_path_player_costs": 128,
+        "training_path_parameters": 128
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "holdout_cluster_weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "holdout_saa_costs": [
+          [
+            5.693439015885815e-05,
+            4.425384759088047e-05
+          ],
+          [
+            5.693448110832833e-05,
+            4.425384759088047e-05
+          ],
+          [
+            5.693451385013759e-05,
+            4.425384395290166e-05
+          ],
+          [
+            5.693447383237071e-05,
+            4.4253865780774504e-05
+          ],
+          [
+            5.693454295396805e-05,
+            4.4253840314922854e-05
+          ],
+          [
+            5.693445200449787e-05,
+            4.42538112110924e-05
+          ],
+          [
+            5.693456478184089e-05,
+            4.4253851228859276e-05
+          ],
+          [
+            5.693455022992566e-05,
+            4.4253851228859276e-05
+          ]
+        ],
+        "maximum_analytic_parameter_defect": 2.9802322387695312e-08,
+        "maximum_descriptive_cluster_standard_error": 5.344581040844787e-06,
+        "maximum_stationarity_residual": 2.60770320892334e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "eb5d3eb4eac90fc7744fce5b6a5529e063e7975b188ad8119b9a58e1c6d63068",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                8,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                8,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                8,
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                8,
+                32,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                8,
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                8,
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                8,
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                8,
+                8,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": [
+                8
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                8,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                8,
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.63795425
+      },
+      "dimensions": {
+        "case_shape": [
+          8
+        ],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 8,
+        "holdout_paths": 32,
+        "horizon": 8,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "63305b6ad686055b9f58d7069a44a4b2981e56de7066df44cba11a03ed7d664e",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.31766675
+      },
+      "memory": {
+        "compiler_argument_bytes": 75491,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 18781,
+        "compiler_temporary_bytes": 183888,
+        "logical_input_bytes": 39294,
+        "logical_output_bytes": 18389,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "cases-8",
+      "provenance_fingerprint": "9bf7eb00e8c332a8a6f096cdc7202bee0a5db54e4115e05e7c63d8b70189540f",
+      "run": {
+        "count": 3,
+        "max_ms": 1.6775419999999999,
+        "mean_ms": 1.4681113333333335,
+        "median_ms": 1.4087500000000002,
+        "min_ms": 1.318042,
+        "samples_ms": [
+          1.318042,
+          1.6775419999999999,
+          1.4087500000000002
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.15264968265352602
+      },
+      "work": {
+        "case_count": 8,
+        "compiler_bytes_accessed": 1550016,
+        "compiler_flops": 453865,
+        "complete_path_gradient_entries": 2048,
+        "holdout_cluster_player_costs": 128,
+        "holdout_path_player_costs": 512,
+        "training_path_parameters": 1024
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          16,
+          16
+        ],
+        "holdout_cluster_weights": [
+          0.5,
+          0.5
+        ],
+        "holdout_saa_costs": [
+          5.693433195119724e-05,
+          4.42538621427957e-05
+        ],
+        "maximum_analytic_parameter_defect": 7.450580596923828e-09,
+        "maximum_descriptive_cluster_standard_error": 2.557655534474179e-06,
+        "maximum_stationarity_residual": 1.0710209608078003e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "9747545d4286d1603231ff3344422c9ba15c25aa56944db0f4687f91b101d4b3",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                2,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                2,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.57898375
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 2,
+        "holdout_paths": 32,
+        "horizon": 8,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "bb60f4ec7970f146e83a9f420d8aa7bf8b3e449610c6f6e4624607a70cbebdcd",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.508972042
+      },
+      "memory": {
+        "compiler_argument_bytes": 16147,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 3175,
+        "compiler_temporary_bytes": 31632,
+        "logical_input_bytes": 9294,
+        "logical_output_bytes": 2783,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "clusters-2",
+      "provenance_fingerprint": "a0fcd93c82822c82a9dff49ae967e867b927bb54d0511f788229fcc6abae5256",
+      "run": {
+        "count": 3,
+        "max_ms": 1.0448339999999998,
+        "mean_ms": 0.9946529999999999,
+        "median_ms": 0.997375,
+        "min_ms": 0.94175,
+        "samples_ms": [
+          1.0448339999999998,
+          0.997375,
+          0.94175
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.04212785877144317
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 227475,
+        "compiler_flops": 62716,
+        "complete_path_gradient_entries": 256,
+        "holdout_cluster_player_costs": 4,
+        "holdout_path_player_costs": 64,
+        "training_path_parameters": 128
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_clusters_valid": true,
+        "claim": "LOCAL_SAA_POLICY_STATIONARITY",
+        "claim_scope": "local stationarity of the declared frozen training-sample policy game",
+        "frozen_holdout_ids_reproduced": true,
+        "frozen_training_ids_reproduced": true,
+        "holdout_cluster_counts": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "holdout_cluster_weights": [
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125,
+          0.03125
+        ],
+        "holdout_saa_costs": [
+          5.693433195119724e-05,
+          4.42538621427957e-05
+        ],
+        "maximum_analytic_parameter_defect": 7.450580596923828e-09,
+        "maximum_descriptive_cluster_standard_error": 8.512305612384807e-06,
+        "maximum_stationarity_residual": 1.0710209608078003e-08,
+        "not_claimed": [
+          "population Nash equilibrium",
+          "feedback Nash equilibrium",
+          "global policy-game stationarity",
+          "holdout population coverage"
+        ],
+        "output_fingerprint": {
+          "sha256": "eb3f86bde3443008eb009431dc3c572cb478f402e0781555bf98209329fced9f",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": ".parameters",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".original_residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_complete_path_gradients",
+              "shape": [
+                32,
+                2,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_owned_path_gradients",
+              "shape": [
+                32,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_path_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_saa_costs",
+              "shape": [
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_costs",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_cluster_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_cluster_counts",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": ".holdout_cluster_valid",
+              "shape": [
+                32,
+                2
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".training_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".holdout_weights",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".training_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".holdout_independence_labels",
+              "shape": [
+                32
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".status",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".valid",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".stationarity_certified",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".numeric_version",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.state",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.residual",
+              "shape": [
+                4
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.initial_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_step_norm",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.residual_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jvp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.vjp_evaluations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.jacobian_preparations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_solves",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.linear_iterations",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.accepted_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.rejected_steps",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.domain_failures",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.nonfinite_trials",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.acceleration_restarts",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.setup_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.numeric_refreshes",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_forcing",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_trust_radius",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_status",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": ".root_result.diagnostics.final_linear_rank",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_condition_estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": ".root_result.diagnostics.final_linear_residual_norm",
+              "shape": []
+            },
+            {
+              "dtype": "|b1",
+              "path": ".root_result.diagnostics.final_linear_converged",
+              "shape": []
+            }
+          ]
+        },
+        "root_status": 0,
+        "statistical_scope": "descriptive independent-cluster holdout summaries; no population coverage interval is asserted",
+        "status": 0,
+        "successful": true,
+        "training_holdout_bundle_ids_distinct": true,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true
+      },
+      "compile": {
+        "scope": "lowered JAX executable compilation",
+        "seconds": 0.576771375
+      },
+      "dimensions": {
+        "case_shape": [],
+        "control_parameter_sizes": [
+          2,
+          2
+        ],
+        "holdout_independent_clusters": 32,
+        "holdout_paths": 32,
+        "horizon": 8,
+        "joint_parameter_size": 4,
+        "noise_size": 2,
+        "players": 2,
+        "training_paths": 32
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "69093c58217eca6b3ad60488e6cf6123df81b3985d4c9e9c3b163a78c6188eb4",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['offset']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['ownership']",
+            "shape": [
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]['scale']",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[2]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[3]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[4]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[5]",
+            "shape": [
+              32,
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[6]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[7]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[8]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[9]",
+            "shape": [
+              32
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "eqx-filter-jit lowering of the frozen prepared solve",
+        "seconds": 0.286879542
+      },
+      "memory": {
+        "compiler_argument_bytes": 19987,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 3715,
+        "compiler_temporary_bytes": 35472,
+        "logical_input_bytes": 13134,
+        "logical_output_bytes": 3323,
+        "source": "jax-compiled-executable",
+        "unavailable_reason": null
+      },
+      "name": "clusters-32",
+      "provenance_fingerprint": "5d231eb5c2c355d90d4667b764e1e229426e7c6b1d601cd5d8de8ebf7314835c",
+      "run": {
+        "count": 3,
+        "max_ms": 1.010208,
+        "mean_ms": 0.9972080000000001,
+        "median_ms": 1.0050000000000001,
+        "min_ms": 0.9764160000000001,
+        "samples_ms": [
+          0.9764160000000001,
+          1.0050000000000001,
+          1.010208
+        ],
+        "scope": "synchronized root solve plus untouched holdout evaluation",
+        "std_ms": 0.014855106058187524
+      },
+      "work": {
+        "case_count": 1,
+        "compiler_bytes_accessed": 252855,
+        "compiler_flops": 74566,
+        "complete_path_gradient_entries": 256,
+        "holdout_cluster_player_costs": 64,
+        "holdout_path_player_costs": 64,
+        "training_path_parameters": 128
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "2a52e8f8e125c0d9c193af56e5456f94754ebc2a7f2a42bb2fef73e0fc11c069",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "c26dd929f11e2e66bcb486deba57838a31c1f6d5534b27b079d66ef7244a0eaa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

@@ -201,6 +201,105 @@ same joint-control order, then use `players.split_controls` to recover the
 player-local trajectories. `examples/lq_nash_game.py` performs that complete
 rollout and compares each direct discrete payoff with its initial value.
 
+
+## Audit and solve a nonlinear feedback game
+
+Start from one `DeterministicFeedbackGameProblem`, an identified joint
+`AffineFeedbackPolicy`, and physical scales. Keep evaluation, one-step modeling,
+and the iterative solve visible:
+
+```python
+scaling = phx.control.games.ILQGameScaling(
+    jnp.ones(game_problem.state_size),
+    jnp.ones(game_problem.control_size),
+    jnp.ones(game_problem.num_players),
+    scaling_id="nonlinear-game-physical-scales",
+)
+
+nominal = phx.control.games.evaluate_game_policy(game_problem, initial_policy)
+if not bool(jnp.all(nominal.successful)):
+    raise RuntimeError(f"nominal policy failed: status={nominal.status}")
+
+residual = phx.control.games.nominal_nash_residual(
+    game_problem, nominal, scaling
+)
+suggestion = phx.control.games.suggest_local_affine_game_policy(
+    game_problem,
+    nominal,
+    scaling,
+    suggestion_id="nonlinear-game-local-model",
+)
+if not bool(jnp.all(suggestion.successful)):
+    raise RuntimeError(f"local model failed: status={suggestion.status}")
+
+plan = phx.control.games.plan_ilq_feedback_game(
+    game_problem,
+    scaling,
+    maximum_iterations=24,
+    maximum_line_search_steps=12,
+    residual_tolerance=1.0e-6,
+)
+prepared = phx.control.games.prepare_ilq_feedback_game(
+    plan, game_problem, initial_policy
+)
+solution = phx.control.games.solve_prepared_ilq_feedback_game(prepared)
+if not bool(jnp.all(solution.valid)):
+    raise RuntimeError(f"nonlinear game failed: status={solution.status}")
+```
+
+`residual` is independent nominal first-order evidence. `suggestion` is one local
+quadratic direction. `solution` is a residual-globalized local nominal-stationarity
+result. None of them, including a successful iLQ result, is automatically an exact
+nonlinear feedback-Nash or global-convergence certificate. The complete runnable
+workflow is `examples/nonlinear_feedback_game.py`.
+
+## Choose a constrained-game concept before solving
+
+Declare physical constraint ownership before selecting a solver. For example, a shared
+resource residual uses one physical block with no owner:
+
+```python
+shared_resource = phx.control.games.GameConstraintBlock(
+    phx.control.BoundedPathConstraint(
+        lambda time, state, control, args: control[0] + control[1] - args["capacity"],
+        lower=-jnp.inf,
+        upper=0.0,
+        constraint_id="shared-resource",
+    ),
+    scope=phx.control.games.GameConstraintScope.SHARED,
+    participants=("player-1", "player-2"),
+    owner=None,
+    site=phx.control.games.GameConstraintSite.PATH,
+    equality=False,
+    residual_shape=(),
+    time_dependent=False,
+    state_dependent=False,
+    control_dependencies=("player-1", "player-2"),
+)
+game_constraints = phx.control.games.OpenLoopGameConstraints(
+    players, (shared_resource,)
+)
+layout = game_constraints.layout(num_path_sites=horizon)
+ve_multiplier_layout = layout.multiplier_layout(variational=True)
+gne_multiplier_layout = layout.multiplier_layout(variational=False)
+```
+
+The two multiplier layouts express different equilibria; do not choose one as a
+numerical workaround for the other.
+
+| Intended problem | Construct | Solve | Accept only |
+|---|---|---|---|
+| Convex affine open-loop VE with common shared multipliers | `FiniteHorizonLQOpenLoopVEProblem` | `solve_open_loop_ve(problem, initial_controls)` | `result.valid`, original KKT/natural residual evidence, and the declared VE label |
+| Convex affine generic open-loop GNE with player-specific shared-multiplier copies | `FiniteHorizonLQOpenLoopGNEProblem` | `solve_open_loop_gne(problem, initial_controls, audit_best_responses=True)` | KKT evidence; treat `global_gne_gap_bound` separately and only when `global_gap_evidence_available` |
+| Nonlinear open-loop game with player-local or player-owned-coupled constraints | `NonlinearOpenLoopGameProblem` | `solve_open_loop_game_kkt(problem, initial_controls)` | Local original-scale feasibility, constraint qualification, and KKT evidence only |
+| One fixed-active local feedback branch | `ConstrainedFeedbackGameProblem` | `solve_feedback_quasi_nash_model(problem, plan=plan)` | An authoritative local branch and its rank, LICQ, complementarity, active, inactive, and KKT evidence |
+
+The VE workflow in `examples/open_loop_variational_game.py` shows a common shared
+multiplier. `examples/constrained_open_loop_game.py` shows opponent-dependent private
+constraints. The feedback quasi-Nash path requires caller-supplied stagewise
+constraint residuals, Jacobians, and an active mask; it performs no active-set search
+and makes no off-trajectory feasibility claim.
+
 ## Compile and solve the canonical QP
 
 `LinearQuadraticControlProblem` is the affine discrete contract used by both direct QP
