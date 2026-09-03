@@ -394,17 +394,17 @@
       "name": "baseline",
       "run": {
         "count": 3,
-        "max_ms": 144.52533300000002,
-        "mean_ms": 143.485125,
-        "median_ms": 143.332458,
-        "min_ms": 142.597584,
+        "max_ms": 152.62954100000002,
+        "mean_ms": 149.11566633333334,
+        "median_ms": 147.49683299999998,
+        "min_ms": 147.22062499999998,
         "samples_ms": [
-          142.597584,
-          144.52533300000002,
-          143.332458
+          152.62954100000002,
+          147.22062499999998,
+          147.49683299999998
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 0.7943695451601885
+        "std_ms": 2.487241992595742
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -807,17 +807,17 @@
       "name": "paths-16",
       "run": {
         "count": 3,
-        "max_ms": 108.512625,
-        "mean_ms": 107.60787533333333,
-        "median_ms": 108.09420899999999,
-        "min_ms": 106.216792,
+        "max_ms": 113.441125,
+        "mean_ms": 107.50105566666667,
+        "median_ms": 105.65316700000001,
+        "min_ms": 103.408875,
         "samples_ms": [
-          106.216792,
-          108.512625,
-          108.09420899999999
+          103.408875,
+          105.65316700000001,
+          113.441125
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 0.9983662045135984
+        "std_ms": 4.299033178822213
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -1220,17 +1220,17 @@
       "name": "paths-256",
       "run": {
         "count": 3,
-        "max_ms": 325.138375,
-        "mean_ms": 318.455736,
-        "median_ms": 317.302708,
-        "min_ms": 312.926125,
+        "max_ms": 327.294833,
+        "mean_ms": 319.4518473333333,
+        "median_ms": 320.76137500000004,
+        "min_ms": 310.299334,
         "samples_ms": [
-          312.926125,
-          317.302708,
-          325.138375
+          320.76137500000004,
+          310.299334,
+          327.294833
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 5.051855612360862
+        "std_ms": 6.9998996943801215
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -1633,17 +1633,17 @@
       "name": "horizon-4",
       "run": {
         "count": 3,
-        "max_ms": 85.9985,
-        "mean_ms": 84.50388866666667,
-        "median_ms": 84.61379099999999,
-        "min_ms": 82.89937499999999,
+        "max_ms": 82.87391600000001,
+        "mean_ms": 80.13040266666667,
+        "median_ms": 80.119667,
+        "min_ms": 77.39762499999999,
         "samples_ms": [
-          84.61379099999999,
-          85.9985,
-          82.89937499999999
+          77.39762499999999,
+          80.119667,
+          82.87391600000001
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 1.2675968953260486
+        "std_ms": 2.235699326843748
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -2046,17 +2046,17 @@
       "name": "horizon-64",
       "run": {
         "count": 3,
-        "max_ms": 452.655125,
-        "mean_ms": 445.03766666666667,
-        "median_ms": 448.39374999999995,
-        "min_ms": 434.06412500000005,
+        "max_ms": 460.43412500000005,
+        "mean_ms": 455.8320556666667,
+        "median_ms": 454.462292,
+        "min_ms": 452.59975000000003,
         "samples_ms": [
-          434.06412500000005,
-          448.39374999999995,
-          452.655125
+          452.59975000000003,
+          460.43412500000005,
+          454.462292
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 7.952097909994471
+        "std_ms": 3.3418106157238063
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -2459,17 +2459,17 @@
       "name": "cases-1",
       "run": {
         "count": 3,
-        "max_ms": 161.74883300000002,
-        "mean_ms": 159.653278,
-        "median_ms": 160.142959,
-        "min_ms": 157.068042,
+        "max_ms": 174.061166,
+        "mean_ms": 162.89691666666667,
+        "median_ms": 158.2195,
+        "min_ms": 156.410084,
         "samples_ms": [
-          157.068042,
-          160.142959,
-          161.74883300000002
+          174.061166,
+          156.410084,
+          158.2195
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 1.9420421738882772
+        "std_ms": 7.928801672715705
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -2872,17 +2872,17 @@
       "name": "cases-32",
       "run": {
         "count": 3,
-        "max_ms": 179.73225000000002,
-        "mean_ms": 176.92315300000004,
-        "median_ms": 176.810709,
-        "min_ms": 174.22650000000002,
+        "max_ms": 174.624,
+        "mean_ms": 169.63784733333333,
+        "median_ms": 170.607709,
+        "min_ms": 163.681833,
         "samples_ms": [
-          174.22650000000002,
-          179.73225000000002,
-          176.810709
+          163.681833,
+          170.607709,
+          174.624
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 2.2491188653154843
+        "std_ms": 4.519456339231098
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -3285,17 +3285,17 @@
       "name": "clusters-4",
       "run": {
         "count": 3,
-        "max_ms": 121.24333299999999,
-        "mean_ms": 118.51213866666666,
-        "median_ms": 118.31920799999999,
-        "min_ms": 115.973875,
+        "max_ms": 130.577125,
+        "mean_ms": 116.61655533333332,
+        "median_ms": 112.030125,
+        "min_ms": 107.24241599999999,
         "samples_ms": [
-          118.31920799999999,
-          115.973875,
-          121.24333299999999
+          130.577125,
+          107.24241599999999,
+          112.030125
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 2.1555685383128504
+        "std_ms": 10.06325555111467
       },
       "work": {
         "compiler_bytes_accessed": null,
@@ -3698,17 +3698,17 @@
       "name": "clusters-16",
       "run": {
         "count": 3,
-        "max_ms": 130.17337500000002,
-        "mean_ms": 128.66886100000002,
-        "median_ms": 130.08975,
-        "min_ms": 125.743458,
+        "max_ms": 139.168958,
+        "mean_ms": 133.3153606666667,
+        "median_ms": 130.59079100000002,
+        "min_ms": 130.186333,
         "samples_ms": [
-          130.17337500000002,
-          130.08975,
-          125.743458
+          130.59079100000002,
+          139.168958,
+          130.186333
         ],
         "scope": "synchronized training-role and holdout-role evaluations",
-        "std_ms": 2.0688540015288712
+        "std_ms": 4.142410560213004
       },
       "work": {
         "compiler_bytes_accessed": null,

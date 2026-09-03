@@ -335,7 +335,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.720798625
+        "seconds": 0.496550708
       },
       "dimensions": {
         "case_shape": [],
@@ -448,7 +448,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.436215042
+        "seconds": 0.412832625
       },
       "memory": {
         "compiler_argument_bytes": 16915,
@@ -464,17 +464,17 @@
       "provenance_fingerprint": "fdfe5809741a0b6c09fd1befac5dae6691ff39c860e50f047d26290b1a3f6b94",
       "run": {
         "count": 3,
-        "max_ms": 1.476083,
-        "mean_ms": 1.326333,
-        "median_ms": 1.444416,
-        "min_ms": 1.0585,
+        "max_ms": 1.49125,
+        "mean_ms": 1.2577503333333333,
+        "median_ms": 1.157334,
+        "min_ms": 1.124667,
         "samples_ms": [
-          1.476083,
-          1.444416,
-          1.0585
+          1.49125,
+          1.124667,
+          1.157334
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.1898272664626098
+        "std_ms": 0.1656469216382309
       },
       "work": {
         "case_count": 1,
@@ -811,7 +811,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.590785834
+        "seconds": 0.497835333
       },
       "dimensions": {
         "case_shape": [],
@@ -924,7 +924,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.348139125
+        "seconds": 0.492723792
       },
       "memory": {
         "compiler_argument_bytes": 4523,
@@ -940,17 +940,17 @@
       "provenance_fingerprint": "f81cb3013964fdb56a8e96a8d30d06726ff9dc8d26a701f69acb656f410afb4f",
       "run": {
         "count": 3,
-        "max_ms": 1.389042,
-        "mean_ms": 1.0649583333333335,
-        "median_ms": 0.914833,
-        "min_ms": 0.891,
+        "max_ms": 1.22125,
+        "mean_ms": 1.147889,
+        "median_ms": 1.124917,
+        "min_ms": 1.0975,
         "samples_ms": [
-          1.389042,
-          0.891,
-          0.914833
+          1.22125,
+          1.124917,
+          1.0975
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.22936821956893297
+        "std_ms": 0.05306788239604065
       },
       "work": {
         "case_count": 1,
@@ -1343,7 +1343,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 1.357393167
+        "seconds": 0.509112875
       },
       "dimensions": {
         "case_shape": [],
@@ -1456,7 +1456,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.692350625
+        "seconds": 0.288283083
       },
       "memory": {
         "compiler_argument_bytes": 78259,
@@ -1472,17 +1472,17 @@
       "provenance_fingerprint": "91c4e8029b49c2261a36e7770e6516d627481a03d7845a11ca60a4ea124f189f",
       "run": {
         "count": 3,
-        "max_ms": 1.3164170000000002,
-        "mean_ms": 1.2249860000000001,
-        "median_ms": 1.2294999999999998,
-        "min_ms": 1.129041,
+        "max_ms": 1.156334,
+        "mean_ms": 1.076653,
+        "median_ms": 1.0803749999999999,
+        "min_ms": 0.99325,
         "samples_ms": [
-          1.3164170000000002,
-          1.129041,
-          1.2294999999999998
+          1.156334,
+          0.99325,
+          1.0803749999999999
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.07656249513088428
+        "std_ms": 0.06663076229990669
       },
       "work": {
         "case_count": 1,
@@ -1827,7 +1827,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.600339417
+        "seconds": 0.51659025
       },
       "dimensions": {
         "case_shape": [],
@@ -1940,7 +1940,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.843732709
+        "seconds": 0.287235042
       },
       "memory": {
         "compiler_argument_bytes": 12307,
@@ -1956,17 +1956,17 @@
       "provenance_fingerprint": "11571a1bc672f2529e260b42bb094ef7e57975a80501680cb8f2402bdea36285",
       "run": {
         "count": 3,
-        "max_ms": 1.430167,
-        "mean_ms": 1.2300283333333333,
-        "median_ms": 1.2065839999999999,
-        "min_ms": 1.053334,
+        "max_ms": 1.154083,
+        "mean_ms": 1.0029443333333334,
+        "median_ms": 1.032,
+        "min_ms": 0.82275,
         "samples_ms": [
-          1.430167,
-          1.2065839999999999,
-          1.053334
+          1.154083,
+          1.032,
+          0.82275
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.15473203729099613
+        "std_ms": 0.1368175501567284
       },
       "work": {
         "case_count": 1,
@@ -2311,7 +2311,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.61934225
+        "seconds": 0.505232
       },
       "dimensions": {
         "case_shape": [],
@@ -2424,7 +2424,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.347913
+        "seconds": 0.280814708
       },
       "memory": {
         "compiler_argument_bytes": 35347,
@@ -2440,17 +2440,17 @@
       "provenance_fingerprint": "1f8e42ec2adfae360c66a3c59aadb314b0ebaf975111859ad6f08ab462258c40",
       "run": {
         "count": 3,
-        "max_ms": 1.446834,
-        "mean_ms": 1.2431666666666665,
-        "median_ms": 1.170166,
-        "min_ms": 1.1125,
+        "max_ms": 1.272416,
+        "mean_ms": 1.0607499999999999,
+        "median_ms": 1.017542,
+        "min_ms": 0.8922920000000001,
         "samples_ms": [
-          1.446834,
-          1.170166,
-          1.1125
+          1.272416,
+          1.017542,
+          0.8922920000000001
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.14592607463902926
+        "std_ms": 0.15816397038516702
       },
       "work": {
         "case_count": 1,
@@ -2795,7 +2795,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.568309709
+        "seconds": 0.520350125
       },
       "dimensions": {
         "case_shape": [],
@@ -2908,7 +2908,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.360758083
+        "seconds": 0.292148208
       },
       "memory": {
         "compiler_argument_bytes": 10555,
@@ -2924,17 +2924,17 @@
       "provenance_fingerprint": "aac01b99a84ca2561b0ede0a28ac3b0aa70b5f421db65e92e06126816ece744c",
       "run": {
         "count": 3,
-        "max_ms": 1.163667,
-        "mean_ms": 1.0668333333333335,
-        "median_ms": 1.0766250000000002,
-        "min_ms": 0.9602080000000001,
+        "max_ms": 0.939708,
+        "mean_ms": 0.9336386666666666,
+        "median_ms": 0.939083,
+        "min_ms": 0.922125,
         "samples_ms": [
-          1.163667,
-          1.0766250000000002,
-          0.9602080000000001
+          0.939083,
+          0.922125,
+          0.939708
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.08334985991723214
+        "std_ms": 0.008145389138784124
       },
       "work": {
         "case_count": 1,
@@ -3279,7 +3279,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.616251792
+        "seconds": 0.518829875
       },
       "dimensions": {
         "case_shape": [],
@@ -3392,7 +3392,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.33839425
+        "seconds": 0.292252417
       },
       "memory": {
         "compiler_argument_bytes": 141091,
@@ -3408,17 +3408,17 @@
       "provenance_fingerprint": "bf6f66452a0557fbc91012157f4013e31b0e4199707a4d217ad7f04174220dd5",
       "run": {
         "count": 3,
-        "max_ms": 1.2045409999999999,
-        "mean_ms": 1.1899579999999998,
-        "median_ms": 1.191833,
-        "min_ms": 1.1735,
+        "max_ms": 1.1364159999999999,
+        "mean_ms": 1.0648466666666667,
+        "median_ms": 1.072916,
+        "min_ms": 0.985208,
         "samples_ms": [
-          1.2045409999999999,
-          1.191833,
-          1.1735
+          1.1364159999999999,
+          1.072916,
+          0.985208
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.012741602175550714
+        "std_ms": 0.06199355031685864
       },
       "work": {
         "case_count": 1,
@@ -3765,7 +3765,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.651624208
+        "seconds": 0.524140083
       },
       "dimensions": {
         "case_shape": [],
@@ -3880,7 +3880,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.291362125
+        "seconds": 0.511103584
       },
       "memory": {
         "compiler_argument_bytes": 17171,
@@ -3896,17 +3896,17 @@
       "provenance_fingerprint": "9e1486b3d7ebe6b70fca2b6876335d0d7286ca690ddee38b4729c9774c6a55e7",
       "run": {
         "count": 3,
-        "max_ms": 1.133292,
-        "mean_ms": 1.0064026666666666,
-        "median_ms": 0.980208,
-        "min_ms": 0.905708,
+        "max_ms": 1.184917,
+        "mean_ms": 1.1194166666666667,
+        "median_ms": 1.0907499999999999,
+        "min_ms": 1.082583,
         "samples_ms": [
-          1.133292,
-          0.980208,
-          0.905708
+          1.184917,
+          1.082583,
+          1.0907499999999999
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.09473907917831773
+        "std_ms": 0.04643558421680033
       },
       "work": {
         "case_count": 1,
@@ -4308,7 +4308,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.63795425
+        "seconds": 0.545084875
       },
       "dimensions": {
         "case_shape": [
@@ -4426,7 +4426,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.31766675
+        "seconds": 0.31721075
       },
       "memory": {
         "compiler_argument_bytes": 75491,
@@ -4442,17 +4442,17 @@
       "provenance_fingerprint": "9bf7eb00e8c332a8a6f096cdc7202bee0a5db54e4115e05e7c63d8b70189540f",
       "run": {
         "count": 3,
-        "max_ms": 1.6775419999999999,
-        "mean_ms": 1.4681113333333335,
-        "median_ms": 1.4087500000000002,
-        "min_ms": 1.318042,
+        "max_ms": 1.120959,
+        "mean_ms": 1.0010003333333333,
+        "median_ms": 1.0042499999999999,
+        "min_ms": 0.8777919999999999,
         "samples_ms": [
-          1.318042,
-          1.6775419999999999,
-          1.4087500000000002
+          1.120959,
+          1.0042499999999999,
+          0.8777919999999999
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.15264968265352602
+        "std_ms": 0.09929910278994922
       },
       "work": {
         "case_count": 8,
@@ -4785,7 +4785,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.57898375
+        "seconds": 0.491627084
       },
       "dimensions": {
         "case_shape": [],
@@ -4898,7 +4898,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.508972042
+        "seconds": 0.293499167
       },
       "memory": {
         "compiler_argument_bytes": 16147,
@@ -4914,17 +4914,17 @@
       "provenance_fingerprint": "a0fcd93c82822c82a9dff49ae967e867b927bb54d0511f788229fcc6abae5256",
       "run": {
         "count": 3,
-        "max_ms": 1.0448339999999998,
-        "mean_ms": 0.9946529999999999,
-        "median_ms": 0.997375,
-        "min_ms": 0.94175,
+        "max_ms": 1.1008330000000002,
+        "mean_ms": 1.023125,
+        "median_ms": 1.010917,
+        "min_ms": 0.9576250000000001,
         "samples_ms": [
-          1.0448339999999998,
-          0.997375,
-          0.94175
+          1.1008330000000002,
+          1.010917,
+          0.9576250000000001
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.04212785877144317
+        "std_ms": 0.05909827557551917
       },
       "work": {
         "case_count": 1,
@@ -5317,7 +5317,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.576771375
+        "seconds": 0.489017083
       },
       "dimensions": {
         "case_shape": [],
@@ -5430,7 +5430,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit lowering of the frozen prepared solve",
-        "seconds": 0.286879542
+        "seconds": 0.295155625
       },
       "memory": {
         "compiler_argument_bytes": 19987,
@@ -5446,17 +5446,17 @@
       "provenance_fingerprint": "5d231eb5c2c355d90d4667b764e1e229426e7c6b1d601cd5d8de8ebf7314835c",
       "run": {
         "count": 3,
-        "max_ms": 1.010208,
-        "mean_ms": 0.9972080000000001,
-        "median_ms": 1.0050000000000001,
-        "min_ms": 0.9764160000000001,
+        "max_ms": 1.0940830000000001,
+        "mean_ms": 1.0064443333333335,
+        "median_ms": 1.0093750000000001,
+        "min_ms": 0.915875,
         "samples_ms": [
-          0.9764160000000001,
-          1.0050000000000001,
-          1.010208
+          1.0940830000000001,
+          1.0093750000000001,
+          0.915875
         ],
         "scope": "synchronized root solve plus untouched holdout evaluation",
-        "std_ms": 0.014855106058187524
+        "std_ms": 0.07278261890192074
       },
       "work": {
         "case_count": 1,

@@ -281,17 +281,17 @@
       "name": "baseline",
       "run": {
         "count": 3,
-        "max_ms": 2634.6733750000003,
-        "mean_ms": 2590.6309303333333,
-        "median_ms": 2585.7328329999996,
-        "min_ms": 2551.486583,
+        "max_ms": 3074.9484580000003,
+        "mean_ms": 2948.338444333333,
+        "median_ms": 2890.1606659999998,
+        "min_ms": 2879.906209,
         "samples_ms": [
-          2585.7328329999996,
-          2551.486583,
-          2634.6733750000003
+          2890.1606659999998,
+          2879.906209,
+          3074.9484580000003
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 34.13701909391955
+        "std_ms": 89.624625122773
       },
       "work": {
         "coarse_coefficient_action_sites": 1200,
@@ -581,17 +581,17 @@
       "name": "grid-9",
       "run": {
         "count": 3,
-        "max_ms": 1221.675334,
-        "mean_ms": 1218.4928476666666,
-        "median_ms": 1220.2701670000001,
-        "min_ms": 1213.5330419999998,
+        "max_ms": 1426.510667,
+        "mean_ms": 1421.225625,
+        "median_ms": 1420.22125,
+        "min_ms": 1416.944958,
         "samples_ms": [
-          1220.2701670000001,
-          1221.675334,
-          1213.5330419999998
+          1426.510667,
+          1416.944958,
+          1420.22125
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 3.553718968704723
+        "std_ms": 3.9692378801342394
       },
       "work": {
         "coarse_coefficient_action_sites": 560,
@@ -881,17 +881,17 @@
       "name": "grid-65",
       "run": {
         "count": 3,
-        "max_ms": 10426.592541,
-        "mean_ms": 10363.321055,
-        "median_ms": 10400.355958,
-        "min_ms": 10263.014666000001,
+        "max_ms": 18021.544458,
+        "mean_ms": 13888.866541333335,
+        "median_ms": 11823.602875,
+        "min_ms": 11821.452291,
         "samples_ms": [
-          10426.592541,
-          10400.355958,
-          10263.014666000001
+          11821.452291,
+          11823.602875,
+          18021.544458
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 71.73152876080536
+        "std_ms": 2922.244711225846
       },
       "work": {
         "coarse_coefficient_action_sites": 5040,
@@ -1181,17 +1181,17 @@
       "name": "actions-1",
       "run": {
         "count": 3,
-        "max_ms": 517.432959,
-        "mean_ms": 512.0591113333334,
-        "median_ms": 514.9652500000001,
-        "min_ms": 503.779125,
+        "max_ms": 602.742708,
+        "mean_ms": 596.048597,
+        "median_ms": 594.010875,
+        "min_ms": 591.392208,
         "samples_ms": [
-          517.432959,
-          503.779125,
-          514.9652500000001
+          602.742708,
+          591.392208,
+          594.010875
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 5.940876881814126
+        "std_ms": 4.852675947314219
       },
       "work": {
         "coarse_coefficient_action_sites": 240,
@@ -1481,17 +1481,17 @@
       "name": "actions-17",
       "run": {
         "count": 3,
-        "max_ms": 8415.647874999999,
-        "mean_ms": 8371.349416666666,
-        "median_ms": 8366.542374999999,
-        "min_ms": 8331.858,
+        "max_ms": 10799.349709,
+        "mean_ms": 10106.694694666667,
+        "median_ms": 9831.016458,
+        "min_ms": 9689.717917,
         "samples_ms": [
-          8415.647874999999,
-          8331.858,
-          8366.542374999999
+          10799.349709,
+          9831.016458,
+          9689.717917
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 34.37553902915706
+        "std_ms": 493.16633169956964
       },
       "work": {
         "coarse_coefficient_action_sites": 4080,
@@ -1781,17 +1781,17 @@
       "name": "time-9",
       "run": {
         "count": 3,
-        "max_ms": 1244.156958,
-        "mean_ms": 1239.0436523333335,
-        "median_ms": 1244.0231660000002,
-        "min_ms": 1228.950833,
+        "max_ms": 1448.028834,
+        "mean_ms": 1438.2800143333334,
+        "median_ms": 1440.9524170000002,
+        "min_ms": 1425.858792,
         "samples_ms": [
-          1228.950833,
-          1244.0231660000002,
-          1244.156958
+          1440.9524170000002,
+          1425.858792,
+          1448.028834
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 7.136910005798323
+        "std_ms": 9.246043931687632
       },
       "work": {
         "coarse_coefficient_action_sites": 600,
@@ -2081,17 +2081,17 @@
       "name": "time-65",
       "run": {
         "count": 3,
-        "max_ms": 9949.886084,
-        "mean_ms": 9902.232291666667,
-        "median_ms": 9900.029833,
-        "min_ms": 9856.780958,
+        "max_ms": 11371.735458,
+        "mean_ms": 11343.488194333333,
+        "median_ms": 11347.393625,
+        "min_ms": 11311.335500000001,
         "samples_ms": [
-          9900.029833,
-          9856.780958,
-          9949.886084
+          11347.393625,
+          11311.335500000001,
+          11371.735458
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 38.04190005772377
+        "std_ms": 24.8123359523644
       },
       "work": {
         "coarse_coefficient_action_sites": 4800,
@@ -2381,17 +2381,17 @@
       "name": "refinement-large",
       "run": {
         "count": 3,
-        "max_ms": 10070.119208,
-        "mean_ms": 10039.244541333333,
-        "median_ms": 10047.320333,
-        "min_ms": 10000.294083,
+        "max_ms": 11616.638458000001,
+        "mean_ms": 11528.128611333334,
+        "median_ms": 11508.369667,
+        "min_ms": 11459.377709,
         "samples_ms": [
-          10047.320333,
-          10000.294083,
-          10070.119208
+          11459.377709,
+          11508.369667,
+          11616.638458000001
         ],
         "scope": "coarse solve, nested refined solve, and common-grid evidence",
-        "std_ms": 29.072333108976437
+        "std_ms": 65.70412318308061
       },
       "work": {
         "coarse_coefficient_action_sites": 4960,

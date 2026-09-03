@@ -17,7 +17,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.105535125
+        "seconds": 1.222122958
       },
       "control_sizes": [
         1,
@@ -112,7 +112,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.739701042
+        "seconds": 1.73800025
       },
       "memory": {
         "compiler_argument_bytes": 824,
@@ -128,16 +128,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 5.126666,
-        "mean_ms": 5.092930333333333,
-        "median_ms": 5.120667,
-        "min_ms": 5.031458,
+        "max_ms": 5.523458,
+        "mean_ms": 5.174291666666666,
+        "median_ms": 5.176875,
+        "min_ms": 4.822542,
         "samples_ms": [
-          5.120667,
-          5.031458,
-          5.126666
+          5.176875,
+          4.822542,
+          5.523458
         ],
-        "std_ms": 0.0435364431584495
+        "std_ms": 0.2861535892632173
       },
       "state_size": 4,
       "work": {
@@ -164,7 +164,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.092882459
+        "seconds": 1.338149375
       },
       "control_sizes": [
         1,
@@ -259,7 +259,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.611855791
+        "seconds": 1.592780333
       },
       "memory": {
         "compiler_argument_bytes": 472,
@@ -275,16 +275,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.0326250000000003,
-        "mean_ms": 2.882486333333334,
-        "median_ms": 2.932417,
-        "min_ms": 2.682417,
+        "max_ms": 3.382333,
+        "mean_ms": 3.088513666666666,
+        "median_ms": 2.957125,
+        "min_ms": 2.9260829999999998,
         "samples_ms": [
-          3.0326250000000003,
-          2.682417,
-          2.932417
+          3.382333,
+          2.9260829999999998,
+          2.957125
         ],
-        "std_ms": 0.14726668421910272
+        "std_ms": 0.20814778711504217
       },
       "state_size": 4,
       "work": {
@@ -311,7 +311,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.149025334
+        "seconds": 1.347808125
       },
       "control_sizes": [
         1,
@@ -406,7 +406,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.615448958
+        "seconds": 1.637300875
       },
       "memory": {
         "compiler_argument_bytes": 1352,
@@ -422,16 +422,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 10.191459,
-        "mean_ms": 9.760806,
-        "median_ms": 9.630583999999999,
-        "min_ms": 9.460375,
+        "max_ms": 10.524083,
+        "mean_ms": 10.117180666666668,
+        "median_ms": 10.027625,
+        "min_ms": 9.799834,
         "samples_ms": [
-          10.191459,
-          9.460375,
-          9.630583999999999
+          10.524083,
+          10.027625,
+          9.799834
         ],
-        "std_ms": 0.3123451944318443
+        "std_ms": 0.3023786991774087
       },
       "state_size": 4,
       "work": {
@@ -458,7 +458,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.061834125
+        "seconds": 1.340709834
       },
       "control_sizes": [
         1,
@@ -553,7 +553,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.389748083
+        "seconds": 1.412480083
       },
       "memory": {
         "compiler_argument_bytes": 472,
@@ -569,16 +569,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.520291,
-        "mean_ms": 3.0657636666666668,
-        "median_ms": 2.8943749999999997,
-        "min_ms": 2.782625,
+        "max_ms": 4.257042,
+        "mean_ms": 3.888305666666667,
+        "median_ms": 3.8592090000000003,
+        "min_ms": 3.548666,
         "samples_ms": [
-          3.520291,
-          2.8943749999999997,
-          2.782625
+          4.257042,
+          3.8592090000000003,
+          3.548666
         ],
-        "std_ms": 0.32462115168848066
+        "std_ms": 0.28992424453333027
       },
       "state_size": 2,
       "work": {
@@ -605,7 +605,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.239104459
+        "seconds": 1.313381
       },
       "control_sizes": [
         1,
@@ -700,7 +700,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.70756875
+        "seconds": 1.756407375
       },
       "memory": {
         "compiler_argument_bytes": 1720,
@@ -716,16 +716,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 7.115291,
-        "mean_ms": 6.614083000000001,
-        "median_ms": 6.379208,
-        "min_ms": 6.3477500000000004,
+        "max_ms": 6.146833,
+        "mean_ms": 6.030583,
+        "median_ms": 6.062583,
+        "min_ms": 5.882333,
         "samples_ms": [
-          6.379208,
-          6.3477500000000004,
-          7.115291
+          6.146833,
+          5.882333,
+          6.062583
         ],
-        "std_ms": 0.3546401893835496
+        "std_ms": 0.11032697615119642
       },
       "state_size": 8,
       "work": {
@@ -752,7 +752,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.214397833
+        "seconds": 1.232785875
       },
       "control_sizes": [
         2,
@@ -847,7 +847,7 @@
       },
       "joint_control_size": 4,
       "lower": {
-        "seconds": 1.717323625
+        "seconds": 1.75411275
       },
       "memory": {
         "compiler_argument_bytes": 1384,
@@ -863,16 +863,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 8.25675,
-        "mean_ms": 8.049444666666668,
-        "median_ms": 8.116625,
-        "min_ms": 7.774959,
+        "max_ms": 11.641250000000001,
+        "mean_ms": 9.375278,
+        "median_ms": 8.298542000000001,
+        "min_ms": 8.186041999999999,
         "samples_ms": [
-          8.116625,
-          8.25675,
-          7.774959
+          8.298542000000001,
+          8.186041999999999,
+          11.641250000000001
         ],
-        "std_ms": 0.20234547982816165
+        "std_ms": 1.6029422720085718
       },
       "state_size": 4,
       "work": {
@@ -899,7 +899,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.125585375
+        "seconds": 1.064692625
       },
       "control_sizes": [
         2
@@ -993,7 +993,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.317234167
+        "seconds": 1.272183625
       },
       "memory": {
         "compiler_argument_bytes": 816,
@@ -1009,16 +1009,16 @@
       "player_count": 1,
       "run": {
         "count": 3,
-        "max_ms": 4.575584,
-        "mean_ms": 4.240264000000001,
-        "median_ms": 4.251833,
-        "min_ms": 3.8933750000000003,
+        "max_ms": 5.423542,
+        "mean_ms": 4.525264,
+        "median_ms": 4.10675,
+        "min_ms": 4.0455,
         "samples_ms": [
-          4.575584,
-          4.251833,
-          3.8933750000000003
+          5.423542,
+          4.10675,
+          4.0455
         ],
-        "std_ms": 0.2786307726974893
+        "std_ms": 0.6356704673481905
       },
       "state_size": 4,
       "work": {
@@ -1045,7 +1045,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.334503167
+        "seconds": 1.304615583
       },
       "control_sizes": [
         1,
@@ -1142,7 +1142,7 @@
       },
       "joint_control_size": 4,
       "lower": {
-        "seconds": 1.934629583
+        "seconds": 1.881111916
       },
       "memory": {
         "compiler_argument_bytes": 1400,
@@ -1158,16 +1158,16 @@
       "player_count": 4,
       "run": {
         "count": 3,
-        "max_ms": 8.636792000000002,
-        "mean_ms": 8.349194333333335,
-        "median_ms": 8.246958000000001,
-        "min_ms": 8.163833,
+        "max_ms": 8.602333,
+        "mean_ms": 7.8365833333333335,
+        "median_ms": 7.570167,
+        "min_ms": 7.33725,
         "samples_ms": [
-          8.163833,
-          8.636792000000002,
-          8.246958000000001
+          7.33725,
+          7.570167,
+          8.602333
         ],
-        "std_ms": 0.20617428680662972
+        "std_ms": 0.5497526693719236
       },
       "state_size": 4,
       "work": {
@@ -1203,7 +1203,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.350205792
+        "seconds": 1.359179875
       },
       "control_sizes": [
         1,
@@ -1301,7 +1301,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.877173125
+        "seconds": 1.473357084
       },
       "memory": {
         "compiler_argument_bytes": 4408,
@@ -1317,16 +1317,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 14.304084,
-        "mean_ms": 13.799361333333332,
-        "median_ms": 13.811833,
-        "min_ms": 13.282167,
+        "max_ms": 15.088000000000001,
+        "mean_ms": 14.409055333333333,
+        "median_ms": 14.360291,
+        "min_ms": 13.778875,
         "samples_ms": [
-          13.282167,
-          13.811833,
-          14.304084
+          15.088000000000001,
+          14.360291,
+          13.778875
         ],
-        "std_ms": 0.41728906493727136
+        "std_ms": 0.5355592320558231
       },
       "state_size": 4,
       "work": {

@@ -22,7 +22,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 2.706783291
+        "seconds": 1.214793375
       },
       "control_sizes": [
         1,
@@ -1996,7 +1996,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 2.503016625
+        "seconds": 1.645283625
       },
       "memory": {
         "compiler_argument_bytes": 10824,
@@ -2013,16 +2013,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 6.439709,
-        "mean_ms": 6.165361333333333,
-        "median_ms": 6.214625,
-        "min_ms": 5.841749999999999,
+        "max_ms": 3.359583,
+        "mean_ms": 2.869847333333334,
+        "median_ms": 2.793917,
+        "min_ms": 2.456042,
         "samples_ms": [
-          6.439709,
-          6.214625,
-          5.841749999999999
+          3.359583,
+          2.793917,
+          2.456042
         ],
-        "std_ms": 0.2465886224197884
+        "std_ms": 0.37275608316997627
       },
       "shared_constraint_count": 1,
       "state_size": 4,
@@ -2059,7 +2059,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.473642958
+        "seconds": 1.130179541
       },
       "control_sizes": [
         1,
@@ -4033,7 +4033,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.838326916
+        "seconds": 1.644400833
       },
       "memory": {
         "compiler_argument_bytes": 2184,
@@ -4050,16 +4050,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.158625,
-        "mean_ms": 2.9936803333333333,
-        "median_ms": 2.935,
-        "min_ms": 2.887416,
+        "max_ms": 2.992167,
+        "mean_ms": 2.739875,
+        "median_ms": 2.717542,
+        "min_ms": 2.509916,
         "samples_ms": [
-          2.887416,
-          3.158625,
-          2.935
+          2.992167,
+          2.717542,
+          2.509916
         ],
-        "std_ms": 0.11824019779058022
+        "std_ms": 0.19751047046844536
       },
       "shared_constraint_count": 1,
       "state_size": 4,
@@ -4096,7 +4096,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.635129416
+        "seconds": 1.335764666
       },
       "control_sizes": [
         1,
@@ -6070,7 +6070,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.877596666
+        "seconds": 1.675494625
       },
       "memory": {
         "compiler_argument_bytes": 62024,
@@ -6087,16 +6087,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.4301660000000003,
-        "mean_ms": 3.399236,
-        "median_ms": 3.3938330000000003,
-        "min_ms": 3.373709,
+        "max_ms": 3.661958,
+        "mean_ms": 3.4582216666666667,
+        "median_ms": 3.372916,
+        "min_ms": 3.339791,
         "samples_ms": [
-          3.373709,
-          3.3938330000000003,
-          3.4301660000000003
+          3.372916,
+          3.661958,
+          3.339791
         ],
-        "std_ms": 0.02336296954584342
+        "std_ms": 0.14469666327950415
       },
       "shared_constraint_count": 1,
       "state_size": 4,
@@ -6133,7 +6133,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.461852959
+        "seconds": 1.244061583
       },
       "control_sizes": [
         1,
@@ -8107,7 +8107,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.801332292
+        "seconds": 1.695160042
       },
       "memory": {
         "compiler_argument_bytes": 7920,
@@ -8124,16 +8124,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.375959,
-        "mean_ms": 3.192944666666667,
-        "median_ms": 3.2846249999999997,
-        "min_ms": 2.91825,
+        "max_ms": 3.032708,
+        "mean_ms": 2.9014303333333333,
+        "median_ms": 2.935375,
+        "min_ms": 2.736208,
         "samples_ms": [
-          3.375959,
-          3.2846249999999997,
-          2.91825
+          2.935375,
+          3.032708,
+          2.736208
         ],
-        "std_ms": 0.1977849755169037
+        "std_ms": 0.12340243864779263
       },
       "shared_constraint_count": 1,
       "state_size": 1,
@@ -8170,7 +8170,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.543790292
+        "seconds": 1.248416125
       },
       "control_sizes": [
         1,
@@ -10144,7 +10144,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.802607792
+        "seconds": 1.73744425
       },
       "memory": {
         "compiler_argument_bytes": 16936,
@@ -10161,16 +10161,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.220167,
-        "mean_ms": 2.926819666666667,
-        "median_ms": 2.908125,
-        "min_ms": 2.652167,
+        "max_ms": 2.855958,
+        "mean_ms": 2.7545136666666665,
+        "median_ms": 2.7508329999999996,
+        "min_ms": 2.6567499999999997,
         "samples_ms": [
-          2.652167,
-          3.220167,
-          2.908125
+          2.855958,
+          2.7508329999999996,
+          2.6567499999999997
         ],
-        "std_ms": 0.23226151628618022
+        "std_ms": 0.08136795969066851
       },
       "shared_constraint_count": 1,
       "state_size": 8,
@@ -10207,7 +10207,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.483346834
+        "seconds": 1.291021584
       },
       "control_sizes": [
         2,
@@ -12181,7 +12181,7 @@
       },
       "joint_control_size": 4,
       "lower": {
-        "seconds": 2.001629208
+        "seconds": 1.82268375
       },
       "memory": {
         "compiler_argument_bytes": 25672,
@@ -12198,16 +12198,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.625584,
-        "mean_ms": 3.320777666666667,
-        "median_ms": 3.243666,
-        "min_ms": 3.093083,
+        "max_ms": 3.0114579999999997,
+        "mean_ms": 2.8803056666666667,
+        "median_ms": 2.8420419999999997,
+        "min_ms": 2.787417,
         "samples_ms": [
-          3.093083,
-          3.625584,
-          3.243666
+          2.8420419999999997,
+          3.0114579999999997,
+          2.787417
         ],
-        "std_ms": 0.22412643098979243
+        "std_ms": 0.09538229591258295
       },
       "shared_constraint_count": 1,
       "state_size": 4,
@@ -12244,7 +12244,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.583182875
+        "seconds": 1.442963375
       },
       "control_sizes": [
         1,
@@ -14310,7 +14310,7 @@
       },
       "joint_control_size": 4,
       "lower": {
-        "seconds": 2.015900916
+        "seconds": 1.853132
       },
       "memory": {
         "compiler_argument_bytes": 29718,
@@ -14327,16 +14327,16 @@
       "player_count": 4,
       "run": {
         "count": 3,
-        "max_ms": 3.685667,
-        "mean_ms": 3.4090559999999996,
-        "median_ms": 3.359042,
-        "min_ms": 3.1824589999999997,
+        "max_ms": 3.653666,
+        "mean_ms": 3.396444333333333,
+        "median_ms": 3.378417,
+        "min_ms": 3.15725,
         "samples_ms": [
-          3.685667,
-          3.359042,
-          3.1824589999999997
+          3.378417,
+          3.653666,
+          3.15725
         ],
-        "std_ms": 0.20845562751338723
+        "std_ms": 0.20306148465318466
       },
       "shared_constraint_count": 1,
       "state_size": 4,
@@ -14382,7 +14382,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.741875209
+        "seconds": 1.5368575
       },
       "control_sizes": [
         1,
@@ -16607,7 +16607,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 2.079977041
+        "seconds": 1.964891791
       },
       "memory": {
         "compiler_argument_bytes": 86074,
@@ -16624,16 +16624,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.937334,
-        "mean_ms": 3.849181,
-        "median_ms": 3.837459,
-        "min_ms": 3.7727500000000003,
+        "max_ms": 4.21,
+        "mean_ms": 3.839722333333333,
+        "median_ms": 3.665333,
+        "min_ms": 3.643834,
         "samples_ms": [
-          3.937334,
-          3.7727500000000003,
-          3.837459
+          3.643834,
+          4.21,
+          3.665333
         ],
-        "std_ms": 0.06770045409498113
+        "std_ms": 0.2619729179060733
       },
       "shared_constraint_count": 1,
       "state_size": 4,
@@ -16670,7 +16670,7 @@
         "valid": true
       },
       "compile": {
-        "seconds": 1.547780042
+        "seconds": 1.362331209
       },
       "control_sizes": [
         1,
@@ -18779,7 +18779,7 @@
       },
       "joint_control_size": 2,
       "lower": {
-        "seconds": 1.512912125
+        "seconds": 1.392413208
       },
       "memory": {
         "compiler_argument_bytes": 15558,
@@ -18796,16 +18796,16 @@
       "player_count": 2,
       "run": {
         "count": 3,
-        "max_ms": 3.57625,
-        "mean_ms": 3.296972333333333,
-        "median_ms": 3.178334,
-        "min_ms": 3.136333,
+        "max_ms": 3.544792,
+        "mean_ms": 3.1922363333333337,
+        "median_ms": 3.100959,
+        "min_ms": 2.930958,
         "samples_ms": [
-          3.178334,
-          3.57625,
-          3.136333
+          3.100959,
+          3.544792,
+          2.930958
         ],
-        "std_ms": 0.19822215201524662
+        "std_ms": 0.25877494543113894
       },
       "shared_constraint_count": 4,
       "state_size": 4,

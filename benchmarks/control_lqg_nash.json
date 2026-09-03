@@ -472,7 +472,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.801082167
+        "seconds": 0.441212334
       },
       "dimensions": {
         "case_shape": [],
@@ -574,7 +574,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.982442125
+        "seconds": 0.784194333
       },
       "memory": {
         "compiler_argument_bytes": 38592,
@@ -589,17 +589,17 @@
       "name": "baseline",
       "run": {
         "count": 3,
-        "max_ms": 3.9525840000000003,
-        "mean_ms": 3.9095973333333336,
-        "median_ms": 3.8899579999999996,
-        "min_ms": 3.88625,
+        "max_ms": 1.802625,
+        "mean_ms": 1.4591943333333333,
+        "median_ms": 1.435916,
+        "min_ms": 1.139042,
         "samples_ms": [
-          3.8899579999999996,
-          3.88625,
-          3.9525840000000003
+          1.802625,
+          1.435916,
+          1.139042
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.030433834782287467
+        "std_ms": 0.27140622699112027
       },
       "work": {
         "batched_cases": 1,
@@ -1083,7 +1083,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.848591417
+        "seconds": 0.438419041
       },
       "dimensions": {
         "case_shape": [],
@@ -1185,7 +1185,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 1.073071292
+        "seconds": 0.422492625
       },
       "memory": {
         "compiler_argument_bytes": 10848,
@@ -1200,17 +1200,17 @@
       "name": "horizon-4",
       "run": {
         "count": 3,
-        "max_ms": 3.65275,
-        "mean_ms": 2.8784723333333333,
-        "median_ms": 3.0976250000000003,
-        "min_ms": 1.8850419999999999,
+        "max_ms": 0.9601670000000001,
+        "mean_ms": 0.9339863333333334,
+        "median_ms": 0.928,
+        "min_ms": 0.9137919999999999,
         "samples_ms": [
-          1.8850419999999999,
-          3.65275,
-          3.0976250000000003
+          0.928,
+          0.9601670000000001,
+          0.9137919999999999
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.7381141789706764
+        "std_ms": 0.01939995354519072
       },
       "work": {
         "batched_cases": 1,
@@ -1691,7 +1691,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 1.029873583
+        "seconds": 0.501119
       },
       "dimensions": {
         "case_shape": [],
@@ -1793,7 +1793,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.903993291
+        "seconds": 0.407143583
       },
       "memory": {
         "compiler_argument_bytes": 149568,
@@ -1808,17 +1808,17 @@
       "name": "horizon-64",
       "run": {
         "count": 3,
-        "max_ms": 10.025915999999999,
-        "mean_ms": 8.983791333333334,
-        "median_ms": 8.724417,
-        "min_ms": 8.201041,
+        "max_ms": 3.272125,
+        "mean_ms": 2.7757780000000003,
+        "median_ms": 2.5675,
+        "min_ms": 2.4877089999999997,
         "samples_ms": [
-          8.724417,
-          8.201041,
-          10.025915999999999
+          2.5675,
+          2.4877089999999997,
+          3.272125
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.7672454952622538
+        "std_ms": 0.35247875513000787
       },
       "work": {
         "batched_cases": 1,
@@ -2299,7 +2299,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.865394333
+        "seconds": 0.382359167
       },
       "dimensions": {
         "case_shape": [],
@@ -2401,7 +2401,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 1.111121167
+        "seconds": 0.44462075
       },
       "memory": {
         "compiler_argument_bytes": 15392,
@@ -2416,17 +2416,17 @@
       "name": "state-4",
       "run": {
         "count": 3,
-        "max_ms": 4.484458,
-        "mean_ms": 3.5520833333333335,
-        "median_ms": 3.603833,
-        "min_ms": 2.5679589999999997,
+        "max_ms": 1.479375,
+        "mean_ms": 1.3512223333333335,
+        "median_ms": 1.3264170000000002,
+        "min_ms": 1.247875,
         "samples_ms": [
-          2.5679589999999997,
-          4.484458,
-          3.603833
+          1.3264170000000002,
+          1.479375,
+          1.247875
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.7832626742246536
+        "std_ms": 0.09612332676075853
       },
       "work": {
         "batched_cases": 1,
@@ -2907,7 +2907,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.945655208
+        "seconds": 0.481421375
       },
       "dimensions": {
         "case_shape": [],
@@ -3009,7 +3009,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 1.247671875
+        "seconds": 0.685078292
       },
       "memory": {
         "compiler_argument_bytes": 124160,
@@ -3024,17 +3024,17 @@
       "name": "state-16",
       "run": {
         "count": 3,
-        "max_ms": 4.157292,
-        "mean_ms": 3.8788750000000003,
-        "median_ms": 3.999375,
-        "min_ms": 3.479958,
+        "max_ms": 1.843625,
+        "mean_ms": 1.8215830000000002,
+        "median_ms": 1.825791,
+        "min_ms": 1.795333,
         "samples_ms": [
-          4.157292,
-          3.999375,
-          3.479958
+          1.843625,
+          1.825791,
+          1.795333
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.2893504500186582
+        "std_ms": 0.01993840120638228
       },
       "work": {
         "batched_cases": 1,
@@ -3515,7 +3515,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 1.055928
+        "seconds": 0.432064583
       },
       "dimensions": {
         "case_shape": [],
@@ -3617,7 +3617,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 1.481984917
+        "seconds": 0.39315175
       },
       "memory": {
         "compiler_argument_bytes": 33472,
@@ -3632,17 +3632,17 @@
       "name": "controls-1-1",
       "run": {
         "count": 3,
-        "max_ms": 2.804833,
-        "mean_ms": 2.4558750000000003,
-        "median_ms": 2.404542,
-        "min_ms": 2.1582500000000002,
+        "max_ms": 1.304292,
+        "mean_ms": 1.260611,
+        "median_ms": 1.284458,
+        "min_ms": 1.193083,
         "samples_ms": [
-          2.1582500000000002,
-          2.804833,
-          2.404542
+          1.284458,
+          1.193083,
+          1.304292
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.2664503726637788
+        "std_ms": 0.0484311881401507
       },
       "work": {
         "batched_cases": 1,
@@ -4123,7 +4123,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.844641542
+        "seconds": 0.445506916
       },
       "dimensions": {
         "case_shape": [],
@@ -4225,7 +4225,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 1.025538792
+        "seconds": 0.376588833
       },
       "memory": {
         "compiler_argument_bytes": 54976,
@@ -4240,17 +4240,17 @@
       "name": "controls-4-4",
       "run": {
         "count": 3,
-        "max_ms": 2.9408339999999997,
-        "mean_ms": 1.932056,
-        "median_ms": 1.471542,
-        "min_ms": 1.383792,
+        "max_ms": 1.8522079999999999,
+        "mean_ms": 1.7449723333333331,
+        "median_ms": 1.753042,
+        "min_ms": 1.629667,
         "samples_ms": [
-          2.9408339999999997,
-          1.383792,
-          1.471542
+          1.8522079999999999,
+          1.753042,
+          1.629667
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.7142127626919025
+        "std_ms": 0.09103099768882143
       },
       "work": {
         "batched_cases": 1,
@@ -4669,7 +4669,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.846555333
+        "seconds": 0.380381375
       },
       "dimensions": {
         "case_shape": [],
@@ -4770,7 +4770,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.72888275
+        "seconds": 0.373549333
       },
       "memory": {
         "compiler_argument_bytes": 27840,
@@ -4785,17 +4785,17 @@
       "name": "players-1",
       "run": {
         "count": 3,
-        "max_ms": 3.214208,
-        "mean_ms": 2.853027666666667,
-        "median_ms": 2.705625,
-        "min_ms": 2.63925,
+        "max_ms": 1.3010000000000002,
+        "mean_ms": 1.225389,
+        "median_ms": 1.236875,
+        "min_ms": 1.1382919999999999,
         "samples_ms": [
-          3.214208,
-          2.63925,
-          2.705625
+          1.3010000000000002,
+          1.236875,
+          1.1382919999999999
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.25682657578780455
+        "std_ms": 0.06691994950685495
       },
       "work": {
         "batched_cases": 1,
@@ -5400,7 +5400,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.95512075
+        "seconds": 0.486700708
       },
       "dimensions": {
         "case_shape": [],
@@ -5504,7 +5504,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.7890585
+        "seconds": 0.629707584
       },
       "memory": {
         "compiler_argument_bytes": 60096,
@@ -5519,17 +5519,17 @@
       "name": "players-4",
       "run": {
         "count": 3,
-        "max_ms": 3.8800000000000003,
-        "mean_ms": 3.5431526666666673,
-        "median_ms": 3.4068750000000003,
-        "min_ms": 3.3425830000000003,
+        "max_ms": 1.6993340000000001,
+        "mean_ms": 1.5886393333333333,
+        "median_ms": 1.548709,
+        "min_ms": 1.5178749999999999,
         "samples_ms": [
-          3.3425830000000003,
-          3.4068750000000003,
-          3.8800000000000003
+          1.5178749999999999,
+          1.6993340000000001,
+          1.548709
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.23962882380372266
+        "std_ms": 0.07927868906725338
       },
       "work": {
         "batched_cases": 1,
@@ -6010,7 +6010,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.985670458
+        "seconds": 0.857643833
       },
       "dimensions": {
         "case_shape": [],
@@ -6112,7 +6112,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 1.216188708
+        "seconds": 0.421172834
       },
       "memory": {
         "compiler_argument_bytes": 35520,
@@ -6127,17 +6127,17 @@
       "name": "noise-1",
       "run": {
         "count": 3,
-        "max_ms": 5.338583,
-        "mean_ms": 3.2723193333333334,
-        "median_ms": 2.295292,
-        "min_ms": 2.1830830000000003,
+        "max_ms": 5.105250000000001,
+        "mean_ms": 4.637749666666667,
+        "median_ms": 4.864291,
+        "min_ms": 3.9437079999999995,
         "samples_ms": [
-          2.295292,
-          2.1830830000000003,
-          5.338583
+          3.9437079999999995,
+          4.864291,
+          5.105250000000001
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 1.4617870045621861
+        "std_ms": 0.5005235167451069
       },
       "work": {
         "batched_cases": 1,
@@ -6618,7 +6618,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.918845833
+        "seconds": 0.780874375
       },
       "dimensions": {
         "case_shape": [],
@@ -6720,7 +6720,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.756377416
+        "seconds": 0.610108666
       },
       "memory": {
         "compiler_argument_bytes": 45120,
@@ -6735,17 +6735,17 @@
       "name": "noise-6",
       "run": {
         "count": 3,
-        "max_ms": 8.211666,
-        "mean_ms": 5.222471666666666,
-        "median_ms": 4.005291000000001,
-        "min_ms": 3.450458,
+        "max_ms": 3.8021249999999998,
+        "mean_ms": 3.372388666666667,
+        "median_ms": 3.551708,
+        "min_ms": 2.7633330000000003,
         "samples_ms": [
-          4.005291000000001,
-          8.211666,
-          3.450458
+          3.551708,
+          2.7633330000000003,
+          3.8021249999999998
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 2.1257817364123297
+        "std_ms": 0.44263511857686505
       },
       "work": {
         "batched_cases": 1,
@@ -7311,7 +7311,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 1.264829292
+        "seconds": 1.034683125
       },
       "dimensions": {
         "case_shape": [
@@ -7424,7 +7424,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.988652584
+        "seconds": 0.915651916
       },
       "memory": {
         "compiler_argument_bytes": 308736,
@@ -7439,17 +7439,17 @@
       "name": "cases-8",
       "run": {
         "count": 3,
-        "max_ms": 6.387708,
-        "mean_ms": 5.591375,
-        "median_ms": 5.45425,
-        "min_ms": 4.932167000000001,
+        "max_ms": 8.550208999999999,
+        "mean_ms": 7.911611333333333,
+        "median_ms": 7.874249999999999,
+        "min_ms": 7.310375,
         "samples_ms": [
-          6.387708,
-          5.45425,
-          4.932167000000001
+          7.874249999999999,
+          7.310375,
+          8.550208999999999
         ],
         "scope": "synchronized compiled feedback-Nash solve",
-        "std_ms": 0.6020810299226063
+        "std_ms": 0.5068490826076554
       },
       "work": {
         "batched_cases": 8,

@@ -276,7 +276,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.258743083
+        "seconds": 0.253378625
       },
       "dimensions": {
         "case_shape": [],
@@ -370,7 +370,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.414243042
+        "seconds": 0.409276708
       },
       "memory": {
         "compiler_argument_bytes": 27840,
@@ -385,17 +385,17 @@
       "name": "baseline",
       "run": {
         "count": 3,
-        "max_ms": 1.016458,
-        "mean_ms": 0.9140693333333333,
-        "median_ms": 0.9472499999999999,
-        "min_ms": 0.7785,
+        "max_ms": 0.951417,
+        "mean_ms": 0.887042,
+        "median_ms": 0.948167,
+        "min_ms": 0.761542,
         "samples_ms": [
-          1.016458,
-          0.9472499999999999,
-          0.7785
+          0.951417,
+          0.948167,
+          0.761542
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.09993904782860849
+        "std_ms": 0.08875181923018062
       },
       "work": {
         "batched_cases": 1,
@@ -679,7 +679,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.254691125
+        "seconds": 0.262366125
       },
       "dimensions": {
         "case_shape": [],
@@ -773,7 +773,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.286416959
+        "seconds": 0.254771958
       },
       "memory": {
         "compiler_argument_bytes": 7776,
@@ -788,17 +788,17 @@
       "name": "horizon-4",
       "run": {
         "count": 3,
-        "max_ms": 0.712291,
-        "mean_ms": 0.664597,
-        "median_ms": 0.6521250000000001,
-        "min_ms": 0.629375,
+        "max_ms": 0.693375,
+        "mean_ms": 0.6183193333333333,
+        "median_ms": 0.6727080000000001,
+        "min_ms": 0.48887500000000006,
         "samples_ms": [
-          0.6521250000000001,
-          0.712291,
-          0.629375
+          0.6727080000000001,
+          0.693375,
+          0.48887500000000006
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.034980269219470936
+        "std_ms": 0.0919190143417321
       },
       "work": {
         "batched_cases": 1,
@@ -1082,7 +1082,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.339208333
+        "seconds": 0.311629833
       },
       "dimensions": {
         "case_shape": [],
@@ -1176,7 +1176,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.28235725
+        "seconds": 0.467451167
       },
       "memory": {
         "compiler_argument_bytes": 108096,
@@ -1191,17 +1191,17 @@
       "name": "horizon-64",
       "run": {
         "count": 3,
-        "max_ms": 1.721583,
-        "mean_ms": 1.6457500000000003,
-        "median_ms": 1.648833,
-        "min_ms": 1.566834,
+        "max_ms": 1.765833,
+        "mean_ms": 1.6556386666666665,
+        "median_ms": 1.675458,
+        "min_ms": 1.525625,
         "samples_ms": [
-          1.721583,
-          1.566834,
-          1.648833
+          1.675458,
+          1.765833,
+          1.525625
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.06321361623890853
+        "std_ms": 0.09906084088859508
       },
       "work": {
         "batched_cases": 1,
@@ -1485,7 +1485,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.241656542
+        "seconds": 0.203358334
       },
       "dimensions": {
         "case_shape": [],
@@ -1579,7 +1579,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.253744875
+        "seconds": 0.259557
       },
       "memory": {
         "compiler_argument_bytes": 11168,
@@ -1594,17 +1594,17 @@
       "name": "state-4",
       "run": {
         "count": 3,
-        "max_ms": 0.88475,
-        "mean_ms": 0.8201390000000001,
-        "median_ms": 0.8060419999999999,
-        "min_ms": 0.769625,
+        "max_ms": 1.0100829999999998,
+        "mean_ms": 0.8671386666666666,
+        "median_ms": 0.799708,
+        "min_ms": 0.791625,
         "samples_ms": [
-          0.8060419999999999,
-          0.88475,
-          0.769625
+          1.0100829999999998,
+          0.791625,
+          0.799708
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.04804501682797085
+        "std_ms": 0.10113075874442062
       },
       "work": {
         "batched_cases": 1,
@@ -1888,7 +1888,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.290674125
+        "seconds": 0.286363083
       },
       "dimensions": {
         "case_shape": [],
@@ -1982,7 +1982,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.282603
+        "seconds": 0.27505725
       },
       "memory": {
         "compiler_argument_bytes": 87296,
@@ -1997,17 +1997,17 @@
       "name": "state-16",
       "run": {
         "count": 3,
-        "max_ms": 1.029375,
-        "mean_ms": 0.9660553333333333,
-        "median_ms": 0.9757499999999999,
-        "min_ms": 0.893041,
+        "max_ms": 0.8095,
+        "mean_ms": 0.7378473333333333,
+        "median_ms": 0.729583,
+        "min_ms": 0.6744589999999999,
         "samples_ms": [
-          1.029375,
-          0.9757499999999999,
-          0.893041
+          0.8095,
+          0.729583,
+          0.6744589999999999
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.05607869357925123
+        "std_ms": 0.055439109687015105
       },
       "work": {
         "batched_cases": 1,
@@ -2291,7 +2291,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.280811333
+        "seconds": 0.249020459
       },
       "dimensions": {
         "case_shape": [],
@@ -2385,7 +2385,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.434087875
+        "seconds": 0.213112209
       },
       "memory": {
         "compiler_argument_bytes": 24256,
@@ -2400,17 +2400,17 @@
       "name": "control-2",
       "run": {
         "count": 3,
-        "max_ms": 0.7894589999999999,
-        "mean_ms": 0.6902223333333334,
-        "median_ms": 0.6693330000000001,
-        "min_ms": 0.6118750000000001,
+        "max_ms": 0.7522909999999999,
+        "mean_ms": 0.7499996666666666,
+        "median_ms": 0.751625,
+        "min_ms": 0.746083,
         "samples_ms": [
-          0.7894589999999999,
-          0.6693330000000001,
-          0.6118750000000001
+          0.7522909999999999,
+          0.751625,
+          0.746083
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.07398780282061505
+        "std_ms": 0.00278281599982619
       },
       "work": {
         "batched_cases": 1,
@@ -2694,7 +2694,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.250470708
+        "seconds": 0.233566292
       },
       "dimensions": {
         "case_shape": [],
@@ -2788,7 +2788,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.196445167
+        "seconds": 0.217248833
       },
       "memory": {
         "compiler_argument_bytes": 38080,
@@ -2803,17 +2803,17 @@
       "name": "control-8",
       "run": {
         "count": 3,
-        "max_ms": 1.0145,
-        "mean_ms": 0.9753333333333334,
-        "median_ms": 0.993,
-        "min_ms": 0.9185000000000001,
+        "max_ms": 1.0699159999999999,
+        "mean_ms": 1.0348053333333334,
+        "median_ms": 1.055125,
+        "min_ms": 0.979375,
         "samples_ms": [
-          0.993,
-          1.0145,
-          0.9185000000000001
+          0.979375,
+          1.0699159999999999,
+          1.055125
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.04113460289774961
+        "std_ms": 0.03965757439492344
       },
       "work": {
         "batched_cases": 1,
@@ -3097,7 +3097,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.270961083
+        "seconds": 0.261392375
       },
       "dimensions": {
         "case_shape": [],
@@ -3191,7 +3191,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.124702
+        "seconds": 0.122805084
       },
       "memory": {
         "compiler_argument_bytes": 24768,
@@ -3206,17 +3206,17 @@
       "name": "noise-1",
       "run": {
         "count": 3,
-        "max_ms": 0.746625,
-        "mean_ms": 0.7213609999999999,
-        "median_ms": 0.715208,
-        "min_ms": 0.7022499999999999,
+        "max_ms": 0.712209,
+        "mean_ms": 0.6959026666666667,
+        "median_ms": 0.697791,
+        "min_ms": 0.677708,
         "samples_ms": [
-          0.7022499999999999,
-          0.715208,
-          0.746625
+          0.712209,
+          0.697791,
+          0.677708
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.01863115156576929
+        "std_ms": 0.014148123605466405
       },
       "work": {
         "batched_cases": 1,
@@ -3500,7 +3500,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.2685525
+        "seconds": 0.253282542
       },
       "dimensions": {
         "case_shape": [],
@@ -3594,7 +3594,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.125908542
+        "seconds": 0.113048084
       },
       "memory": {
         "compiler_argument_bytes": 40000,
@@ -3609,17 +3609,17 @@
       "name": "noise-8",
       "run": {
         "count": 3,
-        "max_ms": 0.902041,
-        "mean_ms": 0.8363606666666666,
-        "median_ms": 0.8052079999999999,
-        "min_ms": 0.8018329999999999,
+        "max_ms": 0.9257920000000001,
+        "mean_ms": 0.8576389999999999,
+        "median_ms": 0.913875,
+        "min_ms": 0.73325,
         "samples_ms": [
-          0.902041,
-          0.8052079999999999,
-          0.8018329999999999
+          0.9257920000000001,
+          0.913875,
+          0.73325
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.04646344295130196
+        "std_ms": 0.08809075325291907
       },
       "work": {
         "batched_cases": 1,
@@ -3962,7 +3962,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.424264375
+        "seconds": 0.349220458
       },
       "dimensions": {
         "case_shape": [
@@ -4067,7 +4067,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.424756916
+        "seconds": 0.402909792
       },
       "memory": {
         "compiler_argument_bytes": 222720,
@@ -4082,17 +4082,17 @@
       "name": "cases-8",
       "run": {
         "count": 3,
-        "max_ms": 1.919459,
-        "mean_ms": 1.87532,
-        "median_ms": 1.900084,
-        "min_ms": 1.806417,
+        "max_ms": 2.011708,
+        "mean_ms": 1.9419303333333333,
+        "median_ms": 1.938833,
+        "min_ms": 1.8752499999999999,
         "samples_ms": [
-          1.919459,
-          1.806417,
-          1.900084
+          1.8752499999999999,
+          2.011708,
+          1.938833
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.04935966783383648
+        "std_ms": 0.05575178051765609
       },
       "work": {
         "batched_cases": 8,
@@ -4459,7 +4459,7 @@
       },
       "compile": {
         "scope": "lowered JAX executable compilation",
-        "seconds": 0.359693291
+        "seconds": 0.357962541
       },
       "dimensions": {
         "case_shape": [
@@ -4564,7 +4564,7 @@
       },
       "lower": {
         "scope": "eqx-filter-jit host lowering",
-        "seconds": 0.451400417
+        "seconds": 0.420378583
       },
       "memory": {
         "compiler_argument_bytes": 890880,
@@ -4579,17 +4579,17 @@
       "name": "cases-32",
       "run": {
         "count": 3,
-        "max_ms": 5.812708,
-        "mean_ms": 5.682208,
-        "median_ms": 5.672041,
-        "min_ms": 5.561875,
+        "max_ms": 5.814125,
+        "mean_ms": 5.689333333333333,
+        "median_ms": 5.651459,
+        "min_ms": 5.602416,
         "samples_ms": [
-          5.672041,
-          5.812708,
-          5.561875
+          5.602416,
+          5.651459,
+          5.814125
         ],
         "scope": "synchronized compiled solve",
-        "std_ms": 0.10265419098117722
+        "std_ms": 0.09048397285093575
       },
       "work": {
         "batched_cases": 32,
