@@ -9,8 +9,9 @@ from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ._channels import FiniteCPTPMap
@@ -101,7 +102,7 @@ def _quality_from_choi(
     choi4 = effective_choi.reshape(dimension, dimension, dimension, dimension)
     trace_sum = jnp.real(jnp.trace(effective_choi))
     target_overlap = jnp.real(
-        oe.contract("ol,olpm,pm->", jnp.conj(target), choi4, target)
+        ein.contract("ol,olpm,pm->", jnp.conj(target), choi4, target)
     )
     survival = trace_sum / dimension
     average = (trace_sum + target_overlap) / (dimension * (dimension + 1))
@@ -249,7 +250,7 @@ def finite_channel_gate_quality(
         channel.output_dimension,
         channel.input_dimension,
     )
-    effective4 = oe.contract(
+    effective4 = ein.contract(
         "ao,il,aibj,bp,jm->olpm",
         jnp.conj(output_isometry),
         input_isometry,
@@ -346,14 +347,14 @@ def coherent_pauli_expansion(
         basis = [jnp.kron(left, right) for left in basis for right in one_qubit]
     basis_array = jnp.stack(basis)
     coefficients = (
-        oe.contract(
+        ein.contract(
             "kab,ab->k",
             jnp.conj(basis_array),
             value,
         )
         / dimension
     )
-    reconstruction = oe.contract("k,kab->ab", coefficients, basis_array)
+    reconstruction = ein.contract("k,kab->ab", coefficients, basis_array)
     residual = jnp.max(jnp.abs(reconstruction - value))
     weights = jnp.real(coefficients * jnp.conj(coefficients))
     finite = jnp.all(jnp.isfinite(coefficients)) & jnp.isfinite(residual)

@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -249,9 +250,9 @@ def recolour_populations(
     density = red + blue
     safe_density = jnp.maximum(density, floor)
     velocities = jnp.asarray(velocity_set.velocities, dtype=populations.dtype)
-    speed = jnp.sqrt(oe.contract("qd,qd->q", velocities, velocities))
+    speed = jnp.sqrt(ein.contract("qd,qd->q", velocities, velocities))
     direction = velocities / jnp.where(speed > 0.0, speed, 1.0)[:, None]
-    cosine = oe.contract("...d,qd->...q", normal, direction)
+    cosine = ein.contract("...d,qd->...q", normal, direction)
     weights = jnp.asarray(velocity_set.weights, dtype=populations.dtype)
     segregation = beta * (red * blue / safe_density)[..., None] * weights * cosine
     red_fraction = red / safe_density
@@ -361,7 +362,7 @@ class PreparedColourGradientLBMDynamics(StrictModule, NonTrainableState):
             raise ValueError("wall_normal must contain one vector per lattice cell.")
         mask = parameters.wetting_mask
         wall = jnp.asarray(parameters.wall_normal, dtype=dtype)
-        norm = jnp.sqrt(oe.contract("...d,...d->...", wall, wall))
+        norm = jnp.sqrt(ein.contract("...d,...d->...", wall, wall))
         normal_valid = jnp.all(jnp.isfinite(wall), axis=-1) & (norm > 0.0)
         fallback = jnp.zeros_like(wall).at[..., 0].set(1.0)
         safe_wall = jnp.where((~mask | normal_valid)[..., None], wall, fallback)
@@ -560,7 +561,7 @@ class PreparedColourGradientLBMDynamics(StrictModule, NonTrainableState):
         velocities = jnp.asarray(
             self.discretization.velocity_set.velocities, dtype=total.dtype
         )
-        momentum_closure = oe.contract("...q,qd->...d", closure, velocities)
+        momentum_closure = ein.contract("...q,qd->...d", closure, velocities)
         return RecolouringConservation(
             jnp.max(jnp.abs(red_moment - red_density)),
             jnp.max(jnp.abs(blue_moment - blue_density)),
@@ -579,7 +580,7 @@ class PreparedColourGradientLBMDynamics(StrictModule, NonTrainableState):
         /,
     ) -> ColourGradientDiagnostics:
         fluid = self.boundary.geometry.fluid_mask
-        speed = jnp.sqrt(oe.contract("...d,...d->...", fields.velocity, fields.velocity))
+        speed = jnp.sqrt(ein.contract("...d,...d->...", fields.velocity, fields.velocity))
         cs = jnp.sqrt(
             jnp.asarray(
                 self.discretization.velocity_set.sound_speed_squared,

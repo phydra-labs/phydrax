@@ -13,9 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
 from .._frozendict import frozendict
@@ -725,7 +725,7 @@ def trajectory_node_feynman_kac_labels(
             (path_count, paths.num_steps, noise_size)
         )
         dt = jnp.diff(paths.times)
-        interval_controls = oe.contract(
+        interval_controls = ein.contract(
             "pto,ptn->pton",
             target_flat,
             increments,
@@ -939,7 +939,7 @@ def sample_feynman_kac_paths(
 
         drift, diffusion = jax.vmap(coefficients)(point_times, flat_states)
         flat_increment = noise_increment.reshape((-1, noise_size))
-        diffusion_action = oe.contract(
+        diffusion_action = ein.contract(
             "psn,pn->ps",
             diffusion.reshape((-1, state_size, noise_size)),
             flat_increment,
@@ -1121,7 +1121,7 @@ def query_feynman_kac_labels(
         )
         dt0 = paths.times[:, 1] - paths.times[:, 0]
         safe_dt = jnp.where(nonterminal, dt0, 1.0)
-        samples = oe.contract(
+        samples = ein.contract(
             "qpo,qpn->qpon",
             next_values,
             first_increment,
@@ -1167,7 +1167,7 @@ def query_feynman_kac_labels(
             )
         baseline = _terminal_values(problem, q_states)
         centered = value_samples - baseline[:, None]
-        samples = oe.contract(
+        samples = ein.contract(
             "qpo,qpn->qpon",
             centered.reshape((q_times.shape[0], paths.num_paths, -1)),
             flat_weights.reshape((q_times.shape[0], paths.num_paths, -1)),

@@ -12,7 +12,12 @@ from jaxtyping import Array, Key
 
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..metrics import operator_l2_loss
-from ._losses import AbstractOperatorLossTerm, OperatorLossContext
+from ._losses import (
+    _weighted_case_reduction,
+    AbstractOperatorLossTerm,
+    OperatorAccumulationKind,
+    OperatorLossContext,
+)
 
 
 @dataclass(frozen=True)
@@ -51,14 +56,19 @@ class TargetOperatorConsistencyLoss(AbstractOperatorLossTerm):
         if current.query_name != target.query_name:
             raise ValueError("Target/current operator fields use different queries.")
         query = context.physical_batch.query(current.query_name)
-        value = operator_l2_loss(
+        case_values = operator_l2_loss(
             current.values,
             jnp.asarray(target.values),
             query,
             squared=True,
-            reduction="mean",
+            reduction="none",
         )
+        value = _weighted_case_reduction(case_values, context, "mean")
         return jnp.asarray(self.weight, dtype=value.dtype) * value
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean"
 
     @property
     def fingerprint(self) -> str:

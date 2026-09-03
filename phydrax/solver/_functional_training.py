@@ -579,6 +579,7 @@ class FunctionalTrainingState(StrictModule):
     previous_gradient: PyTree[Any] | None
     progress: TrainingProgress = eqx.field(static=True)
     run_id: str = eqx.field(static=True)
+    gradient_accumulation: int = eqx.field(static=True)
     training_seconds: float = eqx.field(static=True)
     resumed_from_step: int = eqx.field(static=True)
 
@@ -591,6 +592,7 @@ class FunctionalTrainingState(StrictModule):
         key: Key[Array, ""],
         progress: TrainingProgress,
         run_id: str,
+        gradient_accumulation: int = 1,
         target_state: TargetParameterState | None = None,
         enforcement_state: EnforcementState | None = None,
         previous_functions: PyTree[Any] | None = None,
@@ -613,7 +615,14 @@ class FunctionalTrainingState(StrictModule):
         identifier = str(run_id)
         seconds = float(training_seconds)
         resumed = int(resumed_from_step)
-        if not identifier or not isfinite(seconds) or seconds < 0.0 or resumed < 0:
+        accumulation = int(gradient_accumulation)
+        if (
+            not identifier
+            or not isfinite(seconds)
+            or seconds < 0.0
+            or resumed < 0
+            or accumulation <= 0
+        ):
             raise ValueError("Functional training state metadata is invalid.")
         self.current_functions = current_functions
         self.best_functions = best_functions
@@ -629,6 +638,7 @@ class FunctionalTrainingState(StrictModule):
         self.previous_gradient = previous_gradient
         self.progress = progress
         self.run_id = identifier
+        self.gradient_accumulation = accumulation
         self.training_seconds = seconds
         self.resumed_from_step = resumed
 

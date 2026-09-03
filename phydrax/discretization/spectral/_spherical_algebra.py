@@ -12,9 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 from s2fft.recursions.risbo_jax import compute_full as _wigner_small_d
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -230,7 +231,7 @@ class PreparedSphericalRotation(StrictModule, NonTrainableState):
             active = slice(offset - degree, offset + degree + 1)
             block = flattened_matrices[:, degree, active, active]
             values = payload[degree, active, :]
-            rotated = oe.contract("bmn,nc->bmc", block, values, backend="jax")
+            rotated = ein.contract("bmn,nc->bmc", block, values, backend="jax")
             output = output.at[:, degree, active, :].set(rotated)
         output = output.reshape(
             angle_shape + layout.coefficient_shape + (payload.shape[-1],)
@@ -433,7 +434,7 @@ class PreparedSphericalClebschGordan(StrictModule, NonTrainableState):
             raise ValueError("Spherical CG action currently accepts scalar modal fields.")
         left_flat = left.reshape((-1,))
         right_flat = right.reshape((-1,))
-        coupled = oe.contract(
+        coupled = ein.contract(
             "k,k,k->k",
             self.weights.astype(jnp.result_type(left.dtype, right.dtype)),
             left_flat[self.left_indices],

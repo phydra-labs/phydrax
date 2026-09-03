@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -186,18 +187,18 @@ def _sample_core_frame(
     def one(point):
         left = jnp.ones((1,), dtype=tensor.dtype)
         for position in range(axis):
-            left = oe.contract(
+            left = ein.contract(
                 "a,ab->b", left, tensor.cores[position][:, point[position], :]
             )
         right = jnp.ones((1,), dtype=tensor.dtype)
         for position in range(tensor.order - 1, axis, -1):
-            right = oe.contract(
+            right = ein.contract(
                 "ab,b->a", tensor.cores[position][:, point[position], :], right
             )
         physical = jax.nn.one_hot(
             point[axis], tensor.mode_sizes[axis], dtype=tensor.dtype
         )
-        return oe.contract("a,i,b->aib", left, physical, right).reshape((-1,))
+        return ein.contract("a,i,b->aib", left, physical, right).reshape((-1,))
 
     return jax.vmap(one)(indices)
 

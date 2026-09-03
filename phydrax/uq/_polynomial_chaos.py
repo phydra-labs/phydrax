@@ -15,9 +15,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax.domain import ProbabilityDomain, ProductDomain
 from phydrax.integration import (
     FixedQuadraturePlan,
@@ -1138,7 +1138,7 @@ def _contract_basis(basis_values: Array, coefficients: Array, /) -> Array:
     mode = input_rank + output_rank
     input_axes = list(range(input_rank))
     output_axes = list(range(input_rank, input_rank + output_rank))
-    return oe.contract(
+    return ein.contract(
         basis_values,
         input_axes + [mode],
         coefficients,
@@ -1153,7 +1153,7 @@ def _coefficient_energy(coefficients: Array, /) -> Array:
     mode = coefficients.ndim - 1
     output_axes = list(range(mode))
     return jnp.real(
-        oe.contract(
+        ein.contract(
             jnp.conj(coefficients),
             [mode] + output_axes,
             coefficients,
@@ -1167,7 +1167,7 @@ def _project_leaf(weights: Array, basis: Array, values: Array, /) -> Array:
     output_rank = values.ndim - 1
     mode = output_rank + 1
     output_axes = list(range(1, output_rank + 1))
-    return oe.contract(
+    return ein.contract(
         weights,
         [0],
         basis,
@@ -1182,7 +1182,7 @@ def _contract_design(design: Array, coefficients: Array, /) -> Array:
     output_rank = coefficients.ndim - 1
     output_axes = list(range(1, output_rank + 1))
     mode = output_rank + 1
-    return oe.contract(
+    return ein.contract(
         design,
         [0, mode],
         coefficients,

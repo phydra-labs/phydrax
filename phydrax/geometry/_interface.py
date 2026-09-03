@@ -8,8 +8,9 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 
@@ -155,7 +156,7 @@ def _directed_nearest_distances(
         stop = min(start + chunk_size, int(source.shape[-2]))
         block = source[..., start:stop, :]
         block_square = jnp.sum(block * block, axis=-1, keepdims=True)
-        cross = oe.contract("...id,...jd->...ij", block, target)
+        cross = ein.contract("...id,...jd->...ij", block, target)
         squared = jnp.maximum(
             block_square + target_square[..., None, :] - 2.0 * cross,
             0.0,
@@ -243,7 +244,7 @@ def phase_geometry_metrics(
     safe_points = _checked_active_points(points, active, "phase coordinates")
     effective = jnp.where(active, fraction * weights, 0.0)
     measure = jnp.sum(effective, axis=-1)
-    numerator = oe.contract("...n,...nd->...d", effective, safe_points)
+    numerator = ein.contract("...n,...nd->...d", effective, safe_points)
     defined = measure > 0.0
     safe_measure = jnp.where(defined, measure, 1.0)
     centroid = numerator / safe_measure[..., None]

@@ -772,13 +772,14 @@ def validate_operator_contract(
         if field.is_source:
             assert field.source_name is not None
             if field.source_name not in batch.inputs:
-                issues.append(
-                    _issue(
-                        "UNKNOWN_SOURCE_REPRESENTATION",
-                        f"field was bound to unknown input {field.source_name!r}",
-                        field.source_name,
+                if field.required:
+                    issues.append(
+                        _issue(
+                            "UNKNOWN_SOURCE_REPRESENTATION",
+                            f"field was bound to unknown input {field.source_name!r}",
+                            field.source_name,
+                        )
                     )
-                )
             else:
                 bound_samples.append((field.source_name, batch.input(field.source_name)))
                 if field.representation not in capability.input_representations:

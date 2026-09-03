@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, RowRelation, SparseLinearMap, SparseRelation
 from ._core import nonempty_identifier, resolved_identifier
+from .spatial._dyadic import DyadicCellTopology
 
 
 def _array_digest(value: object, /) -> dict[str, object]:
@@ -588,12 +589,15 @@ class PointTopology(StrictModule, NonTrainableState):
         )
 
 
-DiscreteTopology: TypeAlias = TensorTopology | CellComplexTopology | PointTopology
+DiscreteTopology: TypeAlias = (
+    TensorTopology | CellComplexTopology | PointTopology | DyadicCellTopology
+)
 
 
 __all__ = [
     "CellComplexTopology",
     "DiscreteTopology",
+    "DyadicCellTopology",
     "EntitySet",
     "EntitySubset",
     "OrientedIncidence",

@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
@@ -242,7 +243,7 @@ class WeightSpaceRecurrence(StrictModule):
             ),
             previous_input,
         )
-        additions = oe.contract(
+        additions = ein.contract(
             "pi,...ti->...tp",
             self.input_weight.astype(compute_dtype),
             drives,

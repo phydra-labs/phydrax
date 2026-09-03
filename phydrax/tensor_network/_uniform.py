@@ -10,8 +10,9 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -200,7 +201,7 @@ def uniform_cell_transfer_matrix(state: UniformMatrixProductState, /) -> Array:
     bond = state.bond_dimension
     transfer = jnp.eye(bond * bond, dtype=state.tensors[0].dtype)
     for tensor in state.precision.accumulation(state.tensors):
-        local = oe.contract("apr,bps->abrs", jnp.conj(tensor), tensor).reshape(
+        local = ein.contract("apr,bps->abrs", jnp.conj(tensor), tensor).reshape(
             (bond * bond, bond * bond)
         )
         transfer = transfer @ local

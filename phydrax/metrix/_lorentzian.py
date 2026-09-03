@@ -8,8 +8,9 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._chart import CoordinateChart
@@ -88,8 +89,8 @@ def _assemble_adm_matrix(
     convention: LorentzianConvention,
     /,
 ) -> Array:
-    shift_covector = oe.contract("...ij,...j->...i", spatial_metric, shift)
-    time_time = -(lapse**2) + oe.contract(
+    shift_covector = ein.contract("...ij,...j->...i", spatial_metric, shift)
+    time_time = -(lapse**2) + ein.contract(
         "...i,...i->...",
         shift,
         shift_covector,

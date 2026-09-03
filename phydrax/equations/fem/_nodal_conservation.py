@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -333,7 +334,7 @@ def _edge_coordinate_trace(
     )
     physical_points = np.asarray(basis) @ coordinates
     reference_tangent = stop - start
-    physical_tangent = oe.contract(
+    physical_tangent = ein.contract(
         "qid,d,ia->qa",
         np.asarray(gradients),
         reference_tangent,
@@ -610,7 +611,7 @@ def _periodic_trace_routes(
         mapped_owner = np.asarray(
             pair.transform.map_coordinates(jnp.asarray(owner_physical))
         )
-        mapped_tangent = oe.contract(
+        mapped_tangent = ein.contract(
             "ij,qj->qi",
             np.asarray(pair.transform.coordinate_matrix),
             owner_tangent,
@@ -746,7 +747,7 @@ def _hybrid_boundary_routes(
             coordinates = discretization.default_runtime.coordinates[
                 coordinate_routes[local_cell]
             ]
-            physical_points = oe.contract(
+            physical_points = ein.contract(
                 "qi,id->qd", coordinate_basis, coordinates, backend="jax"
             )
             physical_weights = jnp.ones((1,), dtype=physical_points.dtype)
@@ -1231,7 +1232,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 ),
                 axis=-1,
             )
-            return -oe.contract(
+            return -ein.contract(
                 "cq,cqid,cqvd->civ",
                 physical_weights,
                 test_gradients,
@@ -1347,7 +1348,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 )
                 if source_values.shape != values[0].shape:
                     raise ValueError("Nodal DG source must match quadrature state shape.")
-                return -oe.contract(
+                return -ein.contract(
                     "cq,cqv,qi->civ",
                     physical_weights,
                     source_values,
@@ -1480,13 +1481,13 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     ) -> Array:
         residual = jnp.zeros_like(state)
         for route in self.three_dimensional_interface_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 state[route.owner_dofs],
                 backend="jax",
             )
-            minus = oe.contract(
+            minus = ein.contract(
                 "qi,iv->qv",
                 route.neighbour_basis,
                 state[route.neighbour_dofs],
@@ -1509,14 +1510,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 neighbour_flux = -numerical + self.system.physical_normal_flux(
                     minus, route.normal, context.user_args
                 )
-            owner = oe.contract(
+            owner = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
                 route.owner_basis,
                 owner_flux,
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
                 route.neighbour_basis,
@@ -1589,7 +1590,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 context.runtime.coordinates[coordinate_routes],
                 jnp.ones((element.local_dof_count,), dtype=state.dtype),
             )
-            raw = oe.contract(
+            raw = ein.contract(
                 "cqid,civ->cqvd",
                 metric.physical_gradients(element.tabulate(element.reference_nodes)[1]),
                 state[routes],
@@ -1606,14 +1607,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             neighbour_vector = (common - minus)[..., :, None] * (
                 -route.normal[..., None, :]
             )
-            owner = oe.contract(
+            owner = ein.contract(
                 "iq,q,qvd->ivd",
                 route.mortar.left_raw_dual_pullback,
                 route.mortar.physical_weights,
                 owner_vector,
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "iq,q,qvd->ivd",
                 route.mortar.right_raw_dual_pullback,
                 route.mortar.physical_weights,
@@ -1623,19 +1624,19 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             correction_dual = correction_dual.at[route.owner_dofs].add(owner)
             correction_dual = correction_dual.at[route.neighbour_dofs].add(neighbour)
         for route in self.periodic_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 state[route.owner_dofs],
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "qi,iv->qv",
                 route.neighbour_basis,
                 state[route.neighbour_dofs],
                 backend="jax",
             )
-            minus = oe.contract(
+            minus = ein.contract(
                 "ji,qj->qi",
                 route.component_transform,
                 neighbour,
@@ -1646,21 +1647,21 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             neighbour_owner = (common - minus)[..., :, None] * (
                 -route.normal[..., None, :]
             )
-            neighbour_vector = oe.contract(
+            neighbour_vector = ein.contract(
                 "ab,qbd,ed->qae",
                 route.component_transform,
                 neighbour_owner,
                 route.coordinate_transform,
                 backend="jax",
             )
-            owner = oe.contract(
+            owner = ein.contract(
                 "q,qi,qvd->ivd",
                 route.physical_weights,
                 route.owner_basis,
                 owner_vector,
                 backend="jax",
             )
-            neighbour_correction = oe.contract(
+            neighbour_correction = ein.contract(
                 "q,qi,qvd->ivd",
                 route.physical_weights,
                 route.neighbour_basis,
@@ -1672,13 +1673,13 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 neighbour_correction
             )
         for route in self.three_dimensional_interface_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 state[route.owner_dofs],
                 backend="jax",
             )
-            minus = oe.contract(
+            minus = ein.contract(
                 "qi,iv->qv",
                 route.neighbour_basis,
                 state[route.neighbour_dofs],
@@ -1689,14 +1690,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             neighbour_vector = (common - minus)[..., :, None] * (
                 -route.normal[..., None, :]
             )
-            owner = oe.contract(
+            owner = ein.contract(
                 "q,qi,qvd->ivd",
                 route.physical_weights,
                 route.owner_basis,
                 owner_vector,
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "q,qi,qvd->ivd",
                 route.physical_weights,
                 route.neighbour_basis,
@@ -1710,7 +1711,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 raise ValueError(
                     "Viscous DG requires boundary state and gradient traces."
                 )
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 state[route.owner_dofs],
@@ -1732,7 +1733,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 plus - trace.viscous_state_trace
             )
             vector = (common - plus)[..., :, None] * route.normal[..., None, :]
-            local = oe.contract(
+            local = ein.contract(
                 "q,qi,qvd->ivd",
                 route.physical_weights,
                 route.owner_basis,
@@ -1766,20 +1767,20 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 data.points,
                 data.weights,
             )
-            values = oe.contract(
+            values = ein.contract(
                 "qi,civ->cqv",
                 geometry.basis_values,
                 state[routes],
                 backend="jax",
             )
-            gradients = oe.contract(
+            gradients = ein.contract(
                 "qi,civd->cqvd",
                 geometry.basis_values,
                 gradient[routes],
                 backend="jax",
             )
             flux = self.system.viscous_flux(values, gradients, context.user_args)
-            local = oe.contract(
+            local = ein.contract(
                 "cq,cqid,cqvd->civ",
                 geometry.physical_weights,
                 geometry.physical_gradients,
@@ -1817,14 +1818,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             common = viscous_common(
                 plus, minus, plus_gradient, minus_gradient, route.normal
             )
-            owner = oe.contract(
+            owner = ein.contract(
                 "iq,q,qv->iv",
                 route.mortar.left_raw_dual_pullback,
                 route.mortar.physical_weights,
                 -common,
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "iq,q,qv->iv",
                 route.mortar.right_raw_dual_pullback,
                 route.mortar.physical_weights,
@@ -1834,25 +1835,25 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             residual = residual.at[route.owner_dofs].add(owner)
             residual = residual.at[route.neighbour_dofs].add(neighbour)
         for route in self.three_dimensional_interface_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 state[route.owner_dofs],
                 backend="jax",
             )
-            minus = oe.contract(
+            minus = ein.contract(
                 "qi,iv->qv",
                 route.neighbour_basis,
                 state[route.neighbour_dofs],
                 backend="jax",
             )
-            plus_gradient = oe.contract(
+            plus_gradient = ein.contract(
                 "qi,ivd->qvd",
                 route.owner_basis,
                 gradient[route.owner_dofs],
                 backend="jax",
             )
-            minus_gradient = oe.contract(
+            minus_gradient = ein.contract(
                 "qi,ivd->qvd",
                 route.neighbour_basis,
                 gradient[route.neighbour_dofs],
@@ -1861,14 +1862,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             common = viscous_common(
                 plus, minus, plus_gradient, minus_gradient, route.normal
             )
-            owner = -oe.contract(
+            owner = -ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
                 route.owner_basis,
                 common,
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
                 route.neighbour_basis,
@@ -1878,13 +1879,13 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             residual = residual.at[route.owner_dofs].add(owner)
             residual = residual.at[route.neighbour_dofs].add(neighbour)
         for route in self.hybrid_boundary_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 state[route.owner_dofs],
                 backend="jax",
             )
-            plus_gradient = oe.contract(
+            plus_gradient = ein.contract(
                 "qi,ivd->qvd",
                 route.owner_basis,
                 gradient[route.owner_dofs],
@@ -1928,7 +1929,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 default_common,
                 context.user_args,
             )
-            local = -oe.contract(
+            local = -ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
                 route.owner_basis,
@@ -1943,13 +1944,13 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     ) -> Array:
         residual = jnp.zeros_like(state)
         for batch in self.mortar_batches:
-            plus = oe.contract(
+            plus = ein.contract(
                 "rqi,riv->rqv",
                 batch.left_interpolation,
                 state[batch.owner_dofs],
                 backend="jax",
             )
-            minus = oe.contract(
+            minus = ein.contract(
                 "rqi,riv->rqv",
                 batch.right_interpolation,
                 state[batch.neighbour_dofs],
@@ -1972,14 +1973,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 neighbour_flux = -flux + self.system.physical_normal_flux(
                     minus, batch.normal, context.user_args
                 )
-            owner = oe.contract(
+            owner = ein.contract(
                 "riq,rq,rqv->riv",
                 batch.left_dual_pullback,
                 batch.physical_weights,
                 owner_flux,
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "riq,rq,rqv->riv",
                 batch.right_dual_pullback,
                 batch.physical_weights,
@@ -1995,19 +1996,19 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     ) -> Array:
         residual = jnp.zeros_like(state)
         for route in self.periodic_routes:
-            owner_state = oe.contract(
+            owner_state = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 state[route.owner_dofs],
                 backend="jax",
             )
-            neighbour_state = oe.contract(
+            neighbour_state = ein.contract(
                 "qi,iv->qv",
                 route.neighbour_basis,
                 state[route.neighbour_dofs],
                 backend="jax",
             )
-            neighbour_in_owner_frame = oe.contract(
+            neighbour_in_owner_frame = ein.contract(
                 "ji,qj->qi",
                 route.component_transform,
                 neighbour_state,
@@ -2021,7 +2022,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                     route.normal,
                     context.user_args,
                 ).normal_flux
-                neighbour_flux = -oe.contract(
+                neighbour_flux = -ein.contract(
                     "ij,qj->qi",
                     route.component_transform,
                     owner_flux,
@@ -2043,20 +2044,20 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                     route.normal,
                     context.user_args,
                 )
-                neighbour_flux = oe.contract(
+                neighbour_flux = ein.contract(
                     "ij,qj->qi",
                     route.component_transform,
                     neighbour_correction,
                     backend="jax",
                 )
-            owner = oe.contract(
+            owner = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
                 route.owner_basis,
                 owner_flux,
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
                 route.neighbour_basis,
@@ -2072,7 +2073,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     ) -> Array:
         residual = jnp.zeros_like(state)
         for batch in self.boundary_batches:
-            plus = oe.contract(
+            plus = ein.contract(
                 "rqi,riv->rqv",
                 batch.owner_basis,
                 state[batch.owner_dofs],
@@ -2106,7 +2107,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 flux = flux - self.system.physical_normal_flux(
                     plus, batch.normal, context.user_args
                 )
-            local = oe.contract(
+            local = ein.contract(
                 "rq,rqi,rqv->riv",
                 batch.physical_weights,
                 batch.owner_basis,
@@ -2199,7 +2200,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             speeds.append(result.max_speed)
             weights.append(physical_weights)
             integrated.append(
-                oe.contract(
+                ein.contract(
                     "q,qv->v",
                     physical_weights,
                     result.normal_flux,
@@ -2212,19 +2213,19 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             kinds.append("mortar")
             identifiers.append(route.route_id)
         for route in self.periodic_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 value[route.owner_dofs],
                 backend="jax",
             )
-            neighbour = oe.contract(
+            neighbour = ein.contract(
                 "qi,iv->qv",
                 route.neighbour_basis,
                 value[route.neighbour_dofs],
                 backend="jax",
             )
-            minus = oe.contract(
+            minus = ein.contract(
                 "ji,qj->qi",
                 route.component_transform,
                 neighbour,
@@ -2237,7 +2238,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             speeds.append(result.max_speed)
             weights.append(route.physical_weights)
             integrated.append(
-                oe.contract(
+                ein.contract(
                     "q,qv->v",
                     route.physical_weights,
                     result.normal_flux,
@@ -2250,13 +2251,13 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             kinds.append("periodic")
             identifiers.append(route.route_id)
         for route in self.three_dimensional_interface_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 value[route.owner_dofs],
                 backend="jax",
             )
-            minus = oe.contract(
+            minus = ein.contract(
                 "qi,iv->qv",
                 route.neighbour_basis,
                 value[route.neighbour_dofs],
@@ -2269,7 +2270,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             speeds.append(result.max_speed)
             weights.append(route.physical_weights)
             integrated.append(
-                oe.contract(
+                ein.contract(
                     "q,qv->v",
                     route.physical_weights,
                     result.normal_flux,
@@ -2282,7 +2283,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             kinds.append("conforming")
             identifiers.append(route.route_id)
         for route in self.hybrid_boundary_routes:
-            plus = oe.contract(
+            plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
                 value[route.owner_dofs],
@@ -2321,7 +2322,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             speeds.append(signal_speed)
             weights.append(route.physical_weights)
             integrated.append(
-                oe.contract(
+                ein.contract(
                     "q,qv->v",
                     route.physical_weights,
                     normal_flux,
@@ -2340,7 +2341,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                     for direction in range(route.normal.shape[-1])
                 )
                 numerical_entropy = (
-                    oe.contract("qv,qv->q", variables, normal_flux, backend="jax")
+                    ein.contract("qv,qv->q", variables, normal_flux, backend="jax")
                     - potential
                 )
                 contract = self.method.entropy_stability.boundary_contract(
@@ -2446,10 +2447,10 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         ):
             local_value = value[routes]
             local_rate = rate[routes]
-            weighted_value = oe.contract(
+            weighted_value = ein.contract(
                 "cij,cjv->civ", matrices, local_value, backend="jax"
             )
-            weighted_rate = oe.contract(
+            weighted_rate = ein.contract(
                 "cij,cjv->civ", matrices, local_rate, backend="jax"
             )
             total_integral = total_integral + jnp.sum(weighted_value, axis=(0, 1))
@@ -2513,7 +2514,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 self.mass_inverse.mass_matrices,
                 strict=True,
             ):
-                weighted_source = oe.contract(
+                weighted_source = ein.contract(
                     "cij,cjv->civ",
                     matrices,
                     source_values[routes],

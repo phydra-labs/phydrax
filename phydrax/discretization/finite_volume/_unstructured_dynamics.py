@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
@@ -36,6 +37,7 @@ from ._coupling import (
     PreparedUnstructuredFiniteVolumeCoupling,
     UnstructuredFiniteVolumeCouplingPlan,
 )
+from ._dyadic import DyadicFiniteVolumeDiscretization
 from ._embedded_dynamics import (
     lower_embedded_stage_metrics,
     UnstructuredEmbeddedBoundarySet,
@@ -191,7 +193,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     """Single-device conservative dynamics over explicit unstructured faces."""
 
     system: Any
-    discretization: UnstructuredFiniteVolumeDiscretization
+    discretization: (
+        UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
+    )
     method: UnstructuredFiniteVolumeMethodPlan
     boundaries: UnstructuredFiniteVolumeBoundarySet
     coupling: PreparedUnstructuredFiniteVolumeCoupling
@@ -213,7 +217,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     def __init__(
         self,
         system: Any,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: (
+            UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
+        ),
         method: UnstructuredFiniteVolumeMethodPlan,
         boundaries: UnstructuredFiniteVolumeBoundarySet,
         /,
@@ -223,8 +229,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         precision: FiniteVolumePrecisionPolicy | None = None,
         coupling: PreparedUnstructuredFiniteVolumeCoupling | None = None,
     ):
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("discretization must be unstructured finite-volume geometry.")
+        if not isinstance(
+            discretization,
+            (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),
+        ):
+            raise TypeError(
+                "discretization must be explicit-face finite-volume geometry."
+            )
         if not isinstance(method, UnstructuredFiniteVolumeMethodPlan):
             raise TypeError("method must be UnstructuredFiniteVolumeMethodPlan.")
         if not isinstance(boundaries, UnstructuredFiniteVolumeBoundarySet):
@@ -1135,7 +1146,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             grid_velocity,
             args,
         )
-        integrated_face_flux = oe.contract(
+        integrated_face_flux = ein.contract(
             "fq,fqc->fc",
             measures_array,
             self.precision.reduction(normal_flux.normal_flux),
@@ -1374,7 +1385,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 jnp.zeros((), dtype=jnp.dtype(self.precision.reduction_dtype)),
             )
             weights = self.precision.reduction(geometry_block.quadrature_weights)
-            flux_rate = oe.contract(
+            flux_rate = ein.contract(
                 "fq,fqc->fc",
                 weights,
                 normal_flux,
@@ -1462,17 +1473,17 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 exterior_volume_flux_density = (
                     exterior_total_mass_flux / exterior_mixture_density
                 )
-                exterior_volume_flux = oe.contract(
+                exterior_volume_flux = ein.contract(
                     "fq,fq->f",
                     weights,
                     exterior_volume_flux_density,
                 )
-                exterior_mass0_flux = oe.contract(
+                exterior_mass0_flux = ein.contract(
                     "fq,fq->f",
                     weights,
                     exterior_alpha * exterior_rho0 * exterior_volume_flux_density,
                 )
-                exterior_alpha_flux = oe.contract(
+                exterior_alpha_flux = ein.contract(
                     "fq,fq->f",
                     weights,
                     exterior_alpha * exterior_volume_flux_density,
@@ -1502,7 +1513,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 cell_volume_divergence = cell_volume_divergence.at[safe_neighbour].add(
                     jnp.where(neighbour >= 0, -volume_flux, 0.0)
                 )
-            face_rate = oe.contract(
+            face_rate = ein.contract(
                 "fq,fq->f",
                 weights,
                 signal_speed,

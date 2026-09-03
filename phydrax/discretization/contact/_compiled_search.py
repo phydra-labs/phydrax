@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..spatial import morton_encode_integer
 from ._stencils import ContactStencilKind
 from ._surface import PreparedCollisionScene
 
@@ -221,7 +222,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         quantized = jnp.floor(
             jnp.clip(normalized, 0.0, 1.0) * maximum_code_coordinate
         ).astype(jnp.uint32)
-        codes = _morton_codes(quantized, self.morton_bits)
+        codes = morton_encode_integer(quantized, self.morton_bits)
         primitive_kind = jnp.concatenate(
             (
                 jnp.zeros((self.vertex_count,), dtype=jnp.int32),
@@ -230,7 +231,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             )
         )
         stable_id = jnp.arange(codes.size, dtype=jnp.int32)
-        order = jnp.lexsort((stable_id, primitive_kind, codes))
+        order = jnp.lexsort((stable_id, primitive_kind, codes)).astype(jnp.int32)
         sorted_codes = codes[order]
         duplicate_codes = jnp.sum(sorted_codes[1:] == sorted_codes[:-1], dtype=jnp.int32)
 
@@ -837,16 +838,6 @@ def _aabb_mask(first_min, first_max, second_min, second_max, radius):
         jnp.maximum(first_min - second_max, second_min - first_max),
     )
     return jnp.sum(delta * delta, axis=-1) <= radius * radius
-
-
-def _morton_codes(coordinates: Array, bits: int, /) -> Array:
-    dimension = int(coordinates.shape[1])
-    code = jnp.zeros((coordinates.shape[0],), dtype=jnp.uint32)
-    for bit in range(int(bits)):
-        for axis in range(dimension):
-            component = (coordinates[:, axis] >> bit) & jnp.uint32(1)
-            code = code | (component << (bit * dimension + axis))
-    return code
 
 
 def _balanced_morton_hierarchy(leaf_count: int, /):

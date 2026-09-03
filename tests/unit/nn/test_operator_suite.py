@@ -161,7 +161,10 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "WaveletNeuralOperator",
             "MultiwaveletOperator",
             "ManifoldSpectralOperator",
+            "ChemicalConditionalAffineOperator",
+            "ConditionalFunctionFrameFlowOperator",
             "CoordinateConditionedOperator",
+            "ConditionalFunctionFrameFlowOperator",
             "UPT",
             "CochainNeuralOperator",
             "ABUPT",
@@ -179,6 +182,7 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "KoopmanTemporalOperator",
             "GreenKernelOperator",
             "LatticeEquivariantCNO",
+            "OrthogonalEquivariantPointCNO",
             "WeightSpaceOperator",
         },
     }
@@ -370,9 +374,9 @@ def test_fno_rejects_nonincreasing_runtime_axes(axis):
         model((jnp.ones((4,)), axis))
 
 
-def test_spectral_resampling_preserves_constants_and_multiscale_shape():
+def test_signal_resampling_preserves_constants_and_multiscale_shape():
     values = jnp.ones((2, 15, 17, 3))
-    resized = phx.nn.operator.architectures.spectral_resample(values, (8, 9))
+    resized = phx.signal.fourier_resample(values, (8, 9), axes=(1, 2))
     assert resized.shape == (2, 8, 9, 3)
     assert jnp.allclose(resized, 1.0)
     layer = phx.nn.operator.architectures.MultiScaleSpectralConvND(

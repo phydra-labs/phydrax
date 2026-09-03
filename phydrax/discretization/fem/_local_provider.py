@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -132,15 +133,15 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         del runtime
         coefficients = jnp.asarray(local_coefficients)
         if self.basis_values.ndim == 2:
-            return oe.contract("qi,ci...->cq...", self.basis_values, coefficients)
-        return oe.contract("cqi,ci...->cq...", self.basis_values, coefficients)
+            return ein.contract("qi,ci...->cq...", self.basis_values, coefficients)
+        return ein.contract("cqi,ci...->cq...", self.basis_values, coefficients)
 
     def interpolate_transpose(self, runtime: object, values: ArrayLike, /) -> Array:
         del runtime
         values_ = jnp.asarray(values)
         if self.basis_values.ndim == 2:
-            return oe.contract("qi,cq...->ci...", self.basis_values, values_)
-        return oe.contract("cqi,cq...->ci...", self.basis_values, values_)
+            return ein.contract("qi,cq...->ci...", self.basis_values, values_)
+        return ein.contract("cqi,cq...->ci...", self.basis_values, values_)
 
     def reference_gradient(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -148,8 +149,8 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         del runtime
         coefficients = jnp.asarray(local_coefficients)
         if self.basis_gradients.ndim == 3:
-            return oe.contract("qir,ci...->cq...r", self.basis_gradients, coefficients)
-        return oe.contract("cqir,ci...->cq...r", self.basis_gradients, coefficients)
+            return ein.contract("qir,ci...->cq...r", self.basis_gradients, coefficients)
+        return ein.contract("cqir,ci...->cq...r", self.basis_gradients, coefficients)
 
     def reference_gradient_transpose(
         self, runtime: object, gradients: ArrayLike, /
@@ -157,8 +158,8 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         del runtime
         gradients_ = jnp.asarray(gradients)
         if self.basis_gradients.ndim == 3:
-            return oe.contract("qir,cq...r->ci...", self.basis_gradients, gradients_)
-        return oe.contract("cqir,cq...r->ci...", self.basis_gradients, gradients_)
+            return ein.contract("qir,cq...r->ci...", self.basis_gradients, gradients_)
+        return ein.contract("cqir,cq...r->ci...", self.basis_gradients, gradients_)
 
     def reference_hessian(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -268,8 +269,8 @@ class FiniteElementGeometryActions(LocalGeometryActions):
 
     def realize(self, runtime: object, /) -> LocalMetricResult:
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
-        points = oe.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
-        jacobian = oe.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
+        points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
+        jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
         inverse_result = inverse_small_linear(
             SmallLinearSolvePlan(jacobian.shape[-1]),
             jacobian,
@@ -329,7 +330,7 @@ class FiniteElementLocalProvider(StrictModule):
                 LocalVariationalOffer(
                     "prepared-local",
                     ("cell",),
-                    ("diffusion", "mass", "source"),
+                    ("diffusion", "tensor-diffusion", "mass", "source"),
                     ("value", "grad"),
                     ("value", "gradient"),
                     (

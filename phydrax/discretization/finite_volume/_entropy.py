@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
@@ -142,12 +143,12 @@ def _evaluate_finite_volume_entropy_diagnostics(
     policy.validate_state(state_)
     entropy_state = policy.flux(state_)
     entropy_variables = policy.reduction(pair.entropy_variables(entropy_state))
-    convective_density = oe.contract(
+    convective_density = ein.contract(
         "...i,...i->...",
         entropy_variables,
         policy.reduction(convective),
     )
-    source_density = oe.contract(
+    source_density = ein.contract(
         "...i,...i->...",
         entropy_variables,
         policy.reduction(source),
@@ -227,7 +228,7 @@ def evaluate_content_form_entropy_diagnostics(
     def integrated(rate: Array, /) -> Array:
         return jnp.sum(
             policy.reduction(
-                oe.contract(
+                ein.contract(
                     "...i,...i->...",
                     variables,
                     policy.reduction(rate),
@@ -242,7 +243,7 @@ def evaluate_content_form_entropy_diagnostics(
     shear_rate = integrated(shear)
     bulk_rate = integrated(bulk)
     thermal_rate = integrated(thermal)
-    entropy_potential = entropy - oe.contract(
+    entropy_potential = entropy - ein.contract(
         "...i,...i->...", variables, state_reduction, backend="jax"
     )
     geometric_rate = jnp.sum(

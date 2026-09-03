@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -53,7 +54,7 @@ class PreparedWeightedLeastSquares(StrictModule, NonTrainableState):
             value,
             0,
         )
-        return oe.contract("rfk,rk...->rf...", self.factors, masked)
+        return ein.contract("rfk,rk...->rf...", self.factors, masked)
 
 
 def prepare_weighted_least_squares(

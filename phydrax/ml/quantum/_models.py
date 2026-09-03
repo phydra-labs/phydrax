@@ -10,8 +10,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._model import AbstractArrayModel
@@ -322,7 +323,7 @@ class BinaryVariationalCircuitClassifier(AbstractArrayModel):
 
     def _logit(self, x: Any, /, *, key: Any = None) -> Array:
         features = self.feature_model(x, key=key)
-        return oe.contract("f,f->", self.weight, features) + self.bias
+        return ein.contract("f,f->", self.weight, features) + self.bias
 
     def decision_function(self, x: Any, /) -> Array:
         return self._logit(x)

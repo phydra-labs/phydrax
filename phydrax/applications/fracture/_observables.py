@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -174,15 +175,15 @@ def _interaction_integral(
     auxiliary_strain = 0.5 * (
         auxiliary_gradient + jnp.swapaxes(auxiliary_gradient, -1, -2)
     )
-    displacement_tangent = oe.contract("...ij,j->...i", displacement_gradient, tangent)
-    auxiliary_tangent = oe.contract("...ij,j->...i", auxiliary_gradient, tangent)
-    mutual_energy = oe.contract("...ij,...ij->...", stress, auxiliary_strain)
+    displacement_tangent = ein.contract("...ij,j->...i", displacement_gradient, tangent)
+    auxiliary_tangent = ein.contract("...ij,j->...i", auxiliary_gradient, tangent)
+    mutual_energy = ein.contract("...ij,...ij->...", stress, auxiliary_strain)
     interaction_flux = (
-        oe.contract("...ij,...i->...j", stress, auxiliary_tangent)
-        + oe.contract("...ij,...i->...j", auxiliary_stress, displacement_tangent)
+        ein.contract("...ij,...i->...j", stress, auxiliary_tangent)
+        + ein.contract("...ij,...i->...j", auxiliary_stress, displacement_tangent)
         - mutual_energy[..., None] * tangent
     )
-    return -oe.contract("cq,cqj,cqj->c", weights, interaction_flux, q_gradient)
+    return -ein.contract("cq,cqj,cqj->c", weights, interaction_flux, q_gradient)
 
 
 def _path_defect(values: Array) -> Array:
@@ -278,13 +279,13 @@ def evaluate_interaction_integral(
     mode_ii = 0.5 * material.effective_modulus * interaction_ii
 
     strain = 0.5 * (gradient_ + jnp.swapaxes(gradient_, -1, -2))
-    energy_density = 0.5 * oe.contract("...ij,...ij->...", stress_, strain)
-    displacement_tangent = oe.contract("...ij,j->...i", gradient_, tangent_value)
+    energy_density = 0.5 * ein.contract("...ij,...ij->...", stress_, strain)
+    displacement_tangent = ein.contract("...ij,j->...i", gradient_, tangent_value)
     j_flux = (
-        oe.contract("...ij,...i->...j", stress_, displacement_tangent)
+        ein.contract("...ij,...i->...j", stress_, displacement_tangent)
         - energy_density[..., None] * tangent_value
     )
-    j_values = -oe.contract("cq,cqj,cqj->c", weights_, j_flux, q_gradient_)
+    j_values = -ein.contract("cq,cqj,cqj->c", weights_, j_flux, q_gradient_)
 
     mode_i_defect = _path_defect(mode_i)
     mode_ii_defect = _path_defect(mode_ii)

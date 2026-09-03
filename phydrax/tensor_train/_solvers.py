@@ -11,8 +11,9 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -267,7 +268,7 @@ def _left_interface(tensor: TensorTrain, stop: int, /) -> Array:
     interface = jnp.ones((1, 1), dtype=tensor.dtype)
     for axis in range(stop):
         core = tensor.cores[axis]
-        interface = oe.contract("pa,aib->pib", interface, core).reshape(
+        interface = ein.contract("pa,aib->pib", interface, core).reshape(
             (interface.shape[0] * core.shape[1], core.shape[2])
         )
     return interface
@@ -277,7 +278,7 @@ def _right_interface(tensor: TensorTrain, start: int, /) -> Array:
     interface = jnp.ones((1, 1), dtype=tensor.dtype)
     for axis in range(tensor.order - 1, start - 1, -1):
         core = tensor.cores[axis]
-        interface = oe.contract("aib,bq->aiq", core, interface).reshape(
+        interface = ein.contract("aib,bq->aiq", core, interface).reshape(
             (core.shape[0], core.shape[1] * interface.shape[1])
         )
     return interface
@@ -289,7 +290,7 @@ def _core_frame(tensor: TensorTrain, axis: int, /) -> Array:
     basis = jnp.eye(unknowns, dtype=tensor.dtype).reshape(core.shape + (unknowns,))
     left = _left_interface(tensor, axis)
     right = _right_interface(tensor, axis + 1)
-    return oe.contract("pa,aibk,bq->piqk", left, basis, right).reshape((-1, unknowns))
+    return ein.contract("pa,aibk,bq->piqk", left, basis, right).reshape((-1, unknowns))
 
 
 def _update_core(
@@ -306,7 +307,7 @@ def _update_core(
             f"ALS core needs {frame.shape[1]} local unknowns, exceeding budget "
             f"{plan.max_local_unknowns}."
         )
-    design = oe.contract("ij,jk->ik", matrix, frame)
+    design = ein.contract("ij,jk->ik", matrix, frame)
     local = regularized_least_squares(design, right_hand_side, plan.local_regularization)
     cores = list(tensor.cores)
     cores[axis] = local.reshape(cores[axis].shape)
@@ -317,7 +318,7 @@ def _global_residual(
     matrix: Array, solution: TensorTrain, right: Array, plan: TensorTrainSolvePlan, /
 ) -> Array:
     dense = solution.to_dense(max_entries=plan.max_dense_entries).reshape((-1,))
-    return right - oe.contract("ij,j->i", matrix, dense)
+    return right - ein.contract("ij,j->i", matrix, dense)
 
 
 def solve_tensor_train(prepared: PreparedTensorTrainSolve, /) -> TensorTrainSolveResult:
@@ -362,12 +363,12 @@ def solve_tensor_train(prepared: PreparedTensorTrainSolve, /) -> TensorTrainSolv
             direction_dense = direction.to_dense(
                 max_entries=plan.max_dense_entries
             ).reshape((-1,))
-            applied_direction = oe.contract("ij,j->i", matrix, direction_dense)
+            applied_direction = ein.contract("ij,j->i", matrix, direction_dense)
             denominator = jnp.real(
-                oe.contract("i,i->", jnp.conj(applied_direction), applied_direction)
+                ein.contract("i,i->", jnp.conj(applied_direction), applied_direction)
             )
             numerator = jnp.real(
-                oe.contract("i,i->", jnp.conj(applied_direction), residual)
+                ein.contract("i,i->", jnp.conj(applied_direction), residual)
             )
             step = jnp.where(denominator > 0, numerator / denominator, 0)
             enriched = solution + step * direction

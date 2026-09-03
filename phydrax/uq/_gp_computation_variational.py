@@ -13,8 +13,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import MaterializationPolicy, materialize
@@ -132,9 +133,9 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
             )
         _validate_variational_capacity(state, self.action_count)
         features = self.observation_features
-        mean = oe.contract("bi,i->b", features, state.mean)
+        mean = ein.contract("bi,i->b", features, state.mean)
         conditional = self.prior_diagonal - jnp.sum(features * features, axis=1)
-        transformed = oe.contract("bi,ij->bj", features, state.scale_tril)
+        transformed = ein.contract("bi,ij->bj", features, state.scale_tril)
         variance = conditional + jnp.sum(transformed * transformed, axis=1)
         return mean, variance
 
@@ -158,9 +159,9 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         safe_ids = jnp.where(batch.factor_mask, batch.factor_ids, 0)
         features = self.observation_features[safe_ids]
         prior = self.prior_diagonal[safe_ids]
-        mean = oe.contract("bi,i->b", features, state.mean)
+        mean = ein.contract("bi,i->b", features, state.mean)
         conditional = prior - jnp.sum(features * features, axis=1)
-        transformed = oe.contract("bi,ij->bj", features, state.scale_tril)
+        transformed = ein.contract("bi,ij->bj", features, state.scale_tril)
         variance = conditional + jnp.sum(transformed * transformed, axis=1)
         variance = eqx.error_if(
             variance,

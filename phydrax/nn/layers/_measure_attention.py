@@ -9,8 +9,9 @@ from typing import Literal
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
@@ -74,14 +75,14 @@ def _dense_softmax_attention(
     /,
 ) -> Array:
     safe_mask, log_measure, any_source = _softmax_measure(measure)
-    logits = oe.contract("bqhd,bshd->bhqs", query, key) * _attention_scale(query)
+    logits = ein.contract("bqhd,bshd->bhqs", query, key) * _attention_scale(query)
     logits = jnp.where(
         safe_mask[:, None, None, :],
         logits + log_measure[:, None, None, :],
         -jnp.inf,
     )
     attention = jnn.softmax(logits, axis=-1)
-    attended = oe.contract("bhqs,bshd->bqhd", attention, value)
+    attended = ein.contract("bhqs,bshd->bqhd", attention, value)
     return jnp.where(any_source[:, None, None, None], attended, 0.0)
 
 
@@ -114,7 +115,7 @@ def _blockwise_softmax_attention(
         block_value = value[:, start:stop]
         block_measure = measure[:, start:stop]
         valid = block_measure > 0.0
-        logits = oe.contract("bhqd,bshd->bhqs", q, block_key) * scale
+        logits = ein.contract("bhqd,bshd->bhqs", q, block_key) * scale
         logits = jnp.where(
             valid[:, None, None, :],
             logits + jnp.log(jnp.where(valid, block_measure, 1.0))[:, None, None, :],
@@ -134,7 +135,7 @@ def _blockwise_softmax_attention(
         )
         exponential = jnp.exp(shifted)
         running_sum = running_sum * previous_scale + jnp.sum(exponential, axis=-1)
-        accumulator = accumulator * previous_scale[..., None] + oe.contract(
+        accumulator = accumulator * previous_scale[..., None] + ein.contract(
             "bhqs,bshd->bhqd", exponential, block_value
         )
         running_max = updated_max
@@ -192,10 +193,10 @@ def _linear_attention(
     q = jnn.elu(query) + 1.0
     k = jnn.elu(key) + 1.0
     weighted_key = k * measure[:, :, None, None]
-    covariance = oe.contract("bshd,bshv->bhdv", weighted_key, value)
-    attended = oe.contract("bqhd,bhdv->bqhv", q, covariance)
+    covariance = ein.contract("bshd,bshv->bhdv", weighted_key, value)
+    attended = ein.contract("bqhd,bhdv->bqhv", q, covariance)
     if normalize:
-        normalizer = oe.contract("bqhd,bhd->bqh", q, jnp.sum(weighted_key, axis=1))
+        normalizer = ein.contract("bqhd,bhd->bqh", q, jnp.sum(weighted_key, axis=1))
         positive_normalizer = normalizer > 0.0
         attended = attended / jnp.where(
             positive_normalizer[..., None],

@@ -9,8 +9,9 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..discretization.spectral import SphericalSpectralDiscretization
 from ..metrix import SphereLaplacianLevels
@@ -151,9 +152,7 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
         membership_tolerance: float = 1e-6,
     ) -> "SphereSpectralKernel":
         if not isinstance(discretization, SphericalSpectralDiscretization):
-            raise TypeError(
-                "discretization must be a SphericalSpectralDiscretization."
-            )
+            raise TypeError("discretization must be a SphericalSpectralDiscretization.")
         if discretization.layout.spin != 0:
             raise ValueError("Sphere spectral kernels require a spin-zero space.")
         return cls(
@@ -439,7 +438,7 @@ class SpecialOrthogonalCharacterKernel(AbstractHomogeneousPolynomialKernel):
             self.membership_tolerance,
             special=True,
         )
-        return oe.contract("aij,bij->ab", left_matrices, right_matrices) / self.dimension
+        return ein.contract("aij,bij->ab", left_matrices, right_matrices) / self.dimension
 
     @property
     def kernel_id(self) -> str:
@@ -485,7 +484,7 @@ class SpecialUnitaryCharacterKernel(AbstractHomogeneousPolynomialKernel):
             right, self.dimension, self.membership_tolerance
         )
         return (
-            oe.contract("aij,bij->ab", jnp.conj(left_matrices), right_matrices)
+            ein.contract("aij,bij->ab", jnp.conj(left_matrices), right_matrices)
             / self.dimension
         )
 
@@ -545,7 +544,7 @@ class StiefelSpectralKernel(AbstractHomogeneousPolynomialKernel):
             special=False,
         )
         return (
-            oe.contract("aij,bij->ab", left_frames, right_frames) / self.frame_dimension
+            ein.contract("aij,bij->ab", left_frames, right_frames) / self.frame_dimension
         )
 
     @property
@@ -603,7 +602,7 @@ class GrassmannSpectralKernel(AbstractHomogeneousPolynomialKernel):
             self.membership_tolerance,
             special=False,
         )
-        overlap = oe.contract("anp,bnq->abpq", left_frames, right_frames)
+        overlap = ein.contract("anp,bnq->abpq", left_frames, right_frames)
         return jnp.sum(overlap * overlap, axis=(-1, -2)) / self.subspace_dimension
 
     @property

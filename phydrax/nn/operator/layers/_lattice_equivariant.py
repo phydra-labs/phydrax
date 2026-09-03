@@ -15,9 +15,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
@@ -239,7 +239,7 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
         values = jnp.asarray(coefficients)
         if values.shape != (self.rank,):
             raise ValueError(f"coefficients must have shape ({self.rank},).")
-        return oe.contract("r,r...oi->...oi", values, self.basis.astype(values.dtype))
+        return ein.contract("r,r...oi->...oi", values, self.basis.astype(values.dtype))
 
     def project(self, kernel: Array, /) -> Array:
         values = jnp.asarray(kernel)
@@ -250,7 +250,7 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
         if values.shape != expected:
             raise ValueError(f"kernel must have shape {expected}; got {values.shape}.")
         flat_basis = self.basis.astype(values.dtype).reshape(self.rank, -1)
-        coefficients = oe.contract("ri,i->r", flat_basis, values.reshape(-1))
+        coefficients = ein.contract("ri,i->r", flat_basis, values.reshape(-1))
         return self.synthesize(coefficients)
 
     def equivariance_defect(self, kernel: Array, /) -> Array:
@@ -329,7 +329,7 @@ class LatticeEquivariantConvND(StrictModule):
                 shift=tuple(-offset for offset in offsets),
                 axis=spatial_axes,
             )
-            output = output + oe.contract("...i,oi->...o", shifted, kernel[index])
+            output = output + ein.contract("...i,oi->...o", shifted, kernel[index])
         return output
 
     def __call__(
@@ -467,7 +467,7 @@ class TensorPointwiseLinear(StrictModule):
             self.basis.output_layout.channel_count,
             self.basis.input_layout.channel_count,
         )
-        output = oe.contract("...i,oi->...o", inputs, matrix.astype(inputs.dtype))
+        output = ein.contract("...i,oi->...o", inputs, matrix.astype(inputs.dtype))
         if self.bias is not None:
             full_bias = jnp.zeros((matrix.shape[0],), dtype=output.dtype)
             full_bias = full_bias.at[jnp.asarray(self.bias_indices)].set(

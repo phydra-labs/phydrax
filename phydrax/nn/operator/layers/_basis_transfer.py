@@ -9,9 +9,9 @@ from collections.abc import Sequence
 
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
@@ -160,7 +160,7 @@ class InvariantBasisTransferPlan(StrictModule, NonTrainableState):
                 f"{residual} > {self.residual_tolerance}."
             )
         flat_basis = self.target_basis.basis.reshape(self.target_basis.rank, -1)
-        target_coefficients = oe.contract(
+        target_coefficients = ein.contract(
             "ri,i->r",
             flat_basis.astype(projected.dtype),
             projected.reshape(-1),

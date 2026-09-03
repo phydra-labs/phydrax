@@ -17,6 +17,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._fingerprint import array_tree_fingerprint
+from phydrax.nn.operator.training._loader import _pad_case_payload
 from tools.operator_benchmarks.data_plane import run_data_plane_benchmark
 
 
@@ -503,6 +504,94 @@ def _logged_dataset_source(dataset, reads, *, fingerprint=None):
         ),
         background_read_safe=True,
         configuration={"adapter": "logged-in-memory", "revision": 1},
+    )
+
+
+def test_eager_and_callback_sources_preserve_case_measure_and_exhaustive_mass():
+    base = _dataset(cases=3)
+    dataset = phx.nn.operator.training.OperatorDataset(
+        base.batch,
+        base.targets,
+        base.provenance,
+        case_log_weights=jnp.asarray((3.0, -jnp.inf, 1.0)),
+        case_mask=jnp.asarray((True, False, True)),
+    )
+    callback = _logged_dataset_source(dataset, [])
+    eager_loader = phx.nn.operator.training.OperatorBatchLoader(
+        dataset,
+        batch_size=2,
+        shuffle=False,
+        prefetch=0,
+    )
+    callback_loader = phx.nn.operator.training.OperatorBatchLoader(
+        callback,
+        batch_size=2,
+        shuffle=False,
+        prefetch=0,
+    )
+
+    with eager_loader.epoch(0) as eager_epoch:
+        eager_batches = tuple(eager_epoch)
+    with callback_loader.epoch(0) as callback_epoch:
+        callback_batches = tuple(callback_epoch)
+
+    assert len(eager_batches) == len(callback_batches) == 2
+    for eager, lazy in zip(eager_batches, callback_batches, strict=True):
+        assert jnp.array_equal(eager.case_log_weights, lazy.case_log_weights)
+        assert jnp.array_equal(eager.case_mask, lazy.case_mask)
+        assert jnp.array_equal(
+            eager.sampling_probabilities,
+            jnp.ones_like(eager.case_log_weights),
+        )
+        assert jnp.array_equal(
+            lazy.sampling_probabilities,
+            jnp.ones_like(lazy.case_log_weights),
+        )
+
+
+def test_case_payload_padding_duplicates_shapes_but_masks_padding():
+    dataset = _dataset(cases=3)
+    batch, targets, log_weights, mask = _pad_case_payload(
+        dataset.batch,
+        dataset.targets,
+        dataset.case_log_weights,
+        dataset.case_mask,
+        capacity=4,
+    )
+
+    assert batch.case_shape == (4,)
+    assert targets.case_shape == (4,)
+    assert log_weights.shape == mask.shape == (4,)
+    assert jnp.array_equal(mask, jnp.asarray((True, True, True, False)))
+    assert jnp.array_equal(
+        batch.input("state").values[-1],
+        batch.input("state").values[-2],
+    )
+
+
+@pytest.mark.skipif(
+    jax.device_count() < 2,
+    reason="Sharded tail padding requires at least two JAX devices.",
+)
+def test_sharded_tail_padding_preserves_logical_cases_and_masks_capacity():
+    dataset = _dataset(cases=3)
+    loader = phx.nn.operator.training.OperatorBatchLoader(
+        dataset,
+        batch_size=3,
+        shuffle=False,
+        prefetch=0,
+        sharding_policy=phx.nn.operator.OperatorShardingPolicy(),
+    )
+
+    with loader.epoch(0) as epoch:
+        (batch,) = tuple(epoch)
+
+    capacity = batch.batch.case_shape[0]
+    assert capacity % jax.device_count() == 0
+    assert int(jnp.sum(batch.case_mask)) == dataset.size
+    assert jnp.array_equal(
+        jnp.asarray(batch.batch.input("state").values)[: dataset.size],
+        dataset.batch.input("state").values,
     )
 
 

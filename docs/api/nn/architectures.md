@@ -992,13 +992,14 @@ order-ablation studies, not an alias for the stable `FNO` architecture.
 Legendre policies for nonperiodic or nonuniform tensor axes.
 
 Periodic grid reconstruction is shared across spectral architectures and public
-array-level evaluation. `spectral_resample` transfers to an aligned or
-period-shifted uniform grid. `sample_fourier_grid` evaluates paired arbitrary
-coordinates with an exact direct backend or an explicitly tolerance-controlled
-NUFFT backend. Both preserve channel-last fields and leading case axes; the
-point sampler also accepts physical uniform axis nodes and periods.
+array-level evaluation. `phydrax.signal.fourier_resample` transfers explicit
+spatial axes to aligned or period-shifted uniform grids.
+`sample_fourier_grid` evaluates paired arbitrary coordinates with an exact
+direct backend or an explicitly tolerance-controlled NUFFT backend. Both
+preserve channel-last fields and leading case axes; the point sampler also
+accepts physical uniform axis nodes and periods.
 
-::: phydrax.nn.operator.architectures.spectral_resample
+::: phydrax.signal.fourier_resample
 
 ---
 
@@ -1123,7 +1124,7 @@ grouped as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax._spectral.DiscreteWaveletTransform
+::: phydrax.signal.DiscreteWaveletTransform
     options:
         members:
             - __init__
@@ -1142,7 +1143,7 @@ grouped as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax._spectral.MultiresolutionCoefficients
+::: phydrax.signal.MultiresolutionCoefficients
     options:
         members:
             - levels
@@ -1303,9 +1304,52 @@ promotion still requires benchmark evidence.
 - `LocalGlobalOperator` composes local and global paths.
 - `LaplaceTemporalOperator` implements stable causal pole–residue dynamics with
   constrained negative-real-part poles and explicit conjugate reconstruction.
+- `ChemicalConditionalAffineOperator` predicts auxiliary midpoint chemistry
+  drivers, applies an optional reaction-shared positive correction, and advances
+  the authoritative state through a certified physical affine reconstruction.
 - `OperatorAttention`, `SliceAttention`, `CodomainAttention`, and
   `AxialOperatorAttention` cover continuum self/cross attention, Transolver-style
   slices, variable physical fields, and tensor-axis factorization.
+
+::: phydrax.nn.operator.architectures.ChemicalConditionalAffineScaling
+
+---
+
+::: phydrax.nn.operator.architectures.StoichiometricRateCorrection
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.operator.architectures.ChemicalConditionalAffineOperator
+    options:
+        members:
+            - __init__
+            - predict_drivers
+            - transition_with_drivers
+            - evaluate_transition
+            - __call__
+
+---
+
+::: phydrax.nn.operator.training.ChemicalConditionalAffineDriverLoss
+
+---
+
+::: phydrax.nn.operator.training.ChemicalConditionalAffineTeacherForcedLoss
+
+---
+
+::: phydrax.nn.operator.adapters.TrainedChemicalConditionalAffineTransition
+    options:
+        members:
+            - __init__
+            - evaluate_with_evidence
+            - discrete_system
+
+---
 
 ::: phydrax.nn.operator.architectures.LocalIntegralOperator
     options:
@@ -1368,7 +1412,9 @@ zero after every block.
 `OperatorBatch` CNO calls require explicit physical source quadrature. Tuple
 calls have no mask or quadrature channel and therefore mean all-valid equal
 measure; the constant physical cell scale cancels from normalized convolution.
-UNO does not consume masks and rejects a masked source or query.
+UNO transports the masked numerator and observed physical mass independently
+through every multiresolution resize, renormalizes only supported targets, and
+zeros source or query sites outside the declared masks.
 
 
 `operator_dependency_support(model, axes)` reports instance-authoritative
@@ -2169,7 +2215,7 @@ every PDE:
 | --- | --- | --- |
 | Stable | `FNO`, `TFNO`, `DeepONet`, `MIONet`, `PODDeepONet` | Yes |
 | Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO`, `ConditionalFlowFunctionOperator`, `LinearRecurrentOperator` | No |
-| Research | `Flower`, `UNO`, `DiagonalStateSpaceMixer`, `SelectiveStateSpaceMixer`, `WeightSpaceOperator`, `LatticeEquivariantCNO`, `LaplaceTemporalOperator`, `GINO`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
+| Research | `Flower`, `UNO`, `DiagonalStateSpaceMixer`, `SelectiveStateSpaceMixer`, `WeightSpaceOperator`, `LatticeEquivariantCNO`, `OrthogonalEquivariantPointCNO`, `LaplaceTemporalOperator`, `GINO`, `FunctionFrameReconstructor`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `ChemicalConditionalAffineOperator`, `ConditionalFunctionFrameFlowOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
 
 TFNO is `FNO(factorization="tucker")`. MIONet is a product-fusion `DeepONet`
 with a mapping of branch encoders. POD-DeepONet is a `DeepONet` with a fixed
@@ -2555,16 +2601,20 @@ mask-preserving collation, persisted training-only normalization, exact
 model/optimizer/RNG checkpoints, explicit parameter/compute/reduction dtypes,
 scheduled autoregressive rollouts, and prefetching sharded loaders.
 `OperatorDataset` carries `case_log_weights` and `case_mask` as part of the
-canonical finite-case measure. Loader batches retain the active mask and add
-sampling probabilities, so supervised L2 reduces per case with
-inverse-probability-adjusted normalized active weights rather than treating
-sampled cases as uniformly weighted.
+canonical finite-case measure. Eager and callback-backed `OperatorCase` sources
+propagate the same relative log mass and active flag. Exhaustive epoch batches
+have unit inclusion factors; a correction is applied only when a genuinely
+non-exhaustive sampler supplies its proposal probability. Losses normalize this
+measure in the log domain, so weighted and masked objectives remain invariant to
+arbitrary microbatch partitions and extreme finite log-weight ranges.
 
 
 `OperatorDTypePolicy` makes placement executable. Trainable parameters remain in
 `parameter_dtype`; each forward pass builds a transient `compute_dtype` view;
-losses, metrics, and gradient accumulation use `reduction_dtype`. Coordinate,
-quadrature, mask, and topology arrays are never quantized as model values.
+losses, metrics, and gradient numerator accumulation use `reduction_dtype`.
+Normalized gradients are cast back to the corresponding persistent parameter
+dtype before the optimizer transition. Coordinate, quadrature, mask, and
+topology arrays are never quantized as model values.
 `matmul_precision` is scoped with JAX around model execution. FNO spectral
 convolutions promote float16/bfloat16 values to float32 FFTs (and float64 values
 to float64 FFTs), then cast the inverse transform back to compute dtype.
@@ -2585,8 +2635,9 @@ ordering engine drives array-backed UQ minibatches; operator collation and UQ
 factor padding remain domain-owned. Loader prefetch is one bounded, ordered host
 producer followed by device placement and is enabled only for sources that
 declare background reads safe. Otherwise the same iterator runs synchronously.
-Short final operator batches remain short unless a consumer, such as SG-MCMC,
-explicitly pads them and carries a validity mask.
+Short final operator batches remain logical tails. Case-sharded loaders pad only
+their physical capacity to the mesh divisor and mark every padding lane inactive,
+so losses, metrics, gradients, and reported case support remain unchanged.
 
 `ExternalOperatorAdapter` requires a version-2
 `OperatorCheckpointManifest` with immutable source and checkpoint revisions,
@@ -2664,6 +2715,23 @@ output pipeline. `OperatorFitResult.execution_model` and
 `last_execution_model` make the execution-space result explicit. Loss callables
 and all callable schedules require stable identities for exact-resume
 compatibility.
+
+`gradient_accumulation=K` evaluates `K` independently keyed microbatches while
+holding parameters, optimizer state, target parameters, and the logical schedule
+step fixed. Each loss supplies a scaled numerator and non-negative support;
+PhydraX merges them without exponentiating absolute log weights and normalizes
+the accumulated numerator gradient exactly once. The final short window of each
+epoch uses its actual support. A zero-support window consumes its microsteps but
+does not advance the optimizer, target, validation, callback, selection, history,
+or checkpoint lifecycle.
+
+Accumulation greater than one requires loss terms with an explicit case-additive
+mean contract. Case-axis sums, nonlinear mechanics risks, and ambiguous scalar
+custom losses fail before the first training batch is consumed. They remain
+available with `gradient_accumulation=1`; custom accumulated losses should return
+one value per case through `OperatorLossTerm(case_reduction="per_case")`.
+Optimizer-side delayed-update wrappers are not equivalent because they do not
+control the surrounding training lifecycle.
 
 `parameter_subspace=` restricts differentiation, gradient accumulation, and
 optimizer state to exact selected model leaves. The subspace is validated

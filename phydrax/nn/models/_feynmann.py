@@ -9,7 +9,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule

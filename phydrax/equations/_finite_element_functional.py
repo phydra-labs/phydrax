@@ -8,8 +8,9 @@ from collections.abc import Callable, Mapping, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._compensated import compensated_sum
@@ -27,6 +28,7 @@ from ._variational import (
     _rule_id,
     IntegrationRule as ReferenceRule,
 )
+from .fem._selection import select_local_execution
 
 
 class FiniteElementFunctional(StrictModule, NonTrainableState):
@@ -101,11 +103,21 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
             raise ValueError("Functional domain belongs to another support.")
         discretization.validate_local_runtime(context.runtime)
         if not self.rules or not isinstance(discretization, FiniteElementDiscretization):
-            mode = (
-                "dense"
-                if isinstance(discretization, FiniteElementDiscretization)
-                else "sum_factorized"
-            )
+            reference_realization_id = None
+            if isinstance(discretization, FiniteElementDiscretization):
+                mode = "dense"
+            else:
+                selection = select_local_execution(
+                    discretization,
+                    domain,
+                    "functional",
+                    ("value", "grad"),
+                    requested_kernel_mode="auto",
+                    requested_operator_realization="matrix_free",
+                    explicit_rules=bool(self.rules),
+                )
+                mode = selection.kernel_mode
+                reference_realization_id = selection.reference_realization_id
             regions = discretization.prepare_local_regions(
                 domain,
                 field_names=(self.field_name,),
@@ -117,6 +129,13 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
                 reference = region.reference_actions[0].realize_reference_actions(
                     context.runtime
                 )
+                if (
+                    reference_realization_id is not None
+                    and reference.realization_id != reference_realization_id
+                ):
+                    raise ValueError(
+                        "Local functional reference realization violates its offer."
+                    )
                 metric = region.geometry_actions.realize(context.runtime)
                 local = execution_values[region.field_gathers[0]]
                 field_values = reference.interpolate(context.runtime, local)
@@ -171,12 +190,12 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
                 data.weights,
             )
             local = values[dofs]
-            field_values = oe.contract(
+            field_values = ein.contract(
                 "qi,ci...->cq...",
                 geometry.basis_values,
                 local,
             )
-            gradients = oe.contract(
+            gradients = ein.contract(
                 "cqid,ci...->cqd...",
                 geometry.physical_gradients,
                 local,

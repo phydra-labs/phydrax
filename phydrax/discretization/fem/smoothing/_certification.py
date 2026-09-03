@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import ArrayLike
+
+import phydrax.ein as ein
 
 from ._common import (
     SmoothingEnergyEvidence,
@@ -53,7 +54,7 @@ def certify_smoothing_operator(
         0.0,
     )
     moments = boundary_moment(layout, geometry)
-    affine_tensor = oe.contract(
+    affine_tensor = ein.contract(
         "plc,pld->pcd",
         gathered_coordinates,
         moments,

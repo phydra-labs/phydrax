@@ -9,6 +9,7 @@ from . import (
     bem as bem,
     collocation,
     contact,
+    explicit_polygon_h1,
     fem,
     finite_difference,
     finite_volume,
@@ -18,6 +19,7 @@ from . import (
     multiblock,
     particle,
     pic,
+    spatial as spatial,
     spectral,
     splatting,
     vem,
@@ -71,6 +73,7 @@ from ._cochain_electrochemical import (
     PreparedCochainElectrochemicalFlux,
     stable_bernoulli,
 )
+from ._constraints import AbstractDiscreteDirichletConstraint
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -339,6 +342,25 @@ from .contact import (
 )
 from .discrete_velocity import *  # noqa: F403
 from .discrete_velocity import __all__ as _discrete_velocity_all
+from .explicit_polygon_h1 import (
+    evaluate_explicit_polygon_h1_reconstruction,
+    evaluate_explicit_polygon_h1_trace,
+    explicit_polygon_h1_dirichlet_constraint,
+    ExplicitPolygonH1BasisEvidence,
+    ExplicitPolygonH1BlockData,
+    ExplicitPolygonH1DirichletConstraint,
+    ExplicitPolygonH1Discretization,
+    ExplicitPolygonH1DofMap,
+    ExplicitPolygonH1FieldSpec,
+    ExplicitPolygonH1Plan,
+    ExplicitPolygonH1PrecisionPolicy,
+    ExplicitPolygonH1QuadraturePolicy,
+    ExplicitPolygonH1QualificationPolicy,
+    ExplicitPolygonH1Reconstruction,
+    ExplicitPolygonH1ResourceBudget,
+    ExplicitPolygonH1RuntimeData,
+    prepare_explicit_polygon_h1_reconstruction,
+)
 from .fem import (
     affine_dof_constraint,
     AttachmentActionReactionCertificate,
@@ -602,6 +624,8 @@ from .finite_volume import (
     DistributedMarkerExchange,
     DistributedMarkerOwnershipPlan,
     DistributedMarkerTransferDiagnostics,
+    DyadicFiniteVolumeDiscretization,
+    DyadicFiniteVolumePlan,
     EinfeldtHLLFluxPlan,
     EmbeddedBoundaryContactAngleSet,
     EmbeddedBoundaryEvidence,
@@ -1694,9 +1718,12 @@ from .pic import (
     UnstructuredWhitneyCurrentPlan,
     UnstructuredWhitneyCurrentResult,
 )
+from .spatial import *  # noqa: F403
+from .spatial import __all__ as _spatial_all
 from .spectral import (
     AbstractDealiasingPlan,
     AbstractSpectralBasisPlan,
+    BallWaveletCoefficients,
     BoundaryLiftPlan,
     BrillouinZonePlan,
     ChannelMeanConstraint,
@@ -1713,10 +1740,12 @@ from .spectral import (
     DCPolicy,
     DealiasingKind,
     DealiasingReport,
+    DirectionalBallWaveletPlan,
     discover_modal_support,
     estimate_spectral_regularity,
     FinalEdgePolicy,
     FourierBasisPlan,
+    FourierLaguerrePlan,
     FourierShellStatisticResult,
     GeneralizedTauPlan,
     HarmonicTruncationKind,
@@ -1763,6 +1792,7 @@ from .spectral import (
     PreparedTauSystem,
     project_tensor_spectral_symmetries,
     PseudospectralMethodPlan,
+    RadialLaguerrePlan,
     RationalChebyshevHalfLineBasisPlan,
     RationalChebyshevLineBasisPlan,
     recover_missing_modes,
@@ -1811,6 +1841,8 @@ from .spectral import (
     TensorSpectralDiscretization,
     TensorSpectralPlan,
     TensorSpectralSymmetry,
+    WignerLaguerrePlan,
+    WignerTransformPlan,
 )
 from .splatting import (
     AbstractStructuredSplatAssignment,
@@ -1988,6 +2020,25 @@ __all__ = [
     "simplex_inversion_step_limit",
     "static_collision_operator",
     "vem",
+    "explicit_polygon_h1",
+    "AbstractDiscreteDirichletConstraint",
+    "ExplicitPolygonH1BasisEvidence",
+    "ExplicitPolygonH1BlockData",
+    "ExplicitPolygonH1DirichletConstraint",
+    "ExplicitPolygonH1Discretization",
+    "ExplicitPolygonH1DofMap",
+    "ExplicitPolygonH1FieldSpec",
+    "ExplicitPolygonH1Plan",
+    "ExplicitPolygonH1PrecisionPolicy",
+    "ExplicitPolygonH1QuadraturePolicy",
+    "ExplicitPolygonH1QualificationPolicy",
+    "ExplicitPolygonH1Reconstruction",
+    "ExplicitPolygonH1ResourceBudget",
+    "ExplicitPolygonH1RuntimeData",
+    "evaluate_explicit_polygon_h1_reconstruction",
+    "evaluate_explicit_polygon_h1_trace",
+    "explicit_polygon_h1_dirichlet_constraint",
+    "prepare_explicit_polygon_h1_reconstruction",
     "PolygonAdmissibilityPolicy",
     "PolygonCubature",
     "PolygonGeometry",
@@ -2151,6 +2202,8 @@ __all__ = [
     "FDRegridPlan",
     "FDRegridResult",
     "FiniteVolumeDiscretization",
+    "DyadicFiniteVolumeDiscretization",
+    "DyadicFiniteVolumePlan",
     "DerivativeRequest",
     "DistributedStencilPartition",
     "DistributedHaloSchedule",
@@ -2654,12 +2707,15 @@ __all__ = [
     "BrillouinZonePlan",
     "AbstractSpectralBasisPlan",
     "BoundaryLiftPlan",
+    "BallWaveletCoefficients",
     "ChebyshevBasisPlan",
     "CosineBasisPlan",
     "ConstrainedBasisPlan",
     "DealiasingKind",
     "DealiasingReport",
+    "DirectionalBallWaveletPlan",
     "FourierBasisPlan",
+    "FourierLaguerrePlan",
     "SpectralTraceConstraint",
     "SpectralTraceTerm",
     "DCPolicy",
@@ -2699,6 +2755,7 @@ __all__ = [
     "PreparedTauSystem",
     "PreparedSpectralOperator",
     "RationalChebyshevHalfLineBasisPlan",
+    "RadialLaguerrePlan",
     "RationalChebyshevLineBasisPlan",
     "PseudospectralMethodPlan",
     "PreparedChannelStokesSolver",
@@ -2729,6 +2786,8 @@ __all__ = [
     "SpectralResidualDiagnostics",
     "TensorSpectralDiscretization",
     "TensorSpectralPlan",
+    "WignerLaguerrePlan",
+    "WignerTransformPlan",
     "AbstractSPHDensityPlan",
     "AbstractParticleNeighborhoodPlan",
     "AbstractPreparedParticleNeighborhood",
@@ -3699,7 +3758,12 @@ __all__ = [
 
 __all__ += [
     name
-    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all, *_vortex_all)
+    for name in (
+        *_discrete_velocity_all,
+        *_lattice_boltzmann_all,
+        *_spatial_all,
+        *_vortex_all,
+    )
     if name not in __all__
 ]
 __all__ += [name for name in _bem_all if name not in __all__]

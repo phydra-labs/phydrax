@@ -114,6 +114,11 @@ from ._validity import (
     GeometryValidityEvidence,
     GeometryValidityProvider,
 )
+from ._voxel_sampling import (
+    PreparedVoxelGeometrySamples,
+    VoxelGeometrySamplingEvidence,
+    VoxelGeometrySamplingPlan,
+)
 from .analytic import (
     BlendCSG,
     BlendDifference,
@@ -386,6 +391,9 @@ __all__ = [
     "GeometrySource",
     "GeometryValidityDisposition",
     "GeometryValidityEvidence",
+    "PreparedVoxelGeometrySamples",
+    "VoxelGeometrySamplingEvidence",
+    "VoxelGeometrySamplingPlan",
     "GeometryValidityProvider",
     "Horizontal",
     "InteriorClearance",

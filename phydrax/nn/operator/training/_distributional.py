@@ -16,7 +16,12 @@ from jaxtyping import Array, Key
 from ...._doc import DOC_KEY0
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..distribution import AbstractProbabilisticOperatorModel
-from ._losses import AbstractOperatorLossTerm, OperatorLossContext
+from ._losses import (
+    _weighted_case_reduction,
+    AbstractOperatorLossTerm,
+    OperatorAccumulationKind,
+    OperatorLossContext,
+)
 
 
 DistributionReduction = Literal["none", "mean", "sum"]
@@ -94,11 +99,22 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
             raise ValueError(
                 "OperatorDistributionNLL target channels do not match the distribution."
             )
-        value = distribution.negative_log_likelihood(
-            target.values,
-            reduction=self.reduction,
-        )
+        if self.reduction == "mean":
+            case_values = distribution.negative_log_likelihood(
+                target.values,
+                reduction="none",
+            )
+            value = _weighted_case_reduction(case_values, context, "mean")
+        else:
+            value = distribution.negative_log_likelihood(
+                target.values,
+                reduction=self.reduction,
+            )
         return jnp.asarray(self.weight, dtype=jnp.asarray(value).dtype) * value
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "case_mean" if self.reduction == "mean" else "single_batch"
 
     @property
     def fingerprint(self) -> str:

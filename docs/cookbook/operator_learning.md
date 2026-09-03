@@ -234,7 +234,7 @@ refined_prediction = frame_operator.decode_query(encoded, refined_query)
 
 assert prediction.shape == (64,)
 assert refined_prediction.shape == (128,)
-assert encoded.report.frame_id == "forcing-frame"
+assert encoded.reports["forcing"].frame_id == "forcing-frame"
 ```
 
 Inspect `report.status`, `report.rank`, `report.condition_number`,
@@ -1452,6 +1452,66 @@ training-only recurrence. Dynamic controls, independent queries, and multiple
 recurrent state fields require a future typed route rather than an `advance`
 closure.
 
+## Local conditional-affine chemistry
+
+Use `ChemicalConditionalAffineOperator` only when
+`ChemicalConditionalAffinePlan.analyze` certifies every active reaction
+direction. Each training case supplies one authoritative initial concentration
+vector, physical temperature and pressure, and one or more local durations.
+The physical target contains the complete state. Exact midpoint drivers are a
+training-only sampled input named `driver_targets`, not an additional model output.
+
+```text
+inputs:
+  state        case_shape + (species,)
+  temperature  case_shape
+  pressure     case_shape
+  driver_targets  case_shape + query_shape + (driver_species,)  # training only
+query:
+  time         case_shape + query_shape + (1,)
+targets:
+  state        case_shape + query_shape + (species,)
+```
+
+Declare `driver_targets` as a source-only `OperatorFieldSpec` with
+`required=False`; it may therefore be present during supervised stages and
+absent from deployment batches.
+
+Build local examples from successful reference trajectories. Treat every valid
+trajectory node as a possible new initial state, choose horizons that stay
+inside one continuous reaction interval, and store midpoint driver samples as
+the optional `driver_targets` source alongside the endpoint state target. Do not
+violate elemental, charge, or thermodynamic constraints.
+
+The model owns `ChemicalConditionalAffineScaling`. Pass
+`normalization=None` and `output_pipeline=None` to `fit_operator`: generic
+source normalization occurs before the physical model and would change the
+rate law. Use positive reference scales and zero-preserving `log1p` duration
+features inside the architecture instead.
+
+Train through ordinary `fit_operator` calls:
+
+1. Select `driver_model` with `ParameterSubspace` and use
+   `ChemicalConditionalAffineDriverLoss`.
+2. If a learned rate correction is required, freeze the driver, select
+   `rate_correction`, and use
+   `ChemicalConditionalAffineTeacherForcedLoss` with exact midpoint drivers.
+3. Select both subtrees and fine-tune against the authoritative state target.
+4. Qualify state feedback with `ConditionedSemigroupObjective` and
+   `OperatorRolloutPolicy`.
+
+The rate correction starts at the identity and emits one positive multiplier
+per base reaction; forward and reverse channels share it. The physical
+compiler derives all matrix entries afterward. Drivers remain internal
+conditioning values and are never routed back as the physical state.
+
+After every stage, continue from `OperatorFitResult.execution_model` and
+rebase `ParameterSubspace` against that exact tree. Persist the final result
+with `save_operator_artifact`. A loaded identity-scaled artifact can be bound
+to `DiscreteSystem` with
+`TrainedChemicalConditionalAffineTransition`; unsuccessful numerical or
+physical evidence raises rather than silently invoking a reference solver.
+
 ## Reproducible production training
 
 Fit normalization on the training partition only, then pass the same persisted
@@ -1540,6 +1600,7 @@ fit_result = phx.nn.operator.training.fit_operator(
     epochs=1,
     steps=1,
     batch_size=16,
+    gradient_accumulation=4,
     normalization=normalization,
     dtype_policy=dtype_policy,
     validation_policy=phx.nn.operator.training.OperatorValidationPolicy(every=1),
@@ -1610,12 +1671,24 @@ unconstrained execution-space models.
 fingerprint participates in checkpoint compatibility. Loss terms default to
 physical space; set `space="execution"` only for an objective intentionally
 defined on normalized execution values. `OperatorLossContext` exposes paired
-execution and physical predictions, batches, and targets. Set
-`gradient_accumulation` for exact case-weighted microbatch accumulation; use
-`OperatorDTypePolicy` for parameter/compute/reduction placement and an explicit
-`OperatorLossScalePolicy` for float16 dynamic loss scaling.
-`OperatorShardingPolicy` shards a named case dimension while keeping parameters
-and shared geometry replicated.
+execution and physical predictions, batches, and targets.
+
+`gradient_accumulation=K` holds parameters, optimizer state, target parameters,
+and the loss-schedule step fixed while evaluating `K` independently keyed
+microbatches. Case log masses and active masks are merged in the log domain, so
+the result equals the corresponding pooled weighted mean even for uneven final
+batches. The optimizer, validation, callbacks, history, and checkpoints advance
+only after a positive-support window flushes. Case-axis sums, nonlinear
+batch-risk reductions, and scalar custom losses are intentionally rejected when
+`K > 1`; write custom accumulated terms with
+`OperatorLossTerm(case_reduction="per_case")`.
+
+Use `OperatorDTypePolicy` for parameter/compute/reduction placement. Gradient
+numerators accumulate in `reduction_dtype` and are cast back to parameter dtype
+at the optimizer boundary. Float16 compute additionally requires an explicit
+`OperatorLossScalePolicy`; any nonfinite microstep discards the pending window.
+`OperatorShardingPolicy` shards a named case dimension, pads only physical tail
+capacity, and masks the padding from every reduction.
 
 ### Exact output transforms, weak forms, and operator adjoints
 

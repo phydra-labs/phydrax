@@ -10,8 +10,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -200,13 +201,15 @@ class MHDPrimitiveReconstructionPlan(StrictModule, NonTrainableState):
             right_conserved,
             axis_,
         )
-        left_characteristic = oe.contract("...ij,...j->...i", left_matrix, left_conserved)
-        right_characteristic = oe.contract(
+        left_characteristic = ein.contract(
+            "...ij,...j->...i", left_matrix, left_conserved
+        )
+        right_characteristic = ein.contract(
             "...ij,...j->...i", left_matrix, right_conserved
         )
         return (
-            oe.contract("...ij,...j->...i", right_matrix, left_characteristic),
-            oe.contract("...ij,...j->...i", right_matrix, right_characteristic),
+            ein.contract("...ij,...j->...i", right_matrix, left_characteristic),
+            ein.contract("...ij,...j->...i", right_matrix, right_characteristic),
         )
 
 

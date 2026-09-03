@@ -42,6 +42,19 @@ be evaluated; invalid candidates are counted as invalid objective evaluations.
 Field certificates remain semantic contracts. Runtime validity determines
 whether those contracts apply at the current design state.
 
+## Sparse voxel sampling
+
+`VoxelGeometrySamplingPlan` evaluates a compiled boundary field on a prepared
+`SparseVoxelGrid`. The resulting numeric values remain differentiable with
+respect to the geometry state while voxel topology is fixed. Morton lookup,
+active support, and narrow-band selection are discrete.
+
+Sampling and multilinear interpolation do not preserve exact signed-distance
+semantics. The returned certificate is explicitly approximate and
+piecewise-smooth. An optional `ExactSDFEnclosureCertificate` can certify cell
+sign only where its Lipschitz interval excludes zero; cells intersecting that
+interval remain unresolved.
+
 ## Implicit point projection
 
 `ImplicitPointProjectionPlan` binds fixed reference points to one compiled

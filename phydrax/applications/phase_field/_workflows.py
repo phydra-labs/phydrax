@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._thermodynamics import (
@@ -113,7 +114,7 @@ def phase_field_mass(
     field_index = discretization._field_index(field_name)
     for block_index, geometry in enumerate(discretization.block_geometries[field_index]):
         local = _field_local_data(discretization, field_name, value, block_index)
-        reconstructed = oe.contract("qi,ci->cq", geometry.basis_values, local)
+        reconstructed = ein.contract("qi,ci->cq", geometry.basis_values, local)
         total = total + jnp.sum(reconstructed * geometry.physical_weights)
     return total
 
@@ -130,8 +131,8 @@ def phase_field_energy(
     field_index = discretization._field_index(field_name)
     for block_index, geometry in enumerate(discretization.block_geometries[field_index]):
         local = _field_local_data(discretization, field_name, value, block_index)
-        reconstructed = oe.contract("qi,ci->cq", geometry.basis_values, local)
-        gradient = oe.contract("cqid,ci->cqd", geometry.physical_gradients, local)
+        reconstructed = ein.contract("qi,ci->cq", geometry.basis_values, local)
+        gradient = ein.contract("cqid,ci->cqd", geometry.physical_gradients, local)
         density = (
             parameters.thermodynamics.bulk_scale
             * parameters.closure.free_energy.density(reconstructed)
@@ -165,15 +166,15 @@ def allen_cahn_form(
     def residual(values, gradients, points, weights, test_basis, test_gradients, context):
         value = values[0]
         gradient = gradients[0]
-        previous_value = oe.contract("qi,ci->cq", test_basis, previous_local[0])
+        previous_value = ein.contract("qi,ci->cq", test_basis, previous_local[0])
         local_drive = (value - previous_value) / dt + parameters.mobility * (
             parameters.thermodynamics.bulk_scale
             * parameters.closure.free_energy.derivative(value)
         )
-        return oe.contract("cq,cq,qi->ci", weights, local_drive, test_basis) + (
+        return ein.contract("cq,cq,qi->ci", weights, local_drive, test_basis) + (
             parameters.mobility
             * parameters.thermodynamics.gradient_coefficient
-            * oe.contract("cq,cqid,cqd->ci", weights, test_gradients, gradient)
+            * ein.contract("cq,cqid,cqd->ci", weights, test_gradients, gradient)
         )
 
     return FiniteElementForm(
@@ -210,13 +211,13 @@ def cahn_hilliard_form(
     ):
         concentration, _ = values
         _, chemical_gradient = gradients
-        previous_value = oe.contract("qi,ci->cq", test_basis, previous_local)
-        return oe.contract(
+        previous_value = ein.contract("qi,ci->cq", test_basis, previous_local)
+        return ein.contract(
             "cq,cq,qi->ci",
             weights,
             (concentration - previous_value) / dt,
             test_basis,
-        ) + parameters.mobility * oe.contract(
+        ) + parameters.mobility * ein.contract(
             "cq,cqid,cqd->ci",
             weights,
             test_gradients,
@@ -226,14 +227,14 @@ def cahn_hilliard_form(
     def chemical(values, gradients, points, weights, test_basis, test_gradients, context):
         concentration, potential = values
         concentration_gradient, _ = gradients
-        return oe.contract(
+        return ein.contract(
             "cq,cq,qi->ci",
             weights,
             potential
             - parameters.thermodynamics.bulk_scale
             * parameters.closure.free_energy.derivative(concentration),
             test_basis,
-        ) - parameters.thermodynamics.gradient_coefficient * oe.contract(
+        ) - parameters.thermodynamics.gradient_coefficient * ein.contract(
             "cq,cqid,cqd->ci",
             weights,
             test_gradients,

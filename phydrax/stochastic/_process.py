@@ -14,8 +14,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._probability import DiagonalNormalLaw
 from .._strict import AbstractAttribute, StrictModule
@@ -204,7 +205,7 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
             samples + self.batch_shape + (self.event_size,),
             dtype=self.mean.dtype,
         )
-        centered = oe.contract("...ij,...j->...i", self.scale_tril, noise)
+        centered = ein.contract("...ij,...j->...i", self.scale_tril, noise)
         mean = self.mean.reshape(self.batch_shape + (self.event_size,))
         return (centered + mean).reshape(samples + self.batch_shape + self.event_shape)
 
@@ -513,7 +514,7 @@ class LatentGaussianCoefficientProcess(
         diffusion = self.diffusion.reshape(
             (prod(self.state_shape), prod(self.driver_shape))
         )
-        update = oe.contract("...j,ij->...i", driver_flat, diffusion)
+        update = ein.contract("...j,ij->...i", driver_flat, diffusion)
         drift = self.drift.reshape((prod(self.state_shape),))
         return (state_flat + duration * drift + update).reshape(batch + self.state_shape)
 
@@ -607,7 +608,7 @@ class LatentGaussianCoefficientProcess(
         diffusion = self.diffusion.reshape(
             (prod(self.state_shape), prod(self.driver_shape))
         )
-        stochastic = oe.contract(
+        stochastic = ein.contract(
             "...tj,ij->...ti",
             driver_values.reshape(sample_shape + (num_times, prod(self.driver_shape))),
             diffusion,
@@ -753,7 +754,7 @@ def process_sample_statistics(
     )
     mean = jnp.mean(flat, axis=0)
     centered = flat - mean
-    covariance = oe.contract("n...i,n...j->...ij", centered, centered) / float(count - 1)
+    covariance = ein.contract("n...i,n...j->...ij", centered, centered) / float(count - 1)
     log_probabilities = jax.vmap(distribution.log_prob)(values)
     return ProcessSampleStatistics(
         mean=mean.reshape(distribution.batch_shape + distribution.event_shape),

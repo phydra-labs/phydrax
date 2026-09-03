@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ._lattice import LatticeBoltzmannVelocitySet
@@ -77,7 +78,7 @@ def isotropic_gradient(
         axis=-1,
     )
     cs2 = jnp.asarray(velocity_set.sound_speed_squared, dtype=values.dtype)
-    return oe.contract("...q,q,qd->...d", neighbours, weights, velocities) / (cs2 * dx)
+    return ein.contract("...q,q,qd->...d", neighbours, weights, velocities) / (cs2 * dx)
 
 
 def isotropic_laplacian(
@@ -139,7 +140,7 @@ def isotropic_divergence(
         axis=-2,
     )
     cs2 = jnp.asarray(velocity_set.sound_speed_squared, dtype=values.dtype)
-    return oe.contract("...qd,q,qd->...", neighbours, weights, velocities) / (cs2 * dx)
+    return ein.contract("...qd,q,qd->...", neighbours, weights, velocities) / (cs2 * dx)
 
 
 def normalized_gradient(
@@ -153,7 +154,7 @@ def normalized_gradient(
     """Return gradient, magnitude, and a zero-safe unit normal."""
 
     gradient = isotropic_gradient(field, velocity_set, cell_size)
-    magnitude = jnp.sqrt(oe.contract("...d,...d->...", gradient, gradient))
+    magnitude = jnp.sqrt(ein.contract("...d,...d->...", gradient, gradient))
     threshold = jnp.asarray(epsilon, dtype=gradient.dtype)
     if threshold.shape != ():
         raise ValueError("epsilon must be scalar.")
@@ -168,7 +169,7 @@ def normalized_gradient(
 
 
 def _normalise_vectors(vectors: Array, epsilon: Array, /) -> tuple[Array, Array]:
-    magnitude = jnp.sqrt(oe.contract("...d,...d->...", vectors, vectors))
+    magnitude = jnp.sqrt(ein.contract("...d,...d->...", vectors, vectors))
     unit = vectors / jnp.maximum(magnitude, epsilon)[..., None]
     return jnp.where((magnitude > epsilon)[..., None], unit, 0.0), magnitude
 
@@ -228,7 +229,7 @@ def static_contact_angle_normal(
     )
     tangent = (
         interface
-        - oe.contract("...d,...d->...", interface, wall_unit)[..., None] * wall_unit
+        - ein.contract("...d,...d->...", interface, wall_unit)[..., None] * wall_unit
     )
     tangent_unit, tangent_magnitude = _normalise_vectors(tangent, threshold)
     fallback, _ = _normalise_vectors(_fallback_tangent(wall_unit), threshold)
@@ -326,7 +327,7 @@ def natural_wetting_gradient(
         jnp.any(mask & (~jnp.isfinite(wall_magnitude) | (wall_magnitude <= threshold))),
         "Every wetting cell requires a finite nonzero wall normal.",
     )
-    current = oe.contract("...d,...d->...", grad, wall_unit)
+    current = ein.contract("...d,...d->...", grad, wall_unit)
     prescribed = -h * (phi**2 - 1.0) / kappa
     adjusted = grad + (prescribed - current)[..., None] * wall_unit
     return jnp.where(mask[..., None], adjusted, grad)

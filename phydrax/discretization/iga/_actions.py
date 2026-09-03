@@ -8,8 +8,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation._rational_spline import RationalSplineJet
@@ -138,7 +139,9 @@ class IsogeometricReferenceActions(LocalReferenceActions):
                 "field_weight_kind": (
                     "geometry"
                     if dynamic_weights
-                    else "polynomial" if weights is None else "rational"
+                    else "polynomial"
+                    if weights is None
+                    else "rational"
                 ),
                 "field_weights": (
                     None
@@ -222,13 +225,13 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.entity_rows.size, self.local_width):
             raise ValueError("IGA local coefficients do not match reference actions.")
-        return oe.contract("eql,el...->eq...", self._values(runtime), coefficients)
+        return ein.contract("eql,el...->eq...", self._values(runtime), coefficients)
 
     def interpolate_transpose(self, runtime: object, values: ArrayLike, /) -> Array:
         values_ = jnp.asarray(values)
         if values_.shape[:2] != (self.entity_rows.size, self.point_count):
             raise ValueError("IGA point values do not match reference actions.")
-        return oe.contract("eql,eq...->el...", self._values(runtime), values_)
+        return ein.contract("eql,eq...->el...", self._values(runtime), values_)
 
     def reference_gradient(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -236,7 +239,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.entity_rows.size, self.local_width):
             raise ValueError("IGA local coefficients do not match reference actions.")
-        return oe.contract("eqlr,el...->eq...r", self._gradients(runtime), coefficients)
+        return ein.contract("eqlr,el...->eq...r", self._gradients(runtime), coefficients)
 
     def reference_gradient_transpose(
         self, runtime: object, gradients: ArrayLike, /
@@ -247,7 +250,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
             or gradients_.shape[-1] != self.tensor_plan.dimension
         ):
             raise ValueError("IGA point gradients do not match reference actions.")
-        return oe.contract("eqlr,eq...r->el...", self._gradients(runtime), gradients_)
+        return ein.contract("eqlr,eq...r->el...", self._gradients(runtime), gradients_)
 
     def reference_hessian(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -255,7 +258,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.entity_rows.size, self.local_width):
             raise ValueError("IGA local coefficients do not match reference actions.")
-        return oe.contract("eqlrs,el...->eq...rs", self._hessians(runtime), coefficients)
+        return ein.contract("eqlrs,el...->eq...rs", self._hessians(runtime), coefficients)
 
     def reference_hessian_transpose(
         self, runtime: object, hessians: ArrayLike, /
@@ -267,7 +270,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
             or hessians_.shape[-2:] != expected
         ):
             raise ValueError("IGA point Hessians do not match reference actions.")
-        return oe.contract("eqlrs,eq...rs->el...", self._hessians(runtime), hessians_)
+        return ein.contract("eqlrs,eq...rs->el...", self._hessians(runtime), hessians_)
 
     def trace(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         if not self.is_trace:
@@ -406,10 +409,10 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         local_points = runtime_.control_points.reshape(
             (-1, runtime_.control_points.shape[-1])
         )[indices]
-        points = oe.contract("eql,eqld->eqd", values, local_points)
-        jacobian = oe.contract("eqlr,eqld->eqdr", gradients, local_points)
-        mapping_hessian = oe.contract("eqlrs,eqld->eqdrs", hessians, local_points)
-        metric = oe.contract("eqdi,eqdj->eqij", jacobian, jacobian)
+        points = ein.contract("eql,eqld->eqd", values, local_points)
+        jacobian = ein.contract("eqlr,eqld->eqdr", gradients, local_points)
+        mapping_hessian = ein.contract("eqlrs,eqld->eqdrs", hessians, local_points)
+        metric = ein.contract("eqdi,eqdj->eqij", jacobian, jacobian)
         inverse_result = inverse_small_linear(
             SmallLinearSolvePlan(metric.shape[-1]),
             metric,
@@ -419,7 +422,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
             jnp.any(~inverse_result.successful),
             "Isogeometric metric inversion failed.",
         )
-        inverse_jacobian = oe.contract("eqij,eqdj->eqid", inverse_metric, jacobian)
+        inverse_jacobian = ein.contract("eqij,eqdj->eqid", inverse_metric, jacobian)
         determinant = inverse_result.determinant
         volume_measure = jnp.sqrt(jnp.maximum(determinant, 0.0))
         normals = None
@@ -430,7 +433,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
                 .at[self.facet_axis]
                 .set(float(self.facet_side))
             )
-            normal_vector = oe.contract(
+            normal_vector = ein.contract(
                 "eqdr,eqrs,s->eqd", jacobian, inverse_metric, covector
             )
             normal_scale = jnp.linalg.norm(normal_vector, axis=-1)
@@ -441,7 +444,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
             physical_weights = physical_weights * normal_scale
         inverse_hessian = None
         if jacobian.shape[-2] == jacobian.shape[-1]:
-            inverse_hessian = -oe.contract(
+            inverse_hessian = -ein.contract(
                 "eqrd,eqdst,eqsa,eqtb->eqrab",
                 inverse_jacobian,
                 mapping_hessian,
@@ -460,7 +463,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         polynomial_values = self.tensor_plan.basis(zero)
         polynomial_indices = self.tensor_plan.tensor_indices
         local_weights = runtime_.weights.reshape((-1,))[polynomial_indices]
-        weight_sum = oe.contract("...l,...l->...", polynomial_values, local_weights)
+        weight_sum = ein.contract("...l,...l->...", polynomial_values, local_weights)
         weight_sum = _query_view(
             weight_sum,
             self.query_permutation,
@@ -483,7 +486,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         tiny = jnp.finfo(points.dtype).tiny
         safe_scale = jnp.maximum(coordinate_scale, tiny)
         scaled_jacobian = metric.jacobian * self.parameter_scales
-        gram = oe.contract("eqdi,eqdj->eqij", scaled_jacobian, scaled_jacobian)
+        gram = ein.contract("eqdi,eqdj->eqij", scaled_jacobian, scaled_jacobian)
         eigenvalues = jnp.linalg.eigvalsh(gram)
         minimum_rank_ratio = jnp.min(eigenvalues[..., 0]) / (safe_scale * safe_scale)
         maximum_weight = jnp.maximum(jnp.max(jnp.abs(weight_sum)), tiny)

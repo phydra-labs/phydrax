@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._sampling import derive_key, SampleAddress
@@ -219,7 +220,7 @@ def solve_event_driven_quantum_jump(
             collapsed = jnp.stack(
                 [operator(normalized) for operator in problem.collapse_operators]
             )
-            rates = jnp.real(oe.contract("ki,ki->k", jnp.conj(collapsed), collapsed))
+            rates = jnp.real(ein.contract("ki,ki->k", jnp.conj(collapsed), collapsed))
             total_rate = jnp.sum(rates)
             if not bool(
                 jax.device_get(

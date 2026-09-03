@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
@@ -548,12 +549,12 @@ class PreparedSpectralConservationDynamics(StrictModule):
             pair = self.entropy_pair
             entropy_variables = pair.entropy_variables(physical_state)
             convective_physical = self.discretization.reconstruct(convective)
-            convective_density = oe.contract(
+            convective_density = ein.contract(
                 "...i,...i->...",
                 entropy_variables,
                 convective_physical,
             )
-            source_density = oe.contract(
+            source_density = ein.contract(
                 "...i,...i->...",
                 entropy_variables,
                 physical_source,

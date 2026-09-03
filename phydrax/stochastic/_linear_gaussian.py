@@ -11,8 +11,9 @@ from typing import Any, cast, NamedTuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 
@@ -191,7 +192,7 @@ class LinearGaussianDynamics(StrictModule):
             values.shape[: -len(self.state_shape)] if self.state_shape else values.shape
         )
         flat = values.reshape(batch_shape + (self.drift_matrix.shape[0],))
-        drift = oe.contract("ij,...j->...i", self.drift_matrix, flat) + self.offset
+        drift = ein.contract("ij,...j->...i", self.drift_matrix, flat) + self.offset
         return drift.reshape(values.shape)
 
     def parameters(
@@ -237,7 +238,7 @@ def degenerate_gaussian_log_prob(residual: Array, covariance: Array, /) -> Array
     tolerance = jnp.finfo(covariance.dtype).eps * covariance.shape[-1] * scale
     positive = eigenvalues > tolerance
     invalid = jnp.any(eigenvalues < -tolerance, axis=-1)
-    coordinates = oe.contract("...ji,...j->...i", eigenvectors, residual)
+    coordinates = ein.contract("...ji,...j->...i", eigenvectors, residual)
     supported = jnp.all(
         jnp.where(positive, True, jnp.abs(coordinates) <= jnp.sqrt(tolerance)),
         axis=-1,

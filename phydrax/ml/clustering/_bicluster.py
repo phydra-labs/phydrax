@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
@@ -135,7 +136,7 @@ def _row_centers(x: Array, w: Array, labels: Array, count: int) -> tuple[Array, 
     membership = jax.nn.one_hot(labels, count, dtype=w.dtype) * w[..., :, None]
     mass = jnp.sum(membership, axis=-2)
     centers = (
-        oe.contract("...nk,...nf->...kf", membership, x)
+        ein.contract("...nk,...nf->...kf", membership, x)
         / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
     )
     return centers, mass
@@ -267,7 +268,7 @@ class SpectralBiclustering(AbstractRecipe):
         active_rows = w > 0.0
         row_mean = jnp.mean(x, axis=-1, keepdims=True)
         column_mean = (
-            oe.contract("...n,...nf->...f", w, x)
+            ein.contract("...n,...nf->...f", w, x)
             / jnp.maximum(jnp.sum(w, axis=-1), jnp.finfo(w.dtype).tiny)[..., None]
         )
         overall_mean = (

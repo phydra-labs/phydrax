@@ -11,9 +11,10 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 import optax
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
@@ -233,7 +234,7 @@ def probabilistic_stefan_moment_loss(
         batch.test_centers,
         batch.test_inverse_widths,
     )
-    initial_moments = oe.contract(
+    initial_moments = ein.contract(
         "m,m,mk->k",
         batch.domain_weights,
         batch.initial_solid_fraction,
@@ -255,7 +256,7 @@ def probabilistic_stefan_moment_loss(
         )
 
     phase = jax.vmap(phase_at_time)(batch.times)
-    current_moments = oe.contract(
+    current_moments = ein.contract(
         "m,tm,mk->tk",
         batch.domain_weights,
         phase,

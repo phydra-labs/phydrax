@@ -95,7 +95,7 @@ def test_fourier_grid_sampler_supports_physical_nodes_batches_and_nufft():
     assert jnp.allclose(direct[1], 2.0 * direct[0], rtol=1e-12, atol=1e-12)
 
 
-def test_public_spectral_resample_evaluates_shifted_uniform_grid():
+def test_public_fourier_resample_evaluates_shifted_uniform_grid():
     source_size = 8
     target_size = 11
     offset = 0.125
@@ -109,9 +109,10 @@ def test_public_spectral_resample_evaluates_shifted_uniform_grid():
     )
     target = offset + jnp.arange(target_size, dtype=float) / target_size
 
-    output = phx.nn.operator.architectures.spectral_resample(
+    output = phx.signal.fourier_resample(
         values,
         (target_size,),
+        axes=(0,),
         phase_offsets=(offset,),
     )
     expected = jnp.stack(

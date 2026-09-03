@@ -49,6 +49,17 @@ from ._chemical_calibration import (
     ChemicalParameterCoordinate,
 )
 from ._chemical_components import ChemicalComponentCatalog
+from ._chemical_conditional_affine import (
+    ChemicalAffinePivot,
+    ChemicalConditionalAffineAssembly,
+    ChemicalConditionalAffineCertificate,
+    ChemicalConditionalAffineDrivers,
+    ChemicalConditionalAffinePlan,
+    ChemicalConditionalAffineResult,
+    ChemicalConditionalAffineStatus,
+    ChemicalReactionDirection,
+    PreparedChemicalConditionalAffine,
+)
 from ._chemical_mechanism import (
     ChemicalMechanismEvidence,
     ChemicalMechanismIR,
@@ -445,6 +456,7 @@ from ._radiation_material import (
     RadiationScaleContract,
     SpectralFrequencyGrid,
 )
+from ._radiation_moments import MultigroupM1RadiationSystem
 from ._radiative import (
     RadiativeCoolingBoundsPolicy,
     TabulatedCoolingCurve,
@@ -551,6 +563,7 @@ from ._variational import (
     BoundaryLoadAction,
     coefficient,
     DiffusionAction,
+    TensorDiffusionAction,
     MassAction,
     SourceAction,
     VariationalCoefficient,
@@ -740,6 +753,7 @@ __all__ = [
     "compile_finite_element_problem",
     "CompiledFiniteElementProblem",
     "DiffusionAction",
+    "TensorDiffusionAction",
     "ExteriorFacetAction",
     "finite_element_form_from_functional",
     "FiniteElementAction",
@@ -1059,6 +1073,14 @@ __all__ = [
     "load_chemical_mechanism_yaml",
     "AbstractChemicalRatePlan",
     "ArrheniusRatePlan",
+    "ChemicalAffinePivot",
+    "ChemicalConditionalAffineAssembly",
+    "ChemicalConditionalAffineCertificate",
+    "ChemicalConditionalAffineDrivers",
+    "ChemicalConditionalAffinePlan",
+    "ChemicalConditionalAffineResult",
+    "ChemicalConditionalAffineStatus",
+    "ChemicalReactionDirection",
     "ChemicalMechanismEvidence",
     "ChemicalMechanismIR",
     "ChemicalRateEvaluation",
@@ -1070,6 +1092,7 @@ __all__ = [
     "PhotolysisRatePlan",
     "PLogRatePlan",
     "PreparedChemicalMechanism",
+    "PreparedChemicalConditionalAffine",
     "ThirdBodyRatePlan",
     "TroeRatePlan",
     "AbstractSpeciesThermodynamicsPlan",
@@ -1110,7 +1133,9 @@ __all__ = [
     "RadiationMatterExchangePlan",
     "RadiationMatterExchangeResult",
     "RadiationMeanEvaluation",
+    "MultigroupM1RadiationSystem",
     "RadiationScaleContract",
+    "MultigroupM1RadiationSystem",
     "SpectralFrequencyGrid",
     "ChemicalPhaseSpec",
     "ChemicalSpeciesSchema",

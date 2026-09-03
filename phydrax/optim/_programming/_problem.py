@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
@@ -90,7 +91,7 @@ def _conic_matrix_mv(
 ) -> Array:
     if isinstance(matrix, AbstractSparseLinearOperator):
         return jnp.asarray(matrix.mv(vector))
-    return oe.contract("...ij,...j->...i", matrix, vector)
+    return ein.contract("...ij,...j->...i", matrix, vector)
 
 
 def _conic_matrix_transpose_mv(
@@ -98,7 +99,7 @@ def _conic_matrix_transpose_mv(
 ) -> Array:
     if isinstance(matrix, AbstractSparseLinearOperator):
         return jnp.asarray(matrix.transpose_mv(vector))
-    return oe.contract("...ji,...j->...i", matrix, vector)
+    return ein.contract("...ji,...j->...i", matrix, vector)
 
 
 def _conic_quadratic_mv(

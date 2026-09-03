@@ -13,8 +13,9 @@ from functools import partial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._base import (
@@ -400,7 +401,7 @@ def operator_kernel_features(
         raise TypeError(f"{kernel.kernel_id} has no exact finite-feature representation.")
     if isinstance(kernel, IntrinsicCoregionalizationKernel):
         spatial = kernel_features(kernel.spatial_kernel, points)
-        features = oe.contract(
+        features = ein.contract(
             "pr,oq->porq",
             spatial,
             kernel.coregionalization.factor,
@@ -415,7 +416,7 @@ def operator_kernel_features(
             spatial = kernel_features(spatial_kernel, points)
             component_rank = int(spatial.shape[1]) * coregionalization.factor_rank
             components.append(
-                oe.contract(
+                ein.contract(
                     "pr,oq->porq",
                     spatial,
                     coregionalization.factor,
@@ -430,7 +431,7 @@ def operator_kernel_features(
         )
         spatial = kernel_features(kernel.scalar_kernel, point_design)
         projectors = kernel._projectors(point_design)
-        features = oe.contract(
+        features = ein.contract(
             "pij,pr->pirj",
             projectors,
             spatial,
@@ -443,7 +444,7 @@ def operator_kernel_features(
         )
         spatial = kernel_features(kernel.scalar_kernel, point_design)
         projectors = kernel._projectors(point_design)
-        features = oe.contract(
+        features = ein.contract(
             "pij,pr->pirj",
             projectors,
             spatial,
@@ -526,7 +527,7 @@ class ProjectedTangentKernel(AbstractOperatorValuedKernel):
         right_points = _as_inputs(right, input_ndim=self.input_ndim, name="right")
         left_projectors = self._projectors(left_points)
         right_projectors = self._projectors(right_points)
-        projector_blocks = oe.contract(
+        projector_blocks = ein.contract(
             "aij,bkj->abik",
             left_projectors,
             jnp.conj(right_projectors),
@@ -670,7 +671,7 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
         right_points = _as_inputs(right, input_ndim=self.input_ndim, name="right")
         left_projectors = self._projectors(left_points)
         right_projectors = self._projectors(right_points)
-        projector_blocks = oe.contract(
+        projector_blocks = ein.contract(
             "aij,bkj->abik",
             left_projectors,
             jnp.conj(right_projectors),

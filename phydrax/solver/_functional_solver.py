@@ -431,6 +431,7 @@ class FunctionalSolver(StrictModule):
         tensorboard_flush_every: int = 10,
         profile_adaptive: bool = False,
         train_term_sample_size: int | None = None,
+        gradient_accumulation: int = 1,
         precision: FunctionalPrecisionPolicy | None = None,
         training: FunctionalTrainingPlan | None = None,
         resume: bool = False,
@@ -483,6 +484,8 @@ class FunctionalSolver(StrictModule):
         - `train_term_sample_size` optionally samples a fixed-size subset of
           stochastic training terms per optimizer step and rescales their values
           to preserve an unbiased estimate of the complete term sum.
+        - `gradient_accumulation` averages independently keyed prepared objectives
+          before one standard Optax update; `num_iter` continues to count updates.
         """
         from ..terms._target_consistency import TargetConsistencyTerm
 
@@ -497,6 +500,9 @@ class FunctionalSolver(StrictModule):
         num_iter = int(num_iter)
         if num_iter < 0:
             raise ValueError("num_iter must be non-negative.")
+        gradient_accumulation = int(gradient_accumulation)
+        if gradient_accumulation <= 0:
+            raise ValueError("gradient_accumulation must be positive.")
         if num_iter == 0:
             return self
         if parameter_subspace is None:
@@ -542,6 +548,10 @@ class FunctionalSolver(StrictModule):
             )
             if stored_target_policy != target_policy:
                 raise ValueError("In-memory functional target-policy identity mismatch.")
+            if self.training_state.gradient_accumulation != gradient_accumulation:
+                raise ValueError(
+                    "In-memory functional gradient-accumulation identity mismatch."
+                )
         if (
             keep_best
             and (training is None or training.selection is None)
@@ -595,6 +605,7 @@ class FunctionalSolver(StrictModule):
             tensorboard_flush_every=tensorboard_flush_every,
             profile_adaptive=profile_adaptive,
             train_term_sample_size=train_term_sample_size,
+            gradient_accumulation=gradient_accumulation,
             precision=precision,
             training=training,
             resume=bool(resume),

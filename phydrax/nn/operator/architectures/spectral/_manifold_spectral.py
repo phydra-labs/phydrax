@@ -13,10 +13,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax.discretization import SpectralDecomposition
@@ -95,10 +95,10 @@ class _ManifoldSpectralMixer(StrictModule):
                 "Manifold spectral values must end in source points/channels "
                 f"{(source.num_points, self.in_channels)}; got {array.shape}."
             )
-        coefficients = oe.contract("mp,...pc->...mc", source.analysis, array)
+        coefficients = ein.contract("mp,...pc->...mc", source.analysis, array)
         mode_weight = self.weight[source.group_ids]
-        transformed = oe.contract("moc,...mc->...mo", mode_weight, coefficients)
-        return oe.contract("pm,...mo->...po", target.synthesis, transformed)
+        transformed = ein.contract("moc,...mc->...mo", mode_weight, coefficients)
+        return ein.contract("pm,...mo->...po", target.synthesis, transformed)
 
 
 class ManifoldSpectralOperator(AbstractOperatorModel):

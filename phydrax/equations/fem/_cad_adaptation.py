@@ -9,8 +9,9 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -77,7 +78,7 @@ class CADProjectionPlan(StrictModule, NonTrainableState):
         if projected.shape != values.shape or normals.shape != values.shape:
             raise ValueError("CAD projection or normal provider changed point shape.")
         normal_norm = jnp.sqrt(
-            oe.contract("...d,...d->...", normals, normals, backend="jax")
+            ein.contract("...d,...d->...", normals, normals, backend="jax")
         )
         normals = normals / normal_norm[..., None]
         distances = jnp.sqrt(jnp.sum((projected - values) ** 2, axis=-1))
@@ -155,7 +156,7 @@ class CurvatureAdaptationPlan(StrictModule, NonTrainableState):
     ) -> Array:
         value = jnp.asarray(displacement)
         maximum = self.maximum_displacement_fraction * jnp.asarray(local_length)
-        norm = jnp.sqrt(oe.contract("...d,...d->...", value, value, backend="jax"))
+        norm = jnp.sqrt(ein.contract("...d,...d->...", value, value, backend="jax"))
         factor = jnp.minimum(1.0, maximum / jnp.maximum(norm, 1.0e-30))
         return value * factor[..., None]
 

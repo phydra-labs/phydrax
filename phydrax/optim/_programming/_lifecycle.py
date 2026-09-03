@@ -10,8 +10,9 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._bounds import Bounds
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -498,9 +499,9 @@ def _restore_linear_constraint_fields(
     inequality_dual = result.cone_dual[..., equalities : equalities + inequalities]
     inequality_slack = result.cone_slack[..., equalities : equalities + inequalities]
     equality_residual = (
-        oe.contract("...ij,...j->...i", equality_matrix, result.primal) - equality_rhs
+        ein.contract("...ij,...j->...i", equality_matrix, result.primal) - equality_rhs
     )
-    inequality_action = oe.contract(
+    inequality_action = ein.contract(
         "...ij,...j->...i",
         inequality_matrix,
         result.primal,

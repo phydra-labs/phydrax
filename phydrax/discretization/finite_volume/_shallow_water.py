@@ -10,8 +10,9 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -487,11 +488,11 @@ class ShallowWaterHydrostaticHLLPlan(StrictModule, NonTrainableState):
             -1,
         )
         flux_left = (
-            oe.contract("...id,...d->...i", flux_left, normal_, backend="jax")
+            ein.contract("...id,...d->...i", flux_left, normal_, backend="jax")
             - grid_speed[..., None] * state_left
         )
         flux_right = (
-            oe.contract("...id,...d->...i", flux_right, normal_, backend="jax")
+            ein.contract("...id,...d->...i", flux_right, normal_, backend="jax")
             - grid_speed[..., None] * state_right
         )
         denominator = upper - lower

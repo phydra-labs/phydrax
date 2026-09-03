@@ -11,8 +11,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -208,7 +209,7 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         value = jnp.asarray(state)
         candidates = self.candidate_coefficients(value)
         gram = self.optimal.smoothness_gram.astype(value.dtype)
-        smoothness = oe.contract(
+        smoothness = ein.contract(
             "kc...i,cij,kc...j->kc...",
             candidates,
             gram,

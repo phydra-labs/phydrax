@@ -16,9 +16,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..optim import FiniteProductSpace
@@ -741,7 +742,7 @@ def _acquisition_scores(
         dtype=objectives.dtype,
     )
     objective_factor = jax.vmap(jnp.linalg.cholesky)(objective_blocks)
-    objective_samples = objective_means + oe.contract(
+    objective_samples = objective_means + ein.contract(
         "tij,ftj->fti", objective_factor, normal
     )
     has_feasible = jnp.any(feasible)
@@ -771,7 +772,7 @@ def _acquisition_scores(
             (plan.fantasy_count, tuple_count, q),
             dtype=objectives.dtype,
         )
-        samples = means + oe.contract("tij,ftj->fti", factor, child_normal)
+        samples = means + ein.contract("tij,ftj->fti", factor, child_normal)
         sample_feasible = sample_feasible & jnp.all(samples <= 0.0, axis=-1)
         usable = usable & child_usable
     values = jnp.where(
@@ -821,7 +822,7 @@ def _pending_fantasy_posterior(
     query_pending = covariance[pending_count:, :pending_count]
     query_covariance = covariance[pending_count:, pending_count:]
     factor = jnp.linalg.cholesky(pending_covariance)
-    fantasy_values = pending_mean + oe.contract(
+    fantasy_values = pending_mean + ein.contract(
         "ij,fj->fi",
         factor,
         jr.normal(
@@ -835,7 +836,7 @@ def _pending_fantasy_posterior(
     solved_centered = jsp.linalg.solve_triangular(
         factor.T, solved_centered, lower=False
     ).T
-    conditional_means = query_mean + oe.contract(
+    conditional_means = query_mean + ein.contract(
         "qp,fp->fq", query_pending, solved_centered
     )
     solved_cross = jsp.linalg.solve_triangular(factor, query_pending.T, lower=True)
