@@ -364,7 +364,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
             )
         else:
             gradient = self.plan.gradient(local)
-            flux = oe.contract("...ba,...b->...a", self.quadrature_data, gradient)
+            flux = ein.contract("...ba,...b->...a", self.quadrature_data, gradient)
             local_output = self.plan.gradient_transpose(flux)
         contribution = local_output.reshape(self.gathers.shape)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
@@ -382,7 +382,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         if self.action_kind == "mass":
             basis = self.plan.interpolate(identity).reshape((local_width, -1))
             data = self.quadrature_data.reshape((self.gathers.shape[0], -1))
-            local = oe.contract("cq,iq,jq->cij", data, basis, basis)
+            local = ein.contract("cq,iq,jq->cij", data, basis, basis)
         else:
             gradients = self.plan.gradient(identity).reshape(
                 (local_width, -1, self.plan.tabulation.dimension)
@@ -395,7 +395,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
                     self.plan.tabulation.dimension,
                 )
             )
-            local = oe.contract("cqab,iqa,jqb->cij", data, gradients, gradients)
+            local = ein.contract("cqab,iqa,jqb->cij", data, gradients, gradients)
         return ElementTensorOperator(
             local,
             self.gathers,

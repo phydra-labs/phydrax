@@ -572,7 +572,7 @@ def _prepared_local_volume_residual(
             metric.physical_dimension,
             leading_shape=metric.points.shape[:-1],
         )
-        physical_flux = oe.contract("cqde,cqe->cqd", tensor, physical_gradient)
+        physical_flux = ein.contract("cqde,cqe->cqd", tensor, physical_gradient)
         local = reference.reference_gradient_transpose(
             context.runtime,
             metric.reference_gradient_transpose(
@@ -1529,28 +1529,20 @@ def _full_residual(
                     weighted_measure = metric.weighted_measure.reshape(
                         (local_state.shape[0]) + qshape
                     )
-                    reference_tensor = oe.contract(
-                        "...rd,...de,...se,...->...rs",
-                        inverse_jacobian,
-                        tensor_grid,
-                        inverse_jacobian,
-                        weighted_measure,
-                    )
-                    reference_flux = oe.contract(
-                        "...rs,...s->...r", reference_tensor, reference_gradient
-                    )
+                    reference_tensor = ein.contract("...rd,...de,...se,...->...rs",
+                    inverse_jacobian,
+                    tensor_grid,
+                    inverse_jacobian,
+                    weighted_measure,)
+                    reference_flux = ein.contract("...rs,...s->...r", reference_tensor, reference_gradient)
                     local = _tensor_gradient_transpose(plan, reference_flux, ())
                 else:
-                    field_gradient = oe.contract(
-                        "cqid,ci->cqd", physical_gradients, local_state
-                    )
-                    local = oe.contract(
-                        "cq,cqid,cqde,cqe->ci",
-                        physical_weights,
-                        physical_gradients,
-                        tensor,
-                        field_gradient,
-                    )
+                    field_gradient = ein.contract("cqid,ci->cqd", physical_gradients, local_state)
+                    local = ein.contract("cq,cqid,cqde,cqe->ci",
+                    physical_weights,
+                    physical_gradients,
+                    tensor,
+                    field_gradient,)
             elif isinstance(action, DiffusionAction):
                 values = _cell_coefficient_values(
                     action.diffusivity,
