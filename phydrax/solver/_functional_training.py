@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._training import TargetParameterState, TrainingProgress
 from ..domain import DomainFunction
+from ..enforcement import EnforcementState
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
 
@@ -571,6 +572,7 @@ class FunctionalTrainingState(StrictModule):
     previous_functions: PyTree[Any] | None
     optimizer_state: PyTree[Any]
     target_state: TargetParameterState | None
+    enforcement_state: EnforcementState | None
     key: Key[Array, ""]
     pseudo_inverse_steps: tuple[Array, ...]
     term_multipliers: Array
@@ -592,6 +594,7 @@ class FunctionalTrainingState(StrictModule):
         run_id: str,
         gradient_accumulation: int = 1,
         target_state: TargetParameterState | None = None,
+        enforcement_state: EnforcementState | None = None,
         previous_functions: PyTree[Any] | None = None,
         pseudo_inverse_steps: Sequence[ArrayLike] = (),
         term_multipliers: ArrayLike = (),
@@ -605,6 +608,10 @@ class FunctionalTrainingState(StrictModule):
             target_state, TargetParameterState
         ):
             raise TypeError("target_state must be a TargetParameterState or None.")
+        if enforcement_state is not None and not isinstance(
+            enforcement_state, EnforcementState
+        ):
+            raise TypeError("enforcement_state must be EnforcementState or None.")
         identifier = str(run_id)
         seconds = float(training_seconds)
         resumed = int(resumed_from_step)
@@ -622,6 +629,7 @@ class FunctionalTrainingState(StrictModule):
         self.previous_functions = previous_functions
         self.optimizer_state = optimizer_state
         self.target_state = target_state
+        self.enforcement_state = enforcement_state
         self.key = key
         self.pseudo_inverse_steps = tuple(
             jnp.asarray(value) for value in pseudo_inverse_steps

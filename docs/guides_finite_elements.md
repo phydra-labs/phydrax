@@ -15,9 +15,12 @@ Supported cell blocks are triangles, quadrilaterals, tetrahedra, and
 hexahedra. Polygonal meshes order triangle blocks before quadrilateral blocks
 so global cell/facet routes remain canonical.
 
-Arbitrary straight-sided polygons use the separate
-[virtual-element substrate](guides_virtual_elements.md); they are not represented
-as reference finite elements with fabricated interior basis tabulations.
+Arbitrary straight-sided polygons have two separate substrates. The
+[explicit polygon H1 method](guides_explicit_polygon_h1.md) constructs a
+degree-one interior basis by discrete-harmonic fan condensation. The
+[virtual-element substrate](guides_virtual_elements.md) retains functional
+degrees of freedom, polynomial projections, and projector-kernel stabilization.
+Neither path fabricates a reference-polygon polynomial element.
 
 ## Reference elements and fields
 

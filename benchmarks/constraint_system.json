@@ -1,0 +1,60 @@
+{
+  "backend": "cpu",
+  "cases": [
+    {
+      "constraint_rows": 1,
+      "first_execution_seconds": 0.14506470802007243,
+      "iterations": 20,
+      "maximum_constraint_defect": 0.0,
+      "nullity": 0,
+      "preparation_seconds": 6.472531750012422,
+      "projector_id": "8fcd34ba0e3e3a366e95c14d652a1305a99c39418ad1c126a579cdb19969af65",
+      "rank": 1,
+      "right_inverse_defect": 0.0,
+      "source_size": 1,
+      "steady_execution_seconds": 0.004576791649742518
+    },
+    {
+      "constraint_rows": 4,
+      "first_execution_seconds": 0.03314433299237862,
+      "iterations": 20,
+      "maximum_constraint_defect": 0.0,
+      "nullity": 0,
+      "preparation_seconds": 3.413525500014657,
+      "projector_id": "e3ed5421378df4d579db8afbcd36b239530d0838a6036b9a05c3dc1de008e63c",
+      "rank": 4,
+      "right_inverse_defect": 0.0,
+      "source_size": 4,
+      "steady_execution_seconds": 0.001995131249714177
+    },
+    {
+      "constraint_rows": 16,
+      "first_execution_seconds": 0.10380549999536015,
+      "iterations": 20,
+      "maximum_constraint_defect": 0.0,
+      "nullity": 0,
+      "preparation_seconds": 3.165600958018331,
+      "projector_id": "c75e2addc0a436887939532552f2e350a3dc0ce53d4f2fccf828fd9cad5d3bd7",
+      "rank": 16,
+      "right_inverse_defect": 0.0,
+      "source_size": 16,
+      "steady_execution_seconds": 0.004039233351068106
+    },
+    {
+      "constraint_rows": 32,
+      "first_execution_seconds": 0.0936540839902591,
+      "iterations": 20,
+      "maximum_constraint_defect": 0.0,
+      "nullity": 0,
+      "preparation_seconds": 4.401744208007585,
+      "projector_id": "c4749d6907524a1c73f3e41449a62a05b7e6262b6418eb29f858ce538dd20b16",
+      "rank": 32,
+      "right_inverse_defect": 0.0,
+      "source_size": 32,
+      "steady_execution_seconds": 0.0057866624993039295
+    }
+  ],
+  "devices": [
+    "TFRT_CPU_0"
+  ]
+}

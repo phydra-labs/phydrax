@@ -15,8 +15,11 @@ from jaxtyping import Array, ArrayLike
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._strict import StrictModule
+from ._constraint_conditioning import (
+    ConstraintLikelihoodTerm,
+    LinearGaussianConstraintConditioner,
+)
 from ._gp_actions import AbstractGaussianProcessActionPolicy
-from ._gp_backend import exact_gp_log_probability
 from ._gp_computation_aware import GaussianProcessComputationPolicy
 from ._gp_computation_structured import (
     StructuredComputationAwareGaussianProcessFactor,
@@ -593,11 +596,21 @@ class MultiOutputGaussianProcessDiscrepancy(StrictModule):
         """Marginalize the correlated latent discrepancy."""
         _validate_state(state, self.design)
         noise = state.observation_noise(self.design)
-        covariance = state.kernel.matrix(self.design, self.design) + jnp.diag(
-            noise * noise + state.jitter
+        residual = self.residual(physical_mean)
+        likelihood = ConstraintLikelihoodTerm(
+            residual,
+            noise_scale=noise,
+            likelihood_id="multi-output-gp-constraint",
         )
-        cholesky = jnp.linalg.cholesky(covariance)
-        return exact_gp_log_probability(self.residual(physical_mean), cholesky)
+        conditioner = LinearGaussianConstraintConditioner(
+            numerical_jitter=state.jitter,
+            rank_tolerance=state.jitter,
+        )
+        return conditioner.log_evidence_from_covariance(
+            jnp.zeros_like(residual),
+            state.kernel.matrix(self.design, self.design),
+            likelihood,
+        )
 
     def condition(
         self,
@@ -611,19 +624,28 @@ class MultiOutputGaussianProcessDiscrepancy(StrictModule):
         _validate_state(state, self.design)
         _validate_design(query_design, output_names=self.output_names)
         noise = state.observation_noise(self.design)
-        observation_covariance = state.kernel.matrix(self.design, self.design) + jnp.diag(
-            noise * noise + state.jitter
+        residual = self.residual(physical_mean)
+        likelihood = ConstraintLikelihoodTerm(
+            residual,
+            noise_scale=noise,
+            likelihood_id="multi-output-gp-constraint",
         )
-        cross_covariance = state.kernel.matrix(query_design, self.design)
-        query_covariance = state.kernel.matrix(query_design, query_design)
-        cholesky = jnp.linalg.cholesky(observation_covariance)
-        whitened_cross = jnp.linalg.solve(cholesky, cross_covariance.T)
-        projection = jnp.linalg.solve(cholesky.T, whitened_cross).T
-        covariance = query_covariance - projection @ cross_covariance.T
-        covariance = 0.5 * (covariance + covariance.T)
+        conditioner = LinearGaussianConstraintConditioner(
+            numerical_jitter=state.jitter,
+            rank_tolerance=state.jitter,
+        )
+        conditioned = conditioner.condition_from_covariances(
+            jnp.zeros((query_design.num_observations,), dtype=residual.dtype),
+            state.kernel.matrix(query_design, query_design),
+            jnp.zeros_like(residual),
+            state.kernel.matrix(self.design, self.design),
+            state.kernel.matrix(query_design, self.design),
+            likelihood,
+        )
+        covariance = conditioned.posterior_covariance
         return MultiOutputGaussianProcessCondition(
             design=query_design,
-            mean=projection @ self.residual(physical_mean),
+            mean=conditioned.posterior_mean,
             covariance=covariance,
             variance=jnp.maximum(jnp.diag(covariance), 0.0),
         )

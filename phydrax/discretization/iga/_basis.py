@@ -201,6 +201,7 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
     component_shape: tuple[int, ...] = eqx.field(static=True)
     mapping: str = eqx.field(static=True)
     weights: Array | None
+    weights_from_geometry: bool = eqx.field(static=True)
     field_spec_id: str = eqx.field(static=True)
 
     def __init__(
@@ -213,6 +214,7 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
         component_shape: Sequence[int] = (),
         mapping: str = "identity",
         weights: ArrayLike | None = None,
+        weights_from_geometry: bool = False,
     ):
         name_, components, conformity_, mapping_ = (
             str(name),
@@ -228,7 +230,12 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
             raise ValueError("IGA fields support only identity-mapped H1 conformity.")
         if any(x <= 0 for x in components):
             raise ValueError("Field component dimensions must be positive.")
+        dynamic_weights = bool(weights_from_geometry)
         field_weights = None if weights is None else jnp.asarray(weights)
+        if dynamic_weights and field_weights is not None:
+            raise ValueError(
+                "Geometry-owned rational weights cannot also be supplied statically."
+            )
         if field_weights is not None:
             if field_weights.shape != basis.control_shape:
                 raise ValueError(
@@ -243,7 +250,16 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
             self.component_shape,
             self.mapping,
             self.weights,
-        ) = name_, basis, conformity_, components, mapping_, field_weights
+            self.weights_from_geometry,
+        ) = (
+            name_,
+            basis,
+            conformity_,
+            components,
+            mapping_,
+            field_weights,
+            dynamic_weights,
+        )
         self.field_spec_id = canonical_fingerprint(
             {
                 "kind": "isogeometric-field-spec",
@@ -255,12 +271,13 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
                 "weights": None
                 if field_weights is None
                 else array_tree_fingerprint(np.asarray(field_weights)),
+                "weights_from_geometry": dynamic_weights,
             }
         )
 
     @property
     def is_rational(self) -> bool:
-        return self.weights is not None
+        return self.weights is not None or self.weights_from_geometry
 
 
 class IsogeometricQuadraturePolicy(StrictModule, NonTrainableState):

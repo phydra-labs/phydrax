@@ -660,21 +660,34 @@ This allows localized influence while preserving exactness at snapped anchors.
 If anchors from different sources are coincident (according to the same snap metric used at runtime), they are deduplicated.
 Conflicting coincident targets are rejected: exact enforcement of incompatible pointwise data is not possible.
 
-## A.8. Multi-field pipelines, co-variables, and topological ordering
+## A.8. Joint multi-field affine projection
 
-For a vector of fields $(u^{(1)},\dots,u^{(M)})$, an enforced constraint for one field may require access to other fields
-(co-variables). This defines a directed dependency graph on field names. If the graph is acyclic, there exists a
-topological order $u^{(i_1)},\dots,u^{(i_M)}$ such that every co-variable needed for enforcing $u^{(i_k)}$ has been
-enforced earlier in the order.
-
-Applying per-field pipelines in this order yields a well-defined global enforcement map:
+For a product of fields $U=(u^{(1)},\ldots,u^{(M)})$, collect every certified
+linear condition into one operator
 
 $$
-\mathcal P:\ (u^{(1)},\dots,u^{(M)})\mapsto (\tilde u^{(1)},\dots,\tilde u^{(M)}).
+C: X_1\oplus\cdots\oplus X_M\longrightarrow Y.
 $$
 
-If the dependency graph contains a cycle, a global deterministic enforcement map cannot be defined without additional
-fixed-point structure; the implementation rejects such cycles.
+Given a right inverse $R$ on the declared target range, the joint correction is
+
+$$
+P_b(U)=U+R\bigl(b-CU\bigr).
+$$
+
+Thus $CP_b(U)=b$, $P_b(P_b(U))=P_b(U)$, and every already-feasible field tuple is
+fixed. Off-diagonal blocks of $C$ encode coupled fields directly; cyclic equations
+therefore require no pivot or per-field topological ordering.
+
+If the rows of $C$ are dependent, the compiler retains the generalized-inverse
+identity $CRC=C$ and separately checks that $b$ lies in the range of $C$. Conflicting
+targets fail. Coefficient-space, kernel/RKHS, graph, geometry, and interface
+providers differ only in how they construct the lift $R$ and its certificate.
+
+Local boundary/initial ansatz maps remain useful inexpensive feasible
+parameterizations, but they are not automatically idempotent projectors. A later
+joint realization must either operate in their preservation kernel or include
+their conditions in the joint operator.
 
 ## A.9. Compatibility and scope conditions
 
@@ -705,4 +718,16 @@ The following implementation concepts align with the mathematics above:
 - **Initial stage**: higher-order `enforce_initial` gated Taylor overlay and/or other initial enforced constraints, with
   boundary-gated blending only when boundary compatibility requires it.
 - **Interior stage**: anchor/data correction $u\mapsto u + M\cdot(\text{IDW interpolant of scaled residuals})$ (with snapping for exact anchors).
+- **Joint affine realization**: `prepare_affine_projector` assembles all coupled
+  rows and prepares one certified right-inverse action.
+- **Coefficient realization**: `CoefficientElimination` produces a
+  `ConstraintMap` and target-dependent lift inside a certified linear
+  representation.
+- **Fiber realization**: analytic, realized, or separable fiber units retain
+  unconstrained coordinates as an explicit residual domain.
+- **Dynamic realization**: `PreparedEnforcementStep` freezes one accepted-step
+  realization; refresh is transactional and checkpointable.
+- **Nonlinear/feasibility realization**: local retractions and closed/open
+  feasible maps carry relation-specific certificates rather than affine
+  projection claims.
 - **BVH**: packed AABB tree used to accelerate boundary-subset weight evaluation for blending.

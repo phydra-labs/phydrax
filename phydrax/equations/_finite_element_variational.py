@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -22,13 +23,13 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization._constraints import AbstractDiscreteDirichletConstraint
 from ..discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
 )
 from ..discretization.fem import (
     finite_element_hp_constraint,
     finite_element_hp_domains,
-    FiniteElementDirichletConstraint,
     FiniteElementDiscretization,
     FiniteElementHPEpoch,
     FiniteElementHPTraceConstraintPlan,
@@ -81,6 +82,7 @@ from ._variational import (
     IntegrationRule as ReferenceRule,
     MassAction,
     SourceAction,
+    TensorDiffusionAction,
     VariationalActionDescriptor,
     VariationalCoefficient,
 )
@@ -301,7 +303,9 @@ class CellResidualAction(StrictModule, NonTrainableState):
                 for field in self.input_fields
                 for item in ((field, "value"), (field, "grad"))
             ),
+            provider_action_kind="cell-residual",
             evaluator=self.kernel,
+            provider_offers=("native", "prepared-local"),
         )
 
 
@@ -348,6 +352,7 @@ class PairwiseVolumeFluxAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="pairwise-volume-flux",
             evaluator=self.kernel,
         )
 
@@ -410,6 +415,7 @@ class InteriorFacetAction(StrictModule, NonTrainableState):
                 for field in self.input_field_names
                 for item in ((field, "jump"), (field, "average"))
             ),
+            provider_action_kind="interior-facet",
             evaluator=self.kernel,
         )
 
@@ -468,6 +474,7 @@ class ExteriorFacetAction(StrictModule, NonTrainableState):
             (self.output_field_name,),
             self.input_field_names,
             tuple((field, "value") for field in self.input_field_names),
+            provider_action_kind="exterior-facet",
             evaluator=self.kernel,
         )
 
@@ -661,6 +668,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
                 (self.field_name, "grad"),
                 (self.field_name, "normal-trace"),
             ),
+            provider_action_kind="sipg-facet",
             coefficient_values=coefficients,
         )
 
@@ -706,6 +714,7 @@ class CellEnergyAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"), (self.field_name, "grad")),
+            provider_action_kind="cell-energy",
             evaluator=self.density,
             provider_offers=("prepared-local",),
         )
@@ -814,6 +823,7 @@ class LocalFunctionalAction(StrictModule, NonTrainableState):
             self.output_fields,
             self.input_fields,
             operators,
+            provider_action_kind="functional",
             evaluator=self.term.density,
             provider_offers=("prepared-local",),
         )
@@ -860,6 +870,7 @@ class CellBilinearAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"), (self.field_name, "grad")),
+            provider_action_kind="cell-bilinear",
             evaluator=self.kernel,
         )
 
@@ -904,11 +915,13 @@ class PreparedOperatorAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="operator-action",
         )
 
 
 FiniteElementAction = (
     DiffusionAction
+    | TensorDiffusionAction
     | MassAction
     | SourceAction
     | BoundaryLoadAction
@@ -941,7 +954,10 @@ def _action_input_fields(term: FiniteElementAction, /) -> tuple[str, ...]:
 
 
 def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
-    if isinstance(term, DiffusionAction):
+    if isinstance(term, TensorDiffusionAction):
+        coefficient_id = term.diffusivity.coefficient_id
+        kind = "tensor-diffusion"
+    elif isinstance(term, DiffusionAction):
         coefficient_id = term.diffusivity.coefficient_id
         kind = "diffusion"
     elif isinstance(term, MassAction):
@@ -982,7 +998,7 @@ def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
         kind = "operator-action"
     else:
         raise TypeError("Unsupported finite-element action.")
-    return {
+    payload = {
         "kind": kind,
         "action_id": term.action_id,
         "output_fields": list(_action_output_fields(term)),
@@ -999,6 +1015,15 @@ def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
             else term.boundary.condition_id
         ),
     }
+    if isinstance(term, TensorDiffusionAction):
+        payload["tensor_axes"] = list(term.tensor_axes)
+        payload["operator_properties"] = {
+            "self_adjoint": term.properties.self_adjoint,
+            "positive_definite": term.properties.positive_definite,
+            "positive_semidefinite": term.properties.positive_semidefinite,
+            "evidence": list(term.properties.evidence),
+        }
+    return payload
 
 
 class FiniteElementForm(StrictModule, NonTrainableState):
@@ -1052,6 +1077,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
                 action,
                 (
                     DiffusionAction,
+                    TensorDiffusionAction,
                     MassAction,
                     SourceAction,
                     BoundaryLoadAction,
@@ -1312,6 +1338,120 @@ def _sipg_constant_subspace(
     )
 
 
+def _assemble_tensor_diffusion_action(
+    action: TensorDiffusionAction,
+    discretization: FiniteElementDiscretization,
+    context: FiniteElementExecutionContext,
+    /,
+):
+    field_index = discretization._field_index(action.field_name)
+    dof_map = discretization.dof_maps[field_index]
+    if dof_map.component_shape:
+        raise ValueError("TensorDiffusionAction requires a scalar finite-element field.")
+    domain = _action_domain(action, discretization)
+    active_cells = np.asarray(domain.entity_indices, dtype=np.int32)
+    local_values = []
+    cell_start = 0
+    for block_index, block in enumerate(discretization.mesh.blocks):
+        rule = _action_rule(action, block.name, block.cell_kind)
+        rule_data = _reference_rule_data(rule)
+        geometry = discretization.evaluate_block_geometry(
+            action.field_name,
+            block_index,
+            context.runtime.coordinates,
+            rule_data.points,
+            rule_data.weights,
+        )
+        entity_indices = np.arange(
+            cell_start, cell_start + block.cell_count, dtype=np.int32
+        )
+        coefficient_dofs = None
+        coefficient_basis = None
+        coefficient_orientations = None
+        coefficient_field_space_id = action.diffusivity.field_space_id
+        if action.diffusivity.location == "dof":
+            coefficient_fields = tuple(
+                index
+                for index, space in enumerate(discretization.field_spaces)
+                if space.field_space_id == coefficient_field_space_id
+            )
+            if len(coefficient_fields) != 1:
+                raise ValueError(
+                    "Tensor-diffusion DOF coefficient field is not uniquely available."
+                )
+            coefficient_field_index = coefficient_fields[0]
+            coefficient_dofs = discretization.dof_maps[coefficient_field_index].cell_dofs[
+                block_index
+            ]
+            coefficient_basis = discretization.elements[coefficient_field_index][
+                block_index
+            ].tabulate(rule_data.points)[0]
+            coefficient_orientations = discretization.dof_maps[
+                coefficient_field_index
+            ].orientations[block_index]
+        coefficient_values = action.diffusivity.evaluate(
+            geometry.physical_points,
+            context,
+            entity_indices=entity_indices,
+            dof_indices=coefficient_dofs,
+            dof_orientations=coefficient_orientations,
+            basis_values=coefficient_basis,
+            support_id=(
+                discretization.support.support_id
+                if action.diffusivity.support_id is not None
+                else None
+            ),
+            entity_set_id=(
+                discretization.cell_domain.entity_set_id
+                if action.diffusivity.entity_set_id is not None
+                else None
+            ),
+            field_space_id=(
+                coefficient_field_space_id
+                if coefficient_field_space_id is not None
+                else None
+            ),
+            rule_id=(_rule_id(rule) if action.diffusivity.rule_id is not None else None),
+        )
+        point_shape = geometry.physical_points.shape[:-1]
+        dimension = geometry.physical_points.shape[-1]
+        if coefficient_values.shape == ():
+            coefficient_values = jnp.broadcast_to(coefficient_values, point_shape)
+        elif coefficient_values.shape == (dimension, dimension):
+            coefficient_values = jnp.broadcast_to(
+                coefficient_values, point_shape + (dimension, dimension)
+            )
+        tensor = action.physical_tensor(
+            coefficient_values,
+            dimension,
+            leading_shape=point_shape,
+        )
+        local = oe.contract(
+            "cq,cqid,cqde,cqje->cij",
+            geometry.physical_weights,
+            geometry.physical_gradients,
+            tensor,
+            geometry.physical_gradients,
+        )
+        active = np.isin(entity_indices, active_cells)
+        local_values.append(jnp.where(active[:, None, None], local, 0.0))
+        cell_start += block.cell_count
+    return discretization.assemble_cell_operator(
+        action.field_name,
+        tuple(local_values),
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-tensor-diffusion",
+                "action": action.action_id,
+                "coefficient": action.diffusivity.coefficient_id,
+                "runtime": context.runtime.runtime_id,
+                "domain": domain.domain_id,
+            }
+        ),
+        properties=action.properties,
+    )
+
+
 class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     form: FiniteElementForm
     discretization: AbstractPreparedLocalDiscretization
@@ -1332,14 +1472,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         /,
         *,
         constraint: ConstraintMap
-        | FiniteElementDirichletConstraint
+        | AbstractDiscreteDirichletConstraint
         | FiniteElementLinearConstraint
         | None = None,
         dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
         constraints: Mapping[
             str,
             ConstraintMap
-            | FiniteElementDirichletConstraint
+            | AbstractDiscreteDirichletConstraint
             | FiniteElementLinearConstraint,
         ]
         | None = None,
@@ -1357,7 +1497,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 if isinstance(discretization, FiniteElementDiscretization)
                 else FiniteElementExecutionPolicy(
                     realization="matrix_free",
-                    local_kernel="sum_factorized",
+                    local_kernel="auto",
                 )
             )
             if execution_policy is None
@@ -1368,10 +1508,6 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 "execution_policy must be FiniteElementExecutionPolicy or None."
             )
         if not isinstance(discretization, FiniteElementDiscretization):
-            if policy.realization != "matrix_free":
-                raise ValueError(
-                    "Method-neutral local discretizations require matrix-free execution."
-                )
             if any(
                 isinstance(
                     action,
@@ -1435,7 +1571,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     lift_value = full_space.zeros()
                 elif isinstance(
                     constraint_value,
-                    (FiniteElementDirichletConstraint, FiniteElementLinearConstraint),
+                    (
+                        AbstractDiscreteDirichletConstraint,
+                        FiniteElementLinearConstraint,
+                    ),
                 ):
                     if constraint_value.field_name != field_name:
                         raise ValueError("Constraint field does not match its map key.")
@@ -1914,6 +2053,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     ) -> FunctionLinearOperator:
         state_ = self.state_space.validate(state)
         context = self._execution_context(args)
+        properties = (
+            self.form.actions[0].properties
+            if len(self.form.actions) == 1
+            and isinstance(self.form.actions[0], TensorDiffusionAction)
+            else OperatorProperties()
+        )
         return FunctionLinearOperator(
             lambda direction: jax.jvp(
                 lambda value: self.residual(value, context),
@@ -1926,6 +2071,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 lambda value: self.residual(value, context),
                 state_,
             )[1](cotangent)[0],
+            properties=properties,
             operator_id=canonical_fingerprint(
                 {
                     "kind": "finite-element-linearization",
@@ -2138,20 +2284,25 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         if self.execution_policy.realization == "sparse":
             try_affine = all(
                 (
-                    (
-                        isinstance(term, DiffusionAction)
-                        and term.diffusivity.constant
-                        and term.diffusivity.value.shape == ()
-                    )
+                    isinstance(term, TensorDiffusionAction)
                     or (
-                        isinstance(term, MassAction)
-                        and term.coefficient.constant
-                        and term.coefficient.value.shape == ()
+                        (
+                            (
+                                isinstance(term, DiffusionAction)
+                                and term.diffusivity.constant
+                                and term.diffusivity.value.shape == ()
+                            )
+                            or (
+                                isinstance(term, MassAction)
+                                and term.coefficient.constant
+                                and term.coefficient.value.shape == ()
+                            )
+                            or isinstance(term, (SourceAction, BoundaryLoadAction))
+                        )
+                        and term.domain is None
+                        and not term.rules
                     )
-                    or isinstance(term, (SourceAction, BoundaryLoadAction))
                 )
-                and term.domain is None
-                and not term.rules
                 for term in self.form.actions
             )
             if try_affine:
@@ -2221,7 +2372,13 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             context.runtime,
         )
         for action in self.form.actions:
-            if (
+            if isinstance(action, TensorDiffusionAction):
+                operators.append(
+                    _assemble_tensor_diffusion_action(
+                        action, self.discretization, context
+                    )
+                )
+            elif (
                 isinstance(action, DiffusionAction)
                 and action.domain is None
                 and not action.rules
@@ -2368,12 +2525,16 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
         scalar_diffusion = (
             len(self.form.field_names) == 1
-            and any(isinstance(action, DiffusionAction) for action in self.form.actions)
+            and any(
+                isinstance(action, (DiffusionAction, TensorDiffusionAction))
+                for action in self.form.actions
+            )
             and all(
                 isinstance(
                     action,
                     (
                         DiffusionAction,
+                        TensorDiffusionAction,
                         SourceAction,
                         BoundaryLoadAction,
                     ),
@@ -2895,13 +3056,15 @@ def compile_finite_element_problem(
     /,
     *,
     constraint: ConstraintMap
-    | FiniteElementDirichletConstraint
+    | AbstractDiscreteDirichletConstraint
     | FiniteElementLinearConstraint
     | None = None,
     dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
     constraints: Mapping[
         str,
-        ConstraintMap | FiniteElementDirichletConstraint | FiniteElementLinearConstraint,
+        ConstraintMap
+        | AbstractDiscreteDirichletConstraint
+        | FiniteElementLinearConstraint,
     ]
     | None = None,
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
@@ -2957,13 +3120,15 @@ def compile_finite_element_functional(
     ]
     | None = None,
     constraint: ConstraintMap
-    | FiniteElementDirichletConstraint
+    | AbstractDiscreteDirichletConstraint
     | FiniteElementLinearConstraint
     | None = None,
     dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
     constraints: Mapping[
         str,
-        ConstraintMap | FiniteElementDirichletConstraint | FiniteElementLinearConstraint,
+        ConstraintMap
+        | AbstractDiscreteDirichletConstraint
+        | FiniteElementLinearConstraint,
     ]
     | None = None,
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
@@ -2995,6 +3160,7 @@ __all__ = [
     "CellResidualAction",
     "CompiledFiniteElementProblem",
     "DiffusionAction",
+    "TensorDiffusionAction",
     "ExteriorFacetAction",
     "FiniteElementAction",
     "FiniteElementExecutionContext",

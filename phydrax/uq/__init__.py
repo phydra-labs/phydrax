@@ -134,6 +134,19 @@ from ._conditional_moments import (
     predict_affine_gaussian,
 )
 from ._conformal import FunctionalConformal, NormalizedConformal, SplitConformal
+from ._constraint_conditioning import (
+    ApproximateGaussianConstraintConditioner,
+    build_constraint_posterior,
+    CONSTRAINT_CONDITIONING_INCONSISTENT_SUPPORT,
+    CONSTRAINT_CONDITIONING_INVALID_FACTOR,
+    CONSTRAINT_CONDITIONING_NONFINITE,
+    CONSTRAINT_CONDITIONING_SUCCESS,
+    ConstraintApproximation,
+    ConstraintConditioningResult,
+    ConstraintConditioningStatus,
+    ConstraintLikelihoodTerm,
+    LinearGaussianConstraintConditioner,
+)
 from ._continuous_discrete import (
     continuous_discrete_gaussian_filter,
     CONTINUOUS_DISCRETE_GAUSSIAN_NONFINITE,
@@ -1753,4 +1766,15 @@ __all__ = [
     "free_energy_perturbation",
     "multistate_bennett_acceptance_ratio",
     "thermodynamic_integration",
+    "ApproximateGaussianConstraintConditioner",
+    "CONSTRAINT_CONDITIONING_INCONSISTENT_SUPPORT",
+    "CONSTRAINT_CONDITIONING_INVALID_FACTOR",
+    "CONSTRAINT_CONDITIONING_NONFINITE",
+    "CONSTRAINT_CONDITIONING_SUCCESS",
+    "ConstraintApproximation",
+    "ConstraintConditioningResult",
+    "ConstraintConditioningStatus",
+    "ConstraintLikelihoodTerm",
+    "LinearGaussianConstraintConditioner",
+    "build_constraint_posterior",
 ]

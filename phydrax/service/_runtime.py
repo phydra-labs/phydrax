@@ -321,14 +321,14 @@ class InProcessReferenceService:
                 self._audit_event(
                     principal, "execute", "job", job_id, "allowed", "cancelled", ""
                 )
-        except Exception as error:
+        except Exception:
             with self._lock:
                 job.state = JobState.FAILED
                 job.finished_at = self._clock.now()
                 job.failure = FailureEvidence(
                     "provider_failure",
-                    type(error).__name__,
-                    str(error) or type(error).__name__,
+                    "ProviderExecutionError",
+                    "Provider execution failed.",
                     False,
                     job.attempt,
                 )

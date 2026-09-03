@@ -41,6 +41,8 @@ class MortonPointHierarchyState(NonTrainableState, StrictModule):
     sorted_active: jax.Array
     storage_to_logical: jax.Array
     logical_to_storage: jax.Array
+    sorted_point_leaf_slots: jax.Array
+    logical_point_leaf_slots: jax.Array
     node_prefixes: jax.Array
     node_levels: jax.Array
     node_active: jax.Array
@@ -321,6 +323,34 @@ class MortonPointHierarchyPlan(StrictModule):
             rectangular_sentinel,
         )
         node_children = rectangular_to_packed[child_rectangular]
+        leaf_slots = jnp.nonzero(
+            node_is_leaf,
+            size=self.node_capacity,
+            fill_value=self.node_capacity,
+        )[0].astype(jnp.int32)
+        leaf_count = jnp.sum(node_is_leaf, dtype=jnp.int32)
+        leaf_slot_valid = packed_slots < leaf_count
+        safe_leaf_slots = jnp.minimum(leaf_slots, self.node_capacity - 1)
+        leaf_starts = jnp.where(
+            leaf_slot_valid,
+            node_item_starts[safe_leaf_slots],
+            self.point_capacity,
+        )
+        leaf_order = jnp.argsort(leaf_starts, stable=True)
+        ordered_leaf_slots = leaf_slots[leaf_order]
+        ordered_leaf_starts = leaf_starts[leaf_order]
+        storage_slots = jnp.arange(self.point_capacity, dtype=jnp.int32)
+        leaf_rank = jnp.searchsorted(ordered_leaf_starts, storage_slots, side="right") - 1
+        sorted_point_leaf_slots = jnp.where(
+            sorted_valid,
+            ordered_leaf_slots[jnp.maximum(leaf_rank, 0)],
+            -1,
+        ).astype(jnp.int32)
+        logical_point_leaf_slots = (
+            jnp.full((self.point_capacity,), -1, dtype=jnp.int32)
+            .at[order]
+            .set(sorted_point_leaf_slots)
+        )
         geometry = self.address_plan.cell_geometry(node_prefixes, node_levels)
         leaf_occupancy = jnp.where(node_is_leaf, node_item_counts, 0)
         successful = (
@@ -345,6 +375,8 @@ class MortonPointHierarchyPlan(StrictModule):
             sorted_active=sorted_valid,
             storage_to_logical=order,
             logical_to_storage=inverse,
+            sorted_point_leaf_slots=sorted_point_leaf_slots,
+            logical_point_leaf_slots=logical_point_leaf_slots,
             node_prefixes=node_prefixes,
             node_levels=node_levels,
             node_active=packed_active,

@@ -173,6 +173,14 @@ the sampled minimum denominator, orientation determinant, and reciprocal
 condition margins are not a global injectivity proof. These volume maps are not
 the repository's BRep surface geometry and do not imply trimming, CAD topology,
 shells, multipatch coupling, or three-dimensional solids.
+Explicit polygon H1 elements bind conformingly segmented, star-shaped planar
+polygons to a transported witness fan. A native discrete-harmonic condensation
+removes the private witness coordinate while retaining exact linear traces,
+partition of unity, affine reproduction, actual piecewise gradients, direct
+reconstruction, and dense matrix-free local functional execution. Qualification
+retains fan validity, factorization, rank, spectrum, conditioning, and
+reproduction evidence. Higher order, nonmatching T-junctions, sparse realization,
+and three-dimensional cells remain outside this surface.
 Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
 vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
 projections, explicit projector-kernel stabilization, matrix-free or sparse
@@ -231,9 +239,12 @@ share those identities. Bounded maximal profiles add fixed-layout scalar transfe
 global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
 merger products, stochastic star populations, two-level AMR, sparse occupied Morton
 point hierarchies, isolated Barnes--Hut, sparse occupied-level Cartesian FMM, and
-BH-short-range TreePM. Core discretization additionally provides fixed-resolution sparse
-voxel fields and covering, face-balanced dyadic cell topology with conservative
-adaptation and explicit-face finite-volume lowering. Every profile states unsupported
+BH-short-range TreePM. Core discretization additionally provides fixed-resolution
+sparse voxel fields; covering, face-balanced dyadic cell topology with conservative
+adaptation and explicit-face finite-volume lowering; and oriented finite-footprint
+surfels with physical surface measure, primitive bounds, ray queries, local voxel
+projection, atlas/mesh materialization, and branchwise differentiation. Every profile
+states unsupported
 species, topology, approximation, capacity, distribution, and communication branches;
 precision parity beyond qualified profiles, multilevel distributed AMR, distributed
 trees, production feedback, and full release coverage remain separate qualification
@@ -312,6 +323,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
 [Guide → Isogeometric analysis](guides_isogeometric_analysis.md),
+[Guide → Explicit polygon H1](guides_explicit_polygon_h1.md),
 [Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).

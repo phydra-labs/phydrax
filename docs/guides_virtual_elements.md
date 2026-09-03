@@ -16,6 +16,12 @@ The enhanced local space makes both the energy projection and the full degree-`k
 L2 projection computable. No explicit interior virtual basis is constructed.
 Interior values and gradients returned by the API are polynomial projections.
 
+For an actual piecewise-P1 interior basis on the same class of conforming
+star-shaped meshes, use the separate
+[explicit polygon H1 substrate](guides_explicit_polygon_h1.md). It performs
+discrete-harmonic fan condensation and does not change the projection-native VEM
+space, compiler, reconstruction, or stabilization semantics described here.
+
 Current forms cover:
 
 - constant or cellwise-constant scalar/SPD-tensor diffusion;

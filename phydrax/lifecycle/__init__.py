@@ -18,6 +18,7 @@ from ._archive import (
     SampledExporter,
     SampledField,
     support_bundle,
+    SupportBundleAuthorization,
 )
 from ._models import (
     AnalysisPlan,
@@ -64,5 +65,6 @@ __all__ = [
     "open",
     "query",
     "register_exporter",
+    "SupportBundleAuthorization",
     "support_bundle",
 ]

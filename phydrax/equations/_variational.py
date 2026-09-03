@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import IntegrationDomain
+from ..linalg import OperatorProperties
 
 
 IntegrationRule: TypeAlias = Any
@@ -60,6 +61,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
     """Static lowering contract carried by every variational action."""
 
     action_kind: str = eqx.field(static=True)
+    provider_action_kind: str = eqx.field(static=True)
     default_domain_kind: str = eqx.field(static=True)
     output_fields: tuple[str, ...] = eqx.field(static=True)
     input_fields: tuple[str, ...] = eqx.field(static=True)
@@ -77,11 +79,13 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
         operators: Sequence[tuple[str, str]],
         /,
         *,
+        provider_action_kind: str,
         coefficient_values: Sequence["VariationalCoefficient"] = (),
         provider_offers: Sequence[str] = ("native",),
         evaluator: Callable | None = None,
     ):
         kind = str(action_kind)
+        provider_kind = str(provider_action_kind)
         domain = str(default_domain_kind)
         outputs = tuple(str(value) for value in output_fields)
         inputs = tuple(str(value) for value in input_fields)
@@ -98,6 +102,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
                 "linear",
                 "pairwise-volume-flux",
             )
+            or not provider_kind
             or domain not in ("cell", "exterior_facet", "interior_facet")
             or not outputs
             or not inputs
@@ -111,6 +116,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
         ):
             raise ValueError("Variational action descriptor is invalid.")
         self.action_kind = kind
+        self.provider_action_kind = provider_kind
         self.default_domain_kind = domain
         self.output_fields = outputs
         self.input_fields = inputs
@@ -401,6 +407,106 @@ class DiffusionAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "grad"),),
+            provider_action_kind="diffusion",
+            coefficient_values=(self.diffusivity,),
+            provider_offers=("prepared-local",),
+        )
+
+
+class TensorDiffusionAction(StrictModule, NonTrainableState):
+    """Physical tensor diffusion ``q = D grad(u)`` for one scalar field."""
+
+    field_name: str = eqx.field(static=True)
+    diffusivity: VariationalCoefficient
+    tensor_axes: tuple[str, str] = eqx.field(static=True)
+    properties: OperatorProperties
+    action_id: str = eqx.field(static=True)
+    domain: IntegrationDomain | None
+    rules: tuple[tuple[str, IntegrationRule], ...]
+
+    def __init__(
+        self,
+        field_name: str,
+        diffusivity=1.0,
+        /,
+        *,
+        tensor_axes: Sequence[str] = ("flux", "gradient"),
+        properties: OperatorProperties | None = None,
+        action_id="tensor-diffusion",
+        domain=None,
+        rules=(),
+    ):
+        field = str(field_name)
+        identifier = str(action_id)
+        axes = tuple(str(value) for value in tensor_axes)
+        properties_ = OperatorProperties() if properties is None else properties
+        if not field or not identifier:
+            raise ValueError("Tensor-diffusion field and action IDs must be non-empty.")
+        if axes not in (("flux", "gradient"), ("gradient", "flux")):
+            raise ValueError(
+                "Tensor diffusion axes must explicitly order 'flux' and 'gradient'."
+            )
+        if not isinstance(properties_, OperatorProperties):
+            raise TypeError("properties must be OperatorProperties or None.")
+        if domain is not None and (
+            not isinstance(domain, IntegrationDomain) or domain.kind != "cell"
+        ):
+            raise ValueError("TensorDiffusionAction requires a cell integration domain.")
+        self.field_name = field
+        self.diffusivity = (
+            diffusivity
+            if isinstance(diffusivity, VariationalCoefficient)
+            else coefficient(diffusivity)
+        )
+        self.tensor_axes = cast(tuple[str, str], axes)
+        self.properties = properties_
+        self.action_id = identifier
+        self.domain = domain
+        self.rules = _normalize_rules(rules)
+
+    def physical_tensor(
+        self,
+        values: ArrayLike,
+        dimension: int,
+        /,
+        *,
+        leading_shape: Sequence[int] | None = None,
+    ) -> Array:
+        """Canonicalize coefficient values to ``(..., flux, gradient)`` axes."""
+        array = jnp.asarray(values)
+        dimension_ = int(dimension)
+        if dimension_ < 1:
+            raise ValueError("Physical tensor dimension must be positive.")
+        if leading_shape is None:
+            leading = (
+                array.shape[:-2]
+                if array.shape[-2:] == (dimension_, dimension_)
+                else array.shape
+            )
+        else:
+            leading = tuple(int(value) for value in leading_shape)
+        if array.shape == leading:
+            return array[..., None, None] * jnp.eye(dimension_, dtype=array.dtype)
+        if array.shape != leading + (dimension_, dimension_):
+            raise ValueError(
+                "Tensor diffusivity must have either scalar coefficient shape or "
+                "two trailing physical tensor axes."
+            )
+        return (
+            array
+            if self.tensor_axes == ("flux", "gradient")
+            else jnp.swapaxes(array, -2, -1)
+        )
+
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "residual",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "grad"),),
+            provider_action_kind="tensor-diffusion",
             coefficient_values=(self.diffusivity,),
             provider_offers=("prepared-local",),
         )
@@ -440,6 +546,7 @@ class MassAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="mass",
             coefficient_values=(self.coefficient,),
             provider_offers=("prepared-local",),
         )
@@ -479,6 +586,7 @@ class SourceAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="source",
             coefficient_values=(self.source,),
             provider_offers=("prepared-local",),
         )
@@ -525,6 +633,7 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="boundary-load",
             coefficient_values=(self.load,),
             provider_offers=("prepared-local",),
         )
@@ -533,6 +642,7 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
 __all__ = [
     "BoundaryLoadAction",
     "DiffusionAction",
+    "TensorDiffusionAction",
     "IntegrationRule",
     "MassAction",
     "SourceAction",
