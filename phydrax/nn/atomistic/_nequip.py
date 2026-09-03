@@ -26,6 +26,8 @@ from ...atomistic._graph import (
 )
 from ...atomistic._potential import (
     AbstractAtomisticPotential,
+    AtomisticPotentialCapabilities,
+    AtomisticSpeciesKind,
     initialize_atomistic_potential_identity,
 )
 from ...atomistic._types import (
@@ -49,7 +51,8 @@ class _NequIPConfiguration(StrictModule, NonTrainableState):
     feature_count: int = eqx.field(static=True)
     interaction_count: int = eqx.field(static=True)
     radial_basis_count: int = eqx.field(static=True)
-    maximum_atomic_number: int = eqx.field(static=True)
+    maximum_species_id: int = eqx.field(static=True)
+    species_kind: AtomisticSpeciesKind = eqx.field(static=True)
     maximum_tensor_product_parameters: int = eqx.field(static=True)
     maximum_degree: int = eqx.field(static=True)
 
@@ -61,7 +64,7 @@ class _SpeciesSelfConnection(StrictModule):
     def __init__(
         self,
         representation: O3Representation,
-        maximum_atomic_number: int,
+        maximum_species_id: int,
         /,
         *,
         dtype: jnp.dtype,
@@ -81,16 +84,16 @@ class _SpeciesSelfConnection(StrictModule):
             scale = 1.0 / math.sqrt(float(count))
             value = scale * jr.normal(
                 block_key,
-                (maximum_atomic_number + 1, count, count),
+                (maximum_species_id + 1, count, count),
                 dtype=dtype,
             )
-            weights.append(value.at[0].set(0.0))
+            weights.append(value)
         self.representation = representation
         self.weights = tuple(weights)
 
-    def __call__(self, values: Array, atomic_numbers: Array, /) -> Array:
+    def __call__(self, values: Array, species_ids: Array, /) -> Array:
         features = self.representation.split(values)
-        selected = tuple(weight[atomic_numbers] for weight in self.weights)
+        selected = tuple(weight[species_ids] for weight in self.weights)
         return self.representation.join(
             O3Features(
                 scalars=contract("noi,ni->no", selected[0], features.scalars),
@@ -119,7 +122,7 @@ class _NequIPInteraction(StrictModule):
         representation: O3Representation,
         edge_representation: O3Representation,
         radial_basis_count: int,
-        maximum_atomic_number: int,
+        maximum_species_id: int,
         maximum_tensor_product_parameters: int,
         /,
         *,
@@ -151,7 +154,7 @@ class _NequIPInteraction(StrictModule):
         )
         self.self_connection = _SpeciesSelfConnection(
             representation,
-            maximum_atomic_number,
+            maximum_species_id,
             dtype=dtype,
             key=self_key,
         )
@@ -161,7 +164,7 @@ class _NequIPInteraction(StrictModule):
         self,
         values: Array,
         edge_features: Array,
-        atomic_numbers: Array,
+        species_ids: Array,
         graph: AtomisticGraph,
         radial: Array,
         cutoff_envelope: Array,
@@ -177,7 +180,7 @@ class _NequIPInteraction(StrictModule):
         messages = self.tensor_product(values[ir.senders], edge_features, path_weights)
         messages = messages * edge_mask[:, None]
         aggregate = jnp.zeros_like(values).at[ir.receivers].add(messages)
-        connected = self.self_connection(values, atomic_numbers) + aggregate
+        connected = self.self_connection(values, species_ids) + aggregate
         activated = o3_gated_activation(connected, self.representation)
         return activated * node_mask[:, None]
 
@@ -212,7 +215,8 @@ class NequIPPotential(AbstractAtomisticPotential):
         feature_count: int = 32,
         interaction_count: int = 3,
         radial_basis_count: int = 20,
-        maximum_atomic_number: int = 118,
+        maximum_species_id: int = 118,
+        species_kind: AtomisticSpeciesKind = AtomisticSpeciesKind.ATOMIC_NUMBER,
         maximum_tensor_product_parameters: int = 10_000_000,
         precision: AtomisticPrecisionPolicy | None = None,
         key: Key[Array, ""] = DOC_KEY0,
@@ -223,7 +227,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         features = int(feature_count)
         interactions = int(interaction_count)
         radial_count = int(radial_basis_count)
-        maximum_z = int(maximum_atomic_number)
+        maximum_z = int(maximum_species_id)
         tensor_product_limit = int(maximum_tensor_product_parameters)
         if not math.isfinite(cutoff_value) or cutoff_value <= 0.0:
             raise ValueError("cutoff must be finite and positive.")
@@ -232,7 +236,9 @@ class NequIPPotential(AbstractAtomisticPotential):
                 "NequIP feature, interaction, and radial counts must be positive."
             )
         if maximum_z <= 0:
-            raise ValueError("maximum_atomic_number must be positive.")
+            raise ValueError("maximum_species_id must be positive.")
+        if not isinstance(species_kind, AtomisticSpeciesKind):
+            raise TypeError("species_kind must be AtomisticSpeciesKind.")
         if tensor_product_limit < 0:
             raise ValueError("maximum_tensor_product_parameters must be non-negative.")
         precision_ = AtomisticPrecisionPolicy() if precision is None else precision
@@ -252,7 +258,6 @@ class NequIPPotential(AbstractAtomisticPotential):
         embedding = jr.normal(
             keys[0], (maximum_z + 1, features), dtype=compute_dtype
         ) / jnp.sqrt(jnp.asarray(features, dtype=compute_dtype))
-        embedding = embedding.at[0].set(0.0)
         interaction_modules = tuple(
             _NequIPInteraction(
                 hidden_representation,
@@ -302,7 +307,8 @@ class NequIPPotential(AbstractAtomisticPotential):
             feature_count=features,
             interaction_count=interactions,
             radial_basis_count=radial_count,
-            maximum_atomic_number=maximum_z,
+            maximum_species_id=maximum_z,
+            species_kind=species_kind,
             maximum_tensor_product_parameters=tensor_product_limit,
             maximum_degree=2,
         )
@@ -318,7 +324,8 @@ class NequIPPotential(AbstractAtomisticPotential):
                 "feature_count": features,
                 "interaction_count": interactions,
                 "radial_basis_count": radial_count,
-                "maximum_atomic_number": maximum_z,
+                "maximum_species_id": maximum_z,
+                "species_kind": species_kind.value,
                 "maximum_tensor_product_parameters": tensor_product_limit,
                 "tensor_product_plans": plan_ids,
             }
@@ -328,6 +335,12 @@ class NequIPPotential(AbstractAtomisticPotential):
             self.parameter_state_id,
             self.potential_id,
         ) = initialize_atomistic_potential_identity(self)
+
+    @property
+    def capabilities(self) -> AtomisticPotentialCapabilities:
+        return AtomisticPotentialCapabilities(
+            species_kind=self.configuration.species_kind
+        )
 
     def parameter_state_tree(self, /) -> Any:
         return {
@@ -396,7 +409,7 @@ class NequIPPotential(AbstractAtomisticPotential):
 
     def graph_energy(
         self,
-        atomic_numbers: Array,
+        species_ids: Array,
         atom_mask: Array,
         atom_cases: Array,
         case_count: int,
@@ -407,11 +420,11 @@ class NequIPPotential(AbstractAtomisticPotential):
         ir = graph.graph
         if ir.edge_mask is None:
             raise ValueError("NequIP requires explicit edge masks.")
-        numbers = jnp.asarray(atomic_numbers).reshape((-1,))
+        numbers = jnp.asarray(species_ids).reshape((-1,))
         numbers = eqx.error_if(
             numbers,
-            jnp.any(numbers > self.configuration.maximum_atomic_number),
-            "Atomic number exceeds NequIPPotential.maximum_atomic_number.",
+            jnp.any(numbers > self.configuration.maximum_species_id),
+            "Species ID exceeds NequIPPotential.maximum_species_id.",
         )
         node_mask = (
             jnp.asarray(atom_mask, dtype=bool)
@@ -463,6 +476,12 @@ class NequIPPotential(AbstractAtomisticPotential):
         /,
     ) -> tuple[Array, Array, AtomisticGraph]:
         coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
+        if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER:
+            coordinate = eqx.error_if(
+                coordinate,
+                jnp.any(batch.atom_mask & ~batch.element_mask),
+                "Atomic-number NequIP cannot evaluate non-element particles.",
+            )
         if coordinate.shape != batch.positions.shape:
             raise ValueError("positions must have the batch position shape.")
         coordinate = jnp.where(batch.atom_mask[:, :, None], coordinate, 0.0)
@@ -472,8 +491,13 @@ class NequIPPotential(AbstractAtomisticPotential):
             cutoff=self.configuration.cutoff,
             positions=coordinate,
         )
+        species = (
+            batch.atomic_numbers
+            if self.configuration.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER
+            else batch.atom_type_ids
+        )
         energy, atom_energy = self.graph_energy(
-            batch.atomic_numbers,
+            species,
             batch.atom_mask,
             batch.atom_cases,
             batch.case_count,

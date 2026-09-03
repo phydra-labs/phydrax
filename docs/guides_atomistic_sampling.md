@@ -11,6 +11,11 @@ of gyration, coordination, native-contact similarity, aligned RMSD, volume, dens
 path progress/distance. Periodic metrics provide wrapped differences for torsions and other
 cyclic variables. Every evaluation includes a branch margin and success flag.
 
+`AbstractCollectiveVariableProgram` is the execution boundary consumed by biases.
+`ModelCollectiveVariableProgram` composes a frozen array model after any existing CV
+feature program, preserving position derivatives and fixed output metrics. This is the
+bridge for canonical slow coordinates learned by the variational-kinetics runtime.
+
 ## Bias plans
 
 `AtomisticBiasPlan` represents one static harmonic, flat-bottom, wall, moving,
@@ -19,6 +24,17 @@ umbrella, metadynamics, or adaptive-biasing-force plan over a
 `AtomisticBiasState`. Only an accepted dynamics step advances schedules, deposits a
 hill, or updates ABF statistics; rejected proposals leave history unchanged.
 Checkpoint the physical state and bias state together.
+
+`LearnedFreeEnergyBiasPlan` holds a gauge-aligned committee of scalar free-energy
+models. Each member is shifted to zero at one declared reference coordinate before
+averaging or computing disagreement. A smooth uncertainty taper multiplies the scalar
+bias energy; forces differentiate the complete tapered energy and are never blended
+after differentiation.
+
+`RestrainedMeanForcePlan` estimates finite-stiffness free-energy gradients from
+restrained windows. `fit_free_energy_model` trains a scalar model against those
+gradients with inverse-uncertainty weighting. The finite-restraint approximation and
+source window identity remain explicit.
 
 ## Replica ensembles
 

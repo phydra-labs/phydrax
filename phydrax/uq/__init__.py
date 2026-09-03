@@ -73,6 +73,10 @@ from ..linalg._gaussian_chain import (
     GaussianMarkovStatus,
     sample_gaussian_markov,
 )
+from ._atomistic_targeted import (
+    AlchemicalEndpointReducedPotential,
+    CenterOfMassPreservingBijector,
+)
 from ._autoregressive_law import AutoregressiveLaw
 from ._bayesian_optimization import (
     BAYESIAN_OPTIMIZATION_ACQUISITION,
@@ -271,6 +275,7 @@ from ._flow_variational import (
     FlowVariationalFamily,
     FlowVariationalResult,
 )
+from ._flowjax_bijector import FlowJAXBijectionAdapter
 from ._foundation import (
     Experiment,
     PosteriorRecord,
@@ -943,6 +948,20 @@ from ._swag import (
     SWAGState,
     update_swag_state,
 )
+from ._targeted_free_energy import (
+    AbstractReducedPotential,
+    CallableReducedPotential,
+    evaluate_targeted_work,
+    ReducedPotentialEvaluation,
+    TargetedFreeEnergyProblem,
+    TargetedMapPlan,
+    TargetedWorkEvaluation,
+)
+from ._targeted_map_training import (
+    fit_targeted_free_energy_map,
+    TargetedMapFitResult,
+    TargetedMapTrainingPolicy,
+)
 from ._topology import TopologyEnsembleSummary
 from ._transport_barycenters import (
     aggregate_free_support_transport_barycenter,
@@ -1437,9 +1456,14 @@ __all__ = [
     "operator_predictive_from_samples",
     "sample_operator_predictive",
     "AbstractBijector",
+    "AbstractReducedPotential",
+    "CallableReducedPotential",
+    "AlchemicalEndpointReducedPotential",
+    "CenterOfMassPreservingBijector",
     "ExpBijector",
     "IdentityBijector",
     "SigmoidIntervalBijector",
+    "FlowJAXBijectionAdapter",
     "SimplexBijector",
     "ParameterSpace",
     "PosteriorProblem",
@@ -1762,8 +1786,16 @@ __all__ = [
     "SING_TRANSITION_COVARIANCE_FAILURE",
     "FreeEnergyResult",
     "ReducedPotentialSamples",
+    "ReducedPotentialEvaluation",
+    "TargetedFreeEnergyProblem",
+    "TargetedMapFitResult",
+    "TargetedMapPlan",
+    "TargetedMapTrainingPolicy",
+    "TargetedWorkEvaluation",
     "bennett_acceptance_ratio",
     "free_energy_perturbation",
+    "evaluate_targeted_work",
+    "fit_targeted_free_energy_map",
     "multistate_bennett_acceptance_ratio",
     "thermodynamic_integration",
     "ApproximateGaussianConstraintConditioner",

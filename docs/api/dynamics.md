@@ -229,6 +229,40 @@ architecture hyperparameters.
 
 ::: phydrax.dynamics.identification.fit_discrete_model
 
+## Variational kinetics
+
+Lagged variational estimators use reset-safe `TrajectoryData` transitions and an
+explicit weighting policy. VAMP retains distinct source and target singular functions;
+VAC/TICA uses a generalized self-adjoint covariance problem. Markov-state models accept
+hard or soft assignments and expose communicating-class, stationarity, and
+detailed-balance evidence.
+
+::: phydrax.dynamics.identification.LaggedPairWeighting
+
+::: phydrax.dynamics.identification.fit_vamp
+
+::: phydrax.dynamics.identification.VAMPResult
+
+::: phydrax.dynamics.identification.fit_vac
+
+::: phydrax.dynamics.identification.fit_tica
+
+::: phydrax.dynamics.identification.VACResult
+
+::: phydrax.dynamics.identification.fit_markov_state_model
+
+::: phydrax.dynamics.identification.MarkovStateModel
+
+::: phydrax.dynamics.identification.VariationalKineticTrainingPolicy
+
+::: phydrax.dynamics.identification.fit_variational_kinetic_model
+
+::: phydrax.dynamics.identification.VariationalKineticFitResult
+
+::: phydrax.dynamics.analysis.score_vamp
+
+::: phydrax.dynamics.analysis.validate_markov_models
+
 ## Feature libraries, DMD, and EDMD
 
 Feature libraries preserve `StateLayout`, optional `InputLayout`, ordered feature names,

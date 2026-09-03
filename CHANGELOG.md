@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added reset-safe VAMP/VAC/TICA and Markov-state kinetics, exact full-batch
+  variational encoders and model-backed collective variables, gauge-aligned
+  learned free-energy biases, immutable atomistic learning campaigns,
+  non-element molecular coarse beads with fixed-map force matching, and exact
+  targeted free-energy maps with FlowJAX and alchemical endpoint adapters.
 - Added a native robotics platform with bounded, fail-closed URDF adaptation;
   fixed-base 3-D fixed/hinge/prismatic articulation, kinematics, dynamics, and
   local frame IK; articulated Delassus impact; status-aware rollouts, sampling
