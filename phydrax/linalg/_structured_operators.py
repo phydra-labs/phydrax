@@ -13,8 +13,9 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.ein as ein
 
 from ._operators import (
     _array_value,
@@ -627,7 +628,7 @@ class LocalBlockDiagonalLinearOperator(AbstractLinearOperator):
         columns = value.reshape(
             (blocks.shape[0], blocks.shape[2], prod(rhs_shape) if rhs_shape else 1)
         )
-        image = oe.contract("boi,bir->bor", blocks, columns)
+        image = ein.contract("boi,bir->bor", blocks, columns)
         return image.reshape(target.shape + rhs_shape)
 
     def mv(self, vector: PyTree[Any], /) -> Array:
@@ -1368,6 +1369,191 @@ class KroneckerLinearOperator(AbstractLinearOperator):
         for factor in self.factors:
             result = jnp.kron(result, _assemble_operator_diagonal(factor))
         return result
+
+
+class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
+    """Local operator embedded into selected factors of a tensor-product space."""
+
+    local_operator: AbstractLinearOperator
+    axes: tuple[int, ...] = eqx.field(static=True)
+    source: TensorProductSpace
+    target: TensorProductSpace
+
+    def __init__(
+        self,
+        local_operator: AbstractLinearOperator,
+        ambient_space: TensorProductSpace,
+        axes: Sequence[int],
+        /,
+        *,
+        operator_id: str | None = None,
+    ):
+        if not isinstance(local_operator, AbstractLinearOperator):
+            raise TypeError("local_operator must be an AbstractLinearOperator.")
+        if not isinstance(ambient_space, TensorProductSpace):
+            raise TypeError("ambient_space must be a TensorProductSpace.")
+        if local_operator.batch_shape:
+            raise ValueError("local_operator must be unbatched.")
+        axes_ = tuple(int(axis) for axis in axes)
+        if not axes_:
+            raise ValueError("axes must be nonempty.")
+        if len(set(axes_)) != len(axes_):
+            raise ValueError("axes must be unique.")
+        if any(axis < 0 or axis >= len(ambient_space.factors) for axis in axes_):
+            raise ValueError("axes entries must index ambient tensor factors.")
+        local_size = prod(ambient_space.factors[axis].size for axis in axes_)
+        if (
+            local_operator.source.size != local_size
+            or local_operator.target.size != local_size
+        ):
+            raise ValueError(
+                "local_operator source and target sizes must match the selected factors."
+            )
+        ambient_dtype = _coordinate_dtype(ambient_space)
+        if (
+            _coordinate_dtype(local_operator.source) != ambient_dtype
+            or _coordinate_dtype(local_operator.target) != ambient_dtype
+        ):
+            raise TypeError(
+                "local_operator and ambient_space must share one coordinate dtype."
+            )
+
+        untouched_size = prod(
+            factor.size
+            for axis, factor in enumerate(ambient_space.factors)
+            if axis not in axes_
+        )
+        properties = local_operator.properties
+        certified_full_rank = properties.positive_definite and properties.certifies(
+            "positive_definite"
+        )
+        local_rank = (
+            local_size
+            if properties.rank is None and certified_full_rank
+            else properties.rank
+        )
+        rank = int(local_rank) * untouched_size if local_rank is not None else None
+        euclidean = (
+            all(_has_euclidean_pairing(factor) for factor in ambient_space.factors)
+            and _has_euclidean_pairing(local_operator.source)
+            and _has_euclidean_pairing(local_operator.target)
+        )
+        evidence: dict[str, PropertyEvidence] = {}
+        for name in (
+            "diagonal",
+            "self_adjoint",
+            "positive_semidefinite",
+            "positive_definite",
+        ):
+            if euclidean and properties.certifies(name):
+                evidence[name] = "transformed"
+        if rank is not None and (properties.certifies("rank") or certified_full_rank):
+            evidence["rank"] = "transformed"
+
+        self.local_operator = local_operator
+        self.axes = axes_
+        self.source = ambient_space
+        self.target = ambient_space
+        self.properties = OperatorProperties(
+            diagonal=bool(euclidean and properties.diagonal),
+            self_adjoint=bool(euclidean and properties.self_adjoint),
+            positive_semidefinite=bool(euclidean and properties.positive_semidefinite),
+            positive_definite=bool(euclidean and properties.positive_definite),
+            rank=rank,
+            evidence=evidence,
+        )
+        self.capabilities = OperatorCapabilities(
+            transpose=local_operator.capabilities.transpose,
+            adjoint=local_operator.capabilities.adjoint,
+            materialize=local_operator.capabilities.materialize,
+            diagonal_assembly=(
+                local_operator.capabilities.diagonal_assembly and euclidean
+            ),
+        )
+        self.batch_shape = ()
+        self.operator_id = _id(
+            operator_id,
+            {
+                "kind": "embedded-tensor-product",
+                "ambient_space": ambient_space.space_id,
+                "local_operator": local_operator.operator_id,
+                "axes": list(axes_),
+            },
+        )
+
+    def _apply(
+        self,
+        vector: Any,
+        mode: Literal["forward", "transpose", "adjoint"],
+        /,
+    ) -> Array:
+        value = (
+            self.source.validate(vector)
+            if mode == "forward"
+            else self.target.validate(vector)
+        )
+        if mode == "forward":
+            input_space = self.local_operator.source
+            output_space = self.local_operator.target
+            action = self.local_operator.mv
+        elif mode == "transpose":
+            input_space = self.local_operator.target
+            output_space = self.local_operator.source
+            action = self.local_operator.transpose_mv
+        else:
+            input_space = self.local_operator.target
+            output_space = self.local_operator.source
+            action = self.local_operator.adjoint_mv
+
+        untouched = tuple(axis for axis in range(value.ndim) if axis not in self.axes)
+        permutation = self.axes + untouched
+        inverse_permutation = tuple(np.argsort(np.asarray(permutation)))
+        selected_shape = tuple(value.shape[axis] for axis in self.axes)
+        trailing_shape = tuple(value.shape[axis] for axis in untouched)
+        moved = jnp.transpose(value, permutation)
+        columns = moved.reshape((input_space.size, -1)).T
+
+        def apply_column(coordinates):
+            local_vector = input_space.unflatten(coordinates)
+            return output_space.flatten(action(local_vector))
+
+        applied = jax.vmap(apply_column)(columns).T
+        restored = applied.reshape(selected_shape + trailing_shape)
+        return jnp.transpose(restored, inverse_permutation)
+
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return self._apply(vector, "forward")
+
+    def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return self._apply(vector, "transpose")
+
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return self._apply(vector, "adjoint")
+
+    def _materialize(self, /) -> Array:
+        coordinate_dtype = _coordinate_dtype(self.source)
+        basis = jnp.eye(self.source.size, dtype=coordinate_dtype)
+
+        def apply_column(coordinates):
+            vector = self.source.unflatten(coordinates)
+            return self.target.flatten(self.mv(vector))
+
+        return jax.vmap(apply_column, in_axes=1, out_axes=1)(basis)
+
+    def _assemble_diagonal(self, /) -> Array:
+        diagonal = _assemble_operator_diagonal(self.local_operator)
+        local_shape = tuple(self.source.factors[axis].size for axis in self.axes)
+        untouched = tuple(
+            axis for axis in range(len(self.source.factors)) if axis not in self.axes
+        )
+        trailing_shape = tuple(self.source.factors[axis].size for axis in untouched)
+        broadcast = jnp.broadcast_to(
+            diagonal.reshape(local_shape + (1,) * len(untouched)),
+            local_shape + trailing_shape,
+        )
+        permutation = self.axes + untouched
+        inverse_permutation = tuple(np.argsort(np.asarray(permutation)))
+        return jnp.transpose(broadcast, inverse_permutation).reshape((-1,))
 
 
 class KroneckerSumLinearOperator(AbstractLinearOperator):

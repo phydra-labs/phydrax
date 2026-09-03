@@ -10,8 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
@@ -81,10 +82,10 @@ def _regularized_geometry(
     values, vectors = jnp.linalg.eigh(covariance)
     singular = jnp.any(values <= floor[..., None], axis=-1)
     values = jnp.maximum(values, floor[..., None])
-    covariance = oe.contract(
+    covariance = ein.contract(
         "...ik,...k,...jk->...ij", vectors, values, jnp.conj(vectors)
     )
-    precision = oe.contract(
+    precision = ein.contract(
         "...ik,...k,...jk->...ij", vectors, 1.0 / values, jnp.conj(vectors)
     )
     log_det = jnp.sum(jnp.log(values), axis=-1)
@@ -96,7 +97,7 @@ def _component_log_prob(
 ) -> Array:
     difference = x[..., :, None, :] - means[..., None, :, :]
     quadratic = jnp.real(
-        oe.contract(
+        ein.contract(
             "...nki,...kij,...nkj->...nk", jnp.conj(difference), precision, difference
         )
     )
@@ -135,7 +136,7 @@ def _covariance_structure(
         variance = jnp.real(jnp.trace(covariance, axis1=-2, axis2=-1)) / p
         return variance[..., :, None, None] * eye
     total = jnp.maximum(jnp.sum(mass, axis=-1), jnp.finfo(mass.dtype).tiny)
-    tied = oe.contract("...k,...kij->...ij", mass, covariance) / total[..., None, None]
+    tied = ein.contract("...k,...kij->...ij", mass, covariance) / total[..., None, None]
     return jnp.broadcast_to(tied[..., None, :, :], covariance.shape)
 
 
@@ -196,11 +197,11 @@ def _fit_gaussian_mixture(
     p = batch.feature_count
     mass_total = jnp.sum(w, axis=-1)
     mean_global = (
-        oe.contract("...n,...nf->...f", w, x)
+        ein.contract("...n,...nf->...f", w, x)
         / jnp.maximum(mass_total, jnp.finfo(w.dtype).tiny)[..., None]
     )
     centered = jnp.where(w[..., None] > 0.0, x - mean_global[..., None, :], 0)
-    covariance_global = oe.contract(
+    covariance_global = ein.contract(
         "...ni,...n,...nj->...ij", jnp.conj(centered), w, centered
     )
     covariance_global = (
@@ -243,7 +244,7 @@ def _fit_gaussian_mixture(
         )
         safe_mass = jnp.maximum(component_mass, jnp.finfo(w.dtype).tiny)
         empirical_means = (
-            oe.contract("...nk,...nf->...kf", weighted, x) / safe_mass[..., :, None]
+            ein.contract("...nk,...nf->...kf", weighted, x) / safe_mass[..., :, None]
         )
         if concentration is not None:
             posterior_mass = component_mass + mean_precision
@@ -254,12 +255,12 @@ def _fit_gaussian_mixture(
         else:
             next_means = empirical_means
         difference = x[..., :, None, :] - next_means[..., None, :, :]
-        next_covariance = oe.contract(
+        next_covariance = ein.contract(
             "...nki,...nk,...nkj->...kij", jnp.conj(difference), weighted, difference
         )
         if concentration is not None:
             prior_difference = next_means - mean_global[..., None, :]
-            prior_scatter = oe.contract(
+            prior_scatter = ein.contract(
                 "...ki,...kj->...kij", jnp.conj(prior_difference), prior_difference
             )
             prior_scale = covariance_global + mean_precision * prior_scatter
@@ -484,7 +485,7 @@ class GaussianMixtureModel(AbstractArrayModel):
         )
         difference = values[..., None, :] - means
         quadratic = jnp.real(
-            oe.contract(
+            ein.contract(
                 "...ki,...kij,...kj->...k", jnp.conj(difference), precision, difference
             )
         )
@@ -566,7 +567,7 @@ class BayesianGaussianMixtureModel(AbstractArrayModel):
         )
         difference = values[..., None, :] - means
         quadratic = jnp.real(
-            oe.contract(
+            ein.contract(
                 "...ki,...kij,...kj->...k", jnp.conj(difference), precision, difference
             )
         )

@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -50,8 +51,8 @@ class FiniteElementMetricData(StrictModule):
         dimension = gradients.shape[-1]
         if coordinates.shape[-1] != dimension or dimension not in (2, 3):
             raise ValueError("Tensor cell metrics require square 2-D or 3-D geometry.")
-        physical_points = oe.contract("qi,cid->cqd", basis, coordinates)
-        jacobian = oe.contract("qir,cid->cqdr", gradients, coordinates)
+        physical_points = ein.contract("qi,cid->cqd", basis, coordinates)
+        jacobian = ein.contract("qir,cid->cqdr", gradients, coordinates)
         inverse_result = inverse_small_linear(
             SmallLinearSolvePlan(dimension),
             jacobian,
@@ -67,7 +68,7 @@ class FiniteElementMetricData(StrictModule):
         )
         inverse_jacobian = inverse_result.value
         cofactor = measure[..., None, None] * inverse_jacobian
-        inverse_metric = oe.contract(
+        inverse_metric = ein.contract(
             "cqrd,cqsd->cqrs", inverse_jacobian, inverse_jacobian
         )
         self.physical_points = physical_points
@@ -82,7 +83,7 @@ class FiniteElementMetricData(StrictModule):
         gradients = jnp.asarray(reference_gradients)
         if gradients.ndim != 3 or gradients.shape[0] != self.jacobian.shape[1]:
             raise ValueError("Reference gradients do not match the cell metric points.")
-        return oe.contract("qir,cqrd->cqid", gradients, self.inverse_jacobian)
+        return ein.contract("qir,cqrd->cqid", gradients, self.inverse_jacobian)
 
 
 class FiniteElementFacetMetricData(StrictModule):
@@ -109,7 +110,7 @@ class FiniteElementFacetMetricData(StrictModule):
             cell_metric.jacobian.shape[-1],
         ) or weights.shape != (normals.shape[0],):
             raise ValueError("Facet normal/weight axes do not match the cell metric.")
-        surface_vector = oe.contract("qr,cqrd->cqd", normals, cell_metric.cofactor)
+        surface_vector = ein.contract("qr,cqrd->cqd", normals, cell_metric.cofactor)
         measure = jnp.linalg.norm(surface_vector, axis=-1)
         measure = eqx.error_if(
             measure,
@@ -154,7 +155,9 @@ class PreparedFacetTrace(StrictModule):
         )
 
     def trace(self, coefficients: ArrayLike, /) -> Array:
-        local = oe.contract("qi,...i->...q", self.basis_values, jnp.asarray(coefficients))
+        local = ein.contract(
+            "qi,...i->...q", self.basis_values, jnp.asarray(coefficients)
+        )
         canonical = jnp.zeros_like(local)
         return canonical.at[..., self.local_to_canonical].set(local)
 
@@ -163,7 +166,7 @@ class PreparedFacetTrace(StrictModule):
         if canonical.shape[-1] != self.local_to_canonical.shape[0]:
             raise ValueError("Canonical facet values have the wrong point width.")
         local = canonical[..., self.local_to_canonical]
-        return oe.contract("qi,...q->...i", self.basis_values, local)
+        return ein.contract("qi,...q->...i", self.basis_values, local)
 
 
 class FieldJet(StrictModule):
@@ -264,14 +267,14 @@ class CellDerivativeBatch(StrictModule):
         ):
             raise ValueError("Cell derivative staging local layouts are incompatible.")
         if basis.ndim == 2:
-            value = oe.contract("qi,ei->eq", basis, coefficients)
+            value = ein.contract("qi,ei->eq", basis, coefficients)
         elif basis.ndim == 3 and basis.shape[:1] == coefficients.shape[:1]:
-            value = oe.contract("eqi,ei->eq", basis, coefficients)
+            value = ein.contract("eqi,ei->eq", basis, coefficients)
         else:
             raise ValueError("Cell derivative basis values have an invalid layout.")
         self.local_coefficients = coefficients
         self.value = value
-        self.gradient = oe.contract("eqid,ei->eqd", gradients, coefficients)
+        self.gradient = ein.contract("eqid,ei->eqd", gradients, coefficients)
 
 
 class DGTraceBatch(StrictModule):

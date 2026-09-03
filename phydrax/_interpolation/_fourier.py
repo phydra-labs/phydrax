@@ -14,10 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 from nufftax import nufft1d2, nufft2d2, nufft3d2
 
-from .._spectral._fourier import (
-    fourier_resample,
-    resize_fourier_axis as _resize_fourier_axis,
-)
+from .._spectral._fourier import resize_fourier_axis as _resize_fourier_axis
 from ._types import InterpolationCapabilities, InterpolationResult
 
 
@@ -434,5 +431,4 @@ __all__ = [
     "FOURIER_CAPABILITIES",
     "FourierEvaluationMethod",
     "fourier_interpolate",
-    "fourier_resample",
 ]

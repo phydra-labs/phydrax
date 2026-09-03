@@ -9,8 +9,9 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import inverse as matrix_inverse
@@ -106,8 +107,8 @@ class _GaugeTransformedCoefficients(StrictModule):
         )
         derivative = jax.jacfwd(self._gauge)(coordinates)
         coefficients = self.connection._coefficients_point(coordinates)
-        conjugated = oe.contract("ac,cdi,db->abi", inverse, coefficients, gauge)
-        inhomogeneous = oe.contract("ac,cbi->abi", inverse, derivative)
+        conjugated = ein.contract("ac,cdi,db->abi", inverse, coefficients, gauge)
+        inhomogeneous = ein.contract("ac,cbi->abi", inverse, derivative)
         return conjugated + inhomogeneous
 
 
@@ -133,7 +134,7 @@ def bundle_covariant_derivative(
     def evaluate(point: Array) -> Array:
         value = section_point(point)
         derivative = jax.jacfwd(section_point)(point)
-        correction = oe.contract(
+        correction = ein.contract(
             "abi,b->ai", connection._coefficients_point(point), value
         )
         return derivative + correction
@@ -154,8 +155,8 @@ def bundle_curvature(
         coefficients = connection._coefficients_point(point)
         derivative = jax.jacfwd(connection._coefficients_point)(point)
         first_derivative = jnp.swapaxes(derivative, -1, -2) - derivative
-        first_product = oe.contract("aci,cbj->abij", coefficients, coefficients)
-        second_product = oe.contract("acj,cbi->abij", coefficients, coefficients)
+        first_product = ein.contract("aci,cbj->abij", coefficients, coefficients)
+        second_product = ein.contract("acj,cbi->abij", coefficients, coefficients)
         return first_derivative + first_product - second_product
 
     return _pointwise_array(evaluate, coordinates, connection.chart.dimension)
@@ -196,7 +197,7 @@ def gauge_curvature_residual(
             "Gauge transformation must be nonsingular.",
         )
         curvature = bundle_curvature(connection, point)
-        expected = oe.contract("ac,cdij,db->abij", inverse, curvature, matrix)
+        expected = ein.contract("ac,cdij,db->abij", inverse, curvature, matrix)
         actual = bundle_curvature(transformed, point)
         return jnp.max(jnp.abs(actual - expected))
 

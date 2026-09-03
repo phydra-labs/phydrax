@@ -11,8 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._geometry_precision import GeometryPrecisionPolicy
@@ -170,7 +171,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
                 shape = [1] * result.ndim
                 shape[axis_index] = axis.mode_count
                 result = result * phase.reshape(tuple(shape)).astype(result.dtype)
-        return oe.contract(
+        return ein.contract(
             "ij,...j->...i",
             self.component_matrix.astype(result.dtype),
             result,

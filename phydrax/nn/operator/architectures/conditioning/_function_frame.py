@@ -14,10 +14,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax._frozendict import frozendict
 from phydrax._model import AbstractArrayModel, FrozenModel, register_artifact_value
 from phydrax._numerics import solve_weighted_least_squares
@@ -636,8 +636,8 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
             metric_basis = safe_basis
             metric_target = centered_target
         else:
-            metric_basis = oe.contract("...cr,cd->...dr", safe_basis, factor)
-            metric_target = oe.contract("...c,cd->...d", centered_target, factor)
+            metric_basis = ein.contract("...cr,cd->...dr", safe_basis, factor)
+            metric_target = ein.contract("...c,cd->...d", centered_target, factor)
 
         physical_weights = jnp.where(active, quadrature, 0.0)
         weight_sum = _case_sum(physical_weights, axes)
@@ -742,7 +742,7 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         )
         residual = safe_target - prediction
         if factor is not None:
-            residual = oe.contract("...c,cd->...d", residual, factor)
+            residual = ein.contract("...c,cd->...d", residual, factor)
         residual_density = jnp.sum(jnp.abs(residual) ** 2, axis=-1)
         target_density = jnp.sum(jnp.abs(metric_target) ** 2, axis=-1)
         residual_energy = _case_sum(

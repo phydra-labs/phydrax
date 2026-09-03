@@ -69,7 +69,7 @@ def main() -> None:
 
     print("parity_profile", bool(parity.successful))
     print("barnes_hut_net_force", bh.evidence.net_force)
-    print("fmm_error_indicator", fmm.evidence.estimated_relative_error)
+    print("fmm_error_indicator", fmm.evidence.maximum_opening_indicator)
     print("s3_distance", manifold.distance(s3_point, s3_target))
     print("star_events", stars.ledger.event_count)
 

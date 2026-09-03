@@ -18,8 +18,7 @@ import phydrax as phx
 def _finite_profile(repeats: int):
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     build = phx.tensor_network.build_local_term_mpo(
-        2,
-        2,
+        (2, 2),
         (
             phx.tensor_network.FiniteLocalTerm(0, (z,)),
             phx.tensor_network.FiniteLocalTerm(1, (z,)),

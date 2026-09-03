@@ -9,8 +9,9 @@ from typing import NamedTuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..kernels import AbstractPositiveDefiniteKernel
 from ..linalg import (
@@ -189,7 +190,7 @@ def _predictive_geometry(
         "Projected GP covariance solve failed during prediction.",
     )
     prior_diagonal = kernel.diagonal(query_points)
-    downdate_diagonal = oe.contract("qm,mq->q", query_action, solved)
+    downdate_diagonal = ein.contract("qm,mq->q", query_action, solved)
     variance = _validated_variance(
         prior_diagonal - downdate_diagonal,
         prior_diagonal,
@@ -220,7 +221,7 @@ def _posterior_mean(
 ) -> Array:
     projected_residual = actions.transpose_mv(residual)
     solved = _solve_vector(covariance_factor, projected_residual)
-    return oe.contract("qm,m->q", query_action, solved)
+    return ein.contract("qm,m->q", query_action, solved)
 
 
 def _posterior_mean_from_solved_geometry(
@@ -231,7 +232,7 @@ def _posterior_mean_from_solved_geometry(
     solved_query_action: Array,
 ) -> Array:
     projected_residual = actions.transpose_mv(residual)
-    return oe.contract("mq,m->q", solved_query_action, projected_residual)
+    return ein.contract("mq,m->q", solved_query_action, projected_residual)
 
 
 def _computation_aware_elbo(
@@ -243,7 +244,7 @@ def _computation_aware_elbo(
 ) -> Array:
     projected_residual = actions.transpose_mv(residual)
     alpha = _solve_vector(projected.covariance_factor, projected_residual)
-    mean_correction = oe.contract("nm,m->n", projected.kernel_action, alpha)
+    mean_correction = ein.contract("nm,m->n", projected.kernel_action, alpha)
     solved_kernel_action, successful = _solve_columns(
         projected.covariance_factor,
         projected.kernel_action.T,
@@ -253,7 +254,7 @@ def _computation_aware_elbo(
         ~successful,
         "Projected GP covariance solve failed while computing the ELBO.",
     )
-    downdate_diagonal = oe.contract(
+    downdate_diagonal = ein.contract(
         "nm,mn->n",
         projected.kernel_action,
         solved_kernel_action,
@@ -280,8 +281,8 @@ def _computation_aware_elbo(
         "Projected GP covariance solve failed while computing the KL divergence.",
     )
     trace_term = jnp.trace(solved_noise)
-    quadratic = oe.contract("m,m->", projected_residual, alpha)
-    noise_correction = oe.contract(
+    quadratic = ein.contract("m,m->", projected_residual, alpha)
+    noise_correction = ein.contract(
         "m,mn,n->",
         alpha,
         projected.projected_noise,
@@ -387,7 +388,7 @@ def _weighted_action_gram(
     /,
 ) -> Array:
     if isinstance(actions, DenseLinearOperator):
-        return oe.contract(
+        return ein.contract(
             "ni,n,nj->ij",
             actions.matrix,
             diagonal,

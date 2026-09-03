@@ -11,8 +11,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation._bspline import bspline_stencil
@@ -390,9 +391,9 @@ def _apply_axis_matrices(
     for axis, matrix in enumerate(matrices):
         moved = jnp.moveaxis(result, axis, 0)
         if transpose_action:
-            moved = oe.contract("ij,i...->j...", matrix, moved)
+            moved = ein.contract("ij,i...->j...", matrix, moved)
         else:
-            moved = oe.contract("ji,i...->j...", matrix, moved)
+            moved = ein.contract("ji,i...->j...", matrix, moved)
         result = jnp.moveaxis(moved, 0, axis)
     return result
 

@@ -35,9 +35,16 @@ site/
 _gitignore/
 benchmarks/*
 !benchmarks/combinatorial_native.py
+!benchmarks/conditional_affine_chemistry.py
+!benchmarks/conditional_affine_chemistry.json
+!benchmarks/conditional_affine_chemistry_qualification.json
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/signal_profiles.py
+!benchmarks/signal_profiles.json
+!benchmarks/control_lq_nash.py
+!benchmarks/control_lq_nash.json
 !benchmarks/tensor_network_abelian.py
 !benchmarks/tensor_network_abelian.json
 !benchmarks/tensor_network_chain.py

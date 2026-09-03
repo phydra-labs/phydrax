@@ -359,10 +359,12 @@ def _overflow_second_batch(
     target = targets.field("output").values
     source = batch.input("state").values
     assert source is not None
-    source_mean = jnp.mean(source)
-    loss = jnp.mean((values - target) ** 2)
+    reduction_axes = tuple(range(1, values.ndim))
+    source_axes = tuple(range(1, source.ndim))
+    case_loss = jnp.mean((values - target) ** 2, axis=reduction_axes)
+    source_mean = jnp.mean(source, axis=source_axes)
     overflow = (source_mean > 1.0) & (source_mean < 2.0)
-    return jnp.where(overflow, jnp.inf, loss)
+    return jnp.where(overflow, jnp.inf, case_loss)
 
 
 def _mixed_precision_fit_kwargs():
@@ -390,6 +392,7 @@ def test_nonfinite_microbatch_discards_the_complete_accumulation_window():
         "overflow_second_batch",
         _overflow_second_batch,
         identity="tests.operator_precision.overflow-second.v1",
+        case_reduction="per_case",
     )
     mixed = phx.nn.operator.training.fit_operator(
         _LinearOperator(),
@@ -508,6 +511,51 @@ def test_nonfinite_optimizer_candidate_is_not_treated_as_scale_overflow():
             optimizer=_nonfinite_optimizer(),
             optimizer_id="tests.nonfinite-optimizer.v1",
         )
+
+
+@pytest.mark.skipif(
+    not bool(jax.config.read("jax_enable_x64")),
+    reason="Float64 accumulator coverage requires JAX x64.",
+)
+def test_float64_accumulation_casts_back_to_float32_optimizer_boundary():
+    observed_dtypes = []
+
+    def init_fn(parameters):
+        del parameters
+        return optax.EmptyState()
+
+    def update_fn(updates, state, parameters=None):
+        del parameters
+        observed_dtypes.extend(
+            leaf.dtype
+            for leaf in jax.tree_util.tree_leaves(updates)
+            if isinstance(leaf, jax.Array)
+        )
+        return (
+            jax.tree_util.tree_map(lambda update: -1e-2 * update, updates),
+            state,
+        )
+
+    phx.nn.operator.training.fit_operator(
+        _LinearOperator(),
+        _dataset(cases=2, resolution=4),
+        epochs=1,
+        steps=1,
+        batch_size=1,
+        gradient_accumulation=2,
+        optimizer=optax.GradientTransformation(init_fn, update_fn),
+        optimizer_id="tests.record-gradient-dtype",
+        dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
+            parameter_dtype="float32",
+            compute_dtype="float32",
+            reduction_dtype="float64",
+        ),
+        jit=False,
+        shuffle=False,
+    )
+
+    assert observed_dtypes
+    assert set(observed_dtypes) == {jnp.dtype(jnp.float32)}
 
 
 @pytest.mark.skipif(

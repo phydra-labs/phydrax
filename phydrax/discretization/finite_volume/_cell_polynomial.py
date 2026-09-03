@@ -9,8 +9,9 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._total_degree import TotalDegreePolynomialFeatures
@@ -78,7 +79,7 @@ def _cell_moments(
     quadrature_weights = np.asarray(discretization.cell_quadrature_weights)
     normalized = (quadrature_points - centers[:, None, :]) / lengths[:, None, None]
     monomials = _monomials(normalized, np.asarray(basis.exponents))
-    moments = oe.contract("cq,cqf->cf", quadrature_weights / volumes[:, None], monomials)
+    moments = ein.contract("cq,cqf->cf", quadrature_weights / volumes[:, None], monomials)
     return moments, lengths
 
 
@@ -97,7 +98,7 @@ def _design_rows(
     weights = np.asarray(discretization.cell_quadrature_weights)[stencil]
     normalized = (points - centers[cell]) / lengths[cell]
     monomials = _monomials(normalized, np.asarray(basis.exponents))
-    averages = oe.contract("sq,sqf->sf", weights / volumes[stencil, None], monomials)
+    averages = ein.contract("sq,sqf->sf", weights / volumes[stencil, None], monomials)
     return averages - moments[cell]
 
 
@@ -195,7 +196,7 @@ def _smoothness_gram(
                 coefficient *= np.maximum(exponents[:, axis] - count, 0)
         values = coefficient[None, None, :] * _monomials(normalized, reduced)
         values[..., ~active] = 0.0
-        gram += oe.contract("cq,cqi,cqj->cij", weights, values, values)
+        gram += ein.contract("cq,cqi,cqj->cij", weights, values, values)
     return gram
 
 
@@ -392,7 +393,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"Cell polynomial design for cell {cell} violates rank/condition policy."
                 )
-            pseudoinverse = oe.contract("ij,nj->in", right_t.T / singular[None, :], left)
+            pseudoinverse = ein.contract("ij,nj->in", right_t.T / singular[None, :], left)
             factors[cell, :, :stencil_count] = (
                 pseudoinverse * root_weight[None, :]
             ) / column_scale[:, None]
@@ -442,7 +443,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         mask = self.stencil_valid.reshape(
             self.stencil_valid.shape + (1,) * (difference.ndim - 2)
         )
-        return oe.contract(
+        return ein.contract(
             "cfs,cs...->c...f",
             self.factors.astype(value.dtype),
             jnp.where(mask, difference, 0.0),
@@ -501,8 +502,8 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
             1.0 / jnp.maximum(distance, 1.0e-14) ** 2,
             0.0,
         )
-        gram = oe.contract("cs,csi,csj->cij", weight, design, design, backend="jax")
-        right = oe.contract(
+        gram = ein.contract("cs,csi,csj->cij", weight, design, design, backend="jax")
+        right = ein.contract(
             "cs,csi,cs...->ci...",
             weight,
             design,
@@ -541,7 +542,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
             _jax_monomials(normalized, self.basis.exponents)
             - self.moments[routes, None, :]
         )
-        delta = oe.contract(
+        delta = ein.contract(
             "r...f,rqf->rq...",
             coefficients[routes],
             basis,
@@ -576,7 +577,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         value = jnp.asarray(state)
         routes = jnp.asarray(cell_routes, dtype=jnp.int32)
         basis = self.basis_values(routes, jnp.asarray(points, dtype=value.dtype))
-        delta = oe.contract("r...f,rqf->rq...", coefficients[routes], basis)
+        delta = ein.contract("r...f,rqf->rq...", coefficients[routes], basis)
         return value[routes, None, ...] + delta
 
     def evaluate(self, state: Array, cell_routes: Array, points: Array, /) -> Array:
@@ -605,7 +606,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
 
     def smoothness(self, coefficients: Array, /) -> Array:
         value = jnp.asarray(coefficients)
-        return oe.contract(
+        return ein.contract(
             "c...i,cij,c...j->c...",
             value,
             self.smoothness_gram.astype(value.dtype),

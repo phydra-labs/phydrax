@@ -11,8 +11,9 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -337,7 +338,7 @@ def _lpdo_hilbert_schmidt_inner(
         dtype=jnp.result_type(left_tensors[0], right_tensors[0]),
     )
     for left_tensor, right_tensor in zip(left_tensors, right_tensors, strict=True):
-        environment = oe.contract(
+        environment = ein.contract(
             "abcd,axkr,byks,cyqt,dxqu->rstu",
             environment,
             left_tensor,

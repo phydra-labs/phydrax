@@ -9,8 +9,9 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._chart import CoordinateChart
@@ -82,7 +83,7 @@ class HorizontalCometric(StrictModule):
         frame = self.frame(coordinates)
         control = self.control_metric(coordinates)
         inverse = _metric_inverse(control, positive_definite=True)
-        return oe.contract("...ia,...ab,...jb->...ij", frame, inverse, frame)
+        return ein.contract("...ia,...ab,...jb->...ij", frame, inverse, frame)
 
 
 def horizontal_gradient(
@@ -102,7 +103,7 @@ def horizontal_gradient(
         if value.shape != ():
             raise ValueError("horizontal_gradient requires a scalar field.")
         differential = jax.grad(field)(point)
-        return oe.contract("ij,j->i", cometric(point), differential)
+        return ein.contract("ij,j->i", cometric(point), differential)
 
     return _pointwise_array(evaluate, coordinates, cometric.chart.dimension)
 
@@ -121,7 +122,7 @@ def horizontal_hamiltonian(
         raise ValueError(
             "Horizontal Hamiltonian covectors must match the chart dimension."
         )
-    return 0.5 * oe.contract(
+    return 0.5 * ein.contract(
         "...i,...ij,...j->...",
         covector_array,
         cometric(coordinates),

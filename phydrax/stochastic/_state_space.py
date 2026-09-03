@@ -15,8 +15,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._frozendict import frozendict
 from .._strict import AbstractAttribute, StrictModule
@@ -378,7 +379,7 @@ class GaussianStatePrior(AbstractStatePrior):
         noise = jr.normal(
             key, samples + self.batch_shape + (size,), dtype=self.mean.dtype
         )
-        values = oe.contract("...ij,...j->...i", self.factor, noise)
+        values = ein.contract("...ij,...j->...i", self.factor, noise)
         mean = self.mean.reshape(self.batch_shape + (size,))
         return (values + mean).reshape(samples + self.batch_shape + self.state_shape)
 
@@ -794,7 +795,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         parameters = self.parameters(t0, t1, context)
         flat = values.reshape(batch_shape + (size,))
         mean = (
-            oe.contract("...ij,...j->...i", parameters.transition, flat)
+            ein.contract("...ij,...j->...i", parameters.transition, flat)
             + parameters.offset
         )
         return mean.reshape(batch_shape + self.state_shape)
@@ -815,7 +816,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
         factor = eigenvectors * jnp.sqrt(jnp.maximum(eigenvalues, 0.0))[..., None, :]
         noise = jr.normal(key, batch_shape + (size,), dtype=mean.dtype)
-        draw = mean.reshape(batch_shape + (size,)) + oe.contract(
+        draw = mean.reshape(batch_shape + (size,)) + ein.contract(
             "...ij,...j->...i", factor, noise
         )
         values = draw.reshape(mean.shape)
@@ -1042,7 +1043,7 @@ class GaussianObservationModel(AbstractObservationModel):
         scale = jnp.linalg.cholesky(covariance)
         samples = _shape(sample_shape, owner="sample_shape")
         noise = jr.normal(key, samples + batch_shape + (size,), dtype=location.dtype)
-        values = location.reshape(batch_shape + (size,)) + oe.contract(
+        values = location.reshape(batch_shape + (size,)) + ein.contract(
             "...ij,...j->...i", scale, noise
         )
         return values.reshape(samples + batch_shape + self.observation_shape)
@@ -1114,7 +1115,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         )
         matrix, offset, _ = self.parameters(time, context)
         values = (
-            oe.contract(
+            ein.contract(
                 "...ij,...j->...i",
                 matrix,
                 state_array.reshape(batch_shape + (state_size,)),
@@ -1150,7 +1151,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         noise = jr.normal(
             key, samples + batch_shape + (observation_size,), dtype=location.dtype
         )
-        values = location.reshape(batch_shape + (observation_size,)) + oe.contract(
+        values = location.reshape(batch_shape + (observation_size,)) + ein.contract(
             "...ij,...j->...i", scale, noise
         )
         return values.reshape(samples + batch_shape + self.observation_shape)

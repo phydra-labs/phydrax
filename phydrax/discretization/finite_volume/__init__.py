@@ -76,6 +76,7 @@ from ._diffusion import (
     PreparedConservativeAdvection,
     PreparedConservativeDiffusion,
 )
+from ._dyadic import DyadicFiniteVolumeDiscretization, DyadicFiniteVolumePlan
 from ._distributed import (
     FiniteVolumeDecompositionPlan,
     FiniteVolumeHaloRoute,
@@ -465,6 +466,8 @@ from ._weno import WENOOrder, WENOReconstructionPlan
 
 
 __all__ = [
+    "DyadicFiniteVolumeDiscretization",
+    "DyadicFiniteVolumePlan",
     "ALEBoundaryContext",
     "MovingSlipWallBoundary",
     "ALEGeometryConsistencyPolicy",

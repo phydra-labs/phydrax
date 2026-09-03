@@ -233,8 +233,8 @@ shot randomness. Sampling replay is invariant to shot batching. Mixed
 multi-Kraus branches require LPDO execution; pure MPS branches fail closed.
 
 Hardware compilation records logical placement, native decomposition, and every
-SWAP edge. Fixed-grid controls materialize deterministic local-map programs from
-an immutable time grid and control basis.
+SWAP edge. Continuous controls use `FixedGridLocalHamiltonian` and the local
+Hamiltonian evolution lifecycle; they are not silently materialized as gate programs.
 
 The platform does not provide unbounded branch graphs, arbitrary Python
 callbacks, hidden provider calls, global entropy, automatic gate factorization,

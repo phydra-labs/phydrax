@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._exponential_family import (
     ExponentialFamilyConversionResult,
@@ -62,7 +63,7 @@ def multivariate_normal_from_gaussian_factor(
         batch_shape + (family.event_size, checked_factor.shape[-1]),
     )
     covariance = checked_factor @ jnp.swapaxes(checked_factor, -1, -2)
-    second = covariance + oe.contract("...i,...j->...ij", location_array, location_array)
+    second = covariance + ein.contract("...i,...j->...ij", location_array, location_array)
     mean = family.mean(jnp.concatenate((location_array, svec(second)), axis=-1))
     return family.natural_from_mean(mean)
 

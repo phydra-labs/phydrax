@@ -95,9 +95,12 @@ Inspect `valid`, `status`, residuals, and iteration evidence before consuming re
 ## Shared core substrates
 
 `AstrodynamicsScaleContract` is the shared `DimensionalScaleContract` with physical
-length coordinates; epoch and frame remain astrodynamics-owned. Direct and hierarchical
-gravity now delegate to core `NewtonianPairKernel`, runtime Morton octree, and
-`BarnesHutGravityPlan`; the previous application-local nominal FMM and TreePM names were
-removed because they did not implement those algorithms. Orbit-determination whitening
+length coordinates; epoch and frame remain astrodynamics-owned. Direct and
+hierarchical gravity delegate to the core `NewtonianPairKernel`, sparse runtime
+Morton hierarchy, and `BarnesHutGravityPlan`. Point membership and tree routes
+are discrete; positions, masses, node moments, and the realized force remain
+differentiable while topology is fixed. Capacity, root-domain, and traversal
+evidence must be accepted before consuming the acceleration.
+Orbit-determination whitening
 uses the core Cholesky covariance action, while range/range-rate/RA-Dec geometry remains
 astrodynamics-specific. Artifact manifests use the core checksum/lineage contract.

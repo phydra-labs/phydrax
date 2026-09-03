@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..._sampling import derive_key, SampleAddress
 from ..._sampling._targets import IncrementalMarkovTarget

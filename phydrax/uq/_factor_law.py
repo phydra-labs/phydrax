@@ -9,8 +9,9 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._probability import AbstractProbabilityLaw
 from ..domain._measure import MeasureKind
@@ -50,7 +51,9 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
         if jnp.iscomplexobj(mean) or jnp.iscomplexobj(factor.factor):
             raise TypeError("GaussianFactorLaw initially requires real coordinates.")
         if mean.shape != events:
-            raise ValueError(f"location must have event shape {events}; got {mean.shape}.")
+            raise ValueError(
+                f"location must have event shape {events}; got {mean.shape}."
+            )
         if factor.factor.ndim != 2 or factor.event_size != size:
             raise ValueError("Gaussian factor must be unbatched and match event size.")
         rank = int(jax.device_get(factor.numerical_rank))
@@ -106,7 +109,7 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
             samples + (self.rank,),
             dtype=self.location.dtype,
         )
-        centered = oe.contract("ir,...r->...i", self.factor.factor, noise)
+        centered = ein.contract("ir,...r->...i", self.factor.factor, noise)
         return (centered + self.location.reshape((self.event_size,))).reshape(
             samples + self.event_shape
         )
@@ -114,9 +117,9 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
     def _coordinates_and_residual(self, value: ArrayLike, /):
         flat, leading = self._flat(value)
         residual = flat - self.location.reshape((self.event_size,))
-        projected = oe.contract("ir,...i->...r", self.left_vectors, residual)
+        projected = ein.contract("ir,...i->...r", self.left_vectors, residual)
         coordinates = projected / self.singular_values
-        reconstructed = oe.contract("ir,...r->...i", self.left_vectors, projected)
+        reconstructed = ein.contract("ir,...r->...i", self.left_vectors, projected)
         orthogonal = residual - reconstructed
         return coordinates, orthogonal, leading
 
@@ -131,9 +134,9 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
     def log_prob(self, value: ArrayLike, /) -> Array:
         flat, _ = self._flat(value)
         coordinates, orthogonal, _ = self._coordinates_and_residual(value)
-        support = jnp.linalg.vector_norm(orthogonal, axis=-1) <= self.support_tolerance * (
-            1.0 + jnp.linalg.vector_norm(flat, axis=-1)
-        )
+        support = jnp.linalg.vector_norm(
+            orthogonal, axis=-1
+        ) <= self.support_tolerance * (1.0 + jnp.linalg.vector_norm(flat, axis=-1))
         quadratic = jnp.sum(coordinates**2, axis=-1)
         log_pseudodeterminant = 2.0 * jnp.sum(jnp.log(self.singular_values))
         density = -0.5 * (
@@ -146,9 +149,9 @@ class GaussianFactorLaw(AbstractProbabilityLaw):
     def subspace_score(self, value: ArrayLike, /) -> Array:
         flat, leading = self._flat(value)
         residual = flat - self.location.reshape((self.event_size,))
-        projected = oe.contract("ir,...i->...r", self.left_vectors, residual)
+        projected = ein.contract("ir,...i->...r", self.left_vectors, residual)
         weighted = projected / self.singular_values**2
-        score = -oe.contract("ir,...r->...i", self.left_vectors, weighted)
+        score = -ein.contract("ir,...r->...i", self.left_vectors, weighted)
         return score.reshape(leading + self.event_shape)
 
     def score(self, value: ArrayLike, /) -> Array:

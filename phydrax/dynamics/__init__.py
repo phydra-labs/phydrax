@@ -5,6 +5,7 @@
 """Dynamical-system, pathwise-evolution, analysis, and identification contracts."""
 
 from . import analysis, identification
+from ._affine import affine_exponential_step, AffineExponentialResult
 from ._cell_enclosure import CellMapEnclosure
 from ._conley import (
     compute_conley_homology_index,
@@ -93,6 +94,8 @@ from .identification import (
 __all__ = [
     "analysis",
     "identification",
+    "AffineExponentialResult",
+    "affine_exponential_step",
     "CellMapEnclosure",
     "ConleyHomologyIndex",
     "compute_conley_homology_index",

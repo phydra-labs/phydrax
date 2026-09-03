@@ -28,6 +28,7 @@ from ..discretization.finite_volume import (
     AbstractNumericalFluxPlan,
     AbstractWavePropagationPlan,
     ConvexStateLimiterPlan,
+    DyadicFiniteVolumeDiscretization,
     EinfeldtHLLFluxPlan,
     EntropyConservativeEulerFluxPlan,
     EntropyStableEulerFluxPlan,
@@ -181,6 +182,7 @@ class CompiledConservationProblem(StrictModule):
         | MappedFiniteVolumeDiscretization
         | TriangleFiniteVolumeDiscretization
         | UnstructuredFiniteVolumeDiscretization
+        | DyadicFiniteVolumeDiscretization
         | TensorSpectralDiscretization
         | TensorSBPDiscretization
         | FiniteElementDiscretization
@@ -214,6 +216,7 @@ class CompiledConservationProblem(StrictModule):
             | MappedFiniteVolumeDiscretization
             | TriangleFiniteVolumeDiscretization
             | UnstructuredFiniteVolumeDiscretization
+            | DyadicFiniteVolumeDiscretization
             | TensorSpectralDiscretization
             | TensorSBPDiscretization
             | FiniteElementDiscretization
@@ -458,6 +461,7 @@ def compile_conservation_problem(
         | MappedFiniteVolumeDiscretization
         | TriangleFiniteVolumeDiscretization
         | UnstructuredFiniteVolumeDiscretization
+        | DyadicFiniteVolumeDiscretization
         | TensorSpectralDiscretization
         | TensorSBPDiscretization
         | FiniteElementDiscretization
@@ -613,13 +617,16 @@ def compile_conservation_problem(
             "TwoMaterialVOFSystem requires prepared unstructured VOF coupling "
             "and the piecewise-constant per-stage PLIC path."
         )
-    if isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+    if isinstance(
+        discretization,
+        (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),
+    ):
         if not isinstance(method, UnstructuredFiniteVolumeMethodPlan):
             raise TypeError(
-                "Unstructured geometry requires UnstructuredFiniteVolumeMethodPlan."
+                "Explicit-face geometry requires UnstructuredFiniteVolumeMethodPlan."
             )
         if not isinstance(problem.boundaries, UnstructuredFiniteVolumeBoundarySet):
-            raise TypeError("Unstructured geometry requires patch boundary ownership.")
+            raise TypeError("Explicit-face geometry requires patch boundary ownership.")
         if entropy_pair is not None:
             raise ValueError(
                 "entropy_pair diagnostics currently support structured and mapped "

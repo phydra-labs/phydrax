@@ -14,6 +14,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._capillarity import BalancedCapillaryOperator
 from ._contact_angle import EmbeddedBoundaryContactAngleSet
+from ._dyadic import DyadicFiniteVolumeDiscretization
 from ._embedded_dynamics import UnstructuredEmbeddedBoundarySet
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_amr import UnstructuredAMRHierarchyPlan
@@ -415,7 +416,9 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
 
     def prepare(
         self,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: (
+            UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
+        ),
         /,
         *,
         sliding_coupling: PeriodicSlidingCoupling | None = None,
@@ -460,16 +463,21 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: UnstructuredFiniteVolumeCouplingPlan,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: (
+            UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
+        ),
         /,
         *,
         sliding_coupling: PeriodicSlidingCoupling | None = None,
     ):
         if not isinstance(plan, UnstructuredFiniteVolumeCouplingPlan):
             raise TypeError("plan must be UnstructuredFiniteVolumeCouplingPlan.")
-        if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+        if not isinstance(
+            discretization,
+            (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),
+        ):
             raise TypeError(
-                "discretization must be UnstructuredFiniteVolumeDiscretization."
+                "discretization must be explicit-face finite-volume geometry."
             )
 
         motion = plan.motion

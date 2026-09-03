@@ -1,0 +1,261 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "dee1555b843e001a66559ae750b6d1f4ccdbc2174bdae8bb60b178b423512e5e",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "04eaf233299b60207aa03bc6f06f20aaebf65a123e625df1bcf04147202cc88d",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "inputs": {
+    "complex_bytes": 1048576,
+    "real_bytes": 524288,
+    "stream_state_bytes": 2576
+  },
+  "profiles": {
+    "convolution_direct": {
+      "checksum": 3918.5442158561555,
+      "logical_output_bytes": 524288,
+      "timing": {
+        "count": 10,
+        "max_ms": 0.281208,
+        "mean_ms": 0.12347490000000001,
+        "median_ms": 0.0936245,
+        "min_ms": 0.08662500000000001,
+        "samples_ms": [
+          0.138792,
+          0.08854100000000001,
+          0.16916699999999998,
+          0.095041,
+          0.090833,
+          0.103042,
+          0.281208,
+          0.092208,
+          0.08662500000000001,
+          0.089292
+        ],
+        "std_ms": 0.05849613515857266
+      }
+    },
+    "convolution_fft": {
+      "checksum": 3918.544215856156,
+      "logical_output_bytes": 524288,
+      "timing": {
+        "count": 10,
+        "max_ms": 3.282292,
+        "mean_ms": 2.0294459,
+        "median_ms": 2.012375,
+        "min_ms": 1.18425,
+        "samples_ms": [
+          2.16425,
+          1.18425,
+          2.667375,
+          1.4275,
+          3.282292,
+          1.914417,
+          1.49025,
+          2.209042,
+          1.8447500000000001,
+          2.110333
+        ],
+        "std_ms": 0.587223801643198
+      }
+    },
+    "fir_value_and_grad": {
+      "checksum": 117677.97895212946,
+      "logical_output_bytes": 2064,
+      "timing": {
+        "count": 10,
+        "max_ms": 65.624125,
+        "mean_ms": 38.0372418,
+        "median_ms": 33.261896,
+        "min_ms": 18.031625,
+        "samples_ms": [
+          18.031625,
+          30.789292,
+          22.069374999999997,
+          31.476792000000003,
+          59.937416999999996,
+          65.624125,
+          33.958292,
+          32.5655,
+          43.0015,
+          42.9185
+        ],
+        "std_ms": 14.444624885894005
+      }
+    },
+    "fourier_resize_complex": {
+      "checksum": 53356.30944932837,
+      "logical_output_bytes": 786432,
+      "timing": {
+        "count": 10,
+        "max_ms": 23.402458,
+        "mean_ms": 8.9315958,
+        "median_ms": 7.229979,
+        "min_ms": 0.906792,
+        "samples_ms": [
+          10.056583,
+          23.402458,
+          14.266917000000001,
+          13.955,
+          15.223541,
+          4.4033750000000005,
+          0.906792,
+          2.806167,
+          1.217,
+          3.078125
+        ],
+        "std_ms": 7.212222347271676
+      }
+    },
+    "fourier_resize_real": {
+      "checksum": 78332.97127051391,
+      "logical_output_bytes": 786432,
+      "timing": {
+        "count": 10,
+        "max_ms": 18.876417,
+        "mean_ms": 10.1193293,
+        "median_ms": 9.500667,
+        "min_ms": 2.775625,
+        "samples_ms": [
+          5.351,
+          12.730417000000001,
+          18.876417,
+          8.535457999999998,
+          2.775625,
+          9.090917000000001,
+          6.036709,
+          9.910416999999999,
+          16.357875,
+          11.528458
+        ],
+        "std_ms": 4.704828692764808
+      }
+    },
+    "resample_poly_147_160": {
+      "checksum": 45205.11832114284,
+      "logical_output_bytes": 481792,
+      "timing": {
+        "count": 10,
+        "max_ms": 7.396542,
+        "mean_ms": 1.6183085,
+        "median_ms": 0.953646,
+        "min_ms": 0.433625,
+        "samples_ms": [
+          1.077167,
+          7.396542,
+          0.5826250000000001,
+          0.6371249999999999,
+          0.468792,
+          0.886542,
+          0.433625,
+          1.02075,
+          1.576459,
+          2.103458
+        ],
+        "std_ms": 1.9892390717251283
+      }
+    },
+    "streaming_resample_step": {
+      "checksum": 5894.201309232693,
+      "logical_output_bytes": 52120,
+      "timing": {
+        "count": 10,
+        "max_ms": 5.141833,
+        "mean_ms": 1.2221164999999998,
+        "median_ms": 0.40841649999999996,
+        "min_ms": 0.15645799999999999,
+        "samples_ms": [
+          5.141833,
+          4.1705,
+          0.429791,
+          0.302625,
+          0.28766600000000003,
+          0.387042,
+          0.15645799999999999,
+          0.432583,
+          0.5446249999999999,
+          0.36804200000000004
+        ],
+        "std_ms": 1.733446374937353
+      }
+    },
+    "upfirdn_3_2": {
+      "checksum": 25632.73513578074,
+      "logical_output_bytes": 790144,
+      "timing": {
+        "count": 10,
+        "max_ms": 3.715541,
+        "mean_ms": 1.8206499,
+        "median_ms": 1.587354,
+        "min_ms": 0.742458,
+        "samples_ms": [
+          1.908792,
+          2.94675,
+          3.715541,
+          0.9977499999999999,
+          0.9939169999999999,
+          0.742458,
+          1.318542,
+          1.856166,
+          2.663208,
+          1.0633750000000002
+        ],
+        "std_ms": 0.9447949626827453
+      }
+    },
+    "upfirdn_5_7_complex": {
+      "checksum": 9824.069277502453,
+      "logical_output_bytes": 759296,
+      "timing": {
+        "count": 10,
+        "max_ms": 12.964833,
+        "mean_ms": 5.7875709,
+        "median_ms": 5.571146000000001,
+        "min_ms": 3.067542,
+        "samples_ms": [
+          12.964833,
+          6.906834,
+          3.067542,
+          3.157666,
+          5.5145,
+          5.627792,
+          6.486333,
+          6.087208,
+          4.156708999999999,
+          3.9062919999999997
+        ],
+        "std_ms": 2.7195195688367257
+      }
+    }
+  }
+}

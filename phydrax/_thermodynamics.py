@@ -10,8 +10,9 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ._fingerprint import canonical_fingerprint
 from ._phase_field import AbstractBulkFreeEnergy, DoubleWellFreeEnergy
@@ -152,11 +153,11 @@ class BinaryPhaseThermodynamicClosure(AbstractKineticThermodynamicClosure):
         kappa = parameters.gradient_coefficient.astype(phi.dtype)
         bulk_density = bulk * self.free_energy.density(phi)
         chemical = bulk * self.free_energy.derivative(phi) - kappa * lap
-        gradient_squared = oe.contract("...d,...d->...", grad, grad)
+        gradient_squared = ein.contract("...d,...d->...", grad, grad)
         gradient_density = 0.5 * kappa * gradient_squared
         isotropic_pressure = phi * chemical - bulk_density - gradient_density
         identity = jnp.eye(grad.shape[-1], dtype=phi.dtype)
-        stress = isotropic_pressure[..., None, None] * identity + kappa * oe.contract(
+        stress = isotropic_pressure[..., None, None] * identity + kappa * ein.contract(
             "...a,...b->...ab", grad, grad
         )
         return BinaryThermodynamicLocalFields(

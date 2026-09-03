@@ -9,8 +9,9 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -366,7 +367,7 @@ def evaluate_polygon_geometry(
     second = triangle_points[:, :, 2] - triangle_points[:, :, 0]
     triangle_measures = 0.5 * _cross_2d(first, second)
     triangle_measures = jnp.where(triangulation.triangle_valid, triangle_measures, 0.0)
-    witness = oe.contract("cv,cvd->cd", triangulation.witness_weights, vertices)
+    witness = ein.contract("cv,cvd->cd", triangulation.witness_weights, vertices)
     witness_delta = witness[:, None, :] - vertices
     inward = _cross_2d(edge_vectors, witness_delta) / safe_lengths
     runtime_star_margin = jnp.min(inward, axis=1) / characteristic

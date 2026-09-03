@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -48,10 +49,10 @@ def guo_raw_source(
     c = precision.coefficient(velocity_set.velocities)
     weights = precision.coefficient(velocity_set.weights)
     cs2 = precision.coefficient(velocity_set.sound_speed_squared)
-    cu = oe.contract("...d,qd->...q", u, c)
+    cu = ein.contract("...d,qd->...q", u, c)
     first = (c.reshape((1,) * (u.ndim - 1) + c.shape) - u[..., None, :]) / cs2
     second = cu[..., :, None] * c / cs2**2
-    source = weights * oe.contract("...qd,...d->...q", first + second, force)
+    source = weights * ein.contract("...qd,...d->...q", first + second, force)
     return precision.compute(source)
 
 

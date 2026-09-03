@@ -10,9 +10,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -175,7 +175,7 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
             orthogonal = jnp.linalg.solve(identity + skew, identity - skew)
             retention = jnp.exp(-self.decay_rates())
             powered = retention[None, :] ** flat_times[:, None]
-            matrices = oe.contract(
+            matrices = ein.contract(
                 "li,ti,mi->tlm",
                 orthogonal,
                 powered,
@@ -301,7 +301,7 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
 
         time_nodes = query.axes[time_index].nodes
         transitions = self.evolution_matrix(time_nodes)
-        evolved = oe.contract("...l,tlm->...tm", latent, transitions)
+        evolved = ein.contract("...l,tlm->...tm", latent, transitions)
         latent_grid_shape = (
             case_shape
             + tuple(

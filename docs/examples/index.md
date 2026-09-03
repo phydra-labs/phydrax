@@ -14,6 +14,18 @@ A benchmark notebook for the coupled 3-DOF spring-mass system in matrix form, wi
 
 - Public notebook: [spring-mass-ode](https://static.marimo.app/static/spring-mass-ode-xuq3)
 
+## Linear-quadratic feedback game
+
+```text
+python examples/lq_nash_game.py
+```
+
+The script solves a two-player affine finite-horizon full-state feedback Nash
+game, checks curvature, rank, conditioning, stationarity, and Bellman
+evidence, replays the joint affine policy through the physical control
+contract, and compares both direct discrete payoffs with their initial value
+functions.
+
 ## Shallow-water scripts
 
 The wet/dry and rotating-flow paths have directly runnable qualification examples:

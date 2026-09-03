@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
 from ...._model import AbstractArrayModel
@@ -24,7 +25,6 @@ from ._core import AbstractLayerKernel, BoundaryPanelization2D, LayerDiscretizat
 
 
 class HelmholtzLayerKernel2D(AbstractLayerKernel):
-
     wavenumber: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 

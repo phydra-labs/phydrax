@@ -9,8 +9,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._costs import PrecomputedCost
@@ -111,7 +112,7 @@ def _relational_squared_loss(
     target_probabilities = problem.target.probabilities
     left_square = problem.source_relation**2 @ source_probabilities
     right_square = problem.target_relation**2 @ target_probabilities
-    cross = oe.contract(
+    cross = ein.contract(
         "ik,kl,jl->ij",
         problem.source_relation,
         coupling,
@@ -136,14 +137,14 @@ def _gromov_objective(
     coupling: Array,
     /,
 ) -> Array:
-    relational = oe.contract(
+    relational = ein.contract(
         "ij,ij->",
         coupling,
         _relational_squared_loss(problem, coupling),
     )
     if problem.feature_cost is None:
         return relational
-    feature = oe.contract("ij,ij->", coupling, problem.feature_cost)
+    feature = ein.contract("ij,ij->", coupling, problem.feature_cost)
     return problem.alpha * relational + (1.0 - problem.alpha) * feature
 
 

@@ -10,8 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -65,7 +66,7 @@ class SmagorinskyLESClosure(StrictModule, NonTrainableState):
             raise ValueError("Velocity gradient must be square.")
         strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
         magnitude = jnp.sqrt(
-            2 * oe.contract("...ij,...ij->...", strain, strain, backend="jax")
+            2 * ein.contract("...ij,...ij->...", strain, strain, backend="jax")
         )
         delta = jnp.asarray(state.cell_volume) ** (1 / dimension)
         viscosity = (
@@ -75,7 +76,9 @@ class SmagorinskyLESClosure(StrictModule, NonTrainableState):
             viscosity * jnp.asarray(state.heat_capacity) / self.turbulent_prandtl
         )
         dissipation = (
-            2 * viscosity * oe.contract("...ij,...ij->...", strain, strain, backend="jax")
+            2
+            * viscosity
+            * ein.contract("...ij,...ij->...", strain, strain, backend="jax")
         )
         return EddyTransportProperties(viscosity, conductivity, dissipation)
 
@@ -202,12 +205,12 @@ class HydrostaticLayerCoupling(StrictModule, NonTrainableState):
 
     def potential_energy(self, depths: ArrayLike, /) -> Array:
         values = jnp.asarray(depths)
-        return 0.5 * oe.contract(
+        return 0.5 * ein.contract(
             "...i,ij,...j->...", values, self.energy_hessian, values, backend="jax"
         )
 
     def potential_gradient(self, depths: ArrayLike, /) -> Array:
-        return oe.contract(
+        return ein.contract(
             "ij,...j->...i", self.energy_hessian, jnp.asarray(depths), backend="jax"
         )
 

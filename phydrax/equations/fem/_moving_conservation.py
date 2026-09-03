@@ -9,8 +9,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -160,13 +161,13 @@ def finite_element_ale_metric_evidence(
         current_coordinates = current.coordinates[routes]
         next_coordinates = next_snapshot.coordinates[routes]
         velocity = current.coordinate_velocity[routes]
-        current_jacobian = oe.contract(
+        current_jacobian = ein.contract(
             "qid,cia->cqad", gradients, current_coordinates, backend="jax"
         )
-        next_jacobian = oe.contract(
+        next_jacobian = ein.contract(
             "qid,cia->cqad", gradients, next_coordinates, backend="jax"
         )
-        velocity_gradient_reference = oe.contract(
+        velocity_gradient_reference = ein.contract(
             "qid,cia->cqad", gradients, velocity, backend="jax"
         )
         current_inverse = inverse_small_linear(
@@ -182,7 +183,7 @@ def finite_element_ale_metric_evidence(
         )
         current_determinant = current_inverse.determinant
         next_determinant = next_inverse.determinant
-        velocity_gradient = oe.contract(
+        velocity_gradient = ein.contract(
             "cqad,cqdb->cqab",
             velocity_gradient_reference,
             inverse,
@@ -228,7 +229,7 @@ def ale_physical_normal_flux(
     value = jnp.asarray(state)
     normal_ = jnp.asarray(normal)
     velocity = jnp.asarray(mesh_velocity)
-    grid_speed = oe.contract("...d,...d->...", velocity, normal_, backend="jax")
+    grid_speed = ein.contract("...d,...d->...", velocity, normal_, backend="jax")
     return (
         system.physical_normal_flux(value, normal_, args) - grid_speed[..., None] * value
     )
@@ -249,7 +250,7 @@ def ale_numerical_normal_flux(
     normal_ = jnp.asarray(normal)
     velocity = jnp.asarray(mesh_velocity)
     base = interface_flux.normal_face_flux(system, left_, right_, normal_, args)
-    grid_speed = oe.contract("...d,...d->...", velocity, normal_, backend="jax")
+    grid_speed = ein.contract("...d,...d->...", velocity, normal_, backend="jax")
     flux = base.normal_flux - 0.5 * grid_speed[..., None] * (left_ + right_)
     return NumericalFluxResult(flux, base.max_speed + jnp.abs(grid_speed))
 
@@ -288,7 +289,7 @@ class MovingTraceRoute(StrictModule, NonTrainableState):
         normal = (1.0 - value) * self.current.normal + value * self.next.normal
         normal = (
             normal
-            / jnp.sqrt(oe.contract("...d,...d->...", normal, normal, backend="jax"))[
+            / jnp.sqrt(ein.contract("...d,...d->...", normal, normal, backend="jax"))[
                 ..., None
             ]
         )
@@ -376,7 +377,7 @@ class ConservativeRemapPlan(StrictModule):
 
     def apply(self, source_coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(source_coefficients)
-        right = oe.contract("ij,j...->i...", self.cross_mass, values, backend="jax")
+        right = ein.contract("ij,j...->i...", self.cross_mass, values, backend="jax")
         flat = right.reshape((right.shape[0], -1))
         components = []
         for component in range(flat.shape[-1]):
@@ -406,7 +407,7 @@ class ConservativeRemapPlan(StrictModule):
                 )
             )
         solved = jnp.stack(tuple(solved_components), axis=-1)
-        source = oe.contract("ij,i...->j...", self.cross_mass, solved, backend="jax")
+        source = ein.contract("ij,i...->j...", self.cross_mass, solved, backend="jax")
         return source.reshape((self.source_mass.shape[0],) + cotangent.shape[1:])
 
 

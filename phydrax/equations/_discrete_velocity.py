@@ -11,8 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -149,7 +150,7 @@ class DiscreteVelocityAdvectionSystem(AbstractAdmissibleSystem):
             or normal_.shape[:-1] != left_.shape[:-1]
         ):
             raise ValueError("DVM face states and normals have incompatible shapes.")
-        normal_velocities = oe.contract(
+        normal_velocities = ein.contract(
             "...d,qd->...q", normal_, self.quadrature.velocities
         )
         return jnp.min(normal_velocities, axis=-1), jnp.max(normal_velocities, axis=-1)
@@ -208,7 +209,7 @@ class AbstractConservativeDVMSource(StrictModule, NonTrainableState):
         /,
     ) -> ConservativeDVMSourceEvidence:
         source = self(time, state, coordinates, args)
-        residual = oe.contract("mq,...q->...m", self.moment_matrix, source)
+        residual = ein.contract("mq,...q->...m", self.moment_matrix, source)
         return ConservativeDVMSourceEvidence(
             source=source,
             moment_residual=residual,
@@ -299,7 +300,7 @@ class ConservativeRelaxationDVMSource(AbstractConservativeDVMSource):
         if equilibrium.shape != values.shape:
             raise ValueError("DVM equilibrium must match the population field shape.")
         raw = self.relaxation_rate * (equilibrium - values)
-        return oe.contract("pq,...q->...p", self.nullspace_projector, raw)
+        return ein.contract("pq,...q->...p", self.nullspace_projector, raw)
 
 
 class DiscreteVelocitySourceComposition(AbstractConservativeDVMSource):

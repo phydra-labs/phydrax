@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -38,13 +39,16 @@ class FieldNoiseGeometry(StrictModule):
                 "FieldNoiseGeometry requires a real basis; use explicit complex coordinates."
             )
         if bool(jnp.any(basis.eigenvalues <= 0.0)):
-            raise ValueError("Field diffusion requires strictly positive retained eigenvalues.")
+            raise ValueError(
+                "Field diffusion requires strictly positive retained eigenvalues."
+            )
         space = field_space_id or basis.field_space_id
         if not isinstance(space, str) or not space:
             raise ValueError("field_space_id must be supplied by the basis or caller.")
-        scaled_modes = basis.modes.reshape((-1, basis.modes.shape[-1])) * jnp.sqrt(
-            basis.eigenvalues
-        )[None, :]
+        scaled_modes = (
+            basis.modes.reshape((-1, basis.modes.shape[-1]))
+            * jnp.sqrt(basis.eigenvalues)[None, :]
+        )
         layout = AffineSubspaceLayout(
             jnp.zeros(basis.state_shape, dtype=basis.modes.dtype),
             scaled_modes,
@@ -90,7 +94,9 @@ class FieldNoiseGeometry(StrictModule):
         if self.basis.mode_ids != target.basis.mode_ids:
             raise ValueError("Field transfer requires identical ordered mode IDs.")
         if not jnp.allclose(self.basis.eigenvalues, target.basis.eigenvalues):
-            raise ValueError("Field transfer requires identical retained covariance spectrum.")
+            raise ValueError(
+                "Field transfer requires identical retained covariance spectrum."
+            )
         coefficients, residual = self.coefficients(field)
         coefficients = eqx.error_if(
             coefficients,
@@ -108,13 +114,19 @@ class FieldGaussianDiffusion(StrictModule):
     subspace_process: SubspaceGaussianDiffusion
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, geometry, coefficient_process, /, *, process_id: str | None = None):
+    def __init__(
+        self, geometry, coefficient_process, /, *, process_id: str | None = None
+    ):
         if not isinstance(geometry, FieldNoiseGeometry):
             raise TypeError("geometry must be a FieldNoiseGeometry.")
         if not isinstance(coefficient_process, AbstractGaussianDiffusion):
-            raise TypeError("coefficient_process must implement AbstractGaussianDiffusion.")
+            raise TypeError(
+                "coefficient_process must implement AbstractGaussianDiffusion."
+            )
         if coefficient_process.state_shape != (geometry.rank,):
-            raise ValueError("Coefficient diffusion dimension must match field noise rank.")
+            raise ValueError(
+                "Coefficient diffusion dimension must match field noise rank."
+            )
         identifier = process_id or canonical_fingerprint(
             {
                 "kind": "field-gaussian-diffusion",
@@ -131,7 +143,9 @@ class FieldGaussianDiffusion(StrictModule):
         )
         self.process_id = identifier
 
-    def perturb(self, key: Key[Array, ""], field: ArrayLike, /, *, time: ArrayLike) -> Array:
+    def perturb(
+        self, key: Key[Array, ""], field: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         return self.subspace_process.perturb(key, field, time=time)
 
     def conditional_coefficient_score(self, perturbed, clean, /, *, time):
@@ -146,7 +160,9 @@ class FieldGaussianDiffusion(StrictModule):
         if score.shape[-1:] != (self.geometry.rank,):
             raise ValueError("Coefficient score has an incompatible retained rank.")
         tangent_coefficients = self.geometry.layout.solve_gram(score)
-        flat = oe.contract("ir,...r->...i", self.geometry.layout.basis, tangent_coefficients)
+        flat = ein.contract(
+            "ir,...r->...i", self.geometry.layout.basis, tangent_coefficients
+        )
         return flat.reshape(score.shape[:-1] + self.geometry.state_shape)
 
 

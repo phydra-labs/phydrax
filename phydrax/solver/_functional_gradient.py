@@ -31,6 +31,11 @@ from .._training import (
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
+from .._training_objective import (
+    _GradientAccumulationState,
+    _ObjectiveAccumulator,
+    _ObjectiveContribution,
+)
 from ..nn.parameters import ParameterSubspace
 from ..nn.parameters._low_rank import validate_low_rank_subspace
 from ..optim._composite import CompositeLeastSquaresProblem
@@ -119,6 +124,7 @@ def solve_gradient(
     tensorboard_flush_every: int = 10,
     profile_adaptive: bool = False,
     train_term_sample_size: int | None = None,
+    gradient_accumulation: int = 1,
     precision: FunctionalPrecisionPolicy | None = None,
     training: FunctionalTrainingPlan | None = None,
     resume: bool = False,
@@ -127,6 +133,9 @@ def solve_gradient(
     | ExponentialMovingAverageTargetPolicy
     | None = None,
 ) -> "FunctionalSolver":
+    accumulation_steps = int(gradient_accumulation)
+    if accumulation_steps <= 0:
+        raise ValueError("gradient_accumulation must be positive.")
     if num_iter == 0:
         return self
 
@@ -207,6 +216,13 @@ def solve_gradient(
 
     with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         resume_state = self.training_state if resume else None
+        if (
+            resume_state is not None
+            and resume_state.gradient_accumulation != accumulation_steps
+        ):
+            raise ValueError(
+                "In-memory functional gradient-accumulation identity mismatch."
+            )
         source_functions = (
             self.functions if resume_state is None else resume_state.current_functions
         )
@@ -279,6 +295,19 @@ def solve_gradient(
             raise ValueError(
                 "Functional precision currently supports standard Optax transforms only."
             )
+        if accumulation_steps > 1 and _opt_standard is None:
+            raise ValueError(
+                "gradient_accumulation > 1 is supported only by standard Optax."
+            )
+        if (
+            accumulation_steps > 1
+            and training is not None
+            and (training.stateful or training.causal or training.diagnostics is not None)
+        ):
+            raise ValueError(
+                "gradient_accumulation > 1 does not support stateful, causal, "
+                "term-balancing, or diagnostic functional training policies."
+            )
         trainable_dtypes = {
             leaf.dtype for leaf in jax.tree.leaves(params) if eqx.is_inexact_array(leaf)
         }
@@ -287,6 +316,16 @@ def solve_gradient(
                 "Functional precision requires one uniform trainable parameter dtype."
             )
         precision_dtype = None if precision is None else next(iter(trainable_dtypes))
+        accumulation_dtypes = tuple(
+            jnp.real(leaf).dtype
+            for leaf in jax.tree.leaves(params)
+            if eqx.is_inexact_array(leaf)
+        )
+        accumulation_dtype = (
+            jnp.dtype(jnp.float32)
+            if not accumulation_dtypes
+            else jnp.result_type(*accumulation_dtypes)
+        )
         log_every_ = int(log_every)
         if log_every_ < 0:
             raise ValueError("log_every must be >= 0.")
@@ -624,6 +663,22 @@ def solve_gradient(
             if jit and not is_linesearch
             else solve_step_terms
         )
+
+        run_standard_gradient = eqx.filter_jit(loss_fn) if jit else loss_fn
+
+        def apply_standard_gradient(params_, opt_state_, gradient_):
+            if _opt_standard is None:
+                raise RuntimeError("Standard Optax accumulation is not configured.")
+            updates, next_state = _opt_standard.update(
+                gradient_,
+                opt_state_,
+                params_,
+            )
+            return eqx.apply_updates(params_, updates), next_state
+
+        run_standard_update = (
+            eqx.filter_jit(apply_standard_gradient) if jit else apply_standard_gradient
+        )
         selection_loss_fn = (
             eqx.filter_jit(_loss_wrt_params)
             if jit and evaluation_parameters is not None
@@ -699,6 +754,7 @@ def solve_gradient(
                 ),
                 progress=TrainingProgress(),
                 run_id=training.plan_id,
+                gradient_accumulation=accumulation_steps,
             )
             restored = load_functional_training_checkpoint(
                 training.checkpoint.path,
@@ -848,6 +904,7 @@ def solve_gradient(
                 previous_gradient=previous_gradient,
                 progress=control.progress,
                 run_id=training.plan_id,
+                gradient_accumulation=accumulation_steps,
                 training_seconds=(
                     (0.0 if resume_state is None else resume_state.training_seconds)
                     + time.perf_counter()
@@ -880,6 +937,71 @@ def solve_gradient(
                     f"functional-checkpoint-after-{checkpoint_state.progress.update_step}"
                 )
 
+        def prepare_microstep(current_objective, current_params, subkey, iteration):
+            functions_snapshot_ = reconstruct_functions(
+                current_params,
+                non_trainable,
+            )
+            refresh_started_ = time.perf_counter() if profile_adaptive else 0.0
+            refreshed = current_objective.refresh(
+                functions_snapshot_,
+                key=jr.fold_in(subkey, 101),
+                iter_=int(iteration),
+            )
+            refresh_elapsed = 0.0
+            if profile_adaptive:
+                jax.block_until_ready(refreshed)
+                refresh_elapsed = time.perf_counter() - refresh_started_
+            _, active_indices, term_scale = _active_train_terms(
+                refreshed.terms,
+                sample_size=term_sample_size,
+                key=jr.fold_in(subkey, 17),
+            )
+            physical = refreshed.prepare_training(
+                active_indices,
+                scale=term_scale,
+                evaluation_key=subkey,
+                sampling_key=jr.fold_in(subkey, 211),
+                iteration=jnp.asarray(iteration, dtype=float),
+                evaluation_kwargs=(
+                    None
+                    if target_state is None
+                    else {
+                        "target_functions": reconstruct_functions(
+                            target_state.target,
+                            non_trainable,
+                        )
+                    }
+                ),
+            )
+            if sharding_policy is not None:
+                physical = sharding_policy.place_prepared(physical)
+            if training is None:
+                prepared_ = physical
+            else:
+                surrogate_params, surrogate_non_trainable = surrogate_coordinates(
+                    current_params,
+                    non_trainable,
+                )
+                prepared_ = prepare_functional_update(
+                    physical,
+                    surrogate_params,
+                    surrogate_non_trainable,
+                    self.enforcement,
+                    training=training,
+                    previous_functions=previous_functions,
+                    pseudo_inverse_steps=pseudo_inverse_steps,
+                    term_multipliers=term_multipliers,
+                    previous_gradient=previous_gradient,
+                )
+            return (
+                refreshed,
+                prepared_,
+                active_indices,
+                functions_snapshot_,
+                refresh_elapsed,
+            )
+
         if start_epoch >= int(num_iter):
             resumed_result = replace_solver_state(
                 self,
@@ -905,139 +1027,218 @@ def solve_gradient(
             completed = epoch
             try:
                 iter_start = time.perf_counter()
-                subkey = control.split_key()
                 iter_ = jnp.asarray(epoch + 1, dtype=float)
-                functions_snapshot = reconstruct_functions(params, non_trainable)
-                refresh_started = time.perf_counter() if profile_adaptive else 0.0
-                objective = objective.refresh(
-                    functions_snapshot,
-                    key=jr.fold_in(subkey, 101),
-                    iter_=epoch + 1,
-                )
-                if profile_adaptive:
-                    jax.block_until_ready(objective)
-                    refresh_wall_time += time.perf_counter() - refresh_started
-                optimizer_started = time.perf_counter() if profile_adaptive else 0.0
-                _active_terms, active_term_indices, term_scale = _active_train_terms(
-                    objective.terms,
-                    sample_size=term_sample_size,
-                    key=jr.fold_in(subkey, 17),
-                )
-                physical_prepared = objective.prepare_training(
-                    active_term_indices,
-                    scale=term_scale,
-                    evaluation_key=subkey,
-                    sampling_key=jr.fold_in(subkey, 211),
-                    iteration=iter_,
-                    evaluation_kwargs=(
-                        None
-                        if target_state is None
-                        else {
-                            "target_functions": reconstruct_functions(
-                                target_state.target,
-                                non_trainable,
-                            )
-                        }
-                    ),
-                )
-                if sharding_policy is not None:
-                    physical_prepared = sharding_policy.place_prepared(physical_prepared)
-                if training is None:
-                    prepared = physical_prepared
-                else:
-                    surrogate_params, surrogate_non_trainable = surrogate_coordinates(
+                if accumulation_steps == 1:
+                    subkey = control.split_key()
+                    (
+                        objective,
+                        prepared,
+                        active_term_indices,
+                        functions_snapshot,
+                        refresh_elapsed,
+                    ) = prepare_microstep(
+                        objective,
+                        params,
+                        subkey,
+                        epoch + 1,
+                    )
+                    refresh_wall_time += refresh_elapsed
+                    if isinstance(prepared, PreparedFunctionalUpdate):
+                        pseudo_inverse_steps = prepared.pseudo_inverse_steps
+                        term_multipliers = prepared.term_multipliers
+                        if prepared.diagnostic_gradient is not None:
+                            previous_gradient = prepared.diagnostic_gradient
+                    if (
+                        isinstance(prepared, PreparedFunctionalUpdate)
+                        and training is not None
+                        and training.diagnostics is not None
+                        and training.diagnostics.ntk
+                        and training.diagnostics.due(epoch + 1)
+                    ):
+                        if prepared.residual is None:
+                            raise ValueError("NTK diagnostics require residual roots.")
+                        surrogate_params, _ = surrogate_coordinates(
+                            params,
+                            non_trainable,
+                        )
+                        latest_ntk_diagnostics = _functional_ntk_diagnostics(
+                            prepared.residual,
+                            surrogate_params,
+                            training.diagnostics,
+                            jr.fold_in(subkey, 1701),
+                        )
+                    pre_update_params = params
+                    optimizer_started = time.perf_counter() if profile_adaptive else 0.0
+                    params, opt_state, loss_val, term_values = solve_step(
                         params,
                         non_trainable,
+                        opt_state,
+                        prepared,
                     )
-                    prepared = prepare_functional_update(
-                        physical_prepared,
-                        surrogate_params,
-                        surrogate_non_trainable,
-                        self.enforcement,
-                        training=training,
-                        previous_functions=previous_functions,
-                        pseudo_inverse_steps=pseudo_inverse_steps,
-                        term_multipliers=term_multipliers,
-                        previous_gradient=previous_gradient,
+                    control.progress = replace(
+                        control.progress,
+                        microstep=control.progress.microstep + 1,
                     )
-                if isinstance(prepared, PreparedFunctionalUpdate):
-                    pseudo_inverse_steps = prepared.pseudo_inverse_steps
-                    term_multipliers = prepared.term_multipliers
-                    if prepared.diagnostic_gradient is not None:
-                        previous_gradient = prepared.diagnostic_gradient
-                if (
-                    isinstance(prepared, PreparedFunctionalUpdate)
-                    and training is not None
-                    and training.diagnostics is not None
-                    and training.diagnostics.ntk
-                    and training.diagnostics.due(epoch + 1)
-                ):
-                    if prepared.residual is None:
-                        raise ValueError("NTK diagnostics require residual roots.")
-                    latest_ntk_diagnostics = _functional_ntk_diagnostics(
-                        prepared.residual,
-                        surrogate_params,
-                        training.diagnostics,
-                        jr.fold_in(subkey, 1701),
+                    if training is not None and training.pseudo_transient:
+                        previous_functions = functions_snapshot
+                    iterative_step_metrics = (
+                        _opt_composite.step_metrics(opt_state)
+                        if _opt_composite is not None
+                        else _opt_least_squares.step_metrics(opt_state)
+                        if _opt_least_squares is not None
+                        else _opt_iterative.step_metrics(opt_state)
+                        if _opt_iterative is not None
+                        else None
                     )
-                pre_update_params = params
-                params, opt_state, loss_val, term_values = solve_step(
-                    params,
-                    non_trainable,
-                    opt_state,
-                    prepared,
-                )
-                if training is not None and training.pseudo_transient:
-                    previous_functions = functions_snapshot
-                iterative_step_metrics = (
-                    _opt_composite.step_metrics(opt_state)
-                    if _opt_composite is not None
-                    else _opt_least_squares.step_metrics(opt_state)
-                    if _opt_least_squares is not None
-                    else _opt_iterative.step_metrics(opt_state)
-                    if _opt_iterative is not None
-                    else None
-                )
-                riemannian_linesearch_metrics = (
-                    _opt_riemannian.step_metrics(opt_state)
-                    if is_riemannian_linesearch and _opt_riemannian is not None
-                    else None
-                )
-                accepted_update = (
-                    bool(iterative_step_metrics.accepted)
-                    if iterative_step_metrics is not None
-                    else bool(riemannian_linesearch_metrics.line_search_accepted)
-                    if riemannian_linesearch_metrics is not None
-                    else optax_linesearch_accepted(opt_state)
-                    if is_linesearch
-                    else True
-                )
-                training_evaluation_multiplier = (
-                    1
-                    if iterative_step_metrics is None
-                    else 2 + int(iterative_step_metrics.globalization_evaluations)
-                )
+                    riemannian_linesearch_metrics = (
+                        _opt_riemannian.step_metrics(opt_state)
+                        if is_riemannian_linesearch and _opt_riemannian is not None
+                        else None
+                    )
+                    accepted_update = (
+                        bool(iterative_step_metrics.accepted)
+                        if iterative_step_metrics is not None
+                        else bool(riemannian_linesearch_metrics.line_search_accepted)
+                        if riemannian_linesearch_metrics is not None
+                        else optax_linesearch_accepted(opt_state)
+                        if is_linesearch
+                        else True
+                    )
+                    training_evaluation_multiplier = (
+                        1
+                        if iterative_step_metrics is None
+                        else 2 + int(iterative_step_metrics.globalization_evaluations)
+                    )
+                    if profile_adaptive:
+                        jax.block_until_ready((params, opt_state, loss_val))
+                        optimizer_step_wall_time = time.perf_counter() - optimizer_started
+                    objective = objective.record_training_evaluations(
+                        multiplier=training_evaluation_multiplier,
+                        term_indices=active_term_indices,
+                    )
+                    values_arr = jnp.asarray(term_values, dtype=float)
+                    active_term_count = len(prepared.terms)
+                    train_term_values = _expanded_train_terms(
+                        values_arr[:active_term_count],
+                        active_term_indices=active_term_indices,
+                        num_terms=len(term_names),
+                    )
+                    train_model_loss_terms = values_arr[active_term_count:]
+                else:
+                    pre_update_params = params
+                    gradient_accumulator = _GradientAccumulationState.empty(
+                        params,
+                        accumulation_dtype=accumulation_dtype,
+                    )
+                    loss_accumulator = _ObjectiveAccumulator()
+                    term_accumulators = [_ObjectiveAccumulator() for _ in term_names]
+                    model_loss_accumulators = [
+                        _ObjectiveAccumulator() for _ in model_loss_names
+                    ]
+                    optimizer_started = time.perf_counter() if profile_adaptive else 0.0
+                    window_refresh_elapsed = 0.0
+                    for _ in range(accumulation_steps):
+                        subkey = control.split_key()
+                        (
+                            objective,
+                            prepared,
+                            active_term_indices,
+                            functions_snapshot,
+                            refresh_elapsed,
+                        ) = prepare_microstep(
+                            objective,
+                            pre_update_params,
+                            subkey,
+                            epoch + 1,
+                        )
+                        refresh_wall_time += refresh_elapsed
+                        window_refresh_elapsed += refresh_elapsed
+                        (micro_loss, micro_values), micro_gradient = (
+                            run_standard_gradient(
+                                pre_update_params,
+                                non_trainable,
+                                prepared,
+                            )
+                        )
+                        micro_contribution = _ObjectiveContribution(
+                            micro_loss,
+                            jnp.ones((), dtype=jnp.asarray(micro_loss).real.dtype),
+                        )
+                        gradient_accumulator = gradient_accumulator.add(
+                            micro_gradient,
+                            micro_contribution,
+                        )
+                        loss_accumulator = loss_accumulator.add(micro_contribution)
+                        values_arr = jnp.asarray(micro_values, dtype=float)
+                        active_term_count = len(prepared.terms)
+                        for local_index, term_index in enumerate(active_term_indices):
+                            term_accumulators[term_index] = term_accumulators[
+                                term_index
+                            ].add(
+                                _ObjectiveContribution(
+                                    values_arr[local_index],
+                                    jnp.asarray(1.0, dtype=values_arr.dtype),
+                                )
+                            )
+                        for model_index, value in enumerate(
+                            values_arr[active_term_count:]
+                        ):
+                            model_loss_accumulators[model_index] = (
+                                model_loss_accumulators[model_index].add(
+                                    _ObjectiveContribution(
+                                        value,
+                                        jnp.asarray(1.0, dtype=values_arr.dtype),
+                                    )
+                                )
+                            )
+                        objective = objective.record_training_evaluations(
+                            multiplier=1,
+                            term_indices=active_term_indices,
+                        )
+                        control.progress = replace(
+                            control.progress,
+                            microstep=control.progress.microstep + 1,
+                        )
+                    averaged_gradient = gradient_accumulator.normalized_gradient(
+                        pre_update_params
+                    )
+                    params, opt_state = run_standard_update(
+                        pre_update_params,
+                        opt_state,
+                        averaged_gradient,
+                    )
+                    loss_val = loss_accumulator.value
+                    train_term_values = jnp.asarray(
+                        tuple(
+                            jnp.nan if accumulator.is_empty else accumulator.value
+                            for accumulator in term_accumulators
+                        ),
+                        dtype=float,
+                    )
+                    train_model_loss_terms = jnp.asarray(
+                        tuple(
+                            accumulator.value for accumulator in model_loss_accumulators
+                        ),
+                        dtype=float,
+                    )
+                    iterative_step_metrics = None
+                    riemannian_linesearch_metrics = None
+                    accepted_update = True
+                    if profile_adaptive:
+                        jax.block_until_ready((params, opt_state, loss_val))
+                        optimizer_step_wall_time = max(
+                            0.0,
+                            time.perf_counter()
+                            - optimizer_started
+                            - window_refresh_elapsed,
+                        )
                 if profile_adaptive:
-                    jax.block_until_ready((params, opt_state, loss_val))
-                    optimizer_step_wall_time = time.perf_counter() - optimizer_started
                     optimizer_wall_time += optimizer_step_wall_time
                     if epoch == 0:
                         first_optimizer_step_wall_time = optimizer_step_wall_time
                     else:
                         steady_optimizer_step_wall_time += optimizer_step_wall_time
-                objective = objective.record_training_evaluations(
-                    multiplier=training_evaluation_multiplier,
-                    term_indices=active_term_indices,
-                )
                 completed = epoch + 1
-                values_arr = jnp.asarray(term_values, dtype=float)
-                active_term_count = len(prepared.terms)
-                train_term_values = _expanded_train_terms(
-                    values_arr[:active_term_count],
-                    active_term_indices=active_term_indices,
-                    num_terms=len(term_names),
-                )
-                train_model_loss_terms = values_arr[active_term_count:]
                 attempt_step = epoch + 1
                 control.progress = replace(control.progress, epoch=attempt_step)
                 accepted_step = control.progress.update_step + int(accepted_update)

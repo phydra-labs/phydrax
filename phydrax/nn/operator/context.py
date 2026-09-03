@@ -13,9 +13,10 @@ from typing import Literal
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
@@ -317,14 +318,14 @@ class PooledGeometryContext(AbstractOperatorContextStrategy):
         )
         assignment = jnn.one_hot(segment, self.num_tokens, dtype=flattened.dtype)
         effective = weights * mask.astype(weights.dtype)
-        mass = oe.contract("bn,nm->bm", effective, assignment)
+        mass = ein.contract("bn,nm->bm", effective, assignment)
         denominator = jnp.maximum(mass, jnp.finfo(flattened.dtype).tiny)
         pooled_values = (
-            oe.contract("bn,bnc,nm->bmc", effective, flattened, assignment)
+            ein.contract("bn,bnc,nm->bmc", effective, flattened, assignment)
             / denominator[..., None]
         )
         pooled_coordinates = (
-            oe.contract("bn,bnd,nm->bmd", effective, coordinates, assignment)
+            ein.contract("bn,bnd,nm->bmd", effective, coordinates, assignment)
             / denominator[..., None]
         )
         pooled_mask = mass > 0.0

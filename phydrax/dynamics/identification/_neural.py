@@ -40,7 +40,11 @@ from ..._training import (
     TrainingProgress,
     TrainingSignalGuard,
 )
-from ..._training_objective import _ObjectiveContribution
+from ..._training_objective import (
+    _GradientAccumulationState,
+    _ObjectiveAccumulator,
+    _ObjectiveContribution,
+)
 from ...metrix import EuclideanStateGeometry
 from .._layout import InputLayout, StateLayout
 from .._model_system import DiscreteModelTransition
@@ -877,26 +881,13 @@ def _objective_contributions(
     return total, tuple(term_contributions), runtime_valid
 
 
-def _tree_zeros(tree: Any, /) -> Any:
-    return jax.tree_util.tree_map(
-        lambda value: None if value is None else jnp.zeros_like(value),
-        tree,
+def _tree_real_result_dtype(tree: Any, /):
+    dtypes = tuple(
+        leaf.dtype for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf)
     )
-
-
-def _tree_add_scaled(left: Any, right: Any, scale: Any, /) -> Any:
-    return jax.tree_util.tree_map(
-        lambda x, y: None if x is None else x + y * scale,
-        left,
-        right,
-    )
-
-
-def _tree_scale(tree: Any, scale: Any, /) -> Any:
-    return jax.tree_util.tree_map(
-        lambda value: None if value is None else value * scale,
-        tree,
-    )
+    if not dtypes:
+        return jnp.dtype(jnp.float32)
+    return jnp.result_type(*dtypes)
 
 
 def _tree_finite(tree: Any, /) -> Array:
@@ -1233,6 +1224,7 @@ def fit_discrete_model(
         raise ValueError("validation_policy requires validation data.")
 
     parameters, fixed = partition_trainable(model)
+    accumulation_dtype = _tree_real_result_dtype(parameters)
     optimizer_state = optimizer.init(parameters)
     evaluated_parameters = resolve_evaluation_parameters(
         evaluation_parameters,
@@ -1333,22 +1325,31 @@ def fit_discrete_model(
                 root_key,
                 step,
             )
-            return contribution.value, (
+            return contribution.numerator, (
                 contribution.numerator,
                 contribution.support,
-                tuple(component.numerator for component in components),
+                contribution.log_scale,
+                tuple(
+                    (component.numerator, component.support, component.log_scale)
+                    for component in components
+                ),
                 valid,
             )
 
-        (value, auxiliary), gradient = eqx.filter_value_and_grad(
+        (_, auxiliary), gradient = eqx.filter_value_and_grad(
             objective,
             has_aux=True,
         )(current_parameters)
-        numerator, support, component_numerators, valid = auxiliary
+        numerator, support, log_scale, component_arrays, valid = auxiliary
         finite = valid & _tree_finite(
-            (value, numerator, support, component_numerators, gradient)
+            (numerator, support, log_scale, component_arrays, gradient)
         )
-        return numerator, support, component_numerators, gradient, finite
+        return (
+            (numerator, support, log_scale),
+            component_arrays,
+            gradient,
+            finite,
+        )
 
     def update_fn(current_parameters, current_state, gradient):
         updates, next_state = optimizer.update(
@@ -1368,8 +1369,7 @@ def fit_discrete_model(
             yield batch_index, source.prepare(indices[start : start + size])
 
     def evaluate(current_model, source, size, step):
-        numerators = np.zeros((len(metric_names),), dtype=float)
-        support_total = 0.0
+        metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
         evaluation_key = control.key_for(int(step), site=1000)
         target_model = (
             combine_trainable(target_state.target, fixed)
@@ -1388,16 +1388,21 @@ def fit_discrete_model(
                 raise FloatingPointError(
                     "Model, reference, target, or residual failed during evaluation."
                 )
-            support = float(jax.device_get(total.support))
-            numerators[0] += float(jax.device_get(total.numerator))
-            for index, component in enumerate(components, start=1):
-                numerators[index] += float(jax.device_get(component.numerator))
-            support_total += support
-        if support_total == 0.0:
-            return {name: 0.0 for name in metric_names}
+            metric_accumulators = [
+                accumulator.add(contribution)
+                for accumulator, contribution in zip(
+                    metric_accumulators,
+                    (total,) + components,
+                    strict=True,
+                )
+            ]
         return {
-            name: float(value / support_total)
-            for name, value in zip(metric_names, numerators, strict=True)
+            name: float(jax.device_get(accumulator.value))
+            for name, accumulator in zip(
+                metric_names,
+                metric_accumulators,
+                strict=True,
+            )
         }
 
     initial_metrics: dict[str, float]
@@ -1466,7 +1471,7 @@ def fit_discrete_model(
             )
 
     def save_progress(training_seconds):
-        if checkpoint is None:
+        if checkpoint is None or not gradient_accumulator.is_empty:
             return
         _save_neural_training_checkpoint(
             checkpoint,
@@ -1539,10 +1544,11 @@ def fit_discrete_model(
     stopped_by_signal = False
     control.emit("train_begin", metrics=initial_metrics)
     with logger_context as tensorboard, TrainingSignalGuard() as signal_guard:
-        gradient_accumulator = _tree_zeros(parameters)
-        accumulated_support = 0.0
-        accumulated_numerators = np.zeros((len(metric_names),), dtype=float)
-        accumulated_microsteps = 0
+        gradient_accumulator = _GradientAccumulationState.empty(
+            parameters,
+            accumulation_dtype=accumulation_dtype,
+        )
+        accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
         has_trainable = any(
             eqx.is_array(leaf) for leaf in jax.tree_util.tree_leaves(parameters)
         )
@@ -1562,37 +1568,36 @@ def fit_discrete_model(
                     if control.progress.update_step >= maximum_steps:
                         break
                     root_key = control.key_for(control.progress.microstep, site=0)
-                    numerator, support, component_numerators, gradient, finite_array = (
-                        run_gradient(
-                            parameters,
-                            (
-                                target_state.target
-                                if target_state is not None
-                                else parameters
-                            ),
-                            batch,
-                            root_key,
-                            jnp.asarray(
-                                control.progress.update_step,
-                                dtype=jnp.int32,
-                            ),
-                        )
+                    total_arrays, component_arrays, gradient, finite_array = run_gradient(
+                        parameters,
+                        (target_state.target if target_state is not None else parameters),
+                        batch,
+                        root_key,
+                        jnp.asarray(
+                            control.progress.update_step,
+                            dtype=jnp.int32,
+                        ),
                     )
                     if not bool(jax.device_get(finite_array)):
                         raise FloatingPointError(
                             "Nonfinite model, reference, residual, loss, or gradient encountered."
                         )
-                    support_value = float(jax.device_get(support))
-                    gradient_accumulator = _tree_add_scaled(
-                        gradient_accumulator,
-                        gradient,
-                        support,
+                    total_contribution = _ObjectiveContribution(*total_arrays)
+                    component_contributions = tuple(
+                        _ObjectiveContribution(*values) for values in component_arrays
                     )
-                    accumulated_support += support_value
-                    accumulated_numerators[0] += float(jax.device_get(numerator))
-                    for index, value in enumerate(component_numerators, start=1):
-                        accumulated_numerators[index] += float(jax.device_get(value))
-                    accumulated_microsteps += 1
+                    gradient_accumulator = gradient_accumulator.add(
+                        gradient,
+                        total_contribution,
+                    )
+                    accumulated_metrics = [
+                        accumulator.add(contribution)
+                        for accumulator, contribution in zip(
+                            accumulated_metrics,
+                            (total_contribution,) + component_contributions,
+                            strict=True,
+                        )
+                    ]
                     control.progress = replace(
                         control.progress,
                         microstep=control.progress.microstep + 1,
@@ -1600,105 +1605,113 @@ def fit_discrete_model(
                     )
                     end_of_epoch = batch_index + 1 >= batches_per_epoch
                     if (
-                        accumulated_microsteps < int(gradient_accumulation)
+                        gradient_accumulator.microsteps < int(gradient_accumulation)
                         and not end_of_epoch
                     ):
                         continue
-                    if accumulated_support == 0.0:
+                    if not bool(
+                        jax.device_get(gradient_accumulator.has_positive_support)
+                    ):
                         control.emit("zero_support")
-                    else:
-                        averaged_gradient = _tree_scale(
-                            gradient_accumulator,
-                            1.0 / accumulated_support,
+                        gradient_accumulator = _GradientAccumulationState.empty(
+                            parameters,
+                            accumulation_dtype=accumulation_dtype,
                         )
-                        candidate_parameters, candidate_state, candidate_finite = (
-                            run_update(
-                                parameters,
-                                optimizer_state,
-                                averaged_gradient,
-                            )
-                        )
-                        if not bool(jax.device_get(candidate_finite)):
-                            raise FloatingPointError(
-                                "Optimizer produced nonfinite state."
-                            )
-                        parameters = candidate_parameters
-                        optimizer_state = candidate_state
-                        model = combine_trainable(parameters, fixed)
-                        update_step = control.progress.update_step + 1
-                        control.complete_update(update_step)
-                        if target_state is not None:
-                            target_state = target_state.update(
-                                parameters,
-                                accepted=True,
-                                evaluation_parameters=resolve_evaluation_parameters(
-                                    evaluation_parameters,
-                                    optimizer_state,
-                                    parameters,
-                                ),
-                            )
-                        metrics = {
-                            name: float(value / accumulated_support)
-                            for name, value in zip(
-                                metric_names,
-                                accumulated_numerators,
-                                strict=True,
-                            )
-                        }
-                        train_steps.append(update_step)
-                        train_history.append(metrics)
-                        control.emit("batch_end", metrics=metrics)
-                        if (
-                            tensorboard is not None
-                            and update_step % int(tensorboard_every) == 0
-                        ):
-                            for name, value in metrics.items():
-                                tensorboard.scalar(f"train/{name}", value, update_step)
-                        if (
-                            validation_source is not None
-                            and validation_config is not None
-                            and update_step % int(validation_config.every) == 0
-                        ):
-                            assert resolved_validation_batch is not None
-                            evaluated_parameters = resolve_evaluation_parameters(
+                        accumulated_metrics = [
+                            _ObjectiveAccumulator() for _ in metric_names
+                        ]
+                        if control.stop_requested or signal_guard.stop_requested:
+                            break
+                        continue
+
+                    averaged_gradient = gradient_accumulator.normalized_gradient(
+                        parameters
+                    )
+                    candidate_parameters, candidate_state, candidate_finite = run_update(
+                        parameters,
+                        optimizer_state,
+                        averaged_gradient,
+                    )
+                    if not bool(jax.device_get(candidate_finite)):
+                        raise FloatingPointError("Optimizer produced nonfinite state.")
+                    parameters = candidate_parameters
+                    optimizer_state = candidate_state
+                    model = combine_trainable(parameters, fixed)
+                    update_step = control.progress.update_step + 1
+                    control.complete_update(update_step)
+                    if target_state is not None:
+                        target_state = target_state.update(
+                            parameters,
+                            accepted=True,
+                            evaluation_parameters=resolve_evaluation_parameters(
                                 evaluation_parameters,
                                 optimizer_state,
                                 parameters,
+                            ),
+                        )
+                    metrics = {
+                        name: float(jax.device_get(accumulator.value))
+                        for name, accumulator in zip(
+                            metric_names,
+                            accumulated_metrics,
+                            strict=True,
+                        )
+                    }
+                    train_steps.append(update_step)
+                    train_history.append(metrics)
+                    gradient_accumulator = _GradientAccumulationState.empty(
+                        parameters,
+                        accumulation_dtype=accumulation_dtype,
+                    )
+                    accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
+                    control.emit("batch_end", metrics=metrics)
+                    if (
+                        tensorboard is not None
+                        and update_step % int(tensorboard_every) == 0
+                    ):
+                        for name, value in metrics.items():
+                            tensorboard.scalar(f"train/{name}", value, update_step)
+                    if (
+                        validation_source is not None
+                        and validation_config is not None
+                        and update_step % int(validation_config.every) == 0
+                    ):
+                        assert resolved_validation_batch is not None
+                        evaluated_parameters = resolve_evaluation_parameters(
+                            evaluation_parameters,
+                            optimizer_state,
+                            parameters,
+                        )
+                        evaluation_model = eqx.nn.inference_mode(
+                            combine_trainable(evaluated_parameters, fixed)
+                        )
+                        validation_metrics = evaluate(
+                            evaluation_model,
+                            validation_source,
+                            int(resolved_validation_batch),
+                            update_step,
+                        )
+                        if validation_config.monitor not in validation_metrics:
+                            raise KeyError(
+                                f"Unknown validation monitor {validation_config.monitor!r}."
                             )
-                            evaluation_model = eqx.nn.inference_mode(
-                                combine_trainable(evaluated_parameters, fixed)
-                            )
-                            validation_metrics = evaluate(
-                                evaluation_model,
-                                validation_source,
-                                int(resolved_validation_batch),
-                                update_step,
-                            )
-                            if validation_config.monitor not in validation_metrics:
-                                raise KeyError(
-                                    f"Unknown validation monitor {validation_config.monitor!r}."
+                        validation_steps.append(update_step)
+                        validation_history.append(validation_metrics)
+                        consider_validation(validation_metrics, evaluation_model)
+                        control.emit("validation_end", metrics=validation_metrics)
+                        if tensorboard is not None:
+                            for name, value in validation_metrics.items():
+                                tensorboard.scalar(
+                                    f"validation/{name}",
+                                    value,
+                                    update_step,
                                 )
-                            validation_steps.append(update_step)
-                            validation_history.append(validation_metrics)
-                            consider_validation(validation_metrics, evaluation_model)
-                            control.emit("validation_end", metrics=validation_metrics)
-                            if tensorboard is not None:
-                                for name, value in validation_metrics.items():
-                                    tensorboard.scalar(
-                                        f"validation/{name}",
-                                        value,
-                                        update_step,
-                                    )
-                        elapsed = prior_training_seconds + time.perf_counter() - started
-                        if (
-                            checkpoint is not None
-                            and update_step % int(checkpoint_every) == 0
-                        ):
-                            save_progress(elapsed)
-                    gradient_accumulator = _tree_zeros(parameters)
-                    accumulated_support = 0.0
-                    accumulated_numerators = np.zeros((len(metric_names),), dtype=float)
-                    accumulated_microsteps = 0
+                    elapsed = prior_training_seconds + time.perf_counter() - started
+                    if (
+                        checkpoint is not None
+                        and update_step % int(checkpoint_every) == 0
+                    ):
+                        save_progress(elapsed)
                     if control.stop_requested or signal_guard.stop_requested:
                         break
                 if control.progress.next_batch_index >= batches_per_epoch:

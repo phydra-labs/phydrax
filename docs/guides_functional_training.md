@@ -42,6 +42,39 @@ package. Its first gradient call initializes bounded per-axis covariance bases
 and returns a zero update; subsequent updates and checkpoints retain its Adam
 moments, covariances, and orthogonal bases exactly.
 
+## Gradient accumulation
+
+`FunctionalSolver.solve(..., gradient_accumulation=K)` is available for standard
+Optax transformations. One logical update refreshes and prepares `K`
+independently keyed scalar objective realizations while holding functions,
+optimizer state, target state, and the one-based `iter_` schedule fixed. Each
+realization has unit support; PhydraX averages their numerator gradients and
+calls Optax once. `num_iter` counts optimizer updates, while
+`training_state.progress.microstep` counts prepared objective realizations.
+
+```python
+trained = solver.solve(
+    num_iter=1_000,
+    optim=optax.adam(1e-3),
+    train_term_sample_size=2,
+    gradient_accumulation=4,
+    keep_best=False,
+)
+```
+
+Accumulation enlarges a stochastic objective sample when collocation sources or
+`train_term_sample_size` vary between preparations. Repeating a completely
+deterministic objective produces the same gradient and provides no memory
+benefit. Term reporting averages each term only over microsteps in which that
+term was selected.
+
+Values greater than one fail before objective sampling for line searches,
+least-squares/GGN, KFAC, mirror or Riemannian optimizers, Evosax, pseudo-
+transient/causal/balancing policies, and gradient/NTK diagnostics. Those methods
+require aggregate candidate-value, residual/Jacobian, curvature, or population
+statistics; raw-gradient averaging is not a substitute. Optimizer-side delayed
+updates are likewise not lifecycle-equivalent.
+
 ## Residual blocks
 
 A vector residual may declare `ResidualBlockLayout` without changing its
@@ -175,8 +208,10 @@ continued = trained.solve(
 
 A checkpoint retains current and best functions separately, optimizer state,
 previous pseudo-time fields, adaptive coefficients, collocation populations,
-PRNG state, progress, and run identities. Restore rejects mismatched training
-plans and discretization bundles.
+PRNG state, update/microstep progress, gradient-accumulation identity, and run
+identities. Restore rejects mismatched accumulation, training plans, target
+policies, and discretization bundles. Checkpoints are published only after the
+accumulated Optax update; transient gradient buffers are never serialized.
 
 ## Named sharding
 

@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax.ein import contract
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -158,7 +160,12 @@ class ExtractedBernsteinRealization(StrictModule, NonTrainableState):
 
     def realize(self, coefficients: ArrayLike, /) -> Array:
         local = self.direct.gather(coefficients)
-        return jnp.einsum("eij,ej...->ei...", self.extraction, local)
+        return contract(
+            "eij,ej...->ei...",
+            self.extraction,
+            local,
+            backend="jax",
+        )
 
     def transpose(self, bernstein_values: ArrayLike, /) -> Array:
         values = jnp.asarray(bernstein_values)
@@ -166,7 +173,12 @@ class ExtractedBernsteinRealization(StrictModule, NonTrainableState):
             raise ValueError(
                 "Bernstein values must begin with (cell_count, local_width)."
             )
-        local = jnp.einsum("eji,ej...->ei...", self.extraction, values)
+        local = contract(
+            "eji,ej...->ei...",
+            self.extraction,
+            values,
+            backend="jax",
+        )
         return self.direct.gather_transpose(local)
 
 

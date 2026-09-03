@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
@@ -358,7 +359,7 @@ class MutualInformationFilterRecipe(AbstractRecipe):
         def one_feature(feature_bins: Array, feature_valid: Array) -> Array:
             weight = valid_weight * feature_valid.astype(valid_weight.dtype)
             x_one_hot = jax.nn.one_hot(feature_bins, self.num_bins)
-            joint = oe.contract("n,ni,nj->ij", weight, x_one_hot, y_one_hot)
+            joint = ein.contract("n,ni,nj->ij", weight, x_one_hot, y_one_hot)
             joint = joint / jnp.maximum(jnp.sum(joint), jnp.finfo(weight.dtype).tiny)
             px = jnp.sum(joint, axis=1, keepdims=True)
             py = jnp.sum(joint, axis=0, keepdims=True)

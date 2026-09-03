@@ -15,8 +15,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
@@ -1404,7 +1405,7 @@ def particle_fisher_information(
     case_scores = score.case_scores.reshape((case_count, score.parameter_size))
     valid = score.valid.reshape((case_count,))
     valid_count = jnp.sum(valid)
-    information = oe.contract(
+    information = ein.contract(
         "ci,cj->ij",
         jnp.where(valid[:, None], case_scores, 0.0),
         jnp.where(valid[:, None], case_scores, 0.0),

@@ -8,8 +8,9 @@ from collections.abc import Callable, Mapping, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._compensated import compensated_sum
@@ -171,12 +172,12 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
                 data.weights,
             )
             local = values[dofs]
-            field_values = oe.contract(
+            field_values = ein.contract(
                 "qi,ci...->cq...",
                 geometry.basis_values,
                 local,
             )
-            gradients = oe.contract(
+            gradients = ein.contract(
                 "cqid,ci...->cqd...",
                 geometry.physical_gradients,
                 local,

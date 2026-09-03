@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
@@ -335,7 +336,9 @@ class PreparedSBPConservationDynamics(StrictModule):
                         coefficients.append(2.0 * coefficient)
             left_indices.append(jnp.asarray(left, dtype=jnp.int32))
             right_indices.append(jnp.asarray(right, dtype=jnp.int32))
-            pair_weights.append(jnp.asarray(coefficients, dtype=discretization.grid.points.dtype))
+            pair_weights.append(
+                jnp.asarray(coefficients, dtype=discretization.grid.points.dtype)
+            )
             row_bounds.append(float(np.max(np.sum(np.abs(weights), axis=1))))
         identifier = canonical_fingerprint(
             {
@@ -372,7 +375,9 @@ class PreparedSBPConservationDynamics(StrictModule):
     def _source_value(self, time: Array, state: Array, args: Any, /) -> Array:
         if self.source is None:
             return jnp.zeros_like(state)
-        value = jnp.asarray(self.source(time, state, self.discretization.grid.points, args))
+        value = jnp.asarray(
+            self.source(time, state, self.discretization.grid.points, args)
+        )
         if value.shape != state.shape:
             raise ValueError("SBP conservation source must match the state shape.")
         return value
@@ -430,10 +435,10 @@ class PreparedSBPConservationDynamics(StrictModule):
             return residual, None
         weights = self.discretization.quadrature_weights
         entropy_variables = self.entropy_pair.entropy_variables(value)
-        convective_density = oe.contract(
+        convective_density = ein.contract(
             "...i,...i->...", entropy_variables, convective, backend="jax"
         )
-        source_density = oe.contract(
+        source_density = ein.contract(
             "...i,...i->...", entropy_variables, source, backend="jax"
         )
         convective_rate = jnp.sum(weights * convective_density)

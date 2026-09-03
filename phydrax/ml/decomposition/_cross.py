@@ -8,8 +8,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
@@ -146,7 +147,7 @@ def _apply_matrix(
     cases = _shape_product(case_shape)
     flat = value.reshape((cases, -1, value.shape[-1]))
     matrix_flat = matrix.reshape((cases, matrix.shape[-2], matrix.shape[-1]))
-    result = oe.contract("cni,cio->cno", flat, matrix_flat)
+    result = ein.contract("cni,cio->cno", flat, matrix_flat)
     return result.reshape(leading + (matrix.shape[-1],))
 
 
@@ -263,9 +264,9 @@ class CCA(AbstractRecipe):
         y_mean, yc = _weighted_center(y, y_mask, weights)
         total = jnp.sum(weights, axis=-1)
         denominator = jnp.maximum(total, jnp.finfo(weights.dtype).tiny)
-        cxx = oe.contract("...ni,...n,...nj->...ij", jnp.conj(xc), weights, xc)
-        cyy = oe.contract("...ni,...n,...nj->...ij", jnp.conj(yc), weights, yc)
-        cxy = oe.contract("...ni,...n,...nj->...ij", jnp.conj(xc), weights, yc)
+        cxx = ein.contract("...ni,...n,...nj->...ij", jnp.conj(xc), weights, xc)
+        cyy = ein.contract("...ni,...n,...nj->...ij", jnp.conj(yc), weights, yc)
+        cxy = ein.contract("...ni,...n,...nj->...ij", jnp.conj(xc), weights, yc)
         cxx = cxx / denominator[..., None, None]
         cyy = cyy / denominator[..., None, None]
         cxy = cxy / denominator[..., None, None]
@@ -450,7 +451,7 @@ class PLS(AbstractRecipe):
         y_mean, yc = _weighted_center(
             y, y_mask & batch.sample_mask[..., :, None], weights
         )
-        cross = oe.contract("...ni,...n,...nj->...ij", jnp.conj(xc), weights, yc)
+        cross = ein.contract("...ni,...n,...nj->...ij", jnp.conj(xc), weights, yc)
         u, singular, _vh = jnp.linalg.svd(cross, full_matrices=False)
         available = min(int(x.shape[-1]), int(y.shape[-1]))
         if self.n_components > available:
@@ -459,7 +460,7 @@ class PLS(AbstractRecipe):
         x_weights = _canonicalize_columns(u[..., :rank])
         scores = xc @ x_weights
         ridge = jnp.finfo(scores.real.dtype).eps * jnp.maximum(
-            oe.contract(
+            ein.contract(
                 "...nr,...n,...nr->...",
                 jnp.conj(scores),
                 weights,

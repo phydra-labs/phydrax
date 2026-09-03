@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -336,10 +337,10 @@ class PreparedHydroelasticPatchExtraction(StrictModule, NonTrainableState):
             raise ValueError("Hydroelastic pressure state has the wrong vertex capacity.")
         plus_local = plus_state.pressure[self.plus_cells]
         minus_local = minus_state.pressure[self.minus_cells]
-        plus_endpoint = oe.contract(
+        plus_endpoint = ein.contract(
             "pevk,pk->pev", self.plus_edge_weights, plus_local, backend="jax"
         )
-        minus_endpoint = oe.contract(
+        minus_endpoint = ein.contract(
             "pevk,pk->pev", self.minus_edge_weights, minus_local, backend="jax"
         )
         difference = plus_endpoint - minus_endpoint
@@ -376,10 +377,10 @@ class PreparedHydroelasticPatchExtraction(StrictModule, NonTrainableState):
             jnp.sum(jnp.where(crossing[..., None], point, 0.0), axis=1)
             / safe_count[:, None]
         )
-        plus_gradient = oe.contract(
+        plus_gradient = ein.contract(
             "pkd,pk->pd", self.plus_basis_gradients, plus_local, backend="jax"
         )
-        minus_gradient = oe.contract(
+        minus_gradient = ein.contract(
             "pkd,pk->pd", self.minus_basis_gradients, minus_local, backend="jax"
         )
         gradient = plus_gradient - minus_gradient
@@ -399,8 +400,8 @@ class PreparedHydroelasticPatchExtraction(StrictModule, NonTrainableState):
         tangent_second = jnp.cross(normal, tangent_first)
         relative = point - centroid[:, None, :]
         angle = jnp.arctan2(
-            oe.contract("ped,pd->pe", relative, tangent_second, backend="jax"),
-            oe.contract("ped,pd->pe", relative, tangent_first, backend="jax"),
+            ein.contract("ped,pd->pe", relative, tangent_second, backend="jax"),
+            ein.contract("ped,pd->pe", relative, tangent_first, backend="jax"),
         )
         order = jnp.argsort(jnp.where(crossing, angle, jnp.inf), axis=-1)
         ordered_point = jnp.take_along_axis(point, order[..., None], axis=1)
@@ -480,13 +481,13 @@ class PreparedHydroelasticPatchExtraction(StrictModule, NonTrainableState):
                 }
             ),
         )
-        plus_quad = oe.contract(
+        plus_quad = ein.contract(
             "qk,qk->q",
             plus_interpolation,
             plus_local[pair_for_triangle],
             backend="jax",
         )
-        minus_quad = oe.contract(
+        minus_quad = ein.contract(
             "qk,qk->q",
             minus_interpolation,
             minus_local[pair_for_triangle],
@@ -564,7 +565,7 @@ def _barycentric_weights(
     del gradients
     jacobian = (vertices[1:] - vertices[0]).T
     inverse = np.linalg.inv(jacobian)
-    reduced = oe.contract("ij,...j->...i", inverse, points - vertices[0])
+    reduced = ein.contract("ij,...j->...i", inverse, points - vertices[0])
     return np.concatenate(
         (1.0 - np.sum(reduced, axis=-1, keepdims=True), reduced), axis=-1
     )

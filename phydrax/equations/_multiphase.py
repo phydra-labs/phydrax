@@ -15,8 +15,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -386,8 +387,8 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem):
         right_primitive = self.conserved_to_primitive(right_)
         left_velocity = left_primitive[..., 2 : 2 + self.dimension]
         right_velocity = right_primitive[..., 2 : 2 + self.dimension]
-        left_normal_velocity = oe.contract("...i,...i->...", left_velocity, normal_)
-        right_normal_velocity = oe.contract("...i,...i->...", right_velocity, normal_)
+        left_normal_velocity = ein.contract("...i,...i->...", left_velocity, normal_)
+        right_normal_velocity = ein.contract("...i,...i->...", right_velocity, normal_)
         left_sound = self.sound_speed(left_)
         right_sound = self.sound_speed(right_)
         return (

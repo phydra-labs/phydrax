@@ -9,9 +9,9 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
 
+import phydrax.ein as ein
 from phydrax.graph._query_batch import query_neighbors
 from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn._keys import EvalKey, split_eval_key
@@ -375,7 +375,7 @@ class LocalDifferentialOperator(AbstractOperatorModel):
                 pair_weights / denominator,
                 jnp.zeros_like(pair_weights),
             )
-            center = oe.contract("cqs,cqsi->cqi", normalized_weights, source_data)
+            center = ein.contract("cqs,cqsi->cqi", normalized_weights, source_data)
             differences = source_data - center[:, :, None, :]
             kernel_inputs = jnp.concatenate(
                 (
@@ -394,7 +394,7 @@ class LocalDifferentialOperator(AbstractOperatorModel):
                     _get_size(self.in_size),
                 )
             )
-            chunk = oe.contract(
+            chunk = ein.contract(
                 "cqsoi,cqsi,cqs->cqo",
                 kernels,
                 differences,

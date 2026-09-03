@@ -4,6 +4,7 @@ from ...._model import (
     OperatorArchitectureCodec,
     register_operator_architecture_codec,
 )
+from ._conditional_affine import TrainedChemicalConditionalAffineTransition
 from ._context import bind_operator_context, OperatorContextModel
 from ._external import (
     checkpoint_sha256,
@@ -36,4 +37,5 @@ __all__ = [
     "load_operator_manifest",
     "save_operator_manifest",
     "verify_operator_checkpoint",
+    "TrainedChemicalConditionalAffineTransition",
 ]

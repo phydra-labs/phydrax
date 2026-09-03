@@ -9,6 +9,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from . import ein as ein
+
 from . import (
     backends,
     combinatorial,
@@ -34,6 +36,7 @@ from . import (
     linalg,
     metrix,
     ml,
+    signal,
     nn,
     nonlinear,
     operators,
@@ -86,6 +89,7 @@ __all__ = [
     "topology",
     "domain",
     "dynamics",
+    "ein",
     "equations",
     "enforcement",
     "export",
@@ -99,6 +103,7 @@ __all__ = [
     "linalg",
     "metrix",
     "ml",
+    "signal",
     "nn",
     "nonlinear",
     "observation",

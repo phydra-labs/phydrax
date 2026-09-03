@@ -10,8 +10,9 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -384,7 +385,7 @@ def validate_legendre_geometry(
 
     forward_jacobian = precision_.compute(transition.jacobian(primal_compute))
     inverse_jacobian = precision_.compute(transition.inverse_jacobian(mapped_dual))
-    jacobian_product = oe.contract(
+    jacobian_product = ein.contract(
         "...ij,...jk->...ik",
         forward_jacobian,
         inverse_jacobian,

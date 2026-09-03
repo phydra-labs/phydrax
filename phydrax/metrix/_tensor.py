@@ -10,8 +10,9 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import inverse
@@ -113,7 +114,7 @@ def _apply_linear_axis(
     input_letters = list(output_letters)
     output_letters[axis_] = "i"
     input_letters[axis_] = "j"
-    return oe.contract(
+    return ein.contract(
         f"...ij,...{''.join(input_letters)}->...{''.join(output_letters)}",
         matrix,
         tensor,
@@ -249,7 +250,7 @@ def pushforward_vector(
     expected = points.shape[:-1] + (transition.source.dimension,)
     if values.shape != expected:
         raise ValueError(f"Source vector must have shape {expected}; got {values.shape}.")
-    return oe.contract("...ai,...i->...a", transition.jacobian(points), values)
+    return ein.contract("...ai,...i->...a", transition.jacobian(points), values)
 
 
 def pullback_covector(
@@ -267,7 +268,7 @@ def pullback_covector(
         raise ValueError(
             f"Target covector must have shape {expected}; got {values.shape}."
         )
-    return oe.contract("...ai,...a->...i", transition.jacobian(points), values)
+    return ein.contract("...ai,...a->...i", transition.jacobian(points), values)
 
 
 def reexpress_tensor(

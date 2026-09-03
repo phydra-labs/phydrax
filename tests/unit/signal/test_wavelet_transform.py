@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import pywt
 
-from phydrax._spectral import DiscreteWaveletTransform
+from phydrax.signal import DiscreteWaveletTransform
 
 
 _CASES = (

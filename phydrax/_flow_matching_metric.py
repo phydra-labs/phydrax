@@ -8,8 +8,9 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ._fingerprint import canonical_fingerprint
 from ._geometry_precision import GeometryPrecisionPolicy
@@ -133,7 +134,7 @@ class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
         matrix = self.precision.accumulation(
             self.precision.compute(self.metric(coordinates))
         )
-        value = oe.contract(
+        value = ein.contract(
             "i,ij,j->",
             jnp.conj(accumulated_difference),
             matrix,

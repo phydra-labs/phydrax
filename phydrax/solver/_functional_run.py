@@ -44,6 +44,7 @@ class FunctionalSolveConfig:
     tensorboard_flush_every: int = 10
     profile_adaptive: bool = False
     train_term_sample_size: int | None = None
+    gradient_accumulation: int = 1
     precision: FunctionalPrecisionPolicy | None = None
     training: FunctionalTrainingPlan | None = None
     resume: bool = False
@@ -56,12 +57,15 @@ class FunctionalSolveConfig:
         iterations = int(self.num_iter)
         log_every = int(self.log_every)
         flush_every = int(self.tensorboard_flush_every)
+        accumulation = int(self.gradient_accumulation)
         if iterations <= 0:
             raise ValueError("FunctionalSolveConfig.num_iter must be positive.")
         if log_every < 0:
             raise ValueError("log_every must be >= 0.")
         if flush_every <= 0:
             raise ValueError("tensorboard_flush_every must be positive.")
+        if accumulation <= 0:
+            raise ValueError("gradient_accumulation must be positive.")
         if self.precision is not None and not isinstance(
             self.precision, FunctionalPrecisionPolicy
         ):
@@ -99,6 +103,7 @@ class FunctionalSolveConfig:
         object.__setattr__(self, "num_iter", iterations)
         object.__setattr__(self, "log_every", log_every)
         object.__setattr__(self, "tensorboard_flush_every", flush_every)
+        object.__setattr__(self, "gradient_accumulation", accumulation)
 
 
 def validate_term_sample_size(

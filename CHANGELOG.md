@@ -22,6 +22,41 @@
   exact declared research and engineering support tuple: no clinical,
   diagnostic, treatment, regulated-device, regulatory, or commercial-readiness
   claim is made.
+- Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
+  traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
+  FMM, brick-backed sparse voxel fields and qualified geometry sampling,
+  atomic balanced dyadic adaptation with conservative field transfer, and
+  explicit coarse/fine finite-volume lowering.
+- Added `phydrax.signal` with explicit-axis differentiable windows and framing,
+  finite direct/FFT convolution, causal FIR state, raw and aligned polyphase
+  rate conversion, fixed-capacity causal streaming resampling, periodic Fourier
+  resampling, and public fixed discrete wavelet transforms.
+- Added research-tier conditional-affine chemical transitions with exact
+  directional mass-action certification, inverse-free exponential/phi actions,
+  reaction-shared positive rate correction, stoichiometric extent
+  reconstruction, staged operator losses, portable artifacts, and explicit
+  local `DiscreteSystem` deployment without clipping or hidden fallback.
+- Added native order-two radial Laguerre, Fourier--Laguerre, Wigner, and
+  Wigner--Laguerre transforms with physical `r**2 dr` normalization, together
+  with resource-bounded exact directional ball wavelets and immutable ragged
+  multiresolution coefficients.
+- Added `phydrax.ein` as the package-wide optimized contraction boundary with
+  native named JAX rearrangement, reduction, and repetition.
+- Added log-stable numerator/support gradient accumulation shared by operator,
+  discrete-dynamics, and standard-Optax functional training. Operator case
+  measures now remain exact across weighted, masked, uneven, lazy, and sharded
+  microbatches; optimizer, target, reporting, and checkpoint state advance only
+  at accepted positive-support update boundaries.
+- Added `phydrax.control.games` finite-horizon affine linear-quadratic
+  full-state feedback Nash policies with explicit player control ownership,
+  per-player quadratic values, case batching, differentiable nonsymmetric
+  dense-LU solves, diagnostic-only rank SVDs, and independent curvature,
+  stationarity, Bellman, conditioning, linear-status, and causal-failure
+  evidence without regularization, pseudoinverses, clipping, or fallback.
+- Added qualified circuit-QED mode reduction and device assembly, one-to-one
+  dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
+  exact-state local product formulas with reversible gradients, and exact
+  heterogeneous MPO lowering without dense-Hamiltonian fallbacks.
 - Added content-identified homogeneous Helmholtz thermodynamics with canonical
   component/phase-occurrence identity, explicit gas reference pressure,
   ideal-mixture calorics, Peng--Robinson residual properties and exhaustive
@@ -1629,6 +1664,11 @@
   resource accounting.
 
 ### Changed
+- Periodic Fourier resampling is now owned by `phydrax.signal` with trailing-axis
+  defaults and explicit spatial axes for channel-last neural operators. Removed
+  the `_interpolation.fourier_resample` and
+  `phydrax.nn.operator.architectures.spectral_resample` exposure paths without
+  compatibility aliases.
 - Replaced the independent multispecies and reacting-Euler thermodynamic
   conventions with `HomogeneousMixtureEulerSystem` and full chemical-energy
   conservation. Removed the legacy reacting-flow classes without aliases.

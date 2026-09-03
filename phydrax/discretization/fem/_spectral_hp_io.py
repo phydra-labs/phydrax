@@ -11,8 +11,9 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -94,7 +95,7 @@ class FusedTensorTransfer(StrictModule, NonTrainableState):
         result = jnp.asarray(values)
         for axis, factor in enumerate(self.factors):
             result = jnp.moveaxis(result, axis, 0)
-            result = oe.contract("ij,j...->i...", factor, result)
+            result = ein.contract("ij,j...->i...", factor, result)
             result = jnp.moveaxis(result, 0, axis)
         return result
 
@@ -102,7 +103,7 @@ class FusedTensorTransfer(StrictModule, NonTrainableState):
         result = jnp.asarray(dual)
         for axis in reversed(range(len(self.factors))):
             result = jnp.moveaxis(result, axis, 0)
-            result = oe.contract("ji,j...->i...", self.factors[axis], result)
+            result = ein.contract("ji,j...->i...", self.factors[axis], result)
             result = jnp.moveaxis(result, 0, axis)
         return result
 

@@ -4,11 +4,19 @@
 
 """Global tensor spectral spaces, operators, and pseudospectral methods."""
 
+from ..._spectral._ball_wavelet import (
+    BallWaveletCoefficients,
+    DirectionalBallWaveletPlan,
+)
+from ..._spectral._fourier_laguerre import FourierLaguerrePlan
+from ..._spectral._laguerre import RadialLaguerrePlan
 from ..._spectral._spherical import (
     SphericalExecution,
     SphericalHarmonicPlan,
     SphericalSampling,
 )
+from ..._spectral._wigner import WignerTransformPlan
+from ..._spectral._wigner_laguerre import WignerLaguerrePlan
 from ._basis import (
     AbstractSpectralBasisPlan,
     ChebyshevBasisPlan,
@@ -168,6 +176,7 @@ __all__ = [
     "AbstractDealiasingPlan",
     "AbstractSpectralBasisPlan",
     "BoundaryLiftPlan",
+    "BallWaveletCoefficients",
     "ChebyshevBasisPlan",
     "ConstrainedBasisPlan",
     "CosineBasisPlan",
@@ -182,11 +191,13 @@ __all__ = [
     "FinalEdgePolicy",
     "FourierShellStatisticResult",
     "DealiasingKind",
+    "DirectionalBallWaveletPlan",
     "discover_modal_support",
     "estimate_spectral_regularity",
     "BrillouinZonePlan",
     "DealiasingReport",
     "FourierBasisPlan",
+    "FourierLaguerrePlan",
     "HermitianSpectralCoordinates",
     "IncompressibleSpectralDiagnostics",
     "GeneralizedTauPlan",
@@ -250,6 +261,7 @@ __all__ = [
     "SphericalSpinOperatorKind",
     "SphericalSpinOperatorPlan",
     "RationalChebyshevHalfLineBasisPlan",
+    "RadialLaguerrePlan",
     "RationalChebyshevLineBasisPlan",
     "SpectralBasisFamily",
     "SpectralBoundaryConditionPlan",
@@ -285,4 +297,6 @@ __all__ = [
     "spectral_laplacian_operator",
     "spherical_laplacian_operator",
     "spherical_coordinate_derivative",
+    "WignerLaguerrePlan",
+    "WignerTransformPlan",
 ]

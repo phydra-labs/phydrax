@@ -9,8 +9,9 @@ from typing import cast
 
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
@@ -122,7 +123,7 @@ class BasisSpectralConvND(StrictModule):
                 spatial_start + index,
             )
         letters = "abcdefghijklmnopqrstuvwxyz"[:ndim]
-        coefficients = oe.contract(
+        coefficients = ein.contract(
             f"...{letters}i,io{letters}->...{letters}o",
             coefficients,
             self.weight,

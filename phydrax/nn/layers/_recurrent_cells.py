@@ -11,8 +11,9 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from .._keys import EvalKey, split_eval_key
@@ -135,8 +136,8 @@ class RNNCell(AbstractRecurrentCell):
             input_size=self.input_size,
             hidden_size=self.hidden_size,
         )
-        preactivation = oe.contract("oi,...i->...o", self.weight_ih, values)
-        preactivation = preactivation + oe.contract(
+        preactivation = ein.contract("oi,...i->...o", self.weight_ih, values)
+        preactivation = preactivation + ein.contract(
             "oi,...i->...o", self.weight_hh, hidden
         )
         if self.bias is not None:
@@ -206,12 +207,12 @@ class GRUCell(AbstractRecurrentCell):
         bias = 0.0 if self.cell.bias is None else self.cell.bias
         bias_n = 0.0 if self.cell.bias_n is None else self.cell.bias_n
         input_gates = jnp.split(
-            oe.contract("oi,...i->...o", self.cell.weight_ih, values) + bias,
+            ein.contract("oi,...i->...o", self.cell.weight_ih, values) + bias,
             3,
             axis=-1,
         )
         hidden_gates = jnp.split(
-            oe.contract("oi,...i->...o", self.cell.weight_hh, hidden),
+            ein.contract("oi,...i->...o", self.cell.weight_hh, hidden),
             3,
             axis=-1,
         )
@@ -287,8 +288,8 @@ class LSTMCell(AbstractRecurrentOutputCell):
         memory = jnp.asarray(state[1])
         if memory.shape != hidden.shape:
             raise ValueError("LSTM hidden and cell-memory states must have equal shapes.")
-        gates = oe.contract("oi,...i->...o", self.cell.weight_ih, values)
-        gates = gates + oe.contract("oi,...i->...o", self.cell.weight_hh, hidden)
+        gates = ein.contract("oi,...i->...o", self.cell.weight_ih, values)
+        gates = gates + ein.contract("oi,...i->...o", self.cell.weight_hh, hidden)
         if self.cell.bias is not None:
             gates = gates + self.cell.bias
         input_gate, forget_gate, candidate, output_gate = jnp.split(gates, 4, axis=-1)

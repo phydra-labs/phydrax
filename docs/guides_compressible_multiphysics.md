@@ -107,9 +107,10 @@ transfer, and stochastic thermal reservoir coupling. H2, metals, winds, black-ho
 accretion, radiation, and calibrated production models remain profile-specific.
 
 `PeriodicImageForcePlan` remains a cheap diagnostic and `PeriodicEwaldForcePlan` remains
-the periodic reference. `ParticleOctreePlan3D` prepares one Morton hierarchy consumed by
-isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM; none introduces
-a second particle state or PM path. `TwoLevelAMRPlan` supplies ratio-two prolong/restrict,
+the periodic reference. `ParticleOctreePlan3D` prepares one sparse Morton
+hierarchy consumed by isolated Barnes--Hut, occupied-level Cartesian FMM, and
+BH-short-range TreePM; none introduces a second particle state or PM path.
+`TwoLevelAMRPlan` supplies ratio-two prolong/restrict,
 reflux, average-down, fine-authoritative composite gravity, particle level routing, and
 atomic epoch commit. Multi-level partial patches, CT/radiation synchronization, and
 distributed communication remain later parity profiles rather than silent modes.

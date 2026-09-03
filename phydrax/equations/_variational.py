@@ -10,8 +10,9 @@ from typing import Any, cast, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -311,9 +312,9 @@ class VariationalCoefficient(StrictModule, NonTrainableState):
                     orientations.shape + (1,) * (local.ndim - orientations.ndim)
                 )
             if basis.ndim == 2:
-                return oe.contract("qi,ci...->cq...", basis, local)
+                return ein.contract("qi,ci...->cq...", basis, local)
             if basis.ndim == 3:
-                return oe.contract("cqi,ci...->cq...", basis, local)
+                return ein.contract("cqi,ci...->cq...", basis, local)
             raise ValueError("DOF coefficient basis must have rank two or three.")
         if entity_indices is None:
             raise ValueError("Entity/quadrature coefficients require entity indices.")

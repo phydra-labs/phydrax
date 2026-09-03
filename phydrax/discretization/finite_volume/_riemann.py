@@ -10,8 +10,9 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -1034,8 +1035,8 @@ class RoeFluxPlan(AbstractNumericalFluxPlan):
             absolute,
         )
         jump = right_ - left_
-        characteristic = oe.contract("...ij,...j->...i", left_matrix, jump)
-        dissipation = oe.contract(
+        characteristic = ein.contract("...ij,...j->...i", left_matrix, jump)
+        dissipation = ein.contract(
             "...ij,...j->...i", right_matrix, fixed * characteristic
         )
         flux = 0.5 * (
@@ -1143,7 +1144,7 @@ class EntropyConservativeEulerFluxPlan(AbstractSymmetricTwoPointFluxPlan):
             ),
             axis=-1,
         )
-        contracted = oe.contract("...id,...d->...i", flux, normal_, backend="jax")
+        contracted = ein.contract("...id,...d->...i", flux, normal_, backend="jax")
         speed = system.max_normal_wave_speed(left, right, normal_, args)
         return NumericalFluxResult(contracted, speed)
 
@@ -1229,7 +1230,7 @@ class EntropyStableFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
             ),
             axis=-1,
         )
-        central = oe.contract("...id,...d->...i", fluxes, normal_, backend="jax")
+        central = ein.contract("...id,...d->...i", fluxes, normal_, backend="jax")
         speed = system.max_normal_wave_speed(left, right, normal_, args)
         flux = central - 0.5 * self.dissipation * speed[..., None] * (right - left)
         return NumericalFluxResult(flux, speed)
@@ -1248,7 +1249,7 @@ class EntropyStableFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
             -0.5
             * self.dissipation
             * jnp.asarray(speed)
-            * oe.contract("...i,...i->...", jump, right - left, backend="jax")
+            * ein.contract("...i,...i->...", jump, right - left, backend="jax")
         )
 
 
