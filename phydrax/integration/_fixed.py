@@ -23,7 +23,7 @@ from ._estimates import (
 from ._lowering import _component_base_mass, component_factor_fields, sum_over
 from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
-from ._targets import ComponentTarget, DensityTarget
+from ._targets import ComponentTarget, DensityTarget, ProbabilityTarget
 
 
 def _batch_weight(
@@ -73,6 +73,22 @@ def _num_evaluations(
     return size
 
 
+def _selected_reduction_axes(
+    batch: PointIntegrationBatch | SeparableIntegrationBatch,
+    reduction_axes: tuple[str, ...] | None,
+    /,
+) -> tuple[str, ...]:
+    axes = batch.axes if reduction_axes is None else tuple(reduction_axes)
+    if len(frozenset(axes)) != len(axes):
+        raise ValueError("Reduction axes must be unique.")
+    missing = tuple(axis for axis in axes if axis not in batch.axes)
+    if missing:
+        raise ValueError(
+            f"Reduction axes {missing!r} are not active batch axes {batch.axes!r}."
+        )
+    return axes
+
+
 def _component_reduction_weights(
     target: ComponentTarget,
     batch: PointIntegrationBatch
@@ -82,6 +98,7 @@ def _component_reduction_weights(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    reduction_axes: tuple[str, ...] | None = None,
 ) -> cx.Field | tuple[cx.Field, ...]:
     """Return the exact linear coefficient fields used by a component reduction."""
 
@@ -109,7 +126,7 @@ def _component_reduction_weights(
         denominators: list[cx.Field] = []
         for weight, term_batch in zip(weights, batches, strict=True):
             denominator = weight
-            for axis in term_batch.axes:
+            for axis in _selected_reduction_axes(term_batch, reduction_axes):
                 denominator = sum_over(denominator, axis)
             denominators.append(denominator)
         total = denominators[0]
@@ -129,7 +146,7 @@ def _component_reduction_weights(
     if not target.normalized:
         return weight
     denominator = weight
-    for axis in batch_.axes:
+    for axis in _selected_reduction_axes(batch_, reduction_axes):
         denominator = sum_over(denominator, axis)
     return weight / denominator
 
@@ -141,7 +158,7 @@ def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunc
 
 
 def _target_reduction_weights(
-    target: ComponentTarget | DensityTarget,
+    target: ComponentTarget | ProbabilityTarget | DensityTarget,
     batch: PointIntegrationBatch
     | SeparableIntegrationBatch
     | tuple[PointIntegrationBatch | SeparableIntegrationBatch, ...],
@@ -149,44 +166,81 @@ def _target_reduction_weights(
     *,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    reduction_axes: tuple[str, ...] | None = None,
 ) -> cx.Field | tuple[cx.Field, ...]:
-    """Return exact nonnegative coefficients for a component or density target."""
+    """Return exact fixed coefficient fields for a supported target realization."""
     base = target.base if isinstance(target, DensityTarget) else target
-    if not isinstance(base, ComponentTarget):
-        raise TypeError("Reduction weights require a component integration target.")
-    weights = _component_reduction_weights(
-        base,
-        batch,
-        key=key,
-        kwargs=kwargs,
-    )
+    if isinstance(base, ComponentTarget):
+        weights = _component_reduction_weights(
+            base,
+            batch,
+            key=key,
+            kwargs=kwargs,
+            reduction_axes=reduction_axes,
+        )
+    elif isinstance(base, ProbabilityTarget):
+        if isinstance(batch, tuple):
+            raise TypeError("A probability target requires one integration batch.")
+        batch_ = _require_fixed_batch(batch)
+        weights = _batch_weight(batch_)
+        if base.normalized:
+            denominator = weights
+            for axis in _selected_reduction_axes(batch_, reduction_axes):
+                denominator = sum_over(denominator, axis)
+            weights = weights / denominator
+    else:
+        raise TypeError(
+            "Reduction weights require a component or probability integration target."
+        )
     if not isinstance(target, DensityTarget):
         return weights
 
-    if isinstance(base.component, ComponentSum):
+    if isinstance(base, ComponentTarget) and isinstance(base.component, ComponentSum):
         if not isinstance(batch, tuple) or not isinstance(weights, tuple):
             raise RuntimeError("Component-sum integration data must be tuples.")
         components = base.component.terms
         batches = batch
         base_weights = weights
         keys = tuple(jr.split(key, len(components)))
-    else:
+    elif isinstance(base, ComponentTarget):
         if isinstance(batch, tuple) or isinstance(weights, tuple):
             raise RuntimeError("Single-component integration data must not be tuples.")
         components = (base.component,)
         batches = (batch,)
         base_weights = (weights,)
         keys = (key,)
-
+    else:
+        if isinstance(batch, tuple) or isinstance(weights, tuple):
+            raise RuntimeError("Probability integration data must not be tuples.")
+        components = ()
+        batches = (batch,)
+        base_weights = (weights,)
+        keys = (key,)
     density_weights: list[cx.Field] = []
-    for component, term_batch, base_weight, term_key in zip(
-        components, batches, base_weights, keys, strict=True
+    for index, (term_batch, base_weight, term_key) in enumerate(
+        zip(batches, base_weights, keys, strict=True)
     ):
-        log_density = _as_domain_function(target.log_density, component)(
-            term_batch.points,
-            key=term_key,
-            **kwargs,
-        )
+        if isinstance(base, ComponentTarget):
+            log_density = _as_domain_function(target.log_density, components[index])(
+                term_batch.points,
+                key=term_key,
+                **kwargs,
+            )
+        else:
+            density_function = (
+                target.log_density
+                if isinstance(target.log_density, DomainFunction)
+                else DomainFunction(
+                    domain=base.probability,
+                    deps=(),
+                    func=target.log_density,
+                )
+            )
+            log_density = density_function(
+                term_batch.points,
+                key=term_key,
+                **kwargs,
+            )
         if not isinstance(log_density, cx.Field):
             raise TypeError("Integration log density must return a coordax.Field.")
         log_data = jnp.asarray(log_density.data)
@@ -195,12 +249,11 @@ def _target_reduction_weights(
         density_weights.append(
             base_weight * cx.Field(jnp.exp(log_data), dims=log_density.dims)
         )
-
     if target.normalized:
         denominators: list[cx.Field] = []
         for coefficient, term_batch in zip(density_weights, batches, strict=True):
             denominator = coefficient
-            for axis in term_batch.axes:
+            for axis in _selected_reduction_axes(term_batch, reduction_axes):
                 denominator = sum_over(denominator, axis)
             denominators.append(denominator)
         normalization = denominators[0]
@@ -208,7 +261,7 @@ def _target_reduction_weights(
             normalization = normalization + denominator
         density_weights = [coefficient / normalization for coefficient in density_weights]
 
-    if isinstance(base.component, ComponentSum):
+    if isinstance(base, ComponentTarget) and isinstance(base.component, ComponentSum):
         return tuple(density_weights)
     return density_weights[0]
 

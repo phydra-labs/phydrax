@@ -155,3 +155,57 @@ python examples/velocimetry_interop.py
 The scripts report measurement validity and scientific error evidence. They
 distinguish image displacement from physical velocity and reconstructed
 particle identities from latent synthetic particle IDs.
+
+## Cardiovascular platform
+
+The public end-to-end script uses only canonical facades:
+
+```text
+python examples/cardiovascular_platform.py
+```
+
+It binds quantity and case identities, constructs harmonic cardiac coordinates
+and ventricular microstructure, advances phenomenological electrophysiology,
+observes activation, replays a checkpoint, compares circulation and observation
+pressure--volume work, and confirms that incomplete commercial evidence is
+refused. The model and synthetic cube are research demonstrations, not clinical
+or commercial qualification.
+
+Cardiovascular qualification tools:
+
+```text
+python tools/cardiovascular_geometry_qualification.py
+python tools/cardiovascular_high_order_qualification.py
+python tools/cardiovascular_ep_foundation_qualification.py
+python tools/cardiovascular_advanced_ep_qualification.py
+python tools/cardiovascular_mechanics_qualification.py
+python tools/cardiovascular_circulation_qualification.py
+python tools/cardiovascular_hemodynamics_qualification.py
+python tools/cardiovascular_observation_qualification.py
+python tools/cardiovascular_personalization_qualification.py
+python tools/cardiovascular_learning_qualification.py
+python tools/cardiovascular_runtime_qualification.py
+python tools/cardiovascular_release_qualification.py
+```
+
+Cardiovascular benchmark entry points:
+
+```text
+python benchmarks/cardiovascular_geometry.py
+python benchmarks/cardiovascular_high_order.py
+python benchmarks/cardiovascular_monodomain.py
+python benchmarks/cardiovascular_ep_integration.py
+python benchmarks/cardiovascular_bidomain.py
+python benchmarks/cardiovascular_mechanics.py
+python benchmarks/cardiovascular_electromechanics.py
+python benchmarks/cardiovascular_circulation.py
+python benchmarks/cardiovascular_vascular_1d.py
+python benchmarks/cardiovascular_hemodynamics.py
+python benchmarks/cardiovascular_fsi.py
+python benchmarks/cardiovascular_observations.py
+python benchmarks/cardiovascular_learning.py
+python benchmarks/cardiovascular_runtime.py
+```
+
+These commands emit evidence for their declared bounded route; benchmark
+performance or qualification output must not be generalized beyond that route.

@@ -444,6 +444,26 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     def resource_evidence_id(self) -> str:
         return self.preparation.report_id
 
+    def real_coordinates(
+        self,
+        /,
+        *,
+        component_shape: Sequence[int] = (),
+        reality_tolerance: float = 1e-10,
+        maximum_coordinate_size: int = 10_000_000,
+    ):
+        """Return independent coordinates for a real field in complex modal storage."""
+        if not self.plan.precision.coefficient_dtype.startswith("complex"):
+            raise TypeError("Real-valued modal storage does not require a coordinate map.")
+        from ._coordinates import HermitianSpectralCoordinates
+
+        return HermitianSpectralCoordinates(
+            self,
+            component_shape=component_shape,
+            reality_tolerance=reality_tolerance,
+            maximum_coordinate_size=maximum_coordinate_size,
+        )
+
     def _validate_leading(
         self,
         value: ArrayLike,

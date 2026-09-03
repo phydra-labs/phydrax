@@ -72,6 +72,54 @@ def test_isogeometric_poisson_exact_quadratic_solution():
     np.testing.assert_allclose(residual, 0.0, rtol=1e-11, atol=1e-12)
 
 
+def test_isogeometric_tensor_diffusion_uses_prepared_capability():
+    grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
+    coordinates = grid.greville_abscissae
+    xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
+    prepared = iga.IsogeometricPlan.isoparametric(
+        (grid, grid),
+        iga.NURBSGeometryState(
+            jnp.stack((xx, yy), axis=-1),
+            jnp.ones((grid.coefficient_count, grid.coefficient_count)),
+        ),
+        field_name="u",
+        axis_names=("xi", "eta"),
+        quadrature_policy=iga.IsogeometricQuadraturePolicy(3),
+    ).prepare(numeric_version="tensor-diffusion-test")
+    policy = phx.equations.FiniteElementExecutionPolicy(
+        realization="matrix_free",
+        local_kernel="sum_factorized",
+    )
+    scalar = phx.equations.compile_finite_element_problem(
+        phx.equations.FiniteElementForm(
+            "iga-scalar-diffusion",
+            "u",
+            (phx.equations.DiffusionAction("u", 2.0),),
+        ),
+        prepared,
+        execution_policy=policy,
+    )
+    tensor = phx.equations.compile_finite_element_problem(
+        phx.equations.FiniteElementForm(
+            "iga-tensor-diffusion",
+            "u",
+            (phx.equations.TensorDiffusionAction("u", 2.0 * jnp.eye(2)),),
+        ),
+        prepared,
+        execution_policy=policy,
+    )
+    state = jnp.linspace(-0.4, 0.7, scalar.state_space.zeros().size).reshape(
+        scalar.state_space.shape
+    )
+
+    np.testing.assert_allclose(
+        tensor.full_residual(state, None),
+        scalar.full_residual(state, None),
+        rtol=1e-11,
+        atol=1e-12,
+    )
+
+
 def test_isogeometric_natural_load_uses_physical_boundary_measure():
     grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
     coordinates = grid.greville_abscissae

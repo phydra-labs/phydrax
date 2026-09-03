@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import equinox as eqx
 import numpy as np
@@ -63,7 +64,7 @@ class EnforcementOptions(StrictModule):
 
 
 def compile(
-    functions: Mapping[str, DomainFunction],
+    functions: Mapping[str, Any],
     specs: Sequence[EnforcementSpec],
     /,
     *,
@@ -75,13 +76,34 @@ def compile(
     resolved_functions = dict(functions)
     if not resolved_functions:
         raise ValueError("Hard enforcement requires at least one field.")
-    if any(
-        not isinstance(value, DomainFunction) for value in resolved_functions.values()
-    ):
-        raise TypeError("Every enforced field must be a DomainFunction.")
     resolved_specs = tuple(specs)
     if any(not isinstance(spec, EnforcementSpec) for spec in resolved_specs):
         raise TypeError("specs must contain only EnforcementSpec values.")
+    local_fields = tuple(
+        spec.field for spec in resolved_specs if spec.realization is None
+    )
+    invalid_local = tuple(
+        name
+        for name in local_fields
+        if name in resolved_functions
+        and not isinstance(resolved_functions[name], DomainFunction)
+    )
+    if invalid_local:
+        raise TypeError(
+            "Local ansatz fields must be DomainFunction values; "
+            f"invalid={invalid_local!r}."
+        )
+    invalid_interior = tuple(
+        anchors.field
+        for anchors in interior
+        if anchors.field in resolved_functions
+        and not isinstance(resolved_functions[anchors.field], DomainFunction)
+    )
+    if invalid_interior:
+        raise TypeError(
+            "Interior anchor fields must be DomainFunction values; "
+            f"invalid={invalid_interior!r}."
+        )
     missing_targets = tuple(
         spec.field for spec in resolved_specs if spec.field not in resolved_functions
     )
@@ -96,22 +118,35 @@ def compile(
     if missing_dependencies:
         raise KeyError(f"Unknown enforcement dependencies {missing_dependencies!r}.")
     for spec in resolved_specs:
-        proof = spec.transform.proof
+        if spec.realization is not None:
+            declared_sources = spec.condition.fields.sources
+            missing = tuple(
+                source for source in declared_sources if source not in resolved_functions
+            )
+            if missing:
+                raise KeyError(
+                    f"Typed realization references unknown fields {missing!r}."
+                )
+            continue
+        transform = spec.transform
+        if transform is None:
+            raise RuntimeError("Local enforcement specification lost its transform.")
+        proof = transform.proof
         if not proof.provider_certified:
             raise ValueError(
                 "Typed hard enforcement requires certified right-inverse evidence."
             )
         pivot_terms = tuple(
             coefficient
-            for coefficient, jet in spec.transform.equation.lhs.terms
+            for coefficient, jet in transform.equation.lhs.terms
             if jet.field == spec.field
         )
         if len(pivot_terms) != 1:
-            raise ValueError("Each enforcement equation requires one pivot term.")
+            raise ValueError("Each local enforcement equation requires one field term.")
         pivot = np.asarray(pivot_terms[0])
         if not np.all(np.isfinite(pivot)) or np.any(pivot == 0):
             raise ValueError(
-                "Enforcement pivot coefficient must be finite and nonsingular."
+                "Enforcement field coefficient must be finite and nonsingular."
             )
         required = {
             (value.field, value.variable, value.order)
@@ -128,7 +163,8 @@ def compile(
     certified_targets = tuple(
         spec.field
         for spec in resolved_specs
-        if any(
+        if spec.realization is None
+        and any(
             name in resolved_functions[spec.field].metadata
             for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
         )

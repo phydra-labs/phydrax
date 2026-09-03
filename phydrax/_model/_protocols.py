@@ -6,9 +6,13 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 from ._binding import ModelBinding
+
+
+if TYPE_CHECKING:
+    from ..enforcement._linear_representation import AbstractLinearRepresentation
 
 
 MODEL_CONSTRUCTION_CERTIFICATE_KEYS = frozenset({"trial_space_certificate"})
@@ -22,12 +26,22 @@ class ModelEvaluator(abc.ABC):
         """Return the model's input packing and batch execution contract."""
         raise NotImplementedError
 
+
 @runtime_checkable
 class ModelMetadataProvider(Protocol):
     """Model supplying immutable semantic metadata to a bound domain function."""
 
     def model_metadata(self) -> Mapping[str, Any]:
         """Return metadata attached by ``Domain.Model``."""
+        ...
+
+
+@runtime_checkable
+class LinearRepresentationProvider(Protocol):
+    """Model explicitly exposing a certified finite linear representation."""
+
+    def linear_representation(self) -> AbstractLinearRepresentation:
+        """Return the model's declared coefficient representation."""
         ...
 
 
@@ -75,6 +89,7 @@ class StructuredDerivativeProvider(abc.ABC):
 __all__ = [
     "AxisModelEvaluator",
     "MODEL_CONSTRUCTION_CERTIFICATE_KEYS",
+    "LinearRepresentationProvider",
     "ModelEvaluator",
     "ModelMetadataProvider",
     "StructuredDerivativeProvider",

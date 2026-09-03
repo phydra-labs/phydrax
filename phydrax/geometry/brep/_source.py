@@ -19,6 +19,7 @@ from .._certificate import (
     SignReliability,
     ZeroSetAccuracy,
 )
+from .._closest_point import represented_mesh_closest_point
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
 from .._sampling import (
     bounded_rejection_sample,
@@ -98,7 +99,11 @@ class _BRepKernel(GeometryKernel):
 
     def __init__(self, model: BRepModel):
         self.model = model
-        self.mesh = TriangleMesh(model.mesh_vertices, model.mesh_faces)
+        self.mesh = TriangleMesh(
+            model.mesh_vertices,
+            model.mesh_faces,
+            source_id=f"{model.source_id}:query-mesh:{model.source_revision}",
+        )
         self.query_index = self.mesh.query_index()
 
     @property
@@ -119,6 +124,7 @@ class _BRepKernel(GeometryKernel):
             {
                 GeometryCapability.REGION_QUERY,
                 GeometryCapability.SIGNED_DISTANCE,
+                GeometryCapability.CLOSEST_POINT,
                 GeometryCapability.BOUNDARY_NORMAL,
                 GeometryCapability.MEASURE,
                 GeometryCapability.INTERIOR_SAMPLING,
@@ -181,6 +187,26 @@ class _BRepKernel(GeometryKernel):
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         del state
         return jax.lax.stop_gradient(self._query(points).normal)
+
+    def closest_point(self, state: DesignState, points: Array, /):
+        points_ = jnp.asarray(points, dtype=self.mesh.vertices.dtype)
+        query = self._query(points_)
+        leading = points_.shape[:-1]
+        unavailable = jnp.zeros(leading, dtype=bool)
+        return represented_mesh_closest_point(
+            points_,
+            closest_point=query.closest_point,
+            distance=query.distance,
+            normal=jax.lax.stop_gradient(query.normal),
+            source_entity_id=query.face_index,
+            inside=self.contains(state, points_),
+            unique=unavailable,
+            regular=unavailable,
+            margin=jnp.zeros(leading, dtype=points_.dtype),
+            represented_geometry_id=self.mesh.source_id,
+            physical_geometry_id=self.model.source_id,
+            exact_to_physical=False,
+        )
 
     def bounds(self, state: DesignState, /) -> Array:
         del state
