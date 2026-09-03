@@ -10,9 +10,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
 from ..._strict import StrictModule
@@ -73,7 +73,7 @@ class _PurityCallable(StrictModule):
             self.density.func(*args, key=key, **kwargs),
             role="density operator",
         )
-        return jnp.real(oe.contract("ij,ji->", density, density))
+        return jnp.real(ein.contract("ij,ji->", density, density))
 
 
 class _EntropyCallable(StrictModule):

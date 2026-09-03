@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -64,7 +65,7 @@ class _PreparedBatchedTauSolve(StrictModule, NonTrainableState):
 
         def solve_once(value: Array) -> tuple[Array, Array]:
             base_result = solve_linear(self.base, value, rhs_layout=layout)
-            correction_rhs = oe.contract(
+            correction_rhs = ein.contract(
                 "brn,bnq->brq",
                 self.delta_rows,
                 base_result.value,
@@ -73,7 +74,7 @@ class _PreparedBatchedTauSolve(StrictModule, NonTrainableState):
             correction_result = solve_linear(
                 self.correction, correction_rhs, rhs_layout=layout
             )
-            solution = base_result.value - oe.contract(
+            solution = base_result.value - ein.contract(
                 "bnr,brq->bnq",
                 self.inverse_tau_columns,
                 correction_result.value,
@@ -86,7 +87,7 @@ class _PreparedBatchedTauSolve(StrictModule, NonTrainableState):
 
         def action(value: Array) -> Array:
             base_value = self.base.problem.operator.mv_block(value)
-            tau_update = oe.contract(
+            tau_update = ein.contract(
                 "brn,bnq->brq", self.delta_rows, value, backend="jax"
             )
             return base_value.at[:, self.tau_start : self.tau_start + self.rank, :].add(
@@ -184,7 +185,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         helmholtz_forcing = helmholtz_forcing.at[self.zero_mode_index, :, 1].set(
             modal_rhs[self.zero_mode_index, :, 2]
         )
-        converted_helmholtz = oe.contract(
+        converted_helmholtz = ein.contract(
             "ij,bjq->biq",
             self.chebyshev_to_c2.astype(dtype),
             helmholtz_forcing,
@@ -223,14 +224,14 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         zero_u = zero_u + self.bulk_influence * pressure_gradient[0].astype(dtype)
         zero_w = zero_w + self.bulk_influence * pressure_gradient[1].astype(dtype)
 
-        eliminated_rhs = -wave_square[:, None] * modal_rhs[..., 1] - oe.contract(
+        eliminated_rhs = -wave_square[:, None] * modal_rhs[..., 1] - ein.contract(
             "ij,bj->bi",
             self.modal_derivative.astype(dtype),
             horizontal_divergence_rhs,
             backend="jax",
         )
         nonzero_rhs = eliminated_rhs[self.nonzero_mode_indices]
-        converted_biharmonic = oe.contract(
+        converted_biharmonic = ein.contract(
             "ij,bj->bi",
             self.chebyshev_to_c4.astype(dtype),
             nonzero_rhs,
@@ -251,7 +252,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
             self.horizontal_scale.astype(dtype) * lower_wall_velocity[1].astype(dtype)
         )
 
-        derivative_v = oe.contract(
+        derivative_v = ein.contract(
             "ij,bj->bi",
             self.modal_derivative.astype(dtype),
             velocity_v,
@@ -269,13 +270,13 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         velocity_w = velocity_w.at[self.zero_mode_index].set(zero_w)
         velocity = jnp.stack((velocity_u, velocity_v, velocity_w), axis=-1)
 
-        second_derivative_v = oe.contract(
+        second_derivative_v = ein.contract(
             "ij,bj->bi",
             self.modal_derivative.astype(dtype),
             derivative_v,
             backend="jax",
         )
-        third_derivative_v = oe.contract(
+        third_derivative_v = ein.contract(
             "ij,bj->bi",
             self.modal_derivative.astype(dtype),
             second_derivative_v,
@@ -293,7 +294,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
             - self.shift.astype(dtype) * velocity_v[self.zero_mode_index]
             + self.viscosity.astype(dtype) * second_derivative_v[self.zero_mode_index]
         )
-        converted_pressure_rhs = oe.contract(
+        converted_pressure_rhs = ein.contract(
             "ij,j->i",
             self.chebyshev_to_c1.astype(dtype),
             zero_pressure_rhs_chebyshev,
@@ -309,13 +310,13 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         )
         pressure = pressure.at[self.zero_mode_index].set(zero_pressure)
 
-        derivative_velocity = oe.contract(
+        derivative_velocity = ein.contract(
             "ij,bjc->bic",
             self.modal_derivative.astype(dtype),
             velocity,
             backend="jax",
         )
-        second_derivative_velocity = oe.contract(
+        second_derivative_velocity = ein.contract(
             "ij,bjc->bic",
             self.modal_derivative.astype(dtype),
             derivative_velocity,
@@ -328,7 +329,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         pressure_gradient_modal = jnp.stack(
             (
                 1j * kx[:, None] * pressure,
-                oe.contract(
+                ein.contract(
                     "ij,bj->bi",
                     self.modal_derivative.astype(dtype),
                     pressure,
@@ -346,7 +347,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
             self.horizontal_scale.astype(dtype) * pressure_gradient[1].astype(dtype)
         )
         momentum_chebyshev = helmholtz_velocity + pressure_gradient_modal - effective_rhs
-        momentum_c2 = oe.contract(
+        momentum_c2 = ein.contract(
             "ij,bjc->bic",
             self.chebyshev_to_c2.astype(dtype),
             momentum_chebyshev,
@@ -362,7 +363,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
             .at[:, : count - 2]
             .set(momentum_c2[:, : count - 2, 2])
         )
-        vertical_c4 = oe.contract(
+        vertical_c4 = ein.contract(
             "ij,bj->bi",
             self.chebyshev_to_c4.astype(dtype),
             momentum_chebyshev[..., 1],
@@ -373,7 +374,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
             .at[:, : count - 4]
             .set(vertical_c4[:, : count - 4])
         )
-        vertical_c1_zero = oe.contract(
+        vertical_c1_zero = ein.contract(
             "ij,j->i",
             self.chebyshev_to_c1.astype(dtype),
             momentum_chebyshev[self.zero_mode_index, :, 1],
@@ -522,7 +523,7 @@ def _prepare_batched_tau_solve(
     tau_indices = np.arange(tau_start, tau_start + rank)
     identity_rows[:, np.arange(rank), tau_indices] = column_scale[:, tau_indices]
     delta_rows = jnp.asarray(scaled_desired_rows - identity_rows, dtype=dtype)
-    correction_matrix = jnp.eye(rank, dtype=dtype)[None, ...] + oe.contract(
+    correction_matrix = jnp.eye(rank, dtype=dtype)[None, ...] + ein.contract(
         "brn,bns->brs", delta_rows, inverse_result.value, backend="jax"
     )
     correction_space = ArraySpace((rank,), dtype=dtype)

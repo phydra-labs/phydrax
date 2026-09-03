@@ -10,9 +10,9 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn._keys import EvalKey, split_eval_key
@@ -236,7 +236,7 @@ class GreenKernelOperator(AbstractOperatorModel):
         learned_kernel = _apply_rows(kernel, features, key).reshape(
             features.shape[:-1] + (self.latent_channels, channels)
         )
-        messages = oe.contract("bqslc,bsc->bqsl", learned_kernel, source_values)
+        messages = ein.contract("bqslc,bsc->bqsl", learned_kernel, source_values)
         return jnp.sum(messages * source_weights[:, None, :, None], axis=2)
 
     def __call_operator_batch__(

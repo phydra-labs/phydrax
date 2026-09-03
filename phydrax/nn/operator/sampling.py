@@ -90,6 +90,8 @@ class OperatorCase:
     batch: OperatorBatch
     targets: OperatorTargetBatch
     provenance: OperatorCaseProvenance | None = None
+    case_log_weight: float = 0.0
+    case_active: bool = True
 
     def __post_init__(self):
         if self.batch.case_shape:
@@ -102,6 +104,13 @@ class OperatorCase:
             OperatorCaseProvenance,
         ):
             raise TypeError("OperatorCase provenance must be OperatorCaseProvenance.")
+        log_weight = float(self.case_log_weight)
+        if not np.isfinite(log_weight) and not np.isneginf(log_weight):
+            raise ValueError("OperatorCase log weight must be finite or -inf.")
+        if not isinstance(self.case_active, (bool, np.bool_)):
+            raise TypeError("OperatorCase case_active must be boolean.")
+        object.__setattr__(self, "case_log_weight", log_weight)
+        object.__setattr__(self, "case_active", bool(self.case_active))
 
 
 class OperatorCaseSource(abc.ABC):
@@ -459,12 +468,21 @@ class InMemoryOperatorCaseSource(OperatorCaseSource):
         *,
         request: OperatorCaseReadRequest | None = None,
     ) -> OperatorCase:
-        batch = self._batch(index)
-        targets = self.dataset.targets.take(int(index), axis=0)
+        position = int(index)
+        batch = self._batch(position)
+        targets = self.dataset.targets.take(position, axis=0)
         assert self.dataset.provenance is not None
-        provenance = self.dataset.provenance[int(index)]
+        provenance = self.dataset.provenance[position]
+        case_log_weight = float(np.asarray(self.dataset.case_log_weights)[position])
+        case_active = bool(np.asarray(self.dataset.case_mask)[position])
         if request is None:
-            return OperatorCase(batch, targets, provenance)
+            return OperatorCase(
+                batch,
+                targets,
+                provenance,
+                case_log_weight=case_log_weight,
+                case_active=case_active,
+            )
         inputs = {
             name: (
                 take_function_samples(samples, request.input_selections[name])
@@ -495,6 +513,8 @@ class InMemoryOperatorCaseSource(OperatorCaseSource):
             OperatorBatch(inputs=inputs, queries=queries),
             OperatorTargetBatch(selected_fields),
             provenance,
+            case_log_weight=case_log_weight,
+            case_active=case_active,
         )
 
 
@@ -601,6 +621,8 @@ def read_operator_case_batch(
             )
             for position, case in selected
         ),
+        case_log_weights=tuple(case.case_log_weight for _, case in selected),
+        case_mask=tuple(case.case_active for _, case in selected),
     )
 
 

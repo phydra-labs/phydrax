@@ -11,9 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -199,13 +199,13 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         )
         left_weight = 0.5 * partial_width[..., None] * left_kernel
         right_weight = 0.5 * partial_width[..., None] * right_kernel
-        left_response = oe.contract(
+        left_response = ein.contract(
             "cqnp,cni,pio->cqo",
             left_weight,
             left_values,
             self.residue,
         )
-        right_response = oe.contract(
+        right_response = ein.contract(
             "cqnp,cqni,pio->cqo",
             right_weight,
             right_values,
@@ -225,7 +225,7 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
             axis=1,
         )
         held = held * has_past[..., None]
-        response = response + oe.contract("cqi,io->cqo", held, self.direct_weight)
+        response = response + ein.contract("cqi,io->cqo", held, self.direct_weight)
         response = response + self.bias
         query_mask = (
             batch.require_single_query()
@@ -298,10 +298,10 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
             candidate = transition[..., None] * current_state + increment
             next_state = jnp.where(valid[:, None, None], candidate, current_state)
             response = 2.0 * jnp.real(
-                oe.contract("cpi,pio->co", next_state, self.residue)
+                ein.contract("cpi,pio->co", next_state, self.residue)
             )
             held = right * valid[:, None]
-            response = response + oe.contract(
+            response = response + ein.contract(
                 "ci,io->co",
                 held,
                 self.direct_weight,
@@ -319,7 +319,7 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
             ),
         )
         initial = (
-            oe.contract(
+            ein.contract(
                 "ci,io->co",
                 values[:, 0, :] * source_mask[:, :1],
                 self.direct_weight,

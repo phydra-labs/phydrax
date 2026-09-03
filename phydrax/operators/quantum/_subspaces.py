@@ -12,8 +12,9 @@ import equinox as eqx
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -136,7 +137,7 @@ class DenseQuantumSubspace(StrictModule):
         tolerance_ = float(tolerance)
         if not np.isfinite(tolerance_) or tolerance_ < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
-        gram = oe.contract("ai,aj->ij", jnp.conj(value), value)
+        gram = ein.contract("ai,aj->ij", jnp.conj(value), value)
         residual = jnp.max(jnp.abs(gram - jnp.eye(value.shape[1], dtype=gram.dtype)))
         finite = jnp.all(jnp.isfinite(value))
         valid = finite & (residual <= tolerance_)
@@ -164,13 +165,13 @@ class DenseQuantumSubspace(StrictModule):
         state = jnp.asarray(logical_state)
         if state.shape[-1:] != (self.logical_dimension,):
             raise ValueError("logical_state has the wrong trailing dimension.")
-        return oe.contract("...i,ai->...a", state, self.isometry)
+        return ein.contract("...i,ai->...a", state, self.isometry)
 
     def restrict(self, physical_state: ArrayLike, /) -> Array:
         state = jnp.asarray(physical_state)
         if state.shape[-1:] != (self.physical_dimension,):
             raise ValueError("physical_state has the wrong trailing dimension.")
-        return oe.contract("ai,...a->...i", jnp.conj(self.isometry), state)
+        return ein.contract("ai,...a->...i", jnp.conj(self.isometry), state)
 
 
 QuantumSubspace: TypeAlias = BasisStateSubspace | DenseQuantumSubspace
@@ -270,14 +271,14 @@ def project_quantum_operator(
     if isinstance(input_subspace, BasisStateSubspace):
         restricted_input = jnp.take(value, input_subspace.basis_indices, axis=-1)
     else:
-        restricted_input = oe.contract(
+        restricted_input = ein.contract(
             "...ab,bi->...ai",
             value,
             input_subspace.isometry,
         )
     if isinstance(output, BasisStateSubspace):
         return jnp.take(restricted_input, output.basis_indices, axis=-2)
-    return oe.contract(
+    return ein.contract(
         "ao,...ai->...oi",
         jnp.conj(output.isometry),
         restricted_input,

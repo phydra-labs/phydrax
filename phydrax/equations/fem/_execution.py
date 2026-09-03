@@ -10,8 +10,9 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -91,9 +92,9 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         if value_.shape != (self.global_size,):
             raise ValueError("Partial assembly input shape is incompatible.")
         local = value_[self.gathers]
-        quadrature = oe.contract("qi,ci->cq", self.basis_values, local)
+        quadrature = ein.contract("qi,ci->cq", self.basis_values, local)
         weighted = self.quadrature_weights * self.quadrature_coefficient * quadrature
-        contribution = oe.contract("qi,cq->ci", self.basis_values, weighted)
+        contribution = ein.contract("qi,cq->ci", self.basis_values, weighted)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
         return (
             jnp.zeros((self.global_size,), dtype=contribution.dtype)
@@ -105,7 +106,7 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         return self.mv(value)
 
     def as_element_tensor(self, /) -> ElementTensorOperator:
-        local = oe.contract(
+        local = ein.contract(
             "cq,cq,qi,qj->cij",
             self.quadrature_weights,
             self.quadrature_coefficient,
@@ -264,6 +265,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         *,
         action_kind: TensorProductAction,
         valid: ArrayLike | None = None,
+        properties: OperatorProperties | None = None,
     ):
         if not isinstance(plan, SumFactorizationPlan):
             raise TypeError("plan must be SumFactorizationPlan.")
@@ -300,14 +302,21 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         self.valid = valid_
         self.action_kind = kind
         self.global_size = size
-        self.properties = OperatorProperties(
-            self_adjoint=True,
-            positive_semidefinite=True,
-            evidence={
-                "self_adjoint": "construction",
-                "positive_semidefinite": "construction",
-            },
+        properties_ = (
+            OperatorProperties(
+                self_adjoint=True,
+                positive_semidefinite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_semidefinite": "construction",
+                },
+            )
+            if properties is None
+            else properties
         )
+        if not isinstance(properties_, OperatorProperties):
+            raise TypeError("properties must be OperatorProperties or None.")
+        self.properties = properties_
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "tensor-product-partial-assembly",
@@ -332,7 +341,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
             )
         else:
             gradient = self.plan.gradient(local)
-            flux = oe.contract("...ab,...b->...a", self.quadrature_data, gradient)
+            flux = ein.contract("...ab,...b->...a", self.quadrature_data, gradient)
             local_output = self.plan.gradient_transpose(flux)
         contribution = local_output.reshape(self.gathers.shape)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
@@ -343,7 +352,62 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         )
 
     def transpose_mv(self, value: ArrayLike, /) -> Array:
-        return self.mv(value)
+        value_ = jnp.asarray(value)
+        if value_.shape != (self.global_size,):
+            raise ValueError("Tensor-product input shape is incompatible.")
+        nodal_shape = self.plan.tabulation.nodal_shape
+        local = value_[self.gathers].reshape((self.gathers.shape[0],) + nodal_shape)
+        if self.action_kind == "mass":
+            quadrature = self.plan.interpolate(local)
+            local_output = self.plan.interpolate_transpose(
+                self.quadrature_data * quadrature
+            )
+        else:
+            gradient = self.plan.gradient(local)
+            flux = ein.contract("...ba,...b->...a", self.quadrature_data, gradient)
+            local_output = self.plan.gradient_transpose(flux)
+        contribution = local_output.reshape(self.gathers.shape)
+        contribution = jnp.where(self.valid[:, None], contribution, 0.0)
+        return (
+            jnp.zeros((self.global_size,), dtype=contribution.dtype)
+            .at[self.gathers]
+            .add(contribution)
+        )
+
+    def as_element_tensor(self, /) -> ElementTensorOperator:
+        local_width = self.gathers.shape[1]
+        identity = jnp.eye(local_width, dtype=self.quadrature_data.dtype).reshape(
+            (local_width,) + self.plan.tabulation.nodal_shape
+        )
+        if self.action_kind == "mass":
+            basis = self.plan.interpolate(identity).reshape((local_width, -1))
+            data = self.quadrature_data.reshape((self.gathers.shape[0], -1))
+            local = ein.contract("cq,iq,jq->cij", data, basis, basis)
+        else:
+            gradients = self.plan.gradient(identity).reshape(
+                (local_width, -1, self.plan.tabulation.dimension)
+            )
+            data = self.quadrature_data.reshape(
+                (
+                    self.gathers.shape[0],
+                    -1,
+                    self.plan.tabulation.dimension,
+                    self.plan.tabulation.dimension,
+                )
+            )
+            local = ein.contract("cqab,iqa,jqb->cij", data, gradients, gradients)
+        return ElementTensorOperator(
+            local,
+            self.gathers,
+            self.gathers,
+            self.global_size,
+            self.global_size,
+            valid=self.valid,
+            properties=self.properties,
+        )
+
+    def as_sparse_coordinate(self, /) -> SparseCoordinateOperator:
+        return self.as_element_tensor().as_sparse_coordinate()
 
     def as_linear_operator(self, /) -> FunctionLinearOperator:
         space = ArraySpace((self.global_size,), dtype=self.quadrature_data.dtype)
@@ -452,8 +516,8 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             nx, ny = self.weighted_mass.shape[1:]
             dx, dy = self.derivatives
             q = local.reshape((-1, nx, ny))
-            qx = oe.contract("ia,eaj->eij", dx, q)
-            qy = oe.contract("ja,eia->eij", dy, q)
+            qx = ein.contract("ia,eaj->eij", dx, q)
+            qy = ein.contract("ja,eia->eij", dy, q)
             g00, g01, g11 = (
                 self.weighted_metric[..., 0],
                 self.weighted_metric[..., 1],
@@ -462,17 +526,17 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             flux_x = g00 * qx + g01 * qy
             flux_y = g01 * qx + g11 * qy
             output = (
-                oe.contract("ia,eij->eaj", dx, flux_x)
-                + oe.contract("ja,eij->eia", dy, flux_y)
+                ein.contract("ia,eij->eaj", dx, flux_x)
+                + ein.contract("ja,eij->eia", dy, flux_y)
                 + self.weighted_mass * q
             )
         else:
             nx, ny, nz = self.weighted_mass.shape[1:]
             dx, dy, dz = self.derivatives
             q = local.reshape((-1, nx, ny, nz))
-            qx = oe.contract("ia,eajk->eijk", dx, q)
-            qy = oe.contract("ja,eiak->eijk", dy, q)
-            qz = oe.contract("ka,eija->eijk", dz, q)
+            qx = ein.contract("ia,eajk->eijk", dx, q)
+            qy = ein.contract("ja,eiak->eijk", dy, q)
+            qz = ein.contract("ka,eija->eijk", dz, q)
             g00, g01, g02, g11, g12, g22 = tuple(
                 self.weighted_metric[..., index] for index in range(6)
             )
@@ -480,9 +544,9 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             flux_y = g01 * qx + g11 * qy + g12 * qz
             flux_z = g02 * qx + g12 * qy + g22 * qz
             output = (
-                oe.contract("ia,eijk->eajk", dx, flux_x)
-                + oe.contract("ja,eijk->eiak", dy, flux_y)
-                + oe.contract("ka,eijk->eija", dz, flux_z)
+                ein.contract("ia,eijk->eajk", dx, flux_x)
+                + ein.contract("ja,eijk->eiak", dy, flux_y)
+                + ein.contract("ka,eijk->eija", dz, flux_z)
                 + self.weighted_mass * q
             )
         contribution = output.reshape(self.gathers.shape)

@@ -86,6 +86,12 @@ Most workflows are composing a few primitives:
   exact construction-order search, standards clauses, reliability, calibration,
   evidence acquisition, and immutable digital-twin ancestry extend member-network
   mechanics without erasing model fidelity or applicability.
+- **Native robotics**: secure loss-negotiated URDF adaptation, fixed-base
+  hinge/prismatic kinematics and dynamics, local frame IK, articulated Delassus
+  contact, status-aware control, immutable environments, reduced rods, and
+  capability-gated optional MJX execution retain explicit evidence and rollback.
+  See the [robotics guide](docs/guides_robotics.md) and
+  [robotics API](docs/api/applications/robotics.md).
 - **Atomistic learning, force fields, and sampling**: scale-identified structures,
   interaction-site coordinate maps, stable-ID topology, classical/learned/many-body
   energy programs, polarization, dense/cell/Verlet and distributed execution,
@@ -114,6 +120,13 @@ Most workflows are composing a few primitives:
 - **Sampling**: reference-space designs and fixed-kernel persistent Markov chains
   preserve explicit keys, chain/draw axes, transition evidence, and correlated-measure
   semantics when lowered into integration.
+- **Differentiable signal processing**: explicit-axis windows and framing,
+  finite convolution, causal FIR state, periodic Fourier and fixed wavelet
+  transforms, and finite/streaming polyphase rate conversion preserve complex
+  dtypes, JIT-static capacities, and gradients through samples, taps, and
+  carried history. See the
+  [guide](https://phydra-labs.github.io/phydrax/guides_signal_processing/)
+  and [API](https://phydra-labs.github.io/phydrax/api/signal/).
 - **Linear algebra**: paired array/PyTree/block spaces, composable dense,
   matrix-free, sparse, and block operators, explicit system/least-squares/
   minimum-norm contracts, reusable plans and factorizations, and portable
@@ -287,6 +300,18 @@ atomistics, compartmental systems biology, and experiment-facing observation
 models. Every discrete binding or topology change is transactional, and every
 continuous derivative is conditioned on the accepted fixed event program. See
 the [advanced-biophysics API](docs/api/advanced_biophysics.md) and its guides.
+
+The canonical cardiovascular platform is
+`phydrax.applications.cardiovascular`, with explicit anatomy,
+electrophysiology, mechanics, circulation, hemodynamics, observations, and
+personalization subpackages plus cross-domain quantity, case, execution,
+checkpoint/replay, and release-evidence contracts. It supports bounded
+research workflows and fail-closed evidence; it does not claim clinical
+validation, diagnosis, treatment guidance, medical-device status, regulatory
+clearance, or commercial readiness. Start with the
+[cardiovascular API](docs/api/applications/cardiovascular.md), the
+[core guide](docs/guides_cardiovascular_core.md), or the runnable
+[`cardiovascular_platform.py`](examples/cardiovascular_platform.py) example.
 
 ## Example
 

@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -138,16 +139,16 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
             raise ValueError("Opposite lattice directions must have equal weights.")
 
         identity = np.eye(dimension, dtype=np.float64)
-        first = oe.contract("q,qa->a", weight_host, velocity_host)
-        second = oe.contract("q,qa,qb->ab", weight_host, velocity_host, velocity_host)
-        third = oe.contract(
+        first = ein.contract("q,qa->a", weight_host, velocity_host)
+        second = ein.contract("q,qa,qb->ab", weight_host, velocity_host, velocity_host)
+        third = ein.contract(
             "q,qa,qb,qc->abc",
             weight_host,
             velocity_host,
             velocity_host,
             velocity_host,
         )
-        fourth = oe.contract(
+        fourth = ein.contract(
             "q,qa,qb,qc,qd->abcd",
             weight_host,
             velocity_host,
@@ -156,9 +157,9 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
             velocity_host,
         )
         expected_fourth = cs2**2 * (
-            oe.contract("ab,cd->abcd", identity, identity)
-            + oe.contract("ac,bd->abcd", identity, identity)
-            + oe.contract("ad,bc->abcd", identity, identity)
+            ein.contract("ab,cd->abcd", identity, identity)
+            + ein.contract("ac,bd->abcd", identity, identity)
+            + ein.contract("ad,bc->abcd", identity, identity)
         )
         if not np.isclose(np.sum(weight_host), 1.0, rtol=0.0, atol=1e-14):
             raise ValueError("Lattice weights must sum to one.")

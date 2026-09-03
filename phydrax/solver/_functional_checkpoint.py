@@ -98,7 +98,18 @@ def save_functional_training_checkpoint(
         **_serialize_root_key(state.key),
         "plan_id": plan.plan_id,
         "run_id": state.run_id,
+        "gradient_accumulation": state.gradient_accumulation,
         "target_policy": _target_policy_contract(state),
+        "enforcement_generation": (
+            None
+            if state.enforcement_state is None
+            else state.enforcement_state.generation
+        ),
+        "enforcement_accepted_step": (
+            None
+            if state.enforcement_state is None
+            else state.enforcement_state.accepted_step
+        ),
         "discretization_bundle_id": solver.discretization_bundle.bundle_id,
         "progress": asdict(state.progress),
         "training_seconds": state.training_seconds,
@@ -122,7 +133,10 @@ def _read_functional_manifest(path: str | Path, /) -> tuple[dict[str, Any], Path
         "key_impl",
         "plan_id",
         "run_id",
+        "gradient_accumulation",
         "target_policy",
+        "enforcement_generation",
+        "enforcement_accepted_step",
         "discretization_bundle_id",
         "progress",
         "training_seconds",
@@ -174,6 +188,8 @@ def load_functional_training_checkpoint(
         raise ValueError("Functional checkpoint discretization identity mismatch.")
     if manifest["run_id"] != state_like.run_id:
         raise ValueError("Functional checkpoint run identity mismatch.")
+    if manifest["gradient_accumulation"] != state_like.gradient_accumulation:
+        raise ValueError("Functional checkpoint gradient-accumulation identity mismatch.")
     functions, objective, restored = eqx.tree_deserialise_leaves(
         state_path,
         (solver_like.functions, solver_like.objective, state_like),
@@ -198,18 +214,32 @@ def load_functional_training_checkpoint(
         restored.target_state.update_count
     ) != int(progress.update_step):
         raise ValueError("Functional checkpoint target state disagrees with its step.")
+    restored_enforcement = restored.enforcement_state
+    expected_generation = manifest["enforcement_generation"]
+    expected_enforcement_step = manifest["enforcement_accepted_step"]
+    if (restored_enforcement is None) != (expected_generation is None):
+        raise ValueError("Functional checkpoint enforcement-state presence mismatch.")
+    if restored_enforcement is not None and (
+        restored_enforcement.generation != int(expected_generation)
+        or restored_enforcement.accepted_step != int(expected_enforcement_step)
+    ):
+        raise ValueError(
+            "Functional checkpoint enforcement state disagrees with its manifest."
+        )
     restored = FunctionalTrainingState(
         current_functions=restored.current_functions,
         best_functions=restored.best_functions,
         previous_functions=restored.previous_functions,
         optimizer_state=restored.optimizer_state,
         target_state=restored.target_state,
+        enforcement_state=restored.enforcement_state,
         key=restored.key,
         pseudo_inverse_steps=restored.pseudo_inverse_steps,
         term_multipliers=restored.term_multipliers,
         previous_gradient=restored.previous_gradient,
         progress=progress,
         run_id=str(manifest["run_id"]),
+        gradient_accumulation=int(manifest["gradient_accumulation"]),
         training_seconds=float(manifest["training_seconds"]),
         resumed_from_step=int(manifest["resumed_from_step"]),
     )

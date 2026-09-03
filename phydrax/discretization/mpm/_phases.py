@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 
@@ -78,7 +79,7 @@ def update_deformation(
         jnp.eye(dimension, dtype=deformation_gradient.dtype),
         deformation_gradient.shape,
     )
-    return oe.contract(
+    return ein.contract(
         "pij,pjk->pik",
         identity + step_size * velocity_gradient,
         deformation_gradient,

@@ -84,6 +84,13 @@ native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
 
+Einstein-style array operations are shared through `phydrax.ein`: an exact
+optimized contraction boundary plus named static JAX rearrangement, reduction,
+and repetition. Patterns compile to reshape, transpose, reduction, and
+broadcast primitives without runtime axis metadata. See
+[Guide → Einstein operations](guides_ein.md) and
+[API → Einstein operations](api/ein.md).
+
 Certified positive-semidefinite actions may prepare a fixed-rank
 `RandomizedNystromPreconditioner`. Its deterministic sketch, positive shift,
 refresh mode, retained Ritz evidence, storage, and exact setup matvec count flow
@@ -178,6 +185,14 @@ the sampled minimum denominator, orientation determinant, and reciprocal
 condition margins are not a global injectivity proof. These volume maps are not
 the repository's BRep surface geometry and do not imply trimming, CAD topology,
 shells, multipatch coupling, or three-dimensional solids.
+Explicit polygon H1 elements bind conformingly segmented, star-shaped planar
+polygons to a transported witness fan. A native discrete-harmonic condensation
+removes the private witness coordinate while retaining exact linear traces,
+partition of unity, affine reproduction, actual piecewise gradients, direct
+reconstruction, and dense matrix-free local functional execution. Qualification
+retains fan validity, factorization, rank, spectrum, conditioning, and
+reproduction evidence. Higher order, nonmatching T-junctions, sparse realization,
+and three-dimensional cells remain outside this surface.
 Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
 vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
 projections, explicit projector-kernel stabilization, matrix-free or sparse
@@ -234,12 +249,18 @@ transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombi
 nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
 share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
 global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
-merger products, stochastic star populations, two-level AMR, a shared Morton octree,
-isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM. Every profile
-states unsupported species, topology, approximation, capacity, distribution, and
-communication branches; precision parity beyond qualified profiles, multilevel
-distributed AMR, adaptive/distributed trees, production feedback, and full release
-coverage remain separate qualification claims rather than hidden flags.
+merger products, stochastic star populations, two-level AMR, sparse occupied Morton
+point hierarchies, isolated Barnes--Hut, sparse occupied-level Cartesian FMM, and
+BH-short-range TreePM. Core discretization additionally provides fixed-resolution
+sparse voxel fields; covering, face-balanced dyadic cell topology with conservative
+adaptation and explicit-face finite-volume lowering; and oriented finite-footprint
+surfels with physical surface measure, primitive bounds, ray queries, local voxel
+projection, atlas/mesh materialization, and branchwise differentiation. Every profile
+states unsupported
+species, topology, approximation, capacity, distribution, and communication branches;
+precision parity beyond qualified profiles, multilevel distributed AMR, distributed
+trees, production feedback, and full release coverage remain separate qualification
+claims rather than hidden flags.
 Prepared periodic Fourier shells now provide continuum-normalized isotropic auto/cross
 power, phase-sensitive residuals, Hermitian mode accounting, and explicit spectral
 validity. One-epoch measured power products stack into canonical tables. Inverse
@@ -314,6 +335,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
 [Guide → Isogeometric analysis](guides_isogeometric_analysis.md),
+[Guide → Explicit polygon H1](guides_explicit_polygon_h1.md),
 [Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
@@ -327,6 +349,23 @@ sensitivities reuse the existing solver, discretization, and nonlinear substrate
 No communication, mesh, or fallback-solver stack is introduced. See
 [Guide → Partitioned multiphysics coupling](guides_partitioned_coupling.md) and
 [API → Solver → Partitioned coupling](api/solver/coupling.md).
+
+### Native robotics as a composition
+
+`phydrax.applications.robotics` adapts bounded URDF 1.0 trees into the existing
+particle, rigid-body, joint, and reduced-articulation plans; adds local frame IK,
+immutable task environments, stable backend projections, and optional lazy MJX;
+and keeps capability, loss, freshness, status, and rollback evidence explicit.
+Reduced inverse/forward dynamics, articulated Delassus impact, status-aware
+rollouts, fixed-work sampling MPC, manifold Radau defects, inertial realization,
+and planar reduced rods remain with their existing discretization, contact,
+control, interchange, and solid-mechanics owners.
+
+The native tree scope is 3-D fixed-base fixed/hinge/prismatic. It does not claim
+floating bases, ball joints, global IK, general contact-mode gradients, certified
+sampling robustness, hard real time, or universal MJX differentiability. See
+[Guide → Native robotics](guides_robotics.md) and
+[API → Robotics applications](api/applications/robotics.md).
 
 ### Atomistic learning and conservative dynamics
 
@@ -788,6 +827,11 @@ linearization and frequency response, Lyapunov/Riccati equations, Gramians,
 finite- and infinite-horizon LQR, iLQR, dense multiple shooting, implicit
 direct collocation, dense or structural-sparse prepared linear-control QPs,
 explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
+`phydrax.control.games` adds finite-horizon affine linear-quadratic
+full-state feedback Nash policies with explicit player control ownership,
+per-player values, nonsymmetric dense-LU solves, diagnostic-only rank SVDs,
+and independent curvature, stationarity, Bellman, conditioning, and causal
+failure evidence.
 Direct collocation accepts explicit systems or controlled state-shaped DAEs,
 shared parameter coordinates, fixed or variable duration, exact sparse
 derivatives, and explicitly selected dense-native, sparse-native, or sparse
@@ -1312,6 +1356,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Conditional-affine chemical operators**: certify a directional mass-action
+  factorization with `ChemicalConditionalAffinePlan`, predict only auxiliary
+  midpoint drivers, and reconstruct the complete physical species state from
+  inverse-free phi-function reaction extents. One positive correction per base
+  reaction is shared by forward and reverse channels. The research-tier
+  `ChemicalConditionalAffineOperator` supports staged driver/correction fitting
+  and explicit `DiscreteSystem` deployment without clipping or hidden fallback.
+  See [Chemical kinetics](guides_chemical_kinetics.md) and
+  [Operator-learning cookbook](cookbook/operator_learning.md).
 - **Autoregressive operator learning**: bind one coincident physical state
   source and prediction with `OperatorRolloutRoute`. Training and deployment use
   the same authored step: raw output is physicalized, constrained, restored to
@@ -1657,6 +1710,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Solver substrates](guides_solver_substrates.md)
 - [Differential operators](guides_differential.md)
 - [Linear algebra runtime](api/linalg.md)
+- [Einstein operations](guides_ein.md)
 - [Metrix: differentiable geometry](api/metrix/index.md)
 - [Positive-definite kernels](api/kernels.md)
 - [Integrals and measures](guides_integrals.md)

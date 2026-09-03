@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
@@ -27,6 +28,7 @@ from ..discretization import (
 
 
 class AtomisticSiteDomain(StrEnum):
+    COARSE_BEADS = "coarse-beads"
     DOF_ATOMS = "dof-atoms"
     PHYSICAL_ATOMS = "physical-atoms"
     INTERACTION_SITES = "interaction-sites"
@@ -96,6 +98,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
     site_type_ids: Array
     charges: Array
     active_mask: Array
+    element_mask: Array
     physical_mask: Array
     output_mask: Array
     plan_id: str = eqx.field(static=True)
@@ -109,6 +112,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
         /,
         *,
         active_mask: ArrayLike | None = None,
+        element_mask: ArrayLike | None = None,
         physical_mask: ArrayLike | None = None,
         output_mask: ArrayLike | None = None,
     ):
@@ -134,6 +138,9 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
             if active_mask is None
             else np.asarray(active_mask, dtype=bool)
         )
+        elements = (
+            numbers > 0 if element_mask is None else np.asarray(element_mask, dtype=bool)
+        )
         physical = (
             numbers > 0
             if physical_mask is None
@@ -146,13 +153,16 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
         )
         if (
             active.shape != expected
+            or elements.shape != expected
             or physical.shape != expected
             or output.shape != expected
         ):
             raise ValueError("Interaction-site masks must align with site_ids.")
-        if np.any(physical & (numbers <= 0)) or np.any(~physical & (numbers != 0)):
+        if np.any(elements & ~active):
+            raise ValueError("element_mask must be a subset of active_mask.")
+        if np.any(elements & (numbers <= 0)) or np.any(~elements & (numbers != 0)):
             raise ValueError(
-                "Physical sites require atomic numbers; virtual sites use zero."
+                "Element sites require atomic numbers; non-element sites use zero."
             )
         if np.any(types[active] < 0) or np.any(~np.isfinite(charge[active])):
             raise ValueError("Active interaction-site types and charges are invalid.")
@@ -162,6 +172,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
             "site_type_ids": types.astype(np.int32, copy=False),
             "charges": np.where(active, charge, 0.0),
             "active_mask": active,
+            "element_mask": elements,
             "physical_mask": physical & active,
             "output_mask": output & active,
         }
@@ -267,6 +278,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         charges: ArrayLike,
         /,
         *,
+        element_mask: ArrayLike | None = None,
         active_mask: ArrayLike | None = None,
     ) -> "AtomisticCoordinateMapPlan":
         ids = np.asarray(particle_ids)
@@ -281,6 +293,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
             site_type_ids,
             charges,
             active_mask=active,
+            element_mask=active if element_mask is None else element_mask,
             physical_mask=active,
             output_mask=active,
         )

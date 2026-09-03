@@ -9,8 +9,9 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 
@@ -435,10 +436,10 @@ def gaussian_factor_quadratic_form(
 
     left_vectors, singular_values, _ = jnp.linalg.svd(factor.factor, full_matrices=False)
     active = (tolerance >= 0.0) & (singular_values > tolerance)
-    coefficients = oe.contract("...ji,...j->...i", jnp.conj(left_vectors), vector)
+    coefficients = ein.contract("...ji,...j->...i", jnp.conj(left_vectors), vector)
     safe_values = jnp.where(active, singular_values, jnp.ones_like(singular_values))
     solved = jnp.where(active, coefficients / safe_values, 0.0)
-    projected = oe.contract(
+    projected = ein.contract(
         "...ij,...j->...i", left_vectors, jnp.where(active, coefficients, 0.0)
     )
     support_error = jnp.linalg.norm(vector - projected, axis=-1)
@@ -455,9 +456,9 @@ def _rank_aware_solve(matrix: Array, right: Array, tolerance: Array) -> Array:
     active = (tolerance >= 0.0) & (singular_values > tolerance)
     safe_values = jnp.where(active, singular_values, jnp.ones_like(singular_values))
     if right.ndim == matrix.ndim - 1:
-        projected = oe.contract("...ji,...j->...i", jnp.conj(left_vectors), right)
+        projected = ein.contract("...ji,...j->...i", jnp.conj(left_vectors), right)
         scaled = jnp.where(active, projected / safe_values, 0.0)
-        return oe.contract("...ij,...j->...i", _adjoint(adjoint_right_vectors), scaled)
+        return ein.contract("...ij,...j->...i", _adjoint(adjoint_right_vectors), scaled)
     projected = _adjoint(left_vectors) @ right
     scaled = jnp.where(active[..., :, None], projected / safe_values[..., :, None], 0.0)
     return _adjoint(adjoint_right_vectors) @ scaled

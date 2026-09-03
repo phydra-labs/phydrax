@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._interpolation import gather_patches
 from ..._numerics._compensated import compensated_sum
@@ -42,7 +43,7 @@ def apic_particle_kinetic_energy(
     /,
 ) -> Array:
     translational = jnp.sum(velocity * velocity, axis=-1)
-    affine = oe.contract(
+    affine = ein.contract(
         "pij,pjk,pik->p",
         affine_velocity,
         particle_moment,
@@ -63,7 +64,7 @@ def apic_particle_angular_momentum(
 ) -> Array:
     dimension = int(position.shape[-1])
     orbital = _cross(position, mass[:, None] * velocity, dimension)
-    affine_route_velocity = oe.contract(
+    affine_route_velocity = ein.contract(
         "pij,prj->pri", affine_velocity, state.route_offsets
     )
     affine_route_momentum = (
@@ -112,7 +113,7 @@ def build_apic_route_payload(
     active: Array,
     /,
 ) -> Array:
-    affine_route_velocity = oe.contract(
+    affine_route_velocity = ein.contract(
         "pij,prj->pri", affine_velocity, state.route_offsets
     )
     weights = state.stencil.weights
@@ -121,8 +122,8 @@ def build_apic_route_payload(
         * mass[:, None, None]
         * (velocity[:, None, :] + affine_route_velocity)
     )
-    kirchhoff = oe.contract("pij,pkj->pik", first_piola, deformation_gradient)
-    internal_force = -reference_volume[:, None, None] * oe.contract(
+    kirchhoff = ein.contract("pij,pkj->pik", first_piola, deformation_gradient)
+    internal_force = -reference_volume[:, None, None] * ein.contract(
         "pij,prj->pri", kirchhoff, state.weight_gradients
     )
     external_force = (
@@ -148,11 +149,11 @@ def gather_apic(
     mask = route_valid[..., None]
     route_velocity = jnp.where(mask, gathered, 0.0)
     weights = jnp.where(route_valid, state.stencil.weights, 0.0)
-    velocity = oe.contract("pr,pri->pi", weights, route_velocity)
-    velocity_gradient = oe.contract(
+    velocity = ein.contract("pr,pri->pi", weights, route_velocity)
+    velocity_gradient = ein.contract(
         "pri,prj->pij", route_velocity, state.weight_gradients
     )
-    affine_moment = oe.contract(
+    affine_moment = ein.contract(
         "pr,pri,prj->pij", weights, route_velocity, state.route_offsets
     )
     particle_moment = state.second_moments

@@ -8,8 +8,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation._rational_spline import RationalSplineJet
@@ -64,6 +65,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
 
     tensor_plan: TensorBSplineJetPlan
     field_weights: Array | None
+    field_weights_from_geometry: bool = eqx.field(static=True)
     entity_rows: Array
     query_permutation: tuple[int, ...] = eqx.field(static=True)
     entity_shape: tuple[int, ...] = eqx.field(static=True)
@@ -93,11 +95,17 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         maximum_derivative_order: int,
         structural_id: str,
         is_trace: bool,
+        field_weights_from_geometry: bool = False,
     ):
         if not isinstance(tensor_plan, TensorBSplineJetPlan):
             raise TypeError("tensor_plan must be a TensorBSplineJetPlan.")
         rows = jnp.asarray(entity_rows, dtype=jnp.int32)
         weights = None if field_weights is None else jnp.asarray(field_weights)
+        dynamic_weights = bool(field_weights_from_geometry)
+        if dynamic_weights and weights is not None:
+            raise ValueError(
+                "Geometry-owned IGA field weights cannot also be supplied statically."
+            )
         if weights is not None and weights.shape != tensor_plan.source_shape:
             raise ValueError("IGA field rational weights do not match its tensor basis.")
         entity_count = prod(entity_shape)
@@ -111,6 +119,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         local_width = tensor_plan.local_size
         self.tensor_plan = tensor_plan
         self.field_weights = weights
+        self.field_weights_from_geometry = dynamic_weights
         self.entity_rows = rows
         self.query_permutation = tuple(int(value) for value in query_permutation)
         self.entity_shape = tuple(int(value) for value in entity_shape)
@@ -127,7 +136,13 @@ class IsogeometricReferenceActions(LocalReferenceActions):
             {
                 "kind": "isogeometric-reference-actions",
                 "structural": str(structural_id),
-                "field_weight_kind": "polynomial" if weights is None else "rational",
+                "field_weight_kind": (
+                    "geometry"
+                    if dynamic_weights
+                    else "polynomial"
+                    if weights is None
+                    else "rational"
+                ),
                 "field_weights": (
                     None
                     if weights is None
@@ -148,16 +163,23 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         )
 
     def _rational(self, runtime: object, /) -> RationalSplineJet:
-        _runtime(
+        runtime_ = _runtime(
             runtime,
             topology_id=self.topology_id,
             geometry_layout_id=self.geometry_layout_id,
         )
-        weights = (
-            jnp.ones(self.tensor_plan.source_shape)
-            if self.field_weights is None
-            else self.field_weights
-        )
+        if self.field_weights_from_geometry:
+            if runtime_.weights.shape != self.tensor_plan.source_shape:
+                raise ValueError(
+                    "Dynamic geometry weights do not match the field tensor basis."
+                )
+            weights = runtime_.weights
+        else:
+            weights = (
+                jnp.ones(self.tensor_plan.source_shape)
+                if self.field_weights is None
+                else self.field_weights
+            )
         return RationalSplineJet(self.tensor_plan, weights)
 
     def _values(self, runtime: object, /) -> Array:
@@ -203,13 +225,13 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.entity_rows.size, self.local_width):
             raise ValueError("IGA local coefficients do not match reference actions.")
-        return oe.contract("eql,el...->eq...", self._values(runtime), coefficients)
+        return ein.contract("eql,el...->eq...", self._values(runtime), coefficients)
 
     def interpolate_transpose(self, runtime: object, values: ArrayLike, /) -> Array:
         values_ = jnp.asarray(values)
         if values_.shape[:2] != (self.entity_rows.size, self.point_count):
             raise ValueError("IGA point values do not match reference actions.")
-        return oe.contract("eql,eq...->el...", self._values(runtime), values_)
+        return ein.contract("eql,eq...->el...", self._values(runtime), values_)
 
     def reference_gradient(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -217,7 +239,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.entity_rows.size, self.local_width):
             raise ValueError("IGA local coefficients do not match reference actions.")
-        return oe.contract("eqlr,el...->eq...r", self._gradients(runtime), coefficients)
+        return ein.contract("eqlr,el...->eq...r", self._gradients(runtime), coefficients)
 
     def reference_gradient_transpose(
         self, runtime: object, gradients: ArrayLike, /
@@ -228,7 +250,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
             or gradients_.shape[-1] != self.tensor_plan.dimension
         ):
             raise ValueError("IGA point gradients do not match reference actions.")
-        return oe.contract("eqlr,eq...r->el...", self._gradients(runtime), gradients_)
+        return ein.contract("eqlr,eq...r->el...", self._gradients(runtime), gradients_)
 
     def reference_hessian(
         self, runtime: object, local_coefficients: ArrayLike, /
@@ -236,7 +258,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         coefficients = jnp.asarray(local_coefficients)
         if coefficients.shape[:2] != (self.entity_rows.size, self.local_width):
             raise ValueError("IGA local coefficients do not match reference actions.")
-        return oe.contract("eqlrs,el...->eq...rs", self._hessians(runtime), coefficients)
+        return ein.contract("eqlrs,el...->eq...rs", self._hessians(runtime), coefficients)
 
     def reference_hessian_transpose(
         self, runtime: object, hessians: ArrayLike, /
@@ -248,7 +270,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
             or hessians_.shape[-2:] != expected
         ):
             raise ValueError("IGA point Hessians do not match reference actions.")
-        return oe.contract("eqlrs,eq...rs->el...", self._hessians(runtime), hessians_)
+        return ein.contract("eqlrs,eq...rs->el...", self._hessians(runtime), hessians_)
 
     def trace(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         if not self.is_trace:
@@ -345,7 +367,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
 
     def _rational_data(
         self, runtime: IsogeometricRuntimeData, /
-    ) -> tuple[Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array]:
         rational = RationalSplineJet(self.tensor_plan, runtime.weights)
         values = _query_view(
             rational.values,
@@ -361,6 +383,13 @@ class IsogeometricGeometryActions(LocalGeometryActions):
             self.point_shape,
             2,
         )[self.entity_rows]
+        hessians = _query_view(
+            rational.hessians,
+            self.query_permutation,
+            self.entity_shape,
+            self.point_shape,
+            3,
+        )[self.entity_rows]
         indices = _query_view(
             rational.indices,
             self.query_permutation,
@@ -368,7 +397,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
             self.point_shape,
             1,
         )[self.entity_rows]
-        return values, gradients, indices
+        return values, gradients, hessians, indices
 
     def _metric(self, runtime: object, /) -> tuple[LocalMetricResult, Array]:
         runtime_ = _runtime(
@@ -376,13 +405,14 @@ class IsogeometricGeometryActions(LocalGeometryActions):
             topology_id=self.topology_id,
             geometry_layout_id=self.runtime_layout_id,
         )
-        values, gradients, indices = self._rational_data(runtime_)
+        values, gradients, hessians, indices = self._rational_data(runtime_)
         local_points = runtime_.control_points.reshape(
             (-1, runtime_.control_points.shape[-1])
         )[indices]
-        points = oe.contract("eql,eqld->eqd", values, local_points)
-        jacobian = oe.contract("eqlr,eqld->eqdr", gradients, local_points)
-        metric = oe.contract("eqdi,eqdj->eqij", jacobian, jacobian)
+        points = ein.contract("eql,eqld->eqd", values, local_points)
+        jacobian = ein.contract("eqlr,eqld->eqdr", gradients, local_points)
+        mapping_hessian = ein.contract("eqlrs,eqld->eqdrs", hessians, local_points)
+        metric = ein.contract("eqdi,eqdj->eqij", jacobian, jacobian)
         inverse_result = inverse_small_linear(
             SmallLinearSolvePlan(metric.shape[-1]),
             metric,
@@ -392,7 +422,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
             jnp.any(~inverse_result.successful),
             "Isogeometric metric inversion failed.",
         )
-        inverse_jacobian = oe.contract("eqij,eqdj->eqid", inverse_metric, jacobian)
+        inverse_jacobian = ein.contract("eqij,eqdj->eqid", inverse_metric, jacobian)
         determinant = inverse_result.determinant
         volume_measure = jnp.sqrt(jnp.maximum(determinant, 0.0))
         normals = None
@@ -403,7 +433,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
                 .at[self.facet_axis]
                 .set(float(self.facet_side))
             )
-            normal_vector = oe.contract(
+            normal_vector = ein.contract(
                 "eqdr,eqrs,s->eqd", jacobian, inverse_metric, covector
             )
             normal_scale = jnp.linalg.norm(normal_vector, axis=-1)
@@ -412,18 +442,28 @@ class IsogeometricGeometryActions(LocalGeometryActions):
             )
             normals = normal_vector / safe_normal_scale[..., None]
             physical_weights = physical_weights * normal_scale
+        inverse_hessian = None
+        if jacobian.shape[-2] == jacobian.shape[-1]:
+            inverse_hessian = -ein.contract(
+                "eqrd,eqdst,eqsa,eqtb->eqrab",
+                inverse_jacobian,
+                mapping_hessian,
+                inverse_jacobian,
+                inverse_jacobian,
+            )
         result = LocalMetricResult(
             points,
             physical_weights,
             jacobian,
             inverse_jacobian,
+            inverse_hessian=inverse_hessian,
             normals=normals,
         )
         zero = (0,) * self.tensor_plan.dimension
         polynomial_values = self.tensor_plan.basis(zero)
         polynomial_indices = self.tensor_plan.tensor_indices
         local_weights = runtime_.weights.reshape((-1,))[polynomial_indices]
-        weight_sum = oe.contract("...l,...l->...", polynomial_values, local_weights)
+        weight_sum = ein.contract("...l,...l->...", polynomial_values, local_weights)
         weight_sum = _query_view(
             weight_sum,
             self.query_permutation,
@@ -446,7 +486,7 @@ class IsogeometricGeometryActions(LocalGeometryActions):
         tiny = jnp.finfo(points.dtype).tiny
         safe_scale = jnp.maximum(coordinate_scale, tiny)
         scaled_jacobian = metric.jacobian * self.parameter_scales
-        gram = oe.contract("eqdi,eqdj->eqij", scaled_jacobian, scaled_jacobian)
+        gram = ein.contract("eqdi,eqdj->eqij", scaled_jacobian, scaled_jacobian)
         eigenvalues = jnp.linalg.eigvalsh(gram)
         minimum_rank_ratio = jnp.min(eigenvalues[..., 0]) / (safe_scale * safe_scale)
         maximum_weight = jnp.maximum(jnp.max(jnp.abs(weight_sum)), tiny)

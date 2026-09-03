@@ -45,7 +45,6 @@ from ._contracts import (
     ValidatedPrincipal,
 )
 from ._durability import DurableJobRecord, DurableServiceStore, OutboxMessage
-from ._observability import SecretRedactor
 
 
 if TYPE_CHECKING:
@@ -552,7 +551,7 @@ class InProcessReferenceService:
                     "cancelled",
                     "",
                 )
-        except Exception as error:
+        except Exception:
             with self._lock:
                 try:
                     self._require_execution_fence(
@@ -561,16 +560,10 @@ class InProcessReferenceService:
                 except _ExecutionSuperseded:
                     return self._status(job)
                 finished_at = self._clock.now()
-                redacted_message = SecretRedactor().redact(
-                    str(error) or type(error).__name__,
-                    field_name="provider_error",
-                )
-                if not isinstance(redacted_message, str):
-                    redacted_message = "<redacted>"
                 failure = FailureEvidence(
                     "provider_failure",
-                    type(error).__name__,
-                    redacted_message,
+                    "ProviderExecutionError",
+                    "Provider execution failed.",
                     False,
                     execution_attempt,
                 )

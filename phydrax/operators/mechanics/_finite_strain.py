@@ -9,8 +9,9 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -84,8 +85,8 @@ class FiniteStrainKinematics(StrictModule):
         self.inverse_deformation_gradient = inverse_deformation
         self.jacobian = jacobian
         self.cofactor = jacobian[..., None, None] * inverse_transpose
-        self.right_cauchy_green = oe.contract("...ki,...kj->...ij", embedded, embedded)
-        self.left_cauchy_green = oe.contract("...ik,...jk->...ij", embedded, embedded)
+        self.right_cauchy_green = ein.contract("...ki,...kj->...ij", embedded, embedded)
+        self.left_cauchy_green = ein.contract("...ik,...jk->...ij", embedded, embedded)
         self.inverse_condition_estimate = inverse.condition_estimate
         self.inverse_residual_norm = inverse.residual_norm
         self.admissible = admissible
@@ -209,7 +210,7 @@ def nanson_transform(
     """
     kinematics = finite_strain_kinematics(deformation_gradient)
     reference, dimension = _embedded_area_vector(reference_area_vector, kinematics)
-    current = oe.contract("...ij,...j->...i", kinematics.cofactor, reference)
+    current = ein.contract("...ij,...j->...i", kinematics.cofactor, reference)
     current = jnp.where(
         kinematics.admissible[..., None], current, jnp.full_like(current, jnp.nan)
     )
@@ -230,7 +231,7 @@ def inverse_nanson_transform(
     kinematics = finite_strain_kinematics(deformation_gradient)
     current, dimension = _embedded_area_vector(current_area_vector, kinematics)
     reference = (
-        oe.contract("...ji,...j->...i", kinematics.deformation_gradient, current)
+        ein.contract("...ji,...j->...i", kinematics.deformation_gradient, current)
         / jnp.where(kinematics.admissible, kinematics.jacobian, 1.0)[..., None]
     )
     reference = jnp.where(
@@ -288,7 +289,7 @@ def first_piola_to_cauchy(
     if stress.shape[-2:] != (3, 3):
         raise ValueError("First Piola stress must end in 3x3 in the embedded frame.")
     cauchy = (
-        oe.contract("...ij,...kj->...ik", stress, kinematics.deformation_gradient)
+        ein.contract("...ij,...kj->...ik", stress, kinematics.deformation_gradient)
         / jnp.where(kinematics.admissible, kinematics.jacobian, 1.0)[..., None, None]
     )
     return jnp.where(
@@ -312,7 +313,7 @@ def cauchy_to_first_piola(
     stress = jnp.asarray(cauchy_stress)
     if stress.shape[-2:] != (3, 3):
         raise ValueError("Cauchy stress must end in 3x3 in the embedded frame.")
-    first_piola = kinematics.jacobian[..., None, None] * oe.contract(
+    first_piola = kinematics.jacobian[..., None, None] * ein.contract(
         "...ij,...jk->...ik", stress, kinematics.inverse_transpose
     )
     return jnp.where(
@@ -457,7 +458,7 @@ def neo_hookean_reference_energy_from_moduli(
     kinematics, shear, lambda_, material_admissible, logarithm = _neo_hookean_state(
         deformation_gradient, shear_modulus, lame_lambda
     )
-    first_invariant = oe.contract(
+    first_invariant = ein.contract(
         "...ij,...ij->...",
         kinematics.deformation_gradient,
         kinematics.deformation_gradient,
@@ -516,17 +517,17 @@ def neo_hookean_tangent_from_moduli(
     )
     inverse_transpose = kinematics.inverse_transpose
     identity = jnp.eye(3, dtype=kinematics.deformation_gradient.dtype)
-    direct = shear[..., None, None, None, None] * oe.contract(
+    direct = shear[..., None, None, None, None] * ein.contract(
         "ik,jl->ijkl",
         identity,
         identity,
     )
-    volumetric = lambda_[..., None, None, None, None] * oe.contract(
+    volumetric = lambda_[..., None, None, None, None] * ein.contract(
         "...ij,...kl->...ijkl",
         inverse_transpose,
         inverse_transpose,
     )
-    geometric = (shear - lambda_ * logarithm)[..., None, None, None, None] * oe.contract(
+    geometric = (shear - lambda_ * logarithm)[..., None, None, None, None] * ein.contract(
         "...il,...kj->...ijkl",
         inverse_transpose,
         inverse_transpose,

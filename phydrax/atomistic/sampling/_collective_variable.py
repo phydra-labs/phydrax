@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ... import linalg as la
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -71,6 +72,17 @@ class AbstractCollectiveVariablePlan(StrictModule, NonTrainableState):
 
     @abc.abstractmethod
     def prepare(self, system: PreparedAtomisticSystem, /) -> "PreparedCollectiveVariable":
+        raise NotImplementedError
+
+
+class AbstractCollectiveVariableProgram(StrictModule, NonTrainableState):
+    output_size: AbstractAttribute[int]
+    names: AbstractAttribute[tuple[str, ...]]
+    metrics: AbstractAttribute[tuple[CollectiveVariableMetric, ...]]
+    program_id: AbstractAttribute[str]
+
+    @abc.abstractmethod
+    def evaluate(self, positions: ArrayLike, /, **kwargs):
         raise NotImplementedError
 
 
@@ -389,19 +401,40 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
         )
 
 
-class CollectiveVariableProgram(StrictModule, NonTrainableState):
+class CollectiveVariableProgram(AbstractCollectiveVariableProgram):
     variables: tuple[PreparedCollectiveVariable, ...]
+    output_size: int = eqx.field(static=True)
+    names: tuple[str, ...] = eqx.field(static=True)
+    metrics: tuple[CollectiveVariableMetric, ...]
     program_id: str = eqx.field(static=True)
 
-    def __init__(self, variables, /):
+    def __init__(self, variables, /, *, names=None):
         values = tuple(variables)
         if not values or any(
             not isinstance(value, PreparedCollectiveVariable) for value in values
         ):
             raise TypeError("variables must contain prepared collective variables.")
+        resolved_names = (
+            tuple(f"cv:{index}" for index in range(len(values)))
+            if names is None
+            else tuple(str(name) for name in names)
+        )
+        if (
+            len(resolved_names) != len(values)
+            or any(not name for name in resolved_names)
+            or len(set(resolved_names)) != len(resolved_names)
+        ):
+            raise ValueError("CV names must be non-empty, unique, and match variables.")
         self.variables = values
+        self.output_size = len(values)
+        self.names = resolved_names
+        self.metrics = tuple(value.plan.metric for value in values)
         self.program_id = canonical_fingerprint(
-            {"kind": "cv-program", "variables": [value.prepared_id for value in values]}
+            {
+                "kind": "cv-program",
+                "variables": [value.prepared_id for value in values],
+                "names": list(resolved_names),
+            }
         )
 
     def evaluate(self, positions, /, **kwargs):
@@ -414,6 +447,7 @@ class CollectiveVariableProgram(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AbstractCollectiveVariableProgram",
     "AbstractCollectiveVariablePlan",
     "CollectiveVariableEvaluation",
     "CollectiveVariableKind",

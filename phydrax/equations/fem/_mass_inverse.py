@@ -10,8 +10,9 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -130,7 +131,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
             basis = geometry.basis_values
             physical_weights = geometry.physical_weights
             if basis.ndim == 2:
-                matrices = oe.contract(
+                matrices = ein.contract(
                     "cq,qi,qj->cij",
                     physical_weights,
                     basis,
@@ -139,7 +140,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                 )
                 basis_host = np.asarray(basis)
             else:
-                matrices = oe.contract(
+                matrices = ein.contract(
                     "cq,cqi,cqj->cij",
                     physical_weights,
                     basis,
@@ -211,14 +212,14 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                 factor_bytes += int(reference_physical.nbytes)
             elif block_strategy == "weight_adjusted":
                 reference_weights = np.asarray(rule_data.weights)
-                reference_mass = oe.contract(
+                reference_mass = ein.contract(
                     "q,qi,qj->ij",
                     reference_weights,
                     basis_host,
                     basis_host,
                 )
                 jacobian = np.asarray(physical_weights) / reference_weights[None, :]
-                reciprocal_mass = oe.contract(
+                reciprocal_mass = ein.contract(
                     "cq,qi,qj->cij",
                     reference_weights[None, :] / jacobian,
                     basis_host,
@@ -321,7 +322,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
                 )
             elif strategy == "weight_adjusted":
                 first = _solve_grouped_factor(factors[0], local_flat, validate=validate)
-                weighted = oe.contract(
+                weighted = ein.contract(
                     "cij,cjk->cik", weight_adjusted, first, backend="jax"
                 )
                 solved_flat = _solve_grouped_factor(

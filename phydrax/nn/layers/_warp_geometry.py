@@ -11,8 +11,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ..._interpolation import apply_gather_stencil, rectilinear_stencil
 from ..._strict import StrictModule
@@ -408,7 +409,7 @@ def _transform_tensor(
                     )
                 matrix = inverse
             transformed = jnp.moveaxis(transformed, tensor_axis + 1, -1)
-            transformed = oe.contract("nij,n...j->n...i", matrix, transformed)
+            transformed = ein.contract("nij,n...j->n...i", matrix, transformed)
             transformed = jnp.moveaxis(transformed, -1, tensor_axis + 1)
         transformed = transformed.reshape(sampled.shape)
     if spec.density_weight:

@@ -84,11 +84,11 @@ def _resolve_fourier_axes(
     /,
 ) -> tuple[int, ...]:
     if axes is None:
-        if array.ndim < len(output_shape) + 1:
+        if array.ndim < len(output_shape):
             raise ValueError(
-                "Fourier resampling expects trailing spatial axes before a payload axis."
+                "The input rank must be at least the number of Fourier axes."
             )
-        return tuple(range(array.ndim - len(output_shape) - 1, array.ndim - 1))
+        return tuple(range(array.ndim - len(output_shape), array.ndim))
     resolved_input = tuple(axes)
     if array.ndim == 0 or len(resolved_input) != len(output_shape):
         raise ValueError("axes must provide one array axis per output size.")

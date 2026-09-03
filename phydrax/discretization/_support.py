@@ -12,6 +12,7 @@ from ._core import nonempty_identifier, resolved_identifier
 from ._topology import (
     CellComplexTopology,
     DiscreteTopology,
+    DyadicCellTopology,
     PointTopology,
     TensorTopology,
 )
@@ -34,7 +35,10 @@ class DiscreteSupport(StrictModule, NonTrainableState):
         *,
         support_id: str | None = None,
     ):
-        if not isinstance(topology, (TensorTopology, CellComplexTopology, PointTopology)):
+        if not isinstance(
+            topology,
+            (TensorTopology, CellComplexTopology, PointTopology, DyadicCellTopology),
+        ):
             raise TypeError("topology must be a supported DiscreteTopology value.")
         dimension = int(ambient_dimension)
         if dimension <= 0:

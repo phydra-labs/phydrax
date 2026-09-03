@@ -13,6 +13,7 @@ import pytest
 
 from phydrax._array_archive import (
     ArrayArchiveCorruptionError,
+    ArrayArchiveLimits,
     read_array_archive,
     write_array_archive,
 )
@@ -28,12 +29,12 @@ def test_array_archive_reads_are_bounded_before_payload_allocation(
         arrays={"state": np.arange(32, dtype=np.float64)},
     )
 
-    with pytest.raises(ArrayArchiveCorruptionError, match="byte bound"):
-        read_array_archive(path, max_array_bytes=32)
-    with pytest.raises(ArrayArchiveCorruptionError, match="total byte bound"):
-        read_array_archive(path, max_total_bytes=32)
-    with pytest.raises(ArrayArchiveCorruptionError, match="too many members"):
-        read_array_archive(path, max_members=1)
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_array_archive(path, limits=ArrayArchiveLimits(max_member_bytes=32))
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_array_archive(path, limits=ArrayArchiveLimits(max_aggregate_bytes=32))
+    with pytest.raises(ArrayArchiveCorruptionError):
+        read_array_archive(path, limits=ArrayArchiveLimits(max_members=1))
 
 
 def test_array_archive_rejects_compression_and_path_traversal_before_reading(
@@ -44,14 +45,14 @@ def test_array_archive_rejects_compression_and_path_traversal_before_reading(
         compressed, mode="w", compression=zipfile.ZIP_DEFLATED
     ) as archive:
         archive.writestr("manifest.json", b'{"arrays":{}}')
-    with pytest.raises(ArrayArchiveCorruptionError, match="canonical bounded stored"):
+    with pytest.raises(ArrayArchiveCorruptionError, match="canonical"):
         read_array_archive(compressed)
 
     traversal = tmp_path / "traversal.phx"
     with zipfile.ZipFile(traversal, mode="w", compression=zipfile.ZIP_STORED) as archive:
         archive.writestr("manifest.json", b'{"arrays":{}}')
         archive.writestr("arrays/../../payload.npy", b"payload")
-    with pytest.raises(ArrayArchiveCorruptionError, match="canonical bounded stored"):
+    with pytest.raises(ArrayArchiveCorruptionError, match="unexpected members"):
         read_array_archive(traversal)
 
 
@@ -79,7 +80,7 @@ def test_array_archive_never_loads_pickled_object_arrays(tmp_path: Path) -> None
         )
         archive.writestr("arrays/000000.npy", payload)
 
-    with pytest.raises(ArrayArchiveCorruptionError, match="invalid"):
+    with pytest.raises(ArrayArchiveCorruptionError, match="dtype is not admitted"):
         read_array_archive(path)
     with pytest.raises(TypeError, match="object dtype"):
         write_array_archive(

@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
@@ -1097,26 +1098,26 @@ def _diagnostics(
     equality_rhs = problem.equality_rhs
     inequality_matrix = problem.inequality_matrix
     inequality_rhs = problem.inequality_rhs
-    objective = 0.5 * oe.contract(
+    objective = 0.5 * ein.contract(
         "...i,...ij,...j->...", primal, quadratic, primal
-    ) + oe.contract("...i,...i->...", linear, primal)
+    ) + ein.contract("...i,...i->...", linear, primal)
     stationarity = (
-        oe.contract("...ij,...j->...i", quadratic, primal)
+        ein.contract("...ij,...j->...i", quadratic, primal)
         + linear
-        + oe.contract("...ji,...j->...i", equality_matrix, equality_dual)
-        + oe.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
+        + ein.contract("...ji,...j->...i", equality_matrix, equality_dual)
+        + ein.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
     )
     solver_stationarity = stationarity + regularization * primal
     equality_residual = (
-        oe.contract("...ij,...j->...i", equality_matrix, primal) - equality_rhs
+        ein.contract("...ij,...j->...i", equality_matrix, primal) - equality_rhs
     )
     inequality_residual = (
-        oe.contract("...ij,...j->...i", inequality_matrix, primal)
+        ein.contract("...ij,...j->...i", inequality_matrix, primal)
         + slack
         - inequality_rhs
     )
     inequality_violation = jnp.maximum(
-        oe.contract("...ij,...j->...i", inequality_matrix, primal) - inequality_rhs,
+        ein.contract("...ij,...j->...i", inequality_matrix, primal) - inequality_rhs,
         0.0,
     )
     complementarity = slack * inequality_dual
@@ -1707,17 +1708,17 @@ def _dense_primal_forward(
         step_fraction=step_fraction,
     )
     stationarity = (
-        oe.contract("...ij,...j->...i", quadratic, primal)
+        ein.contract("...ij,...j->...i", quadratic, primal)
         + regularization * primal
         + linear
-        + oe.contract("...ji,...j->...i", equality_matrix, equality_dual)
-        + oe.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
+        + ein.contract("...ji,...j->...i", equality_matrix, equality_dual)
+        + ein.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
     )
     equality_residual = (
-        oe.contract("...ij,...j->...i", equality_matrix, primal) - equality_rhs
+        ein.contract("...ij,...j->...i", equality_matrix, primal) - equality_rhs
     )
     inequality_residual = (
-        oe.contract("...ij,...j->...i", inequality_matrix, primal)
+        ein.contract("...ij,...j->...i", inequality_matrix, primal)
         + slack
         - inequality_rhs
     )

@@ -248,3 +248,44 @@ same way when their derivative requirements are supported.
 For the enforcement compiler and its options, see
 [Exact enforcement](api/solver/enforcement.md). For solver evaluation
 and optimization, see [Functional solver](api/solver/functional_solver.md).
+
+## Joint linear conditions without pivots
+
+Typed finite conditions can couple several fields and are projected jointly:
+
+```python
+import jax.numpy as jnp
+
+value = phx.conditions.ArrayCodomain.from_shape((2,), dtype=float)
+fields = phx.conditions.ProductFieldSpec(
+    (
+        phx.conditions.FieldSpec("u", value),
+        phx.conditions.FieldSpec("v", value),
+    )
+)
+condition = phx.conditions.Condition(
+    "coupled-sum",
+    fields,
+    phx.conditions.MatrixLinearFunctional(
+        ("u", "v"),
+        ((2,), (2,)),
+        (jnp.eye(2), jnp.eye(2)),
+    ),
+    value,
+    phx.conditions.Equality(jnp.array([2.0, 4.0])),
+)
+raw = {"u": jnp.array([5.0, -1.0]), "v": jnp.zeros(2)}
+bound = phx.conditions.bind_condition(condition, raw)
+prepared = phx.enforcement.prepare_affine_projector(
+    (bound,),
+    phx.enforcement.ConstraintLinearCorrectionProvider(),
+    correction_fields=("u", "v"),
+)
+projected = prepared.apply(raw)
+```
+
+The prepared operator contains the full off-diagonal response. Cyclic relations
+therefore require neither a pivot nor sequential projections. Use
+`CoefficientElimination` when the fields expose a certified finite linear
+representation, a geometry/kernel correction provider for function fields, or a
+nonlinear/feasibility realization for non-affine relations.

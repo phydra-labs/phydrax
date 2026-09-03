@@ -10,9 +10,11 @@
 Solvers aggregate numerical terms and attached model losses for training or
 evaluation. `FunctionalSolver` consumes one ordered `terms` collection.
 
-Hard `EnforcementSpec` declarations may also compile boundary, initial, and
-interior requirements into an `EnforcementProgram` that transforms fields before
-term evaluation.
+Hard `EnforcementSpec` declarations compile local boundary/initial ansätze and
+joint typed field realizations into an `EnforcementProgram`. Finite, fiberwise,
+coefficient, kernel, nonlinear, and feasibility routes are applied once before
+term evaluation. Dynamic realization state advances only at accepted-step
+boundaries.
 
 !!! example
     ```python

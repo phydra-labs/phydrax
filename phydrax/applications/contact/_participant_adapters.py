@@ -10,7 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ...discretization.contact._guarantee import (
@@ -247,6 +248,7 @@ def make_articulated_contact_participant(
     forward_kinematics: Callable[[PyTree], Array],
     /,
     *,
+    tangent_space: AbstractVectorSpace | None = None,
     velocity_action: Callable[[PyTree, PyTree], Array] | None = None,
     pullback_action: Callable[[PyTree, Array], PyTree] | None = None,
     bounds_action: Callable[[PyTree, PyTree], tuple[Array, Array]] | None = None,
@@ -256,6 +258,7 @@ def make_articulated_contact_participant(
         plan,
         source_space,
         forward_kinematics,
+        tangent_space=tangent_space,
         velocity_action=velocity_action,
         pullback_action=pullback_action,
         bounds_action=bounds_action,

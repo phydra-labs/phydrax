@@ -9,6 +9,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from . import ein as ein
+
 from . import (
     backends,
     combinatorial,
@@ -34,6 +36,7 @@ from . import (
     linalg,
     metrix,
     ml,
+    signal,
     nn,
     nonlinear,
     operators,
@@ -58,6 +61,7 @@ from . import (
     weighting,
 )
 from . import artifacts, events, observation
+from ._array_archive import ArrayArchiveLimits
 from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
@@ -89,6 +93,7 @@ __all__ = [
     "topology",
     "domain",
     "dynamics",
+    "ein",
     "equations",
     "enforcement",
     "export",
@@ -102,6 +107,7 @@ __all__ = [
     "linalg",
     "metrix",
     "ml",
+    "signal",
     "nn",
     "nonlinear",
     "observation",
@@ -124,6 +130,7 @@ __all__ = [
     "tensor_network",
     "tensor_train",
     "weighting",
+    "ArrayArchiveLimits",
     "DimensionalScaleContract",
     "LengthCoordinateKind",
 ]

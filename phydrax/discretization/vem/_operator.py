@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -106,10 +107,10 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
             strict=True,
         ):
             local = state[gather]
-            projected = oe.contract("cai,ci->ca", coefficient, local)
-            polynomial_action = oe.contract("cab,cb->ca", polynomial, projected)
-            consistent = oe.contract("cai,ca->ci", coefficient, polynomial_action)
-            stabilized = oe.contract("cij,cj->ci", stabilization, local)
+            projected = ein.contract("cai,ci->ca", coefficient, local)
+            polynomial_action = ein.contract("cab,cb->ca", polynomial, projected)
+            consistent = ein.contract("cai,ca->ci", coefficient, polynomial_action)
+            stabilized = ein.contract("cij,cj->ci", stabilization, local)
             result = scatter_local(
                 result,
                 gather,
@@ -143,7 +144,7 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
             self.gathers,
             strict=True,
         ):
-            local = oe.contract("cai,cab,cbj->cij", coefficient, polynomial, coefficient)
+            local = ein.contract("cai,cab,cbj->cij", coefficient, polynomial, coefficient)
             operators.append(
                 ElementTensorOperator(
                     local + stabilization,

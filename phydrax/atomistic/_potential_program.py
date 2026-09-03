@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
+
+from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
@@ -27,6 +28,7 @@ from ._potential import (
     AbstractAtomisticPotential,
     AtomisticPotentialCapabilities,
     AtomisticPotentialRequirements,
+    AtomisticSpeciesKind,
 )
 from ._sites import AtomisticInteractionSiteState
 from ._system import PreparedAtomisticSystem
@@ -164,12 +166,12 @@ class LearnedGraphPotentialTerm(AbstractAtomisticEnergyTerm):
     ) -> "PreparedLearnedGraphPotentialTerm":
         if system.plan.units.scale.scale_id != self.potential.scale.scale_id:
             raise ValueError("Learned potential and atomistic system scales differ.")
-        if not np.array_equal(
-            np.asarray(system.plan.atom_type_ids),
-            np.asarray(system.plan.atomic_numbers),
+        if (
+            self.potential.capabilities.species_kind is AtomisticSpeciesKind.ATOMIC_NUMBER
+            and not bool(jnp.all(system.plan.element_mask | ~system.active_mask))
         ):
             raise ValueError(
-                "Learned graph execution requires atom_type_ids to equal atomic numbers."
+                "Atomic-number learned potentials require element particles."
             )
         if system.cell is not None and not self.allow_periodic:
             raise ValueError(
@@ -210,8 +212,14 @@ class PreparedLearnedGraphPotentialTerm(AbstractPreparedAtomisticEnergyTerm):
         if context.graph is None:
             raise ValueError("Learned graph potential requires a directed graph context.")
         atom_cases = jnp.zeros((self.system.capacity,), dtype=jnp.int32)
+        species = (
+            self.system.plan.atomic_numbers
+            if self.plan.potential.capabilities.species_kind
+            is AtomisticSpeciesKind.ATOMIC_NUMBER
+            else context.species
+        )
         energy, atom_energy = self.plan.potential.graph_energy(
-            context.species,
+            species,
             self.system.active_mask,
             atom_cases,
             1,
@@ -289,6 +297,14 @@ class AtomisticPotentialProgram(StrictModule):
                 value.capabilities.local_energy_delta for value in values
             ),
             dynamic_species=all(value.capabilities.dynamic_species for value in values),
+            species_kind=(
+                AtomisticSpeciesKind.ATOM_TYPE_ID
+                if any(
+                    value.capabilities.species_kind is AtomisticSpeciesKind.ATOM_TYPE_ID
+                    for value in values
+                )
+                else AtomisticSpeciesKind.ATOMIC_NUMBER
+            ),
         )
         self.terms = values
         self.coefficients = jnp.asarray(weights)

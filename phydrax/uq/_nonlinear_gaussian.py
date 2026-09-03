@@ -13,9 +13,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, Key, PyTree
+
+import phydrax.ein as ein
 
 from .._polynomial._orthogonal import standard_normal_hermite_rule_data
 from .._strict import StrictModule
@@ -193,10 +194,10 @@ def _weighted_transform(
         input_unravel,
         physical_points,
     )
-    output_mean = oe.contract("p,po->o", mean_weights, output_points)
+    output_mean = ein.contract("p,po->o", mean_weights, output_points)
     output_centered = output_points - output_mean[None, :]
     input_centered = physical_points - flat_mean[None, :]
-    cross_covariance = oe.contract(
+    cross_covariance = ein.contract(
         "p,pi,po->io",
         covariance_weights,
         input_centered,
@@ -221,7 +222,7 @@ def _weighted_transform(
                 "Scaled unscented dense covariance exceeds max_output_dimension; "
                 f"got {output_mean.size}, cap {max_dense_dimension}."
             )
-        covariance = oe.contract(
+        covariance = ein.contract(
             "p,pi,pj->ij",
             covariance_weights,
             output_centered,
@@ -356,7 +357,7 @@ def _weighted_expectation(
     output_points, output_unravel = _evaluate_points(
         function, input_unravel, physical_points
     )
-    value = oe.contract("p,po->o", weights, output_points)
+    value = ein.contract("p,po->o", weights, output_points)
     evaluations_finite = (
         jnp.all(jnp.isfinite(flat_mean))
         & jnp.all(jnp.isfinite(physical_points))

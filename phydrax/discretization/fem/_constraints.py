@@ -4,75 +4,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import cast
+from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
+    AbstractLinearOperator,
     ArraySpace,
-    ComposedLinearOperator,
+    compose_constraint_maps,
     ConstraintMap,
     DenseLinearOperator,
-    FunctionLinearOperator,
 )
+from ...sparse import EdgeRelation, SparseCoordinateOperator
+from .._constraints import AbstractDiscreteDirichletConstraint
 from ._generic import FiniteElementDiscretization
 from ._hp_runtime import FiniteElementHPTraceConstraintPlan
 
 
-class FiniteElementDirichletConstraint(StrictModule, NonTrainableState):
+class FiniteElementDirichletConstraint(AbstractDiscreteDirichletConstraint):
     """Strong essential constraint resolved onto one prepared FE field."""
-
-    field_name: str = eqx.field(static=True)
-    constraint_map: ConstraintMap
-    constrained_dofs: Array
-    free_dofs: Array
-    dof_coordinates: Array
-    constraint_id: str = eqx.field(static=True)
-
-    def lift(
-        self,
-        values: ArrayLike | Callable[[Array], ArrayLike],
-        /,
-    ) -> Array:
-        if callable(values):
-            evaluator = cast(Callable[[Array], ArrayLike], values)
-            evaluated = evaluator(self.dof_coordinates)
-        else:
-            evaluated = values
-        raw = jnp.asarray(evaluated)
-        full_space = self.constraint_map.full_space
-        if not isinstance(full_space, ArraySpace):
-            raise TypeError("Finite-element Dirichlet lifts require an ArraySpace.")
-        full_shape = full_space.shape
-        full_size = int(np.prod(full_shape, dtype=int))
-        if raw.shape == ():
-            full = jnp.broadcast_to(raw, full_shape).reshape((full_size,))
-        elif raw.shape == full_shape:
-            full = raw.reshape((full_size,))
-        elif raw.shape == (int(self.constrained_dofs.size),):
-            full = (
-                jnp.zeros((full_size,), dtype=raw.dtype)
-                .at[self.constrained_dofs]
-                .set(raw)
-            )
-        else:
-            raise ValueError(
-                "Dirichlet values must be scalar, full-space shaped, or contain "
-                "one value per constrained coordinate."
-            )
-        zeros = jnp.zeros((full_size,), dtype=full.dtype)
-        return (
-            zeros.at[self.constrained_dofs]
-            .set(full[self.constrained_dofs])
-            .reshape(full_shape)
-        )
 
 
 class FiniteElementLinearConstraint(StrictModule, NonTrainableState):
@@ -202,20 +158,21 @@ def dirichlet_constraint(
         raise ValueError(
             "Dirichlet constraints require a non-empty proper subset of DOFs."
         )
-    reduced_space = ArraySpace((free.size,), pairing=None)
     full_space = field_space.vector_space
+    reduced_space = ArraySpace((free.size,), dtype=full_space.dtype)
     free_array = jnp.asarray(free)
     full_size = int(np.prod(full_space.shape, dtype=int))
-    prolongation = FunctionLinearOperator(
-        lambda reduced: (
-            jnp.zeros((full_size,), dtype=reduced.dtype)
-            .at[free_array]
-            .set(reduced, unique_indices=True)
-            .reshape(full_space.shape)
-        ),
+    relation = EdgeRelation(
+        np.arange(free.size, dtype=np.int32),
+        free,
+        source_size=free.size,
+        target_size=full_size,
+    )
+    prolongation = SparseCoordinateOperator(
+        relation,
+        jnp.ones((free.size,), dtype=full_space.dtype),
         source=reduced_space,
         target=full_space,
-        transpose_action=lambda full: full.reshape((full_size,))[free_array],
         operator_id=canonical_fingerprint(
             {
                 "kind": "finite-element-dirichlet-prolongation",
@@ -249,7 +206,7 @@ def dirichlet_constraint(
 def affine_dof_constraint(
     discretization: FiniteElementDiscretization,
     field_name: str,
-    prolongation_matrix: ArrayLike,
+    prolongation: ArrayLike | AbstractLinearOperator,
     /,
     *,
     constraint_id: str | None = None,
@@ -260,24 +217,45 @@ def affine_dof_constraint(
         raise TypeError("discretization must be FiniteElementDiscretization.")
     field_index = discretization._field_index(field_name)
     full_space = discretization.field_spaces[field_index].vector_space
-    matrix = jnp.asarray(prolongation_matrix)
-    if matrix.ndim != 2 or matrix.shape[0] != full_space.size:
-        raise ValueError(
-            "prolongation_matrix must map reduced coordinates to the full field."
+    if isinstance(prolongation, AbstractLinearOperator):
+        operator = prolongation
+        if not operator.target.compatible(full_space):
+            raise ValueError(
+                "Constraint prolongation operator must target the full field space."
+            )
+        if operator.source.size > operator.target.size:
+            raise ValueError("Constraint prolongation cannot be coordinate-injective.")
+        reduced_space = operator.source
+    else:
+        matrix = jnp.asarray(prolongation)
+        if matrix.ndim != 2 or matrix.shape[0] != full_space.size:
+            raise ValueError(
+                "prolongation must map reduced coordinates to the full field."
+            )
+        matrix_host = np.asarray(matrix)
+        if (
+            matrix.shape[1] == 0
+            or np.any(~np.isfinite(matrix_host))
+            or np.linalg.matrix_rank(matrix_host) != matrix.shape[1]
+        ):
+            raise ValueError(
+                "Constraint prolongation must be finite and column-injective."
+            )
+        reduced_space = ArraySpace((int(matrix.shape[1]),), dtype=matrix.dtype)
+        operator = DenseLinearOperator(
+            matrix,
+            source=reduced_space,
+            target=full_space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "finite-element-affine-dof-prolongation",
+                    "field_space": discretization.field_spaces[
+                        field_index
+                    ].field_space_id,
+                    "matrix_shape": list(matrix.shape),
+                }
+            ),
         )
-    reduced_space = ArraySpace((int(matrix.shape[1]),), dtype=matrix.dtype)
-    operator = DenseLinearOperator(
-        matrix,
-        source=reduced_space,
-        target=full_space,
-        operator_id=canonical_fingerprint(
-            {
-                "kind": "finite-element-affine-dof-prolongation",
-                "field_space": discretization.field_spaces[field_index].field_space_id,
-                "matrix_shape": list(matrix.shape),
-            }
-        ),
-    )
     return ConstraintMap(
         full_space,
         reduced_space,
@@ -304,14 +282,52 @@ def finite_element_hp_constraint(
     if plan.full_dof_count != dof_map.global_dof_count:
         raise ValueError("hp trace plan and finite-element DOF map disagree.")
     component_count = int(np.prod(full_space.shape[1:], dtype=int))
-    matrix = np.kron(
-        np.asarray(plan.prolongation),
-        np.eye(component_count, dtype=np.asarray(plan.prolongation).dtype),
+    columns = np.asarray(plan.row_columns, dtype=np.int32)
+    weights = np.asarray(plan.row_weights)
+    valid = np.asarray(plan.row_valid, dtype=bool)
+    components = np.arange(component_count, dtype=np.int32)
+    source_indices = (columns[..., None] * component_count + components).reshape((-1,))
+    target_indices = np.broadcast_to(
+        np.arange(plan.full_dof_count, dtype=np.int32)[:, None, None] * component_count
+        + components,
+        columns.shape + (component_count,),
+    ).reshape((-1,))
+    route_valid = np.broadcast_to(
+        valid[..., None], valid.shape + (component_count,)
+    ).reshape((-1,))
+    relation = EdgeRelation(
+        source_indices,
+        target_indices,
+        source_size=plan.reduced_dof_count * component_count,
+        target_size=plan.full_dof_count * component_count,
+        valid=route_valid,
+    )
+    reduced_space = ArraySpace(
+        (plan.reduced_dof_count * component_count,),
+        dtype=full_space.dtype,
+    )
+    operator = SparseCoordinateOperator(
+        relation,
+        jnp.asarray(
+            np.broadcast_to(
+                weights[..., None], weights.shape + (component_count,)
+            ).reshape((-1,)),
+            dtype=full_space.dtype,
+        ),
+        source=reduced_space,
+        target=full_space,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-hp-field-prolongation",
+                "field_space": discretization.field_spaces[field_index].field_space_id,
+                "trace_plan": plan.plan_id,
+            }
+        ),
     )
     return affine_dof_constraint(
         discretization,
         field_name,
-        matrix,
+        operator,
         constraint_id=canonical_fingerprint(
             {
                 "kind": "finite-element-hp-field-constraint",
@@ -331,13 +347,9 @@ def compose_finite_element_constraints(
 
     if not isinstance(outer, ConstraintMap) or not isinstance(inner, ConstraintMap):
         raise TypeError("Constraint composition requires two ConstraintMap values.")
-    if not inner.full_space.compatible(outer.reduced_space):
-        raise ValueError("Inner full space must equal the outer reduced space.")
-    prolongation = ComposedLinearOperator(outer.prolongation, inner.prolongation)
-    return ConstraintMap(
-        outer.full_space,
-        inner.reduced_space,
-        prolongation,
+    return compose_constraint_maps(
+        outer,
+        inner,
         constraint_id=canonical_fingerprint(
             {
                 "kind": "composed-finite-element-constraint",

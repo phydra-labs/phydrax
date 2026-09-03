@@ -206,6 +206,7 @@ def _transfer_training_state(source: Any, target: Any, /):
         previous_gradient=None,
         progress=TrainingProgress(),
         run_id=state.run_id,
+        gradient_accumulation=state.gradient_accumulation,
         training_seconds=state.training_seconds,
         resumed_from_step=0,
     )
@@ -254,9 +255,7 @@ def train_functional_time_windows(
             training=training,
             resume=plan.transfer_optimizer_state and index > 0,
         )
-        terminal = frozendict(
-            plan.adapter.terminal_fields(current, index, bounds)
-        )
+        terminal = frozendict(plan.adapter.terminal_fields(current, index, bounds))
         if not terminal or any(
             not isinstance(value, DomainFunction) for value in terminal.values()
         ):

@@ -11,8 +11,9 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -200,7 +201,7 @@ def process_output_densities(
     if inputs.ndim != 3 or inputs.shape[1:] != (model.dimension, model.dimension):
         raise ValueError("input_densities have incompatible shape.")
     kraus = model.kraus()
-    return oe.contract("kai,eij,kbj->eab", kraus, inputs, jnp.conj(kraus))
+    return ein.contract("kai,eij,kbj->eab", kraus, inputs, jnp.conj(kraus))
 
 
 def process_experiment_probabilities(
@@ -213,7 +214,7 @@ def process_experiment_probabilities(
     if experiments.dimension != model.dimension:
         raise ValueError("Process model and experiment dimensions differ.")
     outputs = process_output_densities(model, experiments.input_densities)
-    return jnp.real(oe.contract("eoij,eji->eo", experiments.effects, outputs))
+    return jnp.real(ein.contract("eoij,eji->eo", experiments.effects, outputs))
 
 
 def _negative_log_likelihood(

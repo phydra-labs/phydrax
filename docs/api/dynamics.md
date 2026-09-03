@@ -114,6 +114,26 @@ segment-level failure evidence.
 
 ::: phydrax.dynamics.evolve
 
+## Frozen affine exponential flow
+
+`affine_exponential_step` advances `x' = A x + b` through an existing
+`AbstractLinearOperator` and `MatrixFunctionPolicy`. The forcing contribution
+uses `h phi1(h A) b`, so zero and singular operators require no inverse or
+regularization. `AffineExponentialResult` retains the separate exponential and
+forcing action evidence, aggregated work, and success state. Batched execution
+follows the existing dense matrix-function contract; general matrix-free
+operators remain unbatched.
+
+This primitive freezes caller-supplied `A` and `b`. It does not select temporal
+quadrature nodes, claim time-ordered LTV accuracy, impose positivity or
+conservation, or choose a fallback.
+
+::: phydrax.dynamics.AffineExponentialResult
+
+---
+
+::: phydrax.dynamics.affine_exponential_step
+
 ## Trajectory data and source adapters
 
 `TrajectoryData` has shape `case_shape + (capacity,) + state_shape`. `sample_valid`
@@ -175,6 +195,15 @@ deterministic reference-branch, and residual objectives share one authored
 recurrent step. Full, prefix, chunked, rematerialized, and resumed execution are
 required to agree; no JAXPR transformation or inferred carry is involved.
 
+`gradient_accumulation=K` evaluates `K` independently keyed window batches at
+fixed model, optimizer, target, and rollout-schedule state. Each objective emits
+an evidence-weighted numerator and support; numerator gradients and supports are
+summed and normalized once before the Optax update. This is exactly equivalent
+to the pooled evidence-weighted objective for unequal batches and final epoch
+tails. A zero-support group is consumed without advancing optimizer, target,
+validation, callback, history, or checkpoint state. `steps` counts accepted
+optimizer updates, while `TrainingProgress.microstep` counts consumed batches.
+
 The first training contract accepts real `float32` or `float64` pointwise
 models and Euclidean state layouts. Variable steps, stochastic transitions,
 non-Euclidean discrepancies, and low-precision parameters are rejected rather
@@ -199,6 +228,40 @@ architecture hyperparameters.
 ::: phydrax.dynamics.identification.DiscreteModelFitResult
 
 ::: phydrax.dynamics.identification.fit_discrete_model
+
+## Variational kinetics
+
+Lagged variational estimators use reset-safe `TrajectoryData` transitions and an
+explicit weighting policy. VAMP retains distinct source and target singular functions;
+VAC/TICA uses a generalized self-adjoint covariance problem. Markov-state models accept
+hard or soft assignments and expose communicating-class, stationarity, and
+detailed-balance evidence.
+
+::: phydrax.dynamics.identification.LaggedPairWeighting
+
+::: phydrax.dynamics.identification.fit_vamp
+
+::: phydrax.dynamics.identification.VAMPResult
+
+::: phydrax.dynamics.identification.fit_vac
+
+::: phydrax.dynamics.identification.fit_tica
+
+::: phydrax.dynamics.identification.VACResult
+
+::: phydrax.dynamics.identification.fit_markov_state_model
+
+::: phydrax.dynamics.identification.MarkovStateModel
+
+::: phydrax.dynamics.identification.VariationalKineticTrainingPolicy
+
+::: phydrax.dynamics.identification.fit_variational_kinetic_model
+
+::: phydrax.dynamics.identification.VariationalKineticFitResult
+
+::: phydrax.dynamics.analysis.score_vamp
+
+::: phydrax.dynamics.analysis.validate_markov_models
 
 ## Feature libraries, DMD, and EDMD
 

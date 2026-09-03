@@ -24,6 +24,7 @@ from ._archive import (
     SampledExporter,
     SampledField,
     support_bundle,
+    SupportBundleAuthorization,
 )
 from ._chunk_repository import (
     ArtifactManifest,
@@ -210,6 +211,7 @@ __all__ = [
     "prepare_direct_restore",
     "query",
     "register_exporter",
+    "SupportBundleAuthorization",
     "resolve_migration",
     "resolve_run_spec",
     "rollback_configuration",

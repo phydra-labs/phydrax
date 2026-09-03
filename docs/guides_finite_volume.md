@@ -503,6 +503,13 @@ fluxes. `FluxRegister` records orientation, refinement ratio, accumulation time,
 interface mask. `ConservativeAMRSynchronizationPlan` executes subcycling, reflux, and
 covered-cell restriction in that order.
 
+`DyadicFiniteVolumePlan` lowers an accepted covering `DyadicCellTopology` into
+the same explicit-face runtime. Same-level interfaces produce one face route;
+2:1 coarse/fine interfaces are decomposed into fine subfaces so both cells
+receive the same integrated flux with opposite signs. Cell and face quadrature,
+boundary patches, and field-space pairings are materialized once per topology
+epoch. The time-step kernel does not traverse the tree.
+
 State and parameter gradients are supported for a fixed hierarchy. Refinement tagging,
 slot activation, migration routes, and topology changes are discrete and are not
 differentiated.

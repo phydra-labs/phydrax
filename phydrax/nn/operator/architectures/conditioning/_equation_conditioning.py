@@ -10,9 +10,9 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
 
+import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax.equations._tokens import (
     PDE_OPERATOR_VOCABULARY,
@@ -209,11 +209,11 @@ class PDEConditionEncoder(StrictModule):
             queries = query(normalized)
             keys = key(normalized)
             values = value(normalized)
-            logits = oe.contract("id,jd->ij", queries, keys) / sqrt(float(self.width))
+            logits = ein.contract("id,jd->ij", queries, keys) / sqrt(float(self.width))
             logits = logits + symbol_bias * same_symbol
             logits = jnp.where(mask[None, :], logits, -jnp.inf)
             attention = jnn.softmax(logits, axis=-1)
-            attended = oe.contract("ij,jd->id", attention, values)
+            attended = ein.contract("ij,jd->id", attention, values)
             hidden = hidden + output(attended)
             hidden = hidden + ff_out(ff_in(self._normalize(hidden)))
             hidden = hidden * mask[:, None]

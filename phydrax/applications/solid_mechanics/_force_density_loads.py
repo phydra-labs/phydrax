@@ -12,8 +12,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -87,8 +88,8 @@ def _quadrature_data(points: Array, /) -> tuple[Array, Array, Array]:
     basis = 0.25 * (1.0 + xi * node_xi) * (1.0 + eta * node_eta)
     derivative_xi = 0.25 * node_xi * (1.0 + eta * node_eta)
     derivative_eta = 0.25 * node_eta * (1.0 + xi * node_xi)
-    tangent_xi = oe.contract("qi,cid->cqd", derivative_xi, points)
-    tangent_eta = oe.contract("qi,cid->cqd", derivative_eta, points)
+    tangent_xi = ein.contract("qi,cid->cqd", derivative_xi, points)
+    tangent_eta = ein.contract("qi,cid->cqd", derivative_eta, points)
     return basis, tangent_xi, tangent_eta
 
 
@@ -109,7 +110,7 @@ def _surface_regularity(
     quadrature_magnitude = jnp.sqrt(jnp.sum(quadrature_area * quadrature_area, axis=-1))
     resultant = jnp.sum(quadrature_area, axis=1)
     resultant_magnitude = jnp.sqrt(jnp.sum(resultant * resultant, axis=-1))
-    orientation = oe.contract("cqd,cd->cq", quadrature_area, resultant)
+    orientation = ein.contract("cqd,cd->cq", quadrature_area, resultant)
     scale = jnp.maximum(
         quadrature_magnitude * resultant_magnitude[:, None],
         jnp.finfo(points.dtype).tiny,
@@ -150,7 +151,7 @@ def _surface_adapter_quadrature(
     /,
 ) -> tuple[Array, Array, DeformedMeasureState]:
     quadrilateral_basis, tangent_xi, tangent_eta = _quadrature_data(points)
-    quadrilateral_points = oe.contract("qi,cid->cqd", quadrilateral_basis, points)
+    quadrilateral_points = ein.contract("qi,cid->cqd", quadrilateral_basis, points)
     triangle_basis = jnp.zeros_like(quadrilateral_basis)
     triangle_basis = triangle_basis.at[0, :3].set(1.0 / 3.0)
     basis = jnp.where(
@@ -225,7 +226,7 @@ def _integrate_surface_evaluation(
     /,
 ) -> Array:
     weights = measure.measure(evaluation.semantics.measure_frame)
-    cell_forces = oe.contract(
+    cell_forces = ein.contract(
         "cqi,cq,cqd->cid",
         basis,
         weights,
@@ -256,9 +257,9 @@ def enclosed_surface_volume(
     first = points[:, 0]
     second = points[:, 1]
     third = points[:, 2]
-    first_volume = oe.contract("cd,cd->c", first, jnp.cross(second, third)) / 6.0
+    first_volume = ein.contract("cd,cd->c", first, jnp.cross(second, third)) / 6.0
     fourth = points[:, 3]
-    second_volume = oe.contract("cd,cd->c", first, jnp.cross(third, fourth)) / 6.0
+    second_volume = ein.contract("cd,cd->c", first, jnp.cross(third, fourth)) / 6.0
     cell_volume = jnp.where(
         connectivity.cell_kinds == 3, first_volume, first_volume + second_volume
     )
@@ -726,7 +727,7 @@ class SurfaceTractionLoadModel(AbstractForceDensityLoadModel, NonTrainableState)
         )
         if self.measure == "reference":
             _, _, current_points = _surface_points(structure, positions)
-            current_quadrature = oe.contract("cqi,cid->cqd", basis, current_points)
+            current_quadrature = ein.contract("cqi,cid->cqd", basis, current_points)
             reference_quadrature = quadrature_points
         else:
             reference_quadrature = quadrature_points

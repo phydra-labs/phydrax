@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ._core import TensorTrainOperator, TTRoundingEvidence
@@ -136,7 +137,7 @@ class TensorTrainLinear(StrictModule):
                 ]
             )
         operands.append(output_labels)
-        output = oe.contract(*operands)
+        output = ein.contract(*operands)
         return output.reshape((-1,)) + self.bias
 
     def __call__(self, inputs: ArrayLike, /) -> Array:

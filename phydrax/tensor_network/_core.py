@@ -10,8 +10,9 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
@@ -80,7 +81,7 @@ class MatrixProductState(StrictModule):
         tensors = self.precision.contraction(self.tensors)
         state = tensors[0][0]
         for tensor in tensors[1:]:
-            state = oe.contract("...l,lpr->...pr", state, tensor)
+            state = ein.contract("...l,lpr->...pr", state, tensor)
         return state[..., 0].reshape(-1)
 
     def to_dense(self, /, *, maximum_elements: int = 1_000_000) -> Array:
@@ -165,7 +166,7 @@ class MatrixProductOperator(StrictModule):
         tensors = self.precision.contraction(self.tensors)
         operator = tensors[0][0]
         for tensor in tensors[1:]:
-            operator = oe.contract("...l,labr->...abr", operator, tensor)
+            operator = ein.contract("...l,labr->...abr", operator, tensor)
         operator = operator[..., 0]
         output_axes = tuple(range(0, 2 * self.site_count, 2))
         input_axes = tuple(range(1, 2 * self.site_count, 2))
@@ -221,7 +222,7 @@ class LocallyPurifiedDensity(StrictModule):
         tensors = self.precision.contraction(self.tensors)
         amplitude = tensors[0][0]
         for tensor in tensors[1:]:
-            amplitude = oe.contract("...l,lpkr->...pkr", amplitude, tensor)
+            amplitude = ein.contract("...l,lpkr->...pkr", amplitude, tensor)
         amplitude = amplitude[..., 0]
         physical_axes = tuple(range(0, 2 * self.site_count, 2))
         kraus_axes = tuple(range(1, 2 * self.site_count, 2))

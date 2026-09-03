@@ -12,9 +12,9 @@ import coordax as cx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax.domain import (
     BatchEvaluator,
     BinaryFieldEvaluator,
@@ -1223,7 +1223,7 @@ def div_tensor(
                 "div_tensor expects grad(T) to have trailing shape "
                 f"({var_dim}, {var_dim}, {var_dim}), got {g.shape[-3:]}."
             )
-        return oe.contract("...iji->...j", g)
+        return ein.contract("...iji->...j", g)
 
     return DomainFunction(domain=T.domain, deps=T.deps, func=_divT, metadata=gT.metadata)
 
@@ -3025,7 +3025,7 @@ def div_K_grad(
         if out_rank < 0:
             raise ValueError("div_K_grad received incompatible K and grad(u) ranks.")
         Kx_exp = Kx.reshape(Kx.shape[:-2] + (1,) * int(out_rank) + Kx.shape[-2:])
-        return oe.contract("...ij,...j->...i", Kx_exp, gu_x)
+        return ein.contract("...ij,...j->...i", Kx_exp, gu_x)
 
     flux = DomainFunction(
         domain=joined,
@@ -3805,7 +3805,7 @@ def maxwell_stress(
             I = jnp.eye(n)
             I = jnp.broadcast_to(I, Ex.shape[:-1] + (n, n))
             eps_v = jnp.asarray(eps2.func(*[args[i] for i in eps_pos], key=key, **kwargs))
-            ee = oe.contract("...i,...j->...ij", Ex, Ex)
+            ee = ein.contract("...i,...j->...ij", Ex, Ex)
             e2 = jnp.sum(Ex * Ex, axis=-1)[..., None, None]
             T = T + eps_v * (ee - 0.5 * e2 * I)
 
@@ -3816,7 +3816,7 @@ def maxwell_stress(
             I = jnp.eye(int(n))
             I = jnp.broadcast_to(I, Hx.shape[:-1] + (int(n), int(n)))
             mu_v = jnp.asarray(mu2.func(*[args[i] for i in mu_pos], key=key, **kwargs))
-            hh = oe.contract("...i,...j->...ij", Hx, Hx)
+            hh = ein.contract("...i,...j->...ij", Hx, Hx)
             h2 = jnp.sum(Hx * Hx, axis=-1)[..., None, None]
             T = T + mu_v * (hh - 0.5 * h2 * I)
 

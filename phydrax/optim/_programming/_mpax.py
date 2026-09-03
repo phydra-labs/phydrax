@@ -9,9 +9,10 @@ from dataclasses import replace
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jax.experimental import sparse as jsparse
 from jaxtyping import Array
+
+import phydrax.ein as ein
 
 from ...backends import (
     import_backend_module,
@@ -160,7 +161,7 @@ def _expanded_duals_and_slacks(
     inequality_dual = provider_dual[
         ..., problem.num_equalities : problem.num_equalities + problem.num_inequalities
     ]
-    slack = problem.inequality_rhs - oe.contract(
+    slack = problem.inequality_rhs - ein.contract(
         "...ij,...j->...i",
         problem.inequality_matrix,
         primal,

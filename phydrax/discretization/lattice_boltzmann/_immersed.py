@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -219,7 +220,7 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         weights, partition_residual = self._weights(positions, mask)
         flat_velocity = velocity.reshape((-1, dimension))
         flat_density = rho.reshape((-1,))
-        marker_density = oe.contract("nm,n->m", weights, flat_density)
+        marker_density = ein.contract("nm,n->m", weights, flat_density)
         cell_measure = jnp.asarray(
             self.discretization.cell_size**dimension, dtype=velocity.dtype
         )
@@ -228,22 +229,22 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         marker_acceleration = jnp.zeros_like(target)
         corrected_velocity = flat_velocity
         for _ in range(self.iteration_count):
-            interpolated = oe.contract("nm,nd->md", weights, corrected_velocity)
+            interpolated = ein.contract("nm,nd->md", weights, corrected_velocity)
             marker_acceleration = (target - interpolated) / dt
             increment = marker_density[:, None] * measures[:, None] * marker_acceleration
             marker_force = marker_force + increment
-            spread = oe.contract("nm,md->nd", weights, increment) / cell_measure
+            spread = ein.contract("nm,md->nd", weights, increment) / cell_measure
             force_density = force_density + spread
             corrected_velocity = corrected_velocity + dt * spread / jnp.maximum(
                 flat_density[:, None], jnp.finfo(velocity.dtype).tiny
             )
 
-        interpolated = oe.contract("nm,nd->md", weights, corrected_velocity)
+        interpolated = ein.contract("nm,nd->md", weights, corrected_velocity)
         velocity_residual = interpolated - target
         maximum_residual = jnp.max(jnp.abs(velocity_residual))
         body_count = centers.shape[0]
         membership = indices[:, None] == jnp.arange(body_count)[None, :]
-        body_force = -oe.contract(
+        body_force = -ein.contract(
             "mb,md->bd", membership.astype(velocity.dtype), marker_force
         )
         radius = positions - centers[indices]
@@ -265,11 +266,13 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
                 ),
                 axis=-1,
             )
-        body_torque = oe.contract(
+        body_torque = ein.contract(
             "mb,ma->ba", membership.astype(velocity.dtype), marker_torque
         )
-        marker_work = -oe.contract("md,md->m", marker_force, target)
-        body_work = oe.contract("mb,m->b", membership.astype(velocity.dtype), marker_work)
+        marker_work = -ein.contract("md,md->m", marker_force, target)
+        body_work = ein.contract(
+            "mb,m->b", membership.astype(velocity.dtype), marker_work
+        )
         grid_force = jnp.sum(force_density, axis=0) * cell_measure
         force_balance = grid_force + jnp.sum(body_force, axis=0)
         force_balance_residual = jnp.sqrt(jnp.sum(force_balance**2))

@@ -9,8 +9,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -67,14 +68,14 @@ class SlidingMortarPlan(StrictModule, NonTrainableState):
                     prepared.mortar.conservative_flux_contributions(value)
                 )
             else:
-                owner = oe.contract(
+                owner = ein.contract(
                     "q,qi,qv->iv",
                     prepared.physical_weights,
                     prepared.owner_basis,
                     value,
                     backend="jax",
                 )
-                neighbour = -oe.contract(
+                neighbour = -ein.contract(
                     "q,qi,qv->iv",
                     prepared.physical_weights,
                     prepared.neighbour_basis,
@@ -229,7 +230,7 @@ class ConservativeOversetPlan(StrictModule, NonTrainableState):
     def transfer(self, donor_state: ArrayLike, /) -> OversetTransferResult:
         state = jnp.asarray(donor_state)
         donor_values = state[self.connectivity.donor_cells]
-        receptor_state = oe.contract(
+        receptor_state = ein.contract(
             "rk,rkv->rv",
             self.connectivity.interpolation_weights,
             donor_values,
@@ -238,7 +239,7 @@ class ConservativeOversetPlan(StrictModule, NonTrainableState):
         receptor_content = (
             self.connectivity.receptor_content_weights[:, None] * receptor_state
         )
-        donor_content = oe.contract(
+        donor_content = ein.contract(
             "rk,rkv->rv",
             self.connectivity.donor_content_weights,
             donor_values,

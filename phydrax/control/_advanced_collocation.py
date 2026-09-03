@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -73,7 +74,7 @@ def radau_collocation_defects(
         raise ValueError("Radau interval times must be strictly increasing.")
     state_shape = states_.shape[1:]
     flat_rates = rates.reshape((intervals, method.stage_count, -1))
-    increments = oe.contract("ij,njd->nid", method.A, flat_rates)
+    increments = ein.contract("ij,njd->nid", method.A, flat_rates)
     stage_states = (
         states_[:-1, None].reshape((intervals, 1, -1))
         + widths[:, None, None] * increments
@@ -91,7 +92,7 @@ def radau_collocation_defects(
     stage_defects = jax.vmap(interval_defects)(
         stage_times, stage_states, rates, controls_
     )
-    endpoint_increment = oe.contract("j,njd->nd", method.b, flat_rates).reshape(
+    endpoint_increment = ein.contract("j,njd->nd", method.b, flat_rates).reshape(
         (intervals,) + state_shape
     )
     endpoint_defects = (
@@ -454,8 +455,8 @@ def manifold_radau_stages(
     if tangents.shape[0] != method.stage_count:
         raise ValueError("stage_tangents leading axis must equal stage_count.")
     flat = tangents.reshape((method.stage_count, -1))
-    local_stages = oe.contract("ij,jd->id", method.A, flat).reshape(tangents.shape)
-    local_endpoint = oe.contract("j,jd->d", method.b, flat).reshape(anchor_.shape)
+    local_stages = ein.contract("ij,jd->id", method.A, flat).reshape(tangents.shape)
+    local_endpoint = ein.contract("j,jd->d", method.b, flat).reshape(anchor_.shape)
     stages = jax.vmap(lambda local: geometry.retract(anchor_, local))(local_stages)
     endpoint = geometry.retract(anchor_, local_endpoint)
     contained = jnp.concatenate(
@@ -474,13 +475,376 @@ def manifold_radau_stages(
     )
 
 
+class ManifoldCollocationEvidence(StrictModule, NonTrainableState):
+    """Interval-local evidence for one manifold collocation evaluation.
+
+    ``contained`` has columns for the interval anchor, every Radau stage, the
+    retracted collocation endpoint, and the supplied right endpoint, in that
+    order. The remaining arrays have one entry per interval; ``valid`` is their
+    global conjunction.
+    """
+
+    finite: Array
+    contained: Array
+    chart_valid: Array
+    equation_valid: Array
+    valid: Array
+    chart_tolerance: float = eqx.field(static=True)
+    equation_tolerance: float = eqx.field(static=True)
+
+
+class ManifoldRadauCollocationDefects(StrictModule, NonTrainableState):
+    """Geometry-aware Radau defects expressed in shared local coordinates."""
+
+    stage_times: Array
+    stage_states: Array
+    predicted_endpoints: Array
+    stage_defects: Array
+    endpoint_defects: Array
+    evidence: ManifoldCollocationEvidence
+    configuration_convention: Literal["retraction"] = eqx.field(static=True)
+    tangent_convention: Literal["shared-local"] = eqx.field(static=True)
+    implicit: bool = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    @property
+    def finite(self) -> Array:
+        return jnp.all(self.evidence.finite)
+
+    @property
+    def contained(self) -> Array:
+        return self.evidence.contained
+
+    @property
+    def chart_valid(self) -> Array:
+        return jnp.all(self.evidence.chart_valid)
+
+    @property
+    def equation_valid(self) -> Array:
+        return jnp.all(self.evidence.equation_valid)
+
+    @property
+    def valid(self) -> Array:
+        return self.evidence.valid
+
+
+def manifold_radau_collocation_defects(
+    method: RadauIIAMethod,
+    geometry: AbstractStateGeometry,
+    dynamics: Callable[..., Array],
+    times: ArrayLike,
+    states: ArrayLike,
+    stage_local_rates: ArrayLike,
+    controls: ArrayLike,
+    /,
+    *,
+    configuration_convention: Literal["retraction"],
+    tangent_convention: Literal["shared-local"],
+    args: Any = None,
+    implicit: bool = False,
+    chart_tolerance: float = 1.0e-6,
+    equation_tolerance: float = 1.0e-8,
+) -> ManifoldRadauCollocationDefects:
+    """Evaluate fixed-grid Radau defects in one shared local trivialization.
+
+    Node states are manifold points. On each interval, ``stage_local_rates`` are
+    state-shaped rates in the geometry's shared local tangent convention.
+    Radau combinations are retracted from the left node; endpoint differences
+    are obtained with ``inverse_retract`` from that same anchor.
+
+    Explicit ``dynamics(time, state, control, args)`` returns an ambient vector
+    that is projected and converted with ``to_local`` at its stage. Implicit
+    ``dynamics(time, state, state_rate, control, args)`` receives the ambient
+    rate obtained with ``from_local`` and must return a state-shaped ambient
+    tangent equation residual, which is likewise converted to local form.
+
+    Chart evidence additionally requires the endpoint inverse/retraction
+    round-trip to meet ``chart_tolerance``. Equation evidence requires finite
+    local stage and endpoint defects bounded by ``equation_tolerance``.
+    """
+
+    if not isinstance(method, RadauIIAMethod):
+        raise TypeError("method must be a RadauIIAMethod.")
+    if not isinstance(geometry, AbstractStateGeometry):
+        raise TypeError("geometry must be an AbstractStateGeometry.")
+    if not callable(dynamics):
+        raise TypeError("dynamics must be callable.")
+    if not geometry.supports_commutator_free:
+        raise ValueError(
+            "Manifold Radau collocation requires shared-trivialization capability."
+        )
+    if configuration_convention != "retraction":
+        raise ValueError("configuration_convention must be 'retraction'.")
+    if tangent_convention != "shared-local":
+        raise ValueError("tangent_convention must be 'shared-local'.")
+    if not isinstance(implicit, bool):
+        raise TypeError("implicit must be a boolean.")
+    chart_tolerance_ = float(chart_tolerance)
+    equation_tolerance_ = float(equation_tolerance)
+    if not np.isfinite(chart_tolerance_) or chart_tolerance_ < 0.0:
+        raise ValueError("chart_tolerance must be finite and nonnegative.")
+    if not np.isfinite(equation_tolerance_) or equation_tolerance_ < 0.0:
+        raise ValueError("equation_tolerance must be finite and nonnegative.")
+
+    times_ = jnp.asarray(times)
+    states_ = jnp.asarray(states)
+    rates = jnp.asarray(stage_local_rates)
+    controls_ = jnp.asarray(controls)
+    if times_.ndim != 1 or times_.size < 2:
+        raise ValueError("Manifold Radau times must be a rank-one interval grid.")
+    if states_.ndim < 1 or states_.shape[0] != times_.size:
+        raise ValueError("Manifold states must provide one point per grid time.")
+    intervals = times_.size - 1
+    state_shape = states_.shape[1:]
+    if any(size == 0 for size in state_shape):
+        raise ValueError("Manifold state points must be nonempty.")
+    expected_rate_shape = (intervals, method.stage_count) + state_shape
+    if rates.shape != expected_rate_shape:
+        raise ValueError(
+            "stage_local_rates must have shape "
+            f"{expected_rate_shape}; got {rates.shape}."
+        )
+    if controls_.ndim < 1 or controls_.shape[0] != intervals:
+        raise ValueError("controls must provide one value per Radau interval.")
+    widths = times_[1:] - times_[:-1]
+    times_ = eqx.error_if(
+        times_,
+        jnp.any(~jnp.isfinite(times_)) | jnp.any(widths <= 0),
+        "Manifold Radau interval times must be finite and increasing.",
+    )
+
+    flat_rates = rates.reshape((intervals, method.stage_count, -1))
+    stage_local = (
+        widths[:, None, None] * ein.contract("ij,njd->nid", method.A, flat_rates)
+    ).reshape(rates.shape)
+    endpoint_local = (
+        widths[:, None] * ein.contract("j,njd->nd", method.b, flat_rates)
+    ).reshape((intervals,) + state_shape)
+    stage_times = times_[:-1, None] + widths[:, None] * method.c[None, :]
+    anchors = states_[:-1]
+    right_endpoints = states_[1:]
+
+    def retract_stages(anchor, local):
+        return jax.vmap(lambda value: jnp.asarray(geometry.retract(anchor, value)))(
+            local
+        )
+
+    stage_states = jax.vmap(retract_stages)(anchors, stage_local)
+    if stage_states.shape != expected_rate_shape:
+        raise ValueError(
+            "geometry.retract must preserve the state shape at every Radau stage."
+        )
+    predicted_endpoints = jax.vmap(
+        lambda anchor, local: jnp.asarray(geometry.retract(anchor, local))
+    )(anchors, endpoint_local)
+    if predicted_endpoints.shape != (intervals,) + state_shape:
+        raise ValueError("geometry.retract must preserve endpoint state shape.")
+    observed_endpoint_local = jax.vmap(
+        lambda anchor, point: jnp.asarray(geometry.inverse_retract(anchor, point))
+    )(anchors, right_endpoints)
+    if observed_endpoint_local.shape != (intervals,) + state_shape:
+        raise ValueError(
+            "geometry.inverse_retract must return state-shaped coordinates."
+        )
+
+    observed_endpoint_reconstructions = jax.vmap(
+        lambda anchor, local: jnp.asarray(geometry.retract(anchor, local))
+    )(anchors, observed_endpoint_local)
+    if observed_endpoint_reconstructions.shape != (intervals,) + state_shape:
+        raise ValueError(
+            "geometry.retract must preserve reconstructed endpoint state shape."
+        )
+
+    def membership(point):
+        contained = jnp.asarray(geometry.contains(point), dtype=bool)
+        if contained.shape != ():
+            raise ValueError("geometry.contains must return one scalar boolean.")
+        return contained
+
+    node_contained = jax.vmap(membership)(states_)
+    stage_contained = jax.vmap(jax.vmap(membership))(stage_states)
+    predicted_contained = jax.vmap(membership)(predicted_endpoints)
+    contained = jnp.concatenate(
+        (
+            node_contained[:-1, None],
+            stage_contained,
+            predicted_contained[:, None],
+            node_contained[1:, None],
+        ),
+        axis=1,
+    )
+
+    def projected_local(point, ambient):
+        projected = jnp.asarray(geometry.project_tangent(point, ambient))
+        if projected.shape != point.shape:
+            raise ValueError("geometry.project_tangent must preserve state shape.")
+        local = jnp.asarray(geometry.to_local(point, projected))
+        if local.shape != point.shape:
+            raise ValueError("geometry.to_local must preserve state shape.")
+        return local
+
+    def interval_finite(value):
+        return jnp.all(jnp.isfinite(value.reshape((intervals, -1))), axis=1)
+
+    tangent_equation_valid = jnp.ones((intervals,), dtype=bool)
+    dynamics_finite = jnp.ones((intervals,), dtype=bool)
+
+    if implicit:
+
+        def ambient_rates_for_interval(points, local_rates):
+            return jax.vmap(
+                lambda point, local: jnp.asarray(geometry.from_local(point, local))
+            )(points, local_rates)
+
+        ambient_rates = jax.vmap(ambient_rates_for_interval)(stage_states, rates)
+        if ambient_rates.shape != expected_rate_shape:
+            raise ValueError("geometry.from_local must preserve state shape.")
+
+        def interval_equations(t, y, y_dot, control):
+            return jax.vmap(
+                lambda ti, yi, y_dot_i: jnp.asarray(
+                    dynamics(ti, yi, y_dot_i, control, args)
+                )
+            )(t, y, y_dot)
+
+        ambient_equations = jax.vmap(interval_equations)(
+            stage_times, stage_states, ambient_rates, controls_
+        )
+        if ambient_equations.shape != expected_rate_shape:
+            raise ValueError(
+                "Implicit dynamics must return one state-shaped tangent residual "
+                "per stage."
+            )
+        stage_defects = jax.vmap(jax.vmap(projected_local))(
+            stage_states, ambient_equations
+        )
+        reconstructed_equations = jax.vmap(
+            jax.vmap(
+                lambda point, local: jnp.asarray(
+                    geometry.from_local(point, local)
+                )
+            )
+        )(stage_states, stage_defects)
+        if reconstructed_equations.shape != expected_rate_shape:
+            raise ValueError("geometry.from_local must preserve equation shape.")
+        representation_error = jnp.max(
+            jnp.abs(ambient_equations - reconstructed_equations).reshape(
+                (intervals, -1)
+            ),
+            axis=1,
+        )
+        tangent_equation_valid = (
+            interval_finite(ambient_equations)
+            & interval_finite(reconstructed_equations)
+            & (representation_error <= equation_tolerance_)
+        )
+        dynamics_finite = (
+            interval_finite(ambient_rates)
+            & interval_finite(ambient_equations)
+            & interval_finite(reconstructed_equations)
+        )
+    else:
+
+        def interval_fields(t, y, control):
+            return jax.vmap(
+                lambda ti, yi: jnp.asarray(dynamics(ti, yi, control, args))
+            )(t, y)
+
+        ambient_fields = jax.vmap(interval_fields)(
+            stage_times, stage_states, controls_
+        )
+        if ambient_fields.shape != expected_rate_shape:
+            raise ValueError(
+                "Explicit dynamics must return one state-shaped vector per stage."
+            )
+        local_fields = jax.vmap(jax.vmap(projected_local))(
+            stage_states, ambient_fields
+        )
+        stage_defects = rates - local_fields
+        dynamics_finite = interval_finite(ambient_fields) & interval_finite(
+            local_fields
+        )
+
+    endpoint_defects = observed_endpoint_local - endpoint_local
+
+    chart_finite = (
+        interval_finite(stage_local)
+        & interval_finite(endpoint_local)
+        & interval_finite(observed_endpoint_local)
+        & interval_finite(stage_states)
+        & interval_finite(predicted_endpoints)
+        & interval_finite(observed_endpoint_reconstructions)
+    )
+    equation_finite = interval_finite(stage_defects) & interval_finite(
+        endpoint_defects
+    )
+    input_finite = (
+        jnp.isfinite(times_[:-1])
+        & jnp.isfinite(times_[1:])
+        & interval_finite(anchors)
+        & interval_finite(right_endpoints)
+        & interval_finite(rates)
+        & interval_finite(controls_)
+    )
+    finite = input_finite & chart_finite & dynamics_finite & equation_finite
+    chart_error = jnp.max(
+        jnp.abs(observed_endpoint_reconstructions - right_endpoints).reshape(
+            (intervals, -1)
+        ),
+        axis=1,
+    )
+    chart_valid = (
+        jnp.all(contained, axis=1)
+        & chart_finite
+        & (chart_error <= chart_tolerance_)
+    )
+    maximum_stage_defect = jnp.max(
+        jnp.abs(stage_defects).reshape((intervals, -1)), axis=1
+    )
+    maximum_endpoint_defect = jnp.max(
+        jnp.abs(endpoint_defects).reshape((intervals, -1)), axis=1
+    )
+    equation_valid = (
+        tangent_equation_valid
+        & equation_finite
+        & (maximum_stage_defect <= equation_tolerance_)
+        & (maximum_endpoint_defect <= equation_tolerance_)
+    )
+    valid = jnp.all(finite & chart_valid & equation_valid)
+    evidence = ManifoldCollocationEvidence(
+        finite,
+        contained,
+        chart_valid,
+        equation_valid,
+        valid,
+        chart_tolerance_,
+        equation_tolerance_,
+    )
+    return ManifoldRadauCollocationDefects(
+        stage_times,
+        stage_states,
+        predicted_endpoints,
+        stage_defects,
+        endpoint_defects,
+        evidence,
+        configuration_convention,
+        tangent_convention,
+        implicit,
+        geometry.geometry_id,
+        method.method_id,
+    )
+
+
 __all__ = [
     "ComplementarityConstraint",
     "ComplementarityEvidence",
     "ComplementarityHomotopyPolicy",
     "DirectCollocationLink",
     "DirectCollocationPhase",
+    "ManifoldCollocationEvidence",
     "ManifoldCollocationStages",
+    "ManifoldRadauCollocationDefects",
     "MultiphaseDirectCollocationEvidence",
     "MultiphaseDirectCollocationProblem",
     "RadauCollocationDefects",
@@ -489,5 +853,6 @@ __all__ = [
     "audit_complementarity",
     "audit_multiphase_links",
     "manifold_radau_stages",
+    "manifold_radau_collocation_defects",
     "radau_collocation_defects",
 ]

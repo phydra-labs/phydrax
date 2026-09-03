@@ -1,0 +1,140 @@
+{
+  "all_successful": true,
+  "cases": [
+    {
+      "batch_size": 1,
+      "compile_and_first_ms": 839.8207499994896,
+      "execution_ms": 7.810337500995956,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 2,
+      "state_size": 4,
+      "successful": true,
+      "transitions_per_second": 128.0354401935233
+    },
+    {
+      "batch_size": 128,
+      "compile_and_first_ms": 1334.205249993829,
+      "execution_ms": 6.40161250194069,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 2,
+      "state_size": 4,
+      "successful": true,
+      "transitions_per_second": 19994.962200726142
+    },
+    {
+      "batch_size": 1024,
+      "compile_and_first_ms": 1002.9747079825029,
+      "execution_ms": 10.345091699855402,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 2,
+      "state_size": 4,
+      "successful": true,
+      "transitions_per_second": 98984.13950398457
+    },
+    {
+      "batch_size": 1,
+      "compile_and_first_ms": 879.5757089974359,
+      "execution_ms": 0.9991124999942258,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 4,
+      "state_size": 8,
+      "successful": true,
+      "transitions_per_second": 1000.8882883617003
+    },
+    {
+      "batch_size": 128,
+      "compile_and_first_ms": 1040.20175000187,
+      "execution_ms": 4.701695797848515,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 4,
+      "state_size": 8,
+      "successful": true,
+      "transitions_per_second": 27224.219835441607
+    },
+    {
+      "batch_size": 1024,
+      "compile_and_first_ms": 1446.7378330009524,
+      "execution_ms": 26.071129200863652,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 4,
+      "state_size": 8,
+      "successful": true,
+      "transitions_per_second": 39277.16333690979
+    },
+    {
+      "batch_size": 1,
+      "compile_and_first_ms": 1054.9946250102948,
+      "execution_ms": 2.663887498783879,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 8,
+      "state_size": 16,
+      "successful": true,
+      "transitions_per_second": 375.3912282168527
+    },
+    {
+      "batch_size": 128,
+      "compile_and_first_ms": 1294.2510830180254,
+      "execution_ms": 15.028804200119339,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 8,
+      "state_size": 16,
+      "successful": true,
+      "transitions_per_second": 8516.978350079482
+    },
+    {
+      "batch_size": 1024,
+      "compile_and_first_ms": 1856.4920839853585,
+      "execution_ms": 159.82807500113267,
+      "maximum_invariant_residual": 0.0,
+      "minimum_species": 0.009950166250831947,
+      "pair_count": 8,
+      "state_size": 16,
+      "successful": true,
+      "transitions_per_second": 6406.884397454847
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "dee1555b843e001a66559ae750b6d1f4ccdbc2174bdae8bb60b178b423512e5e",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "04eaf233299b60207aa03bc6f06f20aaebf65a123e625df1bcf04147202cc88d",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

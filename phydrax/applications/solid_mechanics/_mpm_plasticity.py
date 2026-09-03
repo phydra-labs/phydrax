@@ -8,8 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -295,11 +296,11 @@ class FiniteStrainJ2MPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         finite_tangent = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
         identity = jnp.eye(3, dtype=deformation.dtype)
         lame = parameters.bulk_modulus - 2.0 * parameters.shear_modulus / 3.0
-        elastic_identity_tangent = lame * oe.contract(
+        elastic_identity_tangent = lame * ein.contract(
             "ij,kl->ijkl", identity, identity
         ) + parameters.shear_modulus * (
-            oe.contract("ik,jl->ijkl", identity, identity)
-            + oe.contract("il,jk->ijkl", identity, identity)
+            ein.contract("ik,jl->ijkl", identity, identity)
+            + ein.contract("il,jk->ijkl", identity, identity)
         )
         near_identity = jnp.linalg.norm(deformation - identity, axis=(-2, -1)) <= 1.0e-10
         replace = (~finite_tangent) & near_identity & (response.branch_code == 0)

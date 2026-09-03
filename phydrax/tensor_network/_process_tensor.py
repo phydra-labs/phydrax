@@ -8,8 +8,9 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
@@ -285,8 +286,8 @@ class ProcessTensorMPO(StrictModule):
         for tensor, intervention in zip(self.tensors, operations, strict=True):
             tensor_ = self.precision.contraction(tensor)
             superoperator = self.precision.contraction(intervention.superoperator)
-            state = oe.contract("li,loir->ro", state, tensor_)
-            state = oe.contract("oi,ri->ro", superoperator, state)
+            state = ein.contract("li,loir->ro", state, tensor_)
+            state = ein.contract("oi,ri->ro", superoperator, state)
             density = self.precision.sum(state, axis=0).reshape(
                 (self.dimension, self.dimension)
             )

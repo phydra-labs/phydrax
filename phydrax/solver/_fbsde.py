@@ -12,9 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+import phydrax.ein as ein
 from phydrax.domain import DomainFunction
 
 from .._strict import StrictModule
@@ -263,7 +263,7 @@ def solve_coupled_fbsde_explicit(
         noise_size = prod(problem.noise_shape)
         diffusion_flat = diffusion.reshape((problem.num_paths, state_size, noise_size))
         increment_flat = increments[:, step].reshape((problem.num_paths, noise_size))
-        stochastic_increment = oe.contract(
+        stochastic_increment = ein.contract(
             "psn,pn->ps", diffusion_flat, increment_flat
         ).reshape((problem.num_paths,) + problem.state_shape)
         next_state = (

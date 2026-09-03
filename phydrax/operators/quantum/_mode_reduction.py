@@ -11,8 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -412,7 +413,7 @@ def _prepare_mode_reduction(
     reduced_operators = tuple(
         NamedModeOperator(
             operator.name,
-            oe.contract(
+            ein.contract(
                 "ai,ab,bj->ij",
                 jnp.conj(isometry),
                 operator.matrix,
@@ -431,7 +432,7 @@ def _prepare_mode_reduction(
     )
     residual = problem.hamiltonian @ isometry - isometry * energies[None, :]
     eigen_residual = jnp.max(jnp.abs(residual))
-    gram = oe.contract("ai,aj->ij", jnp.conj(isometry), isometry)
+    gram = ein.contract("ai,aj->ij", jnp.conj(isometry), isometry)
     orthogonality = jnp.max(jnp.abs(gram - jnp.eye(retained, dtype=gram.dtype)))
     internal_gaps = jnp.abs(energies[1:] - energies[:-1])
     minimum_internal_gap = (
@@ -607,7 +608,7 @@ def compare_mode_resolutions(
         if embedding.shape != expected:
             raise ValueError(f"coarse_to_fine must have shape {expected}.")
         embedded = embedding @ coarse.isometry
-        cross = oe.contract("ai,aj->ij", jnp.conj(embedded), fine.isometry)
+        cross = ein.contract("ai,aj->ij", jnp.conj(embedded), fine.isometry)
         singular_values = jnp.linalg.svd(cross, compute_uv=False)
         overlap = jnp.min(singular_values) ** 2
         overlap_available = jnp.asarray(True)

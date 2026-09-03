@@ -155,20 +155,20 @@ transforms.
 
 ## Fourier reconstruction
 
-Periodic tensor grids have one coefficient substrate with three evaluation
-paths:
+Periodic tensor grids share a private coefficient substrate, but public
+ownership is split by output geometry:
 
-- `fourier_resample(values, output_shape)` transfers a field to an aligned,
-  endpoint-excluded uniform grid;
-- `fourier_resample(..., phase_offsets=offsets)` evaluates a shifted uniform
-  grid through coefficient-space phase factors and FFT resizing;
+- `phydrax.signal.fourier_resample` transfers one or more periodic grid axes to
+  aligned or phase-shifted endpoint-excluded uniform grids;
 - `fourier_interpolate(values, coordinates, spatial_ndim=...)` evaluates paired
   arbitrary coordinates directly or with NUFFTAX Type 2.
 
-These are reconstruction operations, not sampling policies. Domain sampling
+Both are reconstruction operations, not sampling policies. Domain sampling
 still chooses sites, keys, masks, and measures. Fourier reconstruction consumes
 stored periodic-grid values and query coordinates; it does not generate points
-or infer source masks.
+or infer source masks. See the
+[signal-processing guide](../../guides_signal_processing.md) for periodic
+uniform-grid rate conversion.
 
 The low-level point evaluator uses
 `values.shape = batch_shape + source_shape + payload_shape` and

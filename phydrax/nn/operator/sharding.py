@@ -213,6 +213,18 @@ def shard_operator_targets(
     return targets.map_values(lambda value: _put_array(value, policy, per_case=True))
 
 
+def shard_operator_case_array(
+    value,
+    policy: OperatorShardingPolicy,
+    /,
+):
+    """Shard one array whose leading dimensions are operator case dimensions."""
+
+    array = jax.numpy.asarray(value)
+    policy.validate_case_shape(tuple(array.shape))
+    return _put_array(array, policy, per_case=True)
+
+
 def replicate_operator_model(model, policy: OperatorShardingPolicy, /):
     """Replicate every array leaf of a model on the policy mesh."""
     return eqx.filter_shard(model, policy.replicated)
@@ -222,5 +234,6 @@ __all__ = [
     "OperatorShardingPolicy",
     "replicate_operator_model",
     "shard_operator_batch",
+    "shard_operator_case_array",
     "shard_operator_targets",
 ]

@@ -123,11 +123,12 @@ def test_discrete_model_system_binds_complete_autonomous_next_state():
         step_size=0.25,
     )
     state = jnp.asarray([2.0, -4.0])
+    context = phx.dynamics.DiscreteStepContext(1.0, 1.25, 0)
 
     assert isinstance(system.transition, phx.dynamics.DiscreteModelTransition)
     assert system.step_size == 0.25
-    assert jnp.array_equal(system(1.0, state), model(state))
-    assert jnp.array_equal(jax.jit(system)(1.0, state), model(state))
+    assert jnp.array_equal(system(context, state), model(state))
+    assert jnp.array_equal(jax.jit(system)(context, state), model(state))
 
 
 def test_discrete_model_system_uses_structured_interval_control():
@@ -141,9 +142,10 @@ def test_discrete_model_system_uses_structured_interval_control():
     )
     state = jnp.asarray([1.0, 3.0])
     control = jnp.asarray([0.5])
+    context = phx.dynamics.DiscreteStepContext(0.0, 1.0, 0)
 
     assert jnp.array_equal(
-        system(0.0, state, inputs=control),
+        system(context, state, inputs=control),
         model((state, control)),
     )
 

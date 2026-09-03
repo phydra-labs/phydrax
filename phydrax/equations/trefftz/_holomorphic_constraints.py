@@ -11,6 +11,7 @@ from operator import index
 from typing import Any, Literal, Protocol, runtime_checkable
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -30,12 +31,10 @@ from ..._holomorphic_linear import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import (
-    DenseLinearOperator,
-    FactorizationPolicy,
-    factorize,
-    RankPolicy,
-    SolveResourcePolicy,
+from ...linalg import DenseLinearOperator, RankPolicy, SolveResourcePolicy
+from ...linalg._constraint_operators import (
+    prepare_constraint_operator,
+    PreparedConstraintOperator,
 )
 
 
@@ -71,13 +70,6 @@ def _component_weight(component: HolomorphicConstraintComponent, /) -> complex:
     raise ValueError("Holomorphic constraint component must be real or imaginary.")
 
 
-def _canonical_columns(values: np.ndarray, /) -> np.ndarray:
-    result = np.asarray(values, dtype=np.float64).copy()
-    for column in range(result.shape[1]):
-        pivot = int(np.argmax(np.abs(result[:, column])))
-        if result[pivot, column] < 0.0:
-            result[:, column] *= -1.0
-    return result
 
 
 class HolomorphicJetFunctionalTerm(StrictModule, NonTrainableState):
@@ -484,38 +476,20 @@ class HolomorphicConstraintOperatorPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "At least one functional is identically zero on the holomorphic frame."
             )
-        factorization = factorize(
-            DenseLinearOperator(matrix),
-            FactorizationPolicy(
-                "svd",
-                rank=RankPolicy(relative_cutoff=self.rank_cutoff),
-                resources=SolveResourcePolicy(
-                    factorization_bytes=self.maximum_factor_bytes,
-                    workspace_bytes=self.maximum_workspace_bytes,
-                ),
+        prepared = prepare_constraint_operator(
+            DenseLinearOperator(
+                matrix,
+                operator_id=f"{self.plan_id}/functional-operator",
+            ),
+            require_full_row_rank=False,
+            rank=RankPolicy(relative_cutoff=self.rank_cutoff),
+            resources=SolveResourcePolicy(
+                factorization_bytes=self.maximum_factor_bytes,
+                workspace_bytes=self.maximum_workspace_bytes,
             ),
         )
-        target_count = len(self.functionals)
-        identity = jnp.eye(target_count, dtype=matrix.dtype)
-        right_columns = []
-        for column in range(target_count):
-            result = factorization.solve(identity[:, column])
-            value = jnp.asarray(result.value, dtype=matrix.dtype)
-            if not bool(jnp.all(jnp.isfinite(value))):
-                raise RuntimeError(
-                    "Constraint right-inverse solve produced nonfinite data."
-                )
-            right_columns.append(value)
-        right_inverse = jnp.stack(tuple(right_columns), axis=1)
-        rank = int(np.asarray(factorization.rank()))
-        nullity = certificate.real_coefficient_count - rank
-        nullspace = factorization.right_nullspace()
-        if int(np.asarray(nullspace.dimension)) != nullity:
-            raise RuntimeError("Constraint nullspace dimension is inconsistent.")
-        nullspace_basis = jnp.asarray(
-            _canonical_columns(np.asarray(nullspace.basis[:, :nullity])),
-            dtype=matrix.dtype,
-        )
+        right_inverse = prepared.right_inverse
+        nullspace_basis = prepared.nullspace_basis
         right_residual = matrix @ right_inverse @ matrix - matrix
         nullspace_residual = matrix @ nullspace_basis
         epsilon = jnp.finfo(matrix.dtype).eps
@@ -543,33 +517,32 @@ class HolomorphicConstraintOperatorPlan(StrictModule, NonTrainableState):
         right_residual_norm = jnp.linalg.norm(right_residual)
         nullspace_residual_norm = jnp.linalg.norm(nullspace_residual)
         if not bool(right_residual_norm <= right_tolerance):
-            raise RuntimeError("Constraint right inverse failed its residual check.")
+            raise RuntimeError("Shared constraint right inverse failed its residual check.")
         if not bool(nullspace_residual_norm <= nullspace_tolerance):
-            raise RuntimeError("Constraint nullspace failed its residual check.")
+            raise RuntimeError("Shared constraint nullspace failed its residual check.")
         evidence = HolomorphicConstraintOperatorEvidence(
-            singular_values=factorization.singular_values(),
+            singular_values=prepared.factorization.singular_values(),
             right_inverse_residual_norm=right_residual_norm,
             nullspace_residual_norm=nullspace_residual_norm,
             right_inverse_tolerance=right_tolerance,
             nullspace_tolerance=nullspace_tolerance,
-            rank=rank,
-            nullity=nullity,
-            factorization_id=factorization.factorization_id,
+            rank=prepared.rank,
+            nullity=prepared.nullity,
+            factorization_id=prepared.factorization.factorization_id,
             plan_id=self.plan_id,
         )
         return PreparedHolomorphicConstraintOperator(
             self,
-            constraint_matrix=matrix,
-            right_inverse=right_inverse,
-            nullspace_basis=nullspace_basis,
+            prepared,
             evidence=evidence,
         )
 
 
 class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
-    """Reusable right inverse and nullspace for one functional operator."""
+    """Compatibility facade over the shared prepared constraint operator."""
 
     plan: HolomorphicConstraintOperatorPlan
+    prepared_operator: PreparedConstraintOperator
     constraint_matrix: Array
     right_inverse: Array
     nullspace_basis: Array
@@ -579,20 +552,22 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: HolomorphicConstraintOperatorPlan,
+        prepared_operator: PreparedConstraintOperator,
         /,
         *,
-        constraint_matrix: ArrayLike,
-        right_inverse: ArrayLike,
-        nullspace_basis: ArrayLike,
         evidence: HolomorphicConstraintOperatorEvidence,
     ):
         if not isinstance(plan, HolomorphicConstraintOperatorPlan):
             raise TypeError("plan must be HolomorphicConstraintOperatorPlan.")
+        if not isinstance(prepared_operator, PreparedConstraintOperator):
+            raise TypeError("prepared_operator must be PreparedConstraintOperator.")
         if not isinstance(evidence, HolomorphicConstraintOperatorEvidence):
             raise TypeError("evidence must be HolomorphicConstraintOperatorEvidence.")
-        matrix = jnp.asarray(constraint_matrix)
-        right = jnp.asarray(right_inverse)
-        nullspace = jnp.asarray(nullspace_basis)
+        if not isinstance(prepared_operator.operator, DenseLinearOperator):
+            raise TypeError("Holomorphic constraints require a dense prepared operator.")
+        matrix = prepared_operator.operator.matrix
+        right = prepared_operator.right_inverse
+        nullspace = prepared_operator.nullspace_basis
         coefficient_count = plan.frame.linear_frame_certificate().real_coefficient_count
         target_count = len(plan.functionals)
         if matrix.shape != (target_count, coefficient_count):
@@ -604,6 +579,7 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
         if any(jnp.iscomplexobj(value) for value in (matrix, right, nullspace)):
             raise TypeError("Prepared constraint operators must be real Cartesian.")
         self.plan = plan
+        self.prepared_operator = prepared_operator
         self.constraint_matrix = matrix
         self.right_inverse = right
         self.nullspace_basis = nullspace
@@ -612,10 +588,8 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
             {
                 "kind": "prepared-holomorphic-constraint-operator",
                 "plan": plan.plan_id,
+                "shared_prepared_operator": prepared_operator.prepared_id,
                 "evidence": evidence.evidence_id,
-                "constraint_matrix": array_tree_fingerprint(matrix),
-                "right_inverse": array_tree_fingerprint(right),
-                "nullspace_basis": array_tree_fingerprint(nullspace),
             }
         )
 
@@ -629,7 +603,16 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
             raise ValueError("Constraint targets must end with the functional count.")
         if jnp.iscomplexobj(values):
             raise TypeError("Constraint targets must be real.")
-        return values @ jnp.swapaxes(self.right_inverse, -1, -2)
+        flattened = values.reshape((-1, self.target_count))
+        compatible = jax.vmap(self.prepared_operator.is_compatible)(flattened)
+        if not bool(np.all(np.asarray(compatible))):
+            raise ValueError("Constraint targets are inconsistent with the operator range.")
+        lifted = jax.vmap(
+            lambda value: self.prepared_operator.minimum_norm_lift(
+                value, check_compatibility=False
+            )
+        )(flattened)
+        return lifted.reshape(values.shape[:-1] + (self.constraint_matrix.shape[1],))
 
     def target_residual(self, targets: ArrayLike, /) -> Array:
         values = jnp.asarray(targets)

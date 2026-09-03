@@ -11,8 +11,9 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
@@ -166,7 +167,7 @@ class AffineFeedbackPolicy(AbstractControlParameterization):
             state_, jnp.any(~jnp.isfinite(state_)), "Feedback state must be finite."
         )
         gain, bias = self._selected_gain(query)
-        return oe.contract("...ij,...j->...i", gain, state_) + bias
+        return ein.contract("...ij,...j->...i", gain, state_) + bias
 
     def sample(
         self,
@@ -265,8 +266,8 @@ class QuadraticValueFunction(StrictModule):
             linear = self.linear
             constant = self.constants
         return (
-            0.5 * oe.contract("...i,...ij,...j->...", state_, matrix, state_)
-            + oe.contract("...i,...i->...", linear, state_)
+            0.5 * ein.contract("...i,...ij,...j->...", state_, matrix, state_)
+            + ein.contract("...i,...i->...", linear, state_)
             + constant
         )
 
@@ -547,8 +548,8 @@ def finite_horizon_lqr(
         state_control = jnp.swapaxes(b_t, -1, -2) @ p_next @ a_t + jnp.swapaxes(
             cross_t, -1, -2
         )
-        affine_next = oe.contract("...ij,...j->...i", p_next, c_t) + linear_next
-        control_affine = r_t_linear + oe.contract("...ji,...j->...i", b_t, affine_next)
+        affine_next = ein.contract("...ij,...j->...i", p_next, c_t) + linear_next
+        control_affine = r_t_linear + ein.contract("...ji,...j->...i", b_t, affine_next)
         feedback = -jnp.linalg.solve(control_hessian, state_control)
         feedforward = -jnp.linalg.solve(control_hessian, control_affine[..., None])[
             ..., 0
@@ -561,19 +562,20 @@ def finite_horizon_lqr(
         p_current = 0.5 * (p_raw + jnp.swapaxes(p_raw, -1, -2))
         linear_current = (
             q_t_linear
-            + oe.contract("...ji,...j->...i", a_t, affine_next)
-            + oe.contract("...ji,...j->...i", state_control, feedforward)
+            + ein.contract("...ji,...j->...i", a_t, affine_next)
+            + ein.contract("...ji,...j->...i", state_control, feedforward)
         )
         constant_current = (
             d_t
             + constant_next
-            + 0.5 * oe.contract("...i,...ij,...j->...", c_t, p_next, c_t)
-            + oe.contract("...i,...i->...", linear_next, c_t)
-            + 0.5 * oe.contract("...i,...i->...", control_affine, feedforward)
+            + 0.5 * ein.contract("...i,...ij,...j->...", c_t, p_next, c_t)
+            + ein.contract("...i,...i->...", linear_next, c_t)
+            + 0.5 * ein.contract("...i,...i->...", control_affine, feedforward)
         )
         stationarity_matrix = control_hessian @ feedback + state_control
         stationarity_vector = (
-            oe.contract("...ij,...j->...i", control_hessian, feedforward) + control_affine
+            ein.contract("...ij,...j->...i", control_hessian, feedforward)
+            + control_affine
         )
         kkt_residual = jnp.sqrt(
             jnp.sum(jnp.square(stationarity_matrix), axis=(-2, -1))
@@ -582,15 +584,15 @@ def finite_horizon_lqr(
         value_matrix_residual = p_current - p_raw
         value_linear_residual = linear_current - (
             q_t_linear
-            + oe.contract("...ji,...j->...i", a_t, affine_next)
-            + oe.contract("...ji,...j->...i", state_control, feedforward)
+            + ein.contract("...ji,...j->...i", a_t, affine_next)
+            + ein.contract("...ji,...j->...i", state_control, feedforward)
         )
         value_constant_residual = constant_current - (
             d_t
             + constant_next
-            + 0.5 * oe.contract("...i,...ij,...j->...", c_t, p_next, c_t)
-            + oe.contract("...i,...i->...", linear_next, c_t)
-            + 0.5 * oe.contract("...i,...i->...", control_affine, feedforward)
+            + 0.5 * ein.contract("...i,...ij,...j->...", c_t, p_next, c_t)
+            + ein.contract("...i,...i->...", linear_next, c_t)
+            + 0.5 * ein.contract("...i,...i->...", control_affine, feedforward)
         )
         riccati_residual = jnp.sqrt(
             jnp.sum(jnp.square(value_matrix_residual), axis=(-2, -1))

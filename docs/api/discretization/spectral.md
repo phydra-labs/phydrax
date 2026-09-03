@@ -148,6 +148,31 @@
 
 ::: phydrax.discretization.SphericalClebschGordanPlan
 
+## Radial-spherical and rotational transforms
+
+::: phydrax.discretization.RadialLaguerrePlan
+
+---
+
+::: phydrax.discretization.FourierLaguerrePlan
+
+---
+
+::: phydrax.discretization.WignerTransformPlan
+
+---
+
+::: phydrax.discretization.WignerLaguerrePlan
+
+---
+
+::: phydrax.discretization.DirectionalBallWaveletPlan
+
+---
+
+::: phydrax.discretization.BallWaveletCoefficients
+
+
 ## Pseudospectral realization
 
 ::: phydrax.discretization.PseudospectralMethodPlan

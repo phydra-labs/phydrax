@@ -9,8 +9,9 @@ from math import ceil
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -184,7 +185,7 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         del position, committed_input
         if not self.evolving:
             return None
-        widths = oe.contract(
+        widths = ein.contract(
             "pij,pj->pi", jnp.abs(deformation_gradient), self.reference_half_widths
         )
         return GIMPAssignmentInput(widths)

@@ -520,6 +520,7 @@ def solve_characteristic_projection(
     /,
     *,
     inner_num_iter: int,
+    gradient_accumulation: int = 1,
     optim: Any = None,
     seed: int = 0,
     jit: bool = True,
@@ -636,6 +637,7 @@ def solve_characteristic_projection(
         )
         trained = temporary.solve(
             num_iter=inner_steps,
+            gradient_accumulation=gradient_accumulation,
             optim=optimizer,
             seed=int(seed) + index,
             jit=jit,

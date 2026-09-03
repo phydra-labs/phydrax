@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -259,10 +260,10 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             * modal_energy
         )
         modal_transfer = jnp.real(
-            oe.contract("...i,...i->...", jnp.conj(velocity_), nonlinear)
+            ein.contract("...i,...i->...", jnp.conj(velocity_), nonlinear)
         )
         modal_injection = jnp.real(
-            oe.contract("...i,...i->...", jnp.conj(velocity_), forcing_)
+            ein.contract("...i,...i->...", jnp.conj(velocity_), forcing_)
         )
         energy_shells = _modal_shell_statistic(
             self.geometry, modal_energy, "kinetic-energy"
@@ -293,7 +294,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
                 axis=-1,
             )
             helicity = jnp.real(
-                oe.contract("...i,...i->", jnp.conj(velocity_), vorticity)
+                ein.contract("...i,...i->", jnp.conj(velocity_), vorticity)
             )
             helicity_valid = jnp.asarray(True)
         else:

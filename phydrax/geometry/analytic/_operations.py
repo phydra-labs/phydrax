@@ -13,13 +13,18 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jax.scipy.special import logsumexp
 from jaxtyping import Array
 
+import phydrax.ein as ein
+
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
-from .._capabilities import ContactCurvatureProvider, GeometryCapability
+from .._capabilities import (
+    ClosestPointProvider,
+    ContactCurvatureProvider,
+    GeometryCapability,
+)
 from .._certificate import (
     DistanceSemantics,
     FieldCertificate,
@@ -28,6 +33,7 @@ from .._certificate import (
     ZeroSetAccuracy,
 )
 from .._contracts import (
+    ClosestPointResult,
     ContactCurvatureResult,
     GeometryKernel,
     GeometryKind,
@@ -165,7 +171,7 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
             return jax.jacfwd(lambda value: self.base.map(index, value))(coordinate)
 
         base_differential = jax.vmap(differential)(flat_indices, flat_reference)
-        transformed = oe.contract("ij,njk->nik", self.linear, base_differential)
+        transformed = ein.contract("ij,njk->nik", self.linear, base_differential)
         gram = jnp.swapaxes(transformed, -1, -2) @ transformed
         measure = jnp.sqrt(jnp.maximum(jnp.linalg.det(gram), 0.0))
         return measure.reshape(leading)
@@ -243,8 +249,8 @@ class _AffineCubatureMap(AbstractCubatureMap):
                     lambda value: self.base.map(index, value)
                 )(coordinate)
             )(flat_indices, flat_reference)
-            transformed = oe.contract("ij,njk->nik", self.linear, base_differential)
-            gram = oe.contract("nji,njk->nik", jnp.conj(transformed), transformed)
+            transformed = ein.contract("ij,njk->nik", self.linear, base_differential)
+            gram = ein.contract("nji,njk->nik", jnp.conj(transformed), transformed)
             sign, logdet = jnp.linalg.slogdet(gram)
             measure_scale = jnp.where(
                 sign > 0,
@@ -306,16 +312,25 @@ class RigidTransform(GeometrySource):
             self.frame.translation,
             role="position_offset",
         )
-        return _RigidTransformKernel(child, rotation, translation)
+        return _RigidTransformKernel(
+            child,
+            rotation,
+            translation,
+            source_id=self.feature_id,
+        )
 
 
 class _RigidTransformKernel(GeometryKernel):
     child: GeometryKernel
     rotation: ParameterBinding = eqx.field(static=True)
     translation: ParameterBinding = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
 
-    def __init__(self, child, rotation, translation):
-        self.child, self.rotation, self.translation = child, rotation, translation
+    def __init__(self, child, rotation, translation, *, source_id):
+        self.child = child
+        self.rotation = rotation
+        self.translation = translation
+        self.source_id = source_id
 
     @property
     def ambient_dimension(self):
@@ -393,6 +408,32 @@ class _RigidTransformKernel(GeometryKernel):
     def boundary_normal(self, state, points, /):
         rotation, _ = self._parameters(state)
         return self.child.boundary_normal(state, self._local(state, points)) @ rotation.T
+
+    def closest_point(self, state, points, /):
+        if not isinstance(self.child, ClosestPointProvider):
+            raise TypeError("Transformed child lacks a closest-point provider.")
+        rotation, translation = self._parameters(state)
+        result = self.child.closest_point(state, self._local(state, points))
+        if not isinstance(result, ClosestPointResult):
+            raise TypeError("Child closest-point query returned an invalid result.")
+        physical_id = (
+            self.source_id
+            if result.exact_to_physical
+            else result.physical_geometry_id
+        )
+        return ClosestPointResult(
+            closest_point=result.closest_point @ rotation.T + translation,
+            normal_coordinate=result.normal_coordinate,
+            oriented_normal=result.oriented_normal @ rotation.T,
+            source_entity_id=result.source_entity_id,
+            unique=result.unique,
+            regular=result.regular,
+            margin=result.margin,
+            normal_coordinate_valid=result.normal_coordinate_valid,
+            represented_geometry_id=self.source_id,
+            physical_geometry_id=physical_id,
+            exact_to_physical=result.exact_to_physical,
+        )
 
     def contact_curvature(self, state, points, /):
         if not isinstance(self.child, ContactCurvatureProvider):
@@ -549,7 +590,13 @@ class Scaling(GeometrySource):
         center_binding = context.bind(
             ParameterId(self.feature_id, "center"), center, role="position"
         )
-        return _ScalingKernel(child, scale_binding, center_binding, uniform=self.uniform)
+        return _ScalingKernel(
+            child,
+            scale_binding,
+            center_binding,
+            uniform=self.uniform,
+            source_id=self.feature_id,
+        )
 
 
 class _ScalingKernel(GeometryKernel):
@@ -557,9 +604,14 @@ class _ScalingKernel(GeometryKernel):
     scale: ParameterBinding = eqx.field(static=True)
     center: ParameterBinding = eqx.field(static=True)
     uniform: bool = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
 
-    def __init__(self, child, scale, center, *, uniform):
-        self.child, self.scale, self.center, self.uniform = child, scale, center, uniform
+    def __init__(self, child, scale, center, *, uniform, source_id):
+        self.child = child
+        self.scale = scale
+        self.center = center
+        self.uniform = uniform
+        self.source_id = source_id
 
     @property
     def ambient_dimension(self):
@@ -575,7 +627,13 @@ class _ScalingKernel(GeometryKernel):
 
     @property
     def capabilities(self):
-        return self.child.capabilities
+        if self.uniform:
+            return self.child.capabilities
+        return frozenset(
+            capability
+            for capability in self.child.capabilities
+            if capability is not GeometryCapability.CLOSEST_POINT
+        )
 
     @property
     def field_certificate(self):
@@ -619,6 +677,37 @@ class _ScalingKernel(GeometryKernel):
         scale, _ = self._parameters(state)
         normal = self.child.boundary_normal(state, self._local(state, points)) / scale
         return normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
+
+    def closest_point(self, state, points, /):
+        if not self.uniform:
+            raise NotImplementedError(
+                "Nonuniform scaling does not preserve closest-point maps."
+            )
+        if not isinstance(self.child, ClosestPointProvider):
+            raise TypeError("Scaled child lacks a closest-point provider.")
+        scale, center = self._parameters(state)
+        result = self.child.closest_point(state, self._local(state, points))
+        if not isinstance(result, ClosestPointResult):
+            raise TypeError("Child closest-point query returned an invalid result.")
+        factor = scale[0]
+        physical_id = (
+            self.source_id
+            if result.exact_to_physical
+            else result.physical_geometry_id
+        )
+        return ClosestPointResult(
+            closest_point=center + (result.closest_point - center) * scale,
+            normal_coordinate=factor * result.normal_coordinate,
+            oriented_normal=result.oriented_normal,
+            source_entity_id=result.source_entity_id,
+            unique=result.unique,
+            regular=result.regular,
+            margin=factor * result.margin,
+            normal_coordinate_valid=result.normal_coordinate_valid,
+            represented_geometry_id=self.source_id,
+            physical_geometry_id=physical_id,
+            exact_to_physical=result.exact_to_physical,
+        )
 
     def bounds(self, state, /):
         scale, center = self._parameters(state)

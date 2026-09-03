@@ -12,8 +12,9 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import opt_einsum as oe
 from jaxtyping import Array, Key
+
+import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ..._keys import EvalKey, split_eval_key
@@ -188,7 +189,7 @@ class _SelfAttention(eqx.Module):
             (cases, token_count, self.heads, self.head_dim)
         )
         v = self.value(flattened).reshape((cases, token_count, self.heads, self.head_dim))
-        logits = oe.contract("bqhd,bkhd->bhqk", q, k) / jnp.sqrt(float(self.head_dim))
+        logits = ein.contract("bqhd,bkhd->bhqk", q, k) / jnp.sqrt(float(self.head_dim))
         measure = jnp.asarray(token_measure, dtype=logits.dtype).reshape(
             (cases, token_count)
         )
@@ -200,7 +201,7 @@ class _SelfAttention(eqx.Module):
         )
         attention = jnn.softmax(logits + log_measure[:, None, None, :], axis=-1)
         attention = self.dropout(attention, key=key)
-        attended = oe.contract("bhqk,bkhd->bqhd", attention, v).reshape(
+        attended = ein.contract("bhqk,bkhd->bqhd", attention, v).reshape(
             (cases, token_count, width)
         )
         output = self.output(attended)

@@ -7,6 +7,7 @@
 from . import (
     astrodynamics,
     astrophysics,
+    cardiovascular,
     cellular_mechanics,
     compact_objects,
     compressible_flow,
@@ -21,6 +22,7 @@ from . import (
     ocean,
     phase_field,
     reacting_flow,
+    robotics,
     solid_mechanics,
     systems_biology,
     thermofluids,
@@ -40,6 +42,7 @@ from .contact import (
 __all__ = [
     "astrodynamics",
     "astrophysics",
+    "cardiovascular",
     "cellular_mechanics",
     "compact_objects",
     "compressible_flow",
@@ -54,6 +57,7 @@ __all__ = [
     "ocean",
     "phase_field",
     "reacting_flow",
+    "robotics",
     "solid_mechanics",
     "systems_biology",
     "thermofluids",
