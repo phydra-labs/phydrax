@@ -4,7 +4,7 @@
 
 """Optimal-control problems, dynamics, parameterizations, and diagnostics."""
 
-from . import games
+from . import games, stochastic
 from ._advanced_collocation import (
     audit_complementarity,
     audit_multiphase_links,
@@ -563,4 +563,5 @@ __all__ = [
     "LipschitzBoxControlRelaxation",
     "certify_bounded_control_optimum",
     "games",
+    "stochastic",
 ]

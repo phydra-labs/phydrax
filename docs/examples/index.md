@@ -1,6 +1,6 @@
 # Examples
 
-This section links to reproducible, runnable Phydrax examples as public [Marimo](https://marimo.io) notebooks.
+This section collects public [Marimo](https://marimo.io) notebooks and directly runnable repository scripts.
 
 ## Wave Equation (1D)
 
@@ -25,6 +25,44 @@ game, checks curvature, rank, conditioning, stationarity, and Bellman
 evidence, replays the joint affine policy through the physical control
 contract, and compares both direct discrete payoffs with their initial value
 functions.
+
+## Nonlinear, constrained, and stochastic game scripts
+
+```text
+python examples/nonlinear_feedback_game.py
+python examples/open_loop_variational_game.py
+python examples/constrained_open_loop_game.py
+python examples/stochastic_feedback_control.py
+python examples/lqg_feedback_game.py
+python examples/hjbi_reference_game.py
+python examples/mean_field_game.py
+python examples/common_information_game.py
+```
+
+`nonlinear_feedback_game.py` runs residual-globalized iLQ and independently
+recomputes the accepted local nominal stationarity residual. It does not relabel
+that evidence as an exact nonlinear feedback-Nash result.
+
+`open_loop_variational_game.py` solves a convex shared-resource VE with one common
+shared multiplier. `constrained_open_loop_game.py` solves a nonlinear
+opponent-dependent private open-loop KKT system; its result is local KKT evidence,
+not a feedback or global GNE certificate.
+
+`stochastic_feedback_control.py` evaluates one unchanged feedback policy on
+disjoint prepared training and holdout noise, preserving path, coupling, and
+independence-cluster provenance. `lqg_feedback_game.py` exercises the exact
+additive-noise, full-state LQG feedback-Nash recursion and per-player value trace
+corrections.
+
+`hjbi_reference_game.py` evaluates declared lower and upper zero-sum action orders
+and reports the finite-grid residual, refinement, and Isaacs-gap gates.
+`mean_field_game.py` keeps frozen-law response evaluation separate from the
+independently induced-law fixed-point check and reports the empirical-law evidence
+ceiling.
+
+`common_information_game.py` performs pure-prescription Bayesian backward
+induction over a finite public state, then queries each player's policy with only
+that public state and the player's own private type.
 
 ## Shallow-water scripts
 

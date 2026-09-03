@@ -694,12 +694,14 @@ def test_reverse_failures_preserve_causal_stage_and_terminal_index():
 
 
 def test_public_surface_is_namespaced_under_control_games():
-    assert phx.control.games.__all__ == [
+    expected = {
         "FiniteHorizonLQFeedbackNashDiagnostics",
         "FiniteHorizonLQFeedbackNashResult",
         "LQFeedbackNashStatus",
         "PlayerControlPartition",
         "finite_horizon_lq_feedback_nash",
-    ]
+    }
+    assert expected <= set(phx.control.games.__all__)
+    assert len(phx.control.games.__all__) == len(set(phx.control.games.__all__))
     assert "games" in phx.control.__all__
     assert "finite_horizon_lq_feedback_nash" not in phx.control.__all__

@@ -24,6 +24,26 @@ selected from array shape. `control_mode="explicit"` evaluates a supplied $Z$ mo
 The latter requires a differentiable value predictor and is the direct bridge to the
 semilinear PDE residual.
 
+### $Z$, physical actions, and stochastic maximum-principle variables
+
+The historical `control_mode` name refers to the BSDE control $Z$ in
+`evaluate_bsde`; it does **not** turn $Z$ into a physical control action. The
+distinction is structural:
+
+| Quantity | Produced by | Shape and timing | Meaning and evidence |
+|---|---|---|---|
+| Physical action $a_i$ | A feedback/open-loop policy or a `MeanFieldBSDEControlAdapter` | An action event at interval $i$, chosen from information available before the interval noise | Changes drift, diffusion, or cost. Policy evaluation can report its realized empirical risk; it does not make $a_i$ a martingale integrand. |
+| BSDE $Z_i$ | An explicit predictor or `autodiff_bsde_control` | `output_shape + noise_shape` on interval $i$ | Multiplies $\Delta W_i$ in the backward residual. `phydrax.control.stochastic.FittedBellmanBSDEBridge` keeps it in `martingale_integrands` while retaining physical actions separately. |
+| SMP adjoint $p_i$ | `phydrax.control.stochastic.SMPAdjointPredictor` or supplied arrays | State-shaped node values | Costate candidate in open-loop necessary-condition evidence. It is neither a value function nor an action. |
+| SMP martingale integrand $q_i$ | `phydrax.control.stochastic.SMPMartingaleIntegrandPredictor` or supplied arrays | State-by-noise interval tensor | Martingale term in the adjoint BSDE. `phydrax.control.stochastic.evaluate_stochastic_maximum_principle` never feeds it to the physical dynamics as an action. |
+
+`evaluate_bsde` checks a backward equation for supplied predictors.
+`phydrax.control.stochastic.evaluate_stochastic_maximum_principle` additionally checks forward dynamics,
+terminal adjoint, backward martingale, measurability, and conditional Hamiltonian
+stationarity on supplied open-loop paths. These are different residual systems:
+neither one silently upgrades the other to policy optimality, feedback Nash,
+population optimality, or a global solution.
+
 ::: phydrax.stochastic.BSDEPathBatch
 
 ---

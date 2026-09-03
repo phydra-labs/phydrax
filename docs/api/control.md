@@ -14,6 +14,10 @@ failure, or hide a fallback.
 | Audit a supplied control | `ControlProblem.evaluate` | Adds left-rectangle sampled cost and sampled constraint residuals. Nonlinear feasibility is checked only at declared sample sites and is not certified between them. |
 | Unconstrained affine-quadratic control | `finite_horizon_lqr`, `continuous_lqr`, `discrete_lqr` | Riccati solutions with residual, conditioning, stability, and convergence diagnostics. |
 | Unconstrained affine-quadratic feedback game | `control.games.finite_horizon_lq_feedback_nash` | Simultaneous full-state feedback Nash policy with explicit player ownership, per-player values, curvature, rank, conditioning, stationarity, Bellman, and causal-failure evidence. |
+| Deterministic nonlinear game | `control.games.evaluate_game_policy`, `control.games.nominal_nash_residual`, `control.games.solve_ilq_feedback_game` | Physical evaluation, local first-order evidence, and residual-globalized iLQ remain separate; success is local nominal stationarity, not exact nonlinear feedback Nash. |
+| Constrained open-loop or local feedback game | `control.games.solve_open_loop_ve`, `control.games.solve_open_loop_gne`, `control.games.solve_open_loop_game_kkt`, `control.games.solve_feedback_quasi_nash_model` | Choose the equilibrium concept and multiplier ownership first; evidence ranges from convex open-loop VE/GNE to local KKT or a fixed-active-set feedback branch. |
+| Stochastic control or game | `control.stochastic.evaluate_feedback_policy`, exact LQG entry points, SMP/HJB references, or `control.games.solve_stochastic_policy_game` | Information, noise timing, training/holdout samples, and evidence claims are explicit; there is no universal stochastic solver. |
+| Mean-field or finite-state game | Frozen/fixed/common-noise/constrained MFG, finite-$N$, MFC, common-information, and master-equation entry points below | Every layer reports its own law, information, statistical, and provenance ceiling; no layer silently implies another. |
 | Constrained affine discrete control | `compile_linear_quadratic_control`, `solve_linear_quadratic_control` | Canonical, uncondensed QP with exact decision and constraint layouts. |
 | Receding-horizon affine control | `solve_receding_horizon_mpc` | Re-solves canonical QPs and records every subproblem result and exact state handoff. |
 | One unconstrained nonlinear case | `solve_ilqr` | iLQR with a fixed requested regularization and explicit line-search or curvature failure. |
@@ -797,3 +801,186 @@ searches remain non-certificates.
 ---
 
 ::: phydrax.control.certify_bounded_control_optimum
+
+## Deterministic nonlinear games
+
+`phydrax.control.games` keeps a joint physical control vector, while
+`PlayerControlPartition` records the rows owned by each ordered player. For a case
+shape `C`, horizon `T`, `P` players, state size `n`, and joint-control size `m`,
+deterministic evaluations use states `C + (T + 1, n)`, controls
+`C + (T, m)`, and costs `C + (P, T)`. A player axis is never folded into a case
+axis. All callbacks receive `DiscreteStepContext`; stage costs are discrete summands
+and are not multiplied by interval duration.
+
+| Capability | Primary public API | Decision class | Evidence ceiling and explicit non-goals |
+|---|---|---|---|
+| Physical policy evaluation | `DeterministicFeedbackGameProblem`, `evaluate_game_policy` | Simultaneous full-state joint feedback: every player acts from the same pre-transition state. | `GamePolicyEvaluation` reports the physical rollout, ordered costs, validity, and causal failure. It does not test unilateral optimality. |
+| Nominal Nash residual | `ILQGameScaling`, `nominal_nash_residual` | The supplied policy and its one supplied nominal trajectory are fixed. | `NominalNashResidual` contains exact discrete adjoints, dynamics defects, and player-owned first-order rows in physical and dimensionless coordinates. `LOCAL_NOMINAL_NASH_STATIONARY` is a local first-order label, not feedback-Nash existence, uniqueness, or global convergence. |
+| One local quadratic suggestion | `suggest_local_affine_game_policy` | A physical affine policy in deviations from the supplied nominal states and controls. | `LocalAffineGameSuggestion` uses first-order dynamics and exact cost Hessians once. It is neither an iterative solver nor a certificate for the nonlinear game. |
+| Residual-globalized nonlinear iLQ | `plan_ilq_feedback_game`, `prepare_ilq_feedback_game`, `refresh_ilq_feedback_game`, `solve_prepared_ilq_feedback_game`, `solve_ilq_feedback_game` | Simultaneous full-state feedback within the represented local affine policy family. | `LocalNominalNashResult` accepts trials only through the original unregularized dimensionless nominal residual. Proximal regularization may form a direction but cannot change the merit, final residual, or claim. Success remains local nominal stationarity, not an exact nonlinear feedback-Nash or global result. |
+
+The supporting public result and status types are
+`GamePolicyEvaluation`, `GamePolicyEvaluationStatus`, `NominalNashResidual`,
+`LocalAffineGamePolicy`, `LocalAffineGameSuggestion`,
+`LocalAffineGameSuggestionStatus`, `ILQFeedbackGamePlan`,
+`PreparedILQFeedbackGame`, `ILQFeedbackGameStatus`,
+`ILQFeedbackGameTrialReason`, and `LocalNominalNashDiagnostics`.
+
+## Constraint ownership and equilibrium concepts
+
+`GameConstraintBlock` declares a `GameConstraintScope`, a `GameConstraintSite`,
+participants, an optional owner, control dependencies, an equality flag, and one
+fixed residual shape. Equalities use residual `= 0`; inequalities use residual
+`<= 0`. The scopes are not interchangeable:
+
+| Scope | Physical meaning | Multiplier ownership |
+|---|---|---|
+| `PLAYER_LOCAL` | Depends only on its one owning player's declared variables. | One private copy for the owner. |
+| `PLAYER_OWNED_COUPLED` | Belongs to one player but may depend on participating opponents. | One private copy for the owner; this creates a player-specific feasible set. |
+| `SHARED` | One physical residual is shared by declared participants. | A VE uses one common multiplier. A generic GNE uses one multiplier copy per participating player. |
+
+`OpenLoopGameConstraints`, `GameConstraintLayout`, and `GameMultiplierLayout`
+preserve physical-residual rows separately from multiplier copies.
+`evaluate_game_feasibility` returns `GameFeasibilityEvidence` at the declared
+`PATH`, `TERMINAL`, or `TRAJECTORY` sites. This is sampled feasibility only; it is
+not a continuous-time safety certificate.
+
+| Solution concept | Primary public API | Constraint and time semantics | Evidence ceiling |
+|---|---|---|---|
+| Convex open-loop variational equilibrium (VE) | `FiniteHorizonLQOpenLoopVEProblem`, `solve_open_loop_ve` | Finite-horizon affine dynamics, convex quadratic player costs, affine player-local and shared constraints after exact condensation, and one common multiplier for each shared row. | `OpenLoopVEResult` audits structure, phase-I feasibility, the VI, original-scale KKT residuals, an independent natural projection, and isolation. It is an open-loop VE, not a generic GNE or feedback Nash result. |
+| Convex open-loop generalized Nash equilibrium (GNE) | `FiniteHorizonLQOpenLoopGNEProblem`, `solve_open_loop_gne` | The same physical shared row is evaluated once but has a player-specific multiplier copy; player-owned coupled rows remain private. No common-multiplier restriction is imposed. | `OpenLoopGNEResult` certifies original player-specific KKT evidence. A finite global GNE gap is available only when the optional convex unilateral best-response audit succeeds with complete numerical bounds; KKT success alone is not that global gap claim. |
+| Nonlinear private open-loop KKT | `NonlinearOpenLoopGameProblem`, `solve_open_loop_game_kkt` | Discrete simultaneous dynamics with open-loop controls and only `PLAYER_LOCAL` or `PLAYER_OWNED_COUPLED` constraints. Physically shared rows are rejected. | `OpenLoopGameKKTResult` reports original unscaled feasibility, stationarity, dual, complementarity, constraint-qualification, and solver evidence. It is a local nominal Nash/GNE KKT candidate, not feedback equilibrium or global equilibrium. |
+| Fixed-active-set feedback quasi-Nash model | `ConstrainedFeedbackGameProblem`, `FeedbackQuasiNashPlan`, `solve_feedback_quasi_nash_model` | A `LocalAffineGameSuggestion` plus explicitly supplied stagewise path-constraint residuals, state/control Jacobians, multiplier convention, and active mask. | `FeedbackQuasiNashResult` is one local piecewise-affine branch. It performs no active-set search and supplies no derivative through a switch. Even success is not an exact nonlinear feedback Nash result, an off-trajectory feasibility claim, or a global GNE certificate. |
+
+Prepared repeated solves use `OpenLoopVEPlan`, `PreparedOpenLoopVE`,
+`plan_open_loop_ve`, `prepare_open_loop_ve`, `refresh_open_loop_ve`, and
+`solve_prepared_open_loop_ve`; `OpenLoopGNEPlan`, `PreparedOpenLoopGNE`,
+`plan_open_loop_gne`, `prepare_open_loop_gne`, `refresh_open_loop_gne`, and
+`solve_prepared_open_loop_gne`; or `OpenLoopGameKKTPlan`,
+`PreparedOpenLoopGameKKT`, `plan_open_loop_game_kkt`,
+`prepare_open_loop_game_kkt`, `refresh_open_loop_game_kkt`, and
+`solve_prepared_open_loop_game_kkt`. Refresh preserves player, constraint,
+multiplier, case, and horizon topology.
+
+The constrained status inventory is `GameFeasibilityStatus`, `OpenLoopVEStatus`,
+`OpenLoopGNEStatus`, `OpenLoopGameKKTStatus`, and
+`FeedbackQuasiNashStatus`. Status success never widens the solution concept named
+by its corresponding result.
+
+## Stochastic control and games
+
+The stochastic-control contracts distinguish a physical action from the noise
+increment that follows it. For `N` paths and `T` steps,
+`PreparedControlledNoise.increments` has `(N, T) + noise_shape`;
+`ControlledPathBatch.states` has `(N, T + 1) + state_shape`; and actions have
+`(N, T) + action_shape`. `independence_labels`, not raw path count, define the
+independent units used by Monte Carlo summaries.
+
+Information is also a first-class value. `FullStateInformation` exposes the supplied
+state, `CentralizedObservationInformation` exposes only the supplied observation,
+and `GaussianBelief` carries a checked mean/covariance pair. Finite common-information
+policies use a separate prescription contract described below. None of these classes
+infers information from array shape or gives a policy an undeclared latent state,
+noise increment, or random key.
+
+| Capability | Primary public API | Decision/information and stochastic class | Evidence ceiling |
+|---|---|---|---|
+| Fixed-policy rollout, risk, and comparison | `ControlledTransitionProblem`, `PreparedControlledNoise`, `rollout_feedback`, `evaluate_feedback_policy`, `compare_feedback_policies` | One full-state feedback action is chosen from `DiscreteStepContext` and current state before the current noise is exposed. Comparison requires verified common random numbers. | `FeedbackPolicyEvaluation` reports empirical risk and separately qualified `MonteCarloEvidence`; `PairedPolicyComparison` reports right-minus-left return. Neither claims policy optimality. |
+| Additive-noise LQG control and games | `finite_horizon_lqg_state_feedback`, `finite_horizon_lqg_feedback_nash` | Exact discrete full-state certainty equivalence for exogenous zero-mean additive noise with explicit factor and covariance axes. The game has one common process and an explicit player cost axis. | Exact policy and quadratic expected-value trace corrections for the declared finite-horizon LQG class only. State/action-dependent noise and partial observation are outside these entry points. |
+| Multiplicative-noise LQ control and games | `finite_horizon_multiplicative_lq_state_feedback`, `finite_horizon_multiplicative_lq_feedback_nash` | Noise enters as explicitly declared affine channels in state and joint action, with a full channel covariance at every stage. | Exact expected quadratic-affine recursion for the declared all-minimizer class, subject to covariance, curvature, rank, solve, stationarity, and Bellman gates. It is not additive LQG or belief feedback. |
+| Centralized Gaussian-belief LQG | `CentralizedLQGProblem`, `finite_horizon_centralized_lqg` | One observation arrives before each action; `BeliefFeedbackPolicy` acts only on a `GaussianBelief`. Process and observation noise are zero mean, mutually independent across time, and uncorrelated with each other. | `CentralizedLQGResult` provides the deterministic Riccati policy, Kalman schedule, Joseph covariance updates, and exact trace evidence for this classical centralized model. Cross-correlated noise, action-dependent observations, decentralized information, and covariance repair are excluded. |
+| Frozen-policy fitted Bellman evaluation | `FittedBellmanProblem`, `FittedBellmanPlan`, `fit_frozen_policy_bellman` | Fixed features and one unchanged policy are evaluated backward on disjoint training and holdout path batches. | `FittedBellmanResult` reports ranks, conditioning, original/ridge normal-equation residuals, and separate holdout Bellman residuals. It never improves or replaces the policy. `bridge_fitted_bellman_to_bsde` preserves physical actions separately from BSDE martingale integrands. |
+| Single-agent stochastic maximum principle (SMP) | `StochasticMaximumPrincipleProblem`, `evaluate_stochastic_maximum_principle` | Supplied open-loop Euler paths, adjoint predictor, distinct martingale-integrand predictor, and caller-declared pre-increment information cells. | `StochasticMaximumPrincipleResult` is pathwise necessary-condition evidence. Conditional stationarity is an equal-independent-cluster empirical mean; sufficiency additionally requires explicitly checked convexity. There is no feedback, Markov-perfect, coverage, or population-optimality claim. |
+| Multi-player stochastic SMP | `OpenLoopStochasticGameSMPProblem`, `evaluate_open_loop_stochastic_game_smp` | Every player has its own adjoint pair; only that player's owned rows of the joint-action Hamiltonian gradient are retained. | `OpenLoopStochasticGameSMPResult` is open-loop Nash SMP evidence on supplied paths. It does not construct a strategy or claim feedback Nash. |
+| Bounded one-dimensional HJB reference | `BoundedUniformGrid1D`, `DiscreteHJBProblem`, `solve_discrete_hjb_reference`, `refine_discrete_hjb_reference` | One scalar state, a finite physical-action catalog, declared boundary/terminal tables, an explicit time grid, and an upwind/central finite-difference operator. | `DiscreteHJBResult` and `DiscreteHJBRefinementResult` gate residuals and one nested refinement only. They do not establish a continuum viscosity solution or a result outside the bounded grid. |
+| Zero-sum HJBI reference | `DiscreteZeroSumHJBIProblem`, `solve_discrete_hjbi_reference`, `scalar_lq_hjbi_solution` | Separate minimizer/maximizer action catalogs. The declared `max_min` and `min_max` orders are both evaluated; neither is rewritten. | `DiscreteZeroSumHJBIResult` requires both discrete orders, refinement, and the Isaacs-gap gate. This is distinct from an HJB minimum and from all-minimizer coupled HJB. The scalar LQ helper is exact only for its stated analytic model and well-posed horizon. |
+| Coupled all-minimizer HJB | `DiscreteCoupledHJBProblem`, `CoupledHJBPolicyIterationPlan`, `solve_coupled_hjb_reference` | One scalar state, simultaneous finite actions, and player-specific value equations. Jacobi or Gauss--Seidel update order, damping, starts, ties, and branches are explicit. | `DiscreteCoupledHJBResult` is local finite-grid feedback fixed-point evidence for the supplied starts. It does not establish uniqueness, a viscosity solution, or a global Nash equilibrium. |
+| Frozen-sample policy-game SAA | `StochasticPolicyGameProblem`, `plan_stochastic_policy_game`, `prepare_stochastic_policy_game`, `solve_prepared_stochastic_policy_game` | A finite joint policy-parameter vector has player-owned rows. Raw complete-path player costs are differentiated on frozen training noise; disjoint holdout noise is evaluation-only. | `StochasticPolicyGameResult` certifies at most local unscaled SAA pseudo-gradient stationarity. Holdout cluster summaries are not a population bound, and the unconstrained root solve does not certify boundary KKT, feedback Nash, or population Nash. |
+
+The exact LQ result/status inventory is
+`FiniteHorizonLQGStateFeedbackResult`, `LQGStateFeedbackStatus`,
+`FiniteHorizonLQGFeedbackNashResult`, `LQGFeedbackNashStatus`,
+`FiniteHorizonMultiplicativeLQStateFeedbackResult`,
+`FiniteHorizonMultiplicativeLQStateFeedbackDiagnostics`,
+`MultiplicativeLQStateFeedbackStatus`,
+`FiniteHorizonMultiplicativeLQFeedbackNashResult`,
+`FiniteHorizonMultiplicativeLQFeedbackNashDiagnostics`, and
+`MultiplicativeLQFeedbackNashStatus`.
+
+The remaining stochastic evidence inventory is `ControlledPathBatch`,
+`FeedbackPolicyEvaluationStatus`, `FittedBellmanPrepared`,
+`FittedBellmanStatus`, `FittedBellmanBSDEBridge`,
+`SMPCausalInformationEvidence`, `SMPPathClusterEvidence`,
+`StochasticMaximumPrincipleStatus`, `GameSMPCausalInformationEvidence`,
+`GameSMPPathClusterEvidence`, `OpenLoopStochasticGameSMPStatus`,
+`DiscreteHJBEvidence`, `DiscreteHJBStatus`, `DiscreteHJBIEvidence`,
+`DiscreteHJBIStatus`, `CoupledHJBBranchEvidence`,
+`DiscreteCoupledHJBEvidence`, `DiscreteCoupledHJBStatus`,
+`StochasticPolicyGamePlan`, `PreparedStochasticPolicyGame`, and
+`StochasticPolicyGameStatus`.
+
+### Empirical-risk and statistical boundaries
+
+- `sample_role="training"` describes reused or selected data and therefore carries
+  no coverage claim, even if a coverage method was requested.
+- Holdout intervals retain their declared assumptions. Asymptotic-normal intervals
+  are not finite-sample guarantees. Hoeffding evidence requires valid declared
+  return bounds. A confidence interval for a fixed policy is not an optimality
+  interval.
+- Repeated paths with one `independence_label` form one cluster. Increasing the
+  number of dependent paths does not increase the independent-cluster count.
+- SAA stationarity concerns the frozen empirical objective. A fresh holdout
+  evaluation diagnoses the accepted parameters but does not convert the empirical
+  root into a population equilibrium.
+- HJB/HJBI residual and refinement gates are deterministic finite-grid evidence,
+  not Monte Carlo coverage. SMP conditional means are empirical necessary-condition
+  evidence, not Bellman or HJB residuals.
+
+## Mean-field, finite-population, and finite-state games
+
+Mean-field APIs keep law support, weights, effective sample size, time support,
+source-path identity, and flow identity explicit. `EmpiricalMeanField.particles`
+has `sample_shape + (num_times,) + state_shape`; its weights and validity have
+`sample_shape + (num_times,)`. Common-noise scenario and outer-iteration histories
+add distinct leading axes rather than collapsing them into particle samples. A
+frozen law, a fixed-point candidate, a common-noise conditional law, an $N$-player
+continuation, a social planner, and a master equation are different mathematical
+objects:
+
+| Capability | Primary public API | Law/information semantics | Evidence ceiling |
+|---|---|---|---|
+| Frozen-law response | `FrozenLawBestResponseProblem`, `solve_frozen_law_best_response` | A control-adapted `MeanFieldBSDEProblem` is evaluated against exactly one supplied `EmpiricalMeanField`. | `FrozenLawBestResponseResult` reports BSDE, Hamiltonian, law-validity, and ESS evidence. It does not infer an induced law, establish best-response optimality, or claim an MFG. |
+| Induced-law MFG fixed point | `MeanFieldGameFixedPointProblem`, `MeanFieldGameFixedPointPlan`, `solve_mean_field_game_fixed_point` | Each outer step evaluates the current frozen law, then requires a newly sourced independently induced law. Unit damping adopts that law directly; damping below one requires an identified `law_mixture` callback that constructs the convex measure mixture or an evidenced coupling. Particle coordinates from unrelated sources are never interpolated. | `MeanFieldGameFixedPointResult` certifies a valid response and law distance within tolerance only. It remains a fixed-capacity candidate, not an $N$-player, common-noise, MFC, or globally optimal result. |
+| Finite-scenario common-noise MFG | `CommonNoiseMeanFieldProblem`, `CommonNoiseMeanFieldPlan`, `solve_common_noise_mean_field_fixed_point` | One conditional empirical law and one public history per common-noise atom; conditional laws are never replaced by their unconditional mixture. Damping below one uses an identified scenario-local law-mixture callback and never couples particles across common-noise atoms. ESS is computed after idiosyncratic weights are aggregated by declared independent cluster. | `CommonNoiseMeanFieldResult` requires every positive-probability scenario to pass in the same outer iteration. It is conditional-law candidate evidence, not an unconditional MFG or an equilibrium theorem. |
+| Constrained MFG | `ConstrainedMeanFieldGameProblem`, `ConstrainedMeanFieldGamePlan`, `solve_constrained_mean_field_game` | `MeanFieldConstraintConcept` separates individual, aggregate-generic, and aggregate-variational constraints. Physical aggregate rows are evaluated once; multiplier copies follow the declared generic or common convention. Identified aggregate-constraint derivative evidence binds the induced law and exact multiplier vector, and its aggregate price contribution enters the original representative-agent stationarity residual. | `ConstrainedMeanFieldGameResult` adds sampled individual feasibility/stationarity and aggregate-law primal, dual, complementarity, and complete price-adjusted stationarity evidence to law consistency. It is a sampled KKT candidate, not continuous safety, global equilibrium, MFC, finite-$N$, or master-equation evidence. |
+| Finite-$N$ continuation | `FinitePopulationGameProblem`, `FinitePopulationContinuationPlan`, `evaluate_finite_population_continuation` | A separately evaluated $N$-player profile and each feasible unilateral-deviation problem are anchored to one valid MFG fixed-point result. Dependence is clustered explicitly. | `FinitePopulationContinuationResult` emits epsilon-Nash evidence only when every numerical bound, simultaneous statistical bound, provenance check, and finite-law comparison is complete. An MFG fixed point alone never implies this result. |
+| Mean-field control (MFC) planner | `MeanFieldControlProblem`, `MeanFieldExternality`, `evaluate_mean_field_control_planner` | One social planner acts on its law-generating paths. The measure externality is mandatory and is either identified analytic Lions-derivative data or identified finite-particle adjoint data with an explicit bias bound. | `MeanFieldControlResult` reports planner-stationarity, measure-adjoint, welfare, ESS, path-identity, and provenance evidence. Valid evidence does not mean residual convergence or an MFC optimum, and it is not an MFG equilibrium. |
+| Finite-state common information | `FiniteStateCommonInformationGame`, `CommonInformationEquilibriumSelector`, `solve_common_information_game` | Pure prescriptions depend only on finite public state and a player's own private type. Beliefs, type transitions, public-observation transitions, Bayesian supports, and the deterministic branch selector are explicit. | `CommonInformationGameResult` is a finite pure-prescription common-information Markov-perfect candidate. A missing pure Bayes-consistent stage Nash profile is an error; no mixed-strategy or approximate fallback is substituted. |
+| Finite-state master-equation reference | `FiniteStateMasterEquationProblem`, `FinitePopulationSimplexLattice`, `solve_finite_state_master_equation_reference` | Values are tabulated on a finite physical-state set and the exact empirical-law count simplex for a declared population size. The representative state and aggregate population transition are separate. | `FiniteStateMasterEquationResult` reports exact finite-lattice Bellman/action-minimum/simplex residuals and neighbor-transfer differences. Those differences are not Lions derivatives; there is no interpolation, continuous-law, common-noise, MFG, MFC, or global master-equation claim. |
+
+Supporting evidence types include `MeanFieldIndividualConstraintEvidence`,
+`FinitePopulationJointPolicyEvaluation`, `FinitePopulationBestResponseEvidence`,
+`CommonInformationPolicy`, `CommonInformationStageEquilibria`,
+`CommonInformationBayesEvidence`, `FiniteStateMasterEquationEvidence`, and their
+corresponding result/status classes.
+
+The corresponding status inventory is `FrozenLawBestResponseStatus`,
+`MeanFieldGameFixedPointStatus`, `CommonNoiseMeanFieldStatus`,
+`ConstrainedMeanFieldGameStatus`, `FinitePopulationContinuationStatus`,
+`MeanFieldControlStatus`, and `FiniteStateMasterEquationStatus`.
+
+## Failure, provenance, and composition rules
+
+Every result must be interpreted through its own `valid` or `successful` value,
+status, evidence object, and stated certificate/result label. Returned arrays from a
+failed case are diagnostic data, not an applicable policy or equilibrium. Plan,
+problem, time, partition, policy, feature, information, realization, coupling,
+flow, callback, feasible-set, and selector identifiers record which numerical
+object was actually evaluated.
+
+No game or stochastic-control entry point silently clips controls, projects
+covariances, changes an active set, repairs infeasible iterates, inserts a
+pseudoinverse, reuses selected paths as holdout data, mixes conditional laws, or
+falls back to a different solution concept. There is no universal combined solver:
+compose only APIs whose decision class, information pattern, time model, stochastic
+law, constraint ownership, and evidence claim match the problem being posed.
