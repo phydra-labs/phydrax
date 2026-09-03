@@ -750,6 +750,22 @@ classical solver Jacobian. See
 [API → Native combinatorial optimization](api/combinatorial.md) and the
 [combinatorial learning cookbook](cookbook/combinatorial_learning.md).
 
+### Ordered scalar series and reconstruction
+
+`phydrax.series` factors the common one-dimensional support beneath trajectory
+data, sampled inputs, interval controls, and non-time parameter histories.
+`SeriesSupport` represents shared or per-series coordinates as a masked
+oriented line: node masks identify retained samples and edge masks identify
+admissible adjacency. `SampledSeries` places numerical PyTrees on nodes or
+edges, while `SeriesPairView` checks every intervening edge without
+materializing overlapping windows.
+
+Reconstruction remains an explicit numerical choice with bounds, knot side,
+derivative order, and causal capability. A disconnected support cannot be
+reconstructed as one curve. Dynamics trajectories, stochastic paths, solver
+meshes, and physical histories compose this substrate while retaining their
+own geometry, status, realization, and provenance contracts.
+
 ### Dynamical systems, identification, nonlinear analysis, and chaos
 
 `phydrax.dynamics` separates local system laws, pathwise numerical evolution,

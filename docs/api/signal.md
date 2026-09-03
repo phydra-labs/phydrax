@@ -1,4 +1,28 @@
-# Signal processing
+# Ordered series and signal processing
+
+`phydrax.series` is the neutral substrate for fixed-capacity numerical data on
+one ordered scalar coordinate. A `SeriesSupport` owns shared or per-series
+coordinates, node validity, and adjacent-edge connectivity. A `SampledSeries`
+attaches a numerical PyTree explicitly to nodes or edges. Inactive edges are
+hard component boundaries: pair views and reconstructions never cross them.
+
+Reconstruction is always explicit. Nearest, previous-value, linear, local
+cubic-Hermite, and interval-held policies declare their bounds, knot side,
+derivative order, and causal capability. They do not infer Euclidean geometry
+for a dynamics state or erase trajectory, stochastic, solver, or physical
+provenance.
+
+## Ordered scalar series
+
+::: phydrax.series.SeriesSupport
+
+::: phydrax.series.SampledSeries
+
+::: phydrax.series.SeriesPairView
+
+::: phydrax.series.SampledSeriesReconstruction
+
+::: phydrax.series.SeriesEvaluation
 
 ## Windows
 
