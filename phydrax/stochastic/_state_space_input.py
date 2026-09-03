@@ -10,13 +10,13 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._interpolation._bspline import bspline_stencil
 from .._interpolation._bspline_grid import BSplineGrid
 from .._interpolation._stencil import apply_gather_stencil
 from .._strict import StrictModule
+from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 
 
 SampledInputInterpolation: TypeAlias = Literal["zero-order-hold", "linear"]
@@ -92,9 +92,7 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
     includes both interval endpoints.
     """
 
-    times: Array
-    values: Array
-    knot_valid: Array
+    reconstruction: SampledSeriesReconstruction
     interpolation: SampledInputInterpolation = eqx.field(static=True)
     num_knots: int = eqx.field(static=True)
 
@@ -110,6 +108,7 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
     ):
         if interpolation not in ("zero-order-hold", "linear"):
             raise ValueError("interpolation must be 'zero-order-hold' or 'linear'.")
+        identifier = _name(input_id, owner="input_id")
         times_raw = jnp.asarray(times)
         values_raw = jnp.asarray(values)
         if times_raw.ndim < 1:
@@ -146,39 +145,48 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         )
         if valid.shape != times_raw.shape:
             raise ValueError("knot_valid must have the same shape as times.")
-
-        times_host = np.asarray(times_raw)
-        values_host = np.asarray(values_raw)
-        valid_host = np.asarray(valid)
-        flat_times = times_host.reshape((-1, num_knots))
-        flat_valid = valid_host.reshape((-1, num_knots))
-        flat_values = values_host.reshape((-1, num_knots) + input_shape)
-        valid_counts = np.sum(flat_valid, axis=-1)
-        if np.any(valid_counts < minimum_knots):
-            raise ValueError(
-                f"Every physical case requires at least {minimum_knots} valid knots."
-            )
-        if np.any(np.diff(flat_valid.astype(np.int8), axis=-1) > 0):
-            raise ValueError("Valid sampled-input knots must form a prefix.")
-        for case_index, count in enumerate(valid_counts):
-            count_ = int(count)
-            if not np.all(np.isfinite(flat_times[case_index, :count_])):
-                raise ValueError("Valid sampled-input times must be finite.")
-            if np.any(np.diff(flat_times[case_index, :count_]) <= 0.0):
-                raise ValueError("Valid sampled-input times must be strictly increasing.")
-            if not np.all(np.isfinite(flat_values[case_index, :count_])):
-                raise ValueError("Valid sampled-input values must be finite.")
-
-        time_dtype = jnp.result_type(times_raw, float)
-        value_dtype = jnp.result_type(values_raw, float)
-        self.times = times_raw.astype(time_dtype)
-        self.values = values_raw.astype(value_dtype)
-        self.knot_valid = valid
+        times_ = times_raw.astype(jnp.result_type(times_raw, float))
+        values_ = values_raw.astype(jnp.result_type(values_raw, float))
+        times_ = eqx.error_if(
+            times_,
+            jnp.any(jnp.sum(valid, axis=-1) < minimum_knots),
+            f"Every physical case requires at least {minimum_knots} valid knots.",
+        )
+        support = SeriesSupport(
+            times_,
+            node_valid=valid,
+            series_shape=case_shape,
+            coordinate_name="time",
+            coordinate_id=f"{identifier}:time",
+        )
+        series = SampledSeries(
+            support,
+            values_,
+            series_id=f"{identifier}:values",
+        )
+        method = "previous" if interpolation == "zero-order-hold" else "linear"
+        self.reconstruction = SampledSeriesReconstruction(
+            series,
+            interpolation=method,
+            bounds="fill",
+        )
         self.interpolation = interpolation
         self.num_knots = num_knots
         self.case_shape = case_shape
         self.input_shape = input_shape
-        self.input_id = _name(input_id, owner="input_id")
+        self.input_id = identifier
+
+    @property
+    def times(self) -> Array:
+        return self.reconstruction.series.support.coordinates
+
+    @property
+    def values(self) -> Array:
+        return self.reconstruction.series.values
+
+    @property
+    def knot_valid(self) -> Array:
+        return self.reconstruction.series.support.node_valid
 
     def evaluate(
         self,
@@ -190,35 +198,8 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         case_index_ = jnp.asarray(case_index, dtype=jnp.int32).reshape(())
         case_count = prod(self.case_shape) if self.case_shape else 1
         case_index_ = _guard_case_index(case_index_, case_index_, case_count)
-        times = self.times.reshape((case_count, self.num_knots))[case_index_]
-        values = self.values.reshape((case_count, self.num_knots) + self.input_shape)[
-            case_index_
-        ]
-        knot_valid = self.knot_valid.reshape((case_count, self.num_knots))[case_index_]
-        valid_count = jnp.sum(knot_valid, dtype=jnp.int32)
-        first_time = times[0]
-        last_time = times[valid_count - 1]
-        in_support = jnp.isfinite(time_) & (time_ >= first_time) & (time_ <= last_time)
-        count_at_or_before = jnp.sum(knot_valid & (times <= time_), dtype=jnp.int32)
-
-        if self.interpolation == "zero-order-hold":
-            index = jnp.clip(count_at_or_before - 1, 0, valid_count - 1)
-            value = values[index]
-        else:
-            lower_index = jnp.clip(count_at_or_before - 1, 0, valid_count - 2)
-            upper_index = lower_index + 1
-            lower_time = times[lower_index]
-            upper_time = times[upper_index]
-            fraction = (time_ - lower_time) / (upper_time - lower_time)
-            fraction = jnp.clip(fraction, 0.0, 1.0)
-            payload_axes = (1,) * len(self.input_shape)
-            weight = fraction.reshape(payload_axes)
-            value = values[lower_index] + weight * (
-                values[upper_index] - values[lower_index]
-            )
-
-        valid = in_support & jnp.all(jnp.isfinite(value))
-        return InputEvaluation(value=value, valid=valid)
+        evaluation = self.reconstruction.evaluate(time_, case_index_)
+        return InputEvaluation(value=evaluation.values, valid=evaluation.support)
 
     def breakpoints(
         self,
@@ -227,15 +208,10 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         case_index: ArrayLike,
         /,
     ) -> tuple[Array, Array]:
-        start = jnp.asarray(t0, dtype=self.times.dtype).reshape(())
-        end = jnp.asarray(t1, dtype=self.times.dtype).reshape(())
         case_index_ = jnp.asarray(case_index, dtype=jnp.int32).reshape(())
         case_count = prod(self.case_shape) if self.case_shape else 1
         case_index_ = _guard_case_index(case_index_, case_index_, case_count)
-        times = self.times.reshape((case_count, self.num_knots))[case_index_]
-        knot_valid = self.knot_valid.reshape((case_count, self.num_knots))[case_index_]
-        valid = knot_valid & (times > start) & (times < end)
-        return times, valid
+        return self.reconstruction.breakpoints(t0, t1, case_index_)
 
 
 class BSplineStateSpaceInput(AbstractStateSpaceInput):

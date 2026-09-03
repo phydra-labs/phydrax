@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
+  shared or per-series masked supports, node- and edge-aligned numerical
+  PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;
+  canonical trajectory data, sampled dynamics and state-space inputs,
+  trajectory signals, and scalar cosmology histories now compose it without
+  erasing their domain-specific validity or provenance contracts.
 - Added reset-safe VAMP/VAC/TICA and Markov-state kinetics, exact full-batch
   variational encoders and model-backed collective variables, gauge-aligned
   learned free-energy biases, immutable atomistic learning campaigns,

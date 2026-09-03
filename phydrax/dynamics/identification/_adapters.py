@@ -10,6 +10,7 @@ from typing import Any, TYPE_CHECKING
 import jax.numpy as jnp
 
 from .._evolution import EVOLUTION_SUCCESS, EvolutionTrajectory
+from .._grid import IterationGrid
 from .._layout import InputLayout, StateLayout
 from .._trajectory import CaseAxisRole, TrajectoryData
 
@@ -49,6 +50,9 @@ def trajectory_data_from_evolution(
         sample_valid=trajectory.valid,
         transition_valid=transition_valid,
         coordinate_id=trajectory.grid.grid_id,
+        coordinate_kind=(
+            "discrete" if isinstance(trajectory.grid, IterationGrid) else "continuous"
+        ),
         source_id=(
             f"evolution:{trajectory.evolution_id}" if source_id is None else source_id
         ),
@@ -155,10 +159,7 @@ def trajectory_data_from_control(
         raise ValueError("state_layout shape does not match the control trajectory.")
     if resolved_input.shape != trajectory.control_shape:
         raise ValueError("input_layout shape does not match the control trajectory.")
-    coordinates = jnp.broadcast_to(
-        trajectory.time_grid.times,
-        trajectory.case_shape + (trajectory.time_grid.num_times,),
-    )
+    coordinates = trajectory.time_grid.times
     transitions = trajectory.valid[..., :-1] & trajectory.valid[..., 1:]
     return TrajectoryData(
         coordinates,
@@ -302,11 +303,6 @@ def trajectory_data_from_differential_solution(
         else sample_axis_roles
     )
     coordinate_values = jnp.asarray(times)
-    if coordinate_values.ndim == 1 and sample_shape:
-        coordinate_values = jnp.broadcast_to(
-            coordinate_values,
-            sample_shape + (int(coordinate_values.size),),
-        )
     transitions = valid[..., :-1] & valid[..., 1:]
     return TrajectoryData(
         coordinate_values,
