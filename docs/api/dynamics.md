@@ -15,6 +15,13 @@ case axes, reset boundaries, weights, and optional controls or derivatives. Anal
 never infers a missing mask, changes an estimator after failure, or silently replaces a
 geometric state by flattened Euclidean coordinates.
 
+`TrajectoryData` composes the coordinate-neutral `phydrax.series` substrate.
+Its sampled state is node-aligned, while transition validity is the support's
+edge connectivity; long-lag pairs are valid only when every intervening edge
+is active. Reset reasons, weights, layouts, controls, derivatives, and source
+identity remain trajectory semantics. The substrate does not make numerical
+states implicitly interpolable.
+
 ## Choosing a path
 
 | Need | Public entry point | Result and boundary |
