@@ -251,6 +251,105 @@ def _topology():
     }
 
 
+def _member_network():
+    sm = phx.applications.solid_mechanics
+    mn = sm.member_network
+    structure = sm.ForceDensityStructure.from_edges(
+        jnp.asarray(((0, 1),), dtype=jnp.int32),
+        2,
+        2,
+        constrained_dofs=jnp.asarray(((True, True), (False, False))),
+    )
+    positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0)))
+    material = mn.LinearElasticMaterial(1_000.0, 400.0, 1.0)
+    section = mn.BeamSection(0.1, 0.01, 0.01, 0.005, 0.08, 0.08)
+    properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
+    reference = mn.MemberReferenceState(structure, positions)
+    dofs = mn.MemberDOFLayout(
+        structure,
+        rotation_constrained=jnp.asarray(((True,), (False,))),
+    )
+    definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+    assembly = mn.MemberNetworkAssembly((mn.CorotationalFrameBlock((0,)),))
+    problem = mn.MemberNetworkProblem(definition, assembly)
+    initial = mn.MemberKinematics(positions, jnp.zeros((2, 1)))
+    nodal_forces = jnp.asarray(((0.0, 0.0), (0.0, -0.01)))
+    inputs = mn.MemberNetworkInputs(
+        structure.prescribed_values(positions),
+        dofs.prescribed_rotations(initial.rotation_vectors),
+        nodal_forces,
+        jnp.zeros((2, 1)),
+        reference.rest_lengths,
+    )
+    equilibrium = mn.member_network_equilibrium(problem, inputs, initial)
+    reduced = dofs.reduce(
+        equilibrium.state.kinematics.positions,
+        equilibrium.state.kinematics.rotation_vectors,
+    )
+
+    def energy(state):
+        kinematics = dofs.expand(
+            state,
+            inputs.prescribed_positions,
+            inputs.prescribed_rotations,
+        )
+        return assembly.evaluate(definition, kinematics).energy
+
+    generalized_load = jnp.concatenate(
+        (
+            structure.reduce(nodal_forces),
+            inputs.nodal_moments.reshape((-1,))[dofs.free_rotation_indices],
+        )
+    )
+    force_error = jnp.max(jnp.abs(jax.grad(energy)(reduced) - generalized_load))
+    tangent_error = jnp.max(
+        jnp.abs(jax.jacfwd(jax.grad(energy))(reduced) - jax.hessian(energy)(reduced))
+    )
+    angle = jnp.asarray(0.4)
+    rotation = mn.rotation_vector_matrix(angle.reshape((1,)))
+    rigid = mn.MemberKinematics(
+        positions @ rotation.T + jnp.asarray((0.3, -0.2)),
+        jnp.full((2, 1), angle),
+    )
+    objectivity_error = jnp.abs(assembly.evaluate(definition, rigid).energy)
+    modal = mn.tangent_stability(
+        problem,
+        equilibrium,
+        mass=jnp.eye(dofs.reduced_size),
+    )
+    ledger = mn.member_energy_work_evidence(
+        jnp.asarray((0.5, 0.25)),
+        jnp.asarray((0.5, 0.75)),
+        jnp.zeros((1,)),
+        jnp.zeros((1,)),
+        jnp.zeros((1,)),
+        accepted=jnp.ones((2,), dtype=bool),
+        topology_epoch=jnp.zeros((2,), dtype=jnp.int32),
+        contact_epoch=jnp.zeros((2,), dtype=jnp.int32),
+        fracture_epoch=jnp.zeros((2,), dtype=jnp.int32),
+        unilateral_epoch=jnp.zeros((2,), dtype=jnp.int32),
+        mode_epoch=jnp.zeros((2,), dtype=jnp.int32),
+    )
+    passed = (
+        equilibrium.successful
+        & (force_error < 1.0e-8)
+        & (tangent_error < 1.0e-10)
+        & (objectivity_error < 1.0e-9)
+        & modal.modal_valid
+        & ledger.balanced
+    )
+    return {
+        "passed": bool(passed),
+        "force_energy_gradient_error": float(force_error),
+        "tangent_energy_hessian_error": float(tangent_error),
+        "objectivity_error": float(objectivity_error),
+        "modal_residual": float(modal.eigen_residual),
+        "minimum_mass_eigenvalue": float(modal.minimum_mass_eigenvalue),
+        "mass_orthogonality_error": float(modal.mass_orthogonality_error),
+        "energy_balance_defect": float(jnp.max(jnp.abs(ledger.algorithmic_defect))),
+    }
+
+
 def _operator_learning():
     reduction = phx.nn.operator.training.MechanicsCaseReduction("cvar", alpha=0.5)
     result = reduction.evaluate(
@@ -275,6 +374,7 @@ def qualify():
         "contact": _contact(),
         "fracture": _fracture(),
         "topology": _topology(),
+        "member_network": _member_network(),
         "amortized_operator": _operator_learning(),
     }
     return {

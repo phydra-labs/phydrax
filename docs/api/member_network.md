@@ -64,8 +64,18 @@ for scientific scope and workflows.
 ::: phydrax.applications.solid_mechanics.member_network.linearized_buckling
 
 ::: phydrax.applications.solid_mechanics.member_network.tangent_stability
+::: phydrax.applications.solid_mechanics.member_network.TangentStabilityResult
+
 
 ::: phydrax.applications.solid_mechanics.member_network.member_network_continuation_problem
+
+## Accepted-history dynamics evidence
+
+::: phydrax.applications.solid_mechanics.member_network.TractionVelocityPortHistory
+
+::: phydrax.applications.solid_mechanics.member_network.MemberEnergyWorkEvidence
+
+::: phydrax.applications.solid_mechanics.member_network.member_energy_work_evidence
 
 ## Construction and sizing
 

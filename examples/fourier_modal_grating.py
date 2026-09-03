@@ -70,9 +70,11 @@ def main() -> None:
     result = fm.solve_fourier_modal_maxwell(prepared, excitation)
     print(
         {
-            "reflection": float(result.weighted_reflected_power),
-            "transmission": float(result.weighted_transmitted_power),
-            "absorption": float(result.weighted_absorbed_power),
+            "left_incoming_power": float(result.weighted_left_incoming_power),
+            "right_incoming_power": float(result.weighted_right_incoming_power),
+            "left_outgoing_power": float(result.weighted_left_outgoing_power),
+            "right_outgoing_power": float(result.weighted_right_outgoing_power),
+            "net_port_power_into_stack": float(result.weighted_net_port_power_into_stack),
             "status": int(result.status),
             "paired_error": float(result.diagnostics.maximum_boundary_paired_error),
         }

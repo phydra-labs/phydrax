@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.discretization.spectral import LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
@@ -78,3 +79,42 @@ def test_frozen_jones_frame_reports_omitted_gradient() -> None:
     assert prepared.tangent_field is not None
     assert bool(prepared.diagnostics.frame_gradient_omitted)
     assert bool(jnp.all(jnp.isfinite(prepared.tangent_field)))
+
+
+def test_dynamic_analytic_frame_id_cannot_collide_by_shape() -> None:
+    lattice = _patterned_lattice()
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="frame-material")
+    first_tangent = jnp.broadcast_to(jnp.asarray((1.0, 0.0)), lattice.sample_shape + (2,))
+    second_tangent = jnp.broadcast_to(
+        jnp.asarray((0.0, 1.0)), lattice.sample_shape + (2,)
+    )
+    first = fm.FourierModalLayer(
+        material,
+        0.1,
+        fm.VectorFourierFactorizationPlan(
+            fm.AnalyticInterfaceFramePlan(first_tangent, frame_id="shared-frame")
+        ),
+        layer_id="first",
+    )
+    second = fm.FourierModalLayer(
+        material,
+        0.1,
+        fm.VectorFourierFactorizationPlan(
+            fm.AnalyticInterfaceFramePlan(second_tangent, frame_id="shared-frame")
+        ),
+        layer_id="second",
+    )
+    port = fm.HomogeneousMaxwellPort(
+        fm.FrequencyMaxwellMaterial(1.0, material_id="frame-vacuum"),
+        port_id="port",
+    )
+    problem = fm.FourierModalMaxwellProblem(
+        lattice,
+        2.0 * jnp.pi,
+        jnp.zeros((2,)),
+        port,
+        (first, second),
+        port,
+    )
+    with pytest.raises(ValueError, match="frame_id"):
+        fm.prepare_fourier_modal_maxwell(problem)

@@ -165,6 +165,8 @@ def transform_fourier_modal_material(
                 "pml": plan.pml_id,
             }
         ),
+        material_role="artificial_pml",
+        origin_evidence_id=plan.pml_id,
         passive=material.passive,
         reciprocal=material.reciprocal,
     )

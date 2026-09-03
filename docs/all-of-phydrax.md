@@ -357,8 +357,9 @@ unit systems, interaction-site coordinate maps and differentiable virtual sites,
 topology, native force-field bundles and adapters, dense/cell/Verlet and distributed
 execution, constrained NVE/NVT/NPT and rigid dynamics, polarization, implicit solvent,
 quantum-nuclear propagation, many-body and soft-matter models, H5MD/XYZ reporting and
-rerun, MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases,
-replica exchange, free-energy estimators, and committee uncertainty/acquisition. State,
+rerun, loss-audited ASE structure exchange, MDAnalysis, i-PI and PACKMOL boundaries,
+collective variables, adaptive biases, replica exchange, free-energy estimators, and
+committee uncertainty/acquisition. State,
 labels, bias history, transport resources, and analysis frames remain separate typed
 contracts. Every capacity, convergence, protocol, or physical failure is typed and
 fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
@@ -1570,8 +1571,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   and [API → Advanced structural evidence](api/advanced_structural.md).
 - **Classical circuit networks and periodic analysis**: compose typed scattering
   networks, grounded MNA circuits, implicit device DAEs, operating points,
-  descriptors, macromodels, noise, calibration, and field coupling. Harmonic
-  balance plans fixed Fourier-collocation resources, prepares the native
+  descriptors, macromodels, noise, calibration, and field coupling. Independent
+  RMS-phasor MNA power ledgers retain supported RLC, source, and port axes without
+  confusing a wave identity with conservation. Transient and periodic ledgers keep
+  passive storage/dissipation separate from signed source and boundary power.
+  Harmonic balance plans fixed Fourier-collocation resources, prepares the native
   matrix-free nonlinear solve, and refreshes frequency and circuit coefficients
   without changing device equations. See
   [Guides → Circuit networks](guides_circuit_networks.md) and

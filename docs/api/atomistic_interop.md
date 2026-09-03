@@ -28,6 +28,21 @@
 
 ::: phydrax.atomistic.interchange.ExtendedXYZTrajectoryPlan
 
+## ASE structures
+
+::: phydrax.atomistic.interchange.from_ase_atoms
+
+::: phydrax.atomistic.interchange.to_ase_atoms
+
+::: phydrax.atomistic.interchange.is_ase_available
+
+::: phydrax.atomistic.interchange.require_ase
+
+`ASE_PARTICLE_ID_ARRAY` and `ASE_SOURCE_ID_INFO` name the reserved ASE array and info
+field used for stable material-atom identity and source provenance.
+
+## MDAnalysis
+
 ::: phydrax.atomistic.interchange.atomistic_frame_from_mdanalysis
 
 ::: phydrax.atomistic.interchange.atomistic_metadata_from_mdanalysis

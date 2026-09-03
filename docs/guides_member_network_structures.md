@@ -101,6 +101,32 @@ valid geometry domain.
 A fairness or planarity objective remains a design preference, not bending
 stiffness.
 
+## Ligaments and one rigid-unit composition
+
+The qualified ligament go/no-go is deliberately a composition decision, not a
+new element family. `CorotationalFrameBlock` supplies objective finite-rotation
+frame ligaments, `DiscreteRodBlock` supplies ordered centerline ligaments, and
+`HingeBendingBlock` supplies triangulated-surface flexures. Their energy
+gradients, Hessians, objectivity, modal quantities, and geometry derivatives are
+checked on the rigid-unit fixture. The frame route meets the current
+reference-response errors without duplicate member ownership, so there is no
+separate ligament block.
+
+The static rigid-unit example keeps topology fixed while two geometry parameters
+move the second unit and update stress-free ligament lengths. It composes ordinary
+`LoadCase` and `Aggregation` values with `StateDesignProblem`,
+`StateDesignConstraint`, and `ReducedMMA`. Minimum unit spacing and ligament
+offset clearance remain explicit manufacturing inequalities. The design state
+uses the assembly's small-displacement energy Hessian. Its explicit state policy
+accepts least-squares stagnation only when the independently recomputed residual
+is at most `1e-9` and the state remains finite, admissible, and
+realization-consistent. The final design is re-solved independently with
+finite-rotation mechanics on a subdivided frame model. The optimization state is
+not accepted as its own high-fidelity evidence.
+This initial workflow claims only
+static multi-case reference-response matching, not a generic metamaterial type,
+periodic band structure, or homogenized constitutive law.
+
 ## Buckling
 
 Three evidence levels remain distinct:
@@ -112,9 +138,40 @@ Three evidence levels remain distinct:
    pseudo-arclength, fold localization, branch-point certification, and branch
    switching.
 
-`tangent_stability` reports the current conservative tangent spectrum. A linear
-buckling factor is not a nonlinear collapse load. Follower-load tangents may be
-nonsymmetric and are rejected from the self-adjoint eigen route.
+`tangent_stability` accepts an equilibrium result rather than an unverified
+kinematic state and consumes the numerical inputs retained by that result; it
+does not accept a second input authority. It always assembles the physical
+constrained tangent. Supplying a reduced positive-definite mass matrix
+additionally requests physical modes and
+reports generalized-eigen residual, mass orthogonality, declared rigid-mode
+handling, and isolation gaps. An optional
+`HermitianEigenspaceTrackingPlan` adds overlap/assignment evidence against
+reference modes. `modal_valid` requires all of these checks. Eigenvalue
+derivatives are available only when explicitly requested and every flexible mode
+is isolated and unambiguously tracked; crossings reject the derivative route.
+A linear buckling factor remains distinct from a nonlinear collapse load.
+Follower-load tangents may be nonsymmetric and are rejected from the self-adjoint
+eigen route.
+
+## Accepted-history energy evidence
+
+`member_energy_work_evidence` audits only accepted states within one fixed
+physical epoch:
+
+```text
+ΔK + ΔΠ + W_damp + W_material/contact + W_out − W_ext = defect
+```
+
+Kinetic and potential histories and interval damping, material/contact, and
+external work are supplied independently. A topology, contact/search or
+stick/slip, fracture, unilateral-activation, or mode-selection epoch change
+makes the evidence unavailable. It never becomes a large but allegedly balanced
+defect. Per-epoch consistency arrays identify which authority changed.
+`TractionVelocityPortHistory` is the only outgoing-work route: it integrates
+declared outward traction against boundary
+velocity and quadrature measure. Without that explicit port, outgoing work is
+identically absent. Step refinement must reduce the algorithmic defect before the
+ledger is used as numerical evidence.
 
 ## Prestress realizability
 
@@ -206,4 +263,5 @@ Runnable examples:
 
 - `examples/member_network_cable_prestress.py`;
 - `examples/member_network_frame_buckling.py`;
-- `examples/member_network_construction_sizing.py`.
+- `examples/member_network_construction_sizing.py`;
+- `examples/member_network_rigid_unit_metamaterial.py`.

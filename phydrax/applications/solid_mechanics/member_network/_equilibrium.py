@@ -230,6 +230,7 @@ class MemberNetworkProvenance(StrictModule):
 
 class MemberNetworkResult(StrictModule):
     state: MemberNetworkState
+    inputs: MemberNetworkInputs
     status: Array
     diagnostics: MemberNetworkDiagnostics
     provenance: MemberNetworkProvenance
@@ -776,6 +777,7 @@ def solve_member_network(
     )
     return MemberNetworkResult(
         state,
+        prepared.inputs,
         status,
         diagnostics,
         provenance,

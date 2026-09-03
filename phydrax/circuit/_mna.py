@@ -337,7 +337,6 @@ class MNADiagnostics(StrictModule):
     original_residual: Array
     relative_residual: Array
     kcl_residual: Array
-    port_power_balance: Array
     finite: Array
 
     @property
@@ -916,7 +915,6 @@ def solve_mna(
     )
     port_currents = solution[..., prepared.plan.port_current_offset :, :]
     outgoing_values = []
-    powers = []
     for port_index, port in enumerate(prepared.circuit.ports):
         root = jnp.sqrt(jnp.real(port.reference.z0))
         outgoing = (
@@ -924,12 +922,6 @@ def solve_mna(
             - jnp.conj(port.reference.z0)[..., None] * port_currents[..., port_index, :]
         ) / (2.0 * root[..., None])
         outgoing_values.append(outgoing)
-        powers.append(
-            jnp.real(
-                port_voltages[..., port_index, :]
-                * jnp.conj(port_currents[..., port_index, :])
-            )
-        )
     outgoing = jnp.stack(outgoing_values, axis=-2)
     residual = _apply_prepared_mna(prepared, solution) - rhs
     original = jnp.linalg.norm(residual, axis=(-2, -1))
@@ -939,10 +931,6 @@ def solve_mna(
     )
     relative = original / scale
     kcl = jnp.linalg.norm(residual[..., : len(prepared.plan.node_ids), :], axis=(-2, -1))
-    power_balance = jnp.abs(
-        jnp.sum(jnp.abs(incident_) ** 2 - jnp.abs(outgoing) ** 2, axis=(-2, -1))
-        - jnp.sum(jnp.stack(powers, axis=-2), axis=(-2, -1))
-    )
     finite = jnp.all(jnp.isfinite(solution), axis=(-2, -1)) & jnp.isfinite(relative)
     linear_success = jnp.all(linear_result.status == int(LinearSolveStatus.SUCCESS))
     status = jnp.where(
@@ -964,7 +952,6 @@ def solve_mna(
         original_residual=original,
         relative_residual=relative,
         kcl_residual=kcl,
-        port_power_balance=power_balance,
         finite=finite,
     )
     return MNAResult(

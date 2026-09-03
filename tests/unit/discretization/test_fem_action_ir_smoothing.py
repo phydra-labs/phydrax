@@ -217,12 +217,10 @@ def test_application_model_primitives_are_executable():
         ),
         cpfem.CrystalPlasticityParameters(1.0, 2.0, 0.01, 0.1, 0.2, 1.0),
     )
-    response = material.update(jnp.eye(3), material.initial_state(), 0.1)
+    response = material.update(jnp.eye(3), material.initial_state(), jnp.eye(3), 0.1)
     fracture = phx.applications.fracture.PhaseFieldFractureParameters(1.0, 1.0, 1.0, 0.1)
     contact_law = phx.applications.contact.PenaltyContactLaw(100.0)
-    contact_response = contact_law.evaluate(
-        jnp.asarray(-0.01), jnp.asarray([1.0, 0.0])
-    )
+    contact_response = contact_law.evaluate(jnp.asarray(-0.01), jnp.asarray([1.0, 0.0]))
     squared_distance = jnp.asarray(0.05**2)
     barrier = phx.applications.contact.physical_clamped_log_barrier(
         squared_distance, 0.1, 0.0

@@ -1878,9 +1878,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         if self.form.auxiliary_evaluator is None:
             auxiliary = FiniteElementAuxiliaryEvaluation()
         else:
+            context = self._execution_context(args)
             auxiliary = self.form.auxiliary_evaluator(
-                self.state_space.validate(state),
-                self._execution_context(args),
+                self.expand(state, context),
+                context,
             )
             if not isinstance(auxiliary, FiniteElementAuxiliaryEvaluation):
                 raise TypeError(

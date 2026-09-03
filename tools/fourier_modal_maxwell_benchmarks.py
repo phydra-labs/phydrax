@@ -106,7 +106,11 @@ def benchmark() -> dict[str, object]:
         },
         "evidence": {
             "status": int(result.status),
-            "power_balance_residual": float(result.diagnostics.power_balance_residual),
+            "left_incoming_power": float(result.weighted_left_incoming_power),
+            "right_incoming_power": float(result.weighted_right_incoming_power),
+            "left_outgoing_power": float(result.weighted_left_outgoing_power),
+            "right_outgoing_power": float(result.weighted_right_outgoing_power),
+            "net_port_power_into_stack": float(result.weighted_net_port_power_into_stack),
             "paired_error": float(result.diagnostics.maximum_boundary_paired_error),
             "refresh_count": refreshed.refresh_count,
         },

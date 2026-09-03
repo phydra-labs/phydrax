@@ -18,7 +18,7 @@ def test_cpfem_identity_update_is_objective_and_admissible():
         ),
         cpfem.CrystalPlasticityParameters(10.0, 20.0, 0.01, 0.1, 1.0, 2.0),
     )
-    result = model.update(jnp.eye(3), model.initial_state(), 0.1)
+    result = model.update(jnp.eye(3), model.initial_state(), jnp.eye(3), 0.1)
 
     assert bool(result.converged)
     assert jnp.linalg.norm(result.first_piola) < 1.0e-12

@@ -83,7 +83,14 @@ from ._contact import (
     NodePlaneContact,
 )
 from ._cross_section import ThinWalledSection
-from ._dynamics import MemberDynamicState, newmark_step, NewmarkPolicy
+from ._dynamics import (
+    member_energy_work_evidence,
+    MemberDynamicState,
+    MemberEnergyWorkEvidence,
+    newmark_step,
+    NewmarkPolicy,
+    TractionVelocityPortHistory,
+)
 from ._equilibrium import (
     CableActiveSetEvidence,
     member_network_equilibrium,
@@ -269,6 +276,7 @@ __all__ = [
     "MemberBlockEvaluation",
     "MemberDOFLayout",
     "MemberDynamicState",
+    "MemberEnergyWorkEvidence",
     "MemberKinematics",
     "MemberNetworkAssembly",
     "MemberNetworkAssemblyState",
@@ -312,6 +320,7 @@ __all__ = [
     "StructuralVerificationResult",
     "TangentStabilityResult",
     "TensionOnlyCableLaw",
+    "TractionVelocityPortHistory",
     "ThinWalledSection",
     "TubeSectionFamily",
     "WarpingBeamSection",
@@ -339,6 +348,7 @@ __all__ = [
     "member_network_from_force_density",
     "member_network_status_message",
     "member_network_tangent",
+    "member_energy_work_evidence",
     "monte_carlo_reliability",
     "newmark_step",
     "parallel_transport_orientations",
