@@ -253,6 +253,17 @@ geometry evaluation is JAX-differentiable through
 See [Finite elements](guides_finite_elements.md) for reference tabulation,
 DOF maps, constraints, functionals, sparse lowering, and DAE integration.
 
+## Explicit polygon H1 elements
+
+`ExplicitPolygonH1Plan` constructs a conforming degree-one point-value space on
+simple star-shaped polygons. A private star-kernel witness defines a P1 fan; a
+native local solve statically condenses that witness so only mesh vertices remain
+global degrees of freedom. The resulting values, gradients, and traces execute
+through the method-neutral finite-element functional compiler with dense
+matrix-free local actions. Partition, affine reproduction, fan validity, local
+rank, and conditioning remain explicit runtime evidence. See
+[Explicit polygon H1 elements](guides_explicit_polygon_h1.md).
+
 ## Virtual elements
 
 `CellMesh.from_polygons` extends the canonical cell complex to fixed-arity

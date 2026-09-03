@@ -22,13 +22,13 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization._constraints import AbstractDiscreteDirichletConstraint
 from ..discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
 )
 from ..discretization.fem import (
     finite_element_hp_constraint,
     finite_element_hp_domains,
-    FiniteElementDirichletConstraint,
     FiniteElementDiscretization,
     FiniteElementHPEpoch,
     FiniteElementHPTraceConstraintPlan,
@@ -301,7 +301,9 @@ class CellResidualAction(StrictModule, NonTrainableState):
                 for field in self.input_fields
                 for item in ((field, "value"), (field, "grad"))
             ),
+            provider_action_kind="cell-residual",
             evaluator=self.kernel,
+            provider_offers=("native", "prepared-local"),
         )
 
 
@@ -348,6 +350,7 @@ class PairwiseVolumeFluxAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="pairwise-volume-flux",
             evaluator=self.kernel,
         )
 
@@ -410,6 +413,7 @@ class InteriorFacetAction(StrictModule, NonTrainableState):
                 for field in self.input_field_names
                 for item in ((field, "jump"), (field, "average"))
             ),
+            provider_action_kind="interior-facet",
             evaluator=self.kernel,
         )
 
@@ -468,6 +472,7 @@ class ExteriorFacetAction(StrictModule, NonTrainableState):
             (self.output_field_name,),
             self.input_field_names,
             tuple((field, "value") for field in self.input_field_names),
+            provider_action_kind="exterior-facet",
             evaluator=self.kernel,
         )
 
@@ -661,6 +666,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
                 (self.field_name, "grad"),
                 (self.field_name, "normal-trace"),
             ),
+            provider_action_kind="sipg-facet",
             coefficient_values=coefficients,
         )
 
@@ -706,6 +712,7 @@ class CellEnergyAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"), (self.field_name, "grad")),
+            provider_action_kind="cell-energy",
             evaluator=self.density,
             provider_offers=("prepared-local",),
         )
@@ -814,6 +821,7 @@ class LocalFunctionalAction(StrictModule, NonTrainableState):
             self.output_fields,
             self.input_fields,
             operators,
+            provider_action_kind="functional",
             evaluator=self.term.density,
             provider_offers=("prepared-local",),
         )
@@ -860,6 +868,7 @@ class CellBilinearAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"), (self.field_name, "grad")),
+            provider_action_kind="cell-bilinear",
             evaluator=self.kernel,
         )
 
@@ -904,6 +913,7 @@ class PreparedOperatorAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="operator-action",
         )
 
 
@@ -1332,14 +1342,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         /,
         *,
         constraint: ConstraintMap
-        | FiniteElementDirichletConstraint
+        | AbstractDiscreteDirichletConstraint
         | FiniteElementLinearConstraint
         | None = None,
         dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
         constraints: Mapping[
             str,
             ConstraintMap
-            | FiniteElementDirichletConstraint
+            | AbstractDiscreteDirichletConstraint
             | FiniteElementLinearConstraint,
         ]
         | None = None,
@@ -1357,7 +1367,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 if isinstance(discretization, FiniteElementDiscretization)
                 else FiniteElementExecutionPolicy(
                     realization="matrix_free",
-                    local_kernel="sum_factorized",
+                    local_kernel="auto",
                 )
             )
             if execution_policy is None
@@ -1368,10 +1378,6 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 "execution_policy must be FiniteElementExecutionPolicy or None."
             )
         if not isinstance(discretization, FiniteElementDiscretization):
-            if policy.realization != "matrix_free":
-                raise ValueError(
-                    "Method-neutral local discretizations require matrix-free execution."
-                )
             if any(
                 isinstance(
                     action,
@@ -1435,7 +1441,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     lift_value = full_space.zeros()
                 elif isinstance(
                     constraint_value,
-                    (FiniteElementDirichletConstraint, FiniteElementLinearConstraint),
+                    (
+                        AbstractDiscreteDirichletConstraint,
+                        FiniteElementLinearConstraint,
+                    ),
                 ):
                     if constraint_value.field_name != field_name:
                         raise ValueError("Constraint field does not match its map key.")
@@ -2895,13 +2904,15 @@ def compile_finite_element_problem(
     /,
     *,
     constraint: ConstraintMap
-    | FiniteElementDirichletConstraint
+    | AbstractDiscreteDirichletConstraint
     | FiniteElementLinearConstraint
     | None = None,
     dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
     constraints: Mapping[
         str,
-        ConstraintMap | FiniteElementDirichletConstraint | FiniteElementLinearConstraint,
+        ConstraintMap
+        | AbstractDiscreteDirichletConstraint
+        | FiniteElementLinearConstraint,
     ]
     | None = None,
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
@@ -2957,13 +2968,15 @@ def compile_finite_element_functional(
     ]
     | None = None,
     constraint: ConstraintMap
-    | FiniteElementDirichletConstraint
+    | AbstractDiscreteDirichletConstraint
     | FiniteElementLinearConstraint
     | None = None,
     dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
     constraints: Mapping[
         str,
-        ConstraintMap | FiniteElementDirichletConstraint | FiniteElementLinearConstraint,
+        ConstraintMap
+        | AbstractDiscreteDirichletConstraint
+        | FiniteElementLinearConstraint,
     ]
     | None = None,
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]

@@ -9,6 +9,7 @@ from . import (
     bem as bem,
     collocation,
     contact,
+    explicit_polygon_h1,
     fem,
     finite_difference,
     finite_volume,
@@ -72,6 +73,7 @@ from ._cochain_electrochemical import (
     PreparedCochainElectrochemicalFlux,
     stable_bernoulli,
 )
+from ._constraints import AbstractDiscreteDirichletConstraint
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -340,6 +342,25 @@ from .contact import (
 )
 from .discrete_velocity import *  # noqa: F403
 from .discrete_velocity import __all__ as _discrete_velocity_all
+from .explicit_polygon_h1 import (
+    evaluate_explicit_polygon_h1_reconstruction,
+    evaluate_explicit_polygon_h1_trace,
+    explicit_polygon_h1_dirichlet_constraint,
+    ExplicitPolygonH1BasisEvidence,
+    ExplicitPolygonH1BlockData,
+    ExplicitPolygonH1DirichletConstraint,
+    ExplicitPolygonH1Discretization,
+    ExplicitPolygonH1DofMap,
+    ExplicitPolygonH1FieldSpec,
+    ExplicitPolygonH1Plan,
+    ExplicitPolygonH1PrecisionPolicy,
+    ExplicitPolygonH1QuadraturePolicy,
+    ExplicitPolygonH1QualificationPolicy,
+    ExplicitPolygonH1Reconstruction,
+    ExplicitPolygonH1ResourceBudget,
+    ExplicitPolygonH1RuntimeData,
+    prepare_explicit_polygon_h1_reconstruction,
+)
 from .fem import (
     affine_dof_constraint,
     AttachmentActionReactionCertificate,
@@ -1999,6 +2020,25 @@ __all__ = [
     "simplex_inversion_step_limit",
     "static_collision_operator",
     "vem",
+    "explicit_polygon_h1",
+    "AbstractDiscreteDirichletConstraint",
+    "ExplicitPolygonH1BasisEvidence",
+    "ExplicitPolygonH1BlockData",
+    "ExplicitPolygonH1DirichletConstraint",
+    "ExplicitPolygonH1Discretization",
+    "ExplicitPolygonH1DofMap",
+    "ExplicitPolygonH1FieldSpec",
+    "ExplicitPolygonH1Plan",
+    "ExplicitPolygonH1PrecisionPolicy",
+    "ExplicitPolygonH1QuadraturePolicy",
+    "ExplicitPolygonH1QualificationPolicy",
+    "ExplicitPolygonH1Reconstruction",
+    "ExplicitPolygonH1ResourceBudget",
+    "ExplicitPolygonH1RuntimeData",
+    "evaluate_explicit_polygon_h1_reconstruction",
+    "evaluate_explicit_polygon_h1_trace",
+    "explicit_polygon_h1_dirichlet_constraint",
+    "prepare_explicit_polygon_h1_reconstruction",
     "PolygonAdmissibilityPolicy",
     "PolygonCubature",
     "PolygonGeometry",

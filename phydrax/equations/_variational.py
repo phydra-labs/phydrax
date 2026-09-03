@@ -60,6 +60,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
     """Static lowering contract carried by every variational action."""
 
     action_kind: str = eqx.field(static=True)
+    provider_action_kind: str = eqx.field(static=True)
     default_domain_kind: str = eqx.field(static=True)
     output_fields: tuple[str, ...] = eqx.field(static=True)
     input_fields: tuple[str, ...] = eqx.field(static=True)
@@ -77,11 +78,13 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
         operators: Sequence[tuple[str, str]],
         /,
         *,
+        provider_action_kind: str,
         coefficient_values: Sequence["VariationalCoefficient"] = (),
         provider_offers: Sequence[str] = ("native",),
         evaluator: Callable | None = None,
     ):
         kind = str(action_kind)
+        provider_kind = str(provider_action_kind)
         domain = str(default_domain_kind)
         outputs = tuple(str(value) for value in output_fields)
         inputs = tuple(str(value) for value in input_fields)
@@ -98,6 +101,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
                 "linear",
                 "pairwise-volume-flux",
             )
+            or not provider_kind
             or domain not in ("cell", "exterior_facet", "interior_facet")
             or not outputs
             or not inputs
@@ -111,6 +115,7 @@ class VariationalActionDescriptor(StrictModule, NonTrainableState):
         ):
             raise ValueError("Variational action descriptor is invalid.")
         self.action_kind = kind
+        self.provider_action_kind = provider_kind
         self.default_domain_kind = domain
         self.output_fields = outputs
         self.input_fields = inputs
@@ -401,6 +406,7 @@ class DiffusionAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "grad"),),
+            provider_action_kind="diffusion",
             coefficient_values=(self.diffusivity,),
             provider_offers=("prepared-local",),
         )
@@ -440,6 +446,7 @@ class MassAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="mass",
             coefficient_values=(self.coefficient,),
             provider_offers=("prepared-local",),
         )
@@ -479,6 +486,7 @@ class SourceAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="source",
             coefficient_values=(self.source,),
             provider_offers=("prepared-local",),
         )
@@ -525,6 +533,7 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
             (self.field_name,),
             (self.field_name,),
             ((self.field_name, "value"),),
+            provider_action_kind="boundary-load",
             coefficient_values=(self.load,),
             provider_offers=("prepared-local",),
         )

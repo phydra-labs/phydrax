@@ -41,6 +41,10 @@ class WorksetSignature(StrictModule, NonTrainableState):
     precision_id: str = eqx.field(static=True)
     ir_semantics_id: str = eqx.field(static=True)
     local_kernel: str = eqx.field(static=True)
+    provider_selection_id: str | None = eqx.field(static=True)
+    execution_kind: str | None = eqx.field(static=True)
+    operator_realization: str | None = eqx.field(static=True)
+    reference_realization_id: str | None = eqx.field(static=True)
     local_widths: tuple[tuple[str, int], ...] = eqx.field(static=True)
     neighbour_local_widths: tuple[tuple[str, int], ...] = eqx.field(static=True)
     material_id: str | None = eqx.field(static=True)
@@ -64,6 +68,10 @@ class WorksetSignature(StrictModule, NonTrainableState):
         precision_id: str,
         ir_semantics_id: str,
         local_kernel: str,
+        provider_selection_id: str | None = None,
+        execution_kind: str | None = None,
+        operator_realization: str | None = None,
+        reference_realization_id: str | None = None,
         neighbour_local_widths: Mapping[str, int]
         | Sequence[tuple[str, int]]
         | None = None,
@@ -82,6 +90,14 @@ class WorksetSignature(StrictModule, NonTrainableState):
         precision = str(precision_id)
         semantics = str(ir_semantics_id)
         kernel = str(local_kernel)
+        selection = None if provider_selection_id is None else str(provider_selection_id)
+        execution = None if execution_kind is None else str(execution_kind)
+        operator_realization_ = (
+            None if operator_realization is None else str(operator_realization)
+        )
+        reference_realization = (
+            None if reference_realization_id is None else str(reference_realization_id)
+        )
         widths = tuple(
             sorted(
                 (str(name), int(width))
@@ -107,6 +123,12 @@ class WorksetSignature(StrictModule, NonTrainableState):
             )
         )
         material = None if material_id is None else str(material_id)
+        selection_values = (
+            selection,
+            execution,
+            operator_realization_,
+            reference_realization,
+        )
         identities = (
             region,
             block,
@@ -131,6 +153,11 @@ class WorksetSignature(StrictModule, NonTrainableState):
             or set(name for name, _ in neighbour_widths)
             != set(name for name, _ in widths)
             or any(not name or width <= 0 for name, width in neighbour_widths)
+            or (
+                any(value is None for value in selection_values)
+                and any(value is not None for value in selection_values)
+            )
+            or any(value == "" for value in selection_values if value is not None)
         ):
             raise ValueError("Workset signature identities and widths must be complete.")
         self.region_kind = region
@@ -146,6 +173,10 @@ class WorksetSignature(StrictModule, NonTrainableState):
         self.precision_id = precision
         self.ir_semantics_id = semantics
         self.local_kernel = kernel
+        self.provider_selection_id = selection
+        self.execution_kind = execution
+        self.operator_realization = operator_realization_
+        self.reference_realization_id = reference_realization
         self.local_widths = widths
         self.neighbour_local_widths = neighbour_widths
         self.material_id = material
@@ -165,6 +196,10 @@ class WorksetSignature(StrictModule, NonTrainableState):
                 "precision": precision,
                 "ir_semantics": semantics,
                 "local_kernel": kernel,
+                "provider_selection": selection,
+                "execution_kind": execution,
+                "operator_realization": operator_realization_,
+                "reference_realization": reference_realization,
                 "local_widths": [list(item) for item in widths],
                 "neighbour_local_widths": [list(item) for item in neighbour_widths],
                 "material": material,

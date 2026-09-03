@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added deterministic explicit lowest-order H1 elements on conformingly
+  segmented star-shaped polygons, with transported witness-fan condensation,
+  exact trace and affine-reproduction evidence, component-aware constraints,
+  reconstruction, differentiable geometry refresh, and capability-selected
+  dense matrix-free local functional execution.
 - Added canonical Morton addressing, fixed-capacity sparse point hierarchies,
   traversed Barnes--Hut gravity, sparse occupied-level Cartesian and vortex
   FMM, brick-backed sparse voxel fields and qualified geometry sampling,

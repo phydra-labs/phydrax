@@ -27,6 +27,7 @@ from ...discretization.fem._mortar import (
 from ...discretization.fem._reference_operator import PreparedFiniteElementReference
 from ._ir import FieldSlot, FiniteElementActionIR, LocalActionIR, RegionIR
 from ._kernels import KernelBinding, KernelTable
+from ._selection import select_prepared_local_execution
 from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
@@ -421,24 +422,16 @@ def compile_workset_program(
         domain = _domain_for_action(action, discretization)
         common_action = "prepared-local" in descriptor.provider_offers and (
             (
-                domain.kind == "cell"
-                and (
-                    (
-                        descriptor.evaluator is None
-                        and descriptor.action_kind in ("residual", "linear")
-                    )
-                    or (
-                        descriptor.action_kind in ("energy", "functional")
-                        and not isinstance(discretization, FiniteElementDiscretization)
-                    )
-                )
+                not isinstance(discretization, FiniteElementDiscretization)
+                and domain.kind in ("cell", "exterior_facet")
+                and descriptor.action_kind
+                in ("residual", "linear", "energy", "functional")
             )
             or (
-                domain.kind == "exterior_facet"
-                and (
-                    descriptor.evaluator is None or descriptor.action_kind == "functional"
-                )
-                and not isinstance(discretization, FiniteElementDiscretization)
+                isinstance(discretization, FiniteElementDiscretization)
+                and domain.kind == "cell"
+                and descriptor.evaluator is None
+                and descriptor.action_kind in ("residual", "linear")
             )
         )
         if not common_action:
@@ -480,7 +473,14 @@ def compile_workset_program(
             )
             else 0
         )
-        mode = "dense" if str(local_kernel) == "auto" else str(local_kernel)
+        selection = select_prepared_local_execution(
+            action,
+            discretization,
+            domain,
+            requested_kernel_mode=str(local_kernel),
+            requested_operator_realization=str(realization),
+        )
+        mode = selection.kernel_mode
         regions = discretization.prepare_local_regions(
             domain,
             field_names=fields,
@@ -501,6 +501,7 @@ def compile_workset_program(
                     reference.maximum_derivative_order < derivative_order
                     or mode not in reference.kernel_modes
                     or reference.local_width != binding.local_width
+                    or reference.realization_id != selection.reference_realization_id
                     for reference, binding in zip(
                         region.reference_actions, bindings, strict=True
                     )
@@ -528,7 +529,7 @@ def compile_workset_program(
                 ),
             )
             signature = WorksetSignature(
-                "cell",
+                _region_kind(region.domain.kind),
                 region.block_name,
                 region.cell_kind,
                 rule_id,
@@ -547,6 +548,10 @@ def compile_workset_program(
                 precision_id=discretization.precision_policy.policy_id,
                 ir_semantics_id=ir.actions[action_index].action_id,
                 local_kernel=mode,
+                provider_selection_id=selection.selection_id,
+                execution_kind=selection.execution_kind,
+                operator_realization=selection.operator_realization,
+                reference_realization_id=selection.reference_realization_id,
             )
             worksets.append(
                 CompiledWorkset(
