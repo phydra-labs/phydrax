@@ -17,6 +17,17 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...units import (
+    CENTIMETER,
+    conversion_factor as _unit_conversion_factor,
+    derived_unit,
+    MICROFARAD_PER_SQUARE_CENTIMETER,
+    MICROMETER,
+    MICROSIEMENS,
+    NANOFARAD,
+    OHM,
+)
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -82,6 +93,7 @@ class CompartmentSpec(StrictModule, NonTrainableState):
                 "diameter_um": diameter,
                 "capacitance_density_uF_cm2": capacitance,
                 "axial_resistivity_ohm_cm": resistivity,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -193,6 +205,7 @@ class CellMorphologyPlan(StrictModule, NonTrainableState):
                 "cell_id": cell,
                 "compartments": [spec.spec_id for spec in specs],
                 "branches": [branch.branch_spec_id for branch in branch_values],
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -283,18 +296,30 @@ def prepare_cell_morphology(plan: CellMorphologyPlan, /) -> PreparedCellMorpholo
         dtype=np.int32,
     )
     root = int(np.flatnonzero(parent < 0)[0])
+    capacitance_density_area = derived_unit(
+        "uF/cm2*um2",
+        ((MICROFARAD_PER_SQUARE_CENTIMETER, 1), (MICROMETER, 2)),
+    )
+    capacitance_density_area_to_nF = float(
+        _unit_conversion_factor(capacitance_density_area, NANOFARAD)
+    )
+    micrometer_to_centimeter = float(_unit_conversion_factor(MICROMETER, CENTIMETER))
+    reciprocal_ohm = derived_unit("1/ohm", ((OHM, -1),))
+    reciprocal_ohm_to_uS = float(_unit_conversion_factor(reciprocal_ohm, MICROSIEMENS))
     length = np.asarray([spec.length_um for spec in plan.compartments], dtype=float)
     diameter = np.asarray([spec.diameter_um for spec in plan.compartments], dtype=float)
     area = pi * diameter * length
     capacitance_density = np.asarray(
         [spec.capacitance_density_uF_cm2 for spec in plan.compartments], dtype=float
     )
-    capacitance = capacitance_density * area * 1.0e-5
+    capacitance = capacitance_density * area * capacitance_density_area_to_nF
     resistivity = np.asarray(
         [spec.axial_resistivity_ohm_cm for spec in plan.compartments], dtype=float
     )
     half_resistance = (
-        resistivity * (0.5 * length * 1.0e-4) / (pi * (0.5 * diameter * 1.0e-4) ** 2)
+        resistivity
+        * (0.5 * length * micrometer_to_centimeter)
+        / (pi * (0.5 * diameter * micrometer_to_centimeter) ** 2)
     )
     edge_conductance = np.zeros((count,), dtype=float)
     laplacian = np.zeros((count, count), dtype=float)
@@ -302,7 +327,7 @@ def prepare_cell_morphology(plan: CellMorphologyPlan, /) -> PreparedCellMorpholo
         if parent_index < 0:
             continue
         resistance = half_resistance[child] + half_resistance[parent_index]
-        conductance = 1.0e6 / resistance
+        conductance = reciprocal_ohm_to_uS / resistance
         edge_conductance[child] = conductance
         laplacian[child, child] += conductance
         laplacian[parent_index, parent_index] += conductance

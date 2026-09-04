@@ -32,7 +32,7 @@ def frame(distance, source):
         system.plan.particle_ids,
         system_id=system.prepared_id,
         topology_id=system.topology.topology_id,
-        unit_system_id=system.plan.units.unit_system_id,
+        units=system.plan.units,
         source_id=source,
     )
 

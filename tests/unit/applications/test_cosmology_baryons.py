@@ -45,7 +45,11 @@ def _case(count=8):
     ).prepare()
     transfer = phx.discretization.ParticleGridSplatPlan(grid).prepare(particles)
     particle_gravity = phx.solver.ParticleMeshGravityPlan(gravity, transfer)
-    scale = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     kdk = cosmology.CosmologicalKDKPlan(particles, (1.0,), scale=scale)
     gas = cosmology.ComovingEulerPlan(
         dynamics,

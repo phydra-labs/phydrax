@@ -91,6 +91,15 @@ broadcast primitives without runtime axis metadata. See
 [Guide → Einstein operations](guides_ein.md) and
 [API → Einstein operations](api/ein.md).
 
+Physical metadata is shared through `phydrax.units`: exact sparse rational
+dimension signatures, immutable multiplicative unit definitions, explicit
+reference-system conversion, and content-addressed descriptors. Domain
+contracts retain frame, epoch, coordinate kind, sign, support, species, and
+reference semantics above this substrate. Conversion occurs at construction or
+interchange boundaries; prepared JAX kernels continue to operate on homogeneous
+raw arrays. See [Guide → Physical dimensions and units](guides_units.md) and
+[API → Physical units](api/units.md).
+
 Certified positive-semidefinite actions may prepare a fixed-rank
 `RandomizedNystromPreconditioner`. Its deterministic sketch, positive shift,
 refresh mode, retained Ritz evidence, storage, and exact setup matvec count flow

@@ -22,6 +22,7 @@ def main() -> None:
     power_values = scale_factors[:, None] ** 2 * wavenumbers[None, :]
     np.savez(
         output,
+        scale_json=json.dumps(request["scale"], sort_keys=True),
         scale_factors=scale_factors,
         wavenumbers=wavenumbers,
         transfer_values=transfer_values,

@@ -31,7 +31,7 @@ from ..linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
-from ._ir import PDEExpression, PDEField, PDEProblemIR
+from ._ir import _exact_integer_literal, PDEExpression, PDEField, PDEProblemIR
 from ._validate import validate_pde_ir
 
 
@@ -551,7 +551,7 @@ class _SpectralEvaluator(StrictModule):
             return cache[node]
         if node.op == "constant":
             assert node.value is not None
-            result: Any = node.value
+            result: Any = jnp.asarray(float(node.value))
         elif node.op == "field":
             assert node.symbol is not None
             result = self.method.dealiasing.reconstruct(fields[node.symbol])
@@ -937,13 +937,11 @@ def _field_degree(expression: PDEExpression, /) -> int | None:
         return finite[0] if finite[1] == 0 else None
     if expression.op == "power":
         exponent = expression.args[1]
-        if (
-            exponent.op != "constant"
-            or exponent.value is None
-            or not exponent.value.is_integer()
-        ):
+        power = (
+            _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
+        )
+        if power is None:
             return None
-        power = int(exponent.value)
         return finite[0] * power if power >= 0 else None
     if expression.op in ("sin", "cos", "exp", "log", "sqrt"):
         return 0 if finite[0] == 0 else None
@@ -962,7 +960,7 @@ def _linear_symbol(
     zero = jnp.zeros(discretization.modal_shape, dtype=dtype)
     if expression.op == "constant":
         assert expression.value is not None
-        return jnp.asarray(expression.value, dtype=dtype), zero
+        return jnp.asarray(float(expression.value), dtype=dtype), zero
     if expression.op == "parameter":
         assert expression.symbol is not None
         if expression.symbol not in parameter_values:
@@ -1027,14 +1025,11 @@ def _linear_symbol(
     if expression.op == "power":
         base = children[0]
         exponent = expression.args[1]
-        if (
-            base is None
-            or exponent.op != "constant"
-            or exponent.value is None
-            or not exponent.value.is_integer()
-        ):
+        power = (
+            _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
+        )
+        if base is None or power is None:
             return None
-        power = int(exponent.value)
         if power < 0 or (power == 0 and bool(base[0] == 0)):
             return None
         if power == 0:

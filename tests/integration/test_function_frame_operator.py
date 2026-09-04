@@ -123,13 +123,13 @@ def _task():
                 "source-field",
                 role="source",
                 source_name="source",
-                physical_dimension=(0.0,),
+                dimension=phx.units.DIMENSIONLESS,
             ),
             phx.nn.operator.OperatorFieldSpec(
                 "solution",
                 role="target",
                 query_name="query",
-                physical_dimension=(0.0,),
+                dimension=phx.units.DIMENSIONLESS,
             ),
         ),
         queries=(
@@ -137,7 +137,7 @@ def _task():
                 "query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.LENGTH,),
             ),
         ),
         problem=phx.nn.operator.OperatorProblemSpec(

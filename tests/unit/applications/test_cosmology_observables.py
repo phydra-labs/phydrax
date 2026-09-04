@@ -8,7 +8,11 @@ cosmology = phx.applications.cosmology
 
 
 def _context():
-    scale = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     background = cosmology.FLRWBackground(1.0, 1.0, scale=scale)
     growth = cosmology.FLRWGrowthPlan(jnp.geomspace(1.0e-2, 1.0, 32)).solve(background)
     provenance = cosmology.CosmologyProductProvenance(

@@ -10,7 +10,11 @@ cosmology = phx.applications.cosmology
 
 
 def _linear_power():
-    scale = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     background = cosmology.FLRWBackground(1.0, 0.3, scale=scale)
     provenance = cosmology.CosmologyProductProvenance(
         producer="test",

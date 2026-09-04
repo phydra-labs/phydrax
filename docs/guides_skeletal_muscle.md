@@ -53,8 +53,10 @@ converted to 0.03--0.09 s during parameter construction. No result is labeled as
 newtons or percent MVC without an explicit external normalization.
 
 Canonical quantity definitions are available through
-`skeletal_muscle_quantity(...)`. These are application quantities, not a general unit
-registry.
+`skeletal_muscle_quantity(...)`. Each stores a canonical
+`phydrax.units.UnitDefinition` and derives its SI factor while retaining
+muscle-specific sign, support, axes, and reference semantics. The lookup is a
+closed application catalog, not a general runtime unit registry.
 
 ## Basic execution
 

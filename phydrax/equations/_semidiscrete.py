@@ -915,7 +915,7 @@ class _SemidiscreteEvaluator(StrictModule):
             )
         if node.op == "constant":
             assert node.value is not None
-            return node.value
+            return jnp.asarray(float(node.value))
         if node.op == "field":
             assert node.symbol is not None
             return fields[node.symbol]
@@ -2127,7 +2127,7 @@ def _static_scalar(
     /,
 ) -> float | None:
     if expression.op == "constant":
-        return expression.value
+        return None if expression.value is None else float(expression.value)
     if expression.op == "parameter":
         symbol = expression.symbol
         if symbol is None or symbol not in defaults:

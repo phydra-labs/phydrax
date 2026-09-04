@@ -77,9 +77,9 @@ def test_two_link_urdf_builds_native_plans_reference_axis_and_zero_fk():
     assert adaptation.report.status == AdapterStatus.LOSSLESS
     assert adaptation.report.valid
     assert adaptation.negotiation.valid
-    assert adaptation.dimensions.length_unit == "m"
-    assert adaptation.dimensions.mass_unit == "kg"
-    assert adaptation.dimensions.time_unit == "s"
+    assert adaptation.dimensions.length_unit.symbol == "m"
+    assert adaptation.dimensions.mass_unit.symbol == "kg"
+    assert adaptation.dimensions.time_unit.symbol == "s"
     assert adaptation.link_ids.names == ("base", "tool")
     assert adaptation.joint_ids is not None
     assert adaptation.joint_ids.names == ("shoulder",)
@@ -91,8 +91,12 @@ def test_two_link_urdf_builds_native_plans_reference_axis_and_zero_fk():
         np.asarray((np.diag([1.0, 1.1, 1.2]), np.diag([0.2, 0.3, 0.4]))),
     )
     assert adaptation.joints.hinge is not None
-    assert np.allclose(np.asarray(adaptation.joints.hinge.reference_axes), [[0.0, 1.0, 0.0]])
-    assert np.allclose(np.asarray(adaptation.joints.hinge.reference_anchors), [[0.0, 0.0, 1.0]])
+    assert np.allclose(
+        np.asarray(adaptation.joints.hinge.reference_axes), [[0.0, 1.0, 0.0]]
+    )
+    assert np.allclose(
+        np.asarray(adaptation.joints.hinge.reference_anchors), [[0.0, 0.0, 1.0]]
+    )
     assert np.allclose(
         np.asarray(adaptation.reference.position), [[0.0, 0.0, 0.0], [0.1, 0.0, 1.0]]
     )
@@ -159,13 +163,16 @@ def test_name_maps_target_and_report_are_deterministic():
     assert first.target_id == second.target_id
     assert first.evidence.evidence_id == second.evidence.evidence_id
     assert first.report.report_id == second.report.report_id
-    assert first.report.negotiation.negotiation_id == second.report.negotiation.negotiation_id
+    assert (
+        first.report.negotiation.negotiation_id
+        == second.report.negotiation.negotiation_id
+    )
 
 
 def test_visual_is_declared_optional_loss_but_collision_requires_explicit_waiver():
     visual = _TWO_LINK.replace(
-        "<inertial>\n      <mass value=\"5\"/>",
-        "<visual><geometry><box size=\"1 1 1\"/></geometry></visual>\n    <inertial>\n      <mass value=\"5\"/>",
+        '<inertial>\n      <mass value="5"/>',
+        '<visual><geometry><box size="1 1 1"/></geometry></visual>\n    <inertial>\n      <mass value="5"/>',
     )
     optional = parse_urdf_text(visual, root_policy="fixed_world")
     assert optional.report.status == AdapterStatus.DECLARED_LOSS
@@ -231,9 +238,10 @@ def test_file_resolver_normalizes_within_root_and_rejects_traversal(tmp_path: Pa
     )
     assert loaded.evidence.source_path == str(source.resolve())
     assert loaded.evidence.source_bytes == _TWO_LINK.encode("utf-8")
-    assert loaded.evidence.source_content_sha256 == hashlib.sha256(
-        loaded.evidence.source_bytes
-    ).hexdigest()
+    assert (
+        loaded.evidence.source_content_sha256
+        == hashlib.sha256(loaded.evidence.source_bytes).hexdigest()
+    )
     assert loaded.evidence.resource_manifest.relative_components == ("arm.urdf",)
     assert loaded.evidence.resource_manifest.observed_nodes > 0
 
@@ -310,9 +318,7 @@ def test_unsupported_joint_kinds_reject(joint_type):
 )
 def test_invalid_mass_and_inertia_reject_as_malformed(body):
     with pytest.raises(URDFImportError) as caught:
-        parse_urdf_text(
-            f'<robot name="bad">{body}</robot>', root_policy="fixed_world"
-        )
+        parse_urdf_text(f'<robot name="bad">{body}</robot>', root_policy="fixed_world")
     assert caught.value.status == AdapterStatus.MALFORMED_SOURCE
 
 
@@ -367,17 +373,15 @@ def test_root_policy_is_required_and_never_implicitly_fixes_the_root():
 
 
 def test_xml_depth_node_attribute_and_loss_limits_fail_closed():
-    deeply_nested = (
-        '<robot name="deep"><extension><a><b><c/></b></a></extension></robot>'
-    )
+    deeply_nested = '<robot name="deep"><extension><a><b><c/></b></a></extension></robot>'
     cases = (
         (deeply_nested, {"max_depth": 4}),
         (_TWO_LINK, {"max_nodes": 2}),
         (_TWO_LINK, {"max_attributes": 0}),
         (
             _TWO_LINK.replace(
-                "<inertial>\n      <mass value=\"5\"/>",
-                "<visual/>\n    <inertial>\n      <mass value=\"5\"/>",
+                '<inertial>\n      <mass value="5"/>',
+                '<visual/>\n    <inertial>\n      <mass value="5"/>',
             ),
             {"max_losses": 0},
         ),
@@ -428,9 +432,9 @@ def test_required_joint_limit_loss_cannot_be_waived():
     assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
     assert caught.value.report is not None
     assert caught.value.report.negotiation.waived_losses == ()
-    assert {
-        loss.path for loss in caught.value.report.negotiation.unwaived_losses
-    } == set(paths)
+    assert {loss.path for loss in caught.value.report.negotiation.unwaived_losses} == set(
+        paths
+    )
 
 
 def test_stale_urdf_loss_path_waiver_rejects():

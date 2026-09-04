@@ -25,6 +25,7 @@ from ._cable import (
     PreparedCableSolver,
     step_cable,
 )
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -95,6 +96,7 @@ class CurrentClamp(StrictModule, NonTrainableState):
                 "amplitude_nA": amplitude,
                 "start_ms": start,
                 "stop_ms": stop,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -135,6 +137,7 @@ class VoltageClamp(StrictModule, NonTrainableState):
                 "target_mV": target,
                 "start_ms": start,
                 "stop_ms": stop,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -167,6 +170,7 @@ class RecordingPlan(StrictModule, NonTrainableState):
                 "kind": "electrophysiology-recording-v1",
                 "compartment_ids": list(identifiers),
                 "sample_capacity": sample_capacity,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -212,6 +216,7 @@ class ElectrophysiologyProtocol(StrictModule, NonTrainableState):
                 "current_clamps": [value.stimulus_id for value in currents],
                 "voltage_clamps": [value.stimulus_id for value in voltages],
                 "recording": recording.plan_id,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -513,6 +518,7 @@ def _checkpoint_identity(
             "kind": "electrophysiology-checkpoint-v1",
             "protocol": runtime.runtime_id,
             "state": array_tree_fingerprint(state),
+            "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
         }
     )
 

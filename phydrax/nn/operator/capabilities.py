@@ -395,7 +395,7 @@ def _field_schema_signature(field: Any, /) -> tuple[Any, ...]:
         field.query_name,
         None if output is None else (output.channels, tuple(output.component_names)),
         tuple(field.component_names),
-        tuple(field.physical_dimension),
+        field.dimension.dimension_id,
         tuple(field.scale),
         tuple(field.offset),
         field.required,

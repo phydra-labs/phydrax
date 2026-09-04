@@ -45,7 +45,11 @@ def _gravity(count, particles):
 
 
 def _case(count=8):
-    scale = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count),
         jnp.full((count,), 1.0 / count),

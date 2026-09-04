@@ -81,7 +81,7 @@ def _model():
     encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=4,
         depth=1,
-        dimension_rank=0,
+        dimension_basis=(),
         key=encoder_key,
     )
     return PDEConditionedOperator(operator, encoder, input_name="pde")
@@ -89,7 +89,8 @@ def _model():
 
 def _tokens(constant: float, *, constant_first: bool = False):
     return phx.equations.tokenize_pde_ir(
-        _problem(constant, constant_first=constant_first)
+        _problem(constant, constant_first=constant_first),
+        dimension_basis=(),
     )
 
 
@@ -120,6 +121,22 @@ def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts():
     assert (
         model.operator_output_specs["output"].channels
         == model.operator.operator_output_specs["output"].channels
+    )
+    assert ("dimension_basis", ()) in model.operator_contract.configuration
+    length_encoder = phx.nn.operator.architectures.PDEConditionEncoder(
+        width=4,
+        depth=1,
+        dimension_basis=("length",),
+        key=jr.key(21),
+    )
+    length_model = PDEConditionedOperator(
+        model.operator,
+        length_encoder,
+        input_name="pde",
+    )
+    assert (
+        length_model.operator_contract.configuration
+        != model.operator_contract.configuration
     )
     assert output.shape == (2, 5)
     assert jnp.allclose(output, equivalent_output, rtol=1e-5, atol=1e-6)

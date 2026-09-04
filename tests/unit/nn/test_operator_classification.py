@@ -204,7 +204,7 @@ def test_classification_field_is_dimensionless_identity_and_target_only():
     output = OperatorOutputSpec("scalar", classification=classification)
     field = OperatorFieldSpec("phase", role="target", output_spec=output)
     labels = jnp.asarray([False, True])
-    assert field.physical_dimension == ()
+    assert field.dimension == phx.units.DIMENSIONLESS
     assert field.scale == (1.0,)
     assert field.offset == (0.0,)
     assert jnp.array_equal(field.nondimensionalize(labels), labels)

@@ -47,6 +47,9 @@ def test_bounded_rollout_retains_only_planned_samples_and_replays():
     ).rollout(initial)
     assert trajectory_plan.capacity == 4
     assert int(full.trajectory.count) == 4
+    assert (
+        full.trajectory.units.unit_system_id == dynamics.system.plan.units.unit_system_id
+    )
     assert bool(full.successful)
     assert bool(phx.atomistic.atomistic_replay_matches(full.replay, step.replay))
     np.testing.assert_allclose(
@@ -69,6 +72,8 @@ def test_checkpoint_roundtrip_continues_exact_state(tmp_path: Path):
     written = phx.atomistic.write_atomistic_checkpoint(path, plan, advanced)
     restored = phx.atomistic.read_atomistic_checkpoint(path, plan, initial)
     assert written.payload_id == restored.payload_id
+    assert written.units.unit_system_id == dynamics.system.plan.units.unit_system_id
+    assert restored.units.unit_system_id == dynamics.system.plan.units.unit_system_id
     observed = dynamics.step_detailed(restored.state).accepted_state
     expected = dynamics.step_detailed(advanced).accepted_state
     leaves_observed = jax.tree.leaves(observed)

@@ -300,7 +300,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
             "transfer_fields": list(self.transfer_fields),
             "gauge": self.gauge,
             "power_field": self.power_field,
-            "scale_id": self.scale.scale_id,
+            "scale": self.scale.to_dict(),
         }
         if include_identity:
             mapping["request_id"] = self.request_id
@@ -436,11 +436,27 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
                     "wavenumbers",
                     "transfer_values",
                     "power_values",
+                    "scale_json",
                 }
                 missing = required.difference(output.files)
                 if missing:
                     raise RuntimeError(
                         f"Linear-theory backend result is missing arrays: {sorted(missing)}"
+                    )
+                serialized_scale = np.asarray(output["scale_json"])
+                if serialized_scale.shape != ():
+                    raise RuntimeError(
+                        "Linear-theory backend scale metadata must be scalar JSON."
+                    )
+                result_scale_payload = json.loads(str(serialized_scale.item()))
+                if not isinstance(result_scale_payload, dict):
+                    raise RuntimeError(
+                        "Linear-theory backend scale metadata must decode to a mapping."
+                    )
+                result_scale = CosmologyScaleContract.from_dict(result_scale_payload)
+                if result_scale.scale_id != request.scale.scale_id:
+                    raise RuntimeError(
+                        "Linear-theory backend result scale does not match its request."
                     )
                 scales = jnp.asarray(output["scale_factors"])
                 wavenumbers = jnp.asarray(output["wavenumbers"])
@@ -472,7 +488,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
             request_id=request.request_id,
             numerical_policy_id=self.numerical_policy_id,
             physics_policy_id="external-linear-theory",
-            scale_id=request.scale.scale_id,
+            scale_id=result_scale.scale_id,
             source_kind="external",
             differentiation="constant",
         )
@@ -485,7 +501,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
                 gauge=request.gauge,
                 normalization="relative-to-primordial-curvature",
             ),
-            request.scale,
+            result_scale,
             provenance,
             request.realization,
         )
@@ -499,7 +515,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
                 gauge=request.gauge,
                 stage="linear",
             ),
-            request.scale,
+            result_scale,
             provenance,
             request.realization,
         )
@@ -507,7 +523,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
             ThermodynamicsHistory(
                 scales,
                 *thermodynamics_arrays,
-                request.scale,
+                result_scale,
                 provenance,
                 request.realization,
             )

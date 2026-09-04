@@ -2,6 +2,7 @@ import os
 import socket
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -9,6 +10,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import KILOJOULE_PER_MOLE
 
 
 def _runtime(*, units=None, topology=None, charges=None, cell=None):
@@ -81,12 +83,13 @@ def test_force_field_mapping_roundtrip_preserves_energy():
     bundle = phx.atomistic.interchange.AtomisticInterchangeBundle(
         force_field,
         phx.atomistic.interchange.AtomisticInterchangeReport(
-            "native", tuple(term.name for term in potential_plan.terms)
+            "native", units, tuple(term.name for term in potential_plan.terms)
         ),
     )
-    restored = phx.atomistic.interchange.force_field_from_mapping(
-        phx.atomistic.interchange.force_field_to_mapping(bundle), units
-    )
+    serialized = phx.atomistic.interchange.force_field_to_mapping(bundle)
+    assert serialized["unit_system"]["unit_system_id"] == units.unit_system_id
+    restored = phx.atomistic.interchange.force_field_from_mapping(serialized)
+    assert restored.report.units.unit_system_id == units.unit_system_id
     first = force_field.prepare()
     second = restored.force_field.prepare()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 1.3, 0.0]])
@@ -243,6 +246,13 @@ def test_openmm_import_export_energy_force_parity():
     bundle = phx.atomistic.interchange.from_openmm_system(
         source, units, atomic_numbers=[6, 8], cutoff=10.0
     )
+    assert bundle.report.source_energy_unit == KILOJOULE_PER_MOLE
+    assert bundle.report.avogadro_constant_set_id == units.constant_set_id
+    energy_factor = phx.atomistic.molar_energy_to_single_system_factor(
+        KILOJOULE_PER_MOLE,
+        units.scale.energy_unit,
+        constant_set_id=units.constant_set_id,
+    )
     prepared = bundle.force_field.prepare()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(2).prepare(
@@ -259,7 +269,7 @@ def test_openmm_import_export_energy_force_parity():
         state = context.getState(getEnergy=True, getForces=True)
         energy = (
             state.getPotentialEnergy().value_in_unit(openmm.unit.kilojoule_per_mole)
-            / 96.48533212331002
+            * energy_factor
         )
         forces = (
             np.asarray(
@@ -267,7 +277,7 @@ def test_openmm_import_export_energy_force_parity():
                     openmm.unit.kilojoule_per_mole / openmm.unit.angstrom
                 )
             )
-            / 96.48533212331002
+            * energy_factor
         )
         del context, integrator
         return energy, forces
@@ -283,6 +293,8 @@ def test_openmm_import_export_energy_force_parity():
         bundle
     )
     assert not report.unsupported_terms
+    assert report.source_energy_unit == KILOJOULE_PER_MOLE
+    assert report.avogadro_constant_set_id == units.constant_set_id
     exported_energy, exported_forces = openmm_evaluation(exported)
     np.testing.assert_allclose(
         exported_energy, reference_energy, rtol=1.0e-10, atol=1.0e-10
@@ -324,7 +336,7 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
         auxiliary={"temperature": jnp.asarray(1.0)},
         system_id=dynamics.system.plan.system_id,
         topology_id=dynamics.system.topology.topology_id,
-        unit_system_id=dynamics.system.plan.units.unit_system_id,
+        units=dynamics.system.plan.units,
         source_id="advanced-frame",
     )
     h5md = phx.atomistic.interchange.H5MDTrajectoryPlan(tmp_path / "input.h5")
@@ -344,7 +356,7 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
                 auxiliary=frame.auxiliary,
                 system_id=frame.system_id,
                 topology_id=frame.topology_id,
-                unit_system_id=frame.unit_system_id,
+                units=frame.units,
                 source_id="advanced-frame-1",
             )
         )
@@ -354,15 +366,21 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
     np.testing.assert_allclose(recovered[1].velocities, frame.velocities)
     np.testing.assert_allclose(recovered[1].auxiliary["temperature"], 1.0)
     assert recovered[0].source_id == frame.source_id
+    assert recovered[0].units.unit_system_id == frame.units.unit_system_id
 
     xyz = phx.atomistic.interchange.ExtendedXYZTrajectoryPlan(tmp_path / "output.xyz")
     with xyz.open(append=False) as writer:
         writer.write(frame)
+    with xyz.open(append=True) as writer:
+        writer.write(recovered[1])
     with xyz.open() as reader:
-        xyz_frame = tuple(reader)[0]
+        xyz_frames = tuple(reader)
+    assert len(xyz_frames) == 2
+    xyz_frame = xyz_frames[0]
     np.testing.assert_allclose(xyz_frame.forces, frame.forces)
     np.testing.assert_allclose(xyz_frame.momenta, frame.momenta)
     assert xyz_frame.source_id == frame.source_id
+    assert xyz_frame.units.unit_system_id == frame.units.unit_system_id
 
     rerun_output = phx.atomistic.interchange.H5MDTrajectoryPlan(tmp_path / "rerun.h5")
     fields = (
@@ -390,6 +408,13 @@ def test_h5md_extended_xyz_and_rerun_reporting(tmp_path: Path):
     assert reported[0].auxiliary["rerun_lambda_energies"].shape == (2,)
     assert reported[0].source_id.startswith(frame.source_id)
     assert reported[0].auxiliary["rerun_force_group_energies"].shape == (2, 1)
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(h5md.path, "a") as handle:
+        group = handle["particles/phydrax"]
+        assert "unit_system_descriptor" in group.attrs
+        del group.attrs["unit_system_descriptor"]
+    with pytest.raises(ValueError, match="complete unit-system descriptor"):
+        h5md.open()
 
 
 def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
@@ -417,6 +442,7 @@ def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path):
     restored = phx.atomistic.sampling.read_biased_dynamics_checkpoint(
         path, checkpoint_plan, biased_state
     )
+    assert restored.units.unit_system_id == runtime.base.system.plan.units.unit_system_id
     assert restored.payload_id == written.payload_id
     replay = runtime.replay(restored.state, 1)
     assert replay.accepted.shape == (1,)
@@ -561,6 +587,55 @@ def test_collective_variable_families():
         assert bool(jnp.isfinite(evaluation.value)), kind
 
 
+def test_mdanalysis_frame_values_are_converted_before_unit_attachment():
+    atoms = SimpleNamespace(
+        positions=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+        velocities=np.asarray([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
+        forces=np.asarray([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
+        indices=np.asarray([0, 1]),
+    )
+    timestep = SimpleNamespace(
+        dimensions=None,
+        has_velocities=True,
+        has_forces=True,
+        time=2.0,
+        frame=3,
+    )
+    universe = SimpleNamespace(
+        atoms=atoms,
+        trajectory=SimpleNamespace(ts=timestep),
+    )
+    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+
+    frame = phx.atomistic.interchange.atomistic_frame_from_mdanalysis(
+        universe,
+        system_id="mda-system",
+        topology_id="mda-topology",
+        units=units,
+        source_id="mda-frame",
+    )
+
+    assert float(frame.time) == 2000.0
+    np.testing.assert_allclose(
+        frame.velocities,
+        [[0.001, 0.0, 0.0], [0.0, 0.002, 0.0]],
+    )
+    force_factor = phx.atomistic.molar_energy_to_single_system_factor(
+        phx.units.KILOJOULE_PER_MOLE,
+        phx.units.ELECTRONVOLT,
+        constant_set_id=units.constant_set_id,
+    )
+    np.testing.assert_allclose(frame.forces, atoms.forces * force_factor)
+    with pytest.raises(ValueError, match="shared reference system"):
+        phx.atomistic.interchange.atomistic_frame_from_mdanalysis(
+            universe,
+            system_id="mda-system",
+            topology_id="mda-topology",
+            units=phx.atomistic.AtomisticUnitSystem.reduced(),
+            source_id="mda-frame",
+        )
+
+
 def test_mdanalysis_frame_metadata_and_selection_adapters():
     mda = pytest.importorskip("MDAnalysis")
     universe = mda.Universe.empty(
@@ -570,6 +645,8 @@ def test_mdanalysis_frame_metadata_and_selection_adapters():
         atom_resindex=[0, 1],
         residue_segindex=[0, 0],
         trajectory=True,
+        velocities=True,
+        forces=True,
     )
     universe.add_TopologyAttr("names", ["H1", "H2"])
     universe.add_TopologyAttr("elements", ["H", "H"])
@@ -578,11 +655,14 @@ def test_mdanalysis_frame_metadata_and_selection_adapters():
     universe.add_TopologyAttr("chainIDs", ["A", "A"])
     universe.add_TopologyAttr("segids", ["SYSTEM"])
     universe.atoms.positions = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    universe.atoms.velocities = [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]
+    universe.atoms.forces = [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]
+    universe.trajectory.ts.time = 2.0
     frame = phx.atomistic.interchange.atomistic_frame_from_mdanalysis(
         universe,
         system_id="mda-system",
         topology_id="mda-topology",
-        unit_system_id="mda-units",
+        units=phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond(),
         source_id="mda-frame",
     )
     metadata = phx.atomistic.interchange.atomistic_metadata_from_mdanalysis(universe)
@@ -593,6 +673,28 @@ def test_mdanalysis_frame_metadata_and_selection_adapters():
     assert metadata.atom_names == ("H1", "H2")
     np.testing.assert_array_equal(selection.mask, [True, False])
     np.testing.assert_allclose(recovered.atoms.positions, frame.positions)
+    assert float(frame.time) == 2000.0
+    np.testing.assert_allclose(
+        frame.velocities,
+        [[0.001, 0.0, 0.0], [0.0, 0.002, 0.0]],
+    )
+    force_factor = phx.atomistic.molar_energy_to_single_system_factor(
+        phx.units.KILOJOULE_PER_MOLE,
+        phx.units.ELECTRONVOLT,
+        constant_set_id=frame.units.constant_set_id,
+    )
+    np.testing.assert_allclose(
+        frame.forces,
+        np.asarray([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]) * force_factor,
+    )
+    with pytest.raises(ValueError, match="shared reference system"):
+        phx.atomistic.interchange.atomistic_frame_from_mdanalysis(
+            universe,
+            system_id="mda-system",
+            topology_id="mda-topology",
+            units=phx.atomistic.AtomisticUnitSystem.reduced(),
+            source_id="mda-frame",
+        )
 
 
 def test_committee_diversity_and_advanced_methods():
@@ -604,7 +706,7 @@ def test_committee_diversity_and_advanced_methods():
         system.plan.particle_ids,
         system_id=system.plan.system_id,
         topology_id=system.topology.topology_id,
-        unit_system_id=system.plan.units.unit_system_id,
+        units=system.plan.units,
         source_id="acquisition-frame",
     )
     frames = tuple(
@@ -615,7 +717,7 @@ def test_committee_diversity_and_advanced_methods():
             frame.stable_ids,
             system_id=frame.system_id,
             topology_id=frame.topology_id,
-            unit_system_id=frame.unit_system_id,
+            units=frame.units,
             source_id=f"frame-{index}",
         )
         for index in range(3)
@@ -1019,7 +1121,7 @@ Path('output.xyz').write_text(f'{len(output)}\\nfake packmol\\n' + '\\n'.join(ou
         [10, 20],
         system_id="packmol-system",
         topology_id="packmol-topology",
-        unit_system_id="packmol-units",
+        units=phx.atomistic.AtomisticUnitSystem.reduced(),
         source_id="packmol-template",
     )
     component = phx.atomistic.interchange.PackmolComponentPlan(
@@ -1036,5 +1138,6 @@ Path('output.xyz').write_text(f'{len(output)}\\nfake packmol\\n' + '\\n'.join(ou
     ).run()
     assert result.successful
     assert result.positions.shape == (4, 3)
+    assert result.units.unit_system_id == template.units.unit_system_id
     assert result.component_slices == ((0, 4),)
     assert result.input_digest

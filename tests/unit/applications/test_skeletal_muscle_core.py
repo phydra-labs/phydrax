@@ -8,6 +8,7 @@ from phydrax.applications.skeletal_muscle import (
     skeletal_muscle_quantity,
     SkeletalMuscleQuantitySpec,
 )
+from phydrax.units import METER, ONE, UnitDefinition
 
 
 EXPECTED_QUANTITIES = {
@@ -64,10 +65,12 @@ EXPECTED_QUANTITIES = {
 
 def test_skeletal_quantities_are_exact_complete_and_immutable():
     assert EXPECTED_QUANTITIES == set(SKELETAL_MUSCLE_QUANTITIES)
-    assert len({value.quantity_id for value in SKELETAL_MUSCLE_QUANTITIES.values()}) == len(
-        SKELETAL_MUSCLE_QUANTITIES
-    )
+    assert len(
+        {value.quantity_id for value in SKELETAL_MUSCLE_QUANTITIES.values()}
+    ) == len(SKELETAL_MUSCLE_QUANTITIES)
     for name, quantity in SKELETAL_MUSCLE_QUANTITIES.items():
+        assert isinstance(quantity.unit, UnitDefinition)
+        assert quantity.quantity_kind
         assert quantity.name == name
         assert quantity.si_factor > 0
         assert quantity.sign_convention
@@ -82,15 +85,13 @@ def test_skeletal_quantities_are_exact_complete_and_immutable():
     with pytest.raises(KeyError):
         skeletal_muscle_quantity("unknown")
     assert (
-        skeletal_muscle_quantity(
-            "skeletal_muscle_stimulus_current_density"
-        ).to_si(1.0)
+        skeletal_muscle_quantity("skeletal_muscle_stimulus_current_density").to_si(1.0)
         == 0.01
     )
     assert (
-        skeletal_muscle_quantity(
-            "skeletal_muscle_cytosolic_calcium_concentration"
-        ).to_si(1.0)
+        skeletal_muscle_quantity("skeletal_muscle_cytosolic_calcium_concentration").to_si(
+            1.0
+        )
         == 0.001
     )
     assert skeletal_muscle_quantity("motor_unit_event_time").to_si(1.0) == 0.001
@@ -101,9 +102,7 @@ def test_skeletal_quantity_identity_is_domain_and_metadata_sensitive():
     baseline = SkeletalMuscleQuantitySpec(
         "drive",
         "dimensionless",
-        "1",
-        "1",
-        Fraction(1),
+        ONE,
         sign_convention="nonnegative",
         support_association="motor-unit population",
         reference_configuration="named model scale",
@@ -111,9 +110,7 @@ def test_skeletal_quantity_identity_is_domain_and_metadata_sensitive():
     equivalent = SkeletalMuscleQuantitySpec(
         "drive",
         "dimensionless",
-        "1",
-        "1",
-        1.0,
+        ONE,
         sign_convention="nonnegative",
         support_association="motor-unit population",
         reference_configuration="named model scale",
@@ -121,9 +118,7 @@ def test_skeletal_quantity_identity_is_domain_and_metadata_sensitive():
     changed = SkeletalMuscleQuantitySpec(
         "drive",
         "dimensionless",
-        "1",
-        "1",
-        1,
+        ONE,
         sign_convention="signed",
         support_association="motor-unit population",
         reference_configuration="named model scale",
@@ -136,7 +131,5 @@ def test_skeletal_quantity_identity_is_domain_and_metadata_sensitive():
         SkeletalMuscleQuantitySpec(
             "drive",
             "dimensionless",
-            "percent",
-            "1",
-            Fraction(1, 100),
+            METER,
         )

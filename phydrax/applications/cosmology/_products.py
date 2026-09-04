@@ -15,6 +15,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
+from ...units import derived_unit, UnitDefinition
 from ._closure import CosmologyRealizationSignature, DifferentiationContract
 from ._scales import CosmologyScaleContract
 
@@ -405,6 +406,7 @@ class MatterPowerTable(StrictModule):
     power_values: Array
     descriptor: MatterPowerDescriptor
     scale: CosmologyScaleContract
+    power_unit: UnitDefinition = eqx.field(static=True)
     provenance: CosmologyProductProvenance
     realization: CosmologyRealizationSignature
 
@@ -447,12 +449,12 @@ class MatterPowerTable(StrictModule):
         self.power_values = _stored(power, policy)
         self.descriptor = descriptor
         self.scale = scale
+        self.power_unit = derived_unit(
+            f"{scale.length_unit.symbol}^{descriptor.spatial_dimension}",
+            ((scale.length_unit, descriptor.spatial_dimension),),
+        )
         self.provenance = provenance
         self.realization = realization
-
-    @property
-    def power_unit(self) -> str:
-        return f"{self.scale.length_unit}^{self.descriptor.spatial_dimension}"
 
     def evaluate(self, wavenumber: ArrayLike, scale_factor: ArrayLike, /) -> Array:
         query_k = _validated_query(

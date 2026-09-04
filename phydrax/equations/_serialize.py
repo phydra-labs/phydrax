@@ -4,9 +4,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+from collections.abc import Mapping
+from fractions import Fraction
+from numbers import Integral
 from typing import Any
+
+from phydrax._fingerprint import canonical_fingerprint
+from phydrax.units import DIMENSIONLESS, DimensionSignature
 
 from ._ir import (
     PDECondition,
@@ -19,6 +24,42 @@ from ._ir import (
     PDERegion,
 )
 from ._validate import validate_pde_ir
+
+
+def _dimension_from_dict(value: Any, /) -> DimensionSignature:
+    if not isinstance(value, Mapping):
+        raise TypeError("Serialized PDE dimensions must be canonical mappings.")
+    return DimensionSignature.from_dict(value)
+
+
+def _literal_to_dict(
+    value: int | float | Fraction,
+    /,
+) -> int | float | dict[str, int]:
+    if isinstance(value, Fraction):
+        return {"numerator": value.numerator, "denominator": value.denominator}
+    return value
+
+
+def _literal_from_dict(value: Any, /) -> int | float | Fraction:
+    if isinstance(value, Mapping):
+        if set(value) != {"numerator", "denominator"}:
+            raise ValueError(
+                "Serialized exact PDE literals require numerator and denominator."
+            )
+        numerator = value["numerator"]
+        denominator = value["denominator"]
+        if (
+            isinstance(numerator, bool)
+            or not isinstance(numerator, Integral)
+            or isinstance(denominator, bool)
+            or not isinstance(denominator, Integral)
+        ):
+            raise TypeError("Serialized exact PDE literal terms must be integers.")
+        return Fraction(int(numerator), int(denominator))
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError("Serialized PDE literals must be integers, fractions, or floats.")
+    return value
 
 
 def _flatten_associative(
@@ -52,7 +93,7 @@ def _canonical_expression(expression: PDEExpression, /) -> dict[str, Any]:
     if encoded_args:
         result["args"] = encoded_args
     if expression.value is not None:
-        result["value"] = float(expression.value)
+        result["value"] = _literal_to_dict(expression.value)
     if expression.symbol is not None:
         result["symbol"] = expression.symbol
     if expression.coordinate is not None:
@@ -63,8 +104,8 @@ def _canonical_expression(expression: PDEExpression, /) -> dict[str, Any]:
         result["order"] = int(expression.order)
     if expression.region is not None:
         result["region"] = expression.region
-    if expression.physical_dimension:
-        result["physical_dimension"] = list(expression.physical_dimension)
+    if not expression.dimension.is_dimensionless:
+        result["dimension"] = expression.dimension.to_dict()
     return result
 
 
@@ -77,7 +118,7 @@ def pde_ir_to_dict(problem: PDEProblemIR, /) -> dict[str, Any]:
                 "name": item.name,
                 "kind": item.kind,
                 "size": item.size,
-                "physical_dimension": list(item.physical_dimension),
+                "dimension": item.dimension.to_dict(),
                 "bounds": None if item.bounds is None else list(item.bounds),
                 "periodic": item.periodic,
             }
@@ -89,7 +130,7 @@ def pde_ir_to_dict(problem: PDEProblemIR, /) -> dict[str, Any]:
                 "representation": item.representation,
                 "components": item.components,
                 "coordinates": list(item.coordinates),
-                "physical_dimension": list(item.physical_dimension),
+                "dimension": item.dimension.to_dict(),
                 "scale": list(item.scale),
                 "component_names": list(item.component_names),
             }
@@ -100,7 +141,7 @@ def pde_ir_to_dict(problem: PDEProblemIR, /) -> dict[str, Any]:
                 "name": item.name,
                 "value": item.value,
                 "components": item.components,
-                "physical_dimension": list(item.physical_dimension),
+                "dimension": item.dimension.to_dict(),
                 "scale": list(item.scale),
                 "functional": item.functional,
             }
@@ -154,10 +195,12 @@ def pde_ir_to_json(problem: PDEProblemIR, /, *, indent: int | None = None) -> st
 
 
 def pde_ir_hash(problem: PDEProblemIR, /) -> str:
-    return hashlib.sha256(pde_ir_to_json(problem).encode("utf-8")).hexdigest()
+    return canonical_fingerprint(pde_ir_to_dict(problem))
 
 
-def _expression_from_dict(value: dict[str, Any], /) -> PDEExpression:
+def _expression_from_dict(value: Mapping[str, Any], /) -> PDEExpression:
+    if not isinstance(value, Mapping):
+        raise TypeError("Serialized PDE expressions must be mappings.")
     allowed = {
         "op",
         "args",
@@ -167,7 +210,7 @@ def _expression_from_dict(value: dict[str, Any], /) -> PDEExpression:
         "axis",
         "order",
         "region",
-        "physical_dimension",
+        "dimension",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -177,18 +220,49 @@ def _expression_from_dict(value: dict[str, Any], /) -> PDEExpression:
     return PDEExpression(
         value["op"],
         tuple(_expression_from_dict(argument) for argument in value.get("args", ())),
-        value=None if value.get("value") is None else float(value["value"]),
+        value=(
+            None if value.get("value") is None else _literal_from_dict(value["value"])
+        ),
         symbol=value.get("symbol"),
         coordinate=value.get("coordinate"),
         axis=value.get("axis"),
         order=int(value.get("order", 1)),
         region=value.get("region"),
-        physical_dimension=tuple(value.get("physical_dimension", ())),
+        dimension=(
+            DIMENSIONLESS
+            if "dimension" not in value
+            else _dimension_from_dict(value["dimension"])
+        ),
     )
 
 
-def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
+def _records(
+    values: Any,
+    fields: set[str],
+    label: str,
+    /,
+) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(values, (list, tuple)):
+        raise TypeError(f"Serialized PDE {label} records must be a sequence.")
+    records: list[Mapping[str, Any]] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise TypeError(f"Serialized PDE {label} records must be mappings.")
+        missing = fields - set(value)
+        unknown = set(value) - fields
+        if missing or unknown:
+            raise ValueError(
+                f"Serialized PDE {label} records must use canonical fields; "
+                f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+            )
+        records.append(value)
+    return tuple(records)
+
+
+def pde_ir_from_dict(value: Mapping[str, Any], /) -> PDEProblemIR:
     """Load, type, and fully validate a canonical PDE problem dictionary."""
+    if not isinstance(value, Mapping):
+        raise TypeError("Serialized PDE IR must be a mapping.")
     allowed = {
         "coordinates",
         "fields",
@@ -205,12 +279,50 @@ def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
     unknown = set(value) - allowed
     if unknown:
         raise ValueError(f"Unknown PDE IR fields {sorted(unknown)}.")
+    coordinate_records = _records(
+        value["coordinates"],
+        {"name", "kind", "size", "dimension", "bounds", "periodic"},
+        "coordinate",
+    )
+    field_records = _records(
+        value["fields"],
+        {
+            "name",
+            "representation",
+            "components",
+            "coordinates",
+            "dimension",
+            "scale",
+            "component_names",
+        },
+        "field",
+    )
+    parameter_records = _records(
+        value["parameters"],
+        {"name", "value", "components", "dimension", "scale", "functional"},
+        "parameter",
+    )
+    region_records = _records(
+        value["regions"],
+        {"name", "kind", "coordinates", "component"},
+        "region",
+    )
+    equation_records = _records(
+        value["equations"],
+        {"name", "lhs", "rhs"},
+        "equation",
+    )
+    condition_records = _records(
+        value["conditions"],
+        {"name", "kind", "expression", "target", "region", "coordinate"},
+        "condition",
+    )
     coordinates = tuple(
         PDECoordinate(
             item["name"],
             item["kind"],
             size=int(item.get("size", 1)),
-            physical_dimension=tuple(item.get("physical_dimension", ())),
+            dimension=_dimension_from_dict(item["dimension"]),
             bounds=(
                 None
                 if item.get("bounds") is None
@@ -218,7 +330,7 @@ def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
             ),
             periodic=bool(item.get("periodic", False)),
         )
-        for item in value["coordinates"]
+        for item in coordinate_records
     )
     fields = tuple(
         PDEField(
@@ -226,11 +338,11 @@ def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
             representation=item.get("representation", "scalar"),
             components=int(item.get("components", 1)),
             coordinates=tuple(item.get("coordinates", ())),
-            physical_dimension=tuple(item.get("physical_dimension", ())),
+            dimension=_dimension_from_dict(item["dimension"]),
             scale=tuple(item.get("scale", (1.0,))),
             component_names=tuple(item.get("component_names", ())),
         )
-        for item in value["fields"]
+        for item in field_records
     )
     parameters = tuple(
         PDEParameter(
@@ -245,11 +357,11 @@ def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
                 )
             ),
             components=int(item.get("components", 1)),
-            physical_dimension=tuple(item.get("physical_dimension", ())),
+            dimension=_dimension_from_dict(item["dimension"]),
             scale=tuple(item.get("scale", (1.0,))),
             functional=bool(item.get("functional", False)),
         )
-        for item in value.get("parameters", ())
+        for item in parameter_records
     )
     regions = tuple(
         PDERegion(
@@ -258,7 +370,7 @@ def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
             tuple(item["coordinates"]),
             component=item.get("component"),
         )
-        for item in value.get("regions", ())
+        for item in region_records
     )
     equations = tuple(
         PDEEquation(
@@ -266,7 +378,7 @@ def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
             _expression_from_dict(item["lhs"]),
             _expression_from_dict(item["rhs"]),
         )
-        for item in value.get("equations", ())
+        for item in equation_records
     )
     conditions = tuple(
         PDECondition(
@@ -277,7 +389,7 @@ def pde_ir_from_dict(value: dict[str, Any], /) -> PDEProblemIR:
             region=item["region"],
             coordinate=item.get("coordinate"),
         )
-        for item in value.get("conditions", ())
+        for item in condition_records
     )
     problem = PDEProblemIR(
         coordinates=coordinates,

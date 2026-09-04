@@ -35,16 +35,17 @@ def test_fixed_graph_and_atomistic_diffusion_preserve_structural_invariants():
 
     loss = phx.graph.graph_denoising_loss(
         graph_diffusion,
-        lambda noisy, time, key=None: graph_diffusion.conditional_score(
-            noisy, graph, time=time
-        )
-        + 1.0,
+        lambda noisy, time, key=None: (
+            graph_diffusion.conditional_score(noisy, graph, time=time) + 1.0
+        ),
         graph,
         jr.key(11),
         time=0.2,
     )
     assert jnp.allclose(loss, 1.0)
-    scale = phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt")
+    scale = phx.atomistic.AtomisticScaleContract(
+        phx.units.ANGSTROM, phx.units.ELECTRONVOLT
+    )
     batch = phx.atomistic.AtomisticBatch(
         jnp.asarray([[1, 1]], dtype=jnp.int32),
         jnp.asarray([[[-0.5, 0.0, 0.0], [0.5, 0.0, 0.0]]]),
@@ -75,7 +76,7 @@ def test_atomistic_equivariance_report_permutes_every_atom_aligned_field():
         jnp.asarray([[1, 6]], dtype=jnp.int32),
         jnp.asarray([[[-0.7, 0.2, 0.0], [0.4, -0.1, 0.0]]]),
         jnp.asarray([[1.0, 12.0]]),
-        phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt"),
+        phx.atomistic.AtomisticScaleContract(phx.units.ANGSTROM, phx.units.ELECTRONVOLT),
     )
 
     def centered_score(value, time):
@@ -106,7 +107,7 @@ def test_atomistic_conditional_score_uses_centered_noise_pseudoinverse():
         jnp.asarray([[1, 6]], dtype=jnp.int32),
         jnp.asarray([[[-0.7, 0.2, 0.0], [0.4, -0.1, 0.0]]]),
         masses,
-        phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt"),
+        phx.atomistic.AtomisticScaleContract(phx.units.ANGSTROM, phx.units.ELECTRONVOLT),
     )
     process = phx.stochastic.VariancePreservingDiffusion(6)
     diffusion = phx.atomistic.AtomisticCoordinateDiffusion(batch, process)
@@ -128,6 +129,7 @@ def test_atomistic_conditional_score_uses_centered_noise_pseudoinverse():
 
     assert jnp.allclose(score[0], expected, rtol=1e-9, atol=1e-10)
     assert jnp.allclose(jnp.sum(masses[..., None] * score, axis=1), 0.0, atol=1e-10)
+
 
 def test_latent_diffusion_composes_sample_only_decoder_without_density_claim():
     def encoder(value, *, key):

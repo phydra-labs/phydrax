@@ -11,7 +11,11 @@ cosmology = phx.applications.cosmology
 def _case(shape, *, order=1, dealiasing="none"):
     dimension = len(shape)
     capacity = int(np.prod(shape))
-    scale = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(capacity),
         jnp.full((capacity,), 1.0 / capacity),

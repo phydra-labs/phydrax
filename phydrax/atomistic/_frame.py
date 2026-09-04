@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
 from ._sites import AtomisticSiteDomain
+from ._units import AtomisticUnitSystem
 
 
 class AtomisticFrameFields(IntFlag):
@@ -147,7 +148,7 @@ class AtomisticFrame(StrictModule):
     coordinate_domain: AtomisticSiteDomain = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
-    unit_system_id: str = eqx.field(static=True)
+    units: AtomisticUnitSystem
     source_id: str = eqx.field(static=True)
 
     def __init__(
@@ -169,7 +170,7 @@ class AtomisticFrame(StrictModule):
         coordinate_domain: AtomisticSiteDomain = AtomisticSiteDomain.DOF_ATOMS,
         system_id: str,
         topology_id: str,
-        unit_system_id: str,
+        units: AtomisticUnitSystem,
         source_id: str,
     ):
         position = jnp.asarray(positions)
@@ -223,14 +224,16 @@ class AtomisticFrame(StrictModule):
         self.coordinate_domain = coordinate_domain
         self.system_id = str(system_id)
         self.topology_id = str(topology_id)
-        self.unit_system_id = str(unit_system_id)
+        if not isinstance(units, AtomisticUnitSystem):
+            raise TypeError("Frame units must be an AtomisticUnitSystem.")
+        self.units = units
         self.source_id = str(source_id)
         if any(
             not value
             for value in (
                 self.system_id,
                 self.topology_id,
-                self.unit_system_id,
+                self.units.unit_system_id,
                 self.source_id,
             )
         ):
@@ -293,10 +296,27 @@ class InMemoryTrajectorySourcePlan(AbstractAtomisticTrajectorySourcePlan):
         values = tuple(frames)
         if any(not isinstance(value, AtomisticFrame) for value in values):
             raise TypeError("frames must contain AtomisticFrame values.")
+        if values:
+            first = values[0]
+            if any(
+                value.system_id != first.system_id
+                or value.topology_id != first.topology_id
+                or value.units.unit_system_id != first.units.unit_system_id
+                or value.coordinate_domain is not first.coordinate_domain
+                or not np.array_equal(
+                    np.asarray(value.stable_ids), np.asarray(first.stable_ids)
+                )
+                for value in values[1:]
+            ):
+                raise ValueError(
+                    "In-memory trajectory frames must share system, topology, "
+                    "complete units, coordinate domain, and stable IDs."
+                )
         self.frames = values
         self.source_id = canonical_fingerprint(
             {
                 "kind": "in-memory-trajectory",
+                "unit_system": None if not values else values[0].units.unit_system_id,
                 "frames": [value.source_id for value in values],
             }
         )

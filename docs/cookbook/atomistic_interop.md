@@ -27,8 +27,9 @@ assert bool(rerun.successful)
 ```
 
 `append=True` resumes at the committed frame boundary; it does not infer simulation state.
-Resume dynamics from its atomistic checkpoint, then append frames whose system, topology,
-and unit-system identities match the existing stream.
+The artifact stores its complete unit descriptor once and rejects legacy ID-only
+metadata. Resume dynamics from its atomistic checkpoint, then append frames whose
+system, topology, and complete unit system match the existing stream.
 
 For analysis selections, convert an MDAnalysis selection once into an
 `AtomisticSelectionPlan` and store the stable selected IDs. Do not execute selection strings
@@ -43,8 +44,9 @@ ID array with each atom, while the adapter report carries source provenance.
 import numpy as np
 from ase import Atoms
 import phydrax as phx
+from phydrax.units import ANGSTROM, ELECTRONVOLT
 
-scale = phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt")
+scale = phx.atomistic.AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 source = Atoms(
     numbers=[14, 14],
     positions=[[0.0, 0.0, 0.0], [1.35, 1.35, 1.35]],

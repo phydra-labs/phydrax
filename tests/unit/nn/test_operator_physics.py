@@ -345,7 +345,7 @@ def test_trained_operator_applies_conservation_inside_physical_prediction():
                 "query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.LENGTH,),
             ),
         ),
         problem=phx.nn.operator.OperatorProblemSpec(
@@ -442,7 +442,7 @@ def test_trained_operator_linearization_uses_physical_units():
                 "input",
                 role="source",
                 source_name="source",
-                physical_dimension=(1.0,),
+                dimension=phx.units.DimensionSignature({"value": 1}),
                 scale=2.0,
                 offset=1.0,
             ),
@@ -450,7 +450,7 @@ def test_trained_operator_linearization_uses_physical_units():
                 "solution",
                 role="target",
                 query_name="query",
-                physical_dimension=(1.0,),
+                dimension=phx.units.DimensionSignature({"value": 1}),
                 scale=3.0,
                 offset=4.0,
             ),
@@ -460,7 +460,7 @@ def test_trained_operator_linearization_uses_physical_units():
                 "query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.DimensionSignature({"value": 1}),),
             ),
         ),
     )
@@ -481,6 +481,14 @@ def test_trained_operator_linearization_uses_physical_units():
     tangent = jnp.cos(jnp.arange(10.0)).reshape((2, 5))
     expected = 1.5 * (source + 1.0) * tangent
     assert jnp.allclose(linearization.pushforward(tangent), expected)
+    cotangent = jnp.sin(jnp.arange(10.0)).reshape((2, 5))
+    physical_derivative = 1.5 * (source + 1.0)
+    assert jnp.allclose(
+        linearization.adjoint(cotangent),
+        physical_derivative * cotangent,
+    )
+    tolerance = 8.0 * jnp.finfo(linearization.base_output.dtype).eps
+    assert jnp.max(linearization.adjoint_identity_error(tangent, cotangent)) < tolerance
 
 
 def _predict_two_fields(model, batch, key):

@@ -63,7 +63,11 @@ def _baryon_case(cosmo):
     ).prepare()
     transfer = phx.discretization.ParticleGridSplatPlan(grid).prepare(particles)
     particle_gravity = phx.solver.ParticleMeshGravityPlan(gravity, transfer)
-    scale = cosmo.CosmologyScaleContract("L", "M", "T")
+    scale = cosmo.CosmologyScaleContract(
+        cosmo.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmo.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmo.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     kdk = cosmo.CosmologicalKDKPlan(particles, (1.0,), scale=scale)
     gas = cosmo.ComovingEulerPlan(dynamics, substeps=8)
     plan = cosmo.CosmologicalGasParticleGravityPlan(
@@ -88,14 +92,17 @@ def main() -> None:
     _, distance_compile = _measure(distance_function, redshifts)
     _, distance_steady = _measure(distance_function, redshifts)
 
-    provenance = cosmo.CosmologyProductProvenance(producer="advanced-benchmark",
-    producer_version="native",
-    model_form_id=background.model_form_id,
-    request_id="advanced-benchmark-power",
-    numerical_policy_id="advanced-benchmark-grid",
-    physics_policy_id="linear-total-matter",
-    scale_id=background.scale.scale_id,
-    source_kind="native", differentiation="native-parameter")
+    provenance = cosmo.CosmologyProductProvenance(
+        producer="advanced-benchmark",
+        producer_version="native",
+        model_form_id=background.model_form_id,
+        request_id="advanced-benchmark-power",
+        numerical_policy_id="advanced-benchmark-grid",
+        physics_policy_id="linear-total-matter",
+        scale_id=background.scale.scale_id,
+        source_kind="native",
+        differentiation="native-parameter",
+    )
     scales = jnp.linspace(0.2, 1.0, 64)
     k = jnp.geomspace(0.05, 50000.0, 512)
     values = scales[:, None] ** 2 / (1.0 + k[None, :] ** 2)
@@ -120,10 +127,13 @@ def main() -> None:
         expected_error="not calibrated",
         license_id="internal",
     )
-    correction = cosmo.MultiplicativeMatterPowerCorrectionPlan(scales,
-    k,
-    1.0 + 0.1 * jnp.broadcast_to(k[None, :] / (1.0 + k[None, :]), values.shape),
-    card, differentiation="native-parameter")
+    correction = cosmo.MultiplicativeMatterPowerCorrectionPlan(
+        scales,
+        k,
+        1.0 + 0.1 * jnp.broadcast_to(k[None, :] / (1.0 + k[None, :]), values.shape),
+        card,
+        differentiation="native-parameter",
+    )
     correction_function = jax.jit(
         lambda strength: correction.apply(power, strength=strength)
     )

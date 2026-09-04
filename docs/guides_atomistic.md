@@ -10,19 +10,16 @@ atomistic simulation is a separate prepared execution path documented in the
 
 ## Scale and atom identity are part of the input
 
-Every structure carries an `AtomisticScaleContract`. Unit names and conversion
-to a user-chosen reference system are content-addressed; PhydraX does not infer,
-convert, or silently combine units.
+Every structure carries an `AtomisticScaleContract` built from exact
+`UnitDefinition` values. The contract requires length and ordinary energy in one
+reference system and fingerprints the energy as that of one simulated system.
+Molar energy is deliberately a different dimension and is never silently combined.
 
 ```python
 import phydrax as phx
+from phydrax.units import ANGSTROM, ELECTRONVOLT
 
-scale = phx.atomistic.AtomisticScaleContract(
-    "angstrom",
-    "electronvolt",
-    length_to_reference=1.0,
-    energy_to_reference=1.0,
-)
+scale = phx.atomistic.AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 water = phx.atomistic.AtomicStructure(
     [8, 1, 1],
     [[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]],
@@ -226,9 +223,14 @@ reported as an ordinary maximum-step completion.
 
 `load_rmd17_npz` only reads a user-provided local archive. It accepts common
 rMD17 field names for nuclear charge, coordinates, energy, force, and optional
-original sample indices. The default declared scale is angstrom and
-kilocalorie-per-mole; override it when an archive uses different units. The
-parser performs no download and does not import a foreign atomistic framework.
+original sample indices. The boundary declares the source as angstrom and
+kilocalorie-per-mole, then converts coordinates to the target length and converts
+molar energies and forces to ordinary single-system energy with the exact Avogadro
+constant from the recorded `codata-2018` constant set. The default target scale is
+angstrom/electronvolt. The source units and Avogadro provenance are retained in
+the dataset identity, together with dalton mass provenance; molar and ordinary
+energy never become generally convertible. The parser performs no download and
+does not import a foreign atomistic framework.
 
 `split_rmd17` makes deterministic, disjoint train/validation/test indices and
 fingerprints the exact dataset, seed, and index arrays. The default sizes are

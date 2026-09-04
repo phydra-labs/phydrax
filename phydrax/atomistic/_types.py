@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import IntEnum
 from typing import Any
 
@@ -18,6 +18,7 @@ from .._precision import real_precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleDiscretization, ParticleSetPlan
+from ..units import derived_unit, ENERGY, LENGTH, UnitDefinition
 
 
 class AtomisticStatus(IntEnum):
@@ -30,53 +31,94 @@ class AtomisticStatus(IntEnum):
 
 
 class AtomisticScaleContract(StrictModule, NonTrainableState):
-    """Explicit identity and reference conversion for molecular length and energy."""
+    """Exact molecular model-data port for length and ordinary energy.
 
-    length_unit: str = eqx.field(static=True)
-    energy_unit: str = eqx.field(static=True)
-    length_to_reference: float = eqx.field(static=True)
-    energy_to_reference: float = eqx.field(static=True)
+    Energy values are the energy of one simulated system. Molar energies are
+    source-boundary quantities and must be explicitly converted before entering
+    this contract.
+    """
+
+    length_unit: UnitDefinition
+    energy_unit: UnitDefinition
+    force_unit: UnitDefinition
+    energy_semantics: str = eqx.field(static=True)
     scale_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        length_unit: str,
-        energy_unit: str,
+        length_unit: UnitDefinition,
+        energy_unit: UnitDefinition,
         /,
-        *,
-        length_to_reference: float = 1.0,
-        energy_to_reference: float = 1.0,
     ):
-        length = str(length_unit).strip()
-        energy = str(energy_unit).strip()
-        length_factor = float(length_to_reference)
-        energy_factor = float(energy_to_reference)
-        if not length or not energy:
-            raise ValueError("length_unit and energy_unit must be non-empty.")
-        if (
-            not np.isfinite(length_factor)
-            or length_factor <= 0.0
-            or not np.isfinite(energy_factor)
-            or energy_factor <= 0.0
+        if not isinstance(length_unit, UnitDefinition) or not isinstance(
+            energy_unit, UnitDefinition
         ):
-            raise ValueError("Reference conversion factors must be finite and positive.")
-        self.length_unit = length
-        self.energy_unit = energy
-        self.length_to_reference = length_factor
-        self.energy_to_reference = energy_factor
+            raise TypeError("Atomistic scale units must be UnitDefinition values.")
+        if length_unit.dimension != LENGTH:
+            raise ValueError("Atomistic length_unit must have the LENGTH dimension.")
+        if energy_unit.dimension != ENERGY:
+            raise ValueError(
+                "Atomistic energy_unit must have the ordinary ENERGY dimension."
+            )
+        if length_unit.reference_system_id != energy_unit.reference_system_id:
+            raise ValueError(
+                "Atomistic length and energy units must share one reference system."
+            )
+        semantics = "single-simulated-system"
+        force_unit = derived_unit(
+            f"{energy_unit.symbol}/{length_unit.symbol}",
+            ((energy_unit, 1), (length_unit, -1)),
+        )
+        self.length_unit = length_unit
+        self.energy_unit = energy_unit
+        self.force_unit = force_unit
+        self.energy_semantics = semantics
         self.scale_id = canonical_fingerprint(
             {
                 "kind": "atomistic-scale-contract",
-                "length_unit": length,
-                "energy_unit": energy,
-                "length_to_reference": length_factor,
-                "energy_to_reference": energy_factor,
+                "length_unit": length_unit.unit_id,
+                "energy_unit": energy_unit.unit_id,
+                "energy_semantics": semantics,
             }
         )
 
-    @property
-    def force_unit(self) -> str:
-        return f"{self.energy_unit}/{self.length_unit}"
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "length_unit": self.length_unit.to_dict(),
+            "energy_unit": self.energy_unit.to_dict(),
+            "energy_semantics": self.energy_semantics,
+            "scale_id": self.scale_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "AtomisticScaleContract":
+        if not isinstance(payload, Mapping):
+            raise TypeError("Atomistic scale descriptor must be a mapping.")
+        expected = {
+            "length_unit",
+            "energy_unit",
+            "energy_semantics",
+            "scale_id",
+        }
+        if set(payload) != expected:
+            raise ValueError("Atomistic scale descriptor must use the canonical fields.")
+        length_payload = payload.get("length_unit")
+        energy_payload = payload.get("energy_unit")
+        if not isinstance(length_payload, Mapping) or not isinstance(
+            energy_payload, Mapping
+        ):
+            raise TypeError("Atomistic scale descriptor must contain complete units.")
+        if payload.get("energy_semantics") != "single-simulated-system":
+            raise ValueError(
+                "Atomistic scale descriptor has unsupported energy semantics."
+            )
+        scale = cls(
+            UnitDefinition.from_dict(length_payload),
+            UnitDefinition.from_dict(energy_payload),
+        )
+        if payload.get("scale_id") != scale.scale_id:
+            raise ValueError("Atomistic scale descriptor identity is corrupt.")
+        return scale
 
 
 class AtomisticPrecisionPolicy(StrictModule, NonTrainableState):

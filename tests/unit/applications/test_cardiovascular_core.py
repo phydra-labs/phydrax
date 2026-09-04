@@ -13,6 +13,7 @@ from phydrax.applications.cardiovascular._quantities import (
     cardiovascular_quantity,
     CardiovascularQuantitySpec,
 )
+from phydrax.units import LENGTH, MILLIVOLT, UnitDefinition, VOLT
 
 
 EXPECTED_SI_FACTORS = {
@@ -85,6 +86,8 @@ def test_all_kernel_quantities_have_exact_si_scales_and_round_trip():
     value = Fraction(37, 11)
     for name, spec in CARDIOVASCULAR_QUANTITIES.items():
         assert spec.name == name
+        assert isinstance(spec.unit, UnitDefinition)
+        assert spec.unit.symbol == spec.kernel_unit
         assert spec.from_si(spec.to_si(value)) == value
         assert spec.sign_convention
         assert spec.support_association
@@ -101,7 +104,8 @@ def test_quantity_array_conversion_and_physical_metadata():
 
     conductivity = cardiovascular_quantity("electrical_conductivity")
     assert conductivity.axes == ("component_i", "component_j")
-    assert conductivity.physical_dimension == "electrical_conductivity"
+    assert conductivity.quantity_kind == "electrical_conductivity"
+    assert isinstance(conductivity.unit, UnitDefinition)
     assert conductivity.kernel_unit == "mS/mm"
     assert conductivity.si_unit == "S/m"
 
@@ -110,49 +114,60 @@ def test_quantity_identity_is_deterministic_and_metadata_sensitive():
     first = CardiovascularQuantitySpec(
         "paced_voltage",
         "electric_potential",
-        "mV",
-        "V",
-        1e-3,
+        MILLIVOLT,
         support_association="stimulus nodes",
         reference_configuration="extracellular potential",
     )
     second = CardiovascularQuantitySpec(
         "paced_voltage",
         "electric_potential",
-        "mV",
-        "V",
-        Fraction(1, 1_000),
+        MILLIVOLT,
         support_association="stimulus nodes",
         reference_configuration="extracellular potential",
     )
     changed = CardiovascularQuantitySpec(
         "paced_voltage",
         "electric_potential",
-        "mV",
-        "V",
-        Fraction(1, 1_000),
+        MILLIVOLT,
         sign_convention="positive depolarization",
+        support_association="stimulus nodes",
+        reference_configuration="extracellular potential",
+    )
+    changed_unit = CardiovascularQuantitySpec(
+        "paced_voltage",
+        "electric_potential",
+        VOLT,
         support_association="stimulus nodes",
         reference_configuration="extracellular potential",
     )
     assert first == second
     assert first.quantity_id == second.quantity_id
     assert first.quantity_id != changed.quantity_id
+    assert first.quantity_id != changed_unit.quantity_id
     with pytest.raises(FrozenInstanceError):
         first.name = "changed"
 
 
 @pytest.mark.parametrize(
-    "arguments",
+    ("arguments", "error"),
     [
-        ("voltage", "electric_potential", "mV", "V", Fraction(1, 100)),
-        ("length", "length", "m", "m", Fraction(1)),
-        ("pressure", "pressure", "kPa", "bar", Fraction(1, 100)),
-        ("bad name", "length", "mm", "m", Fraction(1, 1_000)),
+        (("voltage", "electric_potential", "mV"), TypeError),
+        (
+            (
+                "length",
+                "length",
+                UnitDefinition("other-m", LENGTH, "other-reference-system"),
+            ),
+            ValueError,
+        ),
+        (("pressure", "log_pressure", MILLIVOLT), ValueError),
+        (("bad name", "electric_potential", MILLIVOLT), ValueError),
     ],
 )
-def test_quantity_specs_refuse_ambiguous_or_inconsistent_units(arguments):
-    with pytest.raises(ValueError):
+def test_quantity_specs_refuse_textual_ambiguous_or_reference_shifted_units(
+    arguments, error
+):
+    with pytest.raises(error):
         CardiovascularQuantitySpec(*arguments)
 
 

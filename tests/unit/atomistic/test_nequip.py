@@ -14,9 +14,10 @@ from phydrax.atomistic import (
     energy_and_forces,
 )
 from phydrax.nn.atomistic import NequIPPotential
+from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-SCALE = AtomisticScaleContract("angstrom", "electronvolt")
+SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
 def _execution(maximum_neighbors=3):

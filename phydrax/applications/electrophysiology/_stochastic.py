@@ -20,6 +20,7 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 class StochasticChannelStatus(IntFlag):
@@ -69,6 +70,7 @@ class MarkovChannelPlan(StrictModule, NonTrainableState):
                 "kind": "electrophysiology-markov-channel-v1",
                 "generator_per_ms": generator_host.tolist(),
                 "compartment_count": compartment_count,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 

@@ -12,10 +12,19 @@ cell policy, and molecular topology. `AtomisticDynamicsState` owns positions, mo
 periodic image counts, neighborhood cache, force cache, stochastic state, and accepted
 energy ledgers.
 
-`AtomisticScaleContract` continues to define length and energy for learning and electronic
-operators. `AtomisticUnitSystem` composes it with mass, time, charge, temperature, the
-kinetic-energy conversion, Boltzmann constant, Coulomb constant, and reduced Planck
-constant. No unit is inferred from an array.
+`AtomisticScaleContract` continues to define exact length and ordinary
+single-simulated-system energy for learning and electronic operators.
+`AtomisticUnitSystem` composes it with mass, time, charge, temperature, and a
+named physical constant set. Host construction derives
+`kinetic_to_energy = sM*sL^2/(sT^2*sE)`, its reciprocal force rate, Boltzmann,
+Coulomb, and reduced Planck constants, plus pressure, velocity, and frequency
+`UnitDefinition` values. Callers never supply those numeric constants.
+
+The `electronvolt_angstrom_dalton_femtosecond()` preset retains the eV-angstrom-
+dalton-femtosecond-K numerical convention. `reduced()` is one canonical
+uncalibrated reference system and cannot be converted to SI. Learned models,
+potentials, and batches compare only the length/energy scale; systems, dynamics,
+and trajectories compare the complete unit-system identity.
 
 ## Potential programs
 

@@ -141,10 +141,16 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> tuple[CartesianOrbitState, KinematicTransformEvaluation]:
+        if not isinstance(state, CartesianOrbitState):
+            raise TypeError("state must be a CartesianOrbitState.")
+        if not isinstance(source_context, AstrodynamicsContext):
+            raise TypeError("source_context must be an AstrodynamicsContext.")
         if state.context.frame.frame_id != self.target_frame.frame_id:
             raise ValueError("State frame does not match transform target.")
         if source_context.frame.frame_id != self.source_frame.frame_id:
             raise ValueError("Source context frame does not match transform source.")
+        if state.context.scale.scale_id != source_context.scale.scale_id:
+            raise ValueError("Frame transformation requires matching scale contracts.")
         evaluation = self.evaluate(relative_seconds, args)
         source_relative = evaluation.rotation.T @ state.position
         position = evaluation.translation + source_relative

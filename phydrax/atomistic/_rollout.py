@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ._units import AtomisticUnitSystem
 
 
 AtomisticReplayMode: TypeAlias = Literal["full", "step", "block"]
@@ -103,6 +104,7 @@ class AtomisticTrajectory(StrictModule):
     energies: Array
     valid: Array
     count: Array
+    units: AtomisticUnitSystem
     trajectory_id: str = eqx.field(static=True)
 
     @property
@@ -382,8 +384,13 @@ class AtomisticRolloutPlan(StrictModule):
             energies=energies,
             valid=valid,
             count=count,
+            units=self.dynamics.system.plan.units,
             trajectory_id=canonical_fingerprint(
-                {"kind": "atomistic-trajectory", "rollout": self.rollout_id}
+                {
+                    "kind": "atomistic-trajectory",
+                    "rollout": self.rollout_id,
+                    "unit_system": self.dynamics.system.plan.units.unit_system_id,
+                }
             ),
         )
         replay = AtomisticReplayRecord(

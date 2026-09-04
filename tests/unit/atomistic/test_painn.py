@@ -18,9 +18,10 @@ from phydrax.atomistic import (
 )
 from phydrax.nn.atomistic import PaiNNPotential
 from phydrax.nn.atomistic._painn import _PaiNNInteraction
+from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-SCALE = AtomisticScaleContract("angstrom", "electronvolt")
+SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
 def _execution(maximum_neighbors=3):

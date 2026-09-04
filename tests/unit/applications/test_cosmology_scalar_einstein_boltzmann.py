@@ -13,7 +13,11 @@ cosmology = phx.applications.cosmology
 
 
 def _prepared(*, scale_count=40, line_of_sight_quadrature_tolerance=1.0e-2):
-    scale_contract = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale_contract = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     background = cosmology.FLRWBackground(
         1.0,
         0.3,

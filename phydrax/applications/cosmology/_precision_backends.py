@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import equinox as eqx
@@ -29,6 +30,7 @@ from ._products import (
     MatterPowerTable,
     ThermodynamicsHistory,
 )
+from ._scales import CosmologyScaleContract
 
 
 def _sha256(path: Path, /) -> str:
@@ -235,7 +237,13 @@ def _provenance(
 
 def _save_products(path: Path, products: CosmologyModelResult, /) -> None:
     thermo = products.thermodynamics
+    product_scales = [products.transfer.scale, products.power.scale]
+    if thermo is not None:
+        product_scales.append(thermo.scale)
+    if any(scale.scale_id != product_scales[0].scale_id for scale in product_scales[1:]):
+        raise ValueError("Linear-theory products have inconsistent scale identities.")
     arrays = {
+        "scale_json": np.asarray(json.dumps(product_scales[0].to_dict(), sort_keys=True)),
         "scale_factors": np.asarray(products.transfer.scale_factors),
         "wavenumbers": np.asarray(products.transfer.wavenumbers),
         "transfer_values": np.asarray(products.transfer.transfer_values),
@@ -264,6 +272,14 @@ def _load_products(
     resources: LinearTheoryResourcePolicy,
 ) -> CosmologyModelResult:
     with np.load(path, allow_pickle=False) as arrays:
+        scale_payload = json.loads(str(np.asarray(arrays["scale_json"]).item()))
+        if not isinstance(scale_payload, dict):
+            raise ValueError("Cached linear-theory scale metadata must be a mapping.")
+        scale = CosmologyScaleContract.from_dict(scale_payload)
+        if scale.scale_id != request.scale.scale_id:
+            raise ValueError(
+                "Cached linear-theory scale does not match the current request."
+            )
         scales = jnp.asarray(arrays["scale_factors"])
         wavenumbers = jnp.asarray(arrays["wavenumbers"])
         transfer_values = jnp.asarray(arrays["transfer_values"])
@@ -292,7 +308,7 @@ def _load_products(
             gauge=request.gauge,
             normalization="relative-to-primordial-curvature",
         ),
-        request.scale,
+        scale,
         provenance,
         request.realization,
     )
@@ -306,7 +322,7 @@ def _load_products(
             gauge=request.gauge,
             stage="linear",
         ),
-        request.scale,
+        scale,
         provenance,
         request.realization,
     )
@@ -314,7 +330,7 @@ def _load_products(
         ThermodynamicsHistory(
             scales,
             *thermo_values,
-            request.scale,
+            scale,
             provenance,
             request.realization,
         )

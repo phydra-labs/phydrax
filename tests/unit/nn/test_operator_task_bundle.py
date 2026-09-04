@@ -68,7 +68,7 @@ def _task(*, revision="1"):
                 "input",
                 role="source",
                 source_name="u",
-                physical_dimension=(0.0,),
+                dimension=phx.units.DIMENSIONLESS,
                 scale=2.0,
                 offset=1.0,
             ),
@@ -76,7 +76,7 @@ def _task(*, revision="1"):
                 "solution",
                 role="target",
                 query_name="solution-query",
-                physical_dimension=(0.0,),
+                dimension=phx.units.DIMENSIONLESS,
                 scale=3.0,
                 offset=4.0,
             ),
@@ -86,7 +86,7 @@ def _task(*, revision="1"):
                 "solution-query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.LENGTH,),
             ),
         ),
         metadata={"source": {"family": "synthetic"}, "tags": ["periodic"]},
@@ -105,7 +105,7 @@ def _fixed_task():
                 "solution-query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.LENGTH,),
                 fixed_geometry=True,
             ),
         ),
@@ -151,8 +151,47 @@ def test_operator_task_is_canonical_and_rejects_unknown_sources():
     restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
 
     assert restored.fingerprint == task.fingerprint
+    assert restored.fields[0].dimension == phx.units.DIMENSIONLESS
+    assert restored.queries[0].coordinate_dimensions == (phx.units.LENGTH,)
     assert len(task.fingerprint) == 64
     task.validate_batch(_batch())
+    with pytest.raises(ValueError, match="axes absent from dimension_basis"):
+        phx.nn.operator.OperatorTask(
+            task.task_id,
+            revision=task.revision,
+            dimension_basis=(),
+            fields=task.fields,
+            queries=task.queries,
+            problem=task.problem,
+            metadata=task.metadata,
+        )
+
+    pde = phx.equations.PDEProblemIR(
+        coordinates=(
+            phx.equations.PDECoordinate("x", "space", dimension=phx.units.LENGTH),
+        ),
+        fields=(phx.equations.PDEField("u", coordinates=("x",)),),
+    )
+    dimensionless_query = phx.nn.operator.OperatorQuerySpec(
+        "pde-query",
+        geometry_kind="tensor_grid",
+        coordinate_components=("x",),
+        coordinate_dimensions=(phx.units.DIMENSIONLESS,),
+    )
+    with pytest.raises(ValueError, match="Embedded PDE dimensions"):
+        phx.nn.operator.OperatorTask(
+            "pde-basis-mismatch",
+            fields=(
+                phx.nn.operator.OperatorFieldSpec(
+                    "u",
+                    role="target",
+                    query_name="pde-query",
+                ),
+            ),
+            queries=(dimensionless_query,),
+            pde=pde,
+            dimension_basis=(),
+        )
 
     batch = _batch()
     with pytest.raises(ValueError, match="absent from the task"):
@@ -293,7 +332,7 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries():
                 "input",
                 role="source",
                 source_name="u",
-                physical_dimension=(0.0,),
+                dimension=phx.units.DIMENSIONLESS,
             ),
             *tuple(
                 phx.nn.operator.OperatorFieldSpec(
@@ -302,7 +341,7 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries():
                     query_name=query_name,
                     channels=spec.channels,
                     component_names=spec.component_names,
-                    physical_dimension=(0.0,),
+                    dimension=phx.units.DIMENSIONLESS,
                 )
                 for name, query_name, spec in targets
             ),
@@ -312,7 +351,7 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries():
                 name,
                 geometry_kind="point_cloud",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.LENGTH,),
             )
             for name in ("spatial", "sensors")
         ),
@@ -371,7 +410,7 @@ def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path):
                 "solution-query",
                 geometry_kind="point_cloud",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.LENGTH,),
                 fixed_geometry=True,
             ),
         ),
@@ -412,6 +451,15 @@ def test_operator_task_serialization_rejects_noncanonical_fields():
 
     with pytest.raises(ValueError, match="current canonical fields"):
         phx.nn.operator.OperatorTask.from_dict(payload)
+    legacy_field = _task().to_dict()
+    legacy_field["fields"][0]["dimension"] = [0.0]
+    with pytest.raises(TypeError, match="canonical mapping"):
+        phx.nn.operator.OperatorTask.from_dict(legacy_field)
+
+    legacy_query = _task().to_dict()
+    legacy_query["queries"][0]["coordinate_dimensions"] = [[1.0]]
+    with pytest.raises(TypeError, match="canonical mappings"):
+        phx.nn.operator.OperatorTask.from_dict(legacy_query)
 
 
 def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path):
@@ -682,13 +730,13 @@ def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
                 "input",
                 role="source",
                 source_name="u",
-                physical_dimension=(),
+                dimension=phx.units.DIMENSIONLESS,
             ),
             phx.nn.operator.OperatorFieldSpec(
                 "solution",
                 role="target",
                 query_name="solution-query",
-                physical_dimension=(),
+                dimension=phx.units.DIMENSIONLESS,
             ),
         ),
         queries=(

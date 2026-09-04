@@ -6,6 +6,11 @@ observation substrates without re-exporting them.
 
 ## Quantities
 
+Skeletal quantity specifications bind canonical `phydrax.units.UnitDefinition`
+objects while retaining muscle-specific kind, axis, sign, support, and reference
+semantics.
+
+
 ::: phydrax.applications.skeletal_muscle.SkeletalMuscleQuantitySpec
 
 ---

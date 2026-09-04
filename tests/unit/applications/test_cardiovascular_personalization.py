@@ -45,6 +45,7 @@ from phydrax.applications.cardiovascular.personalization._validation import (
     ClinicalResearchValidationRecord,
 )
 from phydrax.optim import Bounds, OptimizationTermination, ReducedAdjoint
+from phydrax.units import ONE
 from phydrax.uq import (
     IdentityBijector,
     Normal,
@@ -54,7 +55,7 @@ from phydrax.uq import (
 
 
 def _dimensionless_quantity(name: str = "cardiac_gain") -> CardiovascularQuantitySpec:
-    return CardiovascularQuantitySpec(name, "strain", "1", "1", 1)
+    return CardiovascularQuantitySpec(name, "strain", ONE)
 
 
 def _scalar_schema(

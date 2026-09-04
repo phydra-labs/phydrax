@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 from math import isfinite
+
+from phydrax.units import DIMENSIONLESS, DimensionSignature
 
 from ._ir import PDEExpression, PDEProblemIR
 
@@ -16,39 +19,11 @@ class PDEValueType:
 
     representation: str
     components: int
-    physical_dimension: tuple[float, ...]
+    dimension: DimensionSignature
 
     @property
     def is_scalar(self) -> bool:
         return self.representation in ("scalar", "pseudoscalar") and self.components == 1
-
-
-def _dimension_rank(problem: PDEProblemIR, /) -> int:
-    dimensions = [coordinate.physical_dimension for coordinate in problem.coordinates]
-    dimensions.extend(field.physical_dimension for field in problem.fields)
-    dimensions.extend(parameter.physical_dimension for parameter in problem.parameters)
-    return max((len(value) for value in dimensions), default=0)
-
-
-def _pad_dimension(values: tuple[float, ...], rank: int, /) -> tuple[float, ...]:
-    if len(values) not in (0, rank):
-        raise ValueError(
-            f"Physical dimensions must be empty or have the problem rank {rank}."
-        )
-    return (0.0,) * rank if not values else tuple(float(value) for value in values)
-
-
-def _combine_dimensions(
-    left: tuple[float, ...],
-    right: tuple[float, ...],
-    sign: float,
-    /,
-) -> tuple[float, ...]:
-    return tuple(a + sign * b for a, b in zip(left, right, strict=True))
-
-
-def _same_dimension(left: tuple[float, ...], right: tuple[float, ...], /) -> bool:
-    return all(abs(a - b) <= 1e-12 for a, b in zip(left, right, strict=True))
 
 
 def _require_finite(values: tuple[float, ...], name: str, /) -> None:
@@ -57,7 +32,6 @@ def _require_finite(values: tuple[float, ...], name: str, /) -> None:
 
 
 def _validate_expression_finite(expression: PDEExpression, /) -> None:
-    _require_finite(expression.physical_dimension, "PDE expression physical dimensions")
     if expression.value is not None and not isfinite(float(expression.value)):
         raise ValueError("PDE expression value must be finite.")
     for argument in expression.args:
@@ -70,7 +44,6 @@ def infer_expression_type(
     /,
 ) -> PDEValueType:
     """Infer and validate one expression recursively against a problem schema."""
-    rank = _dimension_rank(problem)
     fields = {field.name: field for field in problem.fields}
     parameters = {parameter.name: parameter for parameter in problem.parameters}
     coordinates = {coordinate.name: coordinate for coordinate in problem.coordinates}
@@ -82,9 +55,7 @@ def infer_expression_type(
         if op == "constant":
             if node.value is None or node.args or node.symbol is not None:
                 raise ValueError("Constant expressions require only a numeric value.")
-            return PDEValueType(
-                "scalar", 1, _pad_dimension(node.physical_dimension, rank)
-            )
+            return PDEValueType("scalar", 1, node.dimension)
         if op == "field":
             if node.symbol not in fields or node.args:
                 raise ValueError(f"Unknown or malformed field reference {node.symbol!r}.")
@@ -92,7 +63,7 @@ def infer_expression_type(
             return PDEValueType(
                 field.representation,
                 field.components,
-                _pad_dimension(field.physical_dimension, rank),
+                field.dimension,
             )
         if op == "parameter":
             if node.symbol not in parameters or node.args:
@@ -104,7 +75,7 @@ def infer_expression_type(
             return PDEValueType(
                 representation,
                 parameter.components,
-                _pad_dimension(parameter.physical_dimension, rank),
+                parameter.dimension,
             )
         if op == "coordinate":
             if node.symbol not in coordinates or node.args:
@@ -116,7 +87,7 @@ def infer_expression_type(
             return PDEValueType(
                 representation,
                 coordinate.size,
-                _pad_dimension(coordinate.physical_dimension, rank),
+                coordinate.dimension,
             )
         if op in ("add", "multiply"):
             if len(args) < 2:
@@ -126,9 +97,7 @@ def infer_expression_type(
                 if any(
                     item.representation != first.representation
                     or item.components != first.components
-                    or not _same_dimension(
-                        item.physical_dimension, first.physical_dimension
-                    )
+                    or item.dimension != first.dimension
                     for item in args[1:]
                 ):
                     raise ValueError(
@@ -141,9 +110,9 @@ def infer_expression_type(
                     "Multiplication supports at most one non-scalar operand."
                 )
             result = non_scalar[0] if non_scalar else args[0]
-            dimension = (0.0,) * rank
+            dimension = DIMENSIONLESS
             for item in args:
-                dimension = _combine_dimensions(dimension, item.physical_dimension, 1.0)
+                dimension = dimension * item.dimension
             return PDEValueType(result.representation, result.components, dimension)
         if op == "divide":
             if len(args) != 2 or not args[1].is_scalar:
@@ -151,11 +120,7 @@ def infer_expression_type(
             return PDEValueType(
                 args[0].representation,
                 args[0].components,
-                _combine_dimensions(
-                    args[0].physical_dimension,
-                    args[1].physical_dimension,
-                    -1.0,
-                ),
+                args[0].dimension / args[1].dimension,
             )
         if op == "negate":
             if len(args) != 1:
@@ -167,32 +132,39 @@ def infer_expression_type(
                 or not args[0].is_scalar
                 or node.args[1].op != "constant"
                 or node.args[1].value is None
-                or not _same_dimension(args[1].physical_dimension, (0.0,) * rank)
+                or not args[1].dimension.is_dimensionless
             ):
                 raise ValueError(
                     "Power requires a scalar base and dimensionless constant exponent."
                 )
-            exponent = float(node.args[1].value)
-            return PDEValueType(
-                args[0].representation,
-                1,
-                tuple(exponent * value for value in args[0].physical_dimension),
+            exponent = node.args[1].value
+            if not args[0].dimension.is_dimensionless and not isinstance(
+                exponent, (int, Fraction)
+            ):
+                raise TypeError(
+                    "A dimensionful base requires an exact integer or Fraction exponent."
+                )
+            dimension = (
+                DIMENSIONLESS
+                if args[0].dimension.is_dimensionless
+                else args[0].dimension ** exponent
             )
+            return PDEValueType(args[0].representation, 1, dimension)
         if op in ("sin", "cos", "exp", "log"):
             if (
                 len(args) != 1
                 or not args[0].is_scalar
-                or not _same_dimension(args[0].physical_dimension, (0.0,) * rank)
+                or not args[0].dimension.is_dimensionless
             ):
                 raise ValueError(f"{op} requires one dimensionless scalar operand.")
-            return PDEValueType(args[0].representation, 1, (0.0,) * rank)
+            return PDEValueType(args[0].representation, 1, DIMENSIONLESS)
         if op == "sqrt":
             if len(args) != 1 or not args[0].is_scalar:
                 raise ValueError("sqrt requires one scalar operand.")
             return PDEValueType(
                 args[0].representation,
                 1,
-                tuple(0.5 * value for value in args[0].physical_dimension),
+                args[0].dimension ** Fraction(1, 2),
             )
         if op == "component":
             if len(args) != 1 or args[0].components <= 1 or node.axis is None:
@@ -204,7 +176,7 @@ def infer_expression_type(
                 if args[0].representation in ("pseudovector", "pseudotensor")
                 else "scalar"
             )
-            return PDEValueType(representation, 1, args[0].physical_dimension)
+            return PDEValueType(representation, 1, args[0].dimension)
         if op == "dot":
             if (
                 len(args) != 2
@@ -218,9 +190,7 @@ def infer_expression_type(
             return PDEValueType(
                 "pseudoscalar" if odd else "scalar",
                 1,
-                _combine_dimensions(
-                    args[0].physical_dimension, args[1].physical_dimension, 1.0
-                ),
+                args[0].dimension * args[1].dimension,
             )
         if op in (
             "derivative",
@@ -232,13 +202,8 @@ def infer_expression_type(
             if len(args) != 1 or node.coordinate not in coordinates:
                 raise ValueError(f"{op} requires one operand and a known coordinate.")
             coordinate = coordinates[node.coordinate]
-            coordinate_dimension = _pad_dimension(coordinate.physical_dimension, rank)
-            factor = 2.0 if op == "laplacian" else float(node.order)
-            dimension = _combine_dimensions(
-                args[0].physical_dimension,
-                tuple(factor * value for value in coordinate_dimension),
-                -1.0,
-            )
+            factor = 2 if op == "laplacian" else node.order
+            dimension = args[0].dimension / coordinate.dimension**factor
             if op == "derivative":
                 if node.axis is not None and not 0 <= node.axis < coordinate.size:
                     raise ValueError("Derivative coordinate axis is out of range.")
@@ -274,24 +239,15 @@ def infer_expression_type(
         if op == "integral":
             if len(args) != 1 or node.region not in regions:
                 raise ValueError("integral requires one operand and a known region.")
-            dimension = args[0].physical_dimension
+            dimension = args[0].dimension
             for coordinate_name in regions[node.region].coordinates:
                 if coordinate_name not in coordinates:
                     raise ValueError(
                         f"Region {node.region!r} references unknown coordinate "
                         f"{coordinate_name!r}."
                     )
-                coordinate_dimension = _pad_dimension(
-                    coordinates[coordinate_name].physical_dimension, rank
-                )
-                dimension = _combine_dimensions(
-                    dimension,
-                    tuple(
-                        coordinates[coordinate_name].size * value
-                        for value in coordinate_dimension
-                    ),
-                    1.0,
-                )
+                coordinate = coordinates[coordinate_name]
+                dimension = dimension * coordinate.dimension**coordinate.size
             return PDEValueType(args[0].representation, args[0].components, dimension)
         raise ValueError(f"Unsupported PDE expression operation {op!r}.")
 
@@ -317,24 +273,15 @@ def validate_pde_ir(problem: PDEProblemIR, /) -> PDEProblemIR:
     if len(set(symbols)) != len(symbols):
         raise ValueError("PDE field and parameter symbols must not collide.")
     for coordinate in problem.coordinates:
-        _require_finite(
-            coordinate.physical_dimension,
-            "PDE coordinate physical dimensions",
-        )
         if coordinate.bounds is not None:
             _require_finite(coordinate.bounds, "PDE coordinate bounds")
             if coordinate.bounds[1] <= coordinate.bounds[0]:
                 raise ValueError("PDE coordinate upper bound must exceed lower bound.")
     for field in problem.fields:
-        _require_finite(field.physical_dimension, "PDE field physical dimensions")
         _require_finite(field.scale, "PDE field scale")
         if any(value <= 0.0 for value in field.scale):
             raise ValueError("PDE field scales must be positive.")
     for parameter in problem.parameters:
-        _require_finite(
-            parameter.physical_dimension,
-            "PDE parameter physical dimensions",
-        )
         _require_finite(parameter.scale, "PDE parameter scale")
         if any(value <= 0.0 for value in parameter.scale):
             raise ValueError("PDE parameter scales must be positive.")
@@ -367,7 +314,7 @@ def validate_pde_ir(problem: PDEProblemIR, /) -> PDEProblemIR:
         if (
             left.representation != right.representation
             or left.components != right.components
-            or not _same_dimension(left.physical_dimension, right.physical_dimension)
+            or left.dimension != right.dimension
         ):
             raise ValueError(
                 f"PDE equation {equation.name!r} equates incompatible values."
@@ -398,7 +345,7 @@ def validate_pde_ir(problem: PDEProblemIR, /) -> PDEProblemIR:
         if (
             value.representation != target.representation
             or value.components != target.components
-            or not _same_dimension(value.physical_dimension, target.physical_dimension)
+            or value.dimension != target.dimension
         ):
             raise ValueError(
                 f"PDE condition {condition.name!r} has incompatible target units."

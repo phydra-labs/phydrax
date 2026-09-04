@@ -17,10 +17,36 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...units import (
+    conversion_factor as _unit_conversion_factor,
+    derived_unit,
+    MICROAMPERE_PER_SQUARE_CENTIMETER,
+    MICROMETER,
+    MICROSIEMENS,
+    MILLISIEMENS_PER_SQUARE_CENTIMETER,
+    NANOAMPERE,
+)
 from ._morphology import PreparedCellMorphology
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 _MAX_GATES = 3
+
+
+def _conductance_density_area_to_microsiemens() -> float:
+    density_area = derived_unit(
+        "mS/cm2*um2",
+        ((MILLISIEMENS_PER_SQUARE_CENTIMETER, 1), (MICROMETER, 2)),
+    )
+    return float(_unit_conversion_factor(density_area, MICROSIEMENS))
+
+
+def _current_density_area_to_nanoamperes() -> float:
+    density_area = derived_unit(
+        "uA/cm2*um2",
+        ((MICROAMPERE_PER_SQUARE_CENTIMETER, 1), (MICROMETER, 2)),
+    )
+    return float(_unit_conversion_factor(density_area, NANOAMPERE))
 
 
 def _finite(value: float, name: str, /) -> float:
@@ -90,6 +116,7 @@ class PassiveLeak(StrictModule, NonTrainableState):
     conductance_density_mS_cm2: Array
     reversal_mV: Array
     mechanism_id: str = eqx.field(static=True)
+    conductance_density_area_to_uS: float = eqx.field(static=True)
     gate_count: int = eqx.field(static=True)
     nonlinear: bool = eqx.field(static=True)
 
@@ -110,12 +137,14 @@ class PassiveLeak(StrictModule, NonTrainableState):
         identifier = _mechanism_identifier(mechanism_id)
         self.conductance_density_mS_cm2 = jnp.asarray(conductance)
         self.reversal_mV = jnp.asarray(reversal)
+        self.conductance_density_area_to_uS = _conductance_density_area_to_microsiemens()
         self.mechanism_id = canonical_fingerprint(
             {
                 "kind": "passive-leak-v1",
                 "name": identifier,
                 "conductance_density_mS_cm2": conductance,
                 "reversal_mV": reversal,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
         self.gate_count = 0
@@ -134,7 +163,11 @@ class PassiveLeak(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array, Array, Array]:
         del gates, intracellular_mM, extracellular_mM
-        conductance = self.conductance_density_mS_cm2 * membrane_area_um2 * 1.0e-5
+        conductance = (
+            self.conductance_density_mS_cm2
+            * membrane_area_um2
+            * self.conductance_density_area_to_uS
+        )
         offset = -conductance * self.reversal_mV
         zeros = jnp.zeros_like(voltage_mV)
         return conductance, offset, zeros, jnp.zeros_like(voltage_mV, dtype=jnp.int32)
@@ -188,6 +221,7 @@ class HodgkinHuxleyNaK(StrictModule, NonTrainableState):
     potassium_conductance_density_mS_cm2: Array
     sodium_reversal_mV: Array
     potassium_reversal_mV: Array
+    conductance_density_area_to_uS: float = eqx.field(static=True)
     mechanism_id: str = eqx.field(static=True)
     gate_count: int = eqx.field(static=True)
     nonlinear: bool = eqx.field(static=True)
@@ -219,6 +253,7 @@ class HodgkinHuxleyNaK(StrictModule, NonTrainableState):
         self.potassium_conductance_density_mS_cm2 = jnp.asarray(potassium)
         self.sodium_reversal_mV = jnp.asarray(ena)
         self.potassium_reversal_mV = jnp.asarray(ek)
+        self.conductance_density_area_to_uS = _conductance_density_area_to_microsiemens()
         self.mechanism_id = canonical_fingerprint(
             {
                 "kind": "hodgkin-huxley-na-k-v1",
@@ -227,6 +262,7 @@ class HodgkinHuxleyNaK(StrictModule, NonTrainableState):
                 "potassium_conductance_density_mS_cm2": potassium,
                 "sodium_reversal_mV": ena,
                 "potassium_reversal_mV": ek,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
         self.gate_count = 3
@@ -250,7 +286,7 @@ class HodgkinHuxleyNaK(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array, Array, Array]:
         del intracellular_mM, extracellular_mM
         m_gate, h_gate, n_gate = gates[..., 0], gates[..., 1], gates[..., 2]
-        area_scale = membrane_area_um2 * 1.0e-5
+        area_scale = membrane_area_um2 * self.conductance_density_area_to_uS
         sodium = self.sodium_conductance_density_mS_cm2 * area_scale * m_gate**3 * h_gate
         potassium = self.potassium_conductance_density_mS_cm2 * area_scale * n_gate**4
         conductance = sodium + potassium
@@ -289,6 +325,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
     potassium_half_saturation_mM: Array
     sodium_species: int = eqx.field(static=True)
     potassium_species: int = eqx.field(static=True)
+    current_density_area_to_nA: float = eqx.field(static=True)
     mechanism_id: str = eqx.field(static=True)
     gate_count: int = eqx.field(static=True)
     nonlinear: bool = eqx.field(static=True)
@@ -329,6 +366,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
         self.potassium_half_saturation_mM = jnp.asarray(potassium_half)
         self.sodium_species = sodium_species
         self.potassium_species = potassium_species
+        self.current_density_area_to_nA = _current_density_area_to_nanoamperes()
         self.mechanism_id = canonical_fingerprint(
             {
                 "kind": "sodium-potassium-pump-v1",
@@ -338,6 +376,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
                 "potassium_half_saturation_mM": potassium_half,
                 "sodium_species": sodium_species,
                 "potassium_species": potassium_species,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
         self.gate_count = 0
@@ -379,7 +418,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
         current = (
             self.maximum_current_density_uA_cm2
             * membrane_area_um2
-            * 1.0e-5
+            * self.current_density_area_to_nA
             * sodium_factor
             * potassium_factor
         )
@@ -421,6 +460,7 @@ class MembraneProgram(StrictModule, NonTrainableState):
                 "kind": "electrophysiology-membrane-program-v1",
                 "mechanisms": list(identifiers),
                 "maximum_gates_per_mechanism": _MAX_GATES,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 

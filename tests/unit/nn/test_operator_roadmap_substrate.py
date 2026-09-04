@@ -4,6 +4,7 @@
 
 import json
 import math
+from fractions import Fraction
 from typing import Any
 
 import coordax as cx
@@ -635,7 +636,7 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
     assert pde_ir_to_json(equivalent) == payload
     assert pde_ir_hash(equivalent) == pde_ir_hash(problem) == problem.canonical_hash
 
-    tokens = tokenize_pde_ir(problem)
+    tokens = tokenize_pde_ir(problem, dimension_basis=())
     valid_count = int(jnp.sum(tokens.mask))
     assert valid_count == tokens.max_tokens
     assert tokens.canonical_hashes == (problem.canonical_hash,)
@@ -681,18 +682,6 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
             "coordinate bounds",
             lambda value: PDECoordinate("x", "space", bounds=(0.0, value)),
         ),
-        (
-            "coordinate dimension",
-            lambda value: PDECoordinate(
-                "x",
-                "space",
-                physical_dimension=(value,),
-            ),
-        ),
-        (
-            "field dimension",
-            lambda value: PDEField("u", physical_dimension=(value,)),
-        ),
         ("field scale", lambda value: PDEField("u", scale=(value,))),
         (
             "parameter scalar value",
@@ -707,24 +696,10 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
             ),
         ),
         (
-            "parameter dimension",
-            lambda value: phx.equations.PDEParameter(
-                "a",
-                physical_dimension=(value,),
-            ),
-        ),
-        (
             "parameter scale",
             lambda value: phx.equations.PDEParameter("a", scale=(value,)),
         ),
         ("expression value", lambda value: PDEExpression.constant(value)),
-        (
-            "expression dimension",
-            lambda value: PDEExpression.constant(
-                0.0,
-                physical_dimension=(value,),
-            ),
-        ),
         (
             "nondimensionalization",
             lambda value: PDEProblemIR(
@@ -744,13 +719,13 @@ def test_pde_numeric_metadata_rejects_nonfinite_during_construction(
         make(bad)
 
 
-def test_pde_numeric_metadata_accepts_finite_zero_and_negative_dimensions():
+def test_pde_dimension_signatures_are_exact_and_serialized_sparse():
     problem = PDEProblemIR(
         coordinates=(
             PDECoordinate(
                 "x",
                 "space",
-                physical_dimension=(-1.0,),
+                dimension=phx.units.LENGTH,
                 bounds=(-2.0, 0.0),
             ),
         ),
@@ -758,7 +733,7 @@ def test_pde_numeric_metadata_accepts_finite_zero_and_negative_dimensions():
             PDEField(
                 "u",
                 coordinates=("x",),
-                physical_dimension=(-2.0,),
+                dimension=phx.units.TEMPERATURE,
                 scale=(1.0,),
             ),
         ),
@@ -766,7 +741,7 @@ def test_pde_numeric_metadata_accepts_finite_zero_and_negative_dimensions():
             phx.equations.PDEParameter(
                 "a",
                 value=0.0,
-                physical_dimension=(-3.0,),
+                dimension=phx.units.ACCELERATION,
                 scale=(2.0,),
             ),
         ),
@@ -774,11 +749,127 @@ def test_pde_numeric_metadata_accepts_finite_zero_and_negative_dimensions():
     )
 
     assert phx.equations.validate_pde_ir(problem) is problem
-    assert '"value":0.0' in pde_ir_to_json(problem)
+    encoded = json.loads(pde_ir_to_json(problem))
+    assert encoded["coordinates"][0]["dimension"]["terms"] == [
+        {"axis": "length", "numerator": 1, "denominator": 1}
+    ]
+    assert pde_ir_from_json(json.dumps(encoded)) == problem
+    ambiguous = json.loads(pde_ir_to_json(problem))
+    ambiguous["coordinates"][0]["physical_dimension"] = [1.0]
+    with pytest.raises(ValueError, match="canonical fields"):
+        phx.equations.pde_ir_from_dict(ambiguous)
 
-    object.__setattr__(problem.fields[0], "scale", (math.nan,))
-    with pytest.raises(ValueError, match="finite"):
-        phx.equations.validate_pde_ir(problem)
+    encoded["fields"][0]["dimension"] = [0.0, 0.0, 0.0]
+    with pytest.raises(TypeError, match="canonical mappings"):
+        phx.equations.pde_ir_from_dict(encoded)
+
+    for make in (
+        lambda: PDECoordinate("x", "space", dimension=(1.0,)),
+        lambda: PDEField("u", dimension=(1.0,)),
+        lambda: phx.equations.PDEParameter("a", dimension=(1.0,)),
+        lambda: PDEExpression.constant(1.0, dimension=(1.0,)),
+    ):
+        with pytest.raises(TypeError, match="DimensionSignature"):
+            make()
+
+
+def test_pde_exact_dimension_algebra_and_rational_power_round_trip():
+    temperature = phx.units.TEMPERATURE
+    x = PDECoordinate("x", "space", dimension=phx.units.LENGTH)
+    time = PDECoordinate("t", "time", dimension=phx.units.TIME)
+    field = PDEField(
+        "u",
+        coordinates=("x", "t"),
+        dimension=temperature,
+    )
+    diffusivity = phx.equations.PDEParameter(
+        "alpha",
+        dimension=phx.units.LENGTH**2 / phx.units.TIME,
+    )
+    u = PDEExpression.field("u")
+    alpha = PDEExpression.parameter("alpha")
+    problem = PDEProblemIR(
+        coordinates=(x, time),
+        fields=(field,),
+        parameters=(diffusivity,),
+        equations=(PDEEquation("heat", u.derivative("t"), alpha * u.laplacian("x")),),
+        regions=(phx.equations.PDERegion("line", "interior", ("x",)),),
+    )
+
+    assert phx.equations.validate_pde_ir(problem) is problem
+    infer = lambda expression: phx.equations.infer_expression_type(expression, problem)
+    assert (
+        infer(u + PDEExpression.constant(1, dimension=temperature)).dimension
+        == temperature
+    )
+    assert infer(u.gradient("x")).dimension == temperature / phx.units.LENGTH
+    assert infer(u.derivative("t")).dimension == temperature / phx.units.TIME
+    assert infer(u.laplacian("x")).dimension == temperature / phx.units.AREA
+    assert infer(u.integrate("line")).dimension == temperature * phx.units.LENGTH
+    assert infer(PDEExpression.constant(2.0).sin()).dimension.is_dimensionless
+    assert (
+        infer(PDEExpression.constant(4, dimension=phx.units.AREA).sqrt()).dimension
+        == phx.units.LENGTH
+    )
+    rational_power = u ** Fraction(2, 3)
+    assert infer(rational_power).dimension == temperature ** Fraction(2, 3)
+    assert infer(PDEExpression.constant(4.0) ** 0.5).dimension.is_dimensionless
+    compiled_exponent = phx.equations.compile_pde_expression(
+        PDEExpression.constant(Fraction(2, 3)),
+        problem,
+        fields={},
+    )
+    assert isinstance(compiled_exponent, jax.Array)
+    assert jnp.array_equal(compiled_exponent, jnp.asarray(2.0 / 3.0))
+
+    with pytest.raises(TypeError, match="exact integer or Fraction"):
+        infer(u**2.0)
+    with pytest.raises(ValueError, match="matching representations and dimensions"):
+        infer(u + PDEExpression.constant(1, dimension=phx.units.LENGTH))
+
+    power_problem = PDEProblemIR(
+        coordinates=(x, time),
+        fields=(field,),
+        equations=(
+            PDEEquation(
+                "rational-power",
+                rational_power,
+                PDEExpression.constant(
+                    0,
+                    dimension=temperature ** Fraction(2, 3),
+                ),
+            ),
+        ),
+    )
+    restored = pde_ir_from_json(pde_ir_to_json(power_problem))
+    assert restored.equations[0].lhs.args[1].value == Fraction(2, 3)
+
+
+def test_pde_token_basis_order_is_explicit_and_stack_checked():
+    problem = PDEProblemIR(
+        coordinates=(PDECoordinate("x", "space", dimension=phx.units.LENGTH),),
+        fields=(PDEField("u", coordinates=("x",), dimension=phx.units.TEMPERATURE),),
+    )
+    standard = tokenize_pde_ir(
+        problem,
+        dimension_basis=("length", "temperature"),
+    )
+    reversed_basis = tokenize_pde_ir(
+        problem,
+        dimension_basis=("temperature", "length"),
+    )
+
+    assert standard.dimension_basis == ("length", "temperature")
+    assert reversed_basis.dimension_basis == ("temperature", "length")
+    assert jnp.array_equal(standard.dimension[0], jnp.asarray([1.0, 0.0]))
+    assert jnp.array_equal(reversed_basis.dimension[0], jnp.asarray([0.0, 1.0]))
+    assert standard.canonical_hashes == reversed_basis.canonical_hashes
+    stacked = phx.equations.stack_pde_tokens((standard, standard))
+    assert stacked.dimension_basis == standard.dimension_basis
+    with pytest.raises(ValueError, match="identical dimension basis"):
+        phx.equations.stack_pde_tokens((standard, reversed_basis))
+    with pytest.raises(ValueError, match="missing axes"):
+        tokenize_pde_ir(problem, dimension_basis=("length",))
 
 
 def _canonical_expression_problem(expression):
@@ -798,7 +889,7 @@ def _token_arrays(tokens):
             "attribute",
             "symbol",
             "scalar",
-            "physical_dimension",
+            "dimension",
             "slot",
             "parent",
             "depth",
@@ -831,7 +922,7 @@ def test_associative_expression_canonicalization_is_recursive(expressions):
     )
     payloads = tuple(pde_ir_to_json(problem) for problem in problems)
     hashes = tuple(pde_ir_hash(problem) for problem in problems)
-    tokens = tuple(tokenize_pde_ir(problem) for problem in problems)
+    tokens = tuple(tokenize_pde_ir(problem, dimension_basis=()) for problem in problems)
 
     assert len(set(payloads)) == 1
     assert len(set(hashes)) == 1

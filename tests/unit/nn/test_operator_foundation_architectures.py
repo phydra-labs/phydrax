@@ -770,13 +770,13 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     equivalent_a = _pde_problem(field + 1.0)
     equivalent_b = _pde_problem(1.0 + field)
     changed = _pde_problem(field + 2.0)
-    tokens_a = phx.equations.tokenize_pde_ir(equivalent_a)
-    tokens_b = phx.equations.tokenize_pde_ir(equivalent_b)
-    tokens_changed = phx.equations.tokenize_pde_ir(changed)
+    tokens_a = phx.equations.tokenize_pde_ir(equivalent_a, dimension_basis=())
+    tokens_b = phx.equations.tokenize_pde_ir(equivalent_b, dimension_basis=())
+    tokens_changed = phx.equations.tokenize_pde_ir(changed, dimension_basis=())
     encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=4,
         depth=1,
-        dimension_rank=0,
+        dimension_basis=(),
         key=jr.key(12),
     )
 
@@ -817,7 +817,7 @@ def _semantic_token_arrays(tokens):
             "attribute",
             "symbol",
             "scalar",
-            "physical_dimension",
+            "dimension",
             "slot",
             "parent",
             "depth",
@@ -1058,13 +1058,13 @@ def test_pde_condition_encoder_distinguishes_execution_semantics():
     encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=16,
         depth=2,
-        dimension_rank=0,
+        dimension_basis=(),
         key=jr.key(120),
     )
 
     for left, right in pairs:
-        left_tokens = phx.equations.tokenize_pde_ir(left)
-        right_tokens = phx.equations.tokenize_pde_ir(right)
+        left_tokens = phx.equations.tokenize_pde_ir(left, dimension_basis=())
+        right_tokens = phx.equations.tokenize_pde_ir(right, dimension_basis=())
         assert any(
             left_array.shape != right_array.shape
             or not jnp.array_equal(left_array, right_array)
@@ -1102,12 +1102,12 @@ def test_pde_condition_encoder_is_alpha_renaming_invariant():
         expression=(expression.field("temperature") + expression.field("pressure")),
         nondimensionalization=(("position", 2.0),),
     )
-    original_tokens = phx.equations.tokenize_pde_ir(original)
-    renamed_tokens = phx.equations.tokenize_pde_ir(renamed)
+    original_tokens = phx.equations.tokenize_pde_ir(original, dimension_basis=())
+    renamed_tokens = phx.equations.tokenize_pde_ir(renamed, dimension_basis=())
     encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=16,
         depth=2,
-        dimension_rank=0,
+        dimension_basis=(),
         key=jr.key(121),
     )
 
@@ -1127,10 +1127,12 @@ def test_pde_token_padding_and_stacking_preserve_semantic_channels():
                 "x",
                 order=2,
             ),
-        )
+        ),
+        dimension_basis=(),
     )
     second = phx.equations.tokenize_pde_ir(
-        _semantic_problem(nondimensionalization=(("x", 3.0),))
+        _semantic_problem(nondimensionalization=(("x", 3.0),)),
+        dimension_basis=(),
     )
     padded = phx.equations.pad_pde_tokens(first, first.max_tokens + 3)
     stacked = phx.equations.stack_pde_tokens((first, second))
@@ -1146,12 +1148,12 @@ def test_pde_token_padding_and_stacking_preserve_semantic_channels():
 def test_arbitrary_pde_metadata_stays_outside_neural_semantics():
     first = _semantic_problem(metadata=(("provenance", "experiment-a"),))
     second = _semantic_problem(metadata=(("provenance", "experiment-b"),))
-    first_tokens = phx.equations.tokenize_pde_ir(first)
-    second_tokens = phx.equations.tokenize_pde_ir(second)
+    first_tokens = phx.equations.tokenize_pde_ir(first, dimension_basis=())
+    second_tokens = phx.equations.tokenize_pde_ir(second, dimension_basis=())
     encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=8,
         depth=1,
-        dimension_rank=0,
+        dimension_basis=(),
         key=jr.key(122),
     )
 

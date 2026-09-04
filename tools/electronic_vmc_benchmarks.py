@@ -48,7 +48,7 @@ CASES = (
 
 
 def _structure(case: MolecularCase):
-    scale = phx.atomistic.AtomisticScaleContract("bohr", "hartree")
+    scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.asarray(case.charges, dtype=jnp.int32),
         jnp.asarray(case.positions, dtype=jnp.float64),

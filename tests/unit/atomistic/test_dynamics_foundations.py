@@ -2,8 +2,18 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+from phydrax.units import (
+    ANGSTROM,
+    conversion_factor,
+    ELECTRONVOLT,
+    FREQUENCY,
+    KILOCALORIE_PER_MOLE,
+    PRESSURE,
+    VELOCITY,
+)
 
 
 def _runtime(*, step_size=1.0e-3, cell=None, topology=None):
@@ -33,13 +43,34 @@ def _runtime(*, step_size=1.0e-3, cell=None, topology=None):
     return units, system, dynamics
 
 
-def test_unit_system_is_complete_and_kinetic_conversion_is_explicit():
+def test_unit_system_is_complete_and_derived_from_unit_definitions():
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
-    assert units.kinetic_to_energy > 100.0
+    assert units.scale.length_unit == ANGSTROM
+    assert units.scale.energy_unit == ELECTRONVOLT
+    assert units.scale.energy_semantics == "single-simulated-system"
+    assert units.constant_set_id == "codata-2018"
+    assert units.pressure_unit.dimension == PRESSURE
+    assert units.velocity_unit.dimension == VELOCITY
+    assert units.frequency_unit.dimension == FREQUENCY
+    np.testing.assert_allclose(units.kinetic_to_energy, 103.64269652680505)
+    np.testing.assert_allclose(units.boltzmann_constant, 8.617333262145e-5)
+    np.testing.assert_allclose(units.coulomb_constant, 14.399645478425668)
+    np.testing.assert_allclose(units.reduced_planck_constant, 0.6582119569509067)
     assert units.force_to_momentum_rate == 1.0 / units.kinetic_to_energy
-    assert units.boltzmann_constant > 0.0
-    assert units.coulomb_constant > 0.0
-    assert units.reduced_planck_constant > 0.0
+    restored = phx.atomistic.AtomisticUnitSystem.from_dict(units.to_dict())
+    assert restored.unit_system_id == units.unit_system_id
+    ambiguous = units.to_dict()
+    ambiguous["kinetic_to_energy"] = units.kinetic_to_energy
+    with pytest.raises(ValueError, match="canonical fields"):
+        phx.atomistic.AtomisticUnitSystem.from_dict(ambiguous)
+
+
+def test_scale_rejects_molar_energy_and_reduced_units_are_not_si_convertible():
+    with pytest.raises(ValueError, match="ordinary ENERGY"):
+        phx.atomistic.AtomisticScaleContract(ANGSTROM, KILOCALORIE_PER_MOLE)
+    reduced = phx.atomistic.AtomisticUnitSystem.reduced()
+    with pytest.raises(ValueError, match="reference system"):
+        conversion_factor(reduced.scale.length_unit, ANGSTROM)
 
 
 def test_system_identity_is_independent_of_initial_positions():

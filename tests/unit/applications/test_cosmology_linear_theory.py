@@ -13,7 +13,11 @@ cosmology = phx.applications.cosmology
 
 
 def test_massive_neutrino_species_and_request_identity():
-    scale = cosmology.CosmologyScaleContract("Mpc", "solar_mass", "Gyr")
+    scale = cosmology.CosmologyScaleContract(
+        phx.units.MEGAPARSEC,
+        phx.units.SOLAR_MASS,
+        phx.units.GIGAYEAR,
+    )
     species = (
         cosmology.MassiveNeutrinoSpecies(0.05),
         cosmology.MassiveNeutrinoSpecies(0.01, degeneracy=2.0),
@@ -30,6 +34,12 @@ def test_massive_neutrino_species_and_request_identity():
     assert "massive_neutrino_mass_1" in request.realization.parameter_names
     assert "massive_neutrino_temperature_ratio_1" in request.realization.parameter_names
     assert "massive_neutrino_degeneracy_1" in request.realization.parameter_names
+    mapping = request.to_mapping()
+    assert "scale_id" not in mapping
+    serialized_scale = mapping["scale"]
+    assert isinstance(serialized_scale, dict)
+    reconstructed_scale = cosmology.CosmologyScaleContract.from_dict(serialized_scale)
+    assert reconstructed_scale.scale_id == request.scale.scale_id
     changed = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
@@ -45,7 +55,11 @@ def test_massive_neutrino_species_and_request_identity():
 def test_concrete_linear_theory_backend_returns_named_constant_products(tmp_path):
     root = Path(__file__).parents[2]
     worker = root / "_linear_theory_worker.py"
-    scale = cosmology.CosmologyScaleContract("Mpc", "solar_mass", "Gyr")
+    scale = cosmology.CosmologyScaleContract(
+        phx.units.MEGAPARSEC,
+        phx.units.SOLAR_MASS,
+        phx.units.GIGAYEAR,
+    )
     request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
@@ -70,6 +84,8 @@ def test_concrete_linear_theory_backend_returns_named_constant_products(tmp_path
     assert result.thermodynamics is not None
     assert result.power.descriptor.left_field == "cold_baryon"
     assert not result.power.provenance.differentiation.query_coordinates
+    assert result.power.scale.scale_id == request.scale.scale_id
+    assert result.power.scale.length_unit == phx.units.MEGAPARSEC
     np.testing.assert_allclose(result.power.evaluate([1.0, 3.0], 0.75), [0.625, 1.875])
     np.testing.assert_allclose(
         result.transfer.evaluate("density/total_matter", [1.0, 3.0], 0.75),

@@ -7,22 +7,23 @@ second array, unit, solver, or archive framework.
 
 ## Quantity specifications
 
-Every specification names its physical dimension, kernel and SI unit, an exact rational
-SI factor, axes, sign convention, support association, and reference configuration. Its
-`quantity_id` hashes all of that semantic content. The alias `spec_id` is provided for
-runtime manifests that bind specification identities.
+Every specification stores a semantic `quantity_kind` and one canonical
+`UnitDefinition`, together with axes, sign convention, support association, and
+reference configuration. Display symbols and the exact SI factor are computed
+from that unit; they are not duplicated stored fields. Its `quantity_id` hashes
+the unit ID and all remaining semantic content. The alias `spec_id` is provided
+for runtime manifests that bind specification identities.
 
 ```python
 from fractions import Fraction
 
 from phydrax.applications import cardiovascular as cardio
+from phydrax.units import MILLIVOLT
 
 voltage = cardio.CardiovascularQuantitySpec(
     "paced_voltage",
     "electric_potential",
-    "mV",
-    "V",
-    Fraction(1, 1000),
+    MILLIVOLT,
     support_association="stimulus nodes",
     reference_configuration="extracellular potential",
 )
@@ -33,11 +34,13 @@ pressure = cardio.CARDIOVASCULAR_QUANTITIES["pressure"]
 pressure_pa = pressure.to_si(13.3)  # 13.3 kPa -> 13300 Pa
 ```
 
-The application admits only its declared kernel-to-SI routes. A mismatched dimension,
-unit spelling, or factor is rejected rather than guessed. Decimal factors such as
-`1e-3` are normalized to an exact fraction before identity generation. Pass a
-`Fraction` when scalar arithmetic itself must remain rational; NumPy and JAX arrays use
-their normal numeric dtype.
+The application accepts only exact multiplicative `UnitDefinition` values whose
+dimension and reference system match the declared quantity kind. Textual units,
+dimension mismatches, reference-system shifts, offsets, and logarithmic conversions
+are rejected rather than parsed or guessed. `kernel_unit`, `si_unit`, and `si_factor`
+remain computed display/conversion properties. Pass a `Fraction` when scalar
+arithmetic itself must remain rational; NumPy and JAX arrays use their normal numeric
+dtype.
 
 The canonical catalog has the following exact factors, where
 `SI value = kernel value * factor`:

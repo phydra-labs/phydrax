@@ -45,9 +45,7 @@ def run_smoke():
     )
 
     factor = phx.uq.GaussianFactor(jnp.asarray([[1.0, 0.0], [0.3, 0.7]]))
-    factor_law = phx.uq.GaussianFactorLaw(
-        jnp.zeros((2,)), factor, event_shape=(2,)
-    )
+    factor_law = phx.uq.GaussianFactorLaw(jnp.zeros((2,)), factor, event_shape=(2,))
     factor_sample = factor_law.sample(jr.key(0), (16,))
     cases.append(
         _case(
@@ -124,9 +122,7 @@ def run_smoke():
         jnp.full((2,), -10.0), jnp.full((2,), 10.0), label="observation"
     )
     domain = state_domain @ phx.domain.TimeInterval(0.0, 1.0) @ context_domain
-    base_field = domain.Function("x", "t", "observation")(
-        lambda x, t, observation: -x
-    )
+    base_field = domain.Function("x", "t", "observation")(lambda x, t, observation: -x)
     likelihood = domain.Function("x", "t", "observation")(
         lambda x, t, observation: -0.5 * jnp.sum((x - observation) ** 2)
     )
@@ -262,9 +258,7 @@ def run_smoke():
     )
     complex_process = phx.stochastic.ComplexVariancePreservingDiffusion((1,))
     complex_sample = complex_law.sample(jr.key(12), (8,))
-    complex_perturbed = complex_process.perturb(
-        jr.key(13), complex_sample[0], time=0.4
-    )
+    complex_perturbed = complex_process.perturb(jr.key(13), complex_sample[0], time=0.4)
     cases.append(
         _case(
             "complex-diffusion",
@@ -294,7 +288,9 @@ def run_smoke():
         )
     )
 
-    scale = phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt")
+    scale = phx.atomistic.AtomisticScaleContract(
+        phx.units.ANGSTROM, phx.units.ELECTRONVOLT
+    )
     atomistic = phx.atomistic.AtomisticBatch(
         jnp.asarray([[1, 1]], dtype=jnp.int32),
         jnp.asarray([[[-0.5, 0.0, 0.0], [0.5, 0.0, 0.0]]]),
@@ -320,8 +316,7 @@ def run_smoke():
     cases.append(
         _case(
             "atomistic-hybrid-diffusion",
-            jnp.allclose(centered, 0.0, atol=1e-10)
-            and jnp.all(species_sample >= 0),
+            jnp.allclose(centered, 0.0, atol=1e-10) and jnp.all(species_sample >= 0),
         )
     )
 

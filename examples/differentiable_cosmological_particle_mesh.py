@@ -50,7 +50,9 @@ def build_workflow():
     shape = (4, 4, 4)
     count = 4**3
     scale = phx.applications.cosmology.CosmologyScaleContract(
-        "box_length", "total_mass", "hubble_time"
+        phx.applications.cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        phx.applications.cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        phx.applications.cosmology.CODE_COSMOLOGY_SCALE.time_unit,
     )
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count),
@@ -79,14 +81,17 @@ def build_workflow():
         dealiasing="three_halves",
         scale=scale,
     )
-    provenance = phx.applications.cosmology.CosmologyProductProvenance(producer="phydrax-example",
-    producer_version="native",
-    model_form_id=background.model_form_id,
-    request_id="native-example-linear-power",
-    numerical_policy_id="example-linear-power",
-    physics_policy_id="linear-cold-baryon-power",
-    scale_id=scale.scale_id,
-    source_kind="native", differentiation="native-parameter")
+    provenance = phx.applications.cosmology.CosmologyProductProvenance(
+        producer="phydrax-example",
+        producer_version="native",
+        model_form_id=background.model_form_id,
+        request_id="native-example-linear-power",
+        numerical_policy_id="example-linear-power",
+        physics_policy_id="linear-cold-baryon-power",
+        scale_id=scale.scale_id,
+        source_kind="native",
+        differentiation="native-parameter",
+    )
     coordinates = tuple(
         (jnp.arange(count_, dtype=float) + 0.5) / count_ for count_ in shape
     )

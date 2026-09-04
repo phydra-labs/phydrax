@@ -36,11 +36,12 @@ from phydrax.applications.cardiovascular.personalization._parameters import (
     ParameterIdentifiability,
 )
 from phydrax.optim import OptimizationTermination, ReducedAdjoint
+from phydrax.units import ONE
 from phydrax.uq import IdentityBijector, Normal, SigmoidIntervalBijector, Uniform
 
 
 def _schema() -> CardiacParameterSchema:
-    quantity = CardiovascularQuantitySpec("activation_scale", "strain", "1", "1", 1)
+    quantity = CardiovascularQuantitySpec("activation_scale", "strain", ONE)
     return CardiacParameterSchema(
         (
             CardiacParameterSpec(
@@ -53,7 +54,7 @@ def _schema() -> CardiacParameterSchema:
             ),
             CardiacParameterSpec(
                 "fixed_reference",
-                CardiovascularQuantitySpec("fixed_reference", "strain", "1", "1", 1),
+                CardiovascularQuantitySpec("fixed_reference", "strain", ONE),
                 IdentityBijector(),
                 CardiacParameterSupport(-10.0, 10.0),
                 Normal(0.0, 1.0),

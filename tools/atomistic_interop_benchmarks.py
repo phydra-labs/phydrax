@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
+units = phx.atomistic.AtomisticUnitSystem.reduced()
+
 with tempfile.TemporaryDirectory(prefix="phydrax-interop-") as directory:
     path = Path(directory) / "trajectory.h5"
     plan = phx.atomistic.interchange.H5MDTrajectoryPlan(path)
@@ -18,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix="phydrax-interop-") as directory:
         jnp.arange(128),
         system_id="benchmark-system",
         topology_id="benchmark-topology",
-        unit_system_id="benchmark-units",
+        units=units,
         source_id="benchmark-frame",
     )
     started = time.perf_counter()
@@ -32,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="phydrax-interop-") as directory:
                     frame.stable_ids,
                     system_id=frame.system_id,
                     topology_id=frame.topology_id,
-                    unit_system_id=frame.unit_system_id,
+                    units=frame.units,
                     source_id=f"benchmark-frame-{index}",
                 )
             )
