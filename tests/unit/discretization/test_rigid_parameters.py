@@ -24,8 +24,7 @@ from phydrax.discretization.particle._rigid_parameters import (
 def _inertia_from_covariance(masses, covariance):
     identity = jnp.eye(3, dtype=covariance.dtype)
     return masses[:, None, None] * (
-        jnp.trace(covariance, axis1=-2, axis2=-1)[:, None, None] * identity
-        - covariance
+        jnp.trace(covariance, axis1=-2, axis2=-1)[:, None, None] * identity - covariance
     )
 
 
@@ -97,9 +96,7 @@ def test_prepared_inverse_round_trip_exposes_reconstruction_evidence():
     )
     np.testing.assert_allclose(evaluation.source_mass_residual, 0.0, atol=1.0e-7)
     np.testing.assert_allclose(evaluation.source_inertia_residual, 0.0, atol=1.0e-6)
-    np.testing.assert_allclose(
-        evaluation.mass_reconstruction_residual, 0.0, atol=1.0e-7
-    )
+    np.testing.assert_allclose(evaluation.mass_reconstruction_residual, 0.0, atol=1.0e-7)
     np.testing.assert_allclose(
         evaluation.center_of_mass_reconstruction_residual, 0.0, atol=1.0e-7
     )
@@ -144,8 +141,7 @@ def test_all_decoded_inertias_are_spd_and_obey_strict_triangle_inequalities():
         principal_moments = np.linalg.eigvalsh(inertia)
         assert np.all(principal_moments > 0.0)
         assert np.all(
-            np.sum(principal_moments, axis=-1)
-            - 2.0 * np.max(principal_moments, axis=-1)
+            np.sum(principal_moments, axis=-1) - 2.0 * np.max(principal_moments, axis=-1)
             > 0.0
         )
     assert np.all(np.linalg.eigvalsh(pseudo_inertia) > 0.0)
@@ -156,6 +152,73 @@ def test_all_decoded_inertias_are_spd_and_obey_strict_triangle_inequalities():
     assert evaluation.body_origin_triangle_inequality_mask.tolist() == [True, True]
     assert np.all(np.asarray(evaluation.minimum_inertia_eigenvalue) > 0.0)
     assert np.all(np.asarray(evaluation.minimum_triangle_margin) > 0.0)
+
+
+def test_body_origin_evidence_uses_shifted_inertia_and_binds_realization():
+    source, _, _ = _prepared_source()
+    parameterization = RigidInertialParameterization(source)
+    shifted_offsets = jnp.asarray(
+        [[1.2, -0.7, 0.9], [-0.8, 1.1, 0.6]],
+        dtype=source.mass_properties.inertia_com.dtype,
+    )
+    centered_coordinates = parameterization.inverse(jnp.zeros_like(shifted_offsets))
+    shifted_coordinates = parameterization.inverse(shifted_offsets)
+
+    centered = parameterization.evaluate(centered_coordinates)
+    shifted = parameterization.evaluate(shifted_coordinates)
+    inertia_com = np.asarray(shifted.parameters.inertia_com)
+    inertia_body = np.asarray(shifted.parameters.inertia_body_origin)
+    com_eigenvalues = np.linalg.eigvalsh(inertia_com)
+    body_eigenvalues = np.linalg.eigvalsh(inertia_body)
+    com_triangle_margin = np.trace(inertia_com, axis1=-2, axis2=-1) - 2.0 * np.max(
+        com_eigenvalues, axis=-1
+    )
+    body_triangle_margin = np.trace(inertia_body, axis1=-2, axis2=-1) - 2.0 * np.max(
+        body_eigenvalues, axis=-1
+    )
+
+    np.testing.assert_allclose(shifted.minimum_inertia_eigenvalue, com_eigenvalues[:, 0])
+    np.testing.assert_allclose(shifted.minimum_triangle_margin, com_triangle_margin)
+    np.testing.assert_allclose(
+        shifted.minimum_body_origin_inertia_eigenvalue,
+        body_eigenvalues[:, 0],
+    )
+    np.testing.assert_allclose(
+        shifted.minimum_body_origin_triangle_margin,
+        body_triangle_margin,
+    )
+    np.testing.assert_allclose(
+        shifted.inertia_condition_number,
+        com_eigenvalues[:, -1] / com_eigenvalues[:, 0],
+    )
+    np.testing.assert_allclose(
+        shifted.body_origin_inertia_condition_number,
+        body_eigenvalues[:, -1] / body_eigenvalues[:, 0],
+    )
+    np.testing.assert_array_equal(shifted.inertia_spd_mask, com_eigenvalues[:, 0] > 0.0)
+    np.testing.assert_array_equal(
+        shifted.triangle_inequality_mask, com_triangle_margin > 0.0
+    )
+    np.testing.assert_array_equal(
+        shifted.body_origin_inertia_spd_mask,
+        body_eigenvalues[:, 0] > 0.0,
+    )
+    np.testing.assert_array_equal(
+        shifted.body_origin_triangle_inequality_mask,
+        body_triangle_margin > 0.0,
+    )
+    np.testing.assert_array_equal(shifted.finite_mask, [True, True])
+    np.testing.assert_array_equal(shifted.evidence_finite_mask, [True, True])
+    assert not np.allclose(com_eigenvalues[:, 0], body_eigenvalues[:, 0])
+    assert not np.allclose(com_triangle_margin, body_triangle_margin)
+    assert bool(centered.valid)
+    assert bool(shifted.valid)
+
+    centered_realization = parameterization.realize(centered_coordinates)
+    shifted_realization = parameterization.realize(shifted_coordinates)
+    assert centered.evaluation_id != shifted.evaluation_id
+    assert centered_realization.realization_id != shifted_realization.realization_id
+    assert shifted_realization.evaluation.evaluation_id == shifted.evaluation_id
 
 
 def test_invalid_coordinates_and_nonphysical_direct_parameters_reject():
@@ -182,9 +245,7 @@ def test_invalid_coordinates_and_nonphysical_direct_parameters_reject():
             coordinates_id="invalid-principal-moments",
         )
     with pytest.raises(ValueError, match="coordinate image"):
-        parameterization.inverse(
-            jnp.full((2, 3), 2.0 * parameterization.finite_ceiling)
-        )
+        parameterization.inverse(jnp.full((2, 3), 2.0 * parameterization.finite_ceiling))
 
     foreign = RigidInertialParameterization(source, parameterization_id="foreign")
     with pytest.raises(ValueError, match="different parameterization"):
@@ -193,9 +254,9 @@ def test_invalid_coordinates_and_nonphysical_direct_parameters_reject():
     planar_particles = ParticleSetPlan(
         jnp.asarray([1]), jnp.asarray([1.0]), ambient_dimension=2
     ).prepare()
-    planar_bodies = RigidBodySetPlan(
-        jnp.asarray([0]), jnp.asarray([1.0])
-    ).prepare(planar_particles)
+    planar_bodies = RigidBodySetPlan(jnp.asarray([0]), jnp.asarray([1.0])).prepare(
+        planar_particles
+    )
     with pytest.raises(ValueError, match="three dimensions"):
         RigidInertialParameterization(planar_bodies)
 
@@ -217,13 +278,9 @@ def test_realization_returns_fresh_plans_and_preserves_prepared_owner():
     assert rigid_plan is not source.plan
     assert particle_plan.plan_id != source.particles.plan.plan_id
     assert rigid_plan.plan_id != source.plan.plan_id
-    assert isinstance(
-        realization.reference_frame_rebase, RigidBodyReferenceFrameRebase
-    )
+    assert isinstance(realization.reference_frame_rebase, RigidBodyReferenceFrameRebase)
     assert realization.rebase_id == realization.reference_frame_rebase.rebase_id
-    np.testing.assert_allclose(
-        rigid_plan.inertia_com, evidence.parameters.inertia_com
-    )
+    np.testing.assert_allclose(rigid_plan.inertia_com, evidence.parameters.inertia_com)
     assert evidence.requires_repreparation
     assert evidence.source_prepared_id == source.prepared_id
     np.testing.assert_array_equal(source.particles.safe_masses, original_masses)
@@ -244,9 +301,7 @@ def test_realization_returns_fresh_plans_and_preserves_prepared_owner():
     assert changed_realization.rebase_id != realization.rebase_id
     assert changed_realization.realization_id != realization.realization_id
 
-    changed_particles = changed_particle_plan.prepare(
-        numeric_version="realized-numerics"
-    )
+    changed_particles = changed_particle_plan.prepare(numeric_version="realized-numerics")
     changed_prepared = changed_rigid_plan.prepare(changed_particles)
     assert changed_prepared.prepared_id != source.prepared_id
     assert changed_prepared.particles.prepared_id != source.particles.prepared_id
@@ -313,10 +368,7 @@ def test_reference_rebase_preserves_spatial_kinetic_energy_and_attached_points()
         mass * jnp.sum(old_reference.velocity * old_reference.velocity, axis=-1)
     )
     old_origin_energy += jnp.sum(
-        mass
-        * jnp.sum(
-            old_reference.velocity * jnp.cross(angular, world_offset), axis=-1
-        )
+        mass * jnp.sum(old_reference.velocity * jnp.cross(angular, world_offset), axis=-1)
     )
     world_origin_inertia = (
         rotation @ parameters.inertia_body_origin @ jnp.swapaxes(rotation, -1, -2)
@@ -324,14 +376,10 @@ def test_reference_rebase_preserves_spatial_kinetic_energy_and_attached_points()
     old_origin_energy += 0.5 * jnp.sum(
         angular * (world_origin_inertia @ angular[..., None])[..., 0]
     )
-    world_com_inertia = (
-        rotation @ parameters.inertia_com @ jnp.swapaxes(rotation, -1, -2)
-    )
+    world_com_inertia = rotation @ parameters.inertia_com @ jnp.swapaxes(rotation, -1, -2)
     com_energy = 0.5 * jnp.sum(
         mass * jnp.sum(rebased.velocity * rebased.velocity, axis=-1)
-    ) + 0.5 * jnp.sum(
-        angular * (world_com_inertia @ angular[..., None])[..., 0]
-    )
+    ) + 0.5 * jnp.sum(angular * (world_com_inertia @ angular[..., None])[..., 0])
     np.testing.assert_allclose(com_energy, old_origin_energy, rtol=1.0e-6)
 
     other_coordinates = parameterization.coordinates(

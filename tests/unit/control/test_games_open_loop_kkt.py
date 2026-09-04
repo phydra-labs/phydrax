@@ -148,6 +148,90 @@ def _zero_terminal(time, state, args):
     return 0.0
 
 
+def _problem_with_state_layout(state_layout, initial_state, problem_id):
+    partition = PlayerControlPartition(("one",), (1,))
+    input_layout = phx.dynamics.InputLayout((1,), roles="control")
+
+    def transition(context, state, control, args):
+        del context, control, args
+        return state
+
+    def stage_cost(context, state, control, args):
+        del context, state, args
+        return 0.5 * control[0] ** 2
+
+    system = phx.dynamics.DiscreteSystem(
+        transition,
+        state_layout=state_layout,
+        input_layout=input_layout,
+        system_id=f"{problem_id}:dynamics",
+    )
+    return NonlinearOpenLoopGameProblem(
+        phx.control.DiscreteControlDynamics(system),
+        phx.dynamics.TimeGrid(
+            jnp.asarray([0.0, 1.0]),
+            time_id=f"{problem_id}:time",
+        ),
+        initial_state,
+        partition,
+        stage_costs=(stage_cost,),
+        terminal_costs=(_zero_terminal,),
+        problem_id=problem_id,
+    )
+
+
+def test_prepare_rejects_nontrivial_quaternion_geometry_before_game_solve():
+    local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
+    state_layout = phx.dynamics.StateLayout(
+        (7,),
+        geometry=phx.metrix.QuaternionPoseStateGeometry(),
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:open-loop-game:quaternion-pose",
+    )
+    problem = _problem_with_state_layout(
+        state_layout,
+        jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7]),
+        "open-loop-game-quaternion-rejection",
+    )
+    plan = plan_open_loop_game_kkt(problem)
+
+    with pytest.raises(
+        ValueError,
+        match="storage-coordinate trajectories require trivial Euclidean geometry",
+    ) as error:
+        prepare_open_loop_game_kkt(plan, problem, jnp.zeros((1, 1)))
+
+    message = str(error.value)
+    assert "trivial=False" in message
+    assert "point_size=7, local_size=6, tangent_size=6" in message
+
+
+def test_prepare_rejects_unequal_euclidean_state_spaces_before_game_solve():
+    state_layout = phx.dynamics.StateLayout(
+        (2,),
+        local_space=phx.linalg.ArraySpace((1,), dtype=jnp.float32),
+        tangent_space=phx.linalg.ArraySpace((2,), dtype=jnp.float32),
+        layout_id="test:open-loop-game:unequal-euclidean-spaces",
+    )
+    problem = _problem_with_state_layout(
+        state_layout,
+        jnp.zeros((2,)),
+        "open-loop-game-unequal-space-rejection",
+    )
+    plan = plan_open_loop_game_kkt(problem)
+
+    with pytest.raises(
+        ValueError,
+        match="equal point/local/tangent sizes",
+    ) as error:
+        prepare_open_loop_game_kkt(plan, problem, jnp.zeros((1, 1)))
+
+    message = str(error.value)
+    assert "trivial=True" in message
+    assert "point_size=2, local_size=1, tangent_size=2" in message
+
+
 def test_one_player_active_inequality_has_original_private_kkt_evidence():
     partition = PlayerControlPartition(("one",), (1,))
     block = _path_block(

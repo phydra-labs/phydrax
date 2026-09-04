@@ -42,9 +42,23 @@ class CrossDiscretizationContactResult(StrictModule):
     route_transition: ContactRouteStateTransition
     closure: ContactClosureEvaluation
     assembly: SmoothContactAssembly
-    generalized_forces: tuple[PyTree[Array], ...]
+    generalized_efforts: tuple[PyTree[Array], ...]
     successful: Array
     scene_id: str = eqx.field(static=True)
+
+    @property
+    def previous_state(self) -> ContactRouteState:
+        return self.route_transition.previous
+
+    @property
+    def candidate_state(self) -> ContactRouteState:
+        return self.closure.candidate_state
+
+    def commit(self, /) -> ContactRouteState:
+        return self.candidate_state
+
+    def rollback(self, /) -> ContactRouteState:
+        return self.previous_state
 
 
 def evaluate_cross_discretization_contact(
@@ -60,6 +74,7 @@ def evaluate_cross_discretization_contact(
     *,
     activation_distance: float | None = None,
     driving_jump: ArrayLike | None = None,
+    candidate_epoch: ContactCandidateEpoch | None = None,
 ) -> CrossDiscretizationContactResult:
     if not isinstance(scene, ContactParticipantScene):
         raise TypeError("scene must be ContactParticipantScene.")
@@ -67,7 +82,11 @@ def evaluate_cross_discretization_contact(
         raise TypeError("search must be a concrete contact search plan.")
     positions = scene.positions(states)
     velocities = scene.velocities(states, rates)
-    epoch = search.build(scene, positions)
+    epoch = search.build(scene, positions) if candidate_epoch is None else candidate_epoch
+    if not isinstance(epoch, ContactCandidateEpoch):
+        raise TypeError("candidate_epoch must be ContactCandidateEpoch or None.")
+    if epoch.search_id != search.plan_id:
+        raise ValueError("Fixed candidate epoch belongs to another contact search plan.")
     kinematics = evaluate_contact_kinematics(
         scene,
         epoch,
@@ -85,7 +104,7 @@ def evaluate_cross_discretization_contact(
         driving_jump=driving_jump,
     )
     assembly = assemble_smooth_contact(kinematics, closure, positions)
-    generalized = scene.force_pullback(states, assembly.surface_force)
+    generalized = scene.effort_pullback(states, assembly.surface_force)
     successful = (
         epoch.successful
         & kinematics.evidence.successful

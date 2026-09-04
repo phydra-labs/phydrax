@@ -18,7 +18,7 @@ from ._cone import (
     ContactConeNumericRevision,
     ContactConeProgram,
     ContactConeResult,
-    project_coulomb_cone,
+    project_signorini_coulomb_product,
 )
 from ._mortar import (
     evaluate_mortar_contact,
@@ -40,8 +40,6 @@ class ContactDerivativeEvidence(StrictModule):
     route_mask: Array | None = None
     branch_classification: Array | None = None
     branch_margins: Array | None = None
-
-
 
 
 class ContactClosureGapJVP(StrictModule):
@@ -238,19 +236,14 @@ def contact_cone_solution_jvp(
     tangent_impulse = result.impulse[:, 1:]
     normal_velocity = result.contact_law_velocity[:, 0]
     tangent_velocity = result.contact_law_velocity[:, 1:]
-    tangent_impulse_norm = jnp.sqrt(
-        jnp.sum(tangent_impulse * tangent_impulse, axis=-1)
-    )
+    tangent_impulse_norm = jnp.sqrt(jnp.sum(tangent_impulse * tangent_impulse, axis=-1))
     tangent_velocity_norm = jnp.sqrt(
         jnp.sum(tangent_velocity * tangent_velocity, axis=-1)
     )
-    static_slack = (
-        program.static_friction * normal_impulse - tangent_impulse_norm
-    )
+    static_slack = program.static_friction * normal_impulse - tangent_impulse_norm
     contacting = normal_impulse > certificate_tolerance
-    separating = (
-        (normal_impulse <= certificate_tolerance)
-        & (normal_velocity > certificate_tolerance)
+    separating = (normal_impulse <= certificate_tolerance) & (
+        normal_velocity > certificate_tolerance
     )
     if program.tangent_dimension == 0:
         sticking = contacting
@@ -290,9 +283,8 @@ def contact_cone_solution_jvp(
         ),
     )
     cone_margin = jnp.min(branch_margins, initial=jnp.inf)
-    branch_qualified = (
-        jnp.all((~program.valid) | (branch_classification > 0))
-        & (cone_margin > qualification_tolerance)
+    branch_qualified = jnp.all((~program.valid) | (branch_classification > 0)) & (
+        cone_margin > qualification_tolerance
     )
     if not bool(branch_qualified):
         evidence = ContactDerivativeEvidence(
@@ -335,7 +327,7 @@ def contact_cone_solution_jvp(
             projection_argument,
             jnp.ones_like(projection_argument),
         )
-        sliding_residual = impulse - project_coulomb_cone(
+        sliding_residual = impulse - project_signorini_coulomb_product(
             safe_projection_argument,
             selected_friction,
         )

@@ -84,6 +84,8 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
     vertex_indices: Array
     left_feature_ids: Array
     right_feature_ids: Array
+    left_feature_indices: Array
+    right_feature_indices: Array
     route_keys: Array
     weights: Array
     minimum_separation: Array
@@ -104,6 +106,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         /,
         *,
         capacity: int,
+        feature_indices: ArrayLike | None = None,
         weights: ArrayLike | None = None,
         minimum_separation: ArrayLike | None = None,
         valid: ArrayLike | None = None,
@@ -147,6 +150,17 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         right = right.astype(np.int64, copy=False)
         if np.any(active & ((left < 0) | (right < 0))):
             raise ValueError("Active contact feature IDs must be nonnegative.")
+        if feature_indices is None:
+            local_features = np.stack((left, right), axis=1)
+        else:
+            local_features = np.asarray(feature_indices)
+            if local_features.shape != (count, 2) or not np.issubdtype(
+                local_features.dtype, np.integer
+            ):
+                raise TypeError("feature_indices must be an integer (capacity, 2) array.")
+            local_features = local_features.astype(np.int32, copy=False)
+        if np.any(active[:, None] & (local_features < 0)):
+            raise ValueError("Active local feature indices must be nonnegative.")
         weight = (
             np.ones((count,), dtype=float) if weights is None else np.asarray(weights)
         )
@@ -197,6 +211,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
                 "capacity": count,
                 "indices": array_tree_fingerprint(indices),
                 "features": array_tree_fingerprint((left, right)),
+                "feature_indices": array_tree_fingerprint(local_features),
                 "keys": array_tree_fingerprint(keys),
                 "valid": array_tree_fingerprint(active),
             }
@@ -208,6 +223,8 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         self.vertex_indices = jnp.asarray(indices, dtype=jnp.int32)
         self.left_feature_ids = jnp.asarray(left, dtype=jnp.int64)
         self.right_feature_ids = jnp.asarray(right, dtype=jnp.int64)
+        self.left_feature_indices = jnp.asarray(local_features[:, 0], dtype=jnp.int32)
+        self.right_feature_indices = jnp.asarray(local_features[:, 1], dtype=jnp.int32)
         self.route_keys = jnp.asarray(keys, dtype=jnp.int64)
         self.weights = jnp.asarray(weight, dtype=dtype)
         self.minimum_separation = jnp.asarray(separation, dtype=dtype)
@@ -237,6 +254,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
             capacity=count,
             weights=np.zeros((count,), dtype=np.dtype(dtype)),
             minimum_separation=np.zeros((count,), dtype=np.dtype(dtype)),
+            feature_indices=np.zeros((count, 2), dtype=np.int32),
             valid=np.zeros((count,), dtype=bool),
         )
 

@@ -22,11 +22,11 @@ def _robot_plan():
     return phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0,), dtype=jnp.int64),
         ambient_dimension=2,
-        allow_isolated_vertices=True,
+        participant_ids=0,
+        body_ids=0,
+        material_ids=0,
         pair_policy=phx.discretization.ContactPairPolicy(
-            1,
-            body_ids=jnp.asarray((0,), dtype=jnp.int64),
-            material_ids=jnp.zeros((1,), dtype=jnp.int64),
+            1, allowed_participant_pairs=jnp.asarray(((0, 1),), dtype=jnp.int64)
         ),
     )
 
@@ -36,11 +36,12 @@ def _ground_plan():
         jnp.asarray((1, 2), dtype=jnp.int64),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
+        participant_ids=1,
+        body_ids=1,
+        material_ids=0,
+        static_mask=True,
         pair_policy=phx.discretization.ContactPairPolicy(
-            2,
-            body_ids=jnp.ones((2,), dtype=jnp.int64),
-            material_ids=jnp.zeros((2,), dtype=jnp.int64),
-            static_mask=jnp.ones((2,), dtype=bool),
+            2, allowed_participant_pairs=jnp.asarray(((0, 1),), dtype=jnp.int64)
         ),
     )
 
@@ -51,21 +52,17 @@ def _articulated_case():
     plan = _robot_plan()
 
     def positions(configuration):
-        return jnp.stack(
-            (jnp.asarray(0.0, dtype=configuration.dtype), configuration[0])
-        )[None, :]
+        return jnp.stack((jnp.asarray(0.0, dtype=configuration.dtype), configuration[0]))[
+            None, :
+        ]
 
     def velocities(configuration, velocity):
         del configuration
-        return jnp.stack(
-            (jnp.asarray(0.0, dtype=velocity.dtype), velocity[0])
-        )[None, :]
+        return jnp.stack((jnp.asarray(0.0, dtype=velocity.dtype), velocity[0]))[None, :]
 
-    def force_pullback(configuration, surface_force):
+    def effort_pullback(configuration, surface_effort):
         del configuration
-        return jnp.asarray(
-            (surface_force[0, 1], 0.0), dtype=surface_force.dtype
-        )
+        return jnp.asarray((surface_effort[0, 1], 0.0), dtype=surface_effort.dtype)
 
     participant = phx.applications.contact.make_articulated_contact_participant(
         plan,
@@ -73,16 +70,15 @@ def _articulated_case():
         positions,
         tangent_space=tangent_space,
         velocity_action=velocities,
-        pullback_action=force_pullback,
+        effort_pullback_action=effort_pullback,
         participant_id="articulated-test-robot",
     )
     ground_space = phx.linalg.ArraySpace((0,), dtype=np.float64)
     ground = phx.discretization.FunctionContactParticipant(
         _ground_plan(),
         ground_space,
-        lambda state: jnp.asarray(
-            ((-1.0, 0.0), (1.0, 0.0)), dtype=state.dtype
-        ),
+        lambda state: jnp.asarray(((-1.0, 0.0), (1.0, 0.0)), dtype=state.dtype),
+        tangent_space=ground_space,
         participant_id="articulated-test-ground",
     )
     configuration = jnp.asarray((0.05,), dtype=jnp.float64)
@@ -117,7 +113,7 @@ def _articulated_case():
     )
     inverse_mass = phx.linalg.DenseLinearOperator(
         jnp.asarray(((0.5, 0.0), (0.0, 0.0)), dtype=jnp.float64),
-        source=tangent_space,
+        source=phx.linalg.DualSpace(tangent_space),
         target=tangent_space,
     )
     return (
@@ -130,30 +126,35 @@ def _articulated_case():
     )
 
 
-def test_function_participant_preserves_legacy_space_and_requires_distinct_actions():
+def test_function_participant_uses_explicit_equal_spaces_and_true_efforts():
     plan = _robot_plan()
-    legacy_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
+    space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
 
     def identity_positions(configuration):
         return configuration
 
-    legacy = phx.discretization.FunctionContactParticipant(
-        plan, legacy_space, identity_positions, participant_id="legacy-participant-test"
+    participant = phx.discretization.FunctionContactParticipant(
+        plan,
+        space,
+        identity_positions,
+        tangent_space=space,
+        participant_id="equal-space-participant-test",
     )
     state = jnp.asarray(((1.0, 2.0),), dtype=jnp.float64)
     rate = jnp.asarray(((0.25, -0.5),), dtype=jnp.float64)
-    force = jnp.asarray(((3.0, -2.0),), dtype=jnp.float64)
+    effort = jnp.asarray(((3.0, -2.0),), dtype=jnp.float64)
 
-    assert legacy.tangent_space.compatible(legacy.source_space)
-    np.testing.assert_allclose(legacy.velocities(state, rate), rate)
-    np.testing.assert_allclose(legacy.force_pullback(state, force), force)
-    assert bool(legacy.duality_evidence(state, rate, force).valid)
+    assert participant.tangent_space.compatible(participant.source_space)
+    np.testing.assert_allclose(participant.velocities(state, rate), rate)
+    np.testing.assert_allclose(participant.effort_pullback(state, effort), effort)
+    assert participant.effort_space.compatible(phx.linalg.DualSpace(space))
+    assert bool(participant.duality_evidence(state, rate, effort).valid)
 
     distinct = phx.linalg.ArraySpace((3,), dtype=np.float64)
     with pytest.raises(ValueError, match="Distinct configuration and tangent spaces"):
         phx.discretization.FunctionContactParticipant(
             plan,
-            legacy_space,
+            space,
             identity_positions,
             tangent_space=distinct,
         )
@@ -162,21 +163,19 @@ def test_function_participant_preserves_legacy_space_and_requires_distinct_actio
 def test_distinct_configuration_and_tangent_spaces_validate_velocity_and_effort():
     participant, configuration, velocity, _, _, _ = _articulated_case()
     world_velocity = participant.velocities(configuration, velocity)
-    surface_force = jnp.asarray(((0.0, 2.0),), dtype=jnp.float64)
-    evidence = participant.duality_evidence(
-        configuration, velocity, surface_force
-    )
+    surface_effort = jnp.asarray(((0.0, 2.0),), dtype=jnp.float64)
+    evidence = participant.duality_evidence(configuration, velocity, surface_effort)
 
     assert participant.source_space.size == 1
     assert participant.tangent_space.size == 2
     assert world_velocity.shape == (1, 2)
-    assert participant.force_pullback(configuration, surface_force).shape == (2,)
+    assert participant.effort_pullback(configuration, surface_effort).shape == (2,)
     assert bool(evidence.valid)
     with pytest.raises(ValueError, match="Vector must have shape"):
         participant.velocities(configuration, jnp.zeros((1,), dtype=jnp.float64))
 
 
-def test_delassus_composition_matches_dense_g_minv_g_adjoint():
+def test_delassus_composition_matches_dense_g_minv_g_dual_transpose():
     participant, configuration, _, kinematics, _, inverse_mass = _articulated_case()
     velocity_operator = build_contact_velocity_operator(
         participant, configuration, kinematics
@@ -384,9 +383,7 @@ def test_stale_cone_numeric_revision_cannot_apply():
         prepared.program,
         2.0 * prepared.program.effective_mass,
     )
-    changed_prepared = eqx.tree_at(
-        lambda value: value.program, prepared, changed_program
-    )
+    changed_prepared = eqx.tree_at(lambda value: value.program, prepared, changed_program)
     result = apply_articulated_contact_impulse(changed_prepared, cone_result)
 
     assert not bool(result.evidence.numeric_revision_matches)
@@ -406,9 +403,7 @@ def _single_contact_program(
 ):
     return phx.applications.contact.ContactConeProgram(
         jnp.asarray(((-1.0, tangential_velocity),), dtype=jnp.float64),
-        jnp.asarray(
-            ((effective_normal, 0.0), (0.0, 1.0)), dtype=jnp.float64
-        ),
+        jnp.asarray(((effective_normal, 0.0), (0.0, 1.0)), dtype=jnp.float64),
         jnp.zeros((2,), dtype=jnp.float64),
         jnp.asarray((dynamic_friction,), dtype=jnp.float64),
         jnp.asarray((1,), dtype=jnp.int64),
@@ -422,14 +417,10 @@ def _single_contact_program(
 
 def test_signorini_and_coulomb_evidence_use_one_static_and_sliding_law():
     sticking = phx.applications.contact.solve_contact_cone(
-        _single_contact_program(
-            0.2, static_friction=0.5, dynamic_friction=0.3
-        )
+        _single_contact_program(0.2, static_friction=0.5, dynamic_friction=0.3)
     )
     sliding = phx.applications.contact.solve_contact_cone(
-        _single_contact_program(
-            1.0, static_friction=0.5, dynamic_friction=0.3
-        )
+        _single_contact_program(1.0, static_friction=0.5, dynamic_friction=0.3)
     )
 
     assert bool(sticking.evidence.successful)
@@ -437,9 +428,7 @@ def test_signorini_and_coulomb_evidence_use_one_static_and_sliding_law():
     np.testing.assert_allclose(sticking.impulse, ((1.0, -0.2),), atol=1.0e-8)
     np.testing.assert_allclose(sticking.contact_law_velocity, 0.0, atol=1.0e-8)
     np.testing.assert_allclose(sliding.impulse, ((1.0, -0.3),), atol=1.0e-8)
-    np.testing.assert_allclose(
-        sliding.contact_law_velocity, ((0.0, 0.7),), atol=1.0e-8
-    )
+    np.testing.assert_allclose(sliding.contact_law_velocity, ((0.0, 0.7),), atol=1.0e-8)
     assert sticking.evidence.complementarity_defect <= 1.0e-8
     assert sliding.evidence.complementarity_defect <= 1.0e-8
     assert sticking.evidence.maximum_dissipation_defect <= 1.0e-8
@@ -457,9 +446,7 @@ def test_unequal_mass_frictionless_impact_and_singular_psd_route_are_supported()
             (((1.0 + restitution) * closing_velocity, 0.0),),
             dtype=jnp.float64,
         ),
-        jnp.asarray(
-            ((inverse_effective_mass, 0.0), (0.0, 0.0)), dtype=jnp.float64
-        ),
+        jnp.asarray(((inverse_effective_mass, 0.0), (0.0, 0.0)), dtype=jnp.float64),
         jnp.zeros((2,), dtype=jnp.float64),
         jnp.zeros((1,), dtype=jnp.float64),
         jnp.asarray((1,), dtype=jnp.int64),
@@ -481,26 +468,18 @@ def test_unequal_mass_frictionless_impact_and_singular_psd_route_are_supported()
 
 
 def test_fixed_route_cone_jit_and_vmap_match_eager():
-    program = _single_contact_program(
-        0.2, static_friction=0.5, dynamic_friction=0.3
-    )
+    program = _single_contact_program(0.2, static_friction=0.5, dynamic_friction=0.3)
     eager = phx.applications.contact.solve_contact_cone(program)
     compiled = jax.jit(phx.applications.contact.solve_contact_cone)(program)
-    free_batch = jnp.asarray(
-        (((-1.0, 0.2),), ((-1.0, 1.0),)), dtype=jnp.float64
-    )
+    free_batch = jnp.asarray((((-1.0, 0.2),), ((-1.0, 1.0),)), dtype=jnp.float64)
 
     def solve_free(free_velocity):
-        changed = eqx.tree_at(
-            lambda value: value.free_velocity, program, free_velocity
-        )
+        changed = eqx.tree_at(lambda value: value.free_velocity, program, free_velocity)
         return phx.applications.contact.solve_contact_cone(changed).impulse
 
     mapped = jax.vmap(solve_free)(free_batch)
     eager_mapped = jnp.stack(tuple(solve_free(value) for value in free_batch))
 
     np.testing.assert_allclose(compiled.impulse, eager.impulse, atol=1.0e-10)
-    np.testing.assert_array_equal(
-        compiled.evidence.successful, eager.evidence.successful
-    )
+    np.testing.assert_array_equal(compiled.evidence.successful, eager.evidence.successful)
     np.testing.assert_allclose(mapped, eager_mapped, atol=1.0e-10)

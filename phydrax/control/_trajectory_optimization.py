@@ -5,23 +5,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from math import prod
 from typing import Any, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..dynamics import ContinuousSystem, DifferentialAlgebraicSystem
+from ..dynamics import ContinuousSystem, DifferentialAlgebraicSystem, StateLayout
 from ..linalg import AbstractVectorSpace
+from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 from ._cost import RunningCost, TerminalCost
 from ._problem import _identifier
 
 
 TrajectoryCost: TypeAlias = Callable[["TrajectoryOptimizationView", Any], ArrayLike]
-PathConstraintFunction: TypeAlias = Callable[
-    [Array, Array, Array, Any], ArrayLike
-]
+PathConstraintFunction: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
 TrajectoryConstraintFunction: TypeAlias = Callable[
     ["TrajectoryOptimizationView", Any], ArrayLike
 ]
@@ -70,6 +71,7 @@ class TrajectoryOptimizationView(StrictModule):
     times: Array
     states: Array
     controls: Array
+    state_geometry: AbstractStateGeometry
     case_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
@@ -85,12 +87,20 @@ class TrajectoryOptimizationView(StrictModule):
         case_shape: Sequence[int],
         state_shape: Sequence[int],
         control_shape: Sequence[int],
-        approximation_id: str = "control:direct-collocation:linear-state-held-control",
+        state_geometry: AbstractStateGeometry | None = None,
+        approximation_id: str = "control:direct-collocation:retracted-state-held-control",
     ):
         times_ = _inexact(times)
         cases = _case_shape(case_shape)
         state_event = tuple(int(size) for size in state_shape)
         control_event = tuple(int(size) for size in control_shape)
+        geometry = EuclideanStateGeometry() if state_geometry is None else state_geometry
+        if not isinstance(geometry, AbstractStateGeometry):
+            raise TypeError("state_geometry must be an AbstractStateGeometry or None.")
+        if not geometry.supports_exact_inverse:
+            raise ValueError(
+                "TrajectoryOptimizationView requires exact inverse-retraction geometry."
+            )
         if times_.ndim != 1 or int(times_.size) < 2:
             raise ValueError("Trajectory times must be rank one with at least two nodes.")
         states_ = _inexact(states)
@@ -113,6 +123,7 @@ class TrajectoryOptimizationView(StrictModule):
         self.times = times_
         self.states = states_
         self.controls = controls_
+        self.state_geometry = geometry
         self.case_shape = cases
         self.state_shape = state_event
         self.control_shape = control_event
@@ -145,7 +156,7 @@ class TrajectoryOptimizationView(StrictModule):
         )
 
     def evaluate_state(self, query_times: ArrayLike, /, *, left: bool = True) -> Array:
-        """Piecewise-linear state values with output ``case + query + state``."""
+        """Retraction interpolation with output ``case + query + state``."""
         if not isinstance(left, bool):
             raise TypeError("left must be a bool.")
         query = self._query(query_times)
@@ -158,17 +169,22 @@ class TrajectoryOptimizationView(StrictModule):
         axis = len(self.case_shape)
         lower = jnp.take(self.states, indices, axis=axis)
         upper = jnp.take(self.states, indices + 1, axis=axis)
-        weight_shape = (
-            (1,) * len(self.case_shape)
-            + (int(query.size),)
-            + (1,) * len(self.state_shape)
-        )
-        values = lower + weight.reshape(weight_shape) * (upper - lower)
+        sample_count = (prod(self.case_shape) if self.case_shape else 1) * int(query.size)
+        flat_lower = lower.reshape((sample_count,) + self.state_shape)
+        flat_upper = upper.reshape((sample_count,) + self.state_shape)
+        flat_weight = jnp.broadcast_to(
+            weight,
+            self.case_shape + (int(query.size),),
+        ).reshape((sample_count,))
+
+        def interpolate(base, point, fraction):
+            local = jnp.asarray(self.state_geometry.inverse_retract(base, point))
+            return jnp.asarray(self.state_geometry.retract(base, fraction * local))
+
+        values = jax.vmap(interpolate)(flat_lower, flat_upper, flat_weight)
         return values.reshape(self.case_shape + query.shape + self.state_shape)
 
-    def evaluate_control(
-        self, query_times: ArrayLike, /, *, left: bool = True
-    ) -> Array:
+    def evaluate_control(self, query_times: ArrayLike, /, *, left: bool = True) -> Array:
         """Held interval controls with output ``case + query + control``."""
         if not isinstance(left, bool):
             raise TypeError("left must be a bool.")
@@ -260,6 +276,7 @@ class TrajectoryOptimizationProblem(StrictModule):
     path_constraints: tuple[BoundedPathConstraint, ...]
     trajectory_constraints: tuple[BoundedTrajectoryConstraint, ...]
     parameter_space: AbstractVectorSpace | None
+    state_layout: StateLayout
     args: Any
     case_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -289,10 +306,16 @@ class TrajectoryOptimizationProblem(StrictModule):
                 "DifferentialAlgebraicSystem."
             )
         if isinstance(dynamics, ContinuousSystem):
-            state_shape = dynamics.state_layout.shape
+            state_layout = dynamics.state_layout
+            state_shape = state_layout.shape
             input_layout = dynamics.input_layout
         else:
             state_shape = dynamics.state_shape
+            state_layout = StateLayout(
+                state_shape,
+                geometry=dynamics.state_geometry,
+                layout_id=f"{dynamics.system_id}:state-layout",
+            )
             input_layout = dynamics.input_layout
         if input_layout is None:
             raise ValueError("Trajectory optimization dynamics require explicit inputs.")
@@ -340,6 +363,7 @@ class TrajectoryOptimizationProblem(StrictModule):
         ):
             raise TypeError("parameter_space must be an AbstractVectorSpace or None.")
         self.dynamics = dynamics
+        self.state_layout = state_layout
         self.initial_state = state
         self.running_cost = running_cost
         self.terminal_cost = terminal_cost

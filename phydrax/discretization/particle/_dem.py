@@ -380,19 +380,29 @@ class DEMBodyPropertyUpdateResult(StrictModule):
 
 
 class DEMStateGeometry(AbstractStateGeometry):
-    """Additive geometry on continuous DEM leaves with frozen discrete routes."""
+    """Additive four-space geometry with frozen discrete DEM routes."""
 
     geometry_id: str = eqx.field(static=True)
-    retraction_method: str = "continuous-leaf-addition"
-    trivial: bool = True
-    supports_exact_pullback: bool = True
-    supports_commutator_free: bool = True
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+    supports_exact_inverse: bool = eqx.field(static=True)
+    supports_exact_differential: bool = eqx.field(static=True)
+    supports_transport: bool = eqx.field(static=True)
+    supports_isometric_transport: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(self, dynamics_id: str, /):
         identifier = str(dynamics_id)
         if not identifier:
             raise ValueError("dynamics_id must be nonempty.")
         self.geometry_id = f"state-geometry:dem:{identifier}"
+        self.retraction_method = "continuous-leaf-addition"
+        self.trivial = True
+        self.supports_exact_inverse = True
+        self.supports_exact_differential = True
+        self.supports_transport = True
+        self.supports_isometric_transport = True
+        self.supports_commutator_free = True
 
     def contains(self, state, /):
         return tree_allfinite(state)
@@ -400,31 +410,50 @@ class DEMStateGeometry(AbstractStateGeometry):
     def project_tangent(self, state, vector, /):
         return _continuous_tangent(state, vector)
 
-    def to_local(self, state, tangent, /):
-        return _continuous_tangent(state, tangent)
-
-    def from_local(self, state, local_tangent, /):
-        return _continuous_tangent(state, local_tangent)
-
     def retract(self, state, local_tangent, /):
+        local = _continuous_tangent(state, local_tangent)
         return jax.tree.map(
             lambda base, tangent: base + tangent if eqx.is_inexact_array(base) else base,
             state,
-            local_tangent,
+            local,
         )
 
     def inverse_retract(self, state, point, /):
+        target = _require_frozen_compatible(state, point)
         return jax.tree.map(
-            lambda base, target: (
-                target - base if eqx.is_inexact_array(base) else jnp.zeros_like(base)
+            lambda base, value: (
+                value - base if eqx.is_inexact_array(base) else jnp.zeros_like(base)
             ),
             state,
-            point,
+            target,
         )
 
-    def pullback(self, state, local_tangent, tangent, /):
-        del local_tangent
-        return _continuous_tangent(state, tangent)
+    def retraction_jvp(self, state, local_tangent, local_velocity, /):
+        _continuous_tangent(state, local_tangent)
+        return _continuous_tangent(state, local_velocity)
+
+    def retraction_inverse_jvp(self, state, point, tangent, /):
+        result = _continuous_tangent(point, tangent)
+        return _require_frozen_compatible(state, point, result)
+
+    def retraction_vjp(self, state, local_tangent, cotangent, /):
+        _continuous_tangent(state, local_tangent)
+        return _continuous_tangent(state, cotangent)
+
+    def transport_tangent(self, state, point, tangent, /):
+        result = _continuous_tangent(state, tangent)
+        return _require_frozen_compatible(state, point, result)
+
+    def transport_cotangent_pullback(self, state, point, cotangent, /):
+        result = _continuous_tangent(state, cotangent)
+        return _require_frozen_compatible(state, point, result)
+
+    def cut_locus_margin(self, state, point, /):
+        dtype = next(
+            leaf.dtype for leaf in jax.tree.leaves(state) if eqx.is_inexact_array(leaf)
+        )
+        margin = jnp.asarray(1.0, dtype=dtype)
+        return _require_frozen_compatible(state, point, margin)
 
 
 class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
@@ -974,16 +1003,19 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         args: Any = None,
     ) -> DEMRuntimeState:
         raw_position = jnp.asarray(position)
-        periodic_state = (
-            None
-            if self.periodic_cell is None
-            else self.method.periodic_cell_control.initialize(
+        if self.periodic_cell is None:
+            periodic_state = None
+        else:
+            periodic_control = self.method.periodic_cell_control
+            assert periodic_control is not None
+            periodic_state = periodic_control.initialize(
                 self.periodic_cell, raw_position.dtype
             )
-        )
         initial_position = raw_position
         if periodic_state is not None:
-            initial_position, _ = self.periodic_cell.wrap_with_vectors(
+            periodic_cell = self.periodic_cell
+            assert periodic_cell is not None
+            initial_position, _ = periodic_cell.wrap_with_vectors(
                 raw_position, periodic_state.vectors
             )
         kinematics = self.bodies.kinematics(initial_position, velocity, angular_velocity)
@@ -1431,6 +1463,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                     contact_context,
                     frame_tolerance=self.method.frame_tolerance,
                 )
+            assert multicontact is not None
             correction_successful = multicontact.successful & (
                 correction_residual <= self.method.multicontact.convergence_tolerance
             )
@@ -1647,6 +1680,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 ),
             )
             if barrier_allocation is not None:
+                assert barrier_particles is not None
+                assert barrier_indices is not None
+                assert barrier_minimum_volume is not None
                 barrier_bridge_volume = jnp.concatenate(
                     tuple(
                         response.contact.next_history.cohesion.components[
@@ -2002,7 +2038,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         next_position = state.kinematics.position + step_size * half_velocity
         next_position = jnp.where(mobile, next_position, state.kinematics.position)
         if state.periodic_cell is not None:
-            next_position, _ = self.periodic_cell.wrap_with_vectors(
+            periodic_cell = self.periodic_cell
+            assert periodic_cell is not None
+            next_position, _ = periodic_cell.wrap_with_vectors(
                 next_position, state.periodic_cell.vectors
             )
         staged = DEMRuntimeState(
@@ -2023,8 +2061,10 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         if self.method.periodic_cell_control is not None:
             if evaluation.bulk_stress is None or periodic_state is None:
                 raise RuntimeError("Prepared periodic DEM state lacks bulk stress.")
+            periodic_cell = self.periodic_cell
+            assert periodic_cell is not None
             cell_update = self.method.periodic_cell_control.update(
-                self.periodic_cell,
+                periodic_cell,
                 periodic_state,
                 next_position,
                 half_velocity,
@@ -2396,7 +2436,36 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
 
 
+def _matching_tree_leaves(reference, value, name, /):
+    reference_leaves, reference_structure = jax.tree.flatten(reference)
+    value_leaves, value_structure = jax.tree.flatten(value)
+    if reference_structure != value_structure:
+        raise ValueError(f"{name} must preserve the DEM state structure.")
+    for reference_leaf, value_leaf in zip(reference_leaves, value_leaves, strict=True):
+        if jnp.shape(reference_leaf) != jnp.shape(value_leaf):
+            raise ValueError(f"{name} leaf shapes must match the DEM state.")
+    return reference_leaves, value_leaves
+
+
+def _require_frozen_compatible(state, point, value=None, /):
+    state_leaves, point_leaves = _matching_tree_leaves(state, point, "Point")
+    compatible = jnp.asarray(True)
+    for base, target in zip(state_leaves, point_leaves, strict=True):
+        if not eqx.is_inexact_array(base):
+            compatible = compatible & jnp.all(jnp.asarray(base) == jnp.asarray(target))
+    checked = point if value is None else value
+    return jax.tree.map(
+        lambda leaf: eqx.error_if(
+            leaf,
+            ~compatible,
+            "DEM points have incompatible frozen route or topology leaves.",
+        ),
+        checked,
+    )
+
+
 def _continuous_tangent(state, vector, /):
+    _matching_tree_leaves(state, vector, "Tangent")
     return jax.tree.map(
         lambda base, tangent: (
             tangent if eqx.is_inexact_array(base) else jnp.zeros_like(base)

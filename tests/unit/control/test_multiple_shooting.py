@@ -5,6 +5,7 @@
 from typing import Any
 
 import diffrax as dfx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -15,6 +16,86 @@ from tests._control_systems import (
     make_differential_control_dynamics,
     make_discrete_control_dynamics,
 )
+
+
+def test_multiple_shooting_layout_uses_local_pose_coordinates():
+    geometry = phx.metrix.QuaternionPoseStateGeometry()
+    local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
+    state_layout = phx.dynamics.StateLayout(
+        (7,),
+        geometry=geometry,
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:multiple-shooting-pose",
+    )
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    anchors = jnp.stack((pose, pose))
+    equivalent = anchors.at[:, :4].multiply(-1.0)
+    layout = phx.control.MultipleShootingDecisionLayout(
+        1,
+        state_layout,
+        (1,),
+        anchors,
+    )
+
+    decision = layout.pack(equivalent, jnp.zeros((1, 1)))
+    states, controls = layout.unpack(decision)
+
+    assert layout.state_size == 6
+    assert layout.num_state_variables == 12
+    assert decision.shape == (13,)
+    assert controls.shape == (1, 1)
+    assert jnp.allclose(
+        jax.vmap(geometry.inverse_retract)(equivalent, states),
+        0.0,
+    )
+
+
+def test_multiple_shooting_pose_continuity_defect_is_local_and_sign_invariant():
+    geometry = phx.metrix.QuaternionPoseStateGeometry()
+    local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
+    state_layout = phx.dynamics.StateLayout(
+        (7,),
+        geometry=geometry,
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:multiple-shooting-pose-defect",
+    )
+    system = phx.dynamics.DiscreteSystem(
+        lambda context, state, control, args: state,
+        state_layout=state_layout,
+        input_layout=phx.dynamics.InputLayout((1,), roles="control"),
+        system_id="test:multiple-shooting-pose-identity",
+    )
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    equivalent = pose.at[:4].multiply(-1.0)
+    problem = phx.control.ControlProblem(
+        phx.control.DiscreteControlDynamics(system),
+        phx.dynamics.TimeGrid(
+            jnp.asarray([0.0, 1.0]),
+            time_id="test:multiple-shooting-pose-grid",
+        ),
+        pose,
+        problem_id="test:multiple-shooting-pose-problem",
+    )
+
+    linearization = phx.control.linearize_multiple_shooting(
+        problem,
+        jnp.stack((pose, equivalent)),
+        jnp.zeros((1, 1)),
+    )
+
+    assert linearization.boundary_defect.shape == (6,)
+    assert linearization.continuity_defects.shape == (1, 6)
+    assert linearization.equality_jacobian.shape == (12, 13)
+    assert jnp.allclose(linearization.boundary_defect, 0.0)
+    assert jnp.allclose(linearization.continuity_defects, 0.0)
+    identity = jnp.eye(6)
+    np.testing.assert_allclose(linearization.equality_jacobian[:6, :6], identity)
+    np.testing.assert_allclose(linearization.equality_jacobian[6:, :6], -identity)
+    np.testing.assert_allclose(linearization.equality_jacobian[6:, 6:12], identity)
+    np.testing.assert_allclose(linearization.equality_jacobian[6:, 12:], 0.0)
+    assert jnp.all(jnp.isfinite(linearization.equality_jacobian))
 
 
 def _linear_problem(*, num_steps=2, path_constraints=(), terminal_constraints=()):
@@ -77,11 +158,12 @@ def test_linear_subproblem_matches_kkt_oracle_and_exact_derivatives():
         jnp.asarray(
             [
                 [1.0, 0.0, 0.0, 0.0, 0.0],
-                [1.0, -1.0, 0.0, 1.0, 0.0],
-                [0.0, 1.0, -1.0, 0.0, 1.0],
+                [-1.0, 1.0, 0.0, -1.0, 0.0],
+                [0.0, -1.0, 1.0, 0.0, -1.0],
             ]
         ),
     )
+    np.testing.assert_allclose(qp.equality_rhs, -local.equality_residuals)
     assert local.equality_provenance == (
         "boundary:initial:state[0]",
         "continuity:segment[0]:state[0]",
@@ -105,17 +187,33 @@ def test_exact_boundary_continuity_path_and_terminal_defect_accounting():
     def terminal(time, state, args):
         return state[0] - 0.2
 
-    problem = _linear_problem(path_constraints=(path,), terminal_constraints=(terminal,))
+    problem = _linear_problem(
+        path_constraints=(path,),
+        terminal_constraints=(terminal,),
+    )
     states = jnp.asarray([[0.2], [0.9], [-0.1]])
     controls = jnp.asarray([[0.3], [-0.2]])
     local = phx.control.linearize_multiple_shooting(problem, states, controls)
 
     np.testing.assert_allclose(local.boundary_defect, jnp.asarray([0.2]))
-    np.testing.assert_allclose(local.continuity_defects, jnp.asarray([[-0.4], [0.8]]))
+    np.testing.assert_allclose(
+        local.continuity_defects,
+        jnp.asarray([[0.4], [-0.8]]),
+    )
     np.testing.assert_allclose(local.path_residuals, jnp.asarray([[0.4], [0.1]]))
     np.testing.assert_allclose(local.terminal_residuals, jnp.asarray([-0.3]))
-    np.testing.assert_allclose(local.equality_residuals, jnp.asarray([0.2, -0.4, 0.8]))
-    np.testing.assert_allclose(local.inequality_residuals, jnp.asarray([0.4, 0.1, -0.3]))
+    np.testing.assert_allclose(
+        local.equality_residuals,
+        jnp.asarray([0.2, 0.4, -0.8]),
+    )
+    np.testing.assert_allclose(
+        local.quadratic_program.equality_rhs,
+        -local.equality_residuals,
+    )
+    np.testing.assert_allclose(
+        local.inequality_residuals,
+        jnp.asarray([0.4, 0.1, -0.3]),
+    )
     assert local.inequality_provenance == (
         "path:segment[0]:constraint[0]",
         "path:segment[1]:constraint[0]",
@@ -168,6 +266,16 @@ def test_multiple_shooting_rejects_explicit_finite_rollback_segments():
     assert result.status == phx.control.MULTIPLE_SHOOTING_INTEGRATION_FAILED
     assert result.last_qp_result is None
     assert not bool(result.valid)
+    evidence = result.trajectory.transition_evidence
+    assert evidence is not None
+    np.testing.assert_allclose(evidence.candidate_states, jnp.asarray([[103.0]]))
+    np.testing.assert_allclose(evidence.accepted_states, jnp.asarray([[2.0]]))
+    np.testing.assert_array_equal(evidence.attempted, jnp.asarray([True]))
+    np.testing.assert_array_equal(evidence.successful, jnp.asarray([False]))
+    np.testing.assert_array_equal(
+        evidence.status,
+        jnp.asarray([failure_status], dtype=jnp.int32),
+    )
 
 
 def test_nonlinear_constrained_problem_converges_without_projection_or_repair():

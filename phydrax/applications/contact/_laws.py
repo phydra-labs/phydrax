@@ -13,7 +13,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._state import CONTACT_OPEN, CONTACT_SLIP, CONTACT_STICK
+from ._route_state import ContactRouteMode
 
 
 def _positive_scalar(value: ArrayLike, name: str) -> Array:
@@ -343,8 +343,12 @@ class CoulombContactLaw(StrictModule, NonTrainableState):
         )
         mode = jnp.where(
             open_,
-            CONTACT_OPEN,
-            jnp.where(stick, CONTACT_STICK, CONTACT_SLIP),
+            int(ContactRouteMode.OPEN),
+            jnp.where(
+                stick,
+                int(ContactRouteMode.STICK),
+                int(ContactRouteMode.SLIP),
+            ),
         ).astype(jnp.int32)
         return CoulombContactResponse(
             tangential_traction=traction,

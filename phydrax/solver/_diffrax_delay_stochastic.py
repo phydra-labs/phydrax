@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..stochastic._wiener import WienerRealization
 from ._delay import (
+    _invalid_geometry_tangent,
     ConstantDelay,
     DelayDifferentialProblem,
     DelayValues,
@@ -60,7 +61,14 @@ from ._diffrax_delay_backend import (
     _RetardedSolverState,
 )
 from ._diffrax_state_packing import _PreparedDiffraxStateAdapter
-from ._geometric import AbstractGeometricSolver, SRKMK
+from ._geometric import (
+    _local_velocity,
+    _physical_tangent,
+    _term_vector_field,
+    AbstractGeometricSolver,
+    GeometricODETerm,
+    SRKMK,
+)
 from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
 
@@ -89,6 +97,7 @@ class _FrozenDelayDiffusion(eqx.Module):
     path_sign: Array
     geometry: Any
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
     state_adapter: _PreparedDiffraxStateAdapter
 
     def __call__(self, state: Array, /) -> Array:
@@ -101,36 +110,37 @@ class _FrozenDelayDiffusion(eqx.Module):
             value = jnp.asarray(
                 term.coefficient(self.time, public_state, self.memory, args)
             )
-            expected = self.state_shape + term.noise_shape
+            expected = self.tangent_shape + term.noise_shape
             if tuple(value.shape) != expected:
                 raise ValueError(
                     f"DelayWienerTerm {term.name!r} changed its declared coefficient "
-                    f"shape; expected {expected}, got {value.shape}."
+                    f"shape; expected tangent-plus-noise {expected}, got {value.shape}."
                 )
-            columns.append(value.reshape(self.state_shape + (term.noise_size,)))
+            columns.append(value.reshape(self.tangent_shape + (term.noise_size,)))
         coefficient = self.validation.apply(
             self.path_sign * jnp.concatenate(columns, axis=-1)
         )
         if self.geometry is not None:
-            projected = jax.vmap(
-                lambda column: self.geometry.project_tangent(public_state, column),
+            invalid = jax.vmap(
+                lambda column: _invalid_geometry_tangent(
+                    self.geometry,
+                    public_state,
+                    column,
+                    self.tangent_shape,
+                ),
                 in_axes=-1,
-                out_axes=-1,
             )(coefficient)
-            scale = jnp.maximum(
-                1.0,
-                jnp.maximum(jnp.max(jnp.abs(coefficient)), jnp.max(jnp.abs(projected))),
-            )
-            tolerance = 256.0 * jnp.finfo(coefficient.dtype).eps * scale
             coefficient = eqx.error_if(
                 coefficient,
-                ~jnp.all(jnp.isfinite(coefficient))
-                | ~jnp.all(jnp.isfinite(projected))
-                | jnp.any(jnp.abs(coefficient - projected) > tolerance),
+                jnp.any(invalid),
                 "Geometric delay diffusion must be tangent-compatible with "
                 "state_geometry.",
             )
-        return self.state_adapter.pack_diffusion(coefficient, (coefficient.shape[-1],))
+        return self.state_adapter.pack_diffusion(
+            coefficient,
+            (coefficient.shape[-1],),
+            output_shape=self.tangent_shape,
+        )
 
 
 class _DelayDiffusionVectorField(eqx.Module):
@@ -157,6 +167,7 @@ class _DelayDiffusionVectorField(eqx.Module):
             path_sign=self.path_sign,
             state_adapter=self.state_adapter,
             geometry=self.context.geometry,
+            tangent_shape=self.context.tangent_shape,
             state_shape=self.state_shape,
         )
 
@@ -224,28 +235,48 @@ class _SRKMKPathConsistentDelayInterpolation(_PathConsistentDelayInterpolation):
         increment = jnp.asarray(
             self.brownian.evaluate(self.t0, time, left=left, use_levy=False)
         )
-        retraction = self.geometry.local_retraction(self.y0)
-        zero = jnp.zeros_like(self.y0)
-        drift_local = retraction.pullback(
-            zero,
-            self.geometry.project_tangent(
-                self.y0,
-                (time - self.t0) * self.drift,
-            ),
+        drift_tangent = _physical_tangent(
+            self.geometry,
+            self.y0,
+            (time - self.t0) * self.drift,
+            "SRKMK delay interpolation drift",
         )
-        first_ambient = self._contract(self.diffusion(self.y0), increment)
-        diffusion_local = retraction.pullback(
-            zero,
-            self.geometry.project_tangent(self.y0, first_ambient),
+        drift_local = _local_velocity(
+            self.geometry,
+            self.y0,
+            self.y0,
+            drift_tangent,
         )
-        predictor = retraction.evaluate(diffusion_local)
-        corrected_ambient = self._contract(self.diffusion(predictor), increment)
-        corrected_local = retraction.pullback(
-            diffusion_local,
-            self.geometry.project_tangent(predictor, corrected_ambient),
+        first_tangent = self._contract(self.diffusion(self.y0), increment)
+        first_tangent = _physical_tangent(
+            self.geometry,
+            self.y0,
+            first_tangent,
+            "SRKMK delay interpolation diffusion",
         )
-        interior = retraction.evaluate(
-            drift_local + 0.5 * (diffusion_local + corrected_local)
+        diffusion_local = _local_velocity(
+            self.geometry,
+            self.y0,
+            self.y0,
+            first_tangent,
+        )
+        predictor = self.geometry.retract(self.y0, diffusion_local)
+        corrected_tangent = self._contract(self.diffusion(predictor), increment)
+        corrected_tangent = _physical_tangent(
+            self.geometry,
+            predictor,
+            corrected_tangent,
+            "SRKMK delay interpolation corrected diffusion",
+        )
+        corrected_local = _local_velocity(
+            self.geometry,
+            self.y0,
+            predictor,
+            corrected_tangent,
+        )
+        interior = self.geometry.retract(
+            self.y0,
+            drift_local + 0.5 * (diffusion_local + corrected_local),
         )
         return jnp.where(
             time <= self.t0,
@@ -330,6 +361,8 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     state_adapter: _PreparedDiffraxStateAdapter
 
+    backend_tangent_shape: tuple[int, ...] = eqx.field(static=True)
+
     def __init__(
         self,
         solver_states: _RetardedSolverState,
@@ -359,13 +392,22 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
         self.initial_derivative = (
             None
             if problem.history_derivative is None
-            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+            else _CoordinateDelayDerivative(
+                problem.history_derivative,
+                state_adapter,
+                problem.tangent_shape,
+            )
         )
         self.args = state_adapter.pack_args(problem.args)
         self.initial_time = problem.t0
         self.geometry = None
         self.sample_shape = samples
         self.state_shape = state_adapter.backend_shape
+        packed_zero = state_adapter.pack_tangent(
+            jnp.zeros(problem.tangent_shape, dtype=problem.initial_state.dtype),
+            problem.tangent_shape,
+        )
+        self.backend_tangent_shape = tuple(int(size) for size in packed_zero.shape)
         self.state_adapter = state_adapter
 
     @eqx.filter_jit
@@ -406,6 +448,7 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
                 computed_history=solver_state.history,
                 state_shape=self.state_shape,
                 geometry=self.geometry,
+                derivative_shape=self.backend_tangent_shape,
             )
             return history.values(query, left=left)
 
@@ -495,7 +538,7 @@ class _StochasticRetardedSolver(_RetardedSolver):
             raise TypeError("Certified stochastic delay terms require delayed diffusion.")
         dense_info = {
             "y0": y0,
-            "drift": jnp.asarray(drift_term.vf(t0, y0, args)),
+            "drift": jnp.asarray(_term_vector_field(drift_term, t0, y0, args)),
             "diffusion": vector_field.freeze(t0, y0, args),
             **_brownian_dense_info(control_term.control, self.path_key),
         }
@@ -698,12 +741,14 @@ def _native_stochastic_delay_solution(
     packed_initial = state_adapter.pack_state(
         problem.initial_state, owner="Initial stochastic delay state"
     )
+    packed_derivative = state_adapter.pack_tangent(
+        jnp.zeros(problem.tangent_shape, dtype=problem.initial_state.dtype),
+        problem.tangent_shape,
+        owner="Initial stochastic delay derivative",
+    )
     empty_history = EmptyDelayHistory(
         packed_initial,
-        state_adapter.pack_state(
-            jnp.zeros_like(problem.initial_state),
-            owner="Initial stochastic delay derivative",
-        ),
+        packed_derivative,
     )
     delay_context = _DelayVectorField(
         function=problem.drift,
@@ -711,14 +756,20 @@ def _native_stochastic_delay_solution(
         initial_derivative=(
             None
             if problem.history_derivative is None
-            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+            else _CoordinateDelayDerivative(
+                problem.history_derivative,
+                state_adapter,
+                problem.tangent_shape,
+            )
         ),
         delay_terms=problem.delay_terms,
         initial_time=integration_start,
         state_shape=problem.state_shape,
+        tangent_shape=problem.tangent_shape,
         geometry=problem.state_geometry,
         state_adapter=state_adapter,
         backend_shape=state_adapter.backend_shape,
+        backend_tangent_shape=tuple(int(size) for size in packed_derivative.shape),
         computed_history=empty_history,
     )
     diffusion_field = _DelayDiffusionVectorField(
@@ -728,8 +779,13 @@ def _native_stochastic_delay_solution(
         state_shape=problem.state_shape,
         state_adapter=state_adapter,
     )
+    drift_term = (
+        GeometricODETerm(delay_context)
+        if isinstance(solver, AbstractGeometricSolver)
+        else dfx.ODETerm(delay_context)
+    )
     terms = dfx.MultiTerm(
-        dfx.ODETerm(delay_context),
+        drift_term,
         dfx.ControlTerm(diffusion_field, brownian),
     )
     wrapper_type = (
@@ -968,6 +1024,11 @@ def _solve_diffrax_delay_stochastic(
                 state_adapter,
             )
         else:
+            packed_derivative = state_adapter.pack_tangent(
+                jnp.zeros(problem.tangent_shape, dtype=problem.initial_state.dtype),
+                problem.tangent_shape,
+                owner="Initial stochastic delay derivative",
+            )
             final_time = jnp.asarray(native.ts["final"])[0]
             history = DelayHistoryView(
                 initial_history=_CoordinateDelayHistory(problem.history, state_adapter),
@@ -975,13 +1036,16 @@ def _solve_diffrax_delay_stochastic(
                     None
                     if problem.history_derivative is None
                     else _CoordinateDelayDerivative(
-                        problem.history_derivative, state_adapter
+                        problem.history_derivative,
+                        state_adapter,
+                        problem.tangent_shape,
                     )
                 ),
                 args=state_adapter.pack_args(problem.args),
                 initial_time=problem.t0,
                 computed_history=solver_state.history,
                 state_shape=state_adapter.backend_shape,
+                derivative_shape=tuple(int(size) for size in packed_derivative.shape),
                 geometry=None,
             )
             interpolation = DelayDenseInterpolation(
@@ -995,7 +1059,9 @@ def _solve_diffrax_delay_stochastic(
             )
             if state_adapter.active:
                 interpolation = _CoordinateDelayInterpolation(
-                    interpolation, state_adapter
+                    interpolation,
+                    state_adapter,
+                    problem.tangent_shape,
                 )
 
     solver_name = type(selected_solver).__name__

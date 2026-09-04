@@ -627,7 +627,7 @@ class SpecialOrthogonalManifold(AbstractRiemannianManifold):
         value = self._point(point, "SO(n) point")
         step = self._point(tangent_step, "SO(n) tangent step")
         _same_shape(step, value, "SO(n) tangent step")
-        local = self.state_geometry.to_local(value, step)
+        local = _skew(_transpose(value) @ self.project_tangent(value, step))
         return self.state_geometry.retract(value, local)
 
     def transport(
@@ -732,7 +732,8 @@ class AffineInvariantSPDManifold(AbstractGeodesicManifold):
         value = self._point(point, "SPD(n) point")
         step = self._point(tangent_step, "SPD(n) tangent step")
         _same_shape(step, value, "SPD(n) tangent step")
-        local = self.state_geometry.to_local(value, step)
+        factor = _symmetric_square_root(value)
+        local = _symmetric(_inverse_congruence(factor, step))
         return self.state_geometry.retract(value, local)
 
     def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
@@ -743,7 +744,8 @@ class AffineInvariantSPDManifold(AbstractGeodesicManifold):
         target = self._point(destination, "SPD(n) destination")
         _same_shape(target, value, "SPD(n) destination")
         local = self.state_geometry.inverse_retract(value, target)
-        return self.state_geometry.from_local(value, local)
+        factor = _symmetric_square_root(value)
+        return _symmetric(factor @ local @ _transpose(factor))
 
     def squared_distance(
         self,

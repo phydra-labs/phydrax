@@ -24,7 +24,7 @@ from ._surface import (
 class ContactProxyEvidence(StrictModule):
     approximation_error: Array
     maximum_error: Array
-    inflated_minimum_separation: Array
+    inflated_contact_extent: Array
     guarantee_level: Array
     finite: Array
     certified: Array
@@ -41,8 +41,8 @@ class PreparedContactProxy(StrictModule, NonTrainableState):
     def positions(self, state, /) -> Array:
         return self.surface.positions(state)
 
-    def pullback(self, force: ArrayLike, /):
-        return self.surface.pullback(force)
+    def effort_pullback(self, surface_effort: ArrayLike, /):
+        return self.surface.effort_pullback(surface_effort)
 
 
 class ContactProxyPlan(StrictModule, NonTrainableState):
@@ -94,7 +94,20 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
         *,
         precision: ContactPrecisionPolicy | None = None,
     ) -> PreparedContactProxy:
-        inflated = self.topology.vertex_minimum_separation + self.approximation_error
+        base_policy = self.topology.feature_policy
+        vertex_increment = np.asarray(self.approximation_error)
+        increments = [vertex_increment]
+        for primitive in (
+            np.asarray(self.topology.edges),
+            np.asarray(self.topology.faces),
+        ):
+            if primitive.size:
+                increments.append(np.max(vertex_increment[primitive], axis=1))
+        proxy_increment = np.concatenate(tuple(increments))
+        inflated_policy = base_policy.with_proxy_error(
+            np.asarray(base_policy.proxy_error) + proxy_increment,
+            provenance_id=base_policy.provenance_id,
+        )
         inflated_topology = CollisionSurfacePlan(
             self.topology.vertex_ids,
             ambient_dimension=self.topology.ambient_dimension,
@@ -102,8 +115,9 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
             faces=self.topology.faces,
             orientable_mask=self.topology.orientable_mask,
             codimensional_mask=self.topology.codimensional_mask,
+            feature_policy=inflated_policy,
             pair_policy=self.topology.pair_policy,
-            minimum_separation=inflated,
+            allow_isolated_vertices=self.topology.allow_isolated_vertices,
         )
         surface = PreparedCollisionSurface(
             inflated_topology,
@@ -122,7 +136,7 @@ class ContactProxyPlan(StrictModule, NonTrainableState):
         evidence = ContactProxyEvidence(
             error,
             maximum,
-            inflated.astype(surface.precision.geometry_dtype),
+            inflated_policy.contact_extent.astype(surface.precision.geometry_dtype),
             jnp.asarray(int(level), dtype=jnp.int32),
             finite,
             jnp.asarray(self.certified),

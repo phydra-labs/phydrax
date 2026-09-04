@@ -62,6 +62,17 @@ from ._halo import (
     pack_contact_halo,
     reduce_contact_halo,
 )
+from ._iga import (
+    CertifiedSplinePatchProxyPlan,
+    IGACommonRefinementEvidence,
+    IGACommonRefinementMortarPlan,
+    IGAMortarDualityEvidence,
+    IGAMortarResidual,
+    IGASweptPatchBounds,
+    IGATraceProjection,
+    IGATraceProjectionEvidence,
+    PreparedIGASplinePatchProxy,
+)
 from ._implicit_geometry import (
     AbstractImplicitContactGeometry,
     FunctionImplicitContactGeometry,
@@ -133,6 +144,8 @@ from ._stencils import (
     evaluate_contact_stencils,
 )
 from ._surface import (
+    CollisionFeatureKind,
+    CollisionFeaturePolicy,
     CollisionMapEvidence,
     CollisionSurfacePlan,
     ContactPairPolicy,
@@ -158,7 +171,10 @@ __all__ = [
     "CCDStatus",
     "CachedContactSearchPlan",
     "CertifiedAABBCCDPlan",
+    "CertifiedSplinePatchProxyPlan",
     "CollisionMapEvidence",
+    "CollisionFeatureKind",
+    "CollisionFeaturePolicy",
     "ClosedSurfaceCertificate",
     "CompiledCandidateBatch",
     "CompiledContactSearchEvidence",
@@ -183,6 +199,14 @@ __all__ = [
     "HydroelasticPressureFieldState",
     "HydroelasticPressurePatch",
     "PreparedHydroelasticPatchExtraction",
+    "IGACommonRefinementEvidence",
+    "IGACommonRefinementMortarPlan",
+    "IGAMortarDualityEvidence",
+    "IGAMortarResidual",
+    "IGASweptPatchBounds",
+    "IGATraceProjection",
+    "IGATraceProjectionEvidence",
+    "PreparedIGASplinePatchProxy",
     "build_triangle_mortar_interface",
     "certify_closed_oriented_surface",
     "filter_geometric_contacts",

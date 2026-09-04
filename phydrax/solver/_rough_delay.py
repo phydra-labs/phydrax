@@ -48,9 +48,11 @@ RoughDelayDrift: TypeAlias = Callable[[Array, Array, DelayValues, Any], ArrayLik
 
 
 class _ZeroRoughDelayDrift(eqx.Module):
+    zero: Array
+
     def __call__(self, time, state, memory, args):
-        del time, memory, args
-        return jnp.zeros_like(state)
+        del time, state, memory, args
+        return self.zero
 
 
 class RoughDelayDifferentialProblem(StrictModule):
@@ -66,6 +68,8 @@ class RoughDelayDifferentialProblem(StrictModule):
     geometry: AbstractStateGeometry
     state_shape: tuple[int, ...] = eqx.field(static=True)
     driver_dimension: int = eqx.field(static=True)
+    local_shape: tuple[int, ...] = eqx.field(static=True)
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
     has_drift: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
@@ -100,12 +104,9 @@ class RoughDelayDifferentialProblem(StrictModule):
         dimension = int(driver_dimension)
         if dimension <= 0:
             raise ValueError("driver_dimension must be positive.")
-        if drift is None:
-            resolved_drift: RoughDelayDrift = _ZeroRoughDelayDrift()
-        else:
-            if not callable(drift):
-                raise TypeError("drift must be callable or None.")
-            resolved_drift = drift
+        if drift is not None and not callable(drift):
+            raise TypeError("drift must be callable or None.")
+        resolved_drift = drift
         start = jnp.asarray(t0, dtype=float)
         if start.shape != ():
             raise ValueError("t0 must be scalar.")
@@ -122,6 +123,43 @@ class RoughDelayDifferentialProblem(StrictModule):
             state,
             "Rough delay initial state lies outside the state geometry.",
         )
+        if not resolved_geometry.supports_exact_differential:
+            raise ValueError(
+                "Rough delay geometry must provide exact retraction differentials."
+            )
+        if not resolved_geometry.supports_exact_inverse:
+            raise ValueError(
+                "Rough delay history interpolation requires exact "
+                "inverse-retraction capability."
+            )
+        tangent_zero = jnp.asarray(
+            resolved_geometry.project_tangent(state, jnp.zeros_like(state))
+        )
+        tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+        local_zero = jnp.asarray(
+            resolved_geometry.retraction_inverse_jvp(state, state, tangent_zero)
+        )
+        local_shape = tuple(int(size) for size in local_zero.shape)
+        retracted_zero = jnp.asarray(resolved_geometry.retract(state, local_zero))
+        if retracted_zero.shape != state.shape:
+            raise ValueError(
+                "Rough delay geometry retraction must return point shape "
+                f"{state.shape}; got {retracted_zero.shape}."
+            )
+        reconstructed_zero = jnp.asarray(
+            resolved_geometry.retraction_jvp(
+                state,
+                local_zero,
+                jnp.zeros_like(local_zero),
+            )
+        )
+        if reconstructed_zero.shape != tangent_shape:
+            raise ValueError(
+                "Rough delay geometry differential must return physical tangent "
+                f"shape {tangent_shape}; got {reconstructed_zero.shape}."
+            )
+        if resolved_drift is None:
+            resolved_drift = _ZeroRoughDelayDrift(tangent_zero)
         if not resolved_geometry.trivial and any(
             isinstance(term, DistributedDelay) and term.reducer is None for term in terms
         ):
@@ -137,39 +175,44 @@ class RoughDelayDifferentialProblem(StrictModule):
                 None,
                 args,
                 state_shape,
+                tangent_shape,
                 resolved_geometry,
             )
             for term in terms
         )
         memory = DelayValues(names, initial_values)
         fields = jnp.asarray(vector_fields(start, state, memory, args))
-        expected_fields = state_shape + (dimension,)
+        expected_fields = tangent_shape + (dimension,)
         if fields.shape != expected_fields:
             raise ValueError(
-                f"vector_fields must return shape {expected_fields}; got {fields.shape}."
+                f"vector_fields must return physical tangent shape "
+                f"{expected_fields}; got {fields.shape}."
             )
-        field_columns = jnp.moveaxis(fields, -1, 0)
         invalid_fields = jax.vmap(
             lambda column: _invalid_geometry_tangent(
                 resolved_geometry,
                 state,
                 column,
-                state_shape,
-            )
-        )(field_columns)
+                tangent_shape,
+            ),
+            in_axes=-1,
+        )(fields)
         fields = eqx.error_if(
             fields,
             jnp.any(invalid_fields),
-            "Rough delay vector fields must be tangent-compatible with geometry.",
+            "Rough delay vector fields must be physical tangents.",
         )
         drift_value = jnp.asarray(resolved_drift(start, state, memory, args))
-        if drift_value.shape != state_shape:
-            raise ValueError("drift must preserve the rough delay state shape.")
+        if drift_value.shape != tangent_shape:
+            raise ValueError(
+                f"drift must return physical tangent shape {tangent_shape}; "
+                f"got {drift_value.shape}."
+            )
         drift_value = _validated_geometry_tangent(
             resolved_geometry,
             state,
             drift_value,
-            state_shape,
+            tangent_shape,
             "Rough delay drift must be tangent-compatible with geometry.",
         )
         identifier = str(problem_id)
@@ -184,6 +227,8 @@ class RoughDelayDifferentialProblem(StrictModule):
         self.args = args
         self.geometry = resolved_geometry
         self.state_shape = state_shape
+        self.local_shape = local_shape
+        self.tangent_shape = tangent_shape
         self.driver_dimension = dimension
         self.has_drift = drift is not None
         self.problem_id = identifier
@@ -309,9 +354,15 @@ def _rough_delay_memory(
             value = history.value(time - term.value(time, state, problem.args))
         else:
             raise TypeError(f"Unsupported rough delay term {type(term).__name__}.")
-        if value.shape != problem.state_shape:
+        expected_shape = (
+            problem.tangent_shape
+            if isinstance(term, FunctionalDelay) and term.output_kind == "tangent"
+            else problem.state_shape
+        )
+        if value.shape != expected_shape:
             raise ValueError(
-                f"Rough delay term {term.name!r} changed its declared state shape."
+                f"Rough delay term {term.name!r} changed its declared role shape; "
+                f"expected {expected_shape}, got {value.shape}."
             )
         if isinstance(term, DistributedDelay) or (
             isinstance(term, FunctionalDelay) and term.output_kind == "point"
@@ -330,7 +381,7 @@ def _rough_delay_memory(
                 problem.geometry,
                 state,
                 value,
-                problem.state_shape,
+                problem.tangent_shape,
                 f"Rough FunctionalDelay {term.name!r} returned a non-tangent value.",
             )
         values.append(value)
@@ -380,6 +431,14 @@ def _validate_rough_delay_control(
         threshold = "1/2" if minimum_hurst == 0.5 else "1/3"
         raise ValueError(
             f"{solver.solver_name} requires fractional Gaussian Hurst > {threshold}."
+        )
+    if (
+        davie
+        and not (problem.state_shape == problem.local_shape == problem.tangent_shape)
+        and not problem.geometry.supports_transport
+    ):
+        raise ValueError(
+            "Unequal-space Davie rough delay execution requires tangent transport."
         )
     return davie
 
@@ -470,6 +529,12 @@ def _rough_delay_integrate(
             memory = _rough_delay_memory(problem, time, state, history)
             drift = jnp.asarray(problem.drift(time, state, memory, problem.args))
             fields = fields_at(state)
+            if drift.shape != problem.tangent_shape:
+                raise ValueError("Rough delay drift changed its physical tangent shape.")
+            if fields.shape != problem.tangent_shape + (problem.driver_dimension,):
+                raise ValueError(
+                    "Rough delay vector fields changed their physical tangent shape."
+                )
             first_update = jnp.tensordot(
                 fields,
                 first_increment,
@@ -477,17 +542,65 @@ def _rough_delay_integrate(
             )
             if davie:
                 directions = jnp.moveaxis(fields, -1, 0)
-                derivatives = jax.vmap(
-                    lambda direction: jax.jvp(
-                        fields_at,
-                        (state,),
-                        (direction,),
-                    )[1]
-                )(directions)
+                equal_roles = (
+                    problem.state_shape == problem.local_shape == problem.tangent_shape
+                )
+                if equal_roles:
+                    derivatives = jax.vmap(
+                        lambda direction: jax.jvp(
+                            fields_at,
+                            (state,),
+                            (direction,),
+                        )[1]
+                    )(directions)
+                else:
+                    if not problem.geometry.supports_transport:
+                        raise ValueError(
+                            "Unequal-space rough delay Davie correction requires "
+                            "tangent transport."
+                        )
+                    tangent_zero = jnp.zeros(
+                        problem.tangent_shape,
+                        dtype=state.dtype,
+                    )
+                    local_zero = problem.geometry.retraction_inverse_jvp(
+                        state,
+                        state,
+                        tangent_zero,
+                    )
+                    local_directions = jax.vmap(
+                        lambda direction: problem.geometry.retraction_inverse_jvp(
+                            state,
+                            state,
+                            direction,
+                        )
+                    )(directions)
+
+                    def fields_in_base(local):
+                        point = problem.geometry.retract(state, local)
+                        point_fields = fields_at(point)
+                        return jax.vmap(
+                            lambda tangent: problem.geometry.transport_tangent(
+                                point,
+                                state,
+                                tangent,
+                            ),
+                            in_axes=-1,
+                            out_axes=-1,
+                        )(point_fields)
+
+                    derivatives = jax.vmap(
+                        lambda direction: jax.jvp(
+                            fields_in_base,
+                            (local_zero,),
+                            (direction,),
+                        )[1]
+                    )(local_directions)
+                tangent_size = int(np.prod(problem.tangent_shape))
                 flattened = derivatives.reshape(
                     (
                         problem.driver_dimension,
-                        int(state.size),
+                        tangent_size,
                         problem.driver_dimension,
                     )
                 )
@@ -495,8 +608,11 @@ def _rough_delay_integrate(
                     "isj,ij->s",
                     flattened,
                     second_increment,
-                ).reshape(problem.state_shape)
-                delayed_second_update = jnp.zeros_like(state)
+                ).reshape(problem.tangent_shape)
+                delayed_second_update = jnp.zeros(
+                    problem.tangent_shape,
+                    dtype=state.dtype,
+                )
                 for memory_index, term in enumerate(problem.delay_terms):
                     assert isinstance(term, ConstantDelay)
                     delayed_time = time - term.delay
@@ -551,10 +667,28 @@ def _rough_delay_integrate(
                                     )
                                 )
 
+                            if equal_roles:
+                                return jax.jvp(
+                                    fields_with_delayed,
+                                    (memory[memory_index],),
+                                    (direction,),
+                                )[1]
+                            local_zero = problem.geometry.retraction_inverse_jvp(
+                                delayed_state,
+                                delayed_state,
+                                jnp.zeros(problem.tangent_shape, dtype=state.dtype),
+                            )
+                            local_direction = problem.geometry.retraction_inverse_jvp(
+                                delayed_state,
+                                delayed_state,
+                                direction,
+                            )
                             return jax.jvp(
-                                fields_with_delayed,
-                                (memory[memory_index],),
-                                (direction,),
+                                lambda local: fields_with_delayed(
+                                    problem.geometry.retract(delayed_state, local)
+                                ),
+                                (local_zero,),
+                                (local_direction,),
                             )[1]
 
                         delayed_derivatives = jax.vmap(differentiate_delayed)(
@@ -562,7 +696,7 @@ def _rough_delay_integrate(
                         ).reshape(
                             (
                                 problem.driver_dimension,
-                                int(state.size),
+                                tangent_size,
                                 problem.driver_dimension,
                             )
                         )
@@ -575,20 +709,31 @@ def _rough_delay_integrate(
                             "isj,ij->s",
                             delayed_derivatives,
                             delayed_cross_level,
-                        ).reshape(problem.state_shape)
+                        ).reshape(problem.tangent_shape)
 
                     delayed_second_update = delayed_second_update + jax.lax.cond(
                         delayed_time >= problem.t0 - tolerance,
                         delayed_correction,
-                        lambda delayed_step_index: jnp.zeros_like(state),
+                        lambda delayed_step_index: jnp.zeros(
+                            problem.tangent_shape,
+                            dtype=state.dtype,
+                        ),
                         safe_delayed_index,
                     )
                 second_update = current_second_update + delayed_second_update
             else:
-                second_update = jnp.zeros_like(state)
-            ambient_update = step * drift + first_update + second_update
-            tangent = problem.geometry.project_tangent(state, ambient_update)
-            local_update = problem.geometry.to_local(state, tangent)
+                second_update = jnp.zeros(
+                    problem.tangent_shape,
+                    dtype=state.dtype,
+                )
+            tangent = step * drift + first_update + second_update
+            if problem.tangent_shape == problem.state_shape:
+                tangent = problem.geometry.project_tangent(state, tangent)
+            local_update = problem.geometry.retraction_inverse_jvp(
+                state,
+                state,
+                tangent,
+            )
             next_state = problem.geometry.retract(state, local_update)
             next_buffer = buffer.at[index + 1].set(next_state)
             return (next_state, next_buffer), next_state
@@ -675,6 +820,8 @@ def solve_rough_delay(
             "driver_dimension": control.dimension,
             "control_depth": control.depth,
             "state_geometry_id": problem.geometry.geometry_id,
+            "local_shape": problem.local_shape,
+            "tangent_shape": problem.tangent_shape,
             "delay_names": problem.delay_names,
             "delay_term_types": tuple(
                 type(term).__name__ for term in problem.delay_terms

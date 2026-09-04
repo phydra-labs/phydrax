@@ -227,10 +227,14 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
                 right_endpoint = batch.vertex_indices[:, 1]
             elif batch.kind == ContactStencilKind.EDGE_EDGE:
                 left_edge = jnp.clip(
-                    batch.left_feature_ids - edge_offset, 0, self.scene.edge_count - 1
+                    batch.left_feature_indices - edge_offset,
+                    0,
+                    self.scene.edge_count - 1,
                 ).astype(jnp.int32)
                 right_edge = jnp.clip(
-                    batch.right_feature_ids - edge_offset, 0, self.scene.edge_count - 1
+                    batch.right_feature_indices - edge_offset,
+                    0,
+                    self.scene.edge_count - 1,
                 ).astype(jnp.int32)
                 weight = 0.25 * (edge_measure[left_edge] + edge_measure[right_edge])
                 right_endpoint = batch.vertex_indices[:, 2]
@@ -323,20 +327,20 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         energy, gradient = jax.value_and_grad(lambda value: self.energy(value, state))(
             velocity
         )
-        surface_force = -gradient
-        state_force = self.scene.pullback(surface_force)
-        dissipation = -jnp.sum(surface_force * velocity)
-        force_norm = jnp.sqrt(jnp.sum(surface_force * surface_force, axis=-1))
+        surface_effort = -gradient
+        state_force = self.scene.effort_pullback(surface_effort)
+        dissipation = -jnp.sum(surface_effort * velocity)
+        force_norm = jnp.sqrt(jnp.sum(surface_effort * surface_effort, axis=-1))
         finite = (
             jnp.isfinite(energy)
-            & jnp.all(jnp.isfinite(surface_force))
+            & jnp.all(jnp.isfinite(surface_effort))
             & jnp.isfinite(dissipation)
         )
         tolerance = jnp.finfo(velocity.dtype).eps * max(64, 8 * state.valid.size)
         dissipative = dissipation >= -tolerance * jnp.maximum(1.0, jnp.abs(dissipation))
         return ContactFrictionEvaluation(
             energy,
-            surface_force,
+            surface_effort,
             state_force,
             dissipation,
             jnp.max(force_norm, initial=0.0),

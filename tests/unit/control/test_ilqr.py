@@ -20,6 +20,42 @@ from tests._control_systems import (
 )
 
 
+def test_ilqr_policy_feedback_uses_quaternion_pose_local_error():
+    geometry = phx.metrix.QuaternionPoseStateGeometry()
+    local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
+    state_layout = phx.dynamics.StateLayout(
+        (7,),
+        geometry=geometry,
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:ilqr-quaternion-pose",
+    )
+    grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 1.0]), time_id="test:ilqr-quaternion-grid"
+    )
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    policy = phx.control.ILQRPolicy(
+        grid,
+        jnp.stack((pose, pose)),
+        jnp.asarray([[0.3]]),
+        jnp.ones((1, 1, 6)),
+        state_layout=state_layout,
+        control_shape=(1,),
+        policy_id="test:ilqr-quaternion-policy",
+    )
+
+    nominal = policy.evaluate(jnp.empty((0,)), 0.0, state=pose)
+    equivalent = policy.evaluate(
+        jnp.empty((0,)),
+        0.0,
+        state=pose.at[:4].multiply(-1.0),
+    )
+
+    np.testing.assert_allclose(nominal, jnp.asarray([0.3]))
+    np.testing.assert_allclose(equivalent, nominal)
+    assert policy.feedback.shape == (1, 1, 6)
+
+
 def _problem(
     transition,
     times,
@@ -357,7 +393,6 @@ def test_differential_ilqr_requires_selected_flow_and_propagates_failed_integrat
     assert not bool(result.control_result.sampled_loss.valid)
 
 
-
 def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence():
     failure_status = 59
 
@@ -392,6 +427,7 @@ def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence()
     assert evidence is not None
     np.testing.assert_allclose(evidence.candidate_states[0], jnp.asarray([103.0]))
     np.testing.assert_allclose(evidence.accepted_states[0], jnp.asarray([2.0]))
+    np.testing.assert_array_equal(evidence.attempted, jnp.asarray([True, False]))
     assert int(evidence.first_failure_step) == 0
     assert int(evidence.first_failure_status) == failure_status
 

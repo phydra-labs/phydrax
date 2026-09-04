@@ -91,6 +91,8 @@ class WienerTerm(StrictModule):
         state: ArrayLike,
         args: Any = None,
         /,
+        *,
+        output_shape: Sequence[int] | None = None,
     ) -> Array:
         """Evaluate a coefficient in its declared array representation."""
         if self.representation == "operator":
@@ -99,10 +101,15 @@ class WienerTerm(StrictModule):
             )
         time_array = jnp.asarray(time)
         state_array = jnp.asarray(state)
+        value_shape = (
+            tuple(state_array.shape)
+            if output_shape is None
+            else tuple(int(size) for size in output_shape)
+        )
         expected_shape = (
-            tuple(state_array.shape) + self.noise_shape
+            value_shape + self.noise_shape
             if self.representation == "dense"
-            else tuple(state_array.shape)
+            else value_shape
         )
         coefficient = jnp.asarray(self.coefficient(time_array, state_array, args))
         if tuple(coefficient.shape) != expected_shape:
@@ -118,6 +125,8 @@ class WienerTerm(StrictModule):
         state: ArrayLike,
         args: Any = None,
         /,
+        *,
+        output_shape: Sequence[int] | None = None,
     ) -> lx.AbstractLinearOperator:
         """Evaluate and validate one explicitly operator-valued coefficient."""
         if self.representation != "operator":
@@ -138,9 +147,14 @@ class WienerTerm(StrictModule):
             raise ValueError(
                 "Operator Wiener input structure must match the declared noise shape."
             )
-        if tuple(output_structure.shape) != tuple(state_array.shape):
+        expected_output = (
+            tuple(state_array.shape)
+            if output_shape is None
+            else tuple(int(size) for size in output_shape)
+        )
+        if tuple(output_structure.shape) != expected_output:
             raise ValueError(
-                "Operator Wiener output structure must match the complete state shape."
+                "Operator Wiener output structure must match the declared tangent shape."
             )
         return operator
 
@@ -150,6 +164,8 @@ class WienerTerm(StrictModule):
         state: ArrayLike,
         args: Any = None,
         /,
+        *,
+        output_shape: Sequence[int] | None = None,
     ) -> Array:
         """Evaluate a declared dense coefficient as ``(state_size, noise_size)``."""
         if self.representation != "dense":
@@ -158,9 +174,19 @@ class WienerTerm(StrictModule):
                 "use a backend with structured-operator support."
             )
         state_array = jnp.asarray(state)
-        coefficient = self.coefficient_array(time, state_array, args)
-        state_size = prod(state_array.shape) if state_array.shape else 1
-        return coefficient.reshape((state_size, self.noise_size))
+        value_shape = (
+            tuple(state_array.shape)
+            if output_shape is None
+            else tuple(int(size) for size in output_shape)
+        )
+        coefficient = self.coefficient_array(
+            time,
+            state_array,
+            args,
+            output_shape=value_shape,
+        )
+        output_size = prod(value_shape) if value_shape else 1
+        return coefficient.reshape((output_size, self.noise_size))
 
 
 def _noise_identity(terms: tuple[WienerTerm, ...], /) -> str | None:
@@ -248,6 +274,8 @@ class DifferentialProblem(StrictModule):
     interpretation: DifferentialInterpretation = eqx.field(static=True)
     state_geometry_id: str | None = eqx.field(static=True)
     state_geometry: AbstractStateGeometry | None
+    tangent_shape: tuple[int, ...] | None = eqx.field(static=True)
+    local_shape: tuple[int, ...] | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     discretization_bundle: DiscretizationBundle | None
     discretization_bundle_id: str | None = eqx.field(static=True)
@@ -314,6 +342,44 @@ class DifferentialProblem(StrictModule):
                 ~membership,
                 "DifferentialProblem initial_state is outside state_geometry.",
             )
+        point_shape = (
+            None if not state_is_array else tuple(int(size) for size in state.shape)
+        )
+        tangent_shape = point_shape
+        local_shape = point_shape
+        if state_geometry is not None:
+            if not state_geometry.supports_exact_differential:
+                raise ValueError(
+                    "DifferentialProblem state_geometry must provide exact "
+                    "retraction differentials."
+                )
+            tangent_zero = jnp.asarray(
+                state_geometry.project_tangent(state, jnp.zeros_like(state))
+            )
+            tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+            local_zero = jnp.asarray(
+                state_geometry.retraction_inverse_jvp(state, state, tangent_zero)
+            )
+            local_shape = tuple(int(size) for size in local_zero.shape)
+            retracted_zero = jnp.asarray(state_geometry.retract(state, local_zero))
+            if retracted_zero.shape != state.shape:
+                raise ValueError(
+                    "DifferentialProblem state_geometry retraction must return "
+                    f"point shape {state.shape}; got {retracted_zero.shape}."
+                )
+            reconstructed_zero = jnp.asarray(
+                state_geometry.retraction_jvp(
+                    state,
+                    local_zero,
+                    jnp.zeros_like(local_zero),
+                )
+            )
+            if reconstructed_zero.shape != tangent_shape:
+                raise ValueError(
+                    "DifferentialProblem state_geometry differential must return "
+                    f"physical tangent shape {tangent_shape}; "
+                    f"got {reconstructed_zero.shape}."
+                )
         terms = tuple(wiener_terms)
         if any(not isinstance(term, WienerTerm) for term in terms):
             raise TypeError("wiener_terms must contain only WienerTerm objects.")
@@ -329,23 +395,36 @@ class DifferentialProblem(StrictModule):
             term for term in terms if term.representation in ("diagonal", "operator")
         )
         for term in structured:
-            if (
-                not state_is_array
-                or term.representation == "diagonal"
-                and term.noise_shape != tuple(state.shape)
+            if not state_is_array:
+                raise ValueError("Structured Wiener terms require one array state.")
+            assert tangent_shape is not None
+            if term.representation == "diagonal" and (
+                tangent_shape != tuple(state.shape)
+                or term.noise_shape != tuple(state.shape)
             ):
                 raise ValueError(
-                    "Diagonal Wiener terms require one array state with matching "
-                    "state and noise shapes."
+                    "Diagonal Wiener terms require equal point, tangent, and noise "
+                    "shapes."
                 )
 
         offset = 0
         slices: dict[str, tuple[int, int]] = {}
         for term in terms:
+            assert tangent_shape is not None
             if term.representation == "operator":
-                term.coefficient_operator(start, state, args)
+                term.coefficient_operator(
+                    start,
+                    state,
+                    args,
+                    output_shape=tangent_shape,
+                )
             else:
-                term.coefficient_array(start, state, args)
+                term.coefficient_array(
+                    start,
+                    state,
+                    args,
+                    output_shape=tangent_shape,
+                )
             slices[term.name] = (offset, offset + term.noise_size)
             offset += term.noise_size
         noise_layout = (
@@ -379,6 +458,8 @@ class DifferentialProblem(StrictModule):
         self.interpretation = interpretation
         self.state_geometry_id = geometry_id
         self.state_geometry = state_geometry
+        self.tangent_shape = tangent_shape
+        self.local_shape = local_shape
         self.discretization_bundle = discretization_bundle
         self.discretization_bundle_id = bundle_id
         self.problem_id = _problem_identifier(

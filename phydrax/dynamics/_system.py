@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
@@ -27,6 +28,14 @@ def _identifier(value: str, owner: str, /) -> str:
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+
+
+def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
+    if isinstance(predicate, jax_core.Tracer):
+        return eqx.error_if(value, predicate, message)
+    if bool(predicate):
+        raise eqx.EquinoxRuntimeError(message)
+    return value
 
 
 class DiscreteTransitionResult(StrictModule):
@@ -57,6 +66,11 @@ class DiscreteTransitionResult(StrictModule):
             raise ValueError("Discrete transition successful must be scalar.")
         if status_array.shape != ():
             raise ValueError("Discrete transition status must be scalar.")
+        successful_array = _error_if(
+            successful_array,
+            successful_array & (status_array != 0),
+            "A successful discrete transition must have status zero.",
+        )
         self.candidate_state = candidate
         self.accepted_state = accepted
         self.successful = successful_array
@@ -68,6 +82,7 @@ class DiscreteTransitionEvidence(StrictModule):
 
     candidate_states: Array
     accepted_states: Array
+    attempted: Array
     successful: Array
     status: Array
     first_failure_step: Array
@@ -77,12 +92,14 @@ class DiscreteTransitionEvidence(StrictModule):
         self,
         candidate_states: ArrayLike,
         accepted_states: ArrayLike,
+        attempted: ArrayLike,
         successful: ArrayLike,
         status: ArrayLike,
         /,
     ):
         candidates = _inexact(candidate_states)
         accepted = _inexact(accepted_states)
+        attempted_array = jnp.asarray(attempted, dtype=bool)
         successful_array = jnp.asarray(successful, dtype=bool)
         status_array = jnp.asarray(status, dtype=jnp.int32)
         if candidates.shape != accepted.shape:
@@ -90,23 +107,30 @@ class DiscreteTransitionEvidence(StrictModule):
                 "Discrete transition evidence candidate_states and accepted_states "
                 "must have matching shapes."
             )
-        if successful_array.ndim < 1:
+        if attempted_array.ndim < 1:
             raise ValueError(
-                "Discrete transition evidence successful must include a step axis."
+                "Discrete transition evidence attempted must include a step axis."
             )
-        if status_array.shape != successful_array.shape:
+        if successful_array.shape != attempted_array.shape:
             raise ValueError(
-                "Discrete transition evidence status must match successful."
+                "Discrete transition evidence successful must match attempted."
             )
+        if status_array.shape != attempted_array.shape:
+            raise ValueError("Discrete transition evidence status must match attempted.")
         if (
-            candidates.ndim < successful_array.ndim
-            or candidates.shape[: successful_array.ndim] != successful_array.shape
+            candidates.ndim < attempted_array.ndim
+            or candidates.shape[: attempted_array.ndim] != attempted_array.shape
         ):
             raise ValueError(
                 "Discrete transition evidence state leading axes must match "
-                "successful, including its final step axis."
+                "attempted, including its final step axis."
             )
-        failed = ~successful_array
+        successful_array = _error_if(
+            successful_array,
+            jnp.any(successful_array & ((~attempted_array) | (status_array != 0))),
+            "Successful transition evidence must be attempted with status zero.",
+        )
+        failed = attempted_array & ~successful_array
         has_failure = jnp.any(failed, axis=-1)
         first_index = jnp.argmax(failed.astype(jnp.int32), axis=-1).astype(jnp.int32)
         gathered_status = jnp.take_along_axis(
@@ -116,6 +140,7 @@ class DiscreteTransitionEvidence(StrictModule):
         )[..., 0]
         self.candidate_states = candidates
         self.accepted_states = accepted
+        self.attempted = attempted_array
         self.successful = successful_array
         self.status = status_array
         self.first_failure_step = jnp.where(

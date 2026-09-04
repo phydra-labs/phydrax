@@ -101,6 +101,7 @@ class ContactRouteState(StrictModule, NonTrainableState):
 
 
 class ContactRouteStateTransition(StrictModule):
+    previous: ContactRouteState
     candidate: ContactRouteState
     continued: Array
     created: Array
@@ -109,6 +110,12 @@ class ContactRouteStateTransition(StrictModule):
     finite: Array
     successful: Array
     transition_id: str = eqx.field(static=True)
+
+    def commit(self, /) -> ContactRouteState:
+        return self.candidate
+
+    def rollback(self, /) -> ContactRouteState:
+        return self.previous
 
 
 def flatten_contact_routes(epoch: ContactKinematicsEpoch, /) -> tuple[Array, Array]:
@@ -156,6 +163,7 @@ def remap_contact_route_state(
         )
         finite = epoch.evidence.successful
         return ContactRouteStateTransition(
+            previous,
             candidate,
             jnp.asarray(0, dtype=jnp.int32),
             jnp.sum(valid, dtype=jnp.int32),
@@ -229,6 +237,7 @@ def remap_contact_route_state(
     )
     successful = epoch.evidence.successful & finite & ~jnp.any(duplicate)
     return ContactRouteStateTransition(
+        previous,
         candidate,
         continued,
         created,

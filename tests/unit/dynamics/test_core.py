@@ -46,6 +46,70 @@ def test_layouts_distinguish_absent_and_scalar_inputs():
         autonomous(0.0, jnp.asarray(2.0), inputs=jnp.asarray(0.5))
 
 
+def test_state_layout_distinguishes_point_local_tangent_and_dual_spaces():
+    local_space = phx.linalg.ArraySpace(
+        (2,),
+        dtype=np.float64,
+        space_id="state-local:2",
+    )
+    tangent_space = phx.linalg.ArraySpace(
+        (3,),
+        dtype=np.float64,
+        space_id="state-tangent:3",
+    )
+    layout = phx.dynamics.StateLayout(
+        (4,),
+        component_names=("q0", "q1", "q2", "q3"),
+        local_space=local_space,
+        tangent_space=tangent_space,
+        local_component_names=("angle-a", "angle-b"),
+        tangent_component_names=("vx", "vy", "vz"),
+    )
+
+    assert layout.shape == (4,)
+    assert layout.size == 4
+    assert layout.local_size == 2
+    assert layout.tangent_size == 3
+    assert layout.local_component_names == ("angle-a", "angle-b")
+    assert layout.tangent_component_names == ("vx", "vy", "vz")
+    assert layout.local_cotangent_space.primal is local_space
+    assert layout.cotangent_space.primal is tangent_space
+    assert layout.local_cotangent_space.size == 2
+    assert layout.cotangent_space.size == 3
+    assert jnp.array_equal(
+        layout.local_cotangent_space.pair(jnp.array([2.0, -1.0]), jnp.array([3.0, 4.0])),
+        jnp.asarray(2.0),
+    )
+
+    changed_local = phx.dynamics.StateLayout(
+        (4,),
+        component_names=("q0", "q1", "q2", "q3"),
+        local_space=phx.linalg.ArraySpace(
+            (2,),
+            dtype=np.float64,
+            space_id="state-local:other",
+        ),
+        tangent_space=tangent_space,
+        local_component_names=("angle-a", "angle-b"),
+        tangent_component_names=("vx", "vy", "vz"),
+    )
+    assert changed_local.layout_id != layout.layout_id
+
+
+def test_state_layout_equal_space_defaults_preserve_point_metadata():
+    layout = phx.dynamics.StateLayout(
+        (2,),
+        component_names=("position", "velocity"),
+    )
+
+    assert layout.local_space.structure().shape == layout.shape
+    assert layout.tangent_space.structure().shape == layout.shape
+    assert layout.local_size == layout.size
+    assert layout.tangent_size == layout.size
+    assert layout.local_component_names == layout.component_names
+    assert layout.tangent_component_names == layout.component_names
+
+
 def test_discrete_evolution_rollout_and_jacobian_share_one_transition():
     state_layout = phx.dynamics.StateLayout((2,), component_names=("x", "y"))
     matrix = jnp.asarray([[1.1, 0.2], [0.0, 0.9]])
@@ -114,6 +178,31 @@ def test_nonfinite_map_result_is_invalid_without_repair():
     assert bool(jnp.isnan(result.final_state[0]))
 
 
+def test_transition_evidence_ignores_unattempted_slots_and_enforces_success():
+    evidence = phx.dynamics.DiscreteTransitionEvidence(
+        jnp.zeros((3, 1)),
+        jnp.zeros((3, 1)),
+        jnp.asarray([False, True, False]),
+        jnp.asarray([False, False, False]),
+        jnp.asarray([0, 41, 0], dtype=jnp.int32),
+    )
+
+    assert int(evidence.first_failure_step) == 1
+    assert int(evidence.first_failure_status) == 41
+
+    with pytest.raises(
+        eqx.EquinoxRuntimeError,
+        match="attempted with status zero",
+    ):
+        invalid = phx.dynamics.DiscreteTransitionEvidence(
+            jnp.zeros((1, 1)),
+            jnp.zeros((1, 1)),
+            jnp.asarray([False]),
+            jnp.asarray([True]),
+            jnp.asarray([0], dtype=jnp.int32),
+        )
+        jnp.asarray(invalid.successful).block_until_ready()
+
 
 def test_failed_finite_discrete_rollback_invalidates_evolution_and_tangent():
     failure_status = 71
@@ -153,6 +242,10 @@ def test_failed_finite_discrete_rollback_invalidates_evolution_and_tangent():
     np.testing.assert_allclose(evidence.candidate_states[0], jnp.asarray([102.0]))
     np.testing.assert_allclose(evidence.accepted_states[0], jnp.asarray([2.0]))
     assert bool(jnp.all(jnp.isnan(evidence.candidate_states[1:])))
+    np.testing.assert_array_equal(
+        evidence.attempted,
+        jnp.asarray([True, False, False]),
+    )
     assert int(evidence.first_failure_step) == 0
     assert int(evidence.first_failure_status) == failure_status
 

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,12 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import StateLayout
-from ...linalg import (
-    AbstractLinearOperator,
-    ArraySpace,
-    JacobianLinearOperator,
-    prepare_linearization,
-)
+from ...linalg import AbstractLinearOperator, ArraySpace, BlockSpace, DualSpace
 from ._rod_dynamics import (
     evaluate_rod,
     PreparedRod,
@@ -30,6 +26,24 @@ from ._rod_dynamics import (
     RodEvaluation,
     RodState,
 )
+from ._rod_reduced_basis import (
+    prepare_rod_strain_basis,
+    PreparedRodStrainBasis,
+    RodStrainBasisEvidence,
+    RodStrainBasisPlan,
+)
+from ._rod_reduced_kinematics import (
+    lift_configuration,
+    lift_effort_pullback_operator,
+    lift_reduced_rod_state,
+    lift_reduced_rod_velocity,
+    lift_velocity_operator,
+    pullback_reduced_rod_loads,
+    target_native_strains,
+)
+
+
+ReducedRodBasePolicy: TypeAlias = Literal["reference", "fixed"]
 
 
 def _real_array(name: str, value: ArrayLike, rank: int, /) -> np.ndarray:
@@ -46,98 +60,161 @@ def _real_array(name: str, value: ArrayLike, rank: int, /) -> np.ndarray:
 def _planar_rotation_matrix(angle: Array, /) -> Array:
     cosine = jnp.cos(angle)
     sine = jnp.sin(angle)
-    return jnp.stack((cosine, -sine, sine, cosine), axis=-1).reshape(
-        angle.shape + (2, 2)
+    return jnp.stack((cosine, -sine, sine, cosine), axis=-1).reshape(angle.shape + (2, 2))
+
+
+def _quaternion_conjugate(quaternion: Array, /) -> Array:
+    return jnp.concatenate((quaternion[..., :1], -quaternion[..., 1:]), axis=-1)
+
+
+def _quaternion_multiply(left: Array, right: Array, /) -> Array:
+    left_scalar = left[..., :1]
+    right_scalar = right[..., :1]
+    left_vector = left[..., 1:]
+    right_vector = right[..., 1:]
+    scalar = left_scalar * right_scalar - jnp.sum(
+        left_vector * right_vector, axis=-1, keepdims=True
     )
+    vector = (
+        left_scalar * right_vector
+        + right_scalar * left_vector
+        + jnp.cross(left_vector, right_vector)
+    )
+    return jnp.concatenate((scalar, vector), axis=-1)
+
+
+def _quaternion_rotation_matrix(quaternion: Array, /) -> Array:
+    normalized = quaternion / jnp.sqrt(
+        jnp.sum(quaternion * quaternion, axis=-1, keepdims=True)
+    )
+    scalar = normalized[..., 0]
+    x = normalized[..., 1]
+    y = normalized[..., 2]
+    z = normalized[..., 3]
+    return jnp.stack(
+        (
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y - scalar * z),
+            2.0 * (x * z + scalar * y),
+            2.0 * (x * y + scalar * z),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z - scalar * x),
+            2.0 * (x * z - scalar * y),
+            2.0 * (y * z + scalar * x),
+            1.0 - 2.0 * (x * x + y * y),
+        ),
+        axis=-1,
+    ).reshape(normalized.shape[:-1] + (3, 3))
+
+
+def _canonical_unit_quaternion(value: np.ndarray, dtype: np.dtype, /) -> np.ndarray:
+    quaternion = value.astype(dtype, copy=False)
+    norm = float(np.linalg.norm(quaternion))
+    tolerance = 500.0 * np.finfo(dtype).eps
+    if not np.isclose(norm, 1.0, rtol=tolerance, atol=tolerance):
+        raise ValueError("fixed_base_orientation must be a unit quaternion.")
+    quaternion = quaternion / norm
+    nonzero = np.flatnonzero(quaternion != 0.0)
+    if nonzero.size and quaternion[int(nonzero[0])] < 0.0:
+        quaternion = -quaternion
+    quaternion = np.where(quaternion == 0.0, 0.0, quaternion)
+    return quaternion.astype(dtype, copy=False)
+
+
+def _quaternion_angle(quaternion: Array, /) -> Array:
+    normalized = quaternion / jnp.sqrt(jnp.sum(quaternion * quaternion))
+    canonical = jnp.where(normalized[0] < 0.0, -normalized, normalized)
+    vector_norm = jnp.sqrt(jnp.sum(canonical[1:] * canonical[1:]))
+    return 2.0 * jnp.arctan2(vector_norm, jnp.abs(canonical[0]))
 
 
 class ReducedRodPlan(StrictModule, NonTrainableState):
-    """Finite planar strain basis for one prepared native Cosserat rod.
+    """Dimension-generic fixed-base reduction over a continuous strain basis.
 
-    The final axis of each basis is the reduced-coordinate axis. Stretch/shear
-    basis values have native shape ``(segments, 2, coordinates)`` and
-    bend/twist basis values have shape ``(junctions, 1, coordinates)``.
-    Reduced coefficients always measure strain from the native rod rest state;
-    ``reference_coefficients`` declares the default prepared state without
-    changing that zero-strain origin.
+    ``base_policy='reference'`` fixes the first native rod frame at its native
+    reference pose. ``base_policy='fixed'`` fixes it at the explicitly supplied
+    pose. Floating-base reduction is intentionally outside this contract.
     """
 
-    stretch_shear_basis: Array
-    bend_twist_basis: Array
+    basis: RodStrainBasisPlan
     reference_coefficients: Array
     fixed_base_position: Array | None
     fixed_base_orientation: Array | None
     coordinate_count: int = eqx.field(static=True)
+    dimension: int = eqx.field(static=True)
+    base_policy: ReducedRodBasePolicy = eqx.field(static=True)
     quadrature_tolerance: float = eqx.field(static=True)
     certification_tolerance: float = eqx.field(static=True)
+    label: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        stretch_shear_basis: ArrayLike,
-        bend_twist_basis: ArrayLike,
+        basis: RodStrainBasisPlan,
         /,
         *,
         reference_coefficients: ArrayLike | None = None,
+        base_policy: ReducedRodBasePolicy = "reference",
         fixed_base_position: ArrayLike | None = None,
         fixed_base_orientation: ArrayLike | None = None,
         quadrature_tolerance: float = 1.0e-6,
         certification_tolerance: float = 1.0e-6,
-        plan_id: str | None = None,
+        label: str | None = None,
     ):
-        stretch = _real_array("stretch_shear_basis", stretch_shear_basis, 3)
-        bend = _real_array("bend_twist_basis", bend_twist_basis, 3)
-        if stretch.shape[0] < 1 or stretch.shape[1] != 2 or stretch.shape[2] < 1:
+        if not isinstance(basis, RodStrainBasisPlan):
+            raise TypeError("basis must be a RodStrainBasisPlan.")
+        if base_policy not in ("reference", "fixed"):
             raise ValueError(
-                "stretch_shear_basis must have shape (segments, 2, coordinates)."
+                "base_policy must be 'reference' or 'fixed'; floating rods are unsupported."
             )
-        coordinate_count = int(stretch.shape[2])
-        if bend.shape != (stretch.shape[0] - 1, 1, coordinate_count):
-            raise ValueError(
-                "bend_twist_basis must have shape "
-                "(segments - 1, 1, coordinates)."
-            )
+        dtype = np.dtype(basis.polynomial_coefficients.dtype)
+        coordinate_count = basis.coordinate_count
         reference = (
-            np.zeros((coordinate_count,), dtype=stretch.dtype)
+            np.zeros((coordinate_count,), dtype=dtype)
             if reference_coefficients is None
-            else _real_array("reference_coefficients", reference_coefficients, 1)
+            else _real_array("reference_coefficients", reference_coefficients, 1).astype(
+                dtype, copy=False
+            )
         )
         if reference.shape != (coordinate_count,):
             raise ValueError(
                 "reference_coefficients must contain one value per reduced coordinate."
             )
-        dtype = stretch.dtype
-        arrays = {
-            "stretch_shear_basis": stretch,
-            "bend_twist_basis": bend.astype(dtype, copy=False),
-            "reference_coefficients": reference.astype(dtype, copy=False),
-        }
-        basis_matrix = np.concatenate(
-            (
-                arrays["stretch_shear_basis"].reshape((-1, coordinate_count)),
-                arrays["bend_twist_basis"].reshape((-1, coordinate_count)),
-            ),
-            axis=0,
-        )
-        if np.linalg.matrix_rank(basis_matrix) != coordinate_count:
-            raise ValueError(
-                "The combined rod strain basis must have full column rank."
-            )
 
-        base_position = (
-            None
-            if fixed_base_position is None
-            else _real_array("fixed_base_position", fixed_base_position, 1)
-        )
-        if base_position is not None and base_position.shape != (2,):
-            raise ValueError(
-                "fixed_base_position must have shape (2,) for a planar rod."
-            )
-        base_orientation = (
-            None
-            if fixed_base_orientation is None
-            else _real_array("fixed_base_orientation", fixed_base_orientation, 0)
-        )
+        if base_policy == "reference":
+            if fixed_base_position is not None or fixed_base_orientation is not None:
+                raise ValueError(
+                    "Reference base policy derives the fixed pose from the native rod; "
+                    "explicit base values are forbidden."
+                )
+            base_position = None
+            base_orientation = None
+        else:
+            if fixed_base_position is None or fixed_base_orientation is None:
+                raise ValueError(
+                    "Fixed base policy requires both fixed_base_position and fixed_base_orientation."
+                )
+            base_position = _real_array(
+                "fixed_base_position", fixed_base_position, 1
+            ).astype(dtype, copy=False)
+            if base_position.shape != (basis.dimension,):
+                raise ValueError(
+                    f"fixed_base_position must have shape {(basis.dimension,)}."
+                )
+            if basis.dimension == 2:
+                base_orientation = _real_array(
+                    "fixed_base_orientation", fixed_base_orientation, 0
+                ).astype(dtype, copy=False)
+            else:
+                raw_orientation = _real_array(
+                    "fixed_base_orientation", fixed_base_orientation, 1
+                )
+                if raw_orientation.shape != (4,):
+                    raise ValueError(
+                        "Spatial fixed_base_orientation must be a scalar-first quaternion of shape (4,)."
+                    )
+                base_orientation = _canonical_unit_quaternion(raw_orientation, dtype)
+
         quadrature = float(quadrature_tolerance)
         certification = float(certification_tolerance)
         if (
@@ -147,49 +224,37 @@ class ReducedRodPlan(StrictModule, NonTrainableState):
             or certification <= 0.0
         ):
             raise ValueError("Rod reduction tolerances must be finite and positive.")
-
+        values = {"reference_coefficients": reference}
+        if base_position is not None:
+            values["fixed_base_position"] = base_position
+            values["fixed_base_orientation"] = base_orientation
         generated = canonical_fingerprint(
             {
                 "kind": "reduced-rod-strain-coordinate-plan",
+                "dimension": basis.dimension,
                 "coordinate_count": coordinate_count,
+                "basis": basis.plan_id,
+                "base_policy": base_policy,
                 "quadrature_tolerance": quadrature,
                 "certification_tolerance": certification,
-                "values": array_tree_fingerprint(arrays),
-                "fixed_base_position": (
-                    None
-                    if base_position is None
-                    else array_tree_fingerprint(base_position.astype(dtype, copy=False))
-                ),
-                "fixed_base_orientation": (
-                    None
-                    if base_orientation is None
-                    else array_tree_fingerprint(
-                        base_orientation.astype(dtype, copy=False)
-                    )
-                ),
+                "values": array_tree_fingerprint(values),
             }
         )
-        identifier = generated if plan_id is None else str(plan_id)
-        if not identifier:
-            raise ValueError("plan_id must be nonempty.")
-
-        self.stretch_shear_basis = jnp.asarray(arrays["stretch_shear_basis"])
-        self.bend_twist_basis = jnp.asarray(arrays["bend_twist_basis"])
-        self.reference_coefficients = jnp.asarray(arrays["reference_coefficients"])
+        self.basis = basis
+        self.reference_coefficients = jnp.asarray(reference)
         self.fixed_base_position = (
-            None
-            if base_position is None
-            else jnp.asarray(base_position.astype(dtype, copy=False))
+            None if base_position is None else jnp.asarray(base_position)
         )
         self.fixed_base_orientation = (
-            None
-            if base_orientation is None
-            else jnp.asarray(base_orientation.astype(dtype, copy=False))
+            None if base_orientation is None else jnp.asarray(base_orientation)
         )
         self.coordinate_count = coordinate_count
+        self.dimension = basis.dimension
+        self.base_policy = base_policy
         self.quadrature_tolerance = quadrature
         self.certification_tolerance = certification
-        self.plan_id = identifier
+        self.label = None if label is None else str(label)
+        self.plan_id = generated
 
 
 class ReducedRodState(StrictModule):
@@ -207,9 +272,7 @@ class ReducedRodState(StrictModule):
         coefficients_ = jnp.asarray(coefficients)
         velocities_ = jnp.asarray(coefficient_velocities)
         if coefficients_.ndim != 1 or coefficients_.shape[0] < 1:
-            raise ValueError(
-                "Reduced rod coefficients must be a nonempty rank-1 array."
-            )
+            raise ValueError("Reduced rod coefficients must be a nonempty rank-1 array.")
         if velocities_.shape != coefficients_.shape:
             raise ValueError(
                 "Reduced rod coefficient velocities must match coefficients."
@@ -241,13 +304,16 @@ class ReducedRodLiftEvidence(StrictModule):
 
     base_position_error: Array
     base_orientation_error: Array
+    base_linear_velocity_error: Array
+    base_angular_velocity_error: Array
     finite: Array
     base_pose_valid: Array
+    base_velocity_valid: Array
     valid: Array
 
 
 class ReducedRodPowerEvidence(StrictModule):
-    """Virtual-power equality for a native load and its reduced pullback."""
+    """Algebraic virtual-power equality for a native effort pullback."""
 
     native_power: Array
     reduced_power: Array
@@ -258,7 +324,7 @@ class ReducedRodPowerEvidence(StrictModule):
 
 
 class ReducedRodStrainEvidence(StrictModule):
-    """Residual between requested reduced strains and lifted native strains."""
+    """Residual between requested and evaluated native discrete rod strains."""
 
     stretch_shear_residual: Array
     bend_twist_residual: Array
@@ -270,7 +336,7 @@ class ReducedRodStrainEvidence(StrictModule):
 
 
 class ReducedRodEvaluation(StrictModule):
-    """Native rod evaluation and reduction-specific finite-domain evidence."""
+    """Native rod mechanics and finite-domain reduction evidence."""
 
     native_state: RodState
     native_evaluation: RodEvaluation
@@ -278,24 +344,35 @@ class ReducedRodEvaluation(StrictModule):
     potential_energy: Array
     kinetic_energy: Array
     total_energy: Array
-    strain_quadrature_energy: Array
-    quadrature_error: Array
+    native_discrete_strain_energy: Array
+    native_discrete_energy_error: Array
     lift_evidence: ReducedRodLiftEvidence
     power_evidence: ReducedRodPowerEvidence
     strain_evidence: ReducedRodStrainEvidence
     finite: Array
-    quadrature_valid: Array
+    native_discrete_energy_valid: Array
     valid: Array
     reduction_id: str = eqx.field(static=True)
 
+    @property
+    def strain_quadrature_energy(self) -> Array:
+        return self.native_discrete_strain_energy
+
+    @property
+    def quadrature_error(self) -> Array:
+        return self.native_discrete_energy_error
+
+    @property
+    def quadrature_valid(self) -> Array:
+        return self.native_discrete_energy_valid
+
 
 class PreparedReducedRod(StrictModule, NonTrainableState):
-    """A planar strain-coordinate parameterization bound to one PreparedRod."""
+    """Fixed-base native-discrete reduction of one prepared 2-D or 3-D rod."""
 
     rod: PreparedRod
     plan: ReducedRodPlan
-    stretch_shear_basis: Array
-    bend_twist_basis: Array
+    basis: PreparedRodStrainBasis
     reference_coefficients: Array
     path_node_ids: Array
     reference_positions: Array
@@ -303,9 +380,10 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
     base_position: Array
     base_orientation: Array
     coefficient_space: ArraySpace
-    native_velocity_space: ArraySpace
+    reduced_effort_space: DualSpace
+    native_velocity_space: BlockSpace
+    native_effort_space: DualSpace
     state_layout: StateLayout
-    native_position_size: int = eqx.field(static=True)
     configuration_slice: slice = eqx.field(static=True)
     velocity_slice: slice = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -315,73 +393,36 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
             raise TypeError("rod must be a PreparedRod.")
         if not isinstance(plan, ReducedRodPlan):
             raise TypeError("plan must be a ReducedRodPlan.")
-        if rod.plan.dimension != 2:
+        if plan.dimension != rod.plan.dimension:
             raise ValueError(
-                "Reduced rod strain lifting currently supports planar "
-                "PreparedRod values."
+                "Reduced rod plan dimension is incompatible with the prepared rod."
             )
-        if rod.plan.inextensible:
-            raise ValueError(
-                "Inextensible rods are unsupported because native projection "
-                "would leave the declared reduced strain manifold."
-            )
-        expected_stretch = (rod.plan.segment_count, 2, plan.coordinate_count)
-        expected_bend = (rod.plan.segment_count - 1, 1, plan.coordinate_count)
-        if plan.stretch_shear_basis.shape != expected_stretch:
-            raise ValueError(
-                "stretch_shear_basis is incompatible with the prepared rod "
-                "segment count."
-            )
-        if plan.bend_twist_basis.shape != expected_bend:
-            raise ValueError(
-                "bend_twist_basis is incompatible with the prepared rod junction count."
-            )
-
+        basis = prepare_rod_strain_basis(plan.basis, rod)
         dtype = np.dtype(rod.plan.rest_positions.dtype)
-        stretch = jnp.asarray(plan.stretch_shear_basis, dtype=dtype)
-        bend = jnp.asarray(plan.bend_twist_basis, dtype=dtype)
-        reference_coefficients = jnp.asarray(plan.reference_coefficients, dtype=dtype)
-        prepared_basis_matrix = np.concatenate(
-            (
-                np.asarray(stretch).reshape((-1, plan.coordinate_count)),
-                np.asarray(bend).reshape((-1, plan.coordinate_count)),
-            ),
-            axis=0,
-        )
-        if np.linalg.matrix_rank(prepared_basis_matrix) != plan.coordinate_count:
-            raise ValueError(
-                "The rod strain basis must retain full column rank in the "
-                "prepared rod dtype."
+        reference_coefficients = jnp.asarray(plan.reference_coefficients)
+        if np.dtype(reference_coefficients.dtype) != dtype:
+            raise TypeError(
+                "Reduced rod reference coefficients must retain the native rod dtype."
             )
         path_node_ids = jnp.concatenate(
             (rod.plan.segment_node_ids[:1, 0], rod.plan.segment_node_ids[:, 1])
         )
-        start_node = int(np.asarray(rod.plan.segment_node_ids[0, 0]))
+        start_node = rod.plan.segment_node_ids[0, 0]
         native_base_position = rod.plan.rest_positions[start_node]
         native_base_orientation = rod.rest_orientations[0]
         base_position = (
             native_base_position
-            if plan.fixed_base_position is None
-            else jnp.asarray(plan.fixed_base_position, dtype=dtype)
+            if plan.base_policy == "reference"
+            else jnp.asarray(plan.fixed_base_position)
         )
         base_orientation = (
             native_base_orientation
-            if plan.fixed_base_orientation is None
-            else jnp.asarray(plan.fixed_base_orientation, dtype=dtype)
+            if plan.base_policy == "reference"
+            else jnp.asarray(plan.fixed_base_orientation)
         )
-        angle_offset = base_orientation - native_base_orientation
-        if plan.fixed_base_orientation is None:
-            reference_positions = rod.plan.rest_positions + (
-                base_position - native_base_position
-            )
-            reference_orientations = rod.rest_orientations
-        else:
-            rotation = _planar_rotation_matrix(angle_offset)
-            offsets = rod.plan.rest_positions - native_base_position
-            reference_positions = base_position + ein.contract(
-                "ij,nj->ni", rotation, offsets
-            )
-            reference_orientations = rod.rest_orientations + angle_offset
+        reference_positions, reference_orientations = _reference_pose(
+            rod, base_position, base_orientation
+        )
 
         coefficient_space = ArraySpace(
             (plan.coordinate_count,),
@@ -394,22 +435,16 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
                 }
             ),
         )
-        native_position_size = rod.plan.node_count * rod.plan.dimension
-        native_velocity_space = ArraySpace(
-            (native_position_size + rod.plan.segment_count,),
-            dtype=dtype,
-            space_id=canonical_fingerprint(
-                {
-                    "kind": "reduced-rod-native-velocity-space",
-                    "rod": rod.prepared_id,
-                }
-            ),
-        )
+        native_velocity_space = rod.velocity_space
+        reduced_effort_space = DualSpace(coefficient_space)
+        native_effort_space = rod.effort_space
         prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-reduced-rod-strain-parameterization",
+                "kind": "prepared-reduced-rod-native-discrete-parameterization",
                 "plan": plan.plan_id,
+                "basis": basis.prepared_id,
                 "rod": rod.prepared_id,
+                "base_policy": plan.base_policy,
                 "reference_pose": array_tree_fingerprint(
                     {
                         "positions": np.asarray(reference_positions),
@@ -427,11 +462,9 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
             ),
             layout_id=f"state-layout:reduced-rod:{prepared_id}",
         )
-
         self.rod = rod
         self.plan = plan
-        self.stretch_shear_basis = stretch
-        self.bend_twist_basis = bend
+        self.basis = basis
         self.reference_coefficients = reference_coefficients
         self.path_node_ids = path_node_ids
         self.reference_positions = reference_positions
@@ -439,9 +472,10 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
         self.base_position = base_position
         self.base_orientation = base_orientation
         self.coefficient_space = coefficient_space
+        self.reduced_effort_space = reduced_effort_space
         self.native_velocity_space = native_velocity_space
+        self.native_effort_space = native_effort_space
         self.state_layout = state_layout
-        self.native_position_size = native_position_size
         self.configuration_slice = slice(0, plan.coordinate_count)
         self.velocity_slice = slice(plan.coordinate_count, 2 * plan.coordinate_count)
         self.prepared_id = prepared_id
@@ -449,6 +483,14 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
     @property
     def state_size(self) -> int:
         return self.state_layout.size
+
+    @property
+    def stretch_shear_basis(self) -> Array:
+        return self.basis.stretch_shear_basis
+
+    @property
+    def bend_twist_basis(self) -> Array:
+        return self.basis.bend_twist_basis
 
     def initialize_state(self) -> ReducedRodState:
         return ReducedRodState(
@@ -462,11 +504,34 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
             jnp.zeros_like(self.reference_coefficients),
         )
 
+    def validate_state(self, state: ReducedRodState, /) -> None:
+        if not isinstance(state, ReducedRodState):
+            raise TypeError("state must be a ReducedRodState.")
+        if (
+            state.coordinate_count != self.plan.coordinate_count
+            or state.values.shape != self.state_layout.shape
+        ):
+            raise ValueError("Reduced rod state must match the prepared state layout.")
+        if np.dtype(state.values.dtype) != self.coefficient_space.dtype:
+            raise TypeError(
+                "Reduced rod state dtype does not match the prepared rod dtype."
+            )
+
+    def lift_configuration(self, coefficients: ArrayLike, /) -> tuple[Array, Array]:
+        return lift_configuration(self, coefficients)
+
+    def lift_velocity_operator(
+        self, coefficients: ArrayLike, /
+    ) -> AbstractLinearOperator:
+        return lift_velocity_operator(self, coefficients)
+
+    def lift_effort_pullback_operator(
+        self, coefficients: ArrayLike, /
+    ) -> AbstractLinearOperator:
+        return lift_effort_pullback_operator(self, coefficients)
+
     def lift(self, state: ReducedRodState, /) -> RodState:
         return lift_reduced_rod_state(self, state)
-
-    def lift_operator(self, coefficients: ArrayLike, /) -> AbstractLinearOperator:
-        return reduced_rod_lift_operator(self, coefficients)
 
     def pullback_loads(
         self,
@@ -483,246 +548,67 @@ class PreparedReducedRod(StrictModule, NonTrainableState):
         return evaluate_reduced_rod(self, state)
 
 
+def _reference_pose(
+    rod: PreparedRod,
+    base_position: Array,
+    base_orientation: Array,
+    /,
+) -> tuple[Array, Array]:
+    start = rod.plan.segment_node_ids[0, 0]
+    source_position = rod.plan.rest_positions[start]
+    source_orientation = rod.rest_orientations[0]
+    if rod.plan.dimension == 2:
+        offset = base_orientation - source_orientation
+        rotation = _planar_rotation_matrix(offset)
+        positions = base_position + ein.contract(
+            "ij,nj->ni", rotation, rod.plan.rest_positions - source_position
+        )
+        orientations = rod.rest_orientations + offset
+    else:
+        offset = _quaternion_multiply(
+            base_orientation, _quaternion_conjugate(source_orientation)
+        )
+        rotation = _quaternion_rotation_matrix(offset)
+        positions = base_position + ein.contract(
+            "ij,nj->ni", rotation, rod.plan.rest_positions - source_position
+        )
+        orientations = _quaternion_multiply(
+            jnp.broadcast_to(offset, rod.rest_orientations.shape),
+            rod.rest_orientations,
+        )
+    return positions, orientations
+
+
 def prepare_reduced_rod(
     rod: PreparedRod,
     plan: ReducedRodPlan,
     /,
 ) -> PreparedReducedRod:
-    """Bind a finite planar strain basis to one prepared native rod."""
+    """Bind a fixed-base strain-coordinate plan to native rod mechanics."""
     return PreparedReducedRod(rod, plan)
 
 
-def _validate_coefficients(
-    prepared: PreparedReducedRod,
-    coefficients: ArrayLike,
-    /,
-) -> Array:
-    values = jnp.asarray(coefficients)
-    return prepared.coefficient_space.validate(values)
-
-
-def _validate_state(prepared: PreparedReducedRod, state: ReducedRodState, /) -> None:
-    if not isinstance(state, ReducedRodState):
-        raise TypeError("state must be a ReducedRodState.")
-    if (
-        state.coordinate_count != prepared.plan.coordinate_count
-        or state.values.shape != prepared.state_layout.shape
-    ):
-        raise ValueError("Reduced rod state must match the prepared state layout.")
-    if np.dtype(state.values.dtype) != prepared.coefficient_space.dtype:
-        raise TypeError(
-            "Reduced rod state dtype does not match the prepared rod dtype."
-        )
-
-
-def _target_strains(
-    prepared: PreparedReducedRod,
-    coefficients: Array,
-    /,
-) -> tuple[Array, Array]:
-    stretch_shear = ein.contract(
-        "sdk,k->sd", prepared.stretch_shear_basis, coefficients
-    )
-    bend_twist = ein.contract("sjk,k->sj", prepared.bend_twist_basis, coefficients)
-    return stretch_shear, bend_twist
-
-
-def _lift_configuration(
-    prepared: PreparedReducedRod,
-    coefficients: Array,
-    /,
-) -> tuple[Array, Array]:
-    stretch_shear, bend_twist = _target_strains(prepared, coefficients)
-    angle_increments = jnp.concatenate(
-        (
-            jnp.zeros((1,), dtype=coefficients.dtype),
-            jnp.cumsum(prepared.rod.dual_lengths * bend_twist[:, 0]),
-        )
-    )
-    orientations = prepared.reference_orientations + angle_increments
-    current_frames = _planar_rotation_matrix(orientations)
-    reference_frames = _planar_rotation_matrix(prepared.reference_orientations)
-    current_material_tangents = prepared.rod.rest_stretch_shear + stretch_shear
-    tangent_correction = prepared.rod.plan.rest_lengths[:, None] * (
-        ein.contract("sij,sj->si", current_frames, current_material_tangents)
-        - ein.contract(
-            "sij,sj->si", reference_frames, prepared.rod.rest_stretch_shear
-        )
-    )
-    path_correction = jnp.concatenate(
-        (
-            jnp.zeros((1, 2), dtype=coefficients.dtype),
-            jnp.cumsum(tangent_correction, axis=0),
-        ),
-        axis=0,
-    )
-    positions = prepared.reference_positions.at[prepared.path_node_ids].add(
-        path_correction
-    )
-    return positions, orientations
-
-
-def _pack_configuration(
-    prepared: PreparedReducedRod,
-    coefficients: Array,
-    /,
-) -> Array:
-    positions, orientations = _lift_configuration(prepared, coefficients)
-    return jnp.concatenate((positions.reshape((-1,)), orientations))
-
-
-def _unpack_native_configuration(
-    prepared: PreparedReducedRod,
-    packed: Array,
-    /,
-) -> tuple[Array, Array]:
-    positions = packed[: prepared.native_position_size].reshape(
-        (prepared.rod.plan.node_count, prepared.rod.plan.dimension)
-    )
-    orientations = packed[prepared.native_position_size :]
-    return positions, orientations
-
-
-def _unpack_native_velocity(
-    prepared: PreparedReducedRod,
-    packed: Array,
-    /,
-) -> tuple[Array, Array]:
-    velocities = packed[: prepared.native_position_size].reshape(
-        (prepared.rod.plan.node_count, prepared.rod.plan.dimension)
-    )
-    angular_velocities = packed[prepared.native_position_size :]
-    return velocities, angular_velocities
-
-
-def _pack_native_loads(
+def _native_efforts(
     prepared: PreparedReducedRod,
     native_forces: ArrayLike,
     native_moments: ArrayLike,
     /,
-) -> Array:
-    forces = jnp.asarray(native_forces)
-    moments = jnp.asarray(native_moments)
-    if forces.shape != (prepared.rod.plan.node_count, 2):
-        raise ValueError("native_forces must contain one planar force per rod node.")
-    if moments.shape != (prepared.rod.plan.segment_count,):
-        raise ValueError(
-            "native_moments must contain one scalar moment per rod segment."
-        )
-    packed = jnp.concatenate((forces.reshape((-1,)), moments))
-    return prepared.native_velocity_space.validate(packed)
-
-
-def _prepare_lift_operator(
-    prepared: PreparedReducedRod,
-    point: Array,
-    /,
-) -> JacobianLinearOperator:
-    def configuration(values):
-        return _pack_configuration(prepared, values)
-
-    linearization = prepare_linearization(
-        configuration,
-        point,
-        source=prepared.coefficient_space,
-        target=prepared.native_velocity_space,
-        linearization_id=canonical_fingerprint(
-            {
-                "kind": "reduced-rod-lift-linearization",
-                "reduction": prepared.prepared_id,
-            }
-        ),
-    )
-    return JacobianLinearOperator(
-        linearization,
-        operator_id=canonical_fingerprint(
-            {
-                "kind": "reduced-rod-lift-operator",
-                "reduction": prepared.prepared_id,
-            }
-        ),
-    )
-
-
-def reduced_rod_lift_operator(
-    prepared: PreparedReducedRod,
-    coefficients: ArrayLike,
-    /,
-) -> AbstractLinearOperator:
-    """Return the native configuration Jacobian at one reduced configuration."""
-    if not isinstance(prepared, PreparedReducedRod):
-        raise TypeError("prepared must be a PreparedReducedRod.")
-    point = _validate_coefficients(prepared, coefficients)
-    return _prepare_lift_operator(prepared, point)
-
-
-def lift_reduced_rod_velocity(
-    prepared: PreparedReducedRod,
-    coefficients: ArrayLike,
-    coefficient_velocities: ArrayLike,
-    /,
 ) -> tuple[Array, Array]:
-    """Push a reduced velocity through the exact configuration JVP."""
-    operator = reduced_rod_lift_operator(prepared, coefficients)
-    packed_velocity = operator.mv(
-        _validate_coefficients(prepared, coefficient_velocities)
-    )
-    return _unpack_native_velocity(prepared, packed_velocity)
-
-
-def _native_state_from_operator(
-    prepared: PreparedReducedRod,
-    state: ReducedRodState,
-    operator: JacobianLinearOperator,
-    /,
-) -> RodState:
-    positions, orientations = _unpack_native_configuration(
-        prepared, operator.linearization.primal
-    )
-    packed_velocity = operator.mv(state.coefficient_velocities)
-    velocities, angular_velocities = _unpack_native_velocity(
-        prepared, packed_velocity
-    )
-    return RodState(positions, velocities, orientations, angular_velocities)
-
-
-def lift_reduced_rod_state(
-    prepared: PreparedReducedRod,
-    state: ReducedRodState,
-    /,
-) -> RodState:
-    """Lift one packed reduced phase state to the native RodState contract."""
-    if not isinstance(prepared, PreparedReducedRod):
-        raise TypeError("prepared must be a PreparedReducedRod.")
-    _validate_state(prepared, state)
-    operator = _prepare_lift_operator(prepared, state.coefficients)
-    return _native_state_from_operator(prepared, state, operator)
-
-
-def pullback_reduced_rod_loads(
-    prepared: PreparedReducedRod,
-    coefficients: ArrayLike,
-    native_forces: ArrayLike,
-    native_moments: ArrayLike,
-    /,
-) -> Array:
-    """Pull native force/moment covectors back with the lift-operator VJP."""
-    operator = reduced_rod_lift_operator(prepared, coefficients)
-    native_loads = _pack_native_loads(prepared, native_forces, native_moments)
-    return operator.transpose_mv(native_loads)
+    return prepared.rod.effort_from_load(native_forces, native_moments)
 
 
 def _power_evidence_from_operator(
     prepared: PreparedReducedRod,
-    operator: JacobianLinearOperator,
+    velocity_operator: AbstractLinearOperator,
+    effort_pullback_operator: AbstractLinearOperator,
     rates: Array,
-    native_loads: Array,
+    native_efforts: tuple[Array, Array],
     /,
 ) -> ReducedRodPowerEvidence:
-    native_velocity = operator.mv(rates)
-    generalized_load = operator.transpose_mv(native_loads)
-    native_power = jnp.vdot(native_loads, native_velocity).real
-    reduced_power = jnp.vdot(generalized_load, rates).real
+    native_velocity = velocity_operator.mv(rates)
+    generalized_load = effort_pullback_operator.mv(native_efforts)
+    native_power = prepared.native_effort_space.pair(native_efforts, native_velocity).real
+    reduced_power = prepared.reduced_effort_space.pair(generalized_load, rates).real
     absolute = jnp.abs(native_power - reduced_power)
     scale = jnp.maximum(
         jnp.asarray(1.0, dtype=absolute.dtype),
@@ -754,12 +640,15 @@ def reduced_rod_power_evidence(
     native_moments: ArrayLike,
     /,
 ) -> ReducedRodPowerEvidence:
-    """Certify virtual-power duality for one load and reduced velocity."""
-    values = _validate_coefficients(prepared, coefficients)
-    rates = _validate_coefficients(prepared, coefficient_velocities)
-    operator = _prepare_lift_operator(prepared, values)
-    native_loads = _pack_native_loads(prepared, native_forces, native_moments)
-    return _power_evidence_from_operator(prepared, operator, rates, native_loads)
+    """Certify algebraic JVP/VJP virtual-power duality."""
+    values = prepared.coefficient_space.validate(jnp.asarray(coefficients))
+    rates = prepared.coefficient_space.validate(jnp.asarray(coefficient_velocities))
+    velocity_operator = lift_velocity_operator(prepared, values)
+    effort_pullback = lift_effort_pullback_operator(prepared, values)
+    efforts = _native_efforts(prepared, native_forces, native_moments)
+    return _power_evidence_from_operator(
+        prepared, velocity_operator, effort_pullback, rates, efforts
+    )
 
 
 def reduced_rod_potential_energy(
@@ -767,9 +656,8 @@ def reduced_rod_potential_energy(
     coefficients: ArrayLike,
     /,
 ) -> Array:
-    """Evaluate reduced potential through the native rod energy function."""
-    values = _validate_coefficients(prepared, coefficients)
-    positions, orientations = _lift_configuration(prepared, values)
+    """Evaluate native rod potential energy at the lifted configuration."""
+    positions, orientations = lift_configuration(prepared, coefficients)
     return rod_potential_energy(prepared.rod, positions, orientations)
 
 
@@ -778,9 +666,10 @@ def reduced_rod_kinetic_energy(
     state: ReducedRodState,
     /,
 ) -> Array:
-    """Evaluate reduced kinetic energy through the native rod evaluation."""
-    native_state = lift_reduced_rod_state(prepared, state)
-    return evaluate_rod(prepared.rod, native_state).kinetic_energy
+    """Evaluate native rod kinetic energy at the lifted physical velocity."""
+    return evaluate_rod(
+        prepared.rod, lift_reduced_rod_state(prepared, state)
+    ).kinetic_energy
 
 
 def _lift_evidence(
@@ -792,10 +681,24 @@ def _lift_evidence(
     base_position_error = jnp.sqrt(
         jnp.sum((native_state.positions[base_node] - prepared.base_position) ** 2)
     )
-    orientation_delta = native_state.orientations[0] - prepared.base_orientation
-    base_orientation_error = jnp.abs(
-        jnp.arctan2(jnp.sin(orientation_delta), jnp.cos(orientation_delta))
+    base_linear_velocity_error = jnp.sqrt(
+        jnp.sum(native_state.velocities[base_node] ** 2)
     )
+    if prepared.rod.plan.dimension == 2:
+        orientation_delta = native_state.orientations[0] - prepared.base_orientation
+        base_orientation_error = jnp.abs(
+            jnp.arctan2(jnp.sin(orientation_delta), jnp.cos(orientation_delta))
+        )
+        base_angular_velocity_error = jnp.abs(native_state.angular_velocities[0])
+    else:
+        relative = _quaternion_multiply(
+            _quaternion_conjugate(prepared.base_orientation),
+            native_state.orientations[0],
+        )
+        base_orientation_error = _quaternion_angle(relative)
+        base_angular_velocity_error = jnp.sqrt(
+            jnp.sum(native_state.angular_velocities[0] ** 2)
+        )
     finite = (
         jnp.all(jnp.isfinite(native_state.positions))
         & jnp.all(jnp.isfinite(native_state.velocities))
@@ -803,17 +706,25 @@ def _lift_evidence(
         & jnp.all(jnp.isfinite(native_state.angular_velocities))
         & jnp.isfinite(base_position_error)
         & jnp.isfinite(base_orientation_error)
+        & jnp.isfinite(base_linear_velocity_error)
+        & jnp.isfinite(base_angular_velocity_error)
     )
     tolerance = prepared.plan.certification_tolerance
     base_pose_valid = (base_position_error <= tolerance) & (
         base_orientation_error <= tolerance
     )
+    base_velocity_valid = (base_linear_velocity_error <= tolerance) & (
+        base_angular_velocity_error <= tolerance
+    )
     return ReducedRodLiftEvidence(
         base_position_error,
         base_orientation_error,
+        base_linear_velocity_error,
+        base_angular_velocity_error,
         finite,
         base_pose_valid,
-        finite & base_pose_valid,
+        base_velocity_valid,
+        finite & base_pose_valid & base_velocity_valid,
     )
 
 
@@ -823,12 +734,10 @@ def _strain_evidence(
     native_evaluation: RodEvaluation,
     /,
 ) -> ReducedRodStrainEvidence:
-    target_stretch_shear, target_bend_twist = _target_strains(
+    target_stretch_shear, target_bend_twist = target_native_strains(
         prepared, coefficients
     )
-    stretch_residual = (
-        native_evaluation.stretch_shear_strain - target_stretch_shear
-    )
+    stretch_residual = native_evaluation.stretch_shear_strain - target_stretch_shear
     bend_residual = native_evaluation.bend_twist_strain - target_bend_twist
     maximum_stretch = jnp.max(jnp.abs(stretch_residual))
     maximum_bend = jnp.max(
@@ -858,73 +767,49 @@ def _strain_evidence(
     )
 
 
-def _strain_quadrature_energy(
-    prepared: PreparedReducedRod,
-    coefficients: Array,
-    /,
-) -> Array:
-    stretch_shear, bend_twist = _target_strains(prepared, coefficients)
-    stretch_density = 0.5 * ein.contract(
-        "si,sij,sj->s",
-        stretch_shear,
-        prepared.rod.plan.stretch_shear_stiffness,
-        stretch_shear,
-    )
-    bend_density = 0.5 * ein.contract(
-        "si,sij,sj->s",
-        bend_twist,
-        prepared.rod.plan.bend_twist_stiffness,
-        bend_twist,
-    )
-    return jnp.sum(prepared.rod.plan.rest_lengths * stretch_density) + jnp.sum(
-        prepared.rod.dual_lengths * bend_density
-    )
-
-
 def evaluate_reduced_rod(
     prepared: PreparedReducedRod,
     state: ReducedRodState,
     /,
 ) -> ReducedRodEvaluation:
-    """Lift and evaluate one reduced state with power and strain certificates."""
+    """Evaluate the lifted state with native-discrete mechanics authority."""
     if not isinstance(prepared, PreparedReducedRod):
         raise TypeError("prepared must be a PreparedReducedRod.")
-    _validate_state(prepared, state)
-    operator = _prepare_lift_operator(prepared, state.coefficients)
-    native_state = _native_state_from_operator(prepared, state, operator)
+    prepared.validate_state(state)
+    velocity_operator = lift_velocity_operator(prepared, state.coefficients)
+    positions, orientations = lift_configuration(prepared, state.coefficients)
+    velocities, angular_velocities = velocity_operator.mv(state.coefficient_velocities)
+    native_state = RodState(positions, velocities, orientations, angular_velocities)
     native_evaluation = evaluate_rod(prepared.rod, native_state)
-    native_internal_loads = _pack_native_loads(
+    native_internal_efforts = _native_efforts(
         prepared,
         native_evaluation.internal_forces,
         native_evaluation.internal_moments,
     )
-    generalized_internal_load = operator.transpose_mv(native_internal_loads)
+    effort_pullback = lift_effort_pullback_operator(prepared, state.coefficients)
+    generalized_internal_load = effort_pullback.mv(native_internal_efforts)
     lift_evidence = _lift_evidence(prepared, native_state)
-    strain_evidence = _strain_evidence(
-        prepared, state.coefficients, native_evaluation
-    )
+    strain_evidence = _strain_evidence(prepared, state.coefficients, native_evaluation)
     power_evidence = _power_evidence_from_operator(
         prepared,
-        operator,
+        velocity_operator,
+        effort_pullback,
         state.coefficient_velocities,
-        native_internal_loads,
+        native_internal_efforts,
     )
-    strain_quadrature_energy = _strain_quadrature_energy(
-        prepared, state.coefficients
+    native_discrete_strain_energy = native_evaluation.potential_energy
+    energy_error = jnp.abs(
+        native_evaluation.potential_energy - native_discrete_strain_energy
     )
-    quadrature_error = jnp.abs(
-        native_evaluation.potential_energy - strain_quadrature_energy
-    )
-    quadrature_scale = jnp.maximum(
-        jnp.asarray(1.0, dtype=quadrature_error.dtype),
+    energy_scale = jnp.maximum(
+        jnp.asarray(1.0, dtype=energy_error.dtype),
         jnp.maximum(
             jnp.abs(native_evaluation.potential_energy),
-            jnp.abs(strain_quadrature_energy),
+            jnp.abs(native_discrete_strain_energy),
         ),
     )
-    quadrature_valid = jnp.isfinite(quadrature_error) & (
-        quadrature_error
-        <= prepared.plan.quadrature_tolerance * quadrature_scale
+    native_discrete_energy_valid = jnp.isfinite(energy_error) & (
+        energy_error <= prepared.plan.quadrature_tolerance * energy_scale
     )
     finite = (
         native_evaluation.finite
@@ -932,8 +817,8 @@ def evaluate_reduced_rod(
         & strain_evidence.finite
         & power_evidence.finite
         & jnp.all(jnp.isfinite(generalized_internal_load))
-        & jnp.isfinite(strain_quadrature_energy)
-        & jnp.isfinite(quadrature_error)
+        & jnp.isfinite(native_discrete_strain_energy)
+        & jnp.isfinite(energy_error)
     )
     valid = (
         finite
@@ -941,7 +826,7 @@ def evaluate_reduced_rod(
         & lift_evidence.valid
         & strain_evidence.valid
         & power_evidence.valid
-        & quadrature_valid
+        & native_discrete_energy_valid
     )
     return ReducedRodEvaluation(
         native_state,
@@ -950,13 +835,13 @@ def evaluate_reduced_rod(
         native_evaluation.potential_energy,
         native_evaluation.kinetic_energy,
         native_evaluation.total_energy,
-        strain_quadrature_energy,
-        quadrature_error,
+        native_discrete_strain_energy,
+        energy_error,
         lift_evidence,
         power_evidence,
         strain_evidence,
         finite,
-        quadrature_valid,
+        native_discrete_energy_valid,
         valid,
         prepared.prepared_id,
     )
@@ -964,19 +849,25 @@ def evaluate_reduced_rod(
 
 __all__ = [
     "PreparedReducedRod",
+    "PreparedRodStrainBasis",
+    "ReducedRodBasePolicy",
     "ReducedRodEvaluation",
     "ReducedRodLiftEvidence",
     "ReducedRodPlan",
     "ReducedRodPowerEvidence",
     "ReducedRodState",
     "ReducedRodStrainEvidence",
+    "RodStrainBasisEvidence",
+    "RodStrainBasisPlan",
     "evaluate_reduced_rod",
+    "lift_configuration",
+    "lift_effort_pullback_operator",
     "lift_reduced_rod_state",
     "lift_reduced_rod_velocity",
+    "lift_velocity_operator",
     "prepare_reduced_rod",
     "pullback_reduced_rod_loads",
     "reduced_rod_kinetic_energy",
-    "reduced_rod_lift_operator",
     "reduced_rod_potential_energy",
     "reduced_rod_power_evidence",
 ]

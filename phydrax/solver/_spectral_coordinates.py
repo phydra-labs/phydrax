@@ -74,9 +74,7 @@ def _coordinate_transition_evidence(
     if evidence is None:
         return None
     leading_shape = evidence.successful.shape
-    flat_candidates = evidence.candidate_states.reshape(
-        (-1,) + coordinates.state_shape
-    )
+    flat_candidates = evidence.candidate_states.reshape((-1,) + coordinates.state_shape)
     flat_accepted = evidence.accepted_states.reshape((-1,) + coordinates.state_shape)
 
     def convert(state: Array) -> Array:
@@ -91,6 +89,7 @@ def _coordinate_transition_evidence(
     return DiscreteTransitionEvidence(
         candidate_coordinates,
         accepted_coordinates,
+        evidence.attempted,
         evidence.successful,
         evidence.status,
     )

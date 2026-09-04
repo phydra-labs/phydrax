@@ -381,16 +381,16 @@ def test_non_euclidean_distributed_and_neutral_delays_require_geometry_maps():
         "velocity",
         phx.solver.ConstantDelay("point", 0.2),
     )
-    with pytest.raises(ValueError, match="tangent transport"):
-        phx.solver.DelayDifferentialProblem(
-            tangent_drift,
-            history,
-            (neutral,),
-            t0=0.0,
-            t1=0.4,
-            history_derivative=lambda time, args: jnp.zeros((2, 2)),
-            state_geometry=geometry,
-        )
+    neutral_problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["velocity"],
+        history,
+        (neutral,),
+        t0=0.0,
+        t1=0.4,
+        history_derivative=lambda time, args: _GENERATOR,
+        state_geometry=geometry,
+    )
+    assert jnp.allclose(neutral_problem.initial_right_derivative, _GENERATOR)
 
     transported_neutral = phx.solver.DerivativeDelay(
         "transported-velocity",
@@ -678,4 +678,48 @@ def test_commutator_free_tableau_rejects_noncausal_stage_abscissa():
             composition_coefficients=((0.5, 0.5),),
             order=2,
             tableau_id="tableau:invalid-negative-stage",
+        )
+
+
+def test_quaternion_delay_uses_physical_tangent_and_local_spaces():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: angular_velocity,
+        lambda time, args: base,
+        (phx.solver.ConstantDelay("past", 0.1),),
+        t0=0.0,
+        t1=0.2,
+        state_geometry=geometry,
+    )
+
+    solution = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=jnp.asarray([0.0, 0.1, 0.2]),
+        solver=phx.solver.RKMK(geometry, method="midpoint"),
+        dt0=0.1,
+        dense=True,
+        max_steps=8,
+    )
+
+    expected = geometry.retract(base, 0.2 * angular_velocity)
+    assert problem.state_shape == (4,)
+    assert problem.tangent_shape == (3,)
+    assert problem.local_shape == (3,)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
+    assert solution.interpolation.derivative(jnp.asarray(0.15)).shape == (3,)
+
+
+def test_quaternion_delay_rejects_point_storage_drift_shape():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    with pytest.raises(ValueError, match="physical tangent shape"):
+        phx.solver.DelayDifferentialProblem(
+            lambda time, state, memory, args: jnp.zeros_like(state),
+            lambda time, args: jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            (phx.solver.ConstantDelay("past", 0.1),),
+            t0=0.0,
+            t1=0.2,
+            state_geometry=geometry,
         )

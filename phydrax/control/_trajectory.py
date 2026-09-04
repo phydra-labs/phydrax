@@ -108,6 +108,12 @@ class ControlTrajectory(StrictModule):
                 )
             expected_steps = cases + (time_grid.num_steps,)
             expected_transition_states = expected_steps + states_shape
+            if transition_evidence.attempted.shape != expected_steps:
+                raise ValueError(
+                    "ControlTrajectory transition evidence attempted must have "
+                    f"shape {expected_steps}; got "
+                    f"{transition_evidence.attempted.shape}."
+                )
             if transition_evidence.successful.shape != expected_steps:
                 raise ValueError(
                     "ControlTrajectory transition evidence successful must have "

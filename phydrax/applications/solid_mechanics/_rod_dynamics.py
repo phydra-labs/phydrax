@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -25,7 +26,19 @@ from ...discretization.contact import (
     PreparedCollisionSurface,
     selection_collision_operator,
 )
-from ...linalg import ArraySpace, SmallLinearSolvePlan, solve_small_linear
+from ...linalg import (
+    ArraySpace,
+    BlockSpace,
+    DualSpace,
+    SmallLinearSolvePlan,
+    solve_small_linear,
+)
+from ._rod_materials import (
+    LinearElasticRodMaterialPlan,
+    PreparedLinearElasticRodMaterial,
+    RodMaterialSite,
+    RodMaterialWorkset,
+)
 
 
 RodDimension: TypeAlias = Literal[2, 3]
@@ -454,6 +467,23 @@ class PreparedRod(StrictModule, NonTrainableState):
     rest_stretch_shear: Array
     rest_relative_orientations: Array
     dual_lengths: Array
+    stretch_shear_measures: Array
+    bend_twist_measures: Array
+    stretch_shear_reference_strains: Array
+    bend_twist_reference_strains: Array
+    node_masses: Array
+    segment_inertias: Array
+    stretch_shear_sites: tuple[RodMaterialSite, ...]
+    bend_twist_sites: tuple[RodMaterialSite, ...]
+    stretch_shear_workset: RodMaterialWorkset
+    bend_twist_workset: RodMaterialWorkset
+    stretch_shear_material: PreparedLinearElasticRodMaterial
+    bend_twist_material: PreparedLinearElasticRodMaterial
+    configuration_schema: ArrayPyTreeSchema
+    velocity_space: BlockSpace
+    effort_space: DualSpace
+    material_owner_id: str = eqx.field(static=True)
+    material_workset_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: RodPlan, /):
@@ -480,15 +510,126 @@ class PreparedRod(StrictModule, NonTrainableState):
                 _quaternion_conjugate(orientations[:-1]), orientations[1:]
             )
         dual_lengths = 0.5 * (plan.rest_lengths[:-1] + plan.rest_lengths[1:])
-        self.plan = plan
-        self.rest_orientations = orientations
-        self.rest_stretch_shear = rest_stretch_shear
-        self.rest_relative_orientations = relative
-        self.dual_lengths = dual_lengths
-        self.prepared_id = canonical_fingerprint(
+        rotation_dimension = 1 if plan.dimension == 2 else 3
+        bend_reference = jnp.zeros(
+            (plan.segment_count - 1, rotation_dimension),
+            dtype=plan.rest_positions.dtype,
+        )
+        material_owner_id = canonical_fingerprint(
+            {
+                "kind": "native-rod-material-site-ownership",
+                "dimension": plan.dimension,
+                "topology": array_tree_fingerprint(np.asarray(plan.segment_node_ids)),
+                "content": array_tree_fingerprint(
+                    {
+                        "stretch_shear_measures": np.asarray(plan.rest_lengths),
+                        "bend_twist_measures": np.asarray(dual_lengths),
+                        "stretch_shear_reference": np.asarray(rest_stretch_shear),
+                        "bend_twist_reference": np.asarray(bend_reference),
+                        "node_masses": np.asarray(plan.node_masses),
+                        "segment_inertias": np.asarray(plan.segment_inertias),
+                    }
+                ),
+            }
+        )
+        stretch_sites = tuple(
+            RodMaterialSite(
+                "stretch_shear",
+                "segment",
+                index,
+                plan.dimension,
+                material_owner_id,
+            )
+            for index in range(plan.segment_count)
+        )
+        bend_sites = tuple(
+            RodMaterialSite(
+                "bend_twist",
+                "junction",
+                index,
+                rotation_dimension,
+                material_owner_id,
+            )
+            for index in np.asarray(plan.segment_node_ids[:-1, 1]).tolist()
+        )
+        stretch_workset = RodMaterialWorkset(
+            stretch_sites,
+            plan.rest_lengths,
+            rest_stretch_shear,
+            material_kind="stretch_shear",
+            component_count=plan.dimension,
+        )
+        bend_workset = RodMaterialWorkset(
+            bend_sites,
+            dual_lengths,
+            bend_reference,
+            material_kind="bend_twist",
+            component_count=rotation_dimension,
+        )
+        stretch_material = LinearElasticRodMaterialPlan(
+            plan.stretch_shear_stiffness
+        ).prepare(stretch_workset)
+        bend_material = LinearElasticRodMaterialPlan(plan.bend_twist_stiffness).prepare(
+            bend_workset
+        )
+        material_workset_id = canonical_fingerprint(
+            {
+                "kind": "native-rod-material-worksets",
+                "stretch_shear": stretch_workset.workset_id,
+                "bend_twist": bend_workset.workset_id,
+            }
+        )
+        dtype = np.dtype(plan.rest_positions.dtype)
+        configuration_schema = ArrayPyTreeSchema.from_tree(
+            (plan.rest_positions, orientations),
+            case_ndim=0,
+            schema_id=f"rod-configuration:{plan.plan_id}",
+        )
+        linear_velocity_space = ArraySpace(
+            (plan.node_count, plan.dimension),
+            dtype=dtype,
+            space_id=canonical_fingerprint(
+                {
+                    "kind": "native-rod-world-node-linear-velocity-space",
+                    "rod": plan.plan_id,
+                }
+            ),
+        )
+        angular_shape = (
+            (plan.segment_count,) if plan.dimension == 2 else (plan.segment_count, 3)
+        )
+        angular_velocity_space = ArraySpace(
+            angular_shape,
+            dtype=dtype,
+            space_id=canonical_fingerprint(
+                {
+                    "kind": "native-rod-material-segment-angular-velocity-space",
+                    "rod": plan.plan_id,
+                }
+            ),
+        )
+        velocity_space = BlockSpace(
+            (linear_velocity_space, angular_velocity_space),
+            names=("world_node_linear_velocity", "material_segment_angular_velocity"),
+            space_id=canonical_fingerprint(
+                {"kind": "native-rod-physical-velocity-space", "rod": plan.plan_id}
+            ),
+        )
+        effort_space = DualSpace(
+            velocity_space,
+            space_id=canonical_fingerprint(
+                {"kind": "native-rod-physical-effort-space", "rod": plan.plan_id}
+            ),
+        )
+        prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-fixed-topology-cosserat-rod",
                 "plan": plan.plan_id,
+                "configuration_schema": configuration_schema.content_id,
+                "velocity_space": velocity_space.space_id,
+                "effort_space": effort_space.space_id,
+                "material_worksets": material_workset_id,
+                "material_ownership": material_owner_id,
                 "rest_kinematics": array_tree_fingerprint(
                     {
                         "orientation": np.asarray(orientations),
@@ -499,6 +640,29 @@ class PreparedRod(StrictModule, NonTrainableState):
                 ),
             }
         )
+        self.plan = plan
+        self.rest_orientations = orientations
+        self.rest_stretch_shear = rest_stretch_shear
+        self.rest_relative_orientations = relative
+        self.dual_lengths = dual_lengths
+        self.stretch_shear_measures = plan.rest_lengths
+        self.bend_twist_measures = dual_lengths
+        self.stretch_shear_reference_strains = rest_stretch_shear
+        self.bend_twist_reference_strains = bend_reference
+        self.node_masses = plan.node_masses
+        self.segment_inertias = plan.segment_inertias
+        self.stretch_shear_sites = stretch_sites
+        self.bend_twist_sites = bend_sites
+        self.stretch_shear_workset = stretch_workset
+        self.bend_twist_workset = bend_workset
+        self.stretch_shear_material = stretch_material
+        self.bend_twist_material = bend_material
+        self.configuration_schema = configuration_schema
+        self.velocity_space = velocity_space
+        self.effort_space = effort_space
+        self.material_owner_id = material_owner_id
+        self.material_workset_id = material_workset_id
+        self.prepared_id = prepared_id
 
     def initialize_state(self) -> RodState:
         return RodState(
@@ -515,6 +679,64 @@ class PreparedRod(StrictModule, NonTrainableState):
             ),
         )
 
+    def configuration_from_state(self, state: RodState, /) -> tuple[Array, Array]:
+        """Return the exact positions/orientations configuration PyTree."""
+        _validate_state_contract(self, state)
+        configuration = (state.positions, state.orientations)
+        self.configuration_schema.validate(configuration)
+        return configuration
+
+    def state_from_configuration(
+        self, configuration: tuple[ArrayLike, ArrayLike], /
+    ) -> RodState:
+        """Create a zero-velocity state from one exact native configuration."""
+        self.configuration_schema.validate(configuration)
+        positions, orientations = (
+            jnp.asarray(configuration[0]),
+            jnp.asarray(configuration[1]),
+        )
+        return RodState(
+            positions,
+            jnp.zeros_like(positions),
+            orientations,
+            jnp.zeros(
+                (
+                    (self.plan.segment_count,)
+                    if self.plan.dimension == 2
+                    else (self.plan.segment_count, 3)
+                ),
+                dtype=positions.dtype,
+            ),
+        )
+
+    def velocity_from_state(self, state: RodState, /) -> tuple[Array, Array]:
+        """Return world nodal velocity and material segment angular velocity."""
+        _validate_state_contract(self, state)
+        return self.velocity_space.validate((state.velocities, state.angular_velocities))
+
+    def state_with_velocity(
+        self,
+        state: RodState,
+        velocity: tuple[ArrayLike, ArrayLike],
+        /,
+    ) -> RodState:
+        """Replace physical velocity without changing native configuration."""
+        configuration = self.configuration_from_state(state)
+        linear, angular = self.velocity_space.validate(velocity)
+        return RodState(configuration[0], linear, configuration[1], angular)
+
+    def effort_from_load(
+        self, forces: ArrayLike, moments: ArrayLike, /
+    ) -> tuple[Array, Array]:
+        """Create a world-force/material-moment velocity covector."""
+        return self.effort_space.validate((forces, moments))
+
+    def load_from_effort(
+        self, effort: tuple[ArrayLike, ArrayLike], /
+    ) -> tuple[Array, Array]:
+        """Recover world nodal forces and material segment moments."""
+        return self.effort_space.validate(effort)
+
     def collision_surface(
         self,
         /,
@@ -522,7 +744,7 @@ class PreparedRod(StrictModule, NonTrainableState):
         vertex_ids: ArrayLike | None = None,
         body_id: int = 0,
         patch_id: int = 0,
-        minimum_separation: float = 0.0,
+        physical_radius: float = 0.0,
     ) -> PreparedCollisionSurface:
         """Expose the rod centerline through the shared collision interface."""
         identifiers = (
@@ -534,17 +756,16 @@ class PreparedRod(StrictModule, NonTrainableState):
             identifiers.dtype, np.integer
         ):
             raise TypeError("vertex_ids must be one integer ID per rod node.")
-        pair_policy = ContactPairPolicy(
-            self.plan.node_count,
-            body_ids=np.full((self.plan.node_count,), int(body_id), dtype=np.int64),
-            patch_ids=np.full((self.plan.node_count,), int(patch_id), dtype=np.int64),
-        )
+        pair_policy = ContactPairPolicy(self.plan.node_count)
         topology = CollisionSurfacePlan(
             identifiers,
             ambient_dimension=self.plan.dimension,
             edges=self.plan.segment_node_ids,
             pair_policy=pair_policy,
-            minimum_separation=minimum_separation,
+            participant_ids=0,
+            body_ids=int(body_id),
+            patch_ids=int(patch_id),
+            physical_radius=physical_radius,
         )
         dtype = np.dtype(self.plan.rest_positions.dtype)
         source = ArraySpace((self.plan.node_count, self.plan.dimension), dtype=dtype)
@@ -662,21 +883,29 @@ def rod_potential_energy(
     _, constitutive, bend_twist, _, _, _ = _rod_strains(
         prepared, positions_, orientations_
     )
-    stretch_density = 0.5 * ein.contract(
-        "si,sij,sj->s",
-        constitutive,
-        prepared.plan.stretch_shear_stiffness,
-        constitutive,
+    stretch_candidate = prepared.stretch_shear_reference_strains + constitutive
+    bend_candidate = prepared.bend_twist_reference_strains + bend_twist
+    zero = jnp.asarray(0.0, dtype=positions_.dtype)
+    step = jnp.asarray(1.0, dtype=positions_.dtype)
+    stretch_response = prepared.stretch_shear_material(
+        stretch_candidate,
+        stretch_candidate,
+        jnp.zeros_like(stretch_candidate),
+        prepared.stretch_shear_material.initialize_history(),
+        None,
+        zero,
+        step,
     )
-    bend_density = 0.5 * ein.contract(
-        "si,sij,sj->s",
-        bend_twist,
-        prepared.plan.bend_twist_stiffness,
-        bend_twist,
+    bend_response = prepared.bend_twist_material(
+        bend_candidate,
+        bend_candidate,
+        jnp.zeros_like(bend_candidate),
+        prepared.bend_twist_material.initialize_history(),
+        None,
+        zero,
+        step,
     )
-    return jnp.sum(prepared.plan.rest_lengths * stretch_density) + jnp.sum(
-        prepared.dual_lengths * bend_density
-    )
+    return stretch_response.stored_energy + bend_response.stored_energy
 
 
 class RodEvaluation(StrictModule):
@@ -1166,12 +1395,14 @@ class PreparedRodDynamics(StrictModule, NonTrainableState):
             inertia_valid = jnp.asarray(True)
             angular_increment = jnp.max(jnp.abs(time_step * angular_velocity))
         else:
+            inertia_solve = self.inertia_solve
+            assert inertia_solve is not None
             angular_momentum = ein.contract(
                 "sij,sj->si", rod_plan.segment_inertias, state.angular_velocities
             )
             gyroscopic = jnp.cross(state.angular_velocities, angular_momentum)
             inertia_result = solve_small_linear(
-                self.inertia_solve,
+                inertia_solve,
                 rod_plan.segment_inertias,
                 moment - gyroscopic,
             )

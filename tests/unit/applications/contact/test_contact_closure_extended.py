@@ -28,12 +28,9 @@ def _closure_case():
         jnp.asarray((10, 11)),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),)),
-        pair_policy=phx.discretization.ContactPairPolicy(
-            2,
-            body_ids=jnp.ones((2,), dtype=jnp.int64),
-            material_ids=jnp.zeros((2,), dtype=jnp.int64),
-            static_mask=jnp.ones((2,), dtype=bool),
-        ),
+        body_ids=1,
+        material_ids=0,
+        static_mask=True,
     )
     static = phx.discretization.PreparedCollisionSurface(
         static_plan,
@@ -154,7 +151,7 @@ def test_cross_discretization_participants_share_one_closure_without_state_alias
     )
 
     assert bool(result.successful)
-    assert len(result.generalized_forces) == 2
+    assert len(result.generalized_efforts) == 2
     np.testing.assert_allclose(
         result.assembly.action_reaction_residual, 0.0, atol=1.0e-10
     )

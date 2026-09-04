@@ -2,7 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -36,6 +39,91 @@ def _batch(species_count=2, shells=3):
         species_count,
     )
     return particles, plan, plan.prepare(particles)
+
+
+def _conversion_role_value(state, scale):
+    return jax.tree.map(
+        lambda leaf: (
+            jnp.full_like(leaf, scale)
+            if eqx.is_inexact_array(leaf)
+            else jnp.zeros_like(leaf)
+        ),
+        state,
+    )
+
+
+def _conversion_tree_pair(reference, covector, vector):
+    products = (
+        jnp.vdot(covector_leaf, vector_leaf)
+        for base, covector_leaf, vector_leaf in zip(
+            jax.tree.leaves(reference),
+            jax.tree.leaves(covector),
+            jax.tree.leaves(vector),
+            strict=True,
+        )
+        if eqx.is_inexact_array(base)
+    )
+    return sum(products, start=jnp.asarray(0.0))
+
+
+def test_particle_conversion_geometry_certifies_four_spaces_and_frozen_routes():
+    _, _, batch = _batch(shells=2)
+    batch_state = phx.discretization.initialize_particle_internal_batch(
+        batch,
+        jnp.ones((1, 2)),
+        jnp.ones((1, 2, 2)),
+        jnp.full((1, 2), 0.2),
+        jnp.ones((1, 2)),
+        jnp.ones((1,)),
+    )
+    state = phx.discretization.initialize_particle_conversion_state((batch_state,))
+    geometry = phx.discretization.ParticleConversionStateGeometry(state.state_id)
+    local = _conversion_role_value(state, 1.0e-4)
+    direction = _conversion_role_value(state, -2.0e-4)
+    cotangent = _conversion_role_value(state, 3.0e-4)
+
+    point = geometry.retract(state, local)
+    recovered = geometry.inverse_retract(state, point)
+    for expected, actual in zip(
+        jax.tree.leaves(local),
+        jax.tree.leaves(recovered),
+        strict=True,
+    ):
+        assert jnp.allclose(actual, expected)
+
+    pushed = geometry.retraction_jvp(state, local, direction)
+    inverse_pushed = geometry.retraction_inverse_jvp(state, point, pushed)
+    pulled = geometry.retraction_vjp(state, local, cotangent)
+    assert _conversion_tree_pair(state, cotangent, pushed) == pytest.approx(
+        _conversion_tree_pair(state, pulled, direction)
+    )
+    for expected, actual in zip(
+        jax.tree.leaves(direction),
+        jax.tree.leaves(inverse_pushed),
+        strict=True,
+    ):
+        assert jnp.allclose(actual, expected)
+
+    transported = geometry.transport_tangent(state, point, pushed)
+    transport_pullback = geometry.transport_cotangent_pullback(
+        state,
+        point,
+        cotangent,
+    )
+    assert _conversion_tree_pair(
+        state,
+        cotangent,
+        transported,
+    ) == pytest.approx(_conversion_tree_pair(state, transport_pullback, pushed))
+    assert jnp.array_equal(point.batches[0].active, state.batches[0].active)
+
+    incompatible = eqx.tree_at(
+        lambda value: value.batches[0].active,
+        point,
+        point.batches[0].active.at[0].set(False),
+    )
+    with pytest.raises(Exception, match="incompatible frozen route"):
+        geometry.inverse_retract(state, incompatible)
 
 
 def test_thermodynamic_inversion_and_radial_transport_are_conservative():

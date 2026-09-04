@@ -12,6 +12,7 @@ import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..linalg import AbstractVectorSpace, ArraySpace, DualSpace
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 
 
@@ -74,12 +75,16 @@ def _identifier(value: str | None, payload, prefix: str, /) -> str:
 
 
 class StateLayout(StrictModule):
-    """Physical state shape, labels, and explicit array-state geometry."""
+    """Point storage metadata and role-aware state differential spaces."""
 
     geometry: AbstractStateGeometry
+    local_space: AbstractVectorSpace
+    tangent_space: AbstractVectorSpace
     shape: tuple[int, ...] = eqx.field(static=True)
     axes: tuple[str, ...] = eqx.field(static=True)
     component_names: tuple[str, ...] = eqx.field(static=True)
+    local_component_names: tuple[str, ...] = eqx.field(static=True)
+    tangent_component_names: tuple[str, ...] = eqx.field(static=True)
     size: int = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
@@ -91,6 +96,10 @@ class StateLayout(StrictModule):
         axes: Sequence[str] | None = None,
         component_names: Sequence[str] | None = None,
         geometry: AbstractStateGeometry | None = None,
+        local_space: AbstractVectorSpace | None = None,
+        tangent_space: AbstractVectorSpace | None = None,
+        local_component_names: Sequence[str] | None = None,
+        tangent_component_names: Sequence[str] | None = None,
         layout_id: str | None = None,
     ):
         resolved_shape = _shape(shape, "StateLayout shape")
@@ -100,10 +109,43 @@ class StateLayout(StrictModule):
         resolved_geometry = EuclideanStateGeometry() if geometry is None else geometry
         if not isinstance(resolved_geometry, AbstractStateGeometry):
             raise TypeError("geometry must be an AbstractStateGeometry or None.")
+        resolved_local_space = (
+            ArraySpace(resolved_shape) if local_space is None else local_space
+        )
+        resolved_tangent_space = (
+            ArraySpace(resolved_shape) if tangent_space is None else tangent_space
+        )
+        if not isinstance(resolved_local_space, AbstractVectorSpace):
+            raise TypeError("local_space must be an AbstractVectorSpace or None.")
+        if not isinstance(resolved_tangent_space, AbstractVectorSpace):
+            raise TypeError("tangent_space must be an AbstractVectorSpace or None.")
+        resolved_local_components = _components(
+            (
+                resolved_components
+                if local_component_names is None and resolved_local_space.size == count
+                else local_component_names
+            ),
+            resolved_local_space.size,
+            "local",
+        )
+        resolved_tangent_components = _components(
+            (
+                resolved_components
+                if tangent_component_names is None
+                and resolved_tangent_space.size == count
+                else tangent_component_names
+            ),
+            resolved_tangent_space.size,
+            "v",
+        )
         self.geometry = resolved_geometry
+        self.local_space = resolved_local_space
+        self.tangent_space = resolved_tangent_space
         self.shape = resolved_shape
         self.axes = resolved_axes
         self.component_names = resolved_components
+        self.local_component_names = resolved_local_components
+        self.tangent_component_names = resolved_tangent_components
         self.size = count
         self.layout_id = _identifier(
             layout_id,
@@ -112,9 +154,35 @@ class StateLayout(StrictModule):
                 "axes": list(resolved_axes),
                 "components": list(resolved_components),
                 "geometry": resolved_geometry.geometry_id,
+                "local_space": resolved_local_space.space_id,
+                "local_size": resolved_local_space.size,
+                "local_components": list(resolved_local_components),
+                "local_cotangent_space": DualSpace(resolved_local_space).space_id,
+                "local_cotangent_size": resolved_local_space.size,
+                "tangent_space": resolved_tangent_space.space_id,
+                "tangent_size": resolved_tangent_space.size,
+                "tangent_components": list(resolved_tangent_components),
+                "cotangent_space": DualSpace(resolved_tangent_space).space_id,
+                "cotangent_size": resolved_tangent_space.size,
             },
             "state-layout",
         )
+
+    @property
+    def local_size(self) -> int:
+        return self.local_space.size
+
+    @property
+    def tangent_size(self) -> int:
+        return self.tangent_space.size
+
+    @property
+    def local_cotangent_space(self) -> DualSpace:
+        return DualSpace(self.local_space)
+
+    @property
+    def cotangent_space(self) -> DualSpace:
+        return DualSpace(self.tangent_space)
 
 
 class InputLayout(StrictModule):

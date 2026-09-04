@@ -118,10 +118,9 @@ def _validate_log_control(
     return control
 
 
-def _projected_local_field(retraction, local: Array, tangent: Array, /) -> Array:
+def _local_field(retraction, local: Array, tangent: Array, /) -> Array:
     point = retraction(local)
-    projected = retraction.geometry.project_tangent(point, tangent)
-    return retraction.pullback(local, projected)
+    return retraction.inverse_jvp(point, tangent)
 
 
 def _automatic_log_field(
@@ -133,12 +132,12 @@ def _automatic_log_field(
     coefficients: Array,
     /,
 ) -> Array:
-    state_size = int(problem.initial_state.size)
+    local_size = int(np.prod(problem.local_shape))
     if control.joint_time:
 
         def augmented_fields(_time, augmented, _args):
             physical_time = augmented[0]
-            local = augmented[1:].reshape(problem.state_shape)
+            local = augmented[1:].reshape(problem.local_shape)
             state = retraction(local)
             rough_fields = jnp.asarray(
                 problem.vector_fields(physical_time, state, problem.args)
@@ -146,7 +145,7 @@ def _automatic_log_field(
             drift = jnp.asarray(problem.drift(physical_time, state, problem.args))
             ambient = jnp.concatenate((drift[..., None], rough_fields), axis=-1)
             local_fields = jax.vmap(
-                lambda tangent: _projected_local_field(retraction, local, tangent),
+                lambda tangent: _local_field(retraction, local, tangent),
                 in_axes=-1,
                 out_axes=-1,
             )(ambient)
@@ -157,7 +156,7 @@ def _automatic_log_field(
                 )
             )
             return jnp.concatenate(
-                (time_fields[None, :], local_fields.reshape((state_size, -1))),
+                (time_fields[None, :], local_fields.reshape((local_size, -1))),
                 axis=0,
             )
 
@@ -171,15 +170,15 @@ def _automatic_log_field(
     else:
 
         def local_fields(_time, local_flat, _args):
-            local = local_flat.reshape(problem.state_shape)
+            local = local_flat.reshape(problem.local_shape)
             state = retraction(local)
             ambient = jnp.asarray(problem.vector_fields(left_time, state, problem.args))
             pulled_back = jax.vmap(
-                lambda tangent: _projected_local_field(retraction, local, tangent),
+                lambda tangent: _local_field(retraction, local, tangent),
                 in_axes=-1,
                 out_axes=-1,
             )(ambient)
-            return pulled_back.reshape((state_size, control.dimension))
+            return pulled_back.reshape((local_size, control.dimension))
 
         lifted = lift_rough_vector_fields(
             local_fields,
@@ -201,36 +200,37 @@ def _explicit_log_field(
     explicit_fields: LiftedRoughVectorFields,
     /,
 ) -> Array:
-    state_size = int(problem.initial_state.size)
+    local_size = int(np.prod(problem.local_shape))
     if control.joint_time:
         physical_time = coordinates[0]
-        local = coordinates[1:].reshape(problem.state_shape)
+        local = coordinates[1:].reshape(problem.local_shape)
     else:
         physical_time = left_time
-        local = coordinates.reshape(problem.state_shape)
+        local = coordinates.reshape(problem.local_shape)
     state = retraction(local)
-    ambient = jnp.asarray(explicit_fields(physical_time, state, problem.args))
-    expected = problem.state_shape + (control.primitive_basis.size,)
-    if ambient.shape != expected:
+    tangents = jnp.asarray(explicit_fields(physical_time, state, problem.args))
+    expected = problem.tangent_shape + (control.primitive_basis.size,)
+    if tangents.shape != expected:
         raise ValueError(
-            f"explicit_fields must return shape {expected}; got {ambient.shape}."
+            f"explicit_fields must return physical tangent shape {expected}; "
+            f"got {tangents.shape}."
         )
     local_fields = jax.vmap(
-        lambda tangent: _projected_local_field(retraction, local, tangent),
+        lambda tangent: _local_field(retraction, local, tangent),
         in_axes=-1,
         out_axes=-1,
-    )(ambient)
+    )(tangents)
     if control.joint_time:
         time_components = jnp.asarray(
             [1.0 if word == (0,) else 0.0 for word in control.primitive_basis.words],
             dtype=coordinates.dtype,
         )
         lifted = jnp.concatenate(
-            (time_components[None, :], local_fields.reshape((state_size, -1))),
+            (time_components[None, :], local_fields.reshape((local_size, -1))),
             axis=0,
         )
     else:
-        lifted = local_fields.reshape((state_size, -1))
+        lifted = local_fields.reshape((local_size, -1))
     return jnp.tensordot(lifted, coefficients, axes=((-1,), (0,)))
 
 
@@ -287,13 +287,15 @@ class LogODE(AbstractRoughSolver):
         /,
     ) -> tuple[Array, Array, Mapping[str, Array]]:
         log_control = _validate_log_control(problem, control)
-        state_size = int(problem.initial_state.size)
+        local_size = int(np.prod(problem.local_shape))
 
         def one_path(path_coefficients):
             def advance(state, item):
                 left_time, right_time, coefficients = item
                 retraction = problem.geometry.local_retraction(state)
-                local_zero = jnp.zeros_like(state).reshape((state_size,))
+                local_zero = jnp.zeros(problem.local_shape, dtype=state.dtype).reshape(
+                    (local_size,)
+                )
                 if log_control.joint_time:
                     initial_coordinates = jnp.concatenate(
                         (jnp.asarray(left_time).reshape((1,)), local_zero)
@@ -336,9 +338,9 @@ class LogODE(AbstractRoughSolver):
                 )
                 final_coordinates = native.ys[0]
                 final_local = (
-                    final_coordinates[1:].reshape(problem.state_shape)
+                    final_coordinates[1:].reshape(problem.local_shape)
                     if log_control.joint_time
-                    else final_coordinates.reshape(problem.state_shape)
+                    else final_coordinates.reshape(problem.local_shape)
                 )
                 next_state = retraction(final_local)
                 status = jnp.asarray(native.result._value, dtype=jnp.int32)
@@ -489,8 +491,15 @@ class LinearLogODE(AbstractRoughSolver):
         log_control = _validate_log_control(problem, control)
         if problem.time_dependent:
             raise ValueError("LinearLogODE only supports autonomous explicit operators.")
-        if not problem.geometry.trivial:
-            raise ValueError("LinearLogODE requires a trivial Euclidean state geometry.")
+        if (
+            not problem.geometry.trivial
+            or problem.state_shape != problem.local_shape
+            or problem.state_shape != problem.tangent_shape
+        ):
+            raise ValueError(
+                "LinearLogODE requires equal point, local, and tangent spaces "
+                "with trivial Euclidean geometry."
+            )
         if len(self.operators) != log_control.dimension:
             raise ValueError(
                 "LinearLogODE requires one explicit operator per control channel."

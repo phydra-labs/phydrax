@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -13,193 +14,167 @@ from phydrax.nn.parameters import ParameterSubspace
 
 
 contact = phx.applications.contact
+collision = phx.discretization.contact
 
 
-def _surface_pair(*, epoch=0):
-    plus = contact.ContactSurface(
-        "plus",
+def _material_table():
+    return contact.ContactMaterialPairTable.uniform(
+        normal_stiffness=100.0,
+        static_friction=0.5,
+        dynamic_friction=0.4,
+        restitution=0.0,
+        adhesion_energy=0.0,
+        thermal_conductance=0.0,
+        electrical_conductance=0.0,
+        wear_coefficient=1.0e-4,
+        hardness=10.0,
+        roughness=1.0e-3,
+    )
+
+
+def _canonical_pair(*, friction=False):
+    moving_space = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
+    static_space = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
+    moving_plan = collision.CollisionSurfacePlan(
         jnp.asarray([10, 11]),
-        jnp.asarray([[0.25, -0.1], [0.75, 0.2]]),
-        jnp.asarray([[0, 1]], dtype=jnp.int32),
-        jnp.asarray([100]),
+        ambient_dimension=2,
+        edges=jnp.asarray([[0, 1]], dtype=jnp.int32),
+        body_ids=0,
+        material_ids=0,
+        physical_radius=0.05,
     )
-    minus = contact.ContactSurface(
-        "minus",
+    static_plan = collision.CollisionSurfacePlan(
         jnp.asarray([20, 21]),
+        ambient_dimension=2,
+        edges=jnp.asarray([[0, 1]], dtype=jnp.int32),
+        body_ids=1,
+        material_ids=0,
+        static_mask=True,
+        physical_radius=0.05,
+    )
+    moving = collision.PreparedCollisionSurface(
+        moving_plan,
+        jnp.asarray([[0.25, 0.05], [0.75, 0.05]]),
+        collision.selection_collision_operator(
+            moving_space, jnp.asarray([0, 1], dtype=jnp.int32)
+        ),
+    )
+    static = collision.PreparedCollisionSurface(
+        static_plan,
         jnp.asarray([[0.0, 0.0], [1.0, 0.0]]),
-        jnp.asarray([[0, 1]], dtype=jnp.int32),
-        jnp.asarray([200]),
+        collision.selection_collision_operator(
+            static_space, jnp.asarray([0, 1], dtype=jnp.int32)
+        ),
     )
-    configuration = contact.ContactConfiguration(
-        plus,
-        minus,
-        epoch=epoch,
-        search_radius=1.0,
-    )
-    return plus, minus, configuration, contact.ContactQueryPlan(configuration).execute()
-
-
-def test_current_geometry_query_is_exact_deterministic_and_epoch_frozen():
-    plus, minus, configuration, first = _surface_pair()
-    second = contact.ContactQueryPlan(configuration).execute()
-
-    assert first.query_id == second.query_id
-    assert first.patches.pair_ids == second.patches.pair_ids
-    np.testing.assert_allclose(first.patches.gaps, jnp.asarray([-0.1, 0.2]))
-    np.testing.assert_allclose(first.patches.normals, jnp.asarray([[0.0, 1.0]] * 2))
-
-    moved_plus = plus.current_coordinates.at[:, 1].add(0.05)
-    gap, normal, closest = first.current_kinematics(moved_plus, minus.current_coordinates)
-    np.testing.assert_allclose(gap, jnp.asarray([-0.05, 0.25]))
-    np.testing.assert_allclose(normal, first.patches.normals)
-    np.testing.assert_allclose(closest[:, 1], 0.0)
-
-    next_configuration = configuration.next_epoch(
-        plus.with_current_coordinates(moved_plus), minus
-    )
-    assert next_configuration.epoch == 1
-    assert next_configuration.plus.surface_id == configuration.plus.surface_id
-
-
-def test_self_contact_excludes_incident_facets_and_preserves_stable_pairs():
-    surface = contact.ContactSurface(
-        "loop",
-        jnp.asarray([0, 1, 2, 3]),
-        jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
-        jnp.asarray([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=jnp.int32),
-        jnp.asarray([10, 11, 12, 13]),
-    )
-    configuration = contact.ContactConfiguration(
-        surface,
-        surface,
-        epoch=0,
-        search_radius=2.0,
-        self_contact=True,
-        excluded_node_facet_pairs=jnp.asarray([[0, 11]]),
-    )
-    query = contact.ContactQueryPlan(configuration).execute()
-    node_ids = np.asarray(surface.node_ids)
-    facets = np.asarray(surface.facets)
-
-    for plus_index, facet_index in zip(
-        np.asarray(query.patches.plus_node_indices),
-        np.asarray(query.patches.minus_facet_indices),
-        strict=True,
-    ):
-        assert int(node_ids[plus_index]) not in set(
-            node_ids[facets[facet_index]].tolist()
+    scene = collision.ContactParticipantScene(
+        (
+            collision.LinearContactParticipant(moving),
+            collision.LinearContactParticipant(static),
         )
-    assert (
-        query.patches.pair_ids
-        == contact.ContactQueryPlan(configuration).execute().patches.pair_ids
     )
-    assert int(query.excluded_count) > 0
+    search = collision.DenseContactSearchPlan(
+        edge_vertex_capacity=16,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.2,
+    )
+    closure = contact.ContactClosurePlan(
+        contact.CompliantNormalContactLaw(),
+        _material_table(),
+        tangential=(contact.RegularizedCoulombContactLaw(1.0e-3) if friction else None),
+        evolution=(
+            contact.FrictionWearEvolutionLaw(
+                critical_slip_distance=0.1,
+                damage_onset=0.1,
+                damage_completion=0.2,
+            )
+            if friction
+            else None
+        ),
+    )
+    state = contact.ContactRouteState.empty(0, 1, closure.closure_id)
+    states = (moving_space.zeros(), static_space.zeros())
+    rates = (moving_space.zeros(), static_space.zeros())
+    rest = jnp.concatenate((moving.rest_positions, static.rest_positions), axis=0)
+    epoch = search.build(scene, scene.positions(states))
+    return scene, search, closure, state, states, rates, rest, epoch
 
 
-def test_penalty_fe_adapter_transaction_and_exact_tangent_action():
-    plus, minus, _, query = _surface_pair()
-    operator = contact.FixedEpochContactOperator(query, contact.PenaltyContactLaw(100.0))
-    accepted = operator.accepted_state()
-    boundary = contact.FiniteElementContactBoundary(operator)
-    assembly = boundary.assemble(accepted)
+def _evaluate(case, states=None, rates=None):
+    scene, search, closure, state, initial_states, initial_rates, rest, epoch = case
+    return contact.evaluate_cross_discretization_contact(
+        scene,
+        initial_states if states is None else states,
+        initial_rates if rates is None else rates,
+        search,
+        closure,
+        state,
+        0.01,
+        rest,
+        activation_distance=0.2,
+        candidate_epoch=epoch,
+    )
 
-    np.testing.assert_allclose(accepted.normal_pressure, 0.0)
-    np.testing.assert_allclose(assembly.contact.normal_pressure, jnp.asarray([10.0, 0.0]))
-    np.testing.assert_allclose(assembly.contact.action_reaction_defect, 0.0, atol=1.0e-12)
+
+def test_collision_surface_search_is_deterministic_and_fixed_epoch_residual_is_dense():
+    case = _canonical_pair()
+    scene, search, _, _, states, rates, rest, epoch = case
+    repeated = search.build(scene, scene.positions(states))
+    first = _evaluate(case)
+    moved = (states[0].at[:, 1].add(-0.02), states[1])
+    second = _evaluate(case, states=moved)
+
+    assert epoch.epoch_id == repeated.epoch_id
+    np.testing.assert_array_equal(
+        epoch.edge_vertex.route_keys, repeated.edge_vertex.route_keys
+    )
+    np.testing.assert_array_equal(
+        first.kinematics.batches[0].route_keys,
+        second.kinematics.batches[0].route_keys,
+    )
+    assert jnp.min(second.kinematics.batches[0].gap) < jnp.min(
+        first.kinematics.batches[0].gap
+    )
     np.testing.assert_allclose(
-        jnp.sum(assembly.plus_residual, axis=0)
-        + jnp.sum(assembly.minus_residual, axis=0),
-        0.0,
-        atol=1.0e-12,
-    )
-    assert bool(assembly.finite)
-    assert bool(assembly.convergence.satisfies_contract)
-
-    plus_direction = jnp.asarray([[0.0, -1.0], [0.0, 0.0]])
-    plus_action, minus_action = boundary.tangent_action(
-        accepted,
-        plus.current_coordinates,
-        minus.current_coordinates,
-        plus_direction,
-        jnp.zeros_like(minus.current_coordinates),
-    )
-    assert plus_action.shape == plus.current_coordinates.shape
-    assert minus_action.shape == minus.current_coordinates.shape
-    assert jnp.linalg.norm(plus_action) > 0.0
-    np.testing.assert_allclose(
-        jnp.sum(plus_action, axis=0) + jnp.sum(minus_action, axis=0),
-        0.0,
-        atol=1.0e-10,
+        second.assembly.action_reaction_residual, 0.0, atol=1.0e-12
     )
 
-    transaction = boundary.attempt(accepted)
-    assert transaction.rollback() is accepted
-    committed = transaction.commit()
-    assert committed.state_version == accepted.state_version + 1
-    np.testing.assert_allclose(accepted.normal_pressure, 0.0)
-    np.testing.assert_allclose(committed.normal_pressure, jnp.asarray([10.0, 0.0]))
+    def residual(moving_state):
+        evaluation = contact.evaluate_cross_discretization_contact(
+            scene,
+            (moving_state, states[1]),
+            rates,
+            search,
+            case[2],
+            case[3],
+            0.01,
+            rest,
+            activation_distance=0.2,
+            candidate_epoch=epoch,
+        )
+        return evaluation.generalized_efforts[0]
+
+    _, action = jax.jvp(residual, (states[0],), (jnp.ones_like(states[0]),))
+    assert action.shape == states[0].shape
+    assert jnp.all(jnp.isfinite(action))
 
 
-def test_pdas_and_augmented_lagrangian_keep_multiplier_updates_transactional():
-    _, _, _, query = _surface_pair()
-    pdas = contact.FixedEpochContactOperator(
-        query, contact.FrictionlessPDASContactLaw(10.0)
+def test_closure_candidate_history_is_committed_or_rolled_back_explicitly():
+    case = _canonical_pair(friction=True)
+    rates = (
+        jnp.broadcast_to(jnp.asarray([0.2, -0.05]), case[4][0].shape),
+        case[5][1],
     )
-    pdas_state = pdas.accepted_state()
-    pdas_evaluation = pdas.evaluate(pdas_state, normal_pressure=jnp.asarray([3.0, 0.0]))
-    np.testing.assert_array_equal(pdas_evaluation.active, jnp.asarray([True, False]))
-    np.testing.assert_allclose(pdas_evaluation.normal_pressure, jnp.asarray([3.0, 0.0]))
+    attempt = _evaluate(case, rates=rates)
 
-    augmented = contact.FixedEpochContactOperator(
-        query, contact.AugmentedLagrangianContactLaw(20.0)
-    )
-    initial = augmented.accepted_state()
-    first = augmented.attempt(initial)
-    np.testing.assert_allclose(initial.normal_pressure, 0.0)
-    np.testing.assert_allclose(first.trial.normal_pressure, jnp.asarray([2.0, 0.0]))
-    assert first.rollback() is initial
-    committed = first.commit()
-    second = augmented.evaluate(committed)
-    np.testing.assert_allclose(second.normal_pressure, jnp.asarray([4.0, 0.0]))
-
-
-def test_coulomb_history_is_committed_only_and_reports_normal_reversal():
-    plus, minus, configuration, query = _surface_pair()
-    operator = contact.FixedEpochContactOperator(
-        query,
-        contact.PenaltyContactLaw(100.0),
-        friction_law=contact.CoulombContactLaw(0.5, 10.0),
-    )
-    accepted = operator.accepted_state()
-    shifted_plus = plus.current_coordinates.at[0, 0].add(1.0)
-    attempt = operator.attempt(accepted, shifted_plus, minus.current_coordinates)
-
-    assert int(attempt.evaluation.mode[0]) == contact.CONTACT_SLIP
-    assert attempt.evaluation.dissipation > 0.0
-    np.testing.assert_allclose(accepted.accumulated_slip, 0.0)
+    assert attempt.rollback() is case[3]
     committed = attempt.commit()
-    assert jnp.linalg.norm(committed.accumulated_slip[0]) > 0.0
-
-    reversed_minus = contact.ContactSurface(
-        minus.surface_id,
-        minus.node_ids,
-        minus.current_coordinates,
-        jnp.asarray([[1, 0]], dtype=jnp.int32),
-        minus.facet_ids,
+    assert committed.state_version == case[3].state_version + 2
+    assert jnp.linalg.norm(committed.accumulated_slip) > 0.0
+    assert case[3].capacity == 0
+    np.testing.assert_allclose(
+        attempt.assembly.action_reaction_residual, 0.0, atol=1.0e-12
     )
-    next_configuration = configuration.next_epoch(
-        plus.with_current_coordinates(shifted_plus), reversed_minus
-    )
-    next_query = contact.ContactQueryPlan(next_configuration).execute()
-    next_operator = contact.FixedEpochContactOperator(
-        next_query,
-        contact.PenaltyContactLaw(100.0),
-        friction_law=contact.CoulombContactLaw(0.5, 10.0),
-    )
-    epoch_attempt = next_operator.attempt_epoch(committed)
-    assert epoch_attempt.rollback() is committed
-    assert epoch_attempt.commit().epoch == next_configuration.epoch
-    assert bool(epoch_attempt.evaluation.transport_ambiguous[0])
 
 
 def test_mortar_and_nitsche_evidence_are_derived_from_discrete_actions():
@@ -235,34 +210,33 @@ def test_mortar_and_nitsche_evidence_are_derived_from_discrete_actions():
     assert bool(nitsche_evidence.coercive)
 
 
-def test_fixed_epoch_neural_virtual_work_builds_parameter_space_root():
-    plus, minus, _, query = _surface_pair()
-    operator = contact.FixedEpochContactOperator(query, contact.PenaltyContactLaw(100.0))
-    accepted = operator.accepted_state()
-    functions = {
-        "minus": minus.current_coordinates,
-        "plus": plus.current_coordinates,
-    }
+def test_neural_contact_uses_canonical_fixed_manifold_virtual_work():
+    case = _canonical_pair()
+    scene, search, closure, state, states, _, rest, epoch = case
+    functions = {"moving": states[0], "static": states[1]}
 
-    def plus_trace(root, epoch_coordinates, args):
-        del epoch_coordinates, args
-        return root["plus"]
+    def state_trace(root, args):
+        del args
+        return root["moving"], root["static"]
 
-    def minus_trace(root, epoch_coordinates, args):
-        del epoch_coordinates, args
-        return root["minus"]
-
-    adapter = contact.FixedEpochNeuralContactAdapter(
-        operator,
-        accepted,
-        plus_trace,
-        minus_trace,
+    adapter = contact.NeuralContactAdapter(
+        scene,
+        search,
+        closure,
+        state,
+        epoch,
+        rest,
+        state_trace,
         adapter_id="neural-obstacle-contact",
+        activation_distance=0.2,
     )
     direct = adapter.evaluate(functions)
-    np.testing.assert_allclose(
-        direct.plus_virtual_work, -direct.contact.plus_nodal_forces
-    )
+    for virtual_work, force in zip(
+        direct.virtual_work, direct.contact.generalized_efforts, strict=True
+    ):
+        np.testing.assert_allclose(virtual_work, -force)
+    assert direct.contact.candidate_epoch is epoch
+
     subspace = ParameterSubspace(functions, eqx.is_inexact_array)
     prepared = adapter.prepare_equilibrium(functions, subspace)
     residual = prepared.problem.residual_function(prepared.initial_state, None)
@@ -271,70 +245,62 @@ def test_fixed_epoch_neural_virtual_work_builds_parameter_space_root():
     assert prepared.formulation == "virtual-work"
 
 
-def test_neural_pdas_includes_multiplier_complementarity_in_the_vjp_root():
-    plus, minus, _, query = _surface_pair()
-    operator = contact.FixedEpochContactOperator(
-        query, contact.FrictionlessPDASContactLaw(10.0)
+def test_mpm_participant_uses_canonical_manifold_and_conservative_pullback():
+    query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
+    query = contact.prepare_point_contact_participant(
+        query_space,
+        jnp.asarray([[0.0, 0.05]]),
+        vertex_ids=jnp.asarray([1]),
+        body_ids=jnp.asarray([0]),
+        physical_radius=jnp.asarray([0.05]),
     )
-    functions = {
-        "minus": minus.current_coordinates,
-        "plus": plus.current_coordinates,
-        "pressure": jnp.asarray([3.0, 0.0]),
-    }
-
-    def plus_trace(root, epoch_coordinates, args):
-        del epoch_coordinates, args
-        return root["plus"]
-
-    def minus_trace(root, epoch_coordinates, args):
-        del epoch_coordinates, args
-        return root["minus"]
-
-    def pressure_trace(root, query_result, args):
-        del query_result, args
-        return root["pressure"]
-
-    adapter = contact.FixedEpochNeuralContactAdapter(
-        operator,
-        operator.accepted_state(),
-        plus_trace,
-        minus_trace,
-        adapter_id="neural-pdas-contact",
-        normal_pressure_trace=pressure_trace,
+    surface_space = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
+    surface_plan = collision.CollisionSurfacePlan(
+        jnp.asarray([2, 3]),
+        ambient_dimension=2,
+        edges=jnp.asarray([[0, 1]], dtype=jnp.int32),
+        body_ids=1,
+        material_ids=0,
+        static_mask=True,
+        physical_radius=0.05,
     )
-    direct = adapter.evaluate(functions)
+    surface = collision.LinearContactParticipant(
+        collision.PreparedCollisionSurface(
+            surface_plan,
+            jnp.asarray([[-1.0, 0.0], [1.0, 0.0]]),
+            collision.selection_collision_operator(
+                surface_space, jnp.asarray([0, 1], dtype=jnp.int32)
+            ),
+        )
+    )
+    scene = collision.ContactParticipantScene((query, surface))
+    search = collision.DenseContactSearchPlan(
+        edge_vertex_capacity=4,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.2,
+    )
+    closure = contact.ContactClosurePlan(
+        contact.CompliantNormalContactLaw(), _material_table()
+    )
+    state = contact.ContactRouteState.empty(0, 1, closure.closure_id)
+    states = (query_space.zeros(), surface_space.zeros())
+    rest = scene.positions(states)
+    result = contact.evaluate_cross_discretization_contact(
+        scene,
+        states,
+        (query_space.zeros(), surface_space.zeros()),
+        search,
+        closure,
+        state,
+        1.0,
+        rest,
+        activation_distance=0.2,
+    )
+
+    assert isinstance(result.candidate_epoch, collision.ContactCandidateEpoch)
+    assert len(result.generalized_efforts) == 2
     np.testing.assert_allclose(
-        direct.normal_pressure_virtual_work,
-        direct.contact.complementarity_residual,
+        result.assembly.action_reaction_residual, 0.0, atol=1.0e-12
     )
-    prepared = adapter.prepare_equilibrium(
-        functions, ParameterSubspace(functions, eqx.is_inexact_array)
-    )
-    residual = prepared.problem.residual_function(prepared.initial_state, None)
-    assert residual.shape == prepared.initial_state.shape
-    assert jnp.all(jnp.isfinite(residual))
-
-
-def test_deformable_mpm_adapter_is_distinct_and_conserves_route_action():
-    plan = contact.DeformableMPMContactPlan(
-        jnp.asarray([0]),
-        jnp.asarray([[0.0, 0.0]]),
-        jnp.asarray([[0.0, 1.0]]),
-        activation_distance=0.5,
-    )
-    prepared = plan.prepare(1)
-    adapter = contact.DeformableMPMContactAdapter(
-        prepared, contact.PenaltyContactLaw(100.0)
-    )
-    position = jnp.asarray([[0.0, -0.2]])
-    result = adapter.evaluate(
-        position,
-        jnp.zeros_like(position),
-        position,
-        jnp.zeros_like(position),
-    )
-
-    assert isinstance(result, contact.DeformableMPMContactEvaluation)
-    np.testing.assert_allclose(result.normal_pressure, jnp.asarray([20.0]))
-    np.testing.assert_allclose(result.transpose.balance_residual, 0.0, atol=1.0e-12)
     assert bool(result.successful)

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -413,7 +413,7 @@ def compile_workset_program(
     /,
     *,
     local_kernel: str = "auto",
-    realization: str = "matrix_free",
+    realization: str = "sparse",
 ) -> WorksetProgram:
     worksets = []
     common_action_indices = set()
@@ -545,7 +545,7 @@ def compile_workset_program(
                 field_layout_ids=tuple(binding.layout_id for binding in bindings),
                 geometry_action_id=region.geometry_actions.action_id,
                 coefficient_layout_ids=_coefficient_layout_ids(action),
-                precision_id=discretization.precision_policy.policy_id,
+                precision_id=cast(Any, discretization.precision_policy).policy_id,
                 ir_semantics_id=ir.actions[action_index].action_id,
                 local_kernel=mode,
                 provider_selection_id=selection.selection_id,
@@ -881,7 +881,7 @@ def kernel_table_from_form(
                     value.geometry_action_id for value in signatures
                 ),
                 coefficient_layout_ids=_coefficient_layout_ids(action),
-                precision_id=discretization.precision_policy.policy_id,
+                precision_id=cast(Any, discretization.precision_policy).policy_id,
                 ir_semantics_id=ir.actions[action_index].action_id,
             )
         )

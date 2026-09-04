@@ -13,10 +13,28 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._guarantee import ContactGuaranteeLevel
+from ._surface import CollisionFeaturePolicy
+
+
+def _analytic_feature_policy(
+    feature_policy: CollisionFeaturePolicy, /
+) -> CollisionFeaturePolicy:
+    if not isinstance(feature_policy, CollisionFeaturePolicy):
+        raise TypeError("feature_policy must be CollisionFeaturePolicy.")
+    if (
+        feature_policy.vertex_count != 0
+        or feature_policy.edge_count != 0
+        or feature_policy.face_count != 0
+        or feature_policy.analytic_count != 1
+    ):
+        raise ValueError(
+            "Implicit contact geometry requires exactly one analytic feature."
+        )
+    return feature_policy
 
 
 class ImplicitContactEvaluation(StrictModule):
@@ -39,6 +57,11 @@ class AbstractImplicitContactGeometry(StrictModule, NonTrainableState):
     @property
     @abc.abstractmethod
     def geometry_id(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def feature_policy(self) -> CollisionFeaturePolicy:
         raise NotImplementedError
 
     @property
@@ -87,22 +110,34 @@ class AbstractImplicitContactGeometry(StrictModule, NonTrainableState):
 class SphereContactGeometry(AbstractImplicitContactGeometry):
     center: Array
     radius: float = eqx.field(static=True)
+    _feature_policy: CollisionFeaturePolicy
     _geometry_id: str = eqx.field(static=True)
 
-    def __init__(self, center: ArrayLike, radius: float, /):
+    def __init__(
+        self,
+        center: ArrayLike,
+        radius: float,
+        /,
+        *,
+        feature_policy: CollisionFeaturePolicy,
+    ):
         center_ = jnp.asarray(center)
         radius_ = float(radius)
         if center_.shape not in ((2,), (3,)):
             raise ValueError("Sphere center requires dimension two or three.")
         if not np.isfinite(radius_) or radius_ <= 0.0:
             raise ValueError("Sphere radius must be finite and positive.")
+        features = _analytic_feature_policy(feature_policy)
         self.center = center_
         self.radius = radius_
+        self._feature_policy = features
         self._geometry_id = canonical_fingerprint(
             {
                 "kind": "sphere-contact-geometry",
+                "center": array_tree_fingerprint(np.asarray(center_)),
                 "dimension": int(center_.size),
                 "radius": radius_.hex(),
+                "feature_policy": features.policy_id,
             }
         )
 
@@ -113,6 +148,10 @@ class SphereContactGeometry(AbstractImplicitContactGeometry):
     @property
     def geometry_id(self) -> str:
         return self._geometry_id
+
+    @property
+    def feature_policy(self) -> CollisionFeaturePolicy:
+        return self._feature_policy
 
     @property
     def guarantee_level(self) -> ContactGuaranteeLevel:
@@ -134,9 +173,17 @@ class SphereContactGeometry(AbstractImplicitContactGeometry):
 class PlaneContactGeometry(AbstractImplicitContactGeometry):
     unit_normal: Array
     offset: float = eqx.field(static=True)
+    _feature_policy: CollisionFeaturePolicy
     _geometry_id: str = eqx.field(static=True)
 
-    def __init__(self, normal: ArrayLike, offset: float, /):
+    def __init__(
+        self,
+        normal: ArrayLike,
+        offset: float,
+        /,
+        *,
+        feature_policy: CollisionFeaturePolicy,
+    ):
         normal_ = jnp.asarray(normal)
         if normal_.shape not in ((2,), (3,)):
             raise ValueError("Plane normal requires dimension two or three.")
@@ -146,13 +193,17 @@ class PlaneContactGeometry(AbstractImplicitContactGeometry):
         offset_ = float(offset)
         if not np.isfinite(offset_):
             raise ValueError("Plane offset must be finite.")
+        features = _analytic_feature_policy(feature_policy)
         self.unit_normal = normal_ / norm
         self.offset = offset_
+        self._feature_policy = features
         self._geometry_id = canonical_fingerprint(
             {
                 "kind": "plane-contact-geometry",
+                "normal": array_tree_fingerprint(np.asarray(self.unit_normal)),
                 "dimension": int(normal_.size),
                 "offset": offset_.hex(),
+                "feature_policy": features.policy_id,
             }
         )
 
@@ -163,6 +214,10 @@ class PlaneContactGeometry(AbstractImplicitContactGeometry):
     @property
     def geometry_id(self) -> str:
         return self._geometry_id
+
+    @property
+    def feature_policy(self) -> CollisionFeaturePolicy:
+        return self._feature_policy
 
     @property
     def guarantee_level(self) -> ContactGuaranteeLevel:
@@ -191,6 +246,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
     upper_bound: Array
     _guarantee_level: ContactGuaranteeLevel = eqx.field(static=True)
     _geometry_id: str = eqx.field(static=True)
+    _feature_policy: CollisionFeaturePolicy
 
     def __init__(
         self,
@@ -201,6 +257,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
         *,
         support_action: Callable[[Array], Array] | None = None,
         guarantee_level: ContactGuaranteeLevel = ContactGuaranteeLevel.HEURISTIC,
+        feature_policy: CollisionFeaturePolicy,
         geometry_id: str | None = None,
     ):
         if not callable(distance_action):
@@ -214,6 +271,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
         ):
             raise ValueError("Implicit geometry bounds must be finite and ordered.")
         level = ContactGuaranteeLevel(guarantee_level)
+        features = _analytic_feature_policy(feature_policy)
         identifier = (
             canonical_fingerprint(
                 {
@@ -222,6 +280,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
                     "distance_action": distance_action,
                     "support_action": support_action,
                     "guarantee": int(level),
+                    "feature_policy": features.policy_id,
                 }
             )
             if geometry_id is None
@@ -234,6 +293,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
         self.lower_bound = lower
         self.upper_bound = upper
         self._guarantee_level = level
+        self._feature_policy = features
         self._geometry_id = identifier
 
     @property
@@ -243,6 +303,10 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
     @property
     def geometry_id(self) -> str:
         return self._geometry_id
+
+    @property
+    def feature_policy(self) -> CollisionFeaturePolicy:
+        return self._feature_policy
 
     @property
     def guarantee_level(self) -> ContactGuaranteeLevel:

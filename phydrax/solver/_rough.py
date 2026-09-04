@@ -25,6 +25,7 @@ from ..stochastic import (
     StochasticTrajectory,
 )
 from ..stochastic._trajectory import _TrajectoryRecord
+from ._delay import _invalid_geometry_tangent
 from ._solution_validation import validate_solution_arrays
 
 
@@ -33,9 +34,11 @@ RoughDrift: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 
 
 class _ZeroRoughDrift(eqx.Module):
+    zero: Array
+
     def __call__(self, time, state, args):
-        del time, args
-        return jnp.zeros_like(state)
+        del time, state, args
+        return self.zero
 
 
 class RoughDifferentialProblem(StrictModule):
@@ -48,6 +51,8 @@ class RoughDifferentialProblem(StrictModule):
     geometry: AbstractStateGeometry
     state_shape: tuple[int, ...] = eqx.field(static=True)
     driver_dimension: int = eqx.field(static=True)
+    local_shape: tuple[int, ...] = eqx.field(static=True)
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
     has_drift: bool = eqx.field(static=True)
     time_dependent: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -70,12 +75,9 @@ class RoughDifferentialProblem(StrictModule):
         dimension = int(driver_dimension)
         if dimension <= 0:
             raise ValueError("driver_dimension must be positive.")
-        if drift is None:
-            resolved_drift: RoughDrift = _ZeroRoughDrift()
-        else:
-            if not callable(drift):
-                raise TypeError("drift must be callable or None.")
-            resolved_drift = drift
+        if drift is not None and not callable(drift):
+            raise TypeError("drift must be callable or None.")
+        resolved_drift = drift
         state = jnp.asarray(initial_state)
         state_shape = tuple(int(size) for size in state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
@@ -86,15 +88,75 @@ class RoughDifferentialProblem(StrictModule):
         membership = jnp.asarray(resolved_geometry.contains(state), dtype=bool)
         if membership.shape != () or not bool(membership):
             raise ValueError("initial_state must belong to the state geometry.")
+        if not resolved_geometry.supports_exact_differential:
+            raise ValueError(
+                "Rough differential geometry must provide exact retraction differentials."
+            )
+        tangent_zero = jnp.asarray(
+            resolved_geometry.project_tangent(state, jnp.zeros_like(state))
+        )
+        tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+        local_zero = jnp.asarray(
+            resolved_geometry.retraction_inverse_jvp(state, state, tangent_zero)
+        )
+        local_shape = tuple(int(size) for size in local_zero.shape)
+        retracted_zero = jnp.asarray(resolved_geometry.retract(state, local_zero))
+        if retracted_zero.shape != state.shape:
+            raise ValueError(
+                "Rough differential geometry retraction must return point shape "
+                f"{state.shape}; got {retracted_zero.shape}."
+            )
+        reconstructed_zero = jnp.asarray(
+            resolved_geometry.retraction_jvp(
+                state,
+                local_zero,
+                jnp.zeros_like(local_zero),
+            )
+        )
+        if reconstructed_zero.shape != tangent_shape:
+            raise ValueError(
+                "Rough differential geometry differential must return physical "
+                f"tangent shape {tangent_shape}; got {reconstructed_zero.shape}."
+            )
+        if resolved_drift is None:
+            resolved_drift = _ZeroRoughDrift(tangent_zero)
         fields = jnp.asarray(vector_fields(jnp.asarray(0.0), state, args))
-        expected_fields = state_shape + (dimension,)
+        expected_fields = tangent_shape + (dimension,)
         if fields.shape != expected_fields:
             raise ValueError(
-                f"vector_fields must return shape {expected_fields}; got {fields.shape}."
+                f"vector_fields must return physical tangent shape "
+                f"{expected_fields}; got {fields.shape}."
             )
+        invalid_fields = jax.vmap(
+            lambda column: _invalid_geometry_tangent(
+                resolved_geometry,
+                state,
+                column,
+                tangent_shape,
+            ),
+            in_axes=-1,
+        )(fields)
+        fields = eqx.error_if(
+            fields,
+            jnp.any(invalid_fields),
+            "vector_fields must return physical tangents at initial_state.",
+        )
         drift_value = jnp.asarray(resolved_drift(jnp.asarray(0.0), state, args))
-        if drift_value.shape != state_shape:
-            raise ValueError("drift must preserve initial_state shape.")
+        if drift_value.shape != tangent_shape:
+            raise ValueError(
+                f"drift must return physical tangent shape {tangent_shape}; "
+                f"got {drift_value.shape}."
+            )
+        drift_value = eqx.error_if(
+            drift_value,
+            _invalid_geometry_tangent(
+                resolved_geometry,
+                state,
+                drift_value,
+                tangent_shape,
+            ),
+            "drift must return a physical tangent at initial_state.",
+        )
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
@@ -104,6 +166,8 @@ class RoughDifferentialProblem(StrictModule):
         self.args = args
         self.geometry = resolved_geometry
         self.state_shape = state_shape
+        self.local_shape = local_shape
+        self.tangent_shape = tangent_shape
         self.driver_dimension = dimension
         self.has_drift = drift is not None
         self.time_dependent = bool(time_dependent)
@@ -168,19 +232,63 @@ def _davie_correction(
     /,
 ) -> Array:
     directions = jnp.moveaxis(fields, -1, 0)
+    equal_roles = problem.state_shape == problem.local_shape == problem.tangent_shape
+    if equal_roles:
 
-    def differentiate(direction):
-        return jax.jvp(
-            lambda value: jnp.asarray(problem.vector_fields(time, value, problem.args)),
-            (state,),
-            (direction,),
-        )[1]
+        def differentiate(direction):
+            return jax.jvp(
+                lambda value: jnp.asarray(
+                    problem.vector_fields(time, value, problem.args)
+                ),
+                (state,),
+                (direction,),
+            )[1]
 
-    derivatives = jax.vmap(differentiate)(directions)
+        derivatives = jax.vmap(differentiate)(directions)
+    else:
+        if not problem.geometry.supports_transport:
+            raise ValueError("Unequal-space Davie correction requires tangent transport.")
+        tangent_zero = jnp.zeros(problem.tangent_shape, dtype=state.dtype)
+        local_zero = problem.geometry.retraction_inverse_jvp(
+            state,
+            state,
+            tangent_zero,
+        )
+        local_directions = jax.vmap(
+            lambda direction: problem.geometry.retraction_inverse_jvp(
+                state,
+                state,
+                direction,
+            )
+        )(directions)
+
+        def fields_in_base(local):
+            point = problem.geometry.retract(state, local)
+            point_fields = jnp.asarray(problem.vector_fields(time, point, problem.args))
+            return jax.vmap(
+                lambda tangent: problem.geometry.transport_tangent(
+                    point,
+                    state,
+                    tangent,
+                ),
+                in_axes=-1,
+                out_axes=-1,
+            )(point_fields)
+
+        derivatives = jax.vmap(
+            lambda direction: jax.jvp(
+                fields_in_base,
+                (local_zero,),
+                (direction,),
+            )[1]
+        )(local_directions)
+    tangent_size = int(np.prod(problem.tangent_shape))
     flattened = derivatives.reshape(
-        (problem.driver_dimension, int(state.size), problem.driver_dimension)
+        (problem.driver_dimension, tangent_size, problem.driver_dimension)
     )
-    return ein.contract("isj,ij->s", flattened, second_level).reshape(problem.state_shape)
+    return ein.contract("isj,ij->s", flattened, second_level).reshape(
+        problem.tangent_shape
+    )
 
 
 def _classical_integrate(
@@ -190,6 +298,12 @@ def _classical_integrate(
     *,
     davie: bool,
 ) -> tuple[Array, Array, Mapping[str, Array]]:
+    if (
+        davie
+        and not (problem.state_shape == problem.local_shape == problem.tangent_shape)
+        and not problem.geometry.supports_transport
+    ):
+        raise ValueError("Unequal-space Davie execution requires tangent transport.")
     first_level = control.levels[0]
     second_level = control.levels[1] if davie else None
     steps = jnp.diff(control.times)
@@ -199,15 +313,26 @@ def _classical_integrate(
             time, step, first_increment, second_increment = item
             drift = jnp.asarray(problem.drift(time, state, problem.args))
             fields = jnp.asarray(problem.vector_fields(time, state, problem.args))
+            if drift.shape != problem.tangent_shape:
+                raise ValueError("Rough drift changed its physical tangent shape.")
+            if fields.shape != problem.tangent_shape + (problem.driver_dimension,):
+                raise ValueError(
+                    "Rough vector fields changed their physical tangent shape."
+                )
             first_update = jnp.tensordot(fields, first_increment, axes=((-1,), (0,)))
             second_update = (
                 _davie_correction(problem, time, state, fields, second_increment)
                 if davie
-                else jnp.zeros_like(state)
+                else jnp.zeros(problem.tangent_shape, dtype=state.dtype)
             )
-            ambient_update = step * drift + first_update + second_update
-            tangent = problem.geometry.project_tangent(state, ambient_update)
-            local_update = problem.geometry.to_local(state, tangent)
+            tangent = step * drift + first_update + second_update
+            if problem.tangent_shape == problem.state_shape:
+                tangent = problem.geometry.project_tangent(state, tangent)
+            local_update = problem.geometry.retraction_inverse_jvp(
+                state,
+                state,
+                tangent,
+            )
             next_state = problem.geometry.retract(state, local_update)
             return next_state, next_state
 
@@ -484,6 +609,8 @@ def solve_rough_differential(
             "driver_dimension": control.dimension,
             "control_depth": control.depth,
             "state_geometry_id": problem.geometry.geometry_id,
+            "local_shape": problem.local_shape,
+            "tangent_shape": problem.tangent_shape,
         },
     )
 

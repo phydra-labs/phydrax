@@ -9,6 +9,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax.discretization.contact._iga import (
+    IGACommonRefinementMortarPlan,
+    IGATraceProjection,
+)
 from phydrax.discretization.iga import BSplineGrid
 from phydrax.discretization.iga._basis import TensorSplineBasisSpec
 from phydrax.discretization.iga._identity import BaseSpanId
@@ -90,3 +94,41 @@ def test_overlay_fails_closed_when_a_patch_is_not_covered():
     topology = SplineSpanTopology(basis, patch_id="p")
     with pytest.raises(ValueError, match="does not cover"):
         IntegrationOverlay(PatchAtlas((topology,)), ((topology.span_id(0),),))
+
+
+def test_contact_mortar_uses_atlas_participants_and_knot_common_refinement():
+    basis = _basis()
+    plus = SplineSpanTopology(basis, patch_id="plus")
+    minus = SplineSpanTopology(basis, patch_id="minus")
+    atlas = PatchAtlas((plus, minus))
+    overlay = IntegrationOverlay(
+        atlas,
+        tuple(
+            (plus.span_id(index), minus.span_id(index))
+            for index in range(plus.cell_count)
+        ),
+    )
+    projection = IGATraceProjection(jnp.eye(basis.coefficient_count))
+
+    mortar = IGACommonRefinementMortarPlan.from_bspline_traces(
+        overlay,
+        projection,
+        projection,
+        tuple(axis.knots for axis in basis.axes),
+        tuple(axis.knots for axis in basis.axes),
+        basis.degrees,
+        basis.degrees,
+        jnp.asarray((0.0, 1.0)),
+        1.0,
+        plus_participant="plus",
+        minus_participant="minus",
+        quadrature_order=2,
+        coverage_certified=True,
+    )
+
+    assert mortar.capacity == 2 * plus.cell_count
+    assert bool(mortar.evidence.successful)
+    np.testing.assert_allclose(
+        np.sum(np.asarray(mortar.interface.plus_weights), axis=-1),
+        1.0,
+    )

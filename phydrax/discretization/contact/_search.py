@@ -365,13 +365,21 @@ def _scene_exclusions(scene: ContactSearchScene, /) -> set[tuple[int, int]]:
 def _primitive_allowed(
     left_vertices: tuple[int, ...],
     right_vertices: tuple[int, ...],
+    left_feature: int,
+    right_feature: int,
     static: np.ndarray,
+    participants: np.ndarray,
+    pair_policy,
     exclusions: set[tuple[int, int]],
     /,
 ) -> bool:
     if set(left_vertices) & set(right_vertices):
         return False
-    if all(bool(static[index]) for index in left_vertices + right_vertices):
+    if bool(static[left_feature]) and bool(static[right_feature]):
+        return False
+    if not pair_policy.allows(
+        int(participants[left_feature]), int(participants[right_feature])
+    ):
         return False
     for left in left_vertices:
         for right in right_vertices:
@@ -381,19 +389,17 @@ def _primitive_allowed(
 
 
 def _pair_minimum_separation(
-    left_vertices: tuple[int, ...],
-    right_vertices: tuple[int, ...],
-    separation: np.ndarray,
+    left_feature: int,
+    right_feature: int,
+    contact_extent: np.ndarray,
     /,
 ) -> float:
-    left = max(float(separation[index]) for index in left_vertices)
-    right = max(float(separation[index]) for index in right_vertices)
-    return 0.5 * (left + right)
+    return float(contact_extent[left_feature] + contact_extent[right_feature])
 
 
 def _pack_batch(
     kind: ContactStencilKind,
-    records: list[tuple[tuple[int, int], tuple[int, ...], float]],
+    records: list[tuple[tuple[int, int], tuple[int, int], tuple[int, ...], float]],
     capacity: int,
     dtype: np.dtype,
     /,
@@ -404,6 +410,7 @@ def _pack_batch(
     left = np.zeros((capacity,), dtype=np.int64)
     right = np.zeros((capacity,), dtype=np.int64)
     separation = np.zeros((capacity,), dtype=dtype)
+    feature_indices = np.zeros((capacity, 2), dtype=np.int32)
     valid = np.zeros((capacity,), dtype=bool)
     if records:
         feature_left = np.asarray([record[0][0] for record in records], dtype=np.int64)
@@ -411,9 +418,10 @@ def _pack_batch(
         keys = canonical_contact_route_keys(kind, feature_left, feature_right)
         order = np.argsort(keys, kind="stable")
         ordered = [records[index] for index in order[:capacity]]
-        for slot, (features, endpoints, dmin) in enumerate(ordered):
+        for slot, (features, local_features, endpoints, dmin) in enumerate(ordered):
             indices[slot, : len(endpoints)] = endpoints
             left[slot], right[slot] = features
+            feature_indices[slot] = local_features
             separation[slot] = dmin
         if overflow_count == 0:
             valid[: len(ordered)] = True
@@ -423,6 +431,7 @@ def _pack_batch(
         left,
         right,
         capacity=capacity,
+        feature_indices=feature_indices,
         minimum_separation=separation,
         valid=valid,
         actual_count=actual,
@@ -487,18 +496,29 @@ def _build_epoch(
             np.empty((0, scene.ambient_dimension)),
         )
     )
-    maximum_separation = float(np.max(np.asarray(scene.minimum_separation), initial=0.0))
-    broad_radius = plan.activation_distance + maximum_separation + plan.envelope_radius
+    feature_ids = np.asarray(scene.feature_ids, dtype=np.int64)
+    feature_participants = np.asarray(scene.feature_participant_ids, dtype=np.int64)
+    feature_static = np.asarray(scene.feature_static_mask, dtype=bool)
+    contact_extent = np.asarray(scene.feature_contact_extent)
+    maximum_pair_separation = 2.0 * float(np.max(contact_extent, initial=0.0))
+    broad_radius = (
+        plan.activation_distance + maximum_pair_separation + plan.envelope_radius
+    )
     exclusions = _scene_exclusions(scene)
-    static = np.asarray(scene.vertex_static_mask, dtype=bool)
-    separation = np.asarray(scene.minimum_separation)
+    pair_policy = scene.pair_policy
     vertex_count = scene.vertex_count
     edge_feature_offset = vertex_count
     face_feature_offset = vertex_count + scene.edge_count
 
-    edge_vertex_records: list[tuple[tuple[int, int], tuple[int, ...], float]] = []
-    edge_edge_records: list[tuple[tuple[int, int], tuple[int, ...], float]] = []
-    face_vertex_records: list[tuple[tuple[int, int], tuple[int, ...], float]] = []
+    edge_vertex_records: list[
+        tuple[tuple[int, int], tuple[int, int], tuple[int, ...], float]
+    ] = []
+    edge_edge_records: list[
+        tuple[tuple[int, int], tuple[int, int], tuple[int, ...], float]
+    ] = []
+    face_vertex_records: list[
+        tuple[tuple[int, int], tuple[int, int], tuple[int, ...], float]
+    ] = []
 
     if scene.ambient_dimension == 2 or faces.shape[0] == 0:
         for vertex, edge_index in _bipartite_pairs(
@@ -506,9 +526,19 @@ def _build_epoch(
         ):
             edge = tuple(int(value) for value in edges[edge_index])
             point = (int(vertex),)
-            if not _primitive_allowed(point, edge, static, exclusions):
+            edge_feature = edge_feature_offset + edge_index
+            if not _primitive_allowed(
+                point,
+                edge,
+                int(vertex),
+                edge_feature,
+                feature_static,
+                feature_participants,
+                pair_policy,
+                exclusions,
+            ):
                 continue
-            dmin = _pair_minimum_separation(point, edge, separation)
+            dmin = _pair_minimum_separation(int(vertex), edge_feature, contact_extent)
             if (
                 _aabb_distance_squared(
                     point_min[vertex],
@@ -520,7 +550,12 @@ def _build_epoch(
             ):
                 continue
             edge_vertex_records.append(
-                ((int(vertex), edge_feature_offset + edge_index), point + edge, dmin)
+                (
+                    (int(feature_ids[vertex]), int(feature_ids[edge_feature])),
+                    (int(vertex), edge_feature),
+                    point + edge,
+                    dmin,
+                )
             )
     else:
         for vertex, face_index in _bipartite_pairs(
@@ -528,9 +563,19 @@ def _build_epoch(
         ):
             face = tuple(int(value) for value in faces[face_index])
             point = (int(vertex),)
-            if not _primitive_allowed(point, face, static, exclusions):
+            face_feature = face_feature_offset + face_index
+            if not _primitive_allowed(
+                point,
+                face,
+                int(vertex),
+                face_feature,
+                feature_static,
+                feature_participants,
+                pair_policy,
+                exclusions,
+            ):
                 continue
-            dmin = _pair_minimum_separation(point, face, separation)
+            dmin = _pair_minimum_separation(int(vertex), face_feature, contact_extent)
             if (
                 _aabb_distance_squared(
                     point_min[vertex],
@@ -542,16 +587,32 @@ def _build_epoch(
             ):
                 continue
             face_vertex_records.append(
-                ((int(vertex), face_feature_offset + face_index), point + face, dmin)
+                (
+                    (int(feature_ids[vertex]), int(feature_ids[face_feature])),
+                    (int(vertex), face_feature),
+                    point + face,
+                    dmin,
+                )
             )
         for first_edge, second_edge in _same_set_pairs(
             edge_min, edge_max, broad_radius, plan.method
         ):
             first = tuple(int(value) for value in edges[first_edge])
             second = tuple(int(value) for value in edges[second_edge])
-            if not _primitive_allowed(first, second, static, exclusions):
+            left_feature = edge_feature_offset + first_edge
+            right_feature = edge_feature_offset + second_edge
+            if not _primitive_allowed(
+                first,
+                second,
+                left_feature,
+                right_feature,
+                feature_static,
+                feature_participants,
+                pair_policy,
+                exclusions,
+            ):
                 continue
-            dmin = _pair_minimum_separation(first, second, separation)
+            dmin = _pair_minimum_separation(left_feature, right_feature, contact_extent)
             if (
                 _aabb_distance_squared(
                     edge_min[first_edge],
@@ -564,7 +625,11 @@ def _build_epoch(
                 continue
             edge_edge_records.append(
                 (
-                    (edge_feature_offset + first_edge, edge_feature_offset + second_edge),
+                    (
+                        int(feature_ids[left_feature]),
+                        int(feature_ids[right_feature]),
+                    ),
+                    (left_feature, right_feature),
                     first + second,
                     dmin,
                 )

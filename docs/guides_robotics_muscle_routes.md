@@ -28,7 +28,7 @@ This native route has no obstacle or contact branch. Run `examples/robotics_fixe
 
 `MJXAdapter.prepare_muscle_projection()` discovers actuators compiled with MuJoCo’s built-in muscle gain, bias, and activation dynamics. The all-muscle selection follows compiled actuator order; `MJXMuscleProjectionPlan(names)` preserves an explicit unique name order. Preparation validates one distinct activation state and a finite increasing actuator length range for every discovered built-in muscle.
 
-`scatter_control(complete_control, independent_excitation)` requires the complete model control vector. It replaces only selected muscle entries, validates dimensionless excitation in `[0, 1]`, and preserves every non-muscle actuator control. This avoids an implicit zero-control policy.
+`scatter_control(complete_control, independent_excitation)` requires the complete model control vector. Passing `MJXAdapter.control(state)` preserves the source epoch binding required by the atomic plant step. The method replaces only selected muscle entries, validates dimensionless excitation in `[0, 1]`, and preserves every non-muscle actuator control. This avoids an implicit zero-control policy.
 
 `snapshot()` gathers fixed-shape projections:
 
@@ -41,7 +41,7 @@ This native route has no obstacle or contact branch. Run `examples/robotics_fixe
 
 `raw_force_N` has atomic `force_owner="provider-native"`. It is not normalized, not converted to positive tensile force, and must not be multiplied by De Groote–Fregly, D1, Shorten, or another native force law. The negative-pulling statement is limited to MuJoCo’s documented built-in muscle convention; it is not a universal provider-force sign rule.
 
-Length, velocity, and force are forward-derived. A step increments the state epoch but preserves the prior forward epoch, so snapshots are explicitly stale until `MJXAdapter.refresh()` runs `mjx.forward`. Failed steps roll back the complete source state and set `rollback_source`; refreshing such a state reports `rollback_source_refreshed` and clears the marker only for successfully forwarded cases. Activation itself is state-current, but a snapshot succeeds only when all four fields are finite and the forward-derived fields are current.
+Length, velocity, and force are forward-derived. A step increments the payload state epoch but preserves the prior forward epoch, so snapshots are explicitly stale until `MJXAdapter.refresh()` runs `mjx.forward`. Failed steps retain the complete accepted `PlantRuntimeState` source through the standard atomic plant transaction; a subsequent successful refresh makes only its accepted complete payload current. Activation itself is state-current, but a snapshot succeeds only when all four fields are finite and the forward-derived fields are current.
 
 The provider contract is documented in MuJoCo 3.12’s [Muscles](https://mujoco.readthedocs.io/en/3.12.0/modeling.html#muscles) section: actuator length is the transmission length, actuator velocity is its rate, and built-in muscle actuator force is negative when pulling. `tools/qualify_mjx_muscle_projection.py` compares all four projected fields against host MuJoCo from the same qualified release.
 

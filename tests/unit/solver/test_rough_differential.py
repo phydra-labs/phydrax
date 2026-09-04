@@ -137,3 +137,69 @@ def test_step_two_fractional_solver_rejects_hurst_requiring_level_three():
             _linear_problem(0.5),
             rough_path,
         )
+
+
+def test_rough_euler_retracts_quaternion_physical_tangent_steps():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: angular_velocity[:, None],
+        base,
+        driver_dimension=1,
+        geometry=geometry,
+    )
+    control = phx.stochastic.GeometricRoughPath.from_values(
+        jnp.asarray([0.0, 0.4]),
+        jnp.asarray([[0.0], [0.4]]),
+    )
+
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        solver=phx.solver.RoughEuler(),
+    )
+
+    expected = geometry.retract(base, 0.4 * angular_velocity)
+    assert problem.state_shape == (4,)
+    assert problem.local_shape == (3,)
+    assert problem.tangent_shape == (3,)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert bool(geometry.contains(solution.states[-1]))
+
+
+def test_rough_problem_rejects_point_shape_for_quaternion_tangent_field():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    with pytest.raises(ValueError, match="physical tangent shape"):
+        phx.solver.RoughDifferentialProblem(
+            lambda time, state, args: jnp.zeros((4, 1)),
+            jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            driver_dimension=1,
+            geometry=geometry,
+        )
+
+
+def test_davie_transports_unequal_quaternion_tangent_spaces():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: angular_velocity[:, None],
+        base,
+        driver_dimension=1,
+        geometry=geometry,
+    )
+    control = phx.stochastic.GeometricRoughPath.from_values(
+        jnp.asarray([0.0, 0.4]),
+        jnp.asarray([[0.0], [0.4]]),
+    )
+
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        solver=phx.solver.Davie(),
+    )
+
+    expected = geometry.retract(base, 0.4 * angular_velocity)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert bool(geometry.contains(solution.states[-1]))

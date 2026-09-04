@@ -40,6 +40,17 @@ class GeometricLocalInterpolation(dfx.AbstractLocalInterpolation):
             jnp.where(weight >= 1.0, self.y1, interior),
         )
 
+    def derivative(self, t, left: bool = True):
+        del left
+        weight = (t - self.t0) / (self.t1 - self.t0)
+        local = weight * self.local_increment
+        local_velocity = self.local_increment / (self.t1 - self.t0)
+        return self.geometry.retraction_jvp(
+            self.y0,
+            local,
+            local_velocity,
+        )
+
 
 class AbstractGeometricSolver(dfx.AbstractSolver):
     """Diffrax solver contract for explicit retraction stages.
@@ -57,10 +68,101 @@ class AbstractGeometricSolver(dfx.AbstractSolver):
     causal_stage_extent: float = eqx.field(static=True)
 
 
+def _require_exact_differential(
+    geometry: AbstractStateGeometry,
+    owner: str,
+    /,
+) -> None:
+    if not geometry.supports_exact_differential:
+        raise ValueError(
+            f"{owner} requires geometry with exact retraction differential capability."
+        )
+
+
+def _term_vector_field(
+    term: dfx.AbstractTerm,
+    time: Array,
+    state: Array,
+    args: Any,
+    /,
+) -> Array:
+    """Evaluate an ODE field without coercing a physical tangent to point shape."""
+    if isinstance(term, WrapTerm):
+        return _term_vector_field(
+            term.term,
+            time * term.direction,
+            state,
+            args,
+        )
+    if isinstance(term, dfx.ODETerm):
+        return term.vector_field(time, state, args)
+    return term.vf(time, state, args)
+
+
+class GeometricODETerm(dfx.ODETerm):
+    """ODE term whose vector field retains physical tangent coordinates."""
+
+    def vf(self, t, y, args):
+        return self.vector_field(t, y, args)
+
+
+def _term_vf_prod(
+    term: dfx.AbstractTerm,
+    time: Array,
+    state: Array,
+    args: Any,
+    control: Any,
+    /,
+) -> Array:
+    return term.prod(_term_vector_field(term, time, state, args), control)
+
+
+def _physical_tangent(
+    geometry: AbstractStateGeometry,
+    state: Array,
+    value: Array,
+    owner: str,
+    /,
+) -> Array:
+    point = jnp.asarray(state)
+    candidate = jnp.asarray(value)
+    tangent_zero = jnp.asarray(geometry.project_tangent(point, jnp.zeros_like(point)))
+    if candidate.shape != tangent_zero.shape:
+        raise ValueError(
+            f"{owner} must have physical tangent shape {tangent_zero.shape}; "
+            f"got {candidate.shape}."
+        )
+    if candidate.shape != point.shape:
+        return candidate
+    projected = jnp.asarray(geometry.project_tangent(point, candidate))
+    if projected.shape != tangent_zero.shape:
+        raise ValueError(
+            f"{owner} projection must preserve physical tangent shape "
+            f"{tangent_zero.shape}; got {projected.shape}."
+        )
+    return projected
+
+
+def _local_zero(geometry: AbstractStateGeometry, state: Array, /) -> Array:
+    point = jnp.asarray(state)
+    tangent_zero = jnp.asarray(geometry.project_tangent(point, jnp.zeros_like(point)))
+    return jnp.asarray(geometry.retraction_inverse_jvp(point, point, tangent_zero))
+
+
+def _local_velocity(
+    geometry: AbstractStateGeometry,
+    state: Array,
+    point: Array,
+    tangent: Array,
+    /,
+) -> Array:
+    return jnp.asarray(geometry.retraction_inverse_jvp(state, point, tangent))
+
+
 class GeometricEuler(AbstractGeometricSolver):
     """First-order retraction Euler method for deterministic dynamics."""
 
-    term_structure: ClassVar = dfx.ODETerm
+    term_structure: ClassVar = dfx.AbstractTerm
     interpolation_cls: ClassVar[Callable[..., GeometricLocalInterpolation]] = (
         GeometricLocalInterpolation
     )
@@ -68,6 +170,7 @@ class GeometricEuler(AbstractGeometricSolver):
     def __init__(self, geometry: AbstractStateGeometry, /):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("GeometricEuler geometry must be an AbstractStateGeometry.")
+        _require_exact_differential(geometry, "GeometricEuler")
         self.geometry = geometry
         self.solver_id = f"solver:geometric-euler:{geometry.geometry_id}"
         self.resolved_method = f"euler:{geometry.retraction_method}"
@@ -84,9 +187,14 @@ class GeometricEuler(AbstractGeometricSolver):
 
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         del solver_state, made_jump
-        ambient = terms.vf_prod(t0, y0, args, terms.contr(t0, t1))
-        tangent = self.geometry.project_tangent(y0, ambient)
-        local = self.geometry.to_local(y0, tangent)
+        value = _term_vf_prod(terms, t0, y0, args, terms.contr(t0, t1))
+        tangent = _physical_tangent(
+            self.geometry,
+            y0,
+            value,
+            "GeometricEuler vector field",
+        )
+        local = _local_velocity(self.geometry, y0, y0, tangent)
         y1 = self.geometry.retract(y0, local)
         dense_info = dict(
             y0=y0,
@@ -97,7 +205,7 @@ class GeometricEuler(AbstractGeometricSolver):
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
     def func(self, terms, t0, y0, args):
-        return terms.vf(t0, y0, args)
+        return _term_vector_field(terms, t0, y0, args)
 
 
 class SeparableHamiltonianVectorField(StrictModule):
@@ -168,7 +276,7 @@ def _separable_hamiltonian_vector_field(
 class StormerVerlet(AbstractGeometricSolver):
     """Second-order symplectic integrator for separable canonical Hamiltonians."""
 
-    term_structure: ClassVar = dfx.ODETerm
+    term_structure: ClassVar = dfx.AbstractTerm
     interpolation_cls: ClassVar[Callable[..., GeometricLocalInterpolation]] = (
         GeometricLocalInterpolation
     )
@@ -240,7 +348,7 @@ RKMKMethod = Literal["midpoint", "rk4"]
 class RKMK(AbstractGeometricSolver):
     """Explicit Runge--Kutta--Munthe-Kaas method in retraction coordinates."""
 
-    term_structure: ClassVar = dfx.ODETerm
+    term_structure: ClassVar = dfx.AbstractTerm
     interpolation_cls: ClassVar[Callable[..., GeometricLocalInterpolation]] = (
         GeometricLocalInterpolation
     )
@@ -255,10 +363,7 @@ class RKMK(AbstractGeometricSolver):
     ):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("RKMK geometry must be an AbstractStateGeometry.")
-        if not geometry.supports_exact_pullback:
-            raise ValueError(
-                "RKMK requires geometry with explicit exact pullback capability."
-            )
+        _require_exact_differential(geometry, "RKMK")
         if method not in ("midpoint", "rk4"):
             raise ValueError("RKMK method must be 'midpoint' or 'rk4'.")
         self.geometry = geometry
@@ -295,20 +400,25 @@ class RKMK(AbstractGeometricSolver):
         del solver_state, made_jump
         dt = t1 - t0
         abscissae, coefficients, weights = self._tableau()
-        retraction = self.geometry.local_retraction(y0)
+        local_zero = _local_zero(self.geometry, y0)
         stages: list[Array] = []
         for abscissa, row in zip(abscissae, coefficients, strict=True):
-            local = jnp.zeros_like(y0)
+            local = jnp.zeros_like(local_zero)
             for coefficient, stage in zip(row, stages, strict=True):
                 local = local + coefficient * dt * stage
-            point = retraction.evaluate(local)
-            ambient = terms.vf(t0 + abscissa * dt, point, args)
-            tangent = self.geometry.project_tangent(point, ambient)
-            stages.append(retraction.pullback(local, tangent))
-        local_increment = jnp.zeros_like(y0)
+            point = self.geometry.retract(y0, local)
+            value = _term_vector_field(terms, t0 + abscissa * dt, point, args)
+            tangent = _physical_tangent(
+                self.geometry,
+                point,
+                value,
+                "RKMK vector field",
+            )
+            stages.append(_local_velocity(self.geometry, y0, point, tangent))
+        local_increment = jnp.zeros_like(local_zero)
         for weight, stage in zip(weights, stages, strict=True):
             local_increment = local_increment + weight * dt * stage
-        y1 = retraction.evaluate(local_increment)
+        y1 = self.geometry.retract(y0, local_increment)
         dense_info = dict(
             y0=y0,
             y1=y1,
@@ -318,7 +428,7 @@ class RKMK(AbstractGeometricSolver):
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
     def func(self, terms, t0, y0, args):
-        return terms.vf(t0, y0, args)
+        return _term_vector_field(terms, t0, y0, args)
 
 
 class CommutatorFreeTableau(StrictModule):
@@ -381,7 +491,7 @@ def commutator_free_midpoint_tableau() -> CommutatorFreeTableau:
 class CommutatorFreeSolver(AbstractGeometricSolver):
     """Tableau-driven composition method requiring no commutator evaluation."""
 
-    term_structure: ClassVar = dfx.ODETerm
+    term_structure: ClassVar = dfx.AbstractTerm
     interpolation_cls: ClassVar[Callable[..., GeometricLocalInterpolation]] = (
         GeometricLocalInterpolation
     )
@@ -397,6 +507,11 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError(
                 "CommutatorFreeSolver geometry must be an AbstractStateGeometry."
+            )
+        _require_exact_differential(geometry, "CommutatorFreeSolver")
+        if not geometry.supports_exact_inverse:
+            raise ValueError(
+                "CommutatorFreeSolver requires exact inverse-retraction capability."
             )
         if not geometry.supports_commutator_free:
             raise ValueError(
@@ -425,22 +540,28 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         del solver_state, made_jump
         dt = t1 - t0
+        local_zero = _local_zero(self.geometry, y0)
         stages: list[Array] = []
         for abscissa, row in zip(
             self.tableau.abscissae,
             self.tableau.stage_coefficients,
             strict=True,
         ):
-            local = jnp.zeros_like(y0)
+            local = jnp.zeros_like(local_zero)
             for coefficient, stage in zip(row, stages, strict=True):
                 local = local + coefficient * dt * stage
             point = self.geometry.retract(y0, local)
-            ambient = terms.vf(t0 + abscissa * dt, point, args)
-            tangent = self.geometry.project_tangent(point, ambient)
-            stages.append(self.geometry.to_local(point, tangent))
+            value = _term_vector_field(terms, t0 + abscissa * dt, point, args)
+            tangent = _physical_tangent(
+                self.geometry,
+                point,
+                value,
+                "Commutator-free vector field",
+            )
+            stages.append(_local_velocity(self.geometry, point, point, tangent))
         y1 = y0
         for row in self.tableau.composition_coefficients:
-            local = jnp.zeros_like(y0)
+            local = jnp.zeros_like(local_zero)
             for coefficient, stage in zip(row, stages, strict=True):
                 local = local + coefficient * dt * stage
             y1 = self.geometry.retract(y1, local)
@@ -454,15 +575,13 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         return y1, None, dense_info, None, dfx.RESULTS.successful
 
     def func(self, terms, t0, y0, args):
-        return terms.vf(t0, y0, args)
+        return _term_vector_field(terms, t0, y0, args)
 
 
 class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
     """Explicit first-order Stratonovich RKMK method for drift plus diffusion."""
 
-    term_structure: ClassVar = dfx.MultiTerm[
-        tuple[dfx.AbstractTerm[Any, Any], dfx.AbstractTerm]
-    ]
+    term_structure: ClassVar = dfx.MultiTerm[tuple[dfx.AbstractTerm, dfx.AbstractTerm]]
     interpolation_cls: ClassVar[Callable[..., GeometricLocalInterpolation]] = (
         GeometricLocalInterpolation
     )
@@ -470,10 +589,7 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
     def __init__(self, geometry: AbstractStateGeometry, /):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("SRKMK geometry must be an AbstractStateGeometry.")
-        if not geometry.supports_exact_pullback:
-            raise ValueError(
-                "SRKMK requires geometry with explicit exact pullback capability."
-            )
+        _require_exact_differential(geometry, "SRKMK")
         self.geometry = geometry
         self.solver_id = f"solver:srkmk:{geometry.geometry_id}"
         self.resolved_method = f"stratonovich-heun:{geometry.retraction_method}"
@@ -497,26 +613,48 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         drift, diffusion = terms.terms
         dt = drift.contr(t0, t1)
         dw = diffusion.contr(t0, t1)
-        drift_ambient = drift.vf_prod(t0, y0, args, dt)
-        diffusion_ambient = diffusion.vf_prod(t0, y0, args, dw)
-        retraction = self.geometry.local_retraction(y0)
-        zero = jnp.zeros_like(y0)
-        drift_local = retraction.pullback(
-            zero,
-            self.geometry.project_tangent(y0, drift_ambient),
+        drift_value = _term_vf_prod(drift, t0, y0, args, dt)
+        diffusion_value = _term_vf_prod(diffusion, t0, y0, args, dw)
+        drift_tangent = _physical_tangent(
+            self.geometry,
+            y0,
+            drift_value,
+            "SRKMK drift",
         )
-        diffusion_local = retraction.pullback(
-            zero,
-            self.geometry.project_tangent(y0, diffusion_ambient),
+        diffusion_tangent = _physical_tangent(
+            self.geometry,
+            y0,
+            diffusion_value,
+            "SRKMK diffusion",
         )
-        predictor = retraction.evaluate(diffusion_local)
-        corrected_ambient = diffusion.vf_prod(t1, predictor, args, dw)
-        corrected_local = retraction.pullback(
-            diffusion_local,
-            self.geometry.project_tangent(predictor, corrected_ambient),
+        drift_local = _local_velocity(
+            self.geometry,
+            y0,
+            y0,
+            drift_tangent,
+        )
+        diffusion_local = _local_velocity(
+            self.geometry,
+            y0,
+            y0,
+            diffusion_tangent,
+        )
+        predictor = self.geometry.retract(y0, diffusion_local)
+        corrected_value = _term_vf_prod(diffusion, t1, predictor, args, dw)
+        corrected_tangent = _physical_tangent(
+            self.geometry,
+            predictor,
+            corrected_value,
+            "SRKMK corrected diffusion",
+        )
+        corrected_local = _local_velocity(
+            self.geometry,
+            y0,
+            predictor,
+            corrected_tangent,
         )
         local_increment = drift_local + 0.5 * (diffusion_local + corrected_local)
-        y1 = retraction.evaluate(local_increment)
+        y1 = self.geometry.retract(y0, local_increment)
         dense_info = dict(
             y0=y0,
             y1=y1,
@@ -527,7 +665,10 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
 
     def func(self, terms, t0, y0, args):
         drift, diffusion = terms.terms
-        return drift.vf(t0, y0, args), diffusion.vf(t0, y0, args)
+        return (
+            _term_vector_field(drift, t0, y0, args),
+            _term_vector_field(diffusion, t0, y0, args),
+        )
 
 
 def solver_state_geometry(

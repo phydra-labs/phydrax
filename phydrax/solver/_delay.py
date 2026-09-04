@@ -530,8 +530,8 @@ class DerivativeDelay(StrictModule):
     """First derivative of one delayed history value.
 
     ``transport`` maps ``(delayed_state, current_state, delayed_derivative, args)``
-    to a state-shaped tangent at ``current_state``. It is mandatory when the
-    problem has non-Euclidean state geometry.
+    to a physical tangent at ``current_state``. When omitted, non-Euclidean
+    problems use their declared state-geometry tangent transport.
     """
 
     name: str = eqx.field(static=True)
@@ -644,27 +644,45 @@ def _invalid_geometry_tangent(
     geometry: AbstractStateGeometry,
     point: Array,
     tangent: Array,
-    state_shape: tuple[int, ...],
+    tangent_shape: tuple[int, ...],
     /,
 ) -> Array:
-    projected = jnp.asarray(geometry.project_tangent(point, tangent))
-    if projected.shape != state_shape:
-        raise ValueError("State geometry tangent projection changed the state shape.")
-    comparison_dtype = jnp.result_type(tangent, projected, float)
-    tangent_value = tangent.astype(comparison_dtype)
-    projected_value = projected.astype(comparison_dtype)
+    tangent_value = jnp.asarray(tangent)
+    if tangent_value.shape != tangent_shape:
+        raise ValueError(
+            f"Geometry tangent must have physical tangent shape {tangent_shape}; "
+            f"got {tangent_value.shape}."
+        )
+    if not geometry.supports_exact_differential:
+        raise ValueError(
+            "Geometry tangent validation requires exact retraction differentials."
+        )
+    local_velocity = jnp.asarray(
+        geometry.retraction_inverse_jvp(point, point, tangent_value)
+    )
+    local_zero = jnp.zeros_like(local_velocity)
+    reconstructed = jnp.asarray(
+        geometry.retraction_jvp(point, local_zero, local_velocity)
+    )
+    if reconstructed.shape != tangent_shape:
+        raise ValueError(
+            "State geometry retraction differential changed the tangent shape."
+        )
+    comparison_dtype = jnp.result_type(tangent_value, reconstructed, float)
+    tangent_value = tangent_value.astype(comparison_dtype)
+    reconstructed = reconstructed.astype(comparison_dtype)
     scale = jnp.maximum(
         1.0,
         jnp.maximum(
             jnp.max(jnp.abs(tangent_value)),
-            jnp.max(jnp.abs(projected_value)),
+            jnp.max(jnp.abs(reconstructed)),
         ),
     )
     tolerance = 256.0 * jnp.finfo(comparison_dtype).eps * scale
     return (
         ~jnp.all(jnp.isfinite(tangent_value))
-        | ~jnp.all(jnp.isfinite(projected_value))
-        | jnp.any(jnp.abs(tangent_value - projected_value) > tolerance)
+        | ~jnp.all(jnp.isfinite(reconstructed))
+        | jnp.any(jnp.abs(tangent_value - reconstructed) > tolerance)
     )
 
 
@@ -684,13 +702,13 @@ def _validated_geometry_tangent(
     geometry: AbstractStateGeometry,
     point: Array,
     tangent: Array,
-    state_shape: tuple[int, ...],
+    tangent_shape: tuple[int, ...],
     message: str,
     /,
 ) -> Array:
     return eqx.error_if(
         tangent,
-        _invalid_geometry_tangent(geometry, point, tangent, state_shape),
+        _invalid_geometry_tangent(geometry, point, tangent, tangent_shape),
         message,
     )
 
@@ -701,6 +719,7 @@ class _InitialDelayHistoryView(eqx.Module):
     args: Any
     state_shape: tuple[int, ...] = eqx.field(static=True)
     geometry: AbstractStateGeometry | None
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
 
     def value(self, time: Array, /, *, left: bool = False) -> Array:
         del left
@@ -725,15 +744,17 @@ class _InitialDelayHistoryView(eqx.Module):
         if self.history_derivative is None:
             raise ValueError("Delay history does not define a derivative callback.")
         value = jnp.asarray(self.history_derivative(time, self.args))
-        if value.shape != self.state_shape:
-            raise ValueError("Delay history derivative changed its declared shape.")
+        if value.shape != self.tangent_shape:
+            raise ValueError(
+                "Delay history derivative changed its declared tangent shape."
+            )
         if self.geometry is not None and not self.geometry.trivial:
             point = self.value(time)
             value = _validated_geometry_tangent(
                 self.geometry,
                 point,
                 value,
-                self.state_shape,
+                self.tangent_shape,
                 "A delayed history derivative is not tangent to state_geometry.",
             )
         return value
@@ -743,7 +764,7 @@ class _InitialDelayHistoryView(eqx.Module):
         values = jax.vmap(lambda item: self.derivative(item, left=left))(
             query.reshape((-1,))
         )
-        return values.reshape(query.shape + self.state_shape)
+        return values.reshape(query.shape + self.tangent_shape)
 
 
 def _initial_term_value(
@@ -754,6 +775,7 @@ def _initial_term_value(
     history_derivative: DelayHistoryDerivative | None,
     args: Any,
     state_shape: tuple[int, ...],
+    tangent_shape: tuple[int, ...],
     state_geometry: AbstractStateGeometry | None,
     /,
 ) -> Array:
@@ -764,6 +786,7 @@ def _initial_term_value(
             args=args,
             state_shape=state_shape,
             geometry=state_geometry,
+            tangent_shape=tangent_shape,
         )
         window = DelayHistoryWindow(
             initial_view,
@@ -772,10 +795,11 @@ def _initial_term_value(
             term.maximum_delay,
         )
         value = jnp.asarray(term.functional(time, state, window, args))
-        if value.shape != state_shape:
+        expected_shape = tangent_shape if term.output_kind == "tangent" else state_shape
+        if value.shape != expected_shape:
             raise ValueError(
-                f"FunctionalDelay {term.name!r} must return state shape "
-                f"{state_shape}; got {value.shape}."
+                f"FunctionalDelay {term.name!r} must return {term.output_kind} "
+                f"shape {expected_shape}; got {value.shape}."
             )
         if state_geometry is not None and term.output_kind == "point":
             value = _validated_geometry_point(
@@ -792,7 +816,7 @@ def _initial_term_value(
                 state_geometry,
                 state,
                 value,
-                state_shape,
+                tangent_shape,
                 f"FunctionalDelay {term.name!r} returned a non-tangent value.",
             )
         return value
@@ -833,10 +857,10 @@ def _initial_term_value(
         lag = _point_lag(term.delay, time, state, args)
         delayed_state = jnp.asarray(history(time - lag, args))
         derivative = jnp.asarray(history_derivative(time - lag, args))
-        if delayed_state.shape != state_shape or derivative.shape != state_shape:
+        if delayed_state.shape != state_shape or derivative.shape != tangent_shape:
             raise ValueError(
-                f"DerivativeDelay {term.name!r} history must preserve state shape "
-                f"{state_shape}."
+                f"DerivativeDelay {term.name!r} history must return point shape "
+                f"{state_shape} and tangent shape {tangent_shape}."
             )
         if state_geometry is not None:
             delayed_state = _validated_geometry_point(
@@ -850,7 +874,7 @@ def _initial_term_value(
                     state_geometry,
                     delayed_state,
                     derivative,
-                    state_shape,
+                    tangent_shape,
                     f"DerivativeDelay {term.name!r} queried a history derivative "
                     "that is not tangent at the delayed state.",
                 )
@@ -858,16 +882,25 @@ def _initial_term_value(
             derivative = jnp.asarray(
                 term.transport(delayed_state, state, derivative, args)
             )
-        if derivative.shape != state_shape:
+        elif state_geometry is not None and not state_geometry.trivial:
+            derivative = jnp.asarray(
+                state_geometry.transport_tangent(
+                    delayed_state,
+                    state,
+                    derivative,
+                )
+            )
+        if derivative.shape != tangent_shape:
             raise ValueError(
-                f"DerivativeDelay {term.name!r} transport changed the state shape."
+                f"DerivativeDelay {term.name!r} transport must preserve tangent "
+                f"shape {tangent_shape}."
             )
         if state_geometry is not None and not state_geometry.trivial:
             derivative = _validated_geometry_tangent(
                 state_geometry,
                 state,
                 derivative,
-                state_shape,
+                tangent_shape,
                 f"DerivativeDelay {term.name!r} transport must return a tangent at "
                 "the current state.",
             )
@@ -910,6 +943,8 @@ class DelayDifferentialProblem(StrictModule):
     initial_derivative_jump: Array | None
     initial_derivative_compatible: Array
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
+    local_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -989,12 +1024,19 @@ class DelayDifferentialProblem(StrictModule):
                 ~membership,
                 "DelayDifferentialProblem initial state is outside state_geometry.",
             )
+            if not state_geometry.supports_exact_differential:
+                raise ValueError(
+                    "Geometric delay problems require exact retraction differentials."
+                )
             if not state_geometry.trivial and any(
-                isinstance(term, DerivativeDelay) and term.transport is None
+                isinstance(term, DerivativeDelay)
+                and term.transport is None
+                and not state_geometry.supports_transport
                 for term in terms
             ):
                 raise ValueError(
-                    "Manifold DerivativeDelay terms require explicit tangent transport."
+                    "Manifold DerivativeDelay terms require explicit or "
+                    "state-geometry tangent transport."
                 )
             if not state_geometry.trivial and any(
                 isinstance(term, DistributedDelay) and term.reducer is None
@@ -1002,6 +1044,35 @@ class DelayDifferentialProblem(StrictModule):
             ):
                 raise ValueError(
                     "Non-Euclidean DistributedDelay terms require an explicit reducer."
+                )
+        tangent_shape = state_shape
+        local_shape = state_shape
+        if state_geometry is not None:
+            tangent_zero = jnp.asarray(
+                state_geometry.project_tangent(state, jnp.zeros_like(state))
+            )
+            tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+            local_zero = jnp.asarray(
+                state_geometry.retraction_inverse_jvp(state, state, tangent_zero)
+            )
+            local_shape = tuple(int(size) for size in local_zero.shape)
+            retracted_zero = jnp.asarray(state_geometry.retract(state, local_zero))
+            if retracted_zero.shape != state.shape:
+                raise ValueError(
+                    "Delay state geometry retraction must return point shape "
+                    f"{state.shape}; got {retracted_zero.shape}."
+                )
+            reconstructed_zero = jnp.asarray(
+                state_geometry.retraction_jvp(
+                    state,
+                    local_zero,
+                    jnp.zeros_like(local_zero),
+                )
+            )
+            if reconstructed_zero.shape != tangent_shape:
+                raise ValueError(
+                    "Delay state geometry differential must return physical tangent "
+                    f"shape {tangent_shape}; got {reconstructed_zero.shape}."
                 )
 
         initial_values = tuple(
@@ -1013,15 +1084,23 @@ class DelayDifferentialProblem(StrictModule):
                 history_derivative,
                 args,
                 state_shape,
+                tangent_shape,
                 state_geometry,
             )
             for term in terms
         )
         checked_initial_values = []
         for term, value in zip(terms, initial_values, strict=True):
-            if value.shape != state_shape:
+            expected_shape = (
+                tangent_shape
+                if isinstance(term, FunctionalDelay)
+                and term.output_kind == "tangent"
+                or isinstance(term, DerivativeDelay)
+                else state_shape
+            )
+            if value.shape != expected_shape:
                 raise ValueError(
-                    f"Delay term {term.name!r} must return state shape {state_shape}; "
+                    f"Delay term {term.name!r} must return shape {expected_shape}; "
                     f"got {value.shape}."
                 )
             if state_geometry is not None and isinstance(term, DistributedDelay):
@@ -1040,14 +1119,17 @@ class DelayDifferentialProblem(StrictModule):
         initial_values = tuple(checked_initial_values)
         memory = DelayValues(names, initial_values)
         drift_value = jnp.asarray(drift(start, state, memory, args))
-        if drift_value.shape != state_shape:
-            raise ValueError("drift must preserve the history state shape.")
-        if state_geometry is not None and not state_geometry.trivial:
+        if drift_value.shape != tangent_shape:
+            raise ValueError(
+                f"drift must return physical tangent shape {tangent_shape}; "
+                f"got {drift_value.shape}."
+            )
+        if state_geometry is not None:
             drift_value = _validated_geometry_tangent(
                 state_geometry,
                 state,
                 drift_value,
-                state_shape,
+                tangent_shape,
                 "DelayDifferentialProblem initial drift must be tangent-compatible "
                 "with state_geometry.",
             )
@@ -1057,16 +1139,17 @@ class DelayDifferentialProblem(StrictModule):
             initial_derivative_compatible = jnp.asarray(True)
         else:
             initial_left_derivative = jnp.asarray(history_derivative(start, args))
-            if initial_left_derivative.shape != state_shape:
+            if initial_left_derivative.shape != tangent_shape:
                 raise ValueError(
-                    "history_derivative must preserve the history state shape."
+                    "history_derivative must return physical tangent shape "
+                    f"{tangent_shape}; got {initial_left_derivative.shape}."
                 )
-            if state_geometry is not None and not state_geometry.trivial:
+            if state_geometry is not None:
                 initial_left_derivative = _validated_geometry_tangent(
                     state_geometry,
                     state,
                     initial_left_derivative,
-                    state_shape,
+                    tangent_shape,
                     "DelayDifferentialProblem history_derivative at t0 must be tangent "
                     "to state_geometry.",
                 )
@@ -1096,11 +1179,11 @@ class DelayDifferentialProblem(StrictModule):
         slices: dict[str, tuple[int, int]] = {}
         for term in stochastic_terms:
             coefficient = jnp.asarray(term.coefficient(start, state, memory, args))
-            expected = state_shape + term.noise_shape
+            expected = tangent_shape + term.noise_shape
             if coefficient.shape != expected:
                 raise ValueError(
-                    f"DelayWienerTerm {term.name!r} coefficient must return shape "
-                    f"{expected}; got {coefficient.shape}."
+                    f"DelayWienerTerm {term.name!r} coefficient must return tangent-"
+                    f"plus-noise shape {expected}; got {coefficient.shape}."
                 )
             slices[term.name] = (offset, offset + term.noise_size)
             offset += term.noise_size
@@ -1126,6 +1209,8 @@ class DelayDifferentialProblem(StrictModule):
             None if state_geometry is None else state_geometry.geometry_id
         )
         self.state_shape = state_shape
+        self.tangent_shape = tangent_shape
+        self.local_shape = local_shape
         self.initial_left_derivative = initial_left_derivative
         self.initial_right_derivative = drift_value
         self.initial_derivative_jump = initial_derivative_jump
@@ -1214,6 +1299,7 @@ class NeutralDelayProblem(StrictModule):
     initial_derivative_jump: Array | None
     initial_derivative_compatible: Array
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     neutral_functional: NeutralFunctional
     endpoint_neutral: EndpointNeutralFunctional | None
@@ -1321,6 +1407,7 @@ class NeutralDelayProblem(StrictModule):
         self.initial_derivative_jump = base.initial_derivative_jump
         self.initial_derivative_compatible = base.initial_derivative_compatible
         self.state_shape = base.state_shape
+        self.tangent_shape = base.tangent_shape
         self.problem_id = base.problem_id
         initial_memory = DelayValues(
             self.delay_names,

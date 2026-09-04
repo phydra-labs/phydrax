@@ -58,7 +58,12 @@ from ._diffrax_state_packing import (
     _PreparedDiffraxStateAdapter,
     DiffraxComplexStatePolicy,
 )
-from ._geometric import AbstractGeometricSolver, SRKMK
+from ._geometric import (
+    _physical_tangent,
+    AbstractGeometricSolver,
+    GeometricODETerm,
+    SRKMK,
+)
 from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
 
@@ -90,15 +95,23 @@ class _CoordinateDelayDerivative(eqx.Module):
     function: Any
     adapter: _PreparedDiffraxStateAdapter
 
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
+
     def __call__(self, time, args):
         public_args = self.adapter.unpack_args(args)
         value = self.function(time, public_args)
-        return self.adapter.pack_state(value, owner="Delay history derivative")
+        return self.adapter.pack_tangent(
+            value,
+            self.tangent_shape,
+            owner="Delay history derivative",
+        )
 
 
 class _PublicDelayWindow(eqx.Module):
     window: DelayHistoryWindow
     adapter: _PreparedDiffraxStateAdapter
+
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
 
     def value(self, time, /, *, left=False):
         return self.adapter.unpack_state(self.window.value(time, left=left))
@@ -110,18 +123,24 @@ class _PublicDelayWindow(eqx.Module):
         )
 
     def derivative(self, time, /, *, left=False):
-        return self.adapter.unpack_state(self.window.derivative(time, left=left))
+        return self.adapter.unpack_tangent(
+            self.window.derivative(time, left=left),
+            self.tangent_shape,
+        )
 
     def derivatives(self, times, /, *, left=False):
-        return self.adapter.unpack_values(
+        return self.adapter.unpack_tangent_values(
             self.window.derivatives(times, left=left),
             jnp.asarray(times).ndim,
+            self.tangent_shape,
         )
 
 
 class _CoordinateDelayInterpolation(eqx.Module):
-    interpolation: DelayDenseInterpolation
+    interpolation: Any
     adapter: _PreparedDiffraxStateAdapter
+
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
 
     def evaluate(self, query_times, /, *, left=True):
         query = jnp.asarray(query_times)
@@ -132,9 +151,10 @@ class _CoordinateDelayInterpolation(eqx.Module):
 
     def derivative(self, query_times, /, *, left=True):
         query = jnp.asarray(query_times)
-        return self.adapter.unpack_values(
+        return self.adapter.unpack_tangent_values(
             self.interpolation.derivative(query, left=left),
             query.ndim,
+            self.tangent_shape,
         )
 
 
@@ -147,7 +167,9 @@ class _DelayVectorField(eqx.Module):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     geometry: Any
     state_adapter: _PreparedDiffraxStateAdapter
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
     backend_shape: tuple[int, ...] = eqx.field(static=True)
+    backend_tangent_shape: tuple[int, ...] = eqx.field(static=True)
     computed_history: _ComputedDelayHistory
 
     def _memory(
@@ -163,6 +185,7 @@ class _DelayVectorField(eqx.Module):
             computed_history=self.computed_history,
             state_shape=self.backend_shape,
             geometry=None,
+            derivative_shape=self.backend_tangent_shape,
         )
         values = []
         predicates = []
@@ -178,6 +201,7 @@ class _DelayVectorField(eqx.Module):
                         term.maximum_delay,
                     ),
                     self.state_adapter,
+                    self.tangent_shape,
                 )
                 value = jnp.asarray(
                     term.functional(time, public_state, window, public_args)
@@ -206,8 +230,9 @@ class _DelayVectorField(eqx.Module):
                     history.value(time - lag, left=False)
                 )
                 delayed_states = delayed_state[None, ...]
-                value = self.state_adapter.unpack_state(
-                    history.derivative(time - lag, left=False)
+                value = self.state_adapter.unpack_tangent(
+                    history.derivative(time - lag, left=False),
+                    self.tangent_shape,
                 )
                 if self.geometry is not None and not self.geometry.trivial:
                     predicates.append(
@@ -215,7 +240,7 @@ class _DelayVectorField(eqx.Module):
                             self.geometry,
                             delayed_state,
                             value,
-                            self.state_shape,
+                            self.tangent_shape,
                         )
                     )
                     messages.append(
@@ -231,6 +256,14 @@ class _DelayVectorField(eqx.Module):
                             public_args,
                         )
                     )
+                elif self.geometry is not None and not self.geometry.trivial:
+                    value = jnp.asarray(
+                        self.geometry.transport_tangent(
+                            delayed_state,
+                            public_state,
+                            value,
+                        )
+                    )
             else:
                 lag = (
                     term.delay
@@ -241,9 +274,17 @@ class _DelayVectorField(eqx.Module):
                     history.value(time - lag, left=False)
                 )
                 delayed_states = value[None, ...]
-            if value.shape != self.state_shape:
+            expected_shape = (
+                self.tangent_shape
+                if isinstance(term, DerivativeDelay)
+                or isinstance(term, FunctionalDelay)
+                and term.output_kind == "tangent"
+                else self.state_shape
+            )
+            if value.shape != expected_shape:
                 raise ValueError(
-                    f"Delay term {term.name!r} changed its declared state shape."
+                    f"Delay term {term.name!r} changed its declared role shape; "
+                    f"expected {expected_shape}, got {value.shape}."
                 )
             if self.geometry is not None and delayed_states is not None:
                 historical_membership = jax.vmap(
@@ -267,7 +308,7 @@ class _DelayVectorField(eqx.Module):
                         self.geometry,
                         public_state,
                         value,
-                        self.state_shape,
+                        self.tangent_shape,
                     )
                 )
                 messages.append(
@@ -311,7 +352,7 @@ class _DelayVectorField(eqx.Module):
                         self.geometry,
                         public_state,
                         value,
-                        self.state_shape,
+                        self.tangent_shape,
                     )
                 )
                 messages.append(
@@ -360,39 +401,34 @@ class _DelayVectorField(eqx.Module):
                 public_args,
             )
         )
-        if value.shape != self.state_shape:
-            raise ValueError("Delay drift changed its declared state shape.")
+        if value.shape != self.tangent_shape:
+            raise ValueError(
+                "Delay drift changed its declared physical tangent shape; "
+                f"expected {self.tangent_shape}, got {value.shape}."
+            )
         value = validation.apply(value)
         if self.geometry is not None:
-            projected = jnp.asarray(self.geometry.project_tangent(current, value))
-            if projected.shape != self.state_shape:
-                raise ValueError(
-                    "State geometry tangent projection changed the state shape."
-                )
-            if jnp.issubdtype(value.dtype, jnp.inexact):
-                scale = jnp.maximum(
-                    1.0,
-                    jnp.maximum(jnp.max(jnp.abs(value)), jnp.max(jnp.abs(projected))),
-                )
-                tolerance = 256.0 * jnp.finfo(value.dtype).eps * scale
-            else:
-                tolerance = jnp.asarray(0, dtype=value.dtype)
-            value = eqx.error_if(
+            value = _physical_tangent(
+                self.geometry,
+                current,
                 value,
-                ~jnp.all(jnp.isfinite(value))
-                | ~jnp.all(jnp.isfinite(projected))
-                | jnp.any(jnp.abs(value - projected) > tolerance),
-                "Geometric delay drift must be tangent-compatible with state_geometry.",
+                "Geometric delay drift",
             )
-        return self.state_adapter.pack_state(value, owner="Delay drift")
+        return self.state_adapter.pack_tangent(
+            value,
+            self.tangent_shape,
+            owner="Delay drift",
+        )
 
 
 class _ZeroVectorField(eqx.Module):
-    """Identically zero deterministic second term for drift-only SRKMK."""
+    """Identically zero physical tangent term for drift-only SRKMK."""
+
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __call__(self, time: ArrayLike, state: Array, args: Any) -> Array:
         del time, args
-        return jnp.zeros_like(state)
+        return jnp.zeros(self.tangent_shape, dtype=jnp.asarray(state).dtype)
 
 
 def _bind_delay_history(
@@ -1112,9 +1148,15 @@ def _deterministic_delay_terms(
     vector_field: _DelayVectorField,
     /,
 ) -> Any:
-    drift = dfx.ODETerm(vector_field)
+    term_type = (
+        GeometricODETerm if isinstance(solver, AbstractGeometricSolver) else dfx.ODETerm
+    )
+    drift = term_type(vector_field)
     if isinstance(solver, SRKMK):
-        return dfx.MultiTerm(drift, dfx.ODETerm(_ZeroVectorField()))
+        return dfx.MultiTerm(
+            drift,
+            GeometricODETerm(_ZeroVectorField(vector_field.backend_tangent_shape)),
+        )
     return drift
 
 
@@ -1253,13 +1295,14 @@ def solve_diffrax_delay(
     initial_computed_derivative = (
         problem.initial_right_derivative
         if problem.neutral
-        else jnp.zeros_like(problem.initial_state)
+        else jnp.zeros(problem.tangent_shape, dtype=problem.initial_state.dtype)
     )
     packed_initial = state_adapter.pack_state(
         problem.initial_state, owner="Initial delay state"
     )
-    packed_derivative = state_adapter.pack_state(
+    packed_derivative = state_adapter.pack_tangent(
         initial_computed_derivative,
+        problem.tangent_shape,
         owner="Initial delay derivative",
     )
     empty_history = EmptyDelayHistory(
@@ -1272,19 +1315,29 @@ def solve_diffrax_delay(
         initial_derivative=(
             None
             if problem.history_derivative is None
-            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+            else _CoordinateDelayDerivative(
+                problem.history_derivative,
+                state_adapter,
+                problem.tangent_shape,
+            )
         ),
         delay_terms=problem.delay_terms,
         initial_time=problem.t0,
         state_shape=problem.state_shape,
+        tangent_shape=problem.tangent_shape,
         geometry=problem.state_geometry,
         state_adapter=state_adapter,
         backend_shape=state_adapter.backend_shape,
+        backend_tangent_shape=tuple(int(size) for size in packed_derivative.shape),
         computed_history=empty_history,
     )
     if isinstance(problem, NeutralDelayProblem):
         vector_field = _neutral_vector_field(problem, history_context)
-        terms = dfx.ODETerm(vector_field)
+        terms = (
+            GeometricODETerm(vector_field)
+            if isinstance(selected_solver, AbstractGeometricSolver)
+            else dfx.ODETerm(vector_field)
+        )
     else:
         vector_field = history_context
         terms = _deterministic_delay_terms(selected_solver, vector_field)
@@ -1534,12 +1587,17 @@ def solve_diffrax_delay(
             initial_derivative=(
                 None
                 if problem.history_derivative is None
-                else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+                else _CoordinateDelayDerivative(
+                    problem.history_derivative,
+                    state_adapter,
+                    problem.tangent_shape,
+                )
             ),
             args=state_adapter.pack_args(problem.args),
             initial_time=problem.t0,
             computed_history=solver_state.history,
             state_shape=state_adapter.backend_shape,
+            derivative_shape=tuple(int(size) for size in packed_derivative.shape),
             geometry=None,
         )
         interpolation = DelayDenseInterpolation(
@@ -1552,7 +1610,11 @@ def solve_diffrax_delay(
             ),
         )
         if state_adapter.active:
-            interpolation = _CoordinateDelayInterpolation(interpolation, state_adapter)
+            interpolation = _CoordinateDelayInterpolation(
+                interpolation,
+                state_adapter,
+                problem.tangent_shape,
+            )
     solver_name = type(selected_solver).__name__
     solver_id, resolved_method = _delay_solver_provenance(
         selected_solver,

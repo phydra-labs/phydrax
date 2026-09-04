@@ -15,6 +15,7 @@ from phydrax.applications.robotics import (
     RoboticsProjection,
     RoboticsProjectionMap,
 )
+from phydrax.dynamics import PlantStepContext
 
 
 mujoco = pytest.importorskip("mujoco")
@@ -57,6 +58,21 @@ def cpu_mjx_muscle():
     return model, adapter, adapter.prepare_muscle_projection()
 
 
+def _reset(adapter):
+    return adapter.reset(
+        jax.random.key(7),
+        adapter.parameters,
+    ).accepted_state
+
+
+def _context(state):
+    return PlantStepContext(
+        state.time,
+        state.time + jnp.asarray(0.001, dtype=state.time.dtype),
+        state.step_index,
+    )
+
+
 def test_all_and_named_compiled_muscles_have_deterministic_fixed_maps(cpu_mjx_muscle):
     model, adapter, projection = cpu_mjx_muscle
     named = MJXMuscleProjectionPlan(("soleus",)).prepare(adapter)
@@ -76,13 +92,19 @@ def test_all_and_named_compiled_muscles_have_deterministic_fixed_maps(cpu_mjx_mu
 
 def test_control_scatter_is_complete_and_snapshot_freshness_is_explicit(cpu_mjx_muscle):
     model, adapter, projection = cpu_mjx_muscle
-    base = adapter.control().values.at[1].set(0.3)
+    source = _reset(adapter)
+    base = adapter.control(source)
+    base = eqx.tree_at(
+        lambda control: control.values,
+        base,
+        base.values.at[1].set(0.3),
+    )
     complete = projection.scatter_control(base, jnp.asarray([0.7]))
     assert complete.values.shape == (model.nu,)
     assert complete.values[0] == pytest.approx(0.7)
     assert complete.values[1] == pytest.approx(0.3)
 
-    initial = projection.snapshot(adapter.initial_state)
+    initial = projection.snapshot(source)
     assert bool(initial.successful)
     assert bool(initial.freshness)
     assert initial.activation.values.shape == (1,)
@@ -92,7 +114,12 @@ def test_control_scatter_is_complete_and_snapshot_freshness_is_explicit(cpu_mjx_
     assert initial.force_owner == "provider-native"
     assert initial.raw_force_sign == "negative-is-pulling-tension"
 
-    stepped = adapter.step(adapter.initial_state, complete)
+    stepped = adapter.step(
+        _context(source),
+        source,
+        complete,
+        adapter.parameters,
+    )
     stale = projection.snapshot(stepped.accepted_state)
     assert int(stale.evidence.status) == int(RoboticsOperationStatus.INVALID_STATE)
     assert not bool(stale.freshness)
@@ -108,7 +135,8 @@ def test_scatter_rejects_wrong_kind_and_incomplete_typed_control_maps(
     cpu_mjx_muscle,
 ):
     _, adapter, projection = cpu_mjx_muscle
-    control = adapter.control()
+    source = _reset(adapter)
+    control = adapter.control(source)
     excitation = jnp.asarray([0.5])
 
     wrong_kind_map = RoboticsProjectionMap(
@@ -147,48 +175,70 @@ def test_scatter_rejects_wrong_kind_and_incomplete_typed_control_maps(
 
 def test_failed_step_rolls_back_whole_state_then_refreshes_that_source(cpu_mjx_muscle):
     _, adapter, projection = cpu_mjx_muscle
-    first_control = projection.scatter_control(adapter.control(), jnp.asarray([0.6]))
-    first = adapter.step(adapter.initial_state, first_control)
+    source = _reset(adapter)
+    first_control = projection.scatter_control(
+        adapter.control(source),
+        jnp.asarray([0.6]),
+    )
+    first = adapter.step(
+        _context(source),
+        source,
+        first_control,
+        adapter.parameters,
+    )
     assert bool(first.successful)
     assert not bool(projection.snapshot(first.accepted_state).freshness)
 
-    invalid_control = first.accepted_state.opaque.ctrl.at[0].set(jnp.nan)
-    failed = adapter.step(first.accepted_state, invalid_control)
-    assert not bool(failed.successful)
-    assert bool(failed.rolled_back)
-    assert bool(failed.accepted_state.rollback_source)
-    assert jnp.array_equal(
-        failed.accepted_state.opaque.qpos, first.accepted_state.opaque.qpos
+    invalid_control = adapter.control(first.accepted_state)
+    invalid_control = eqx.tree_at(
+        lambda control: control.values,
+        invalid_control,
+        invalid_control.values.at[0].set(jnp.nan),
     )
-    assert jnp.array_equal(
-        failed.accepted_state.opaque.ctrl, first.accepted_state.opaque.ctrl
+    failed = adapter.step(
+        _context(first.accepted_state),
+        first.accepted_state,
+        invalid_control,
+        adapter.parameters,
+    )
+    assert not bool(failed.successful)
+    assert adapter.state_digest(failed.accepted_state) == adapter.state_digest(
+        first.accepted_state
     )
 
     refreshed = adapter.refresh(failed.accepted_state)
-    assert bool(refreshed.rollback_source_refreshed)
-    assert not bool(refreshed.accepted_state.rollback_source)
+    assert bool(refreshed.successful)
     assert bool(projection.snapshot(refreshed.accepted_state).freshness)
 
 
 def test_scatter_and_forward_projection_support_jit_vmap_and_jvp(cpu_mjx_muscle):
     _, adapter, projection = cpu_mjx_muscle
-    bases = jnp.stack((adapter.control().values, adapter.control().values))
+    source = _reset(adapter)
+    base = adapter.control(source).values
+    bases = jnp.stack((base, base))
     excitations = jnp.asarray([[0.2], [0.8]])
     scattered = jax.jit(jax.vmap(projection.scatter_control))(bases, excitations)
     assert scattered.values.shape == (2, adapter.control_map.size)
 
     def raw_force_at_qpos(qpos):
-        changed_data = adapter.initial_state.opaque.replace(qpos=qpos)
+        changed_data = source.payload.opaque.replace(qpos=qpos)
+        changed_payload = eqx.tree_at(
+            lambda payload: payload.opaque,
+            source.payload,
+            changed_data,
+        )
         changed_state = eqx.tree_at(
-            lambda state: state.opaque, adapter.initial_state, changed_data
+            lambda state: state.payload,
+            source,
+            changed_payload,
         )
         refreshed = adapter.refresh(changed_state)
         return projection.snapshot(refreshed.accepted_state).raw_force_N.values
 
     _, tangent = jax.jvp(
         raw_force_at_qpos,
-        (adapter.initial_state.opaque.qpos,),
-        (jnp.ones_like(adapter.initial_state.opaque.qpos),),
+        (source.payload.opaque.qpos,),
+        (jnp.ones_like(source.payload.opaque.qpos),),
     )
     assert tangent.shape == (1,)
     assert jnp.all(jnp.isfinite(tangent))

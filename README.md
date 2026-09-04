@@ -86,13 +86,17 @@ Most workflows are composing a few primitives:
   exact construction-order search, standards clauses, reliability, calibration,
   evidence acquisition, and immutable digital-twin ancestry extend member-network
   mechanics without erasing model fidelity or applicability.
-- **Native robotics**: explicit-root, descriptor-relative bounded URDF adaptation;
-  COM-centred fixed-base hinge/prismatic mechanics and rebasing; local frame IK;
-  result-preserving rollout/environment rollback; certified fixed-route impact;
-  reduced rods; and freshness/schema-gated optional MJX. Fixed-route contact is
-  an operator utility, not collision discovery or an atomic robot/contact step.
-  See the [robotics guide](docs/guides_robotics.md) and
-  [robotics API](docs/api/applications/robotics.md).
+- **Native rigid and soft robotics**: explicit-root, descriptor-relative bounded
+  URDF adaptation; COM-centred fixed-base articulation; complete atomic plant,
+  codec, checkpoint, and replay contracts; spatial native and PCS/GVS reduced
+  rods; tendon and advanced actuator evaluators; continuum tasks, observations,
+  calibration, co-design, and control; capsule history/CCD and atomic reduced-rod
+  contact; floating and fixed-topology rigid–soft plants; fixed-mesh FEM and
+  fixed-topology MPM profiles; and a capability-gated complete-state MJX plant.
+  Every claim is limited to its declared capability tuple and runtime evidence.
+  See the [native robotics guide](docs/guides_robotics.md), [soft robotics
+  guide](docs/guides_soft_robotics.md), [robotics API](docs/api/applications/robotics.md),
+  and [soft robotics API](docs/api/applications/soft_robotics.md).
 - **Skeletal-muscle platform**: source-pinned mean-rate and stochastic motor units,
   macroscopic fatigue/recovery, explicit force calibration, complete Shorten
   fast-twitch cellular kinetics, stimulated one-dimensional fibers and sparse motor

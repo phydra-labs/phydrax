@@ -18,7 +18,12 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import TemporalMesh
-from ..dynamics import ContinuousSystem, DifferentialAlgebraicSystem, TimeGrid
+from ..dynamics import (
+    ContinuousSystem,
+    DifferentialAlgebraicSystem,
+    StateLayout,
+    TimeGrid,
+)
 from ..linalg import AbstractVectorSpace, ArraySpace
 from ..optim import (
     AbstractMinimizationMethod,
@@ -344,8 +349,10 @@ class DirectCollocationDecision(StrictModule):
 
 
 class DirectCollocationDecisionLayout(StrictModule):
-    """Physical-to-normalized coordinate map with exact role slices."""
+    """Retraction-local normalized coordinates with exact role slices."""
 
+    state_layout: StateLayout
+    state_anchors: Array
     parameter_space: AbstractVectorSpace | None
     state_scale: Array
     control_scale: Array
@@ -356,6 +363,9 @@ class DirectCollocationDecisionLayout(StrictModule):
     parameter_slice: tuple[int, int] = eqx.field(static=True)
     duration_slice: tuple[int, int] = eqx.field(static=True)
     state_array_shape: tuple[int, ...] = eqx.field(static=True)
+    state_coordinate_shape: tuple[int, ...] = eqx.field(static=True)
+    local_shape: tuple[int, ...] = eqx.field(static=True)
+    tangent_shape: tuple[int, ...] = eqx.field(static=True)
     control_array_shape: tuple[int, ...] = eqx.field(static=True)
     variable_duration: bool = eqx.field(static=True)
     num_variables: int = eqx.field(static=True)
@@ -364,6 +374,8 @@ class DirectCollocationDecisionLayout(StrictModule):
     def __init__(
         self,
         *,
+        state_layout: StateLayout,
+        state_anchors: ArrayLike,
         state_array_shape: Sequence[int],
         control_array_shape: Sequence[int],
         parameter_space: AbstractVectorSpace | None,
@@ -374,9 +386,48 @@ class DirectCollocationDecisionLayout(StrictModule):
         variable_duration: bool,
         layout_id: str,
     ):
+        if not isinstance(state_layout, StateLayout):
+            raise TypeError("state_layout must be a StateLayout.")
+        geometry = state_layout.geometry
+        if (
+            not geometry.supports_exact_inverse
+            or not geometry.supports_exact_differential
+        ):
+            raise ValueError(
+                "DirectCollocationDecisionLayout requires exact inverse-retraction "
+                "and retraction-differential geometry."
+            )
         states = tuple(int(size) for size in state_array_shape)
         controls = tuple(int(size) for size in control_array_shape)
-        state_count = prod(states)
+        point_rank = len(state_layout.shape)
+        if point_rank and states[-point_rank:] != state_layout.shape:
+            raise ValueError("state_array_shape must end with state_layout.shape.")
+        state_prefix = states[:-point_rank] if point_rank else states
+        anchors = _inexact(state_anchors, "state_anchors")
+        if anchors.shape != states:
+            raise ValueError("state_anchors must have state_array_shape.")
+        flat_anchors = anchors.reshape((-1,) + state_layout.shape)
+        local_template = jnp.asarray(
+            state_layout.geometry.inverse_retract(flat_anchors[0], flat_anchors[0])
+        )
+        if local_template.size != state_layout.local_size:
+            raise ValueError(
+                "State geometry local output size must match state_layout.local_size."
+            )
+        local_shape = tuple(local_template.shape)
+        tangent_template = jnp.asarray(
+            state_layout.geometry.retraction_jvp(
+                flat_anchors[0],
+                local_template,
+                jnp.zeros_like(local_template),
+            )
+        )
+        if tangent_template.size != state_layout.tangent_size:
+            raise ValueError(
+                "State geometry tangent output size must match state_layout.tangent_size."
+            )
+        state_coordinates = state_prefix + (state_layout.local_size,)
+        state_count = prod(state_coordinates)
         control_count = prod(controls)
         parameter_count = 0 if parameter_space is None else parameter_space.size
         duration_count = int(variable_duration)
@@ -384,8 +435,17 @@ class DirectCollocationDecisionLayout(StrictModule):
         control_stop = state_stop + control_count
         parameter_stop = control_stop + parameter_count
         duration_stop = parameter_stop + duration_count
+        state_scale_ = _inexact(state_scale, "state scale")
+        if not (
+            state_scale_.shape == state_coordinates
+            or jnp.broadcast_shapes(state_scale_.shape, state_coordinates)
+            == state_coordinates
+        ):
+            raise ValueError("state_scale must broadcast to local state coordinates.")
+        self.state_layout = state_layout
+        self.state_anchors = anchors
         self.parameter_space = parameter_space
-        self.state_scale = state_scale
+        self.state_scale = jnp.broadcast_to(state_scale_, state_coordinates)
         self.control_scale = control_scale
         self.parameter_scale = parameter_scale
         self.duration_scale = duration_scale
@@ -394,10 +454,37 @@ class DirectCollocationDecisionLayout(StrictModule):
         self.parameter_slice = (control_stop, parameter_stop)
         self.duration_slice = (parameter_stop, duration_stop)
         self.state_array_shape = states
+        self.state_coordinate_shape = state_coordinates
+        self.local_shape = local_shape
+        self.tangent_shape = tuple(tangent_template.shape)
         self.control_array_shape = controls
         self.variable_duration = bool(variable_duration)
         self.num_variables = duration_stop
         self.layout_id = _identifier(layout_id, "layout_id")
+
+    def _state_coordinates(self, states: Array, /) -> Array:
+        geometry = self.state_layout.geometry
+        if geometry.trivial:
+            return states.reshape(self.state_coordinate_shape)
+        flat_states = states.reshape((-1,) + self.state_layout.shape)
+        flat_anchors = self.state_anchors.reshape((-1,) + self.state_layout.shape)
+        return jax.vmap(
+            lambda anchor, point: jnp.asarray(
+                geometry.inverse_retract(anchor, point)
+            ).reshape((self.state_layout.local_size,))
+        )(flat_anchors, flat_states).reshape(self.state_coordinate_shape)
+
+    def _states(self, coordinates: Array, /) -> Array:
+        geometry = self.state_layout.geometry
+        if geometry.trivial:
+            return coordinates.reshape(self.state_array_shape)
+        flat_local = coordinates.reshape((-1, self.state_layout.local_size))
+        flat_anchors = self.state_anchors.reshape((-1,) + self.state_layout.shape)
+        return jax.vmap(
+            lambda anchor, local: jnp.asarray(
+                geometry.retract(anchor, local.reshape(self.local_shape))
+            )
+        )(flat_anchors, flat_local).reshape(self.state_array_shape)
 
     def pack(self, decision: DirectCollocationDecision, /) -> Array:
         if not isinstance(decision, DirectCollocationDecision):
@@ -410,8 +497,9 @@ class DirectCollocationDecisionLayout(StrictModule):
             raise ValueError(
                 f"decision controls must have shape {self.control_array_shape}."
             )
+        state_coordinates = self._state_coordinates(states)
         parts = [
-            (states / self.state_scale.astype(states.dtype)).reshape((-1,)),
+            (state_coordinates / self.state_scale.astype(states.dtype)).reshape((-1,)),
             (controls / self.control_scale.astype(controls.dtype)).reshape((-1,)),
         ]
         if self.parameter_space is None:
@@ -449,8 +537,11 @@ class DirectCollocationDecisionLayout(StrictModule):
         control_start, control_stop = self.control_slice
         parameter_start, parameter_stop = self.parameter_slice
         duration_start, duration_stop = self.duration_slice
-        states = vector[state_start:state_stop].reshape(self.state_array_shape)
-        states = states * self.state_scale.astype(vector.dtype)
+        state_coordinates = vector[state_start:state_stop].reshape(
+            self.state_coordinate_shape
+        )
+        state_coordinates = state_coordinates * self.state_scale.astype(vector.dtype)
+        states = self._states(state_coordinates)
         controls = vector[control_start:control_stop].reshape(self.control_array_shape)
         controls = controls * self.control_scale.astype(vector.dtype)
         if self.parameter_space is None:
@@ -481,13 +572,22 @@ class DirectCollocationDecisionLayout(StrictModule):
         lower = jnp.full_like(coordinates, -jnp.inf)
         upper = jnp.full_like(coordinates, jnp.inf)
         if bounds.states is not None:
+            if not self.state_layout.geometry.trivial:
+                raise ValueError(
+                    "Pointwise state bounds are not coordinate bounds on a "
+                    "non-Euclidean state manifold; use path constraints."
+                )
             state_lower, state_upper = bounds.states.materialize(decision.states)
             start, stop = self.state_slice
             lower = lower.at[start:stop].set(
-                (state_lower / self.state_scale).reshape((-1,))
+                (
+                    state_lower.reshape(self.state_coordinate_shape) / self.state_scale
+                ).reshape((-1,))
             )
             upper = upper.at[start:stop].set(
-                (state_upper / self.state_scale).reshape((-1,))
+                (
+                    state_upper.reshape(self.state_coordinate_shape) / self.state_scale
+                ).reshape((-1,))
             )
         if bounds.controls is not None:
             control_lower, control_upper = bounds.controls.materialize(decision.controls)
@@ -551,6 +651,8 @@ class DirectCollocationConstraintLayout(StrictModule):
 
 
 class _DirectValues(StrictModule):
+    """Direct residuals using observed-minus-predicted orientation."""
+
     decision: DirectCollocationDecision
     times: Array
     stage_times: Array
@@ -607,46 +709,77 @@ def _evaluate_values(
     left = jnp.take(decision.states, indices, axis=axis)
     right = jnp.take(decision.states, indices + 1, axis=axis)
     widths = jnp.diff(times)
-    width_shape = (
-        (1,) * len(problem.case_shape) + (steps,) + ((1,) * len(problem.state_shape))
-    )
-    state_rates = (right - left) / widths.reshape(width_shape)
     theta = plan.method.theta
-    stage_states = (1.0 - theta) * left + theta * right
     stage_times = (1.0 - theta) * times[:-1] + theta * times[1:]
     callback_args = _callback_args(problem, plan, decision, args)
     case_count = prod(problem.case_shape) if problem.case_shape else 1
     flat_count = case_count * steps
+    flat_left = left.reshape((flat_count,) + problem.state_shape)
+    flat_right = right.reshape((flat_count,) + problem.state_shape)
+    flat_widths = jnp.broadcast_to(widths, problem.case_shape + (steps,)).reshape(
+        (flat_count,)
+    )
+    geometry = problem.state_layout.geometry
+    local_size = problem.state_layout.local_size
+    flat_endpoint_local = jax.vmap(
+        lambda anchor, point: jnp.asarray(
+            geometry.inverse_retract(anchor, point)
+        ).reshape((local_size,))
+    )(flat_left, flat_right)
+    flat_stage_local = theta * flat_endpoint_local
+    flat_states = jax.vmap(
+        lambda anchor, local: jnp.asarray(
+            geometry.retract(anchor, local.reshape(layout.local_shape))
+        )
+    )(flat_left, flat_stage_local)
+    flat_local_rates = flat_endpoint_local / flat_widths[:, None]
+    flat_rates = jax.vmap(
+        lambda anchor, local, velocity: jnp.asarray(
+            geometry.retraction_jvp(
+                anchor,
+                local.reshape(layout.local_shape),
+                velocity.reshape(layout.local_shape),
+            )
+        )
+    )(flat_left, flat_stage_local, flat_local_rates)
+    stage_states = flat_states.reshape(
+        problem.case_shape + (steps,) + problem.state_shape
+    )
+    state_rates = flat_rates.reshape(problem.case_shape + (steps,) + layout.tangent_shape)
     flat_times = jnp.broadcast_to(
         stage_times,
         problem.case_shape + (steps,),
     ).reshape((flat_count,))
-    flat_states = stage_states.reshape((flat_count,) + problem.state_shape)
-    flat_rates = state_rates.reshape((flat_count,) + problem.state_shape)
     flat_controls = decision.controls.reshape((flat_count,) + problem.control_shape)
 
     dynamics_model = problem.dynamics
     if isinstance(dynamics_model, ContinuousSystem):
 
-        def residual(time, state, state_rate, control):
-            return state_rate - dynamics_model.evaluate(
-                time, state, callback_args, inputs=control
-            )
+        def physical_residual(time, state, state_rate, control):
+            field = dynamics_model.evaluate(time, state, callback_args, inputs=control)
+            return state_rate - geometry.project_tangent(state, field)
 
     else:
 
-        def residual(time, state, state_rate, control):
-            return dynamics_model.evaluate(
+        def physical_residual(time, state, state_rate, control):
+            residual = dynamics_model.evaluate(
                 time,
                 state,
                 state_rate,
                 callback_args,
                 inputs=control,
             )
+            return geometry.project_tangent(state, residual)
 
-    dynamics = jax.vmap(residual)(
+    flat_physical_defects = jax.vmap(physical_residual)(
         flat_times, flat_states, flat_rates, flat_controls
-    ).reshape(problem.case_shape + (steps,) + problem.state_shape)
+    )
+    flat_dynamics = jax.vmap(
+        lambda anchor, point, tangent: jnp.asarray(
+            geometry.retraction_inverse_jvp(anchor, point, tangent)
+        ).reshape((local_size,))
+    )(flat_left, flat_states, flat_physical_defects)
+    dynamics = flat_dynamics.reshape(problem.case_shape + (steps, local_size))
     view = TrajectoryOptimizationView(
         times,
         decision.states,
@@ -654,6 +787,7 @@ def _evaluate_values(
         case_shape=problem.case_shape,
         state_shape=problem.state_shape,
         control_shape=problem.control_shape,
+        state_geometry=geometry,
     )
     objective = jnp.asarray(0.0, dtype=coordinates.dtype)
     running_cost = problem.running_cost
@@ -687,11 +821,16 @@ def _evaluate_values(
         if trajectory_value.shape != ():
             raise ValueError("trajectory_cost must return one scalar.")
         objective = objective + trajectory_value
-    initial = (
-        jnp.empty((0,), dtype=coordinates.dtype)
-        if problem.initial_state is None
-        else view.initial_state - problem.initial_state
-    )
+    if problem.initial_state is None:
+        initial = jnp.empty((0,), dtype=coordinates.dtype)
+    else:
+        flat_initial = problem.initial_state.reshape((case_count,) + problem.state_shape)
+        flat_first = view.initial_state.reshape((case_count,) + problem.state_shape)
+        initial = jax.vmap(
+            lambda anchor, point: jnp.asarray(
+                geometry.inverse_retract(anchor, point)
+            ).reshape((local_size,))
+        )(flat_initial, flat_first).reshape(problem.case_shape + (local_size,))
     path_values = []
     for constraint in problem.path_constraints:
 
@@ -1026,26 +1165,39 @@ def _resolved_scales(
     parameter_guess: Any,
     /,
 ) -> tuple[Array, Array, Any, Array, Array]:
+    local_size = problem.state_layout.local_size
     if isinstance(problem.dynamics, DifferentialAlgebraicSystem):
         default_state = problem.dynamics.state_scale
         default_dynamics = problem.dynamics.residual_scale
     else:
         default_state = jnp.ones(problem.state_shape)
         default_dynamics = jnp.ones(problem.state_shape)
-    state = _broadcast_scale(
-        default_state if plan.scaling.state is None else plan.scaling.state,
-        problem.state_shape,
-        "state scale",
-    )
+    if problem.state_layout.geometry.trivial:
+        state = _broadcast_scale(
+            default_state if plan.scaling.state is None else plan.scaling.state,
+            problem.state_shape,
+            "state scale",
+        ).reshape((local_size,))
+        dynamics = _broadcast_scale(
+            default_dynamics if plan.scaling.dynamics is None else plan.scaling.dynamics,
+            problem.state_shape,
+            "dynamics scale",
+        ).reshape((local_size,))
+    else:
+        state = _broadcast_scale(
+            plan.scaling.state,
+            (local_size,),
+            "local state scale",
+        )
+        dynamics = _broadcast_scale(
+            plan.scaling.dynamics,
+            (local_size,),
+            "local dynamics scale",
+        )
     control = _broadcast_scale(
         plan.scaling.control,
         problem.control_shape,
         "control scale",
-    )
-    dynamics = _broadcast_scale(
-        default_dynamics if plan.scaling.dynamics is None else plan.scaling.dynamics,
-        problem.state_shape,
-        "dynamics scale",
     )
     if problem.parameter_space is None:
         parameter = None
@@ -1086,6 +1238,12 @@ def compile_direct_collocation(
     if not isinstance(plan, DirectCollocationPlan):
         raise TypeError("plan must be a DirectCollocationPlan.")
     trajectory_problem = _trajectory_problem(problem, plan)
+    geometry = trajectory_problem.state_layout.geometry
+    if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
+        raise ValueError(
+            "Direct collocation requires exact inverse-retraction and "
+            "retraction-differential geometry."
+        )
     states = _inexact(initial_states, "initial_states")
     controls = _inexact(initial_controls, "initial_controls")
     expected_states = (
@@ -1132,7 +1290,8 @@ def compile_direct_collocation(
     )
     state_scale_array = jnp.broadcast_to(
         state_scale,
-        (1,) * (len(trajectory_problem.case_shape) + 1) + trajectory_problem.state_shape,
+        (1,) * (len(trajectory_problem.case_shape) + 1)
+        + (trajectory_problem.state_layout.local_size,),
     )
     control_scale_array = jnp.broadcast_to(
         control_scale,
@@ -1140,6 +1299,8 @@ def compile_direct_collocation(
         + trajectory_problem.control_shape,
     )
     layout = DirectCollocationDecisionLayout(
+        state_layout=trajectory_problem.state_layout,
+        state_anchors=states,
         state_array_shape=expected_states,
         control_array_shape=expected_controls,
         parameter_space=trajectory_problem.parameter_space,
@@ -1155,6 +1316,8 @@ def compile_direct_collocation(
                 "plan": plan.plan_id,
                 "states": list(expected_states),
                 "controls": list(expected_controls),
+                "state_layout": trajectory_problem.state_layout.layout_id,
+                "local_size": trajectory_problem.state_layout.local_size,
                 "parameters": (
                     None
                     if trajectory_problem.parameter_space is None
@@ -1407,9 +1570,10 @@ def _off_grid_audit(
     problem = compilation.problem
     steps = compilation.plan.mesh.num_steps
     axis = len(problem.case_shape)
+    local_size = problem.state_layout.local_size
     if points == 0:
         residuals = jnp.empty(
-            problem.case_shape + (steps, 0) + problem.state_shape,
+            problem.case_shape + (steps, 0, local_size),
             dtype=dtype,
         )
         zeros = jnp.zeros(problem.case_shape + (steps,), dtype=dtype)
@@ -1436,63 +1600,84 @@ def _off_grid_audit(
     left = jnp.take(values.decision.states, jnp.arange(steps), axis=axis)
     right = jnp.take(values.decision.states, jnp.arange(steps) + 1, axis=axis)
     widths = jnp.diff(values.times)
-    rate_shape = (
-        (1,) * len(problem.case_shape) + (steps,) + ((1,) * len(problem.state_shape))
+    case_count = prod(problem.case_shape) if problem.case_shape else 1
+    interval_count = case_count * steps
+    flat_left = left.reshape((interval_count,) + problem.state_shape)
+    flat_right = right.reshape((interval_count,) + problem.state_shape)
+    flat_widths = jnp.broadcast_to(widths, problem.case_shape + (steps,)).reshape(
+        (interval_count,)
     )
-    rates = (right - left) / widths.reshape(rate_shape)
-    state_fraction_shape = (
-        (1,) * len(problem.case_shape) + (1, points) + (1,) * len(problem.state_shape)
+    geometry = problem.state_layout.geometry
+    endpoint_local = jax.vmap(
+        lambda anchor, point: jnp.asarray(
+            geometry.inverse_retract(anchor, point)
+        ).reshape((local_size,))
+    )(flat_left, flat_right)
+    sample_local = endpoint_local[:, None, :] * fractions[None, :, None]
+    sample_velocity = jnp.broadcast_to(
+        endpoint_local[:, None, :] / flat_widths[:, None, None],
+        sample_local.shape,
     )
-    left_points = jnp.expand_dims(left, axis=axis + 1)
-    right_points = jnp.expand_dims(right, axis=axis + 1)
-    states = left_points + fractions.reshape(state_fraction_shape) * (
-        right_points - left_points
+    repeated_left = jnp.broadcast_to(
+        flat_left[:, None],
+        (interval_count, points) + problem.state_shape,
     )
+    flat_count = interval_count * points
+    flat_anchors = repeated_left.reshape((flat_count,) + problem.state_shape)
+    flat_local = sample_local.reshape((flat_count, local_size))
+    flat_velocity = sample_velocity.reshape((flat_count, local_size))
+    flat_states = jax.vmap(
+        lambda anchor, local: jnp.asarray(
+            geometry.retract(
+                anchor,
+                local.reshape(compilation.decision_layout.local_shape),
+            )
+        )
+    )(flat_anchors, flat_local)
+    flat_rates = jax.vmap(
+        lambda anchor, local, velocity: jnp.asarray(
+            geometry.retraction_jvp(
+                anchor,
+                local.reshape(compilation.decision_layout.local_shape),
+                velocity.reshape(compilation.decision_layout.local_shape),
+            )
+        )
+    )(flat_anchors, flat_local, flat_velocity)
     times = values.times[:-1, None] + fractions[None, :] * widths[:, None]
     controls = jnp.broadcast_to(
         jnp.expand_dims(values.decision.controls, axis=axis + 1),
         problem.case_shape + (steps, points) + problem.control_shape,
     )
-    rates = jnp.broadcast_to(
-        jnp.expand_dims(rates, axis=axis + 1),
-        problem.case_shape + (steps, points) + problem.state_shape,
-    )
-    case_count = prod(problem.case_shape) if problem.case_shape else 1
-    flat_count = case_count * steps * points
     flat_times = jnp.broadcast_to(times, problem.case_shape + times.shape).reshape(
         (flat_count,)
     )
-    flat_states = states.reshape((flat_count,) + problem.state_shape)
-    flat_rates = rates.reshape((flat_count,) + problem.state_shape)
     flat_controls = controls.reshape((flat_count,) + problem.control_shape)
     callback_args = _callback_args(problem, compilation.plan, values.decision, args)
     dynamics_model = problem.dynamics
     if isinstance(dynamics_model, ContinuousSystem):
-        residual = jax.vmap(
+        physical_residual = jax.vmap(
             lambda time, state, rate, control: (
-                rate - dynamics_model.evaluate(time, state, callback_args, inputs=control)
+                rate
+                - geometry.project_tangent(
+                    state,
+                    dynamics_model.evaluate(time, state, callback_args, inputs=control),
+                )
             )
         )(flat_times, flat_states, flat_rates, flat_controls)
     else:
-        residual = jax.vmap(
-            lambda time, state, rate, control: dynamics_model.evaluate(
-                time, state, rate, callback_args, inputs=control
+        physical_residual = jax.vmap(
+            lambda time, state, rate, control: geometry.project_tangent(
+                state,
+                dynamics_model.evaluate(time, state, rate, callback_args, inputs=control),
             )
         )(flat_times, flat_states, flat_rates, flat_controls)
-    residuals = residual.reshape(
-        problem.case_shape + (steps, points) + problem.state_shape
-    )
-    residual_magnitudes = jnp.abs(residuals)
-    if problem.state_shape:
-        residual_magnitudes = jnp.max(
-            residual_magnitudes,
-            axis=tuple(
-                range(
-                    residual_magnitudes.ndim - len(problem.state_shape),
-                    residual_magnitudes.ndim,
-                )
-            ),
-        )
+    residual = jax.vmap(
+        lambda anchor, state, tangent: jnp.asarray(
+            geometry.retraction_inverse_jvp(anchor, state, tangent)
+        ).reshape((local_size,))
+    )(flat_anchors, flat_states, physical_residual)
+    residuals = residual.reshape(problem.case_shape + (steps, points, local_size))
+    residual_magnitudes = jnp.max(jnp.abs(residuals), axis=-1)
     interval_defects = jnp.max(residual_magnitudes, axis=-1)
     interval_path = jnp.zeros(problem.case_shape + (steps,), dtype=dtype)
     for constraint in problem.path_constraints:

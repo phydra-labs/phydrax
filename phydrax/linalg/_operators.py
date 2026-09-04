@@ -33,6 +33,7 @@ from ._spaces import (
     AbstractVectorSpace,
     ArraySpace,
     BlockSpace,
+    DualSpace,
 )
 
 
@@ -1035,7 +1036,7 @@ class ComposedLinearOperator(AbstractLinearOperator):
 
 
 class TransposeLinearOperator(AbstractLinearOperator):
-    """Algebraic transpose view of one operator."""
+    """Coordinate-transpose view with the original primal source and target."""
 
     operator: AbstractLinearOperator
 
@@ -1066,6 +1067,54 @@ class TransposeLinearOperator(AbstractLinearOperator):
 
     def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.operator.mv(vector)
+
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return _generic_adjoint(self, vector)
+
+    def _materialize(self, /) -> Array:
+        return jnp.swapaxes(self.operator._materialize(), -1, -2)
+
+    def _assemble_diagonal(self, /) -> Array:
+        return _assemble_operator_diagonal(self.operator)
+
+
+class DualTransposeLinearOperator(AbstractLinearOperator):
+    """Algebraic transpose from the target dual to the source dual."""
+
+    operator: AbstractLinearOperator
+
+    def __init__(self, operator: AbstractLinearOperator, /):
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("operator must be an AbstractLinearOperator.")
+        self.source = DualSpace(operator.target)
+        self.target = DualSpace(operator.source)
+        self.operator = operator
+        diagonal = operator.properties.diagonal
+        triangular = operator.properties.triangular
+        rank = operator.properties.rank
+        claimed = {"diagonal": diagonal, "triangular": triangular, "rank": rank}
+        self.properties = OperatorProperties(
+            diagonal=diagonal,
+            triangular=triangular,
+            rank=rank,
+            evidence=_transformed_evidence(claimed, operator),
+        )
+        self.capabilities = OperatorCapabilities(
+            transpose=operator.capabilities.transpose,
+            adjoint=operator.capabilities.transpose and not operator.batch_shape,
+            materialize=operator.capabilities.materialize,
+            diagonal_assembly=operator.capabilities.diagonal_assembly,
+        )
+        self.batch_shape = operator.batch_shape
+        self.operator_id = _id(
+            None, {"kind": "dual-transpose", "operator": operator.operator_id}
+        )
+
+    def mv(self, covector: PyTree[Any], /) -> PyTree[Array]:
+        return self.operator.transpose_mv(covector)
+
+    def transpose_mv(self, covector: PyTree[Any], /) -> PyTree[Array]:
+        return self.operator.mv(covector)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return _generic_adjoint(self, vector)
@@ -1519,7 +1568,7 @@ def _operator_action_workspace(
             left[1] and right[1],
             "composition-action",
         )
-    if isinstance(operator, TransposeLinearOperator):
+    if isinstance(operator, (TransposeLinearOperator, DualTransposeLinearOperator)):
         workspace, exact, kind = _operator_action_workspace(operator.operator)
         return workspace, exact, kind
     if isinstance(operator, AdjointLinearOperator):
@@ -1581,6 +1630,17 @@ def transpose(operator: AbstractLinearOperator, /) -> AbstractLinearOperator:
     return TransposeLinearOperator(operator)
 
 
+def dual_transpose(operator: AbstractLinearOperator, /) -> AbstractLinearOperator:
+    """Return the algebraic transpose ``Dual(target) -> Dual(source)``."""
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be an AbstractLinearOperator.")
+    if not operator.capabilities.transpose:
+        raise LinearCapabilityError("Operator does not declare transpose capability.")
+    if isinstance(operator, DualTransposeLinearOperator):
+        return operator.operator
+    return DualTransposeLinearOperator(operator)
+
+
 def adjoint(operator: AbstractLinearOperator, /) -> AbstractLinearOperator:
     if not isinstance(operator, AbstractLinearOperator):
         raise TypeError("operator must be an AbstractLinearOperator.")
@@ -1596,8 +1656,10 @@ __all__ = [
     "AdjointLinearOperator",
     "BlockLinearOperator",
     "ComposedLinearOperator",
+    "DualTransposeLinearOperator",
     "DenseLinearOperator",
     "DiagonalLinearOperator",
+    "dual_transpose",
     "estimate_operator_action_cost",
     "FunctionLinearOperator",
     "IdentityLinearOperator",

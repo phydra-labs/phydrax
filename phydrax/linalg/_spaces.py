@@ -423,6 +423,23 @@ class DualSpace(AbstractVectorSpace):
     def validate(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.primal.validate(vector)
 
+    def pair(self, covector: PyTree[Any], vector: PyTree[Any], /) -> Array:
+        """Evaluate one covector on one vector using the algebraic duality pairing."""
+        covector_ = self.validate(covector)
+        vector_ = self.primal.validate(vector)
+        products = [
+            jnp.sum(covector_leaf * vector_leaf)
+            for covector_leaf, vector_leaf in zip(
+                jax.tree.leaves(covector_),
+                jax.tree.leaves(vector_),
+                strict=True,
+            )
+        ]
+        total = products[0]
+        for product in products[1:]:
+            total = total + product
+        return total
+
     def inner(self, left: PyTree[Any], right: PyTree[Any], /) -> Array:
         return self.primal.inner(
             self.primal.inverse_riesz(left),

@@ -611,3 +611,51 @@ def test_complex_stochastic_delay_uses_real_coordinates_pathwise():
     assert solution.states.dtype == jnp.complex128
     assert jnp.all(jnp.isfinite(solution.states))
     assert jnp.all(jnp.isfinite(solution.evaluate(jnp.asarray([0.05]))))
+
+
+def test_stratonovich_quaternion_delay_diffusion_uses_physical_tangent_shape():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_diffusion = jnp.asarray([0.2, -0.1, 0.3])
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: jnp.zeros((3,)),
+        lambda time, args: base,
+        (phx.solver.ConstantDelay("past", 0.1),),
+        t0=0.0,
+        t1=0.2,
+        wiener_terms=(
+            phx.solver.DelayWienerTerm(
+                "rotation",
+                lambda time, state, memory, args: angular_diffusion[:, None],
+                (1,),
+                structure="commutative",
+                basis_id="quaternion-delay-basis",
+            ),
+        ),
+        interpretation="stratonovich",
+        state_geometry=geometry,
+    )
+    realization = _realization(
+        problem,
+        seed=38,
+        support=(0.0, 0.2),
+        tolerance=1e-4,
+    )
+
+    solution = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=jnp.asarray([0.0, 0.1, 0.2]),
+        realization=realization,
+        solver=phx.solver.SRKMK(geometry),
+        dt0=0.1,
+        dense=True,
+        max_steps=8,
+    )
+
+    assert problem.state_shape == (4,)
+    assert problem.tangent_shape == (3,)
+    assert problem.local_shape == (3,)
+    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
+    assert jnp.all(
+        jax.vmap(geometry.contains)(solution.evaluate(jnp.asarray([0.05, 0.15])))
+    )

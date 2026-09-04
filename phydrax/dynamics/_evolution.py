@@ -252,6 +252,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         evidence = DiscreteTransitionEvidence(
             transition.candidate_state[None, ...],
             transition.accepted_state[None, ...],
+            jnp.asarray([True]),
             transition.successful[None],
             transition.status[None],
         )
@@ -376,36 +377,50 @@ def evolve(
         if evidence is None:
             candidate = result.final_state
             accepted = result.final_state
+            transition_attempted = jnp.asarray(True)
             transition_successful = result.valid
             transition_status = result.backend_status
         else:
             candidate = evidence.candidate_states[0]
+            transition_attempted = evidence.attempted[0]
             accepted = evidence.accepted_states[0]
             transition_successful = evidence.successful[0]
             transition_status = evidence.status[0]
+        recorded_attempted = prior_valid & transition_attempted
         recorded_candidate = jnp.where(
-            prior_valid,
+            recorded_attempted,
             candidate,
             jnp.full_like(candidate, jnp.nan),
         )
         recorded_accepted = jnp.where(
-            prior_valid,
+            recorded_attempted,
             accepted,
             jnp.full_like(accepted, jnp.nan),
         )
-        recorded_successful = prior_valid & transition_successful
+        recorded_successful = recorded_attempted & transition_successful
         recorded_status = jnp.where(
-            prior_valid,
+            recorded_attempted,
             transition_status,
+            jnp.asarray(0, dtype=jnp.int32),
+        ).astype(jnp.int32)
+        evolution_status = jnp.where(
+            prior_valid,
+            result.status,
+            jnp.asarray(EVOLUTION_SUCCESS, dtype=jnp.int32),
+        ).astype(jnp.int32)
+        backend_status = jnp.where(
+            recorded_attempted,
+            result.backend_status,
             jnp.asarray(0, dtype=jnp.int32),
         ).astype(jnp.int32)
         return (next_state, valid), (
             next_state,
             valid,
-            result.status,
-            result.backend_status,
+            evolution_status,
+            backend_status,
             recorded_candidate,
             recorded_accepted,
+            recorded_attempted,
             recorded_successful,
             recorded_status,
         )
@@ -419,6 +434,7 @@ def evolve(
             backend_statuses,
             candidate_states,
             accepted_states,
+            transition_attempted,
             transition_successful,
             transition_status,
         ),
@@ -433,6 +449,7 @@ def evolve(
         DiscreteTransitionEvidence(
             candidate_states,
             accepted_states,
+            transition_attempted,
             transition_successful,
             transition_status,
         )

@@ -11,18 +11,19 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ._fingerprint import canonical_fingerprint
+from ._identity import ExecutableSignature
 from ._strict import StrictModule
 
 
 class PoolExecutionSignature(StrictModule):
-    """Static topology, method, precision, backend, and shard bucket identity."""
+    """Pool-specific view of the generic static executable identity."""
 
     topology_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     precision_id: str = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
     shard_count: int = eqx.field(static=True)
+    executable_signature: ExecutableSignature = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
     def __init__(
@@ -49,16 +50,16 @@ class PoolExecutionSignature(StrictModule):
             self.backend_id,
         ) = values
         self.shard_count = shards
-        self.signature_id = canonical_fingerprint(
-            {
-                "kind": "pool-execution-signature",
-                "topology": values[0],
-                "method": values[1],
-                "precision": values[2],
-                "backend": values[3],
-                "shards": shards,
-            }
+        self.executable_signature = ExecutableSignature(
+            topology_ids={"pool": values[0]},
+            capacities={"shards": shards},
+            algorithm_facts={"method_id": values[1]},
+            backend_facts={
+                "backend_id": values[3],
+                "precision_id": values[2],
+            },
         )
+        self.signature_id = self.executable_signature.signature_id
 
 
 class PoolRefill(StrictModule):

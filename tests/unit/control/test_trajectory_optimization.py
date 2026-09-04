@@ -121,6 +121,30 @@ def test_trajectory_view_interpolates_states_and_holds_controls():
         view.evaluate_state(jnp.asarray((2.1,)))
 
 
+def test_trajectory_view_retracts_between_equivalent_quaternion_poses():
+    geometry = phx.metrix.QuaternionPoseStateGeometry()
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    equivalent = pose.at[:4].multiply(-1.0)
+    view = phx.control.TrajectoryOptimizationView(
+        jnp.asarray([0.0, 1.0]),
+        jnp.stack((pose, equivalent)),
+        jnp.zeros((1, 1)),
+        case_shape=(),
+        state_shape=(7,),
+        control_shape=(1,),
+        state_geometry=geometry,
+    )
+
+    midpoint = view.evaluate_state(0.5)
+
+    assert bool(geometry.contains(midpoint))
+    assert jnp.allclose(geometry.inverse_retract(pose, midpoint), 0.0)
+    assert jnp.allclose(
+        geometry.inverse_retract(equivalent, midpoint),
+        0.0,
+    )
+
+
 def test_trajectory_problem_retains_cases_and_shared_parameter_space():
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: args * state + control,

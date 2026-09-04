@@ -397,7 +397,8 @@ class PreparedPhenomenologicalMonodomain(StrictModule, NonTrainableState):
             raise TypeError("state must be a MonodomainState.")
         if state.runtime_id != self.runtime_id:
             raise ValueError("Monodomain state does not match this prepared runtime.")
-        return self.geometry.split(state.values)
+        activation, recovery = self.geometry.split_point(state.values)
+        return activation, recovery
 
     def evaluate(self, state: MonodomainState, /) -> MonodomainCandidate:
         return evaluate_monodomain_step(self, state)
@@ -718,7 +719,7 @@ def initialize_monodomain_state(
     if abs(time - expected_time) > tolerance:
         raise ValueError("time_ms must equal step_index * dt_ms.")
     return MonodomainState(
-        runtime.geometry.combine((activation_, recovery_)),
+        runtime.geometry.combine_point((activation_, recovery_)),
         jnp.asarray(time, dtype=activation_.dtype),
         jnp.asarray(step_index, dtype=jnp.int32),
         runtime.runtime_id,
@@ -745,14 +746,14 @@ def _right_hand_side(
     stimulus_per_ms: Array,
     /,
 ) -> tuple[Array, AlievPanfilovEvidence]:
-    activation, recovery = runtime.geometry.split(values)
+    activation, recovery = runtime.geometry.split_point(values)
     reaction = evaluate_aliev_panfilov(
         runtime.plan.reaction,
         AlievPanfilovState(activation, recovery),
         activation_source_per_ms=stimulus_per_ms,
     )
     diffusion = -runtime.stiffness.mv(activation) / runtime.lumped_mass
-    rates = runtime.geometry.combine(
+    rates = runtime.geometry.combine_point(
         (
             diffusion + reaction.rates.activation_per_ms,
             reaction.rates.recovery_per_ms,
@@ -774,7 +775,7 @@ def evaluate_monodomain_step(
         raise TypeError("state must be a MonodomainState.")
     if state.runtime_id != runtime.runtime_id:
         raise ValueError("Monodomain state does not match the prepared runtime.")
-    if state.values.shape != (runtime.geometry.total_size,):
+    if state.values.shape != (runtime.geometry.point_size,):
         raise ValueError("Monodomain state does not match the runtime product geometry.")
     stimulus = _stimulus_for_step(runtime, state.step_index)
     dt = jnp.asarray(runtime.dt_ms, dtype=state.values.dtype)

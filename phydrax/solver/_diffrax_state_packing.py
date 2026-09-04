@@ -222,11 +222,83 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
             )
         return self.coordinates.from_real_coordinates(array)
 
+    def pack_tangent(
+        self,
+        value: ArrayLike,
+        tangent_shape: tuple[int, ...],
+        /,
+        *,
+        owner: str = "Tangent",
+    ) -> Array:
+        array = jnp.asarray(value)
+        expected = tuple(int(size) for size in tangent_shape)
+        if tuple(array.shape) != expected:
+            raise ValueError(
+                f"{owner} must have public tangent shape {expected}; got {array.shape}."
+            )
+        if self.coordinates is None:
+            return array.astype(jnp.dtype(self.public_dtype))
+        if expected != self.state_shape:
+            raise ValueError(
+                "Real-coordinate Diffrax packing requires equal point and tangent "
+                "shapes unless a tangent coordinate map is declared."
+            )
+        return self.pack_state(array, owner=owner)
+
+    def unpack_tangent(
+        self,
+        value: ArrayLike,
+        tangent_shape: tuple[int, ...],
+        /,
+    ) -> Array:
+        expected = tuple(int(size) for size in tangent_shape)
+        if self.coordinates is None:
+            array = jnp.asarray(value)
+            if tuple(array.shape) != expected:
+                raise ValueError(
+                    f"Packed backend tangent must have shape {expected}; "
+                    f"got {array.shape}."
+                )
+            return array.astype(jnp.dtype(self.public_dtype))
+        if expected != self.state_shape:
+            raise ValueError(
+                "Real-coordinate Diffrax unpacking requires equal point and tangent "
+                "shapes unless a tangent coordinate map is declared."
+            )
+        return self.unpack_state(value)
+
+    def unpack_tangent_values(
+        self,
+        value: ArrayLike,
+        sample_rank: int,
+        tangent_shape: tuple[int, ...],
+        /,
+    ) -> Array:
+        rank = int(sample_rank)
+        expected = tuple(int(size) for size in tangent_shape)
+        array = jnp.asarray(value)
+        if rank < 0 or rank > array.ndim:
+            raise ValueError("sample_rank lies outside the tangent value rank.")
+        if self.coordinates is None:
+            if tuple(array.shape[rank:]) != expected:
+                raise ValueError(
+                    "Saved backend tangents do not end with the prepared tangent shape."
+                )
+            return array.astype(jnp.dtype(self.public_dtype))
+        if expected != self.state_shape:
+            raise ValueError(
+                "Real-coordinate Diffrax unpacking requires equal point and tangent "
+                "shapes unless a tangent coordinate map is declared."
+            )
+        return self.unpack_values(array, rank)
+
     def pack_diffusion(
         self,
         value: ArrayLike,
         noise_shape: tuple[int, ...],
         /,
+        *,
+        output_shape: tuple[int, ...] | None = None,
     ) -> Array:
         if self.tree_mode:
             raise ValueError(
@@ -234,17 +306,27 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
             )
         array = jnp.asarray(value)
         trailing = tuple(int(size) for size in noise_shape)
-        expected = self.state_shape + trailing
+        leading = (
+            self.state_shape
+            if output_shape is None
+            else tuple(int(size) for size in output_shape)
+        )
+        expected = leading + trailing
         if tuple(array.shape) != expected:
             raise ValueError(
-                f"Diffusion must have public state-plus-noise shape {expected}; "
+                f"Diffusion must have public tangent-plus-noise shape {expected}; "
                 f"got {array.shape}."
             )
         array = array.astype(jnp.dtype(self.public_dtype))
         if self.coordinates is None:
             return array
+        if leading != self.state_shape:
+            raise ValueError(
+                "Real-coordinate Diffrax diffusion packing requires equal point and "
+                "tangent shapes unless a tangent coordinate map is declared."
+            )
         noise_size = math.prod(trailing) if trailing else 1
-        columns = array.reshape(self.state_shape + (noise_size,))
+        columns = array.reshape(leading + (noise_size,))
         packed = jax.vmap(
             self.coordinates.to_real_coordinates,
             in_axes=-1,
@@ -338,16 +420,13 @@ def _prepare_diffrax_state_adapter(
         raise ValueError(
             "PyTree Diffrax states require an explicit PreparedRealCoordinateTree."
         )
-    shape = (
-        tuple(int(size) for size in state.shape)
-        if state_is_array
-        else state_coordinates.evidence.source_shape
-    )
-    public_dtype = (
-        precision_dtype_name(leaves[0].dtype)
-        if state_is_array
-        else state_coordinates.evidence.source_dtype
-    )
+    if state_is_array:
+        shape = tuple(int(size) for size in state.shape)
+        public_dtype = precision_dtype_name(leaves[0].dtype)
+    else:
+        assert state_coordinates is not None
+        shape = state_coordinates.evidence.source_shape
+        public_dtype = state_coordinates.evidence.source_dtype
     if resolved.strategy == "native":
         if state_coordinates is not None:
             raise ValueError("Native complex execution cannot accept state_coordinates.")
@@ -394,6 +473,16 @@ def _prepare_diffrax_state_adapter(
         raise ValueError(
             "Nontrivial state geometry requires an explicit linear real-coordinate map."
         )
+    if state_geometry is not None and coordinates is not None:
+        point = jnp.asarray(state)
+        tangent = jnp.asarray(
+            state_geometry.project_tangent(point, jnp.zeros_like(point))
+        )
+        if tangent.shape != point.shape:
+            raise ValueError(
+                "Unequal point and tangent spaces require native Diffrax state "
+                "packing until a tangent coordinate map is declared."
+            )
     validated = coordinates.validate_state(state)
     defect = coordinates.defect(validated)
     if not bool(jnp.isfinite(defect)):

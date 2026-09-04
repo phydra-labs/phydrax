@@ -236,7 +236,7 @@ def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry():
     assert bool(geometry.successful)
     assert geometry.as_contact_batch().normal.shape == (2, 3)
     assert collision_surface.plan.face_count == 2
-    assert collision_surface.plan.minimum_separation == pytest.approx(0.1)
+    assert collision_surface.plan.physical_radius == pytest.approx(0.05)
     assert bool(epoch.successful)
     assert epoch.candidate_count > 0
 

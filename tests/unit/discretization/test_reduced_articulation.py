@@ -40,9 +40,7 @@ def _prepared_bodies(count, *, dimension=3):
     orientation = (
         jnp.zeros((count, 1))
         if dimension == 2
-        else jnp.broadcast_to(
-            jnp.asarray([1.0, 0.0, 0.0, 0.0]), (count, 4)
-        )
+        else jnp.broadcast_to(jnp.asarray([1.0, 0.0, 0.0, 0.0]), (count, 4))
     )
     angular = jnp.zeros((count, 1 if dimension == 2 else 3))
     reference = bodies.kinematics(
@@ -88,9 +86,7 @@ def _quaternion_multiply(left, right):
     return jnp.concatenate(
         (
             left[:1] * right[:1] - jnp.sum(left[1:] * right[1:], keepdims=True),
-            left[:1] * right[1:]
-            + right[:1] * left[1:]
-            + jnp.cross(left[1:], right[1:]),
+            left[:1] * right[1:] + right[:1] * left[1:] + jnp.cross(left[1:], right[1:]),
         )
     )
 
@@ -123,6 +119,20 @@ def test_preparation_derives_stable_topology_layouts_and_reference_pose():
     assert jnp.array_equal(articulation.dof_body_indices, jnp.asarray([2, 3]))
     assert articulation.state_layout.shape == (4,)
     assert articulation.input_layout.shape == (2,)
+    assert articulation.state_layout.local_size == 4
+    assert articulation.state_layout.tangent_size == 4
+    assert articulation.state_layout.local_component_names == (
+        "delta_q:12",
+        "delta_q:13",
+        "delta_v:12",
+        "delta_v:13",
+    )
+    assert articulation.state_layout.tangent_component_names == (
+        "q_rate:12",
+        "q_rate:13",
+        "v_rate:12",
+        "v_rate:13",
+    )
     assert articulation.parent_reference_transforms.shape == (3, 4, 4)
     assert articulation.parent_axes.shape == (3, 3)
     assert articulation.parent_anchors.shape == (3, 3)
@@ -141,9 +151,7 @@ def test_preparation_derives_stable_topology_layouts_and_reference_pose():
         jnp.asarray([0.0, 0.0, 0.0, 1.0]),
     )
 
-    state = ReducedArticulationState(
-        jnp.asarray([0.2, -0.1]), jnp.asarray([0.3, 0.4])
-    )
+    state = ReducedArticulationState(jnp.asarray([0.2, -0.1]), jnp.asarray([0.3, 0.4]))
     packed = articulation.pack_state(state)
     unpacked = articulation.unpack_state(packed)
     assert packed.shape == (4,)
@@ -153,6 +161,46 @@ def test_preparation_derives_stable_topology_layouts_and_reference_pose():
         articulation.pack_state(state.configuration, state.velocity), packed
     )
     assert articulation.state_layout.geometry.contains(packed)
+
+
+def test_reduced_articulation_geometry_certifies_four_space_duality():
+    _, _, articulation = _chain()
+    layout = articulation.state_layout
+    geometry = layout.geometry
+    state = jnp.asarray([0.4, -0.2, 0.1, -0.3])
+    local = jnp.asarray([0.2, 0.15, -0.1, 0.05])
+    direction = jnp.asarray([-0.3, 0.25, 0.4, -0.2])
+    cotangent = jnp.asarray([0.7, -0.5, 0.2, 0.6])
+
+    point = geometry.retract(state, local)
+    assert geometry.inverse_retract(state, point) == pytest.approx(local)
+    pushed = geometry.retraction_jvp(state, local, direction)
+    assert geometry.retraction_inverse_jvp(state, point, pushed) == pytest.approx(
+        direction
+    )
+    pulled = geometry.retraction_vjp(state, local, cotangent)
+    assert layout.cotangent_space.pair(cotangent, pushed) == pytest.approx(
+        layout.local_cotangent_space.pair(pulled, direction)
+    )
+
+    transported = geometry.transport_tangent(state, point, pushed)
+    transport_pullback = geometry.transport_cotangent_pullback(
+        state,
+        point,
+        cotangent,
+    )
+    assert geometry.transport_tangent(point, state, transported) == pytest.approx(pushed)
+    assert layout.cotangent_space.pair(cotangent, transported) == pytest.approx(
+        layout.cotangent_space.pair(transport_pullback, pushed)
+    )
+    assert geometry.cut_locus_margin(state, point) > 0.0
+    assert geometry.supports_exact_inverse
+    assert geometry.supports_exact_differential
+    assert geometry.supports_transport
+    assert geometry.supports_isometric_transport
+
+    with pytest.raises(Exception, match="principal-angle cut locus"):
+        geometry.retract(state, local.at[0].set(jnp.pi))
 
 
 def test_hinge_and_prismatic_forward_geometry_is_parent_frame_exact():
@@ -184,9 +232,7 @@ def test_hinge_and_prismatic_forward_geometry_is_parent_frame_exact():
     )
 
     local_transform = jnp.eye(4).at[:3, 3].set(jnp.asarray([0.2, 0.0, 0.0]))
-    frame = articulation.frame_transform(
-        configuration, int(body_ids[3]), local_transform
-    )
+    frame = articulation.frame_transform(configuration, int(body_ids[3]), local_transform)
     assert jnp.allclose(
         frame[:3, 3],
         expected_position[3] + jnp.asarray([0.0, 0.2, 0.0]),
@@ -214,8 +260,9 @@ def test_configuration_retraction_difference_and_body_jvp_are_consistent():
         (velocity,),
     )
     angular_jvp = jax.vmap(
-        lambda tangent, quaternion: 2.0
-        * _quaternion_multiply(tangent, _quaternion_conjugate(quaternion))[1:]
+        lambda tangent, quaternion: (
+            2.0 * _quaternion_multiply(tangent, _quaternion_conjugate(quaternion))[1:]
+        )
     )(orientation_jvp, orientation)
     assert jnp.allclose(body_velocity[:, :3], position_jvp, atol=1.0e-12)
     assert jnp.allclose(body_velocity[:, 3:], angular_jvp, atol=1.0e-12)
@@ -236,9 +283,7 @@ def test_configuration_retraction_difference_and_body_jvp_are_consistent():
         (configuration,),
         (velocity,),
     )
-    assert jnp.allclose(
-        frame_jacobian.mv(velocity)[:3], frame_position_jvp, atol=1.0e-12
-    )
+    assert jnp.allclose(frame_jacobian.mv(velocity)[:3], frame_position_jvp, atol=1.0e-12)
 
 
 def test_body_load_pullback_reports_finite_power_duality():

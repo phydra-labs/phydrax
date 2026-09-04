@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -18,6 +19,8 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite
+from ...linalg import DualSpace, PyTreeSpace
+from ...metrix._quaternion_state_geometry import ScalarFirstQuaternionStateGeometry
 from ...metrix._state_geometry import AbstractStateGeometry
 from .._core import DiscretizationKey, DiscretizationRole, PreparationReport
 from ._core import ParticleDiscretization, ParticleSetPlan
@@ -62,7 +65,9 @@ class RigidBodySetPlan(StrictModule, NonTrainableState):
                 eigenvalues > 0.0
             ).all(axis=-1)
             if not symmetric:
-                raise ValueError("Three-dimensional COM inertia tensors must be symmetric.")
+                raise ValueError(
+                    "Three-dimensional COM inertia tensors must be symmetric."
+                )
         if not np.all(valid_inertia) or np.any(material < 0):
             raise ValueError("Rigid-body COM inertia and material IDs are invalid.")
         fixed = (
@@ -158,12 +163,8 @@ class RigidBodyMassProperties(StrictModule, NonTrainableState):
             identity = jnp.eye(3, dtype=dtype)
             inertia = jnp.where(active[:, None, None], inertia, identity)
         self.masses = particles.safe_masses
-        self.inverse_masses = jnp.where(
-            mobile, 1.0 / particles.safe_masses, 0.0
-        )
-        self.first_moments = jnp.zeros(
-            (particles.capacity, dimension), dtype=dtype
-        )
+        self.inverse_masses = jnp.where(mobile, 1.0 / particles.safe_masses, 0.0)
+        self.first_moments = jnp.zeros((particles.capacity, dimension), dtype=dtype)
         self.inertia_com = inertia
         self.inverse_inertia_com = inverse_inertia
         self.properties_id = canonical_fingerprint(
@@ -294,6 +295,7 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
 
 class RigidBodyKinematics(StrictModule):
     """Rigid-body pose and twist expressed at each centre of mass."""
+
     position: Array
     velocity: Array
     orientation: Array
@@ -397,12 +399,8 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
             source.ambient_dimension != 3
             or target.ambient_dimension != 3
             or source.capacity != target.capacity
-            or not np.array_equal(
-                np.asarray(source.particles.particle_ids), expected_ids
-            )
-            or not np.array_equal(
-                np.asarray(target.particles.particle_ids), expected_ids
-            )
+            or not np.array_equal(np.asarray(source.particles.particle_ids), expected_ids)
+            or not np.array_equal(np.asarray(target.particles.particle_ids), expected_ids)
         ):
             raise ValueError("Rebase owners have incompatible body support.")
 
@@ -434,19 +432,14 @@ class RigidBodyReferenceFrameRebase(StrictModule, NonTrainableState):
         )
         if not all(np.all(np.isfinite(np.asarray(leaf))) for leaf in leaves):
             raise ValueError("Reference kinematics must be finite.")
-        orientation_norm = np.linalg.norm(
-            np.asarray(reference.orientation), axis=-1
-        )
+        orientation_norm = np.linalg.norm(np.asarray(reference.orientation), axis=-1)
         if not np.allclose(orientation_norm, 1.0, rtol=0.0, atol=1.0e-8):
             raise ValueError("Reference orientations must have unit norm.")
         rotation = quaternion_rotation_matrix(reference.orientation)
-        world_offset = contract(
-            "bij,bj->bi", rotation, self.center_of_mass_offsets
-        )
+        world_offset = contract("bij,bj->bi", rotation, self.center_of_mass_offsets)
         return RigidBodyKinematics(
             reference.position + world_offset,
-            reference.velocity
-            + jnp.cross(reference.angular_velocity, world_offset),
+            reference.velocity + jnp.cross(reference.angular_velocity, world_offset),
             reference.orientation,
             reference.angular_velocity,
         )
@@ -756,69 +749,324 @@ def rigid_body_kick_drift_kick(
 
 
 class RigidBodyStateGeometry(AbstractStateGeometry):
-    bodies: PreparedRigidBodySet  # ty: ignore[dataclass-field-order]
+    """Four-space geometry for rigid-body state storage and physical twists."""
+
+    bodies: PreparedRigidBodySet
+    orientation_geometry: ScalarFirstQuaternionStateGeometry | None
+    local_space: PyTreeSpace
+    tangent_space: PyTreeSpace
+    local_cotangent_space: DualSpace
+    cotangent_space: DualSpace
     geometry_id: str = eqx.field(static=True)
-    retraction_method: str = "rigid-body-lie-retraction"
-    trivial: bool = False
-    supports_exact_pullback: bool = False
-    supports_commutator_free: bool = True
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+    supports_exact_inverse: bool = eqx.field(static=True)
+    supports_exact_differential: bool = eqx.field(static=True)
+    supports_transport: bool = eqx.field(static=True)
+    supports_isometric_transport: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(self, bodies: PreparedRigidBodySet, /):
+        if not isinstance(bodies, PreparedRigidBodySet):
+            raise TypeError("bodies must be a PreparedRigidBodySet.")
+        identifier = f"state-geometry:rigid-body:{bodies.prepared_id}"
+        dtype = bodies.particles.safe_masses.dtype
+        linear = jnp.zeros(
+            (bodies.capacity, bodies.ambient_dimension),
+            dtype=dtype,
+        )
+        angular = jnp.zeros(
+            (bodies.capacity, bodies.angular_dimension),
+            dtype=dtype,
+        )
+        role_template = RigidBodyKinematics(linear, linear, angular, angular)
+        local_space = PyTreeSpace(
+            role_template,
+            space_id=f"{identifier}:local-space",
+        )
+        tangent_space = PyTreeSpace(
+            role_template,
+            space_id=f"{identifier}:tangent-space",
+        )
         self.bodies = bodies
-        self.geometry_id = f"state-geometry:rigid-body:{bodies.prepared_id}"
+        self.orientation_geometry = (
+            None
+            if bodies.ambient_dimension == 2
+            else ScalarFirstQuaternionStateGeometry(
+                convention="spatial",
+                tolerance=1.0e-8,
+            )
+        )
+        self.local_space = local_space
+        self.tangent_space = tangent_space
+        self.local_cotangent_space = DualSpace(
+            local_space,
+            space_id=f"{identifier}:local-cotangent-space",
+        )
+        self.cotangent_space = DualSpace(
+            tangent_space,
+            space_id=f"{identifier}:cotangent-space",
+        )
+        self.geometry_id = identifier
+        self.retraction_method = "rigid-body-canonical-lie-retraction:spatial"
+        self.trivial = False
+        self.supports_exact_inverse = True
+        self.supports_exact_differential = True
+        self.supports_transport = True
+        self.supports_isometric_transport = True
+        self.supports_commutator_free = True
+
+    def _point(self, value, name, /):
+        if not isinstance(value, RigidBodyKinematics):
+            raise TypeError(f"{name} must be RigidBodyKinematics.")
+        position = jnp.asarray(value.position)
+        velocity = jnp.asarray(value.velocity)
+        orientation = jnp.asarray(value.orientation)
+        angular_velocity = jnp.asarray(value.angular_velocity)
+        linear_shape = (self.bodies.capacity, self.bodies.ambient_dimension)
+        orientation_shape = (
+            self.bodies.capacity,
+            self.bodies.orientation_dimension,
+        )
+        angular_shape = (
+            self.bodies.capacity,
+            self.bodies.angular_dimension,
+        )
+        if position.shape != linear_shape or velocity.shape != linear_shape:
+            raise ValueError(f"{name} position and velocity shapes are invalid.")
+        if orientation.shape != orientation_shape:
+            raise ValueError(f"{name} orientation shape is invalid.")
+        if angular_velocity.shape != angular_shape:
+            raise ValueError(f"{name} angular-velocity shape is invalid.")
+        return RigidBodyKinematics(
+            position,
+            velocity,
+            orientation,
+            angular_velocity,
+        )
 
     def contains(self, state, /):
+        if not isinstance(state, RigidBodyKinematics):
+            return jnp.asarray(False)
+        linear_shape = (self.bodies.capacity, self.bodies.ambient_dimension)
+        orientation_shape = (
+            self.bodies.capacity,
+            self.bodies.orientation_dimension,
+        )
+        angular_shape = (
+            self.bodies.capacity,
+            self.bodies.angular_dimension,
+        )
+        if (
+            jnp.shape(state.position) != linear_shape
+            or jnp.shape(state.velocity) != linear_shape
+            or jnp.shape(state.orientation) != orientation_shape
+            or jnp.shape(state.angular_velocity) != angular_shape
+        ):
+            return jnp.asarray(False)
         finite = tree_allfinite(state)
         if self.bodies.ambient_dimension == 3:
-            norm = jnp.sqrt(jnp.sum(state.orientation**2, axis=-1))
+            norm = jnp.linalg.norm(state.orientation, axis=-1)
             finite = finite & jnp.all(jnp.abs(norm - 1.0) <= 1.0e-8)
         return finite
 
     def project_tangent(self, state, vector, /):
-        del state
-        return vector
-
-    def to_local(self, state, tangent, /):
-        del state
-        return tangent
-
-    def from_local(self, state, local_tangent, /):
-        del state
-        return local_tangent
-
-    def retract(self, state, local_tangent, /):
-        position = state.position + local_tangent.position
-        velocity = state.velocity + local_tangent.velocity
-        angular = state.angular_velocity + local_tangent.angular_velocity
-        if self.bodies.ambient_dimension == 2:
-            orientation = _principal_angle(state.orientation + local_tangent.orientation)
+        point = self._point(state, "Rigid-body state")
+        ambient = self._point(vector, "Ambient rigid-body tangent")
+        if self.orientation_geometry is None:
+            orientation = ambient.orientation
         else:
-            orientation = _quaternion_retract(
-                state.orientation,
-                local_tangent.orientation[..., 1:],
+            orientation = jax.vmap(self.orientation_geometry.project_tangent)(
+                point.orientation,
+                ambient.orientation,
             )
-        return RigidBodyKinematics(position, velocity, orientation, angular)
-
-    def inverse_retract(self, state, point, /):
-        if self.bodies.ambient_dimension == 2:
-            orientation = _principal_angle(point.orientation - state.orientation)
-        else:
-            rotation = _quaternion_relative_rotation_vector(
-                state.orientation, point.orientation
+        return self.tangent_space.validate(
+            RigidBodyKinematics(
+                ambient.position,
+                ambient.velocity,
+                orientation,
+                ambient.angular_velocity,
             )
-            orientation = jnp.concatenate(
-                (jnp.zeros_like(rotation[..., :1]), rotation), axis=-1
-            )
-        return RigidBodyKinematics(
-            point.position - state.position,
-            point.velocity - state.velocity,
-            orientation,
-            point.angular_velocity - state.angular_velocity,
         )
 
-    def pullback(self, state, local_tangent, tangent, /):
-        del state, local_tangent
-        return tangent
+    def retract(self, state, local_tangent, /):
+        point = self._point(state, "Rigid-body state")
+        local = self.local_space.validate(local_tangent)
+        if self.orientation_geometry is None:
+            orientation = _principal_angle(point.orientation + local.orientation)
+        else:
+            orientation = jax.vmap(self.orientation_geometry.retract)(
+                point.orientation,
+                local.orientation,
+            )
+        return RigidBodyKinematics(
+            point.position + local.position,
+            point.velocity + local.velocity,
+            orientation,
+            point.angular_velocity + local.angular_velocity,
+        )
+
+    def inverse_retract(self, state, point, /):
+        anchor = self._point(state, "Rigid-body chart anchor")
+        target = self._point(point, "Rigid-body chart point")
+        if self.orientation_geometry is None:
+            orientation = _principal_angle(target.orientation - anchor.orientation)
+        else:
+            orientation = jax.vmap(self.orientation_geometry.inverse_retract)(
+                anchor.orientation,
+                target.orientation,
+            )
+        return self.local_space.validate(
+            RigidBodyKinematics(
+                target.position - anchor.position,
+                target.velocity - anchor.velocity,
+                orientation,
+                target.angular_velocity - anchor.angular_velocity,
+            )
+        )
+
+    def retraction_jvp(
+        self,
+        state,
+        local_tangent,
+        local_velocity,
+        /,
+    ):
+        point = self._point(state, "Rigid-body state")
+        local = self.local_space.validate(local_tangent)
+        direction = self.local_space.validate(local_velocity)
+        if self.orientation_geometry is None:
+            orientation = direction.orientation
+        else:
+            orientation = jax.vmap(self.orientation_geometry.retraction_jvp)(
+                point.orientation,
+                local.orientation,
+                direction.orientation,
+            )
+        return self.tangent_space.validate(
+            RigidBodyKinematics(
+                direction.position,
+                direction.velocity,
+                orientation,
+                direction.angular_velocity,
+            )
+        )
+
+    def retraction_inverse_jvp(
+        self,
+        state,
+        point,
+        tangent,
+        /,
+    ):
+        anchor = self._point(state, "Rigid-body chart anchor")
+        target = self._point(point, "Rigid-body chart point")
+        physical = self.tangent_space.validate(tangent)
+        if self.orientation_geometry is None:
+            orientation = physical.orientation
+        else:
+            orientation = jax.vmap(self.orientation_geometry.retraction_inverse_jvp)(
+                anchor.orientation,
+                target.orientation,
+                physical.orientation,
+            )
+        return self.local_space.validate(
+            RigidBodyKinematics(
+                physical.position,
+                physical.velocity,
+                orientation,
+                physical.angular_velocity,
+            )
+        )
+
+    def retraction_vjp(
+        self,
+        state,
+        local_tangent,
+        cotangent,
+        /,
+    ):
+        point = self._point(state, "Rigid-body state")
+        local = self.local_space.validate(local_tangent)
+        physical = self.cotangent_space.validate(cotangent)
+        if self.orientation_geometry is None:
+            orientation = physical.orientation
+        else:
+            orientation = jax.vmap(self.orientation_geometry.retraction_vjp)(
+                point.orientation,
+                local.orientation,
+                physical.orientation,
+            )
+        return self.local_cotangent_space.validate(
+            RigidBodyKinematics(
+                physical.position,
+                physical.velocity,
+                orientation,
+                physical.angular_velocity,
+            )
+        )
+
+    def transport_tangent(self, state, point, tangent, /):
+        anchor = self._point(state, "Rigid-body transport source")
+        target = self._point(point, "Rigid-body transport target")
+        physical = self.tangent_space.validate(tangent)
+        if self.orientation_geometry is None:
+            orientation = physical.orientation
+        else:
+            orientation = jax.vmap(self.orientation_geometry.transport_tangent)(
+                anchor.orientation,
+                target.orientation,
+                physical.orientation,
+            )
+        return self.tangent_space.validate(
+            RigidBodyKinematics(
+                physical.position,
+                physical.velocity,
+                orientation,
+                physical.angular_velocity,
+            )
+        )
+
+    def transport_cotangent_pullback(
+        self,
+        state,
+        point,
+        cotangent,
+        /,
+    ):
+        anchor = self._point(state, "Rigid-body transport source")
+        target = self._point(point, "Rigid-body transport target")
+        physical = self.cotangent_space.validate(cotangent)
+        if self.orientation_geometry is None:
+            orientation = physical.orientation
+        else:
+            orientation = jax.vmap(
+                self.orientation_geometry.transport_cotangent_pullback
+            )(
+                anchor.orientation,
+                target.orientation,
+                physical.orientation,
+            )
+        return self.cotangent_space.validate(
+            RigidBodyKinematics(
+                physical.position,
+                physical.velocity,
+                orientation,
+                physical.angular_velocity,
+            )
+        )
+
+    def cut_locus_margin(self, state, point, /):
+        anchor = self._point(state, "Rigid-body chart anchor")
+        target = self._point(point, "Rigid-body chart point")
+        if self.orientation_geometry is None:
+            difference = _principal_angle(target.orientation - anchor.orientation)
+            return jnp.min(jnp.pi - jnp.abs(difference))
+        margins = jax.vmap(self.orientation_geometry.cut_locus_margin)(
+            anchor.orientation,
+            target.orientation,
+        )
+        return jnp.min(margins)
 
 
 __all__ = [
