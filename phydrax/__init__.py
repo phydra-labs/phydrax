@@ -58,6 +58,7 @@ from . import (
     transport,
     uq,
     circuit,
+    optics,
     velocimetry,
     weighting,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "nonlinear",
     "observation",
     "operators",
+    "optics",
     "optim",
     "precision",
     "qualification",

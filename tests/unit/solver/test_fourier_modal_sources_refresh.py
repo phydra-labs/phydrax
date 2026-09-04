@@ -79,6 +79,64 @@ def test_internal_current_emits_to_both_ports_and_many_rhs_match() -> None:
     assert int(loss.status) == int(fm.FourierModalLossStatus.INELIGIBLE)
 
 
+def test_periodic_directional_bases_emit_consistent_surface_jump() -> None:
+    size = 2
+    identity = jnp.eye(size, dtype=jnp.complex128)
+    active = jnp.ones((size,), dtype=bool)
+    inactive = jnp.zeros((size,), dtype=bool)
+
+    def modes(side: str) -> fm.PreparedPeriodicPortModes:
+        outward_sign = -1.0 if side == "left" else 1.0
+        return fm.PreparedPeriodicPortModes(
+            identity,
+            -outward_sign * identity,
+            identity,
+            outward_sign * identity,
+            1j * jnp.ones((size,)),
+            -1j * jnp.ones((size,)),
+            jnp.ones((size,)),
+            jnp.ones((size,)),
+            active,
+            active,
+            inactive,
+            inactive,
+            inactive,
+            inactive,
+            jnp.asarray(2.0),
+            jnp.asarray(0.0),
+            jnp.asarray(0.0),
+            jnp.asarray(0.0),
+            tuple(f"{side}:mode:{index}" for index in range(size)),
+            side,
+        )
+
+    relation = fm.identity_boundary_relation(size, jnp.complex128)
+    electric_source = jnp.asarray(((1.0 + 0.5j), (-0.25 + 0.1j)))[:, None]
+    magnetic_source = jnp.asarray(((0.2 - 0.3j), (0.4 + 0.2j)))[:, None]
+    affine = fm.AffineBoundaryRelation(
+        relation,
+        electric_source,
+        magnetic_source,
+    )
+    left_modes = modes("left")
+    right_modes = modes("right")
+    right, left = fm.emitted_port_amplitudes(affine, left_modes, right_modes)
+    right_electric = right_modes.outgoing_electric_matrix @ right
+    right_magnetic = right_modes.outgoing_magnetic_matrix @ right
+    left_electric = left_modes.outgoing_electric_matrix @ left
+    left_magnetic = left_modes.outgoing_magnetic_matrix @ left
+    np.testing.assert_allclose(
+        right_electric - left_electric,
+        electric_source,
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(
+        left_magnetic - right_magnetic,
+        magnetic_source,
+        atol=1.0e-12,
+    )
+
+
 def test_thickness_refresh_reuses_material_and_operator() -> None:
     _, problem, policy = _source_problem()
     prepared = fm.prepare_fourier_modal_maxwell(problem, policy)
@@ -408,5 +466,6 @@ def test_brillouin_case_batch_preserves_case_and_rhs_axes() -> None:
     )
     result = fm.solve_fourier_modal_case_batch(prepared, excitations)
     assert result.right_outgoing.shape == (2, 2, 1)
+    assert result.power_audit_residual.shape == (2, 1)
     assert result.status.shape == (2,)
     assert bool(jnp.all(result.status == int(fm.FourierModalSolveStatus.SUCCESS)))

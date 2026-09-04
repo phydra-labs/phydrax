@@ -494,7 +494,7 @@ def prepare_maxwell_modal_sweep(
                 basis_id,
                 selected_mode_id,
                 polarization=polarization,
-                reference_plane=case.problem.superstrate.reference_plane,
+                reference_plane=-case.problem.superstrate.reference_distance,
             )
         )
         right_references.append(
@@ -502,7 +502,10 @@ def prepare_maxwell_modal_sweep(
                 basis_id,
                 selected_mode_id,
                 polarization=polarization,
-                reference_plane=case.problem.substrate.reference_plane,
+                reference_plane=(
+                    jnp.real(case.total_thickness)
+                    + case.problem.substrate.reference_distance
+                ),
             )
         )
         frequency = case.problem.angular_frequency

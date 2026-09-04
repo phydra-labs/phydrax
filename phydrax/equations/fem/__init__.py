@@ -56,6 +56,7 @@ from ._execution import (
     TensorProductAction,
     TensorProductPartialAssemblyOperator,
 )
+from ._guided_elasticity import guided_elasticity_form
 from ._interpreter import evaluate_differential_operator, execute_local_action
 from ._ir import (
     ActionKind,
@@ -215,6 +216,7 @@ __all__ = [
     "CADProjectionPlan",
     "CurvatureAdaptationPlan",
     "project_and_recover_cad_geometry",
+    "guided_elasticity_form",
     "ConservativeOversetPlan",
     "CutCellConservationPlan",
     "OversetConnectivity",

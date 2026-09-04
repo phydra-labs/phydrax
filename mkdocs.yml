@@ -276,6 +276,7 @@ nav:
         - Smoothed finite elements: "guides_fem_smoothing.md"
         - Global spectral methods: "guides_spectral_methods.md"
         - Fourier-modal Maxwell: "guides_fourier_modal_maxwell.md"
+        - Optics: "guides_optics.md"
         - Circuit networks: "guides_circuit_networks.md"
         - Circuit calibration: "guides_circuit_calibration.md"
         - Circuit dynamics: "guides_circuit_dynamics.md"
@@ -345,6 +346,11 @@ nav:
         - Cardiovascular applications: "api/applications/cardiovascular.md"
         - Vortex-flow applications: "api/applications/vortex_flow.md"
         - Thermofluid process applications: "api/applications/thermofluids.md"
+        - Optics:
+            - Overview: "api/optics/index.md"
+            - Geometric optics: "api/optics/geometric.md"
+            - Wave optics: "api/optics/wave.md"
+            - Materials, transport, and SBS: "api/optics/advanced.md"
         - Velocimetry:
             - Overview: "api/velocimetry/index.md"
             - Imaging: "api/velocimetry/imaging.md"

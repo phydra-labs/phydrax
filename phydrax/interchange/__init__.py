@@ -4,6 +4,7 @@
 
 """Generic external-representation interchange contracts."""
 
+from . import opticstudio
 from ._inspection import (
     HostInspectionConversion,
     HostInspectionField,
@@ -35,6 +36,7 @@ from ._resource import (
 
 
 __all__ = [
+    "opticstudio",
     "HostInspectionConversion",
     "HostInspectionField",
     "HostInspectionFrame",

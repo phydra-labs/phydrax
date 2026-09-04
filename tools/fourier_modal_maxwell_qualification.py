@@ -52,6 +52,7 @@ def _interface_case() -> dict[str, float | int]:
             abs(result.right_outgoing_power[0] - expected_transmission)
         ),
         "net_port_power_into_stack": float(result.net_port_power_into_stack[0]),
+        "power_audit_residual": float(jnp.max(result.power_audit_residual)),
         "status": int(result.status),
     }
 

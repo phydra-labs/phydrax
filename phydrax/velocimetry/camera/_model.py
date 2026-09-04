@@ -20,10 +20,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ._refraction import (
-    _trace_refracted_arrays,
-    RefractionStatus,
-    RefractiveLayerStack,
+from ...optics.geometric import (
+    PlanarRefractiveStack,
+    SequentialOpticsStatus,
+    trace_planar_refractive_stack,
 )
 
 
@@ -45,6 +45,10 @@ class RayStatus(IntEnum):
     TOTAL_INTERNAL_REFLECTION = 5
     DISTORTION_NONCONVERGENCE = 6
     OUTSIDE_IMAGE = 7
+    INVALID_INTERFACE_NORMAL = 8
+    COPLANAR_INTERFACE = 9
+    WRONG_SIDE_INCIDENCE = 10
+    REFRACTION_FAILED = 11
 
 
 class CameraIntrinsics(StrictModule):
@@ -128,7 +132,7 @@ class CameraModel(StrictModule):
     intrinsics: CameraIntrinsics
     pose: CameraPose
     distortion: BrownConradyDistortion
-    refraction: RefractiveLayerStack | None
+    refractive_stack: PlanarRefractiveStack | None
 
     def __init__(
         self,
@@ -136,7 +140,7 @@ class CameraModel(StrictModule):
         *,
         pose: CameraPose | None = None,
         distortion: BrownConradyDistortion | None = None,
-        refraction: RefractiveLayerStack | None = None,
+        refractive_stack: PlanarRefractiveStack | None = None,
     ):
         if not isinstance(intrinsics, CameraIntrinsics):
             raise TypeError("intrinsics must be CameraIntrinsics.")
@@ -146,12 +150,14 @@ class CameraModel(StrictModule):
             raise TypeError("pose must be CameraPose or None.")
         if not isinstance(distortion_, BrownConradyDistortion):
             raise TypeError("distortion must be BrownConradyDistortion or None.")
-        if refraction is not None and not isinstance(refraction, RefractiveLayerStack):
-            raise TypeError("refraction must be RefractiveLayerStack or None.")
+        if refractive_stack is not None and not isinstance(
+            refractive_stack, PlanarRefractiveStack
+        ):
+            raise TypeError("refractive_stack must be PlanarRefractiveStack or None.")
         self.intrinsics = intrinsics
         self.pose = pose_
         self.distortion = distortion_
-        self.refraction = refraction
+        self.refractive_stack = refractive_stack
 
 
 class ProjectionResult(StrictModule, NonTrainableState):
@@ -257,7 +263,40 @@ def _inside_image(intrinsics: CameraIntrinsics, pixels: Array) -> Array:
     )
 
 
-def _project_refracted_points(
+def _optics_status_to_ray_status(status: Array, /) -> Array:
+    mapped = jnp.full(
+        jnp.shape(status), int(RayStatus.REFRACTION_FAILED), dtype=jnp.int32
+    )
+    mappings = (
+        (SequentialOpticsStatus.SUCCESS, RayStatus.SUCCESS),
+        (SequentialOpticsStatus.NONFINITE_INPUT, RayStatus.NONFINITE_INPUT),
+        (SequentialOpticsStatus.INVALID_DIRECTION, RayStatus.INVALID_DIRECTION),
+        (
+            SequentialOpticsStatus.INVALID_NORMAL,
+            RayStatus.INVALID_INTERFACE_NORMAL,
+        ),
+        (SequentialOpticsStatus.COPLANAR, RayStatus.COPLANAR_INTERFACE),
+        (SequentialOpticsStatus.PARALLEL, RayStatus.PARALLEL_INTERFACE),
+        (
+            SequentialOpticsStatus.BEHIND_RAY,
+            RayStatus.INTERFACE_BEHIND_RAY,
+        ),
+        (
+            SequentialOpticsStatus.WRONG_SIDE_INCIDENCE,
+            RayStatus.WRONG_SIDE_INCIDENCE,
+        ),
+        (
+            SequentialOpticsStatus.TOTAL_INTERNAL_REFLECTION,
+            RayStatus.TOTAL_INTERNAL_REFLECTION,
+        ),
+        (SequentialOpticsStatus.TANGENT_SURFACE, RayStatus.PARALLEL_INTERFACE),
+    )
+    for optics_status, ray_status in mappings:
+        mapped = jnp.where(status == int(optics_status), int(ray_status), mapped)
+    return mapped
+
+
+def _project_through_refractive_stack(
     camera: CameraModel,
     points: Array,
     initial_normalized: Array,
@@ -265,7 +304,7 @@ def _project_refracted_points(
     maximum_iterations: int,
     tolerance: float,
 ) -> tuple[Array, Array, Array]:
-    stack = camera.refraction
+    stack = camera.refractive_stack
     assert stack is not None
     origin = camera.pose.frame.translation.astype(points.dtype)
     rotation = camera.pose.frame.rotation.astype(points.dtype)
@@ -285,14 +324,16 @@ def _project_refracted_points(
                 jnp.sum(direction_camera * direction_camera)
             )
             direction_world = contract("i,ji->j", direction_camera, rotation)
-            traced = _trace_refracted_arrays(
+            traced = trace_planar_refractive_stack(
                 stack,
                 origin,
                 direction_world,
                 parallel_tolerance=1e-10,
-                intersection_tolerance=1e-9,
+                forward_tolerance=1e-9,
             )
-            final_origin, final_direction, path_valid = traced[:3]
+            final_origin = traced.rays.origins
+            final_direction = traced.rays.directions
+            path_valid = traced.valid
             target_offset = point - final_origin
             path_valid = path_valid & (
                 jnp.sum(final_direction * target_offset) >= -tolerance
@@ -388,13 +429,15 @@ def project_points(
         int(ProjectionStatus.SUCCESS),
         dtype=jnp.int32,
     )
-    if camera.refraction is not None:
-        normalized, refraction_valid, refraction_status = _project_refracted_points(
-            camera,
-            points_,
-            normalized,
-            maximum_iterations=int(refraction_maximum_iterations),
-            tolerance=float(refraction_tolerance),
+    if camera.refractive_stack is not None:
+        normalized, refraction_valid, refraction_status = (
+            _project_through_refractive_stack(
+                camera,
+                points_,
+                normalized,
+                maximum_iterations=int(refraction_maximum_iterations),
+                tolerance=float(refraction_tolerance),
+            )
         )
     distorted = _distort_normalized(camera.distortion, normalized)
     pixels = _normalized_to_pixels(camera.intrinsics, distorted)
@@ -484,18 +527,21 @@ def pixels_to_rays(
     refraction_valid = jnp.ones(finite.shape, dtype=bool)
     refraction_status = jnp.full(
         finite.shape,
-        int(RefractionStatus.SUCCESS),
+        int(RayStatus.SUCCESS),
         dtype=jnp.int32,
     )
-    if camera.refraction is not None:
-        traced = _trace_refracted_arrays(
-            camera.refraction,
+    if camera.refractive_stack is not None:
+        traced = trace_planar_refractive_stack(
+            camera.refractive_stack,
             origins,
             directions,
             parallel_tolerance=1e-10,
-            intersection_tolerance=1e-9,
+            forward_tolerance=1e-9,
         )
-        origins, directions, refraction_valid, refraction_status = traced[:4]
+        origins = traced.rays.origins
+        directions = traced.rays.directions
+        refraction_valid = traced.valid
+        refraction_status = _optics_status_to_ray_status(traced.status)
     valid = finite & inside & distortion_valid & refraction_valid
     status = jnp.where(
         ~finite,

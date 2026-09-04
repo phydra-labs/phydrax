@@ -53,8 +53,12 @@ class CameraRig(StrictModule):
                 "capacity": capacity,
                 "camera_valid": valid_host.tolist(),
                 "image_shapes": [camera.intrinsics.image_shape for camera in cameras_],
-                "refractive_stacks": [
-                    None if camera.refraction is None else camera.refraction.stack_id
+                "planar_refractive_stacks": [
+                    (
+                        None
+                        if camera.refractive_stack is None
+                        else camera.refractive_stack.stack_id
+                    )
                     for camera in cameras_
                 ],
             }

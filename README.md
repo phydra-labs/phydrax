@@ -181,6 +181,10 @@ Most workflows are composing a few primitives:
   frequency-domain scattering, respectively, with full-tensor finite layers,
   field-certificate-aware geometry rasterization, boundary cascades, current
   planes, Brillouin-zone sources, and diffraction orders.
+- **Optics**: fixed-shape geometric, sequential, paraxial, non-sequential,
+  plane-wave, Gaussian-beamlet, atmospheric, nonlinear, radiative-transport,
+  guided-mode, and stimulated-Brillouin models retain explicit approximation,
+  topology, power, resource, differentiability, and provenance evidence.
 - **Variational quantum dynamics and learning**: stable complex log amplitudes,
   connected discrete operators, validated finite symmetry sectors, persistent-chain
   local energies, damped SR, frozen R-hat/ESS diagnostics, portable exact-resume
@@ -270,6 +274,7 @@ actions, area measures, and SFNO interoperability. See the
 [particle qualification guide](docs/guides_particle_qualification.md), the
 [global spectral guide](docs/guides_spectral_methods.md), the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
+[optics guide](docs/guides_optics.md), the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), the

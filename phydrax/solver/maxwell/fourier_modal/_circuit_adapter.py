@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....circuit import MatrixScatteringComponent, ModalWaveReference, WavePort
 from ._runtime import PreparedFourierModalMaxwell
+from ._scattering import _port_power_data
 
 
 def _mode_indices(
@@ -35,14 +36,27 @@ def _validate_eligible(
     prepared_modes, indices: tuple[int, ...], side: str, tolerance: float
 ) -> None:
     index = jnp.asarray(indices)
-    if not bool(jnp.all(prepared_modes.propagating[index])):
-        raise ValueError(f"{side} circuit modes must all be propagating.")
-    if bool(jnp.any(prepared_modes.grazing[index])):
+    (
+        incoming_weights,
+        outgoing_weights,
+        incoming_propagating,
+        outgoing_propagating,
+        incoming_grazing,
+        outgoing_grazing,
+    ) = _port_power_data(prepared_modes)
+    if not bool(
+        jnp.all(incoming_propagating[index]) & jnp.all(outgoing_propagating[index])
+    ):
+        raise ValueError(f"{side} circuit modes must propagate in both directions.")
+    if bool(jnp.any(incoming_grazing[index]) | jnp.any(outgoing_grazing[index])):
         raise ValueError(f"{side} circuit modes must be nongrazing.")
     if not bool(
-        jnp.all(jnp.abs(jnp.abs(prepared_modes.flux_weights[index]) - 1.0) <= tolerance)
+        jnp.all(jnp.abs(incoming_weights[index] - 1.0) <= tolerance)
+        & jnp.all(jnp.abs(outgoing_weights[index] - 1.0) <= tolerance)
     ):
-        raise ValueError(f"{side} circuit modes must have certified unit flux magnitude.")
+        raise ValueError(
+            f"{side} circuit modes must have certified bidirectional unit flux."
+        )
 
 
 def fourier_modal_scattering_component(
@@ -104,10 +118,14 @@ def fourier_modal_scattering_component(
             "right_modes": list(scattering.right_modes.mode_ids),
         }
     )
+    reference_coordinates = (
+        -problem.superstrate.reference_distance,
+        jnp.real(prepared.total_thickness) + problem.substrate.reference_distance,
+    )
     ports = []
-    for side, indices, modes, reference_plane in (
-        ("left", left, scattering.left_modes, problem.superstrate.reference_plane),
-        ("right", right, scattering.right_modes, problem.substrate.reference_plane),
+    for side, indices, modes, reference_coordinate in (
+        ("left", left, scattering.left_modes, reference_coordinates[0]),
+        ("right", right, scattering.right_modes, reference_coordinates[1]),
     ):
         mode_ids = tuple(modes.mode_ids[index] for index in indices)
         references = tuple(
@@ -117,7 +135,7 @@ def fourier_modal_scattering_component(
                 polarization=mode_id.rsplit(":", 1)[-1],
                 normalization="unit-flux",
                 orientation="into-component",
-                reference_plane=reference_plane,
+                reference_plane=reference_coordinate,
             )
             for mode_id in mode_ids
         )

@@ -144,8 +144,8 @@ def fourier_modal_physical_state_digest(
         "angular_frequency": problem.angular_frequency,
         "bloch_wavevector": problem.bloch_wavevector,
         "primitive_vectors": problem.harmonics.primitive_vectors,
-        "superstrate_reference_plane": problem.superstrate.reference_plane,
-        "substrate_reference_plane": problem.substrate.reference_plane,
+        "superstrate_reference_distance": problem.superstrate.reference_distance,
+        "substrate_reference_distance": problem.substrate.reference_distance,
         "superstrate_material": (
             problem.superstrate.material.permittivity,
             problem.superstrate.material.permeability,
@@ -258,8 +258,8 @@ def fourier_modal_numeric_revision(
         "angular_frequency": problem.angular_frequency,
         "bloch_wavevector": problem.bloch_wavevector,
         "primitive_vectors": problem.harmonics.primitive_vectors,
-        "superstrate_reference_plane": problem.superstrate.reference_plane,
-        "substrate_reference_plane": problem.substrate.reference_plane,
+        "superstrate_reference_distance": problem.superstrate.reference_distance,
+        "substrate_reference_distance": problem.substrate.reference_distance,
         "superstrate_material": _canonical_material_samples(
             problem.superstrate.material, problem
         ),
@@ -316,8 +316,18 @@ def fourier_modal_numeric_revision(
                 raise TypeError("Prepared continuous-layer topology does not match.")
             arrays[f"element_{index}_segment_edges"] = prepared_element.segment_edges
             arrays[f"element_{index}_segment_active"] = prepared_element.segment_active
-            arrays[f"element_{index}_operator"] = prepared_element.operator
+            arrays[f"element_{index}_segment_defects"] = prepared_element.segment_defects
+            arrays[f"element_{index}_segment_prefix_boundaries"] = (
+                prepared_element.segment_prefix_boundaries
+            )
             arrays[f"element_{index}_boundary"] = prepared_element.boundary
+            arrays[f"element_{index}_maximum_defect"] = prepared_element.maximum_defect
+            arrays[f"element_{index}_maximum_constitutive_residual"] = (
+                prepared_element.maximum_constitutive_residual
+            )
+            arrays[f"element_{index}_profile_finite"] = prepared_element.profile_finite
+            arrays[f"element_{index}_status"] = prepared_element.status
+            arrays[f"element_{index}_successful"] = prepared_element.successful
     if _contains_tracer(arrays):
         raise ValueError(
             "A Fourier-modal NumericRevision requires host-materialized numeric inputs."
