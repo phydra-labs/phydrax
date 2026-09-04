@@ -146,12 +146,12 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
         attempted_time = time_ + step
         current_fluid = base.dynamics.validate_state(state.fluid_state)
         current_velocity = base.dynamics.unpack_velocity(current_fluid)
-        _, convection, _, forcing = base.dynamics.rate_components(
-            time_, current_fluid, args
-        )
+        components = base.dynamics.rate_components(time_, current_fluid, args)
         explicit = tuple(
             -advective + source
-            for advective, source in zip(convection, forcing, strict=True)
+            for advective, source in zip(
+                components.convection, components.forcing, strict=True
+            )
         )
         right_hand_side = tuple(
             value + step * rate

@@ -25,14 +25,13 @@ conversion and surface-stress acceleration, not as a second projected density fi
 
 ## Coupled numerical method
 
-The model reuses `CompiledMACScalarBuoyancyDynamics`:
-
-1. reconstruct temperature and salinity on the MAC faces;
-2. compute conservative scalar fluxes;
-3. evaluate buoyancy from those same face values;
-4. compute skew momentum transport, viscosity, f-plane rotation, stress, and buoyancy;
-5. project the complete momentum rate with the current boundary stage;
-6. return projected velocity and scalar rates.
+The model reuses `CompiledMACScalarBuoyancyDynamics`. A stage enforces the same
+prepared boundary identity, reconstructs T/S on faces, evaluates conservative
+molecular and optional named SGS scalar fluxes, evaluates buoyancy from those same
+face values, forms skew momentum transport, molecular viscosity, optional algebraic
+LES or KSGS eddy viscosity, f-plane rotation, stress, and buoyancy, and projects the
+complete momentum rate. Algebraic LES and KSGS are alternatives; either one requires
+the complete scalar SGS contract.
 
 The coupling reports normalized kinetic/potential buoyancy-exchange evidence. A finite
 but excessive exchange defect is not accepted.
@@ -67,10 +66,34 @@ outward temperature-content flux by dividing by `rho0 cp`.
 The rigid-lid model has fixed volume. It does not support real freshwater volume flux.
 No implicit virtual-salt convention is applied.
 
+
+## LES and KSGS
+
+`CartesianBoussinesqOceanPlan` accepts `algebraic_les`, `scalar_sgs`, `ksgs`, and
+`ksgs_field_name`. Static algebraic momentum LES or prognostic KSGS may be selected,
+never both. When either is active, `scalar_sgs` is mandatory and its names must
+exactly equal the reference temperature/salinity names. Every name declares a
+positive turbulent Prandtl/Schmidt number or explicit `no_sgs=True`; no value is
+defaulted.
+
+The prepared MAC KSGS backend supports static, buoyant, dynamic, and low-Re
+families. The bounded vertical ocean admits static/buoyant routes and may admit
+low-Re only when preparation receives true no-slip momentum walls; cell-center
+distance is computed only to those sides. Dynamic KSGS requires periodic-uniform
+binomial test filtering and therefore remains incompatible with bounded vertical
+ocean geometry. Continuation retains the complete KSGS history and accepted-update
+state where applicable.
+
+The exact equations, stress/flux signs, filter provenance, and MAC boundary limits
+are normative in the [LES equations API](api/equations/les.md); see the
+[LES guide](guides_large_eddy_simulation.md#ocean-and-prognostic-ksgs) for
+construction and candidate status.
+
 ## Time stepping and budgets
 
-`OceanBoussinesqSSPRK33Method` evaluates the full projected coupled stage at all three
-SSPRK stages. A step is accepted only when projection, scalar transport, buoyancy, and
+`OceanBoussinesqSSPRK33Method` evaluates the full projected coupled stage, including
+any algebraic LES or KSGS/scalar SGS action, at all three SSPRK stages. A step is
+accepted only when projection, momentum/scalar transport, closure, buoyancy, and
 ocean-forcing evidence all succeed.
 
 `OceanBoussinesqContinuationState` stores the packed physical coordinates plus
@@ -86,24 +109,22 @@ Rejected steps leave both state and budgets unchanged. The method composes with
 `FixedStepProblem` and `solve_fixed_step`; pass an explicit
 `EuclideanStateGeometry` because the continuation is a structured PyTree.
 
-The stable-step contract combines:
-
-- momentum advection and viscosity;
-- oriented scalar face-volume-flux CFL;
-- scalar diffusion/reaction;
-- f-plane inertial frequency;
-- a conservative state-dependent stratification frequency.
+The stable-step contract combines momentum advection and molecular/SGS viscosity,
+oriented scalar face-volume-flux CFL, molecular/SGS scalar diffusion and reaction,
+KSGS diffusion/source restrictions where active, f-plane inertial frequency, and a
+conservative state-dependent stratification frequency.
 
 ## Restart and output
 
 `write_ocean_checkpoint` and `read_ocean_checkpoint` use the strict pickle-free array
-archive and require the exact prepared ocean identity. They preserve the full
-continuation state, time, and accepted-step index.
+archive and require the exact prepared ocean identity. They preserve the complete
+packed velocity/scalar state, including transported KSGS energy when active,
+continuation budgets, time, and accepted-step index.
 
-`ocean_diagnostic_view` derives named velocity, T, S, density anomaly, buoyancy,
-pressure, inventories, energy, projection evidence, Coriolis/stress power, and budget
-defects. `write_ocean_output` writes those derived fields without making them
-restart-authoritative.
+`ocean_diagnostic_view` derives named velocity, T, S, optional SGS kinetic energy,
+density anomaly, buoyancy, pressure, inventories, energy, projection evidence,
+Coriolis/stress power, and budget defects. `write_ocean_output` writes those derived
+fields without making them restart-authoritative.
 
 ## Minimal construction
 
@@ -162,7 +183,8 @@ Not supported:
 - open/radiation boundaries;
 - freshwater volume flux;
 - beta-plane or spherical metrics;
-- vertically implicit mixing or turbulence closures;
+- periodic-uniform dynamic KSGS on the bounded vertical grid;
+- vertically implicit turbulence;
 - nonlinear pressure-dependent seawater EOS;
 - distributed end-to-end ocean execution;
 - passive trajectory ingestion or online particle coupling.
@@ -180,6 +202,10 @@ python tools/ocean_qualification.py --case inertial
 python tools/ocean_qualification.py --case stratified
 python tools/ocean_qualification.py --case surface-flux
 ```
+
+These cases qualify the declared base ocean routes only. They do not release an LES
+or KSGS profile; LES evidence must retain its exact closure, filter, coefficient,
+scalar SGS, boundary, and base-profile dependencies.
 
 `tools/ocean_benchmarks.py` separates JIT compilation from steady coupled-RHS and
 accepted-SSPRK throughput for isotropic/directional diffusion and rotation on/off.

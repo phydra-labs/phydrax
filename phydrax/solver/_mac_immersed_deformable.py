@@ -128,6 +128,10 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
     ):
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
+        if dynamics.algebraic_les is not None:
+            raise ValueError(
+                "MAC deformable immersed routes do not support active algebraic LES."
+            )
         if not isinstance(projection, MACImmersedBoundaryProjectionPlan):
             raise TypeError("projection must be MACImmersedBoundaryProjectionPlan.")
         if not isinstance(marker_map, PreparedFiniteElementImmersedMarkerMap):
@@ -235,12 +239,12 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         attempted_time = time_ + step
         current_fluid = self.dynamics.validate_state(state.fluid_state)
         current_velocity = self.dynamics.unpack_velocity(current_fluid)
-        _, convection, _, forcing = self.dynamics.rate_components(
-            time_, current_fluid, args
-        )
+        components = self.dynamics.rate_components(time_, current_fluid, args)
         explicit = tuple(
             -advective + source
-            for advective, source in zip(convection, forcing, strict=True)
+            for advective, source in zip(
+                components.convection, components.forcing, strict=True
+            )
         )
         rhs = tuple(
             value + step * rate

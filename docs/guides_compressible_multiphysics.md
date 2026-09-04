@@ -156,6 +156,11 @@ regions, fallback masks, positivity activation, table intervals, particle routes
 schedule validity are branchwise. Failed transport, elliptic, nonlinear, or stochastic
 primals do not define valid gradients.
 
+Favre LES is differentiable only on the admissible interior with fixed species,
+filter, discretization, and trace policy. Positivity/mass-fraction gates,
+eddy-viscosity bounds, algebraic zero branches, and any shock/limiter selection are
+branchwise. Prepared coefficients and provenance are nontrainable.
+
 ## Compressible-flow candidate ownership
 
 `phydrax.applications.compressible_flow` is the application facade for the current
@@ -181,6 +186,27 @@ residual Helmholtz term form one model identity. `HomogeneousMixtureEulerSystem`
 entropy, frozen-composition sound speed, state recovery, characteristics, and transport
 calorics to that model. Peng–Robinson roots, stability, and flash remain separate
 solver-owned equilibrium operations; they are never selected inside an Euler flux.
+
+### Favre LES transport and SGS energy
+
+`HomogeneousMixtureCompressibleNavierStokesSystem(..., favre_les=model)` adds
+physical SGS transport with exact gas species, SI units, filter/provenance,
+Prandtl/Schmidt numbers, viscosity bound, SGS-energy dissipation coefficient, and
+SGS-energy Schmidt number.
+
+The `provided-sgs-kinetic-energy` policy appends `rho*k_sgs` after total energy in
+conserved state and `k_sgs` after temperature in primitive state. Total energy
+includes SGS energy. Isotropic SGS pressure participates in hyperbolic flux and
+sound speed; deviatoric work, heat/species transport, and SGS-energy diffusion are
+diffusive. `FavreLESCoupledRate` applies production/dissipation only to the
+SGS-energy component, exposes its positivity step, and reports zero total-energy
+source. The `neglected` policy retains the smaller state.
+
+Both policies require conserved state/gradients and refuse the
+primitive-gradient-only convenience. Favre transport remains separate from shock
+sensors, Riemann dissipation, limiting, bulk viscosity, and artificial viscosity.
+Binding it does not qualify every application route. See
+[LES equations](api/equations/les.md#favre-effective-transport).
 
 ### Smooth, all-speed, and shock routes
 

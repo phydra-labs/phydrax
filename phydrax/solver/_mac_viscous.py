@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,10 +19,13 @@ from ..discretization.finite_volume._incompressible import FaceVelocity
 from ..discretization.finite_volume._mac_boundary import MACBoundaryStageData
 from ..discretization.finite_volume._mac_momentum import PreparedMACMomentumOperators
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
+from ..equations._mac_les import MACLESStageResult, PreparedMACAlgebraicLES
 from ..linalg import (
     ArraySpace,
     ConjugateGradient,
+    DifferentiationPolicy,
     FunctionLinearOperator,
+    GMRES,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
@@ -42,6 +45,10 @@ from ..linalg._transform_line import (
     TransformLineSolvePlan,
     TransformLineSolveResult,
 )
+from ._mac_composite_projection import (
+    CompositeMACProjectionPlan,
+    CompositeMACProjectionResult,
+)
 from ._mac_separable import (
     certify_separable_action,
     diagonal_resource_counts,
@@ -52,6 +59,11 @@ from ._mac_separable import (
     velocity_face_line_coefficients,
 )
 from ._structured_incompressible import MACPressureProjectionResult
+from ._temporal_method import TemporalMethodCapabilities
+
+
+if TYPE_CHECKING:
+    from ._mac_stage_inverse_general import MACOperatorStageSolveResult
 
 
 MACHelmholtzSolveMethod: TypeAlias = Literal["auto", "transform", "hybrid", "iterative"]
@@ -60,6 +72,7 @@ MAC_VISCOUS_HELMHOLTZ_FAILURE = -1
 MAC_VISCOUS_PROJECTION_FAILURE = -2
 MAC_VISCOUS_BOUNDARY_FAILURE = -3
 MAC_VISCOUS_HISTORY_INVALID = -4
+MAC_VISCOUS_CLOSURE_FAILURE = -5
 
 
 def _zeros(momentum: PreparedMACMomentumOperators, /) -> FaceVelocity:
@@ -814,11 +827,188 @@ def _explicit_rate(
     state: ArrayLike,
     args: Any,
     /,
+    *,
+    boundary_stage: MACBoundaryStageData | None = None,
 ) -> FaceVelocity:
-    _, convection, _, forcing = dynamics.rate_components(time, state, args)
+    """Evaluate only the declared explicit partition; SGS is never inferred here."""
+    stage = (
+        dynamics.boundary_stage(time, args)
+        if boundary_stage is None
+        else dynamics.momentum.boundaries.validate_stage(boundary_stage)
+    )
+    velocity = dynamics.momentum.boundaries.enforce(
+        dynamics.unpack_velocity(state), stage
+    )
+    convection = dynamics.momentum.convection(velocity, stage=stage)
+    forcing = dynamics._forcing(jnp.asarray(time), velocity, args)
     return tuple(
         -advective + source for advective, source in zip(convection, forcing, strict=True)
     )
+
+
+def _prepared_algebraic_les(
+    dynamics: CompiledMACIncompressibleDynamics, /
+) -> PreparedMACAlgebraicLES | None:
+    prepared = dynamics.algebraic_les
+    if prepared is None:
+        return None
+    if not isinstance(prepared, PreparedMACAlgebraicLES):
+        raise TypeError(
+            "Frozen MAC implicit methods require stateless PreparedMACAlgebraicLES; "
+            "dynamic and continuation-bearing closures are unsupported."
+        )
+    if prepared.momentum.prepared_id != dynamics.momentum.prepared_id:
+        raise ValueError("Prepared MAC LES and compiled momentum IDs differ.")
+    if prepared.viscosity_action.momentum.prepared_id != dynamics.momentum.prepared_id:
+        raise ValueError(
+            "Prepared MAC LES viscosity action and compiled momentum IDs differ."
+        )
+    return prepared
+
+
+def _evaluate_frozen_les(
+    prepared: PreparedMACAlgebraicLES,
+    velocity: FaceVelocity,
+    boundary_stage: MACBoundaryStageData,
+    /,
+) -> tuple[MACLESStageResult, Array]:
+    stage = prepared.evaluate(velocity, boundary_stage)
+    if stage.prepared_id != prepared.prepared_id:
+        raise ValueError("MAC LES stage belongs to a different preparation.")
+    if stage.viscosity_result.action_id != prepared.viscosity_action.action_id:
+        raise ValueError("MAC LES stage viscosity action ID does not match.")
+    if stage.boundary_stage_id != boundary_stage.stage_id:
+        raise ValueError("MAC LES stage boundary ID does not match.")
+    viscosity = jnp.where(
+        stage.successful,
+        stage.model_result.kinematic_viscosity,
+        jnp.zeros_like(stage.model_result.kinematic_viscosity),
+    )
+    return stage, viscosity
+
+
+def _variable_viscosity_policy(
+    tolerance: float,
+    maximum_iterations: int,
+    supplied: LinearSolvePolicy | None,
+    /,
+) -> LinearSolvePolicy:
+    tolerance_ = float(tolerance)
+    iterations = int(maximum_iterations)
+    if tolerance_ <= 0.0 or not np.isfinite(tolerance_) or iterations <= 0:
+        raise ValueError(
+            "Frozen MAC LES tolerance and maximum_iterations must be positive."
+        )
+    if supplied is not None:
+        if not isinstance(supplied, LinearSolvePolicy):
+            raise TypeError("linear_policy must be LinearSolvePolicy or None.")
+        return supplied
+    return LinearSolvePolicy(
+        GMRES(restart=min(40, iterations)),
+        tolerance=TolerancePolicy(
+            relative=tolerance_,
+            absolute=tolerance_,
+            max_steps=iterations,
+        ),
+        differentiation=DifferentiationPolicy("mathematical"),
+    )
+
+
+def _constraint_operators(
+    dynamics: CompiledMACIncompressibleDynamics, /
+) -> tuple[FunctionLinearOperator, FunctionLinearOperator]:
+    operators = dynamics.momentum.operators
+    boundaries = dynamics.momentum.boundaries
+
+    def divergence(velocity):
+        return operators.divergence(velocity)
+
+    def negative_gradient(pressure):
+        return tuple(
+            -value
+            for value in boundaries.pressure_gradient(pressure, None, homogeneous=True)
+        )
+
+    def gradient(pressure):
+        return boundaries.pressure_gradient(pressure, None, homogeneous=True)
+
+    def negative_divergence(velocity):
+        return -operators.divergence(velocity)
+
+    divergence_operator = FunctionLinearOperator(
+        divergence,
+        source=operators.velocity_space,
+        target=operators.pressure_space,
+        transpose_action=negative_gradient,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "mac-frozen-stage-divergence",
+                "operators": operators.prepared_id,
+                "boundaries": boundaries.prepared_id,
+            }
+        ),
+    )
+    gradient_operator = FunctionLinearOperator(
+        gradient,
+        source=operators.pressure_space,
+        target=operators.velocity_space,
+        transpose_action=negative_divergence,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "mac-frozen-stage-gradient",
+                "operators": operators.prepared_id,
+                "boundaries": boundaries.prepared_id,
+            }
+        ),
+    )
+    return divergence_operator, gradient_operator
+
+
+def _incoming_pressure(
+    dynamics: CompiledMACIncompressibleDynamics,
+    pressure: ArrayLike | None,
+    dtype: jnp.dtype,
+    /,
+) -> Array:
+    return (
+        jnp.zeros(
+            dynamics.momentum.operators.discretization.cell_shape,
+            dtype=dtype,
+        )
+        if pressure is None
+        else dynamics.momentum.operators.gauge_project(pressure)
+    )
+
+
+def _frozen_status(
+    history_valid: Array,
+    boundary_successful: Array,
+    coefficient_successful: Array,
+    predictor_successful: Array,
+    projection_successful: Array,
+    /,
+) -> Array:
+    return jnp.where(
+        ~history_valid,
+        MAC_VISCOUS_HISTORY_INVALID,
+        jnp.where(
+            ~boundary_successful,
+            MAC_VISCOUS_BOUNDARY_FAILURE,
+            jnp.where(
+                ~coefficient_successful,
+                MAC_VISCOUS_CLOSURE_FAILURE,
+                jnp.where(
+                    ~predictor_successful,
+                    MAC_VISCOUS_HELMHOLTZ_FAILURE,
+                    jnp.where(
+                        ~projection_successful,
+                        MAC_VISCOUS_PROJECTION_FAILURE,
+                        MAC_VISCOUS_SUCCESS,
+                    ),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
 
 
 class MACIMEXEulerResult(StrictModule):
@@ -831,11 +1021,21 @@ class MACIMEXEulerResult(StrictModule):
     velocity: FaceVelocity
     pressure: Array
     explicit_rate: FaceVelocity
-    helmholtz: MACHelmholtzResult
-    projection: MACPressureProjectionResult
+    helmholtz: MACHelmholtzResult | None
+    projection: MACPressureProjectionResult | CompositeMACProjectionResult
+    les_stage: MACLESStageResult | None
+    frozen_kinematic_viscosity: Array | None
+    coefficient_state: Array | None
+    coefficient_time: Array | None
+    stage_inverse: MACOperatorStageSolveResult | None
     finite: Array
     accepted: Array
     status: Array
+    stage_plan_id: str | None = eqx.field(static=True)
+    predictor_inverse_id: str | None = eqx.field(static=True)
+    projection_inverse_id: str | None = eqx.field(static=True)
+    temporal_profile: str = eqx.field(static=True)
+    coefficient_refresh: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     @property
@@ -844,11 +1044,22 @@ class MACIMEXEulerResult(StrictModule):
 
 
 class MACIMEXEulerMethod(StrictModule, NonTrainableState):
-    """Backward-Euler diffusion with explicit transport and pressure correction."""
+    """IMEX Euler with a distinct accepted-state frozen algebraic-LES profile."""
 
     dynamics: CompiledMACIncompressibleDynamics
-    helmholtz: MACHelmholtzSolvePlan
+    helmholtz: MACHelmholtzSolvePlan | None
+    variable_linear_policy: LinearSolvePolicy | None
+    pressure_linear_policy: LinearSolvePolicy | None
+    face_density: FaceVelocity | None
+    divergence_operator: FunctionLinearOperator | None
+    gradient_operator: FunctionLinearOperator | None
     fixed_step_size: float | None = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    implicit_les: bool = eqx.field(static=True)
+    temporal_profile: str = eqx.field(static=True)
+    coefficient_refresh: str = eqx.field(static=True)
+    capabilities: TemporalMethodCapabilities
+    prepared_les_id: str | None = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -866,33 +1077,96 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
     ):
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
+        prepared_les = _prepared_algebraic_les(dynamics)
+        implicit_les = prepared_les is not None and prepared_les.model.coefficient > 0.0
         fixed = None if fixed_step_size is None else float(fixed_step_size)
         if fixed is not None and (fixed <= 0.0 or not np.isfinite(fixed)):
             raise ValueError("fixed_step_size must be positive and finite.")
-        viscosity = float(np.asarray(dynamics.problem.viscosity))
-        helmholtz = MACHelmholtzSolvePlan(
-            dynamics.momentum,
-            solve_method=solve_method,
-            hybrid_line_axis=hybrid_line_axis,
-            tolerance=tolerance,
-            maximum_iterations=maximum_iterations,
-            linear_policy=linear_policy,
-            fixed_mass_coefficient=None if fixed is None else 1.0,
-            fixed_diffusion_coefficient=None if fixed is None else fixed * viscosity,
-            maximum_resource_bytes=maximum_resource_bytes,
-        )
+        tolerance_ = float(tolerance)
+        if implicit_les:
+            if solve_method not in ("auto", "iterative") or hybrid_line_axis is not None:
+                raise ValueError(
+                    "Frozen MAC algebraic LES supports only the iterative momentum "
+                    "and composite-pressure routes."
+                )
+            policy = _variable_viscosity_policy(
+                tolerance_, maximum_iterations, linear_policy
+            )
+            pressure_policy = _variable_viscosity_policy(
+                tolerance_, maximum_iterations, None
+            )
+            density = tuple(
+                jnp.ones(
+                    layout.shape,
+                    dtype=dynamics.momentum.operators.pressure_space.dtype,
+                )
+                for layout in dynamics.momentum.operators.discretization.face_layouts
+            )
+            divergence, gradient = _constraint_operators(dynamics)
+            helmholtz = None
+            profile = "mac-frozen-algebraic-les-imex-euler"
+            refresh_kind = "accepted-state-once-per-attempt"
+        else:
+            viscosity = float(np.asarray(dynamics.problem.viscosity))
+            helmholtz = MACHelmholtzSolvePlan(
+                dynamics.momentum,
+                solve_method=solve_method,
+                hybrid_line_axis=hybrid_line_axis,
+                tolerance=tolerance_,
+                maximum_iterations=maximum_iterations,
+                linear_policy=linear_policy,
+                fixed_mass_coefficient=None if fixed is None else 1.0,
+                fixed_diffusion_coefficient=(
+                    None if fixed is None else fixed * viscosity
+                ),
+                maximum_resource_bytes=maximum_resource_bytes,
+            )
+            policy = None
+            pressure_policy = None
+            density = None
+            divergence = None
+            gradient = None
+            profile = "mac-constant-laplacian-imex-euler"
+            refresh_kind = "none"
         self.dynamics = dynamics
         self.helmholtz = helmholtz
+        self.variable_linear_policy = policy
+        self.pressure_linear_policy = pressure_policy
+        self.face_density = density
+        self.divergence_operator = divergence
+        self.gradient_operator = gradient
         self.fixed_step_size = fixed
-        self.method_id = canonical_fingerprint(
+        self.tolerance = tolerance_
+        self.implicit_les = implicit_les
+        self.temporal_profile = profile
+        self.coefficient_refresh = refresh_kind
+        self.prepared_les_id = None if prepared_les is None else prepared_les.prepared_id
+        identifier = canonical_fingerprint(
             {
-                "kind": "mac-imex-euler",
+                "kind": profile,
                 "dynamics": dynamics.compilation_id,
-                "helmholtz": helmholtz.plan_id,
+                "implicit_les": (None if not implicit_les else prepared_les.prepared_id),
+                "viscosity_action": (
+                    None if not implicit_les else prepared_les.viscosity_action.action_id
+                ),
+                "helmholtz": None if helmholtz is None else helmholtz.plan_id,
                 "fixed_step_size": fixed,
                 "pressure_coefficient": "dt",
+                "coefficient_refresh": refresh_kind,
             }
         )
+        self.capabilities = TemporalMethodCapabilities(
+            equation_forms=("additive-ode",),
+            method_class="ark",
+            order=1,
+            adaptive=fixed is None,
+            history_depth=1,
+            stage_abscissae=(0.0, 1.0),
+            causal_stage_extent=1.0,
+            noise_requirement="none",
+            method_id=identifier,
+        )
+        self.method_id = identifier
 
     def _step_size(self, value: ArrayLike | None, /) -> Array:
         dtype = self.dynamics.momentum.operators.pressure_space.dtype
@@ -913,23 +1187,19 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
             "MAC IMEX Euler step must be positive and finite.",
         )
 
-    def step(
+    def _constant_step(
         self,
-        time: ArrayLike,
-        state: ArrayLike,
+        time: Array,
+        current_state: Array,
+        step: Array,
+        pressure: ArrayLike | None,
+        args: Any,
         /,
-        *,
-        step_size: ArrayLike | None = None,
-        pressure: ArrayLike | None = None,
-        args: Any = None,
     ) -> MACIMEXEulerResult:
-        step = self._step_size(step_size)
-        current_state = self.dynamics.validate_state(state)
         current_velocity = self.dynamics.unpack_velocity(current_state)
-        time_ = jnp.asarray(time, dtype=step.dtype).reshape(())
-        attempted_time = time_ + step
-        boundary_stage = self.dynamics.momentum.boundaries.evaluate(attempted_time, args)
-        explicit = _explicit_rate(self.dynamics, time_, current_state, args)
+        attempted_time = time + step
+        boundary_stage = self.dynamics.boundary_stage(attempted_time, args)
+        explicit = _explicit_rate(self.dynamics, time, current_state, args)
         rhs = tuple(
             value + step * rate
             for value, rate in zip(current_velocity, explicit, strict=True)
@@ -939,21 +1209,17 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
             rhs,
             boundary_stage,
             mass_coefficient=None if self.fixed_step_size is not None else 1.0,
-            diffusion_coefficient=None
-            if self.fixed_step_size is not None
-            else step * viscosity,
+            diffusion_coefficient=(
+                None if self.fixed_step_size is not None else step * viscosity
+            ),
             initial_guess=current_velocity,
         )
-        incoming_pressure = (
-            jnp.zeros(
-                self.dynamics.momentum.operators.discretization.cell_shape,
-                dtype=step.dtype,
-            )
-            if pressure is None
-            else self.dynamics.momentum.operators.gauge_project(pressure)
-        )
+        incoming_pressure = _incoming_pressure(self.dynamics, pressure, step.dtype)
         projection = self.dynamics.projection.project(
-            helmholtz.value, step, pressure=incoming_pressure
+            helmholtz.value,
+            step,
+            pressure=incoming_pressure,
+            boundary_stage=boundary_stage,
         )
         candidate_velocity = self.dynamics.momentum.boundaries.enforce(
             projection.velocity, boundary_stage
@@ -968,21 +1234,15 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(projection.pressure))
         )
         accepted = finite & helmholtz.converged & projection.converged
-        status = jnp.where(
-            ~boundary_stage.successful,
-            MAC_VISCOUS_BOUNDARY_FAILURE,
-            jnp.where(
-                ~helmholtz.converged,
-                MAC_VISCOUS_HELMHOLTZ_FAILURE,
-                jnp.where(
-                    ~projection.converged,
-                    MAC_VISCOUS_PROJECTION_FAILURE,
-                    MAC_VISCOUS_SUCCESS,
-                ),
-            ),
-        ).astype(jnp.int32)
+        status = _frozen_status(
+            jnp.asarray(True),
+            boundary_stage.successful,
+            jnp.asarray(True),
+            helmholtz.converged,
+            projection.converged,
+        )
         return MACIMEXEulerResult(
-            time=jnp.where(accepted, attempted_time, time_),
+            time=jnp.where(accepted, attempted_time, time),
             attempted_time=attempted_time,
             step_size=step,
             pressure_correction_coefficient=step,
@@ -998,14 +1258,165 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
             explicit_rate=explicit,
             helmholtz=helmholtz,
             projection=projection,
+            les_stage=None,
+            frozen_kinematic_viscosity=None,
+            coefficient_state=None,
+            coefficient_time=None,
+            stage_inverse=None,
             finite=finite,
             accepted=accepted,
             status=status,
+            stage_plan_id=None,
+            predictor_inverse_id=None,
+            projection_inverse_id=None,
+            temporal_profile=self.temporal_profile,
+            coefficient_refresh=self.coefficient_refresh,
             method_id=self.method_id,
         )
 
+    def _frozen_les_step(
+        self,
+        time: Array,
+        current_state: Array,
+        step: Array,
+        pressure: ArrayLike | None,
+        args: Any,
+        /,
+    ) -> MACIMEXEulerResult:
+        from ._mac_stage_inverse_general import MACVariableViscosityStagePlan
+
+        prepared_les = self.dynamics.algebraic_les
+        current_boundary = self.dynamics.boundary_stage(time, args)
+        current_velocity = self.dynamics.momentum.boundaries.enforce(
+            self.dynamics.unpack_velocity(current_state), current_boundary
+        )
+        les_stage, frozen_viscosity = _evaluate_frozen_les(
+            prepared_les, current_velocity, current_boundary
+        )
+        explicit = _explicit_rate(
+            self.dynamics,
+            time,
+            current_state,
+            args,
+            boundary_stage=current_boundary,
+        )
+        attempted_time = time + step
+        boundary_stage = self.dynamics.boundary_stage(attempted_time, args)
+        total_viscosity = frozen_viscosity + self.dynamics.problem.viscosity.astype(
+            frozen_viscosity.dtype
+        )
+        stage_plan = MACVariableViscosityStagePlan(
+            self.dynamics.momentum,
+            self.face_density,
+            total_viscosity,
+            step,
+            rhs_scale=step,
+            viscosity_action=prepared_les.viscosity_action,
+            stage_id=f"{self.method_id}/accepted-state",
+        )
+        inverse = stage_plan.inverse(
+            boundary_stage, linear_policy=self.variable_linear_policy
+        )
+        physical_rhs = tuple(
+            value / step + rate
+            for value, rate in zip(current_velocity, explicit, strict=True)
+        )
+        predictor = inverse.solve_affine(physical_rhs)
+        inverse_operator = inverse.operator()
+        projection_plan = CompositeMACProjectionPlan(
+            self.divergence_operator,
+            self.gradient_operator,
+            inverse_operator,
+            self.dynamics.momentum.operators.gauge_project,
+            linear_policy=self.pressure_linear_policy,
+            tolerance=self.tolerance,
+        )
+        incoming_pressure = _incoming_pressure(self.dynamics, pressure, step.dtype)
+        projection = projection_plan.project(predictor.value, pressure=incoming_pressure)
+        candidate_velocity = self.dynamics.momentum.boundaries.enforce(
+            projection.velocity, boundary_stage
+        )
+        candidate_state = self.dynamics.momentum.operators.velocity_space.flatten(
+            candidate_velocity
+        )
+        finite = (
+            current_boundary.finite
+            & boundary_stage.finite
+            & les_stage.finite
+            & predictor.finite
+            & projection.finite
+            & jnp.all(jnp.isfinite(candidate_state))
+            & jnp.all(jnp.isfinite(projection.pressure))
+        )
+        accepted = (
+            current_boundary.successful
+            & boundary_stage.successful
+            & les_stage.successful
+            & predictor.converged
+            & projection.accepted
+            & finite
+        )
+        status = _frozen_status(
+            jnp.asarray(True),
+            current_boundary.successful & boundary_stage.successful,
+            les_stage.successful,
+            predictor.converged,
+            projection.accepted,
+        )
+        return MACIMEXEulerResult(
+            time=jnp.where(accepted, attempted_time, time),
+            attempted_time=attempted_time,
+            step_size=step,
+            pressure_correction_coefficient=step,
+            previous_state=current_state,
+            state=jnp.where(accepted, candidate_state, current_state),
+            velocity=tuple(
+                jnp.where(accepted, candidate, current)
+                for candidate, current in zip(
+                    candidate_velocity, current_velocity, strict=True
+                )
+            ),
+            pressure=jnp.where(accepted, projection.pressure, incoming_pressure),
+            explicit_rate=explicit,
+            helmholtz=None,
+            projection=projection,
+            les_stage=les_stage,
+            frozen_kinematic_viscosity=frozen_viscosity,
+            coefficient_state=current_state,
+            coefficient_time=time,
+            stage_inverse=predictor,
+            finite=finite,
+            accepted=accepted,
+            status=status,
+            stage_plan_id=stage_plan.plan_id,
+            predictor_inverse_id=inverse.operator_id,
+            projection_inverse_id=projection_plan.inverse_momentum.operator_id,
+            temporal_profile=self.temporal_profile,
+            coefficient_refresh=self.coefficient_refresh,
+            method_id=self.method_id,
+        )
+
+    def step(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        /,
+        *,
+        step_size: ArrayLike | None = None,
+        pressure: ArrayLike | None = None,
+        args: Any = None,
+    ) -> MACIMEXEulerResult:
+        step = self._step_size(step_size)
+        current_state = self.dynamics.validate_state(state)
+        time_ = jnp.asarray(time, dtype=step.dtype).reshape(())
+        if self.implicit_les:
+            return self._frozen_les_step(time_, current_state, step, pressure, args)
+        return self._constant_step(time_, current_state, step, pressure, args)
+
 
 class MACSBDF2State(StrictModule):
+    """Complete fixed-step restart state; it alone determines the next refresh."""
+
     time: Array
     previous_state: Array
     state: Array
@@ -1018,6 +1429,78 @@ class MACSBDF2State(StrictModule):
     method_id: str = eqx.field(static=True)
 
 
+class MACSBDF2GStabilityLedger(StrictModule):
+    """Exact BDF2 G-identity on the weighted MAC velocity space."""
+
+    g_energy_before: Array
+    g_energy_after: Array
+    temporal_dissipation: Array
+    bdf_work: Array
+    identity_defect: Array
+    finite: Array
+    successful: Array
+    identity: str = eqx.field(static=True)
+
+
+def _velocity_norm_squared(
+    dynamics: CompiledMACIncompressibleDynamics,
+    velocity: FaceVelocity,
+    /,
+) -> Array:
+    return jnp.real(dynamics.momentum.operators.velocity_space.inner(velocity, velocity))
+
+
+def _g_stability_ledger(
+    dynamics: CompiledMACIncompressibleDynamics,
+    previous: FaceVelocity,
+    current: FaceVelocity,
+    candidate: FaceVelocity,
+    accepted: Array,
+    /,
+) -> MACSBDF2GStabilityLedger:
+    two_current_minus_previous = tuple(
+        2.0 * value - old for value, old in zip(current, previous, strict=True)
+    )
+    two_candidate_minus_current = tuple(
+        2.0 * value - old for value, old in zip(candidate, current, strict=True)
+    )
+    second_difference = tuple(
+        value - 2.0 * middle + old
+        for value, middle, old in zip(candidate, current, previous, strict=True)
+    )
+    bdf_difference = tuple(
+        1.5 * value - 2.0 * middle + 0.5 * old
+        for value, middle, old in zip(candidate, current, previous, strict=True)
+    )
+    space = dynamics.momentum.operators.velocity_space
+    before = 0.25 * (
+        _velocity_norm_squared(dynamics, current)
+        + _velocity_norm_squared(dynamics, two_current_minus_previous)
+    )
+    after = 0.25 * (
+        _velocity_norm_squared(dynamics, candidate)
+        + _velocity_norm_squared(dynamics, two_candidate_minus_current)
+    )
+    temporal = 0.25 * _velocity_norm_squared(dynamics, second_difference)
+    work = jnp.real(space.inner(bdf_difference, candidate))
+    defect = jnp.abs(work - (after - before + temporal))
+    values = jnp.stack((before, after, temporal, work, defect))
+    finite = jnp.all(jnp.isfinite(values))
+    scale = jnp.maximum(1.0, jnp.max(jnp.abs(values)))
+    tolerance = 4096.0 * jnp.finfo(values.dtype).eps * scale
+    return MACSBDF2GStabilityLedger(
+        before,
+        after,
+        temporal,
+        work,
+        defect,
+        finite,
+        accepted & finite & (defect <= tolerance),
+        "inner(BDF2(u[n+1],u[n],u[n-1]),u[n+1])="
+        "G(u[n+1],u[n])-G(u[n],u[n-1])+one-quarter-norm(second-difference)^2",
+    )
+
+
 class MACSBDF2StepResult(StrictModule):
     history: MACSBDF2State
     attempted_time: Array
@@ -1025,12 +1508,24 @@ class MACSBDF2StepResult(StrictModule):
     pressure_correction_coefficient: Array
     velocity: FaceVelocity
     pressure: Array
-    helmholtz: MACHelmholtzResult
-    projection: MACPressureProjectionResult
+    helmholtz: MACHelmholtzResult | None
+    projection: MACPressureProjectionResult | CompositeMACProjectionResult
+    coefficient_projection: MACPressureProjectionResult | None
+    les_stage: MACLESStageResult | None
+    frozen_kinematic_viscosity: Array | None
+    coefficient_state: Array | None
+    coefficient_time: Array | None
+    stage_inverse: MACOperatorStageSolveResult | None
+    g_stability: MACSBDF2GStabilityLedger | None
     finite: Array
     accepted: Array
     status: Array
     startup: bool = eqx.field(static=True)
+    stage_plan_id: str | None = eqx.field(static=True)
+    predictor_inverse_id: str | None = eqx.field(static=True)
+    projection_inverse_id: str | None = eqx.field(static=True)
+    temporal_profile: str = eqx.field(static=True)
+    coefficient_extrapolation: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     @property
@@ -1039,12 +1534,17 @@ class MACSBDF2StepResult(StrictModule):
 
 
 class MACSBDF2Method(StrictModule, NonTrainableState):
-    """Fixed-step SBDF2 with IMEX-Euler startup and fail-closed history."""
+    """Fixed-step SBDF2 with projected 2u[n]-u[n-1] coefficient refresh."""
 
     dynamics: CompiledMACIncompressibleDynamics
     step_size: float = eqx.field(static=True)
     startup_method: MACIMEXEulerMethod
-    helmholtz: MACHelmholtzSolvePlan
+    helmholtz: MACHelmholtzSolvePlan | None
+    implicit_les: bool = eqx.field(static=True)
+    temporal_profile: str = eqx.field(static=True)
+    coefficient_extrapolation: str = eqx.field(static=True)
+    allows_adaptive_step: bool = eqx.field(static=True)
+    capabilities: TemporalMethodCapabilities
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1075,33 +1575,57 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
             linear_policy=linear_policy,
             maximum_resource_bytes=maximum_resource_bytes,
         )
-        viscosity = float(np.asarray(dynamics.problem.viscosity))
-        helmholtz = MACHelmholtzSolvePlan(
-            dynamics.momentum,
-            solve_method=solve_method,
-            hybrid_line_axis=hybrid_line_axis,
-            tolerance=tolerance,
-            maximum_iterations=maximum_iterations,
-            linear_policy=linear_policy,
-            fixed_mass_coefficient=1.5,
-            fixed_diffusion_coefficient=step * viscosity,
-            maximum_resource_bytes=maximum_resource_bytes,
-        )
+        if startup.implicit_les:
+            helmholtz = None
+            profile = "mac-frozen-algebraic-les-sbdf2"
+            extrapolation = "projected-2*u[n]-u[n-1]-at-t[n+1]"
+        else:
+            viscosity = float(np.asarray(dynamics.problem.viscosity))
+            helmholtz = MACHelmholtzSolvePlan(
+                dynamics.momentum,
+                solve_method=solve_method,
+                hybrid_line_axis=hybrid_line_axis,
+                tolerance=tolerance,
+                maximum_iterations=maximum_iterations,
+                linear_policy=linear_policy,
+                fixed_mass_coefficient=1.5,
+                fixed_diffusion_coefficient=step * viscosity,
+                maximum_resource_bytes=maximum_resource_bytes,
+            )
+            profile = "mac-constant-laplacian-sbdf2"
+            extrapolation = "none"
         identifier = canonical_fingerprint(
             {
-                "kind": "mac-sbdf2",
+                "kind": profile,
                 "dynamics": dynamics.compilation_id,
                 "step_size": step,
                 "startup": startup.method_id,
-                "helmholtz": helmholtz.plan_id,
+                "helmholtz": None if helmholtz is None else helmholtz.plan_id,
                 "pressure_coefficient": "2*dt/3",
-                "failure": "retain-complete-history",
+                "coefficient_extrapolation": extrapolation,
+                "failure": "atomic-retain-complete-history",
+                "g_stability": "bdf2-weighted-velocity-identity",
             }
         )
         self.dynamics = dynamics
         self.step_size = step
         self.startup_method = startup
         self.helmholtz = helmholtz
+        self.implicit_les = startup.implicit_les
+        self.temporal_profile = profile
+        self.coefficient_extrapolation = extrapolation
+        self.allows_adaptive_step = False
+        self.capabilities = TemporalMethodCapabilities(
+            equation_forms=("additive-ode",),
+            method_class="bdf",
+            order=2,
+            adaptive=False,
+            history_depth=2,
+            stage_abscissae=(1.0,),
+            causal_stage_extent=1.0,
+            noise_requirement="none",
+            method_id=identifier,
+        )
         self.method_id = identifier
 
     def initialize(
@@ -1116,10 +1640,10 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         initial_state = self.dynamics.validate_state(state)
         dtype = self.dynamics.momentum.operators.pressure_space.dtype
         time_ = jnp.asarray(time, dtype=dtype).reshape(())
-        initial_explicit = _explicit_rate(self.dynamics, time_, initial_state, args)
         startup = self.startup_method.step(
             time_, initial_state, pressure=pressure, args=args
         )
+        initial_explicit = startup.explicit_rate
         following_explicit = jax.lax.cond(
             startup.accepted,
             lambda _: _explicit_rate(self.dynamics, startup.time, startup.state, args),
@@ -1147,28 +1671,38 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
             pressure=startup.pressure,
             helmholtz=startup.helmholtz,
             projection=startup.projection,
+            coefficient_projection=None,
+            les_stage=startup.les_stage,
+            frozen_kinematic_viscosity=startup.frozen_kinematic_viscosity,
+            coefficient_state=startup.coefficient_state,
+            coefficient_time=startup.coefficient_time,
+            stage_inverse=startup.stage_inverse,
+            g_stability=None,
             finite=startup.finite,
             accepted=startup.accepted,
             status=startup.status,
             startup=True,
+            stage_plan_id=startup.stage_plan_id,
+            predictor_inverse_id=startup.predictor_inverse_id,
+            projection_inverse_id=startup.projection_inverse_id,
+            temporal_profile=self.temporal_profile,
+            coefficient_extrapolation=self.coefficient_extrapolation,
             method_id=self.method_id,
         )
 
-    def step(self, history: MACSBDF2State, /, *, args: Any = None) -> MACSBDF2StepResult:
-        if not isinstance(history, MACSBDF2State):
-            raise TypeError("history must be MACSBDF2State.")
-        if history.method_id != self.method_id:
-            raise ValueError("MAC SBDF2 history belongs to a different method.")
-        current_state = self.dynamics.validate_state(history.state)
-        previous_state = self.dynamics.validate_state(history.previous_state)
-        current_velocity = self.dynamics.unpack_velocity(current_state)
-        previous_velocity = self.dynamics.unpack_velocity(previous_state)
-        step = jnp.asarray(
-            self.step_size,
-            dtype=self.dynamics.momentum.operators.pressure_space.dtype,
-        )
+    def _constant_step(
+        self,
+        history: MACSBDF2State,
+        current_state: Array,
+        previous_state: Array,
+        current_velocity: FaceVelocity,
+        previous_velocity: FaceVelocity,
+        step: Array,
+        args: Any,
+        /,
+    ) -> MACSBDF2StepResult:
         attempted_time = history.time + step
-        boundary_stage = self.dynamics.momentum.boundaries.evaluate(attempted_time, args)
+        boundary_stage = self.dynamics.boundary_stage(attempted_time, args)
         rhs = tuple(
             2.0 * current - 0.5 * previous + step * (2.0 * current_rate - previous_rate)
             for current, previous, current_rate, previous_rate in zip(
@@ -1184,7 +1718,10 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         )
         pressure_coefficient = (2.0 / 3.0) * step
         projection = self.dynamics.projection.project(
-            helmholtz.value, pressure_coefficient, pressure=history.pressure
+            helmholtz.value,
+            pressure_coefficient,
+            pressure=history.pressure,
+            boundary_stage=boundary_stage,
         )
         candidate_velocity = self.dynamics.momentum.boundaries.enforce(
             projection.velocity, boundary_stage
@@ -1199,19 +1736,13 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(projection.pressure))
         )
         accepted = history.valid & finite & helmholtz.converged & projection.converged
-        local_status = jnp.where(
-            ~boundary_stage.successful,
-            MAC_VISCOUS_BOUNDARY_FAILURE,
-            jnp.where(
-                ~helmholtz.converged,
-                MAC_VISCOUS_HELMHOLTZ_FAILURE,
-                jnp.where(
-                    ~projection.converged,
-                    MAC_VISCOUS_PROJECTION_FAILURE,
-                    MAC_VISCOUS_SUCCESS,
-                ),
-            ),
-        ).astype(jnp.int32)
+        local_status = _frozen_status(
+            history.valid,
+            boundary_stage.successful,
+            jnp.asarray(True),
+            helmholtz.converged,
+            projection.converged,
+        )
         status = jnp.where(history.valid, local_status, history.status)
         next_explicit = jax.lax.cond(
             accepted,
@@ -1228,7 +1759,9 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
             previous_explicit_rate=tuple(
                 jnp.where(accepted, current, previous)
                 for current, previous in zip(
-                    history.explicit_rate, history.previous_explicit_rate, strict=True
+                    history.explicit_rate,
+                    history.previous_explicit_rate,
+                    strict=True,
                 )
             ),
             explicit_rate=next_explicit,
@@ -1252,11 +1785,236 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
             pressure=next_history.pressure,
             helmholtz=helmholtz,
             projection=projection,
+            coefficient_projection=None,
+            les_stage=None,
+            frozen_kinematic_viscosity=None,
+            coefficient_state=None,
+            coefficient_time=None,
+            stage_inverse=None,
+            g_stability=_g_stability_ledger(
+                self.dynamics,
+                previous_velocity,
+                current_velocity,
+                candidate_velocity,
+                accepted,
+            ),
             finite=finite,
             accepted=accepted,
             status=status,
             startup=False,
+            stage_plan_id=None,
+            predictor_inverse_id=None,
+            projection_inverse_id=None,
+            temporal_profile=self.temporal_profile,
+            coefficient_extrapolation=self.coefficient_extrapolation,
             method_id=self.method_id,
+        )
+
+    def _frozen_les_step(
+        self,
+        history: MACSBDF2State,
+        current_state: Array,
+        previous_state: Array,
+        current_velocity: FaceVelocity,
+        previous_velocity: FaceVelocity,
+        step: Array,
+        args: Any,
+        /,
+    ) -> MACSBDF2StepResult:
+        from ._mac_stage_inverse_general import MACVariableViscosityStagePlan
+
+        prepared_les = self.dynamics.algebraic_les
+        attempted_time = history.time + step
+        boundary_stage = self.dynamics.boundary_stage(attempted_time, args)
+        extrapolated = tuple(
+            2.0 * current - previous
+            for current, previous in zip(current_velocity, previous_velocity, strict=True)
+        )
+        extrapolated = self.dynamics.momentum.boundaries.enforce(
+            extrapolated, boundary_stage
+        )
+        coefficient_projection = self.dynamics.projection.project(
+            extrapolated,
+            1.0,
+            boundary_stage=boundary_stage,
+        )
+        coefficient_velocity = self.dynamics.momentum.boundaries.enforce(
+            coefficient_projection.velocity, boundary_stage
+        )
+        coefficient_state = self.dynamics.momentum.operators.velocity_space.flatten(
+            coefficient_velocity
+        )
+        les_stage, frozen_viscosity = _evaluate_frozen_les(
+            prepared_les, coefficient_velocity, boundary_stage
+        )
+        total_viscosity = frozen_viscosity + self.dynamics.problem.viscosity.astype(
+            frozen_viscosity.dtype
+        )
+        stage_plan = MACVariableViscosityStagePlan(
+            self.dynamics.momentum,
+            self.startup_method.face_density,
+            total_viscosity,
+            step,
+            rhs_scale=step,
+            viscosity_action=prepared_les.viscosity_action,
+            stage_id=f"{self.method_id}/projected-extrapolated-state",
+        )
+        inverse = stage_plan.inverse(
+            boundary_stage,
+            linear_policy=self.startup_method.variable_linear_policy,
+        )
+        physical_rhs = tuple(
+            (2.0 * current - 0.5 * previous) / step + 2.0 * current_rate - previous_rate
+            for current, previous, current_rate, previous_rate in zip(
+                current_velocity,
+                previous_velocity,
+                history.explicit_rate,
+                history.previous_explicit_rate,
+                strict=True,
+            )
+        )
+        predictor = inverse.solve_affine(physical_rhs)
+        inverse_operator = inverse.operator()
+        projection_plan = CompositeMACProjectionPlan(
+            self.startup_method.divergence_operator,
+            self.startup_method.gradient_operator,
+            inverse_operator,
+            self.dynamics.momentum.operators.gauge_project,
+            linear_policy=self.startup_method.pressure_linear_policy,
+            tolerance=self.startup_method.tolerance,
+        )
+        projection = projection_plan.project(predictor.value, pressure=history.pressure)
+        candidate_velocity = self.dynamics.momentum.boundaries.enforce(
+            projection.velocity, boundary_stage
+        )
+        candidate_state = self.dynamics.momentum.operators.velocity_space.flatten(
+            candidate_velocity
+        )
+        coefficient_successful = coefficient_projection.converged & les_stage.successful
+        finite = (
+            boundary_stage.finite
+            & coefficient_projection.finite
+            & les_stage.finite
+            & predictor.finite
+            & projection.finite
+            & jnp.all(jnp.isfinite(candidate_state))
+            & jnp.all(jnp.isfinite(projection.pressure))
+        )
+        accepted = (
+            history.valid
+            & boundary_stage.successful
+            & coefficient_successful
+            & predictor.converged
+            & projection.accepted
+            & finite
+        )
+        status = _frozen_status(
+            history.valid,
+            boundary_stage.successful,
+            coefficient_successful,
+            predictor.converged,
+            projection.accepted,
+        )
+        next_explicit = jax.lax.cond(
+            accepted,
+            lambda _: _explicit_rate(
+                self.dynamics, attempted_time, candidate_state, args
+            ),
+            lambda _: history.explicit_rate,
+            operand=None,
+        )
+        next_history = MACSBDF2State(
+            time=jnp.where(accepted, attempted_time, history.time),
+            previous_state=jnp.where(accepted, current_state, previous_state),
+            state=jnp.where(accepted, candidate_state, current_state),
+            previous_explicit_rate=tuple(
+                jnp.where(accepted, current, previous)
+                for current, previous in zip(
+                    history.explicit_rate,
+                    history.previous_explicit_rate,
+                    strict=True,
+                )
+            ),
+            explicit_rate=next_explicit,
+            pressure=jnp.where(accepted, projection.pressure, history.pressure),
+            accepted_steps=history.accepted_steps + accepted.astype(jnp.int32),
+            valid=history.valid,
+            status=jnp.where(accepted, status, history.status),
+            method_id=self.method_id,
+        )
+        ledger = _g_stability_ledger(
+            self.dynamics,
+            previous_velocity,
+            current_velocity,
+            candidate_velocity,
+            accepted,
+        )
+        return MACSBDF2StepResult(
+            history=next_history,
+            attempted_time=attempted_time,
+            step_size=step,
+            pressure_correction_coefficient=(2.0 / 3.0) * step,
+            velocity=tuple(
+                jnp.where(accepted, candidate, current)
+                for candidate, current in zip(
+                    candidate_velocity, current_velocity, strict=True
+                )
+            ),
+            pressure=next_history.pressure,
+            helmholtz=None,
+            projection=projection,
+            coefficient_projection=coefficient_projection,
+            les_stage=les_stage,
+            frozen_kinematic_viscosity=frozen_viscosity,
+            coefficient_state=coefficient_state,
+            coefficient_time=attempted_time,
+            stage_inverse=predictor,
+            g_stability=ledger,
+            finite=finite,
+            accepted=accepted,
+            status=status,
+            startup=False,
+            stage_plan_id=stage_plan.plan_id,
+            predictor_inverse_id=inverse.operator_id,
+            projection_inverse_id=projection_plan.inverse_momentum.operator_id,
+            temporal_profile=self.temporal_profile,
+            coefficient_extrapolation=self.coefficient_extrapolation,
+            method_id=self.method_id,
+        )
+
+    def step(self, history: MACSBDF2State, /, *, args: Any = None) -> MACSBDF2StepResult:
+        if not isinstance(history, MACSBDF2State):
+            raise TypeError("history must be MACSBDF2State.")
+        if history.method_id != self.method_id:
+            raise ValueError("MAC SBDF2 history belongs to a different method.")
+        current_state = self.dynamics.validate_state(history.state)
+        previous_state = self.dynamics.validate_state(history.previous_state)
+        current_velocity = self.dynamics.unpack_velocity(current_state)
+        previous_velocity = self.dynamics.unpack_velocity(previous_state)
+        self.dynamics.momentum.operators.validate_velocity(history.previous_explicit_rate)
+        self.dynamics.momentum.operators.validate_velocity(history.explicit_rate)
+        step = jnp.asarray(
+            self.step_size,
+            dtype=self.dynamics.momentum.operators.pressure_space.dtype,
+        )
+        if self.implicit_les:
+            return self._frozen_les_step(
+                history,
+                current_state,
+                previous_state,
+                current_velocity,
+                previous_velocity,
+                step,
+                args,
+            )
+        return self._constant_step(
+            history,
+            current_state,
+            previous_state,
+            current_velocity,
+            previous_velocity,
+            step,
+            args,
         )
 
 
@@ -1268,9 +2026,11 @@ __all__ = [
     "MACIMEXEulerMethod",
     "MACIMEXEulerResult",
     "MACSBDF2Method",
+    "MACSBDF2GStabilityLedger",
     "MACSBDF2State",
     "MACSBDF2StepResult",
     "MAC_VISCOUS_BOUNDARY_FAILURE",
+    "MAC_VISCOUS_CLOSURE_FAILURE",
     "MAC_VISCOUS_HELMHOLTZ_FAILURE",
     "MAC_VISCOUS_HISTORY_INVALID",
     "MAC_VISCOUS_PROJECTION_FAILURE",

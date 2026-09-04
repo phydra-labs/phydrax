@@ -49,6 +49,15 @@ This follows the interface-history concept in libParanumal's
 [multirate AB3 implementation](https://github.com/paranumal/libparanumal/blob/main/libs/timeStepper/timeStepperMRAB3.cpp)
 without adding a duplicate MRAB integrator.
 
+## Relation to LES
+
+This callback-oriented pressure-correction workflow does not infer or insert an SGS
+model. Implemented periodic spectral, MAC, channel, ocean, distributed, and
+unstructured LES routes use their typed compiler/adapters and evidence described in
+[Large-eddy simulation](guides_large_eddy_simulation.md). A closure rate supplied as
+an arbitrary callback does not acquire a `ResolvedLESFilter`,
+`LESParameterProvenance`, prepared-action identity, energy ledger, or qualification.
+
 ## Derivative scope
 
 Pressure-correction and subcycle branching describe the executed algorithm.

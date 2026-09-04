@@ -115,6 +115,25 @@ exact. Full-complex shell statistics conserve native modal integrals, and
 accepted-step statistical windows provide sample/time weighting and completed-block
 uncertainty.
 
+Large-eddy simulation adds filter/provenance-bound Smagorinsky, WALE, Vreman, and
+AMD stresses; explicit Germano averaging/regularization/backscatter policies;
+static, buoyant, dynamic, and low-Re backend-neutral KSGS physics; and Favre heat,
+species, momentum, and energy transport with explicit isotropic-trace policy.
+Implemented owners now include compiled static and dynamic periodic Fourier/MAC,
+transactional dynamic ETDRK and projected MAC stepping, wall-resolved or
+equilibrium-traction spectral channel, all structured-MAC KSGS families on their
+exact boundary subsets, learned-stress Fourier/MAC divergence backends,
+device-resident distributed full-flow production, pressure-stepped tetrahedral
+low-Mach continuation, neglected or transported-energy compressible Favre flow,
+fixed immersed MAC, and collision-local athermal LBM Smagorinsky. Additive
+model-error assimilation remains explicitly not identifiable as SGS stress.
+See [Guide → Large-eddy simulation](guides_large_eddy_simulation.md) and
+[API → LES equations](api/equations/les.md).
+
+LES campaign outputs use the generic qualification spine, remain
+candidate/unreleased, and retain the base incompressible profile as an external
+release dependency.
+
 Fourier--Chebyshev--Fourier channels retain primitive public velocity/pressure fields
 while the default internal Stokes route eliminates pressure into fixed-band
 ultraspherical systems with fixed-rank corrections. The zero mode owns
@@ -139,6 +158,11 @@ padded/canonical layout, precision, collective, and byte bound and performs no h
 gather. The channel schedule replicates its Chebyshev axis and does not make the
 separate `ChannelStokesPlan` a distributed line solver.
 
+`DistributedPeriodicLESPlan` places the scientific action on slab/pencil layouts;
+the application compiler adds full rotational flow, ETDRK/SSPRK, statistics, and
+device-resident checkpointed production without a host gather. Scientific/backend
+qualification remains exact and is never inherited from one-device parity.
+
 Partition-aware `DistributedLineSolvePlan` supports partitioned Thomas, bounded SPIKE,
 and balanced power-of-two PCR with explicit compatibility, gauge, residual, resource,
 and communication evidence. It operates on caller-provided arrays and is not itself a
@@ -160,13 +184,17 @@ dense control system, and atomically rejects rank, conditioning, residual, resou
 underlying-method failure. This is distinct from fixed
 `MACConstantPressureGradientForcing` and spectral channel zero-mode control.
 
-The broader MAC substrate includes dynamic wall/inflow/open closures,
-symmetry-preserving momentum, scalar/Boussinesq and conservative variable-density
-dynamics, implicit diffusion, resolved marker coupling, mapped/ALE geometry, remesh
-epochs, adaptive replay, bounded sensitivity, and route-specific statistics and
-production. `ImmersedDNSQualificationProfile` groups six exact owner support tuples,
-but remains an unsigned candidate with `released=false`; its two-phase runtime
-admission never substitutes an owner.
+The broader MAC substrate includes accepted-step stochastic inflow providers,
+symmetry-preserving momentum, scalar/Boussinesq and variable-density dynamics,
+static algebraic LES with frozen IMEX/SBDF2, periodic-uniform dynamic LES with
+transactional explicit stepping, dynamic/low-Re KSGS, periodic-uniform learned
+stress, and fixed immersed MAC LES. Spectral channel SBDF2 separately admits a
+normal-essential/equilibrium-traction owner and enforces its complete explicit
+restriction. Mapped/ALE geometry, remesh epochs, replay, sensitivity, statistics,
+and production retain their owners. `ImmersedDNSQualificationProfile` groups six
+exact owner support tuples but remains an unsigned candidate with `released=false`; its
+two-phase runtime admission never substitutes an owner or creates an immersed LES
+release.
 
 One-device execution is local. Spectral and selected MAC/LBM owners have explicit
 multi-device JAX or collective routes. Partition metadata, deployment records, and

@@ -273,6 +273,7 @@ nav:
         - Advanced structural evidence: "guides_advanced_structural_evidence.md"
         - FEM solver acceleration: "guides_fem_solver_acceleration.md"
         - Incompressible and multirate workflows: "guides_incompressible_multirate.md"
+        - Large-eddy simulation: "guides_large_eddy_simulation.md"
         - Smoothed finite elements: "guides_fem_smoothing.md"
         - Global spectral methods: "guides_spectral_methods.md"
         - Fourier-modal Maxwell: "guides_fourier_modal_maxwell.md"
@@ -354,6 +355,7 @@ nav:
             - Synthetic qualification: "api/velocimetry/synthetic.md"
             - Persistence and adapters: "api/velocimetry/io.md"
         - Equation representations:
+            - Large-eddy simulation: "api/equations/les.md"
             - Exact PDE trial spaces: "api/equations/trefftz.md"
             - Holomorphic potential fields: "api/equations/holomorphic.md"
             - Radiation: "api/equations/radiation.md"

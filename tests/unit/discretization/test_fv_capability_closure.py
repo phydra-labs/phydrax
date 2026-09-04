@@ -29,9 +29,7 @@ from phydrax.equations._finite_volume_advanced import (
     BedloadSedimentPlan,
     HydrostaticLayerCoupling,
     MultilayerShallowWaterSystem,
-    ResolvedGradientState,
     ShallowWaterExnerSystem,
-    SmagorinskyLESClosure,
 )
 from phydrax.equations._hyperbolic_systems import ShallowWaterSystem
 
@@ -254,15 +252,6 @@ def test_multilayer_exner_les_and_subfloat_precision_contracts():
         ShallowWaterSystem(), sediment, bed_bounds=(-1.0, 1.0)
     )
     assert bool(exner.admissible(jnp.asarray((1.0, 0.0, 0.0))))
-    les = SmagorinskyLESClosure(0.16)
-    rigid = ResolvedGradientState(
-        jnp.asarray(1.0),
-        jnp.asarray(300.0),
-        jnp.asarray(((0.0, -1.0), (1.0, 0.0))),
-        jnp.asarray(1.0),
-        jnp.asarray(1.0),
-    )
-    np.testing.assert_allclose(les.properties(rigid).dynamic_viscosity, 0.0)
     request = PrecisionRequest(
         "finite-volume",
         {

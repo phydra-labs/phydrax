@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +20,12 @@ from ...discretization.finite_volume import FaceVelocity, PreparedMACOperators
 from ...discretization.spectral._fourier_shells import _FourierShellBinGeometry
 from ...discretization.spectral._incompressible import PeriodicLerayProjector
 from ...discretization.spectral._space import TensorSpectralDiscretization
+from ...equations import (
+    CompiledIncompressibleSpectralDynamics,
+    PeriodicIncompressibleStage,
+    PeriodicLESStepRestriction,
+)
+from ...equations._dynamic_les import LagrangianDynamicLESState
 from ._forcing import _hermitian_defect, _periodic_modal_geometry
 
 
@@ -69,15 +77,19 @@ def _modal_shell_statistic(
 
 class PeriodicModalTurbulenceStatistics(StrictModule):
     energy_shells: ModalShellStatistic
-    dissipation_shells: ModalShellStatistic
-    nonlinear_transfer_shells: ModalShellStatistic
+    molecular_dissipation_shells: ModalShellStatistic
+    advective_transfer_shells: ModalShellStatistic
+    sgs_transfer_shells: ModalShellStatistic
     forcing_injection_shells: ModalShellStatistic
+    resolved_spectral_flux: Array
     kinetic_energy: Array
     mean_kinetic_energy: Array
-    dissipation: Array
-    mean_dissipation: Array
-    nonlinear_energy_rate: Array
-    mean_nonlinear_energy_rate: Array
+    molecular_dissipation: Array
+    mean_molecular_dissipation: Array
+    advective_energy_rate: Array
+    mean_advective_energy_rate: Array
+    sgs_energy_rate: Array
+    mean_sgs_energy_rate: Array
     forcing_power: Array
     mean_forcing_power: Array
     enstrophy: Array
@@ -89,38 +101,62 @@ class PeriodicModalTurbulenceStatistics(StrictModule):
     kmax_kolmogorov: Array
     integral_scale: Array
     energy_tail_fraction: Array
-    dissipation_tail_fraction: Array
+    molecular_dissipation_tail_fraction: Array
     divergence_norm: Array
     velocity_reality_defect: Array
-    transfer_available: Array
+    sgs_modeled_dissipation: Array
+    sgs_energy_identity_defect: Array
+    sgs_projection_energy_defect: Array
+    sgs_regularization_activity_count: Array
+    sgs_dynamic_coefficient_minimum: Array
+    sgs_dynamic_coefficient_mean: Array
+    sgs_dynamic_coefficient_maximum: Array
+    sgs_backscatter_activity_count: Array
+    sgs_backscatter_limit_count: Array
+    sgs_accepted_update_count: Array
+    sgs_rejected_update_count: Array
+    sgs_maximum_kinematic_viscosity: Array
+    sgs_advective_step_limit: Array
+    sgs_diffusive_step_limit: Array
+    sgs_combined_step_limit: Array
+    sgs_etdrk_step_limit: Array
+    sgs_fully_explicit_step_limit: Array
+    sgs_available: Array
+    sgs_regularization_available: Array
+    sgs_stability_available: Array
     forcing_available: Array
     helicity_valid: Array
     taylor_microscale_valid: Array
     kolmogorov_scale_valid: Array
     integral_scale_valid: Array
     energy_tail_valid: Array
-    dissipation_tail_valid: Array
+    molecular_dissipation_tail_valid: Array
     finite: Array
     successful: Array
     tail_start_wavenumber: float = eqx.field(static=True)
     spectrum_convention: str = eqx.field(static=True)
+    resolved_flux_convention: str = eqx.field(static=True)
     integral_scale_convention: str = eqx.field(static=True)
     tail_convention: str = eqx.field(static=True)
+    source_problem_id: str = eqx.field(static=True)
+    compilation_id: str = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
     projector_id: str = eqx.field(static=True)
+    sgs_filter_id: str | None = eqx.field(static=True)
+    sgs_model_id: str | None = eqx.field(static=True)
+    sgs_prepared_model_id: str | None = eqx.field(static=True)
+    sgs_prepared_action_id: str | None = eqx.field(static=True)
+    sgs_regularization_id: str | None = eqx.field(static=True)
+    sgs_dynamic_provenance_id: str | None = eqx.field(static=True)
+    sgs_averaging_id: str | None = eqx.field(static=True)
+    sgs_backscatter_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
 class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
-    """Conservative full-complex periodic turbulence statistics.
+    """Term-resolved full-complex statistics for one compiled periodic equation."""
 
-    Shell ``integral`` values are native domain integrals and ``density`` is
-    the integral divided by shell wavenumber width. In three dimensions the
-    reported integral scale is ``3 pi sum(E_k / |k|) / (4 sum(E_k))`` and is
-    valid only for a negligible zero mode. Tail fractions use modes at or
-    above the prepared ``tail_start_wavenumber``.
-    """
-
+    dynamics: CompiledIncompressibleSpectralDynamics
     projector: PeriodicLerayProjector
     geometry: _FourierShellBinGeometry
     conjugate_indices: Array
@@ -130,30 +166,40 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
     tail_start_wavenumber: float = eqx.field(static=True)
     reality_tolerance: float = eqx.field(static=True)
     solenoidal_tolerance: float = eqx.field(static=True)
+    source_problem_id: str = eqx.field(static=True)
+    compilation_id: str = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
     projector_id: str = eqx.field(static=True)
+    sgs_filter_id: str | None = eqx.field(static=True)
+    sgs_model_id: str | None = eqx.field(static=True)
+    sgs_prepared_model_id: str | None = eqx.field(static=True)
+    sgs_prepared_action_id: str | None = eqx.field(static=True)
+    sgs_regularization_id: str | None = eqx.field(static=True)
+    sgs_dynamic_provenance_id: str | None = eqx.field(static=True)
+    sgs_averaging_id: str | None = eqx.field(static=True)
+    sgs_backscatter_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        projector: PeriodicLerayProjector,
+        dynamics: CompiledIncompressibleSpectralDynamics,
         bin_edges: ArrayLike,
         /,
         *,
-        viscosity: float,
         tail_start_wavenumber: float | None = None,
         reality_tolerance: float = 1.0e-10,
         solenoidal_tolerance: float = 1.0e-10,
     ):
-        if not isinstance(projector, PeriodicLerayProjector):
-            raise TypeError("projector must be a PeriodicLerayProjector.")
-        viscosity_ = float(viscosity)
+        if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
+            raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
+        projector = dynamics.projector
+        viscosity = float(np.asarray(dynamics.problem.viscosity))
         reality = float(reality_tolerance)
         solenoidal = float(solenoidal_tolerance)
         edges = np.asarray(bin_edges, dtype=float).reshape((-1,))
         if (
-            not np.isfinite(viscosity_)
-            or viscosity_ < 0.0
+            not np.isfinite(viscosity)
+            or viscosity < 0.0
             or not np.isfinite(reality)
             or reality < 0.0
             or not np.isfinite(solenoidal)
@@ -184,24 +230,72 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             final_edge_policy="include",
             source_id=f"full-complex:{projector.projector_id}",
         )
+        algebraic_les = dynamics.algebraic_les
+        dynamic_les = dynamics.dynamic_les
+        if algebraic_les is None and dynamic_les is None:
+            filter_id = None
+            model_id = None
+            prepared_model_id = None
+            prepared_action_id = None
+            regularization_id = None
+            dynamic_provenance_id = None
+            averaging_id = None
+            backscatter_id = None
+        elif algebraic_les is not None:
+            filter_id = algebraic_les.grid_filter.plan.resolved_filter.filter_id
+            model_id = algebraic_les.model.model_id
+            prepared_model_id = algebraic_les.model.prepared_id
+            prepared_action_id = algebraic_les.prepared_id
+            regularization_id = canonical_fingerprint(
+                {
+                    "kind": "periodic-algebraic-les-regularization",
+                    "policy": "not-applicable-static-coefficient",
+                }
+            )
+            dynamic_provenance_id = None
+            averaging_id = None
+            backscatter_id = None
+        else:
+            dynamic_model = dynamic_les.dynamic_model
+            filter_id = dynamic_les.grid_filter.plan.resolved_filter.filter_id
+            model_id = dynamic_model.model_id
+            prepared_model_id = dynamic_model.prepared_id
+            prepared_action_id = dynamic_les.prepared_id
+            regularization_id = dynamic_model.regularization.regularization_id
+            dynamic_provenance_id = dynamic_model.provenance.provenance_id
+            averaging_id = dynamic_model.averaging.averaging_id
+            backscatter_id = dynamic_model.backscatter.backscatter_id
+        self.dynamics = dynamics
         self.projector = projector
         self.geometry = geometry
         self.conjugate_indices = jnp.asarray(conjugates, dtype=jnp.int32)
-        self.viscosity = viscosity_
+        self.viscosity = viscosity
         self.volume = volume
         self.maximum_admissible_wavenumber = maximum_wave
         self.tail_start_wavenumber = tail_start
         self.reality_tolerance = reality
         self.solenoidal_tolerance = solenoidal
+        self.source_problem_id = dynamics.problem.problem_id
+        self.compilation_id = dynamics.compilation_id
         self.discretization_id = projector.discretization.prepared_id
         self.projector_id = projector.projector_id
+        self.sgs_filter_id = filter_id
+        self.sgs_model_id = model_id
+        self.sgs_prepared_model_id = prepared_model_id
+        self.sgs_prepared_action_id = prepared_action_id
+        self.sgs_regularization_id = regularization_id
+        self.sgs_dynamic_provenance_id = dynamic_provenance_id
+        self.sgs_averaging_id = averaging_id
+        self.sgs_backscatter_id = backscatter_id
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "periodic-modal-turbulence-statistics",
+                "source_problem": self.source_problem_id,
+                "compilation": self.compilation_id,
                 "discretization": self.discretization_id,
                 "projector": self.projector_id,
                 "shell_geometry": geometry.geometry_id,
-                "viscosity": viscosity_,
+                "viscosity": viscosity,
                 "tail_start_wavenumber": tail_start,
                 "tail_policy": (
                     "upper-admissible-third"
@@ -210,76 +304,178 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
                 ),
                 "reality_tolerance": reality,
                 "solenoidal_tolerance": solenoidal,
+                "sgs_filter": filter_id,
+                "sgs_model": model_id,
+                "sgs_prepared_model": prepared_model_id,
+                "sgs_prepared_action": prepared_action_id,
+                "sgs_regularization": regularization_id,
+                "sgs_dynamic_provenance": dynamic_provenance_id,
+                "sgs_averaging": averaging_id,
+                "sgs_backscatter": backscatter_id,
+                "terms": (
+                    "molecular-dissipation",
+                    "advective-transfer",
+                    "sgs-transfer",
+                    "forcing-injection",
+                    "resolved-advective-flux",
+                ),
                 "storage": "full-complex-no-hermitian-multiplicity",
             }
         )
 
     def evaluate(
         self,
+        time: ArrayLike,
         velocity: ArrayLike,
+        args: Any = None,
         /,
         *,
-        nonlinear_rate: ArrayLike | None = None,
-        forcing: ArrayLike | None = None,
+        stage: PeriodicIncompressibleStage | None = None,
+        additive_forcing_rate: ArrayLike | None = None,
+        step_restriction: PeriodicLESStepRestriction | None = None,
+        continuation_state: LagrangianDynamicLESState | None = None,
+        accepted_update_mask: ArrayLike = True,
     ) -> PeriodicModalTurbulenceStatistics:
         value = self.projector.validate_state(velocity)
         finite_velocity = jnp.all(jnp.isfinite(value))
         clean_velocity = jnp.where(finite_velocity, value, jnp.zeros_like(value))
         velocity_ = self.projector.zero_forbidden_modes(clean_velocity)
-        velocity_reality_defect = _hermitian_defect(velocity_, self.conjugate_indices)
-        divergence_norm = self.projector.divergence_norm(velocity_)
-        transfer_available = jnp.asarray(nonlinear_rate is not None)
-        if nonlinear_rate is None:
-            nonlinear = jnp.zeros_like(velocity_)
-            finite_nonlinear = jnp.asarray(True)
-        else:
-            nonlinear_value = self.projector.validate_state(
-                nonlinear_rate, owner="Nonlinear rate"
+        stage_ = (
+            self.dynamics.stage(
+                jnp.asarray(time),
+                velocity_,
+                args,
+                continuation_state=continuation_state,
+                accepted_update_mask=accepted_update_mask,
             )
-            finite_nonlinear = jnp.all(jnp.isfinite(nonlinear_value))
-            nonlinear = self.projector.zero_forbidden_modes(
-                jnp.where(
-                    finite_nonlinear, nonlinear_value, jnp.zeros_like(nonlinear_value)
+            if stage is None
+            else stage
+        )
+        if not isinstance(stage_, PeriodicIncompressibleStage):
+            raise TypeError("stage must be PeriodicIncompressibleStage or None.")
+        algebraic_stage = stage_.algebraic_les
+        dynamic_stage = stage_.dynamic_les
+        if self.dynamics.algebraic_les is not None:
+            if algebraic_stage is None or dynamic_stage is not None:
+                raise ValueError("Static LES statistics require a static LES stage.")
+            if algebraic_stage.prepared_id != self.dynamics.algebraic_les.prepared_id:
+                raise ValueError("LES stage belongs to another prepared LES action.")
+            if step_restriction is None:
+                step_restriction = self.dynamics.step_restriction(
+                    velocity_,
+                    algebraic_les_stage=algebraic_stage,
                 )
-            )
-        forcing_available = jnp.asarray(forcing is not None)
-        if forcing is None:
-            forcing_ = jnp.zeros_like(velocity_)
-            finite_forcing = jnp.asarray(True)
+        elif self.dynamics.dynamic_les is not None:
+            if dynamic_stage is None or algebraic_stage is not None:
+                raise ValueError("Dynamic LES statistics require a dynamic LES stage.")
+            if dynamic_stage.prepared_id != self.dynamics.dynamic_les.prepared_id:
+                raise ValueError("Dynamic stage belongs to another prepared LES action.")
+            if step_restriction is None:
+                step_restriction = self.dynamics.step_restriction(
+                    velocity_,
+                    dynamic_les_stage=dynamic_stage,
+                )
+        elif (
+            algebraic_stage is not None
+            or dynamic_stage is not None
+            or step_restriction is not None
+        ):
+            raise ValueError("A no-LES statistics plan cannot consume LES evidence.")
+        if step_restriction is not None:
+            if not isinstance(step_restriction, PeriodicLESStepRestriction):
+                raise TypeError(
+                    "step_restriction must be PeriodicLESStepRestriction or None."
+                )
+            if step_restriction.prepared_id != self.sgs_prepared_action_id:
+                raise ValueError(
+                    "LES step restriction belongs to another prepared action."
+                )
+        rates = stage_.rates
+        advective = self.projector.validate_state(
+            rates.advective_rate, owner="Advective rate"
+        )
+        molecular = self.projector.validate_state(
+            rates.molecular_rate, owner="Molecular rate"
+        )
+        sgs = self.projector.validate_state(rates.sgs_rate, owner="SGS rate")
+        compiled_forcing = self.projector.validate_state(
+            rates.forcing_rate, owner="Compiled forcing rate"
+        )
+        forcing_available = self.dynamics.problem.forcing is not None
+        if additive_forcing_rate is None:
+            forcing = compiled_forcing
+            finite_additive_forcing = jnp.asarray(True)
         else:
-            forcing_value = self.projector.validate_state(forcing, owner="Forcing")
-            finite_forcing = jnp.all(jnp.isfinite(forcing_value))
-            forcing_ = self.projector.zero_forbidden_modes(
-                jnp.where(finite_forcing, forcing_value, jnp.zeros_like(forcing_value))
+            if forcing_available:
+                raise ValueError(
+                    "additive_forcing_rate cannot supplement compiled forcing."
+                )
+            additive = self.projector.validate_state(
+                additive_forcing_rate, owner="Additive forcing rate"
             )
+            finite_additive_forcing = jnp.all(jnp.isfinite(additive))
+            forcing = compiled_forcing + additive
+            forcing_available = True
+        finite_rates = (
+            jnp.all(jnp.isfinite(advective))
+            & jnp.all(jnp.isfinite(molecular))
+            & jnp.all(jnp.isfinite(sgs))
+            & jnp.all(jnp.isfinite(compiled_forcing))
+            & finite_additive_forcing
+        )
+        advective = self.projector.zero_forbidden_modes(
+            jnp.where(finite_rates, advective, jnp.zeros_like(advective))
+        )
+        molecular = self.projector.zero_forbidden_modes(
+            jnp.where(finite_rates, molecular, jnp.zeros_like(molecular))
+        )
+        sgs = self.projector.zero_forbidden_modes(
+            jnp.where(finite_rates, sgs, jnp.zeros_like(sgs))
+        )
+        forcing = self.projector.zero_forbidden_modes(
+            jnp.where(finite_rates, forcing, jnp.zeros_like(forcing))
+        )
         modal_energy = 0.5 * jnp.sum(jnp.abs(velocity_) ** 2, axis=-1)
-        modal_dissipation = (
-            2.0
-            * self.viscosity
-            * self.projector.wavenumber_squared.astype(modal_energy.dtype)
-            * modal_energy
+        modal_molecular_dissipation = -jnp.real(
+            ein.contract("...i,...i->...", jnp.conj(velocity_), molecular)
         )
-        modal_transfer = jnp.real(
-            ein.contract("...i,...i->...", jnp.conj(velocity_), nonlinear)
+        modal_advective_transfer = jnp.real(
+            ein.contract("...i,...i->...", jnp.conj(velocity_), advective)
         )
-        modal_injection = jnp.real(
-            ein.contract("...i,...i->...", jnp.conj(velocity_), forcing_)
+        modal_sgs_transfer = jnp.real(
+            ein.contract("...i,...i->...", jnp.conj(velocity_), sgs)
+        )
+        modal_forcing_injection = jnp.real(
+            ein.contract("...i,...i->...", jnp.conj(velocity_), forcing)
         )
         energy_shells = _modal_shell_statistic(
             self.geometry, modal_energy, "kinetic-energy"
         )
-        dissipation_shells = _modal_shell_statistic(
-            self.geometry, modal_dissipation, "dissipation"
+        molecular_shells = _modal_shell_statistic(
+            self.geometry,
+            modal_molecular_dissipation,
+            "molecular-dissipation",
         )
-        nonlinear_shells = _modal_shell_statistic(
-            self.geometry, modal_transfer, "nonlinear-transfer"
+        advective_shells = _modal_shell_statistic(
+            self.geometry,
+            modal_advective_transfer,
+            "advective-transfer",
+        )
+        sgs_shells = _modal_shell_statistic(
+            self.geometry,
+            modal_sgs_transfer,
+            "sgs-transfer",
         )
         forcing_shells = _modal_shell_statistic(
-            self.geometry, modal_injection, "forcing-injection"
+            self.geometry,
+            modal_forcing_injection,
+            "forcing-injection",
         )
+        resolved_flux = -jnp.cumsum(advective_shells.integral)
         kinetic_energy = energy_shells.total
-        dissipation = dissipation_shells.total
-        nonlinear_energy_rate = nonlinear_shells.total
+        molecular_dissipation = molecular_shells.total
+        advective_energy_rate = advective_shells.total
+        sgs_energy_rate = sgs_shells.total
         forcing_power = forcing_shells.total
         waves = tuple(
             wave.astype(velocity_.real.dtype) for wave in self.projector.wavenumbers
@@ -303,16 +499,20 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             helicity_valid = jnp.asarray(False)
         enstrophy = 0.5 * jnp.sum(jnp.abs(vorticity) ** 2)
         mean_energy = kinetic_energy / self.volume
-        mean_dissipation = dissipation / self.volume
+        mean_molecular_dissipation = molecular_dissipation / self.volume
         mean_enstrophy = enstrophy / self.volume
         mean_helicity = helicity / self.volume
         scale_valid = (
             (self.projector.spatial_dimension == 3)
             & (self.viscosity > 0.0)
             & (mean_energy > 0.0)
-            & (mean_dissipation > 0.0)
+            & (mean_molecular_dissipation > 0.0)
         )
-        safe_mean_dissipation = jnp.where(mean_dissipation > 0.0, mean_dissipation, 1.0)
+        safe_mean_dissipation = jnp.where(
+            mean_molecular_dissipation > 0.0,
+            mean_molecular_dissipation,
+            1.0,
+        )
         taylor = jnp.where(
             scale_valid,
             jnp.sqrt(10.0 * self.viscosity * mean_energy / safe_mean_dissipation),
@@ -340,48 +540,157 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         )
         tail = magnitude >= self.tail_start_wavenumber
         tail_energy = jnp.sum(jnp.where(tail, modal_energy, 0.0))
-        tail_dissipation = jnp.sum(jnp.where(tail, modal_dissipation, 0.0))
+        tail_molecular_dissipation = jnp.sum(
+            jnp.where(tail, modal_molecular_dissipation, 0.0)
+        )
         energy_tail_valid = kinetic_energy > 0.0
-        dissipation_tail_valid = dissipation > 0.0
+        molecular_tail_valid = molecular_dissipation > 0.0
         energy_tail_fraction = jnp.where(
             energy_tail_valid, tail_energy / safe_energy, 0.0
         )
-        safe_dissipation = jnp.where(dissipation > 0.0, dissipation, 1.0)
-        dissipation_tail_fraction = jnp.where(
-            dissipation_tail_valid, tail_dissipation / safe_dissipation, 0.0
+        safe_molecular_dissipation = jnp.where(
+            molecular_dissipation > 0.0,
+            molecular_dissipation,
+            1.0,
         )
+        molecular_tail_fraction = jnp.where(
+            molecular_tail_valid,
+            tail_molecular_dissipation / safe_molecular_dissipation,
+            0.0,
+        )
+        scalar_dtype = velocity_.real.dtype
+        zero = jnp.zeros((), dtype=scalar_dtype)
+        zero_count = jnp.asarray(0, dtype=jnp.int32)
+        selected_algebraic = (
+            algebraic_stage
+            if algebraic_stage is not None
+            else None
+            if dynamic_stage is None
+            else dynamic_stage.algebraic_stage
+        )
+        if selected_algebraic is None:
+            sgs_modeled_dissipation = zero
+            sgs_identity_defect = zero
+            sgs_projection_defect = zero
+            sgs_regularization_count = zero_count
+            coefficient_minimum = zero
+            coefficient_mean = zero
+            coefficient_maximum = zero
+            backscatter_count = zero_count
+            backscatter_limit_count = zero_count
+            accepted_count = zero_count
+            rejected_count = zero_count
+            sgs_maximum_viscosity = zero
+            advective_limit = zero
+            diffusive_limit = zero
+            combined_limit = zero
+            etdrk_limit = zero
+            explicit_limit = zero
+            sgs_available = jnp.asarray(False)
+            regularization_available = jnp.asarray(False)
+            stability_available = jnp.asarray(False)
+            finite_les = jnp.asarray(True)
+            successful_les = jnp.asarray(True)
+        else:
+            sgs_modeled_dissipation = selected_algebraic.modeled_dissipation
+            sgs_identity_defect = selected_algebraic.energy_identity_defect
+            sgs_projection_defect = selected_algebraic.projection_energy_defect
+            sgs_maximum_viscosity = selected_algebraic.maximum_kinematic_viscosity
+            advective_limit = step_restriction.advective
+            diffusive_limit = step_restriction.algebraic_les_diffusive
+            combined_limit = step_restriction.combined_diffusive
+            etdrk_limit = step_restriction.etdrk_selected
+            explicit_limit = step_restriction.fully_explicit_selected
+            sgs_available = jnp.asarray(True)
+            stability_available = jnp.asarray(True)
+            if dynamic_stage is None:
+                sgs_regularization_count = zero_count
+                coefficient_minimum = zero
+                coefficient_mean = zero
+                coefficient_maximum = zero
+                backscatter_count = zero_count
+                backscatter_limit_count = zero_count
+                accepted_count = zero_count
+                rejected_count = zero_count
+                regularization_available = jnp.asarray(False)
+                dynamic_finite = jnp.asarray(True)
+                successful_policy = (
+                    selected_algebraic.dissipative & selected_algebraic.energy_consistent
+                )
+            else:
+                dynamic_result = dynamic_stage.dynamic_result
+                evidence = dynamic_result.evidence
+                coefficient = dynamic_result.coefficient
+                sgs_regularization_count = evidence.regularization_activity_count
+                coefficient_minimum = jnp.min(coefficient)
+                coefficient_mean = jnp.mean(coefficient)
+                coefficient_maximum = jnp.max(coefficient)
+                backscatter_count = evidence.backscatter_activity_count
+                backscatter_limit_count = evidence.backscatter_limit_count
+                accepted_count = (
+                    evidence.accepted_update_count
+                    if continuation_state is None
+                    else continuation_state.accepted_updates
+                )
+                rejected_count = (
+                    evidence.rejected_update_count
+                    if continuation_state is None
+                    else continuation_state.rejected_updates
+                )
+                regularization_available = jnp.asarray(True)
+                dynamic_finite = evidence.finite
+                successful_policy = evidence.finite
+            finite_les = (
+                selected_algebraic.finite
+                & dynamic_finite
+                & jnp.isfinite(sgs_modeled_dissipation)
+                & jnp.isfinite(sgs_identity_defect)
+                & jnp.isfinite(sgs_projection_defect)
+                & jnp.isfinite(sgs_maximum_viscosity)
+                & step_restriction.finite
+            )
+            successful_les = successful_policy & step_restriction.finite
+        velocity_reality_defect = _hermitian_defect(velocity_, self.conjugate_indices)
+        divergence_norm = self.projector.divergence_norm(velocity_)
         finite = (
             finite_velocity
-            & finite_nonlinear
-            & finite_forcing
+            & finite_rates
+            & finite_les
             & energy_shells.finite
-            & dissipation_shells.finite
-            & nonlinear_shells.finite
+            & molecular_shells.finite
+            & advective_shells.finite
+            & sgs_shells.finite
             & forcing_shells.finite
+            & jnp.all(jnp.isfinite(resolved_flux))
             & jnp.isfinite(enstrophy)
             & jnp.isfinite(helicity)
             & jnp.isfinite(taylor)
             & jnp.isfinite(kolmogorov)
             & jnp.isfinite(integral_scale)
             & jnp.isfinite(energy_tail_fraction)
-            & jnp.isfinite(dissipation_tail_fraction)
+            & jnp.isfinite(molecular_tail_fraction)
         )
         successful = (
             finite
+            & successful_les
             & (velocity_reality_defect <= self.reality_tolerance)
             & (divergence_norm <= self.solenoidal_tolerance)
         )
         return PeriodicModalTurbulenceStatistics(
             energy_shells=energy_shells,
-            dissipation_shells=dissipation_shells,
-            nonlinear_transfer_shells=nonlinear_shells,
+            molecular_dissipation_shells=molecular_shells,
+            advective_transfer_shells=advective_shells,
+            sgs_transfer_shells=sgs_shells,
             forcing_injection_shells=forcing_shells,
+            resolved_spectral_flux=resolved_flux,
             kinetic_energy=kinetic_energy,
             mean_kinetic_energy=mean_energy,
-            dissipation=dissipation,
-            mean_dissipation=mean_dissipation,
-            nonlinear_energy_rate=nonlinear_energy_rate,
-            mean_nonlinear_energy_rate=nonlinear_energy_rate / self.volume,
+            molecular_dissipation=molecular_dissipation,
+            mean_molecular_dissipation=mean_molecular_dissipation,
+            advective_energy_rate=advective_energy_rate,
+            mean_advective_energy_rate=advective_energy_rate / self.volume,
+            sgs_energy_rate=sgs_energy_rate,
+            mean_sgs_energy_rate=sgs_energy_rate / self.volume,
             forcing_power=forcing_power,
             mean_forcing_power=forcing_power / self.volume,
             enstrophy=enstrophy,
@@ -393,27 +702,59 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             kmax_kolmogorov=self.maximum_admissible_wavenumber * kolmogorov,
             integral_scale=integral_scale,
             energy_tail_fraction=energy_tail_fraction,
-            dissipation_tail_fraction=dissipation_tail_fraction,
+            molecular_dissipation_tail_fraction=molecular_tail_fraction,
             divergence_norm=divergence_norm,
             velocity_reality_defect=velocity_reality_defect,
-            transfer_available=transfer_available,
-            forcing_available=forcing_available,
+            sgs_modeled_dissipation=sgs_modeled_dissipation,
+            sgs_energy_identity_defect=sgs_identity_defect,
+            sgs_projection_energy_defect=sgs_projection_defect,
+            sgs_regularization_activity_count=sgs_regularization_count,
+            sgs_dynamic_coefficient_minimum=coefficient_minimum,
+            sgs_dynamic_coefficient_mean=coefficient_mean,
+            sgs_dynamic_coefficient_maximum=coefficient_maximum,
+            sgs_backscatter_activity_count=backscatter_count,
+            sgs_backscatter_limit_count=backscatter_limit_count,
+            sgs_accepted_update_count=accepted_count,
+            sgs_rejected_update_count=rejected_count,
+            sgs_maximum_kinematic_viscosity=sgs_maximum_viscosity,
+            sgs_advective_step_limit=advective_limit,
+            sgs_diffusive_step_limit=diffusive_limit,
+            sgs_combined_step_limit=combined_limit,
+            sgs_etdrk_step_limit=etdrk_limit,
+            sgs_fully_explicit_step_limit=explicit_limit,
+            sgs_available=sgs_available,
+            sgs_regularization_available=regularization_available,
+            sgs_stability_available=stability_available,
+            forcing_available=jnp.asarray(forcing_available),
             helicity_valid=helicity_valid,
             taylor_microscale_valid=scale_valid,
             kolmogorov_scale_valid=scale_valid,
             integral_scale_valid=integral_valid,
             energy_tail_valid=energy_tail_valid,
-            dissipation_tail_valid=dissipation_tail_valid,
+            molecular_dissipation_tail_valid=molecular_tail_valid,
             finite=finite,
             successful=successful,
             tail_start_wavenumber=self.tail_start_wavenumber,
             spectrum_convention=(
                 "full-complex native domain integral; density=integral/bin-width"
             ),
+            resolved_flux_convention=(
+                "-cumulative-sum of ascending-shell advective transfer"
+            ),
             integral_scale_convention="3*pi*sum(E_k/|k|)/(4*sum(E_k))",
             tail_convention="modes with |k| >= tail_start_wavenumber",
+            source_problem_id=self.source_problem_id,
+            compilation_id=self.compilation_id,
             discretization_id=self.discretization_id,
             projector_id=self.projector_id,
+            sgs_filter_id=self.sgs_filter_id,
+            sgs_model_id=self.sgs_model_id,
+            sgs_prepared_model_id=self.sgs_prepared_model_id,
+            sgs_prepared_action_id=self.sgs_prepared_action_id,
+            sgs_regularization_id=self.sgs_regularization_id,
+            sgs_dynamic_provenance_id=self.sgs_dynamic_provenance_id,
+            sgs_averaging_id=self.sgs_averaging_id,
+            sgs_backscatter_id=self.sgs_backscatter_id,
             plan_id=self.plan_id,
         )
 

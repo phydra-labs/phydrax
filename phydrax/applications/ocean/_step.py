@@ -20,12 +20,13 @@ from ..._array_archive import (
 )
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...equations._ksgs import KSGSState, replace_ksgs_kinetic_energy
 from ...solver import AbstractFixedStepMethod, FixedStepResult
 from ._boussinesq import PreparedCartesianBoussinesqOcean
 
 
 class OceanBoussinesqContinuationState(StrictModule):
-    """Authoritative packed state plus accepted cumulative ocean budgets."""
+    """Authoritative packed state, KSGS history, and accepted ocean budgets."""
 
     coordinates: Array
     temperature_boundary_content: Array
@@ -34,16 +35,36 @@ class OceanBoussinesqContinuationState(StrictModule):
     surface_stress_work: Array
     buoyancy_exchange_defect: Array
     energy_balance_defect: Array
+    molecular_potential_energy_mixing: Array
+    sgs_potential_energy_mixing: Array
+    boundary_potential_energy: Array
+    ksgs_state: KSGSState | None
 
     @classmethod
     def initialize(
         cls,
         coordinates: ArrayLike,
         /,
+        *,
+        ksgs_state: KSGSState | None = None,
     ) -> "OceanBoussinesqContinuationState":
         value = jnp.asarray(coordinates)
+        if ksgs_state is not None and not isinstance(ksgs_state, KSGSState):
+            raise TypeError("ksgs_state must be KSGSState or None.")
         zero = jnp.zeros((), dtype=value.dtype)
-        return cls(value, zero, zero, zero, zero, zero, zero)
+        return cls(
+            value,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            ksgs_state,
+        )
 
 
 class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
@@ -70,9 +91,22 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
         state: OceanBoussinesqContinuationState,
         args: Any,
         /,
-    ) -> tuple[OceanBoussinesqContinuationState, Array, Array]:
-        stage = self.ocean.dynamics.stage(time, state.coordinates, args)
-        diagnostics = self.ocean.dynamics.diagnostics(time, state.coordinates, args)
+        *,
+        accept_ksgs_update: ArrayLike = False,
+    ) -> tuple[
+        OceanBoussinesqContinuationState,
+        KSGSState | None,
+        Array,
+        Array,
+    ]:
+        stage = self.ocean.dynamics.stage(
+            time,
+            state.coordinates,
+            args,
+            ksgs_state=state.ksgs_state,
+            accept_ksgs_update=accept_ksgs_update,
+        )
+        diagnostics = self.ocean.dynamics.diagnostics_from_stage(stage)
         velocity_rate = self.ocean.operators.velocity_space.flatten(stage.velocity_rate)
         scalar_rate = self.ocean.transport.layout.pack(stage.scalar_rates)
         coordinate_rate = jnp.concatenate((velocity_rate, scalar_rate))
@@ -99,6 +133,10 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
             stress_power,
             stage.buoyancy.exchange_defect,
             diagnostics.energy_balance_defect,
+            stage.buoyancy.molecular_potential_energy_mixing,
+            stage.buoyancy.sgs_potential_energy_mixing,
+            stage.buoyancy.boundary_potential_energy_rate,
+            None,
         )
         residual = jnp.maximum(
             diagnostics.divergence_norm,
@@ -108,7 +146,8 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
             ),
         )
         success = stage.success & diagnostics.success
-        return rate, success, residual
+        next_ksgs = None if stage.ksgs is None else stage.ksgs.result.state
+        return rate, next_ksgs, success, residual
 
     @staticmethod
     def _axpy(
@@ -117,7 +156,17 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
         rate: OceanBoussinesqContinuationState,
         /,
     ) -> OceanBoussinesqContinuationState:
-        return jax.tree.map(lambda value, slope: value + scale * slope, base, rate)
+        base_without_ksgs = eqx.tree_at(lambda value: value.ksgs_state, base, None)
+        advanced = jax.tree.map(
+            lambda value, slope: value + scale * slope,
+            base_without_ksgs,
+            rate,
+        )
+        return eqx.tree_at(
+            lambda value: value.ksgs_state,
+            advanced,
+            base.ksgs_state,
+        )
 
     @staticmethod
     def _combine(
@@ -127,10 +176,72 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
         second: OceanBoussinesqContinuationState,
         /,
     ) -> OceanBoussinesqContinuationState:
-        return jax.tree.map(
+        first_without_ksgs = eqx.tree_at(lambda value: value.ksgs_state, first, None)
+        second_without_ksgs = eqx.tree_at(lambda value: value.ksgs_state, second, None)
+        combined = jax.tree.map(
             lambda left, right: first_weight * left + second_weight * right,
-            first,
-            second,
+            first_without_ksgs,
+            second_without_ksgs,
+        )
+        return eqx.tree_at(
+            lambda value: value.ksgs_state,
+            combined,
+            first.ksgs_state,
+        )
+
+    def _kinetic_nonnegative(
+        self,
+        state: OceanBoussinesqContinuationState,
+        /,
+    ) -> Array:
+        field_name = self.ocean.plan.ksgs_field_name
+        if field_name is None:
+            return jnp.asarray(True)
+        _, scalars = self.ocean.dynamics.unpack_state(state.coordinates)
+        return jnp.all(scalars[field_name] >= 0.0)
+
+    def _safe_stage_state(
+        self,
+        proposed: OceanBoussinesqContinuationState,
+        current: OceanBoussinesqContinuationState,
+        valid: Array,
+        /,
+    ) -> OceanBoussinesqContinuationState:
+        if self.ocean.plan.ksgs_field_name is None:
+            return proposed
+        return jax.tree.map(
+            lambda candidate, accepted: jnp.where(valid, candidate, accepted),
+            proposed,
+            current,
+        )
+
+    def _initialize_ksgs(
+        self,
+        state: OceanBoussinesqContinuationState,
+        /,
+    ) -> OceanBoussinesqContinuationState:
+        prepared = self.ocean.prepared_ksgs
+        if prepared is None or state.ksgs_state is not None:
+            return state
+        _, scalars = self.ocean.dynamics.unpack_state(state.coordinates)
+        initialized = prepared.plan.initialize_state(scalars[prepared.scalar_field_name])
+        return eqx.tree_at(lambda value: value.ksgs_state, state, initialized)
+
+    def _candidate_ksgs_state(
+        self,
+        candidate: OceanBoussinesqContinuationState,
+        proposed: KSGSState | None,
+        /,
+    ) -> KSGSState | None:
+        prepared = self.ocean.prepared_ksgs
+        if prepared is None:
+            return None
+        if proposed is None:
+            raise ValueError("Ocean KSGS stage did not produce continuation state.")
+        _, scalars = self.ocean.dynamics.unpack_state(candidate.coordinates)
+        return replace_ksgs_kinetic_energy(
+            proposed,
+            scalars[prepared.scalar_field_name],
         )
 
     def step(
@@ -145,18 +256,43 @@ class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
         del step_index
         if not isinstance(state, OceanBoussinesqContinuationState):
             raise TypeError("Ocean SSPRK3 requires OceanBoussinesqContinuationState.")
+        state = self._initialize_ksgs(state)
         dt = jnp.asarray(step_size, dtype=state.coordinates.dtype)
-        first_rate, first_success, first_residual = self._rate(time, state, args)
+        first_rate, _, first_success, first_residual = self._rate(time, state, args)
         first = self._axpy(state, dt, first_rate)
-        second_rate, second_success, second_residual = self._rate(time + dt, first, args)
-        second_euler = self._axpy(first, dt, second_rate)
-        second = self._combine(0.75, state, 0.25, second_euler)
-        third_rate, third_success, third_residual = self._rate(
-            time + 0.5 * dt, second, args
+        first_positive = self._kinetic_nonnegative(first)
+        safe_first = self._safe_stage_state(first, state, first_positive)
+        second_rate, _, second_success, second_residual = self._rate(
+            time + dt,
+            safe_first,
+            args,
         )
-        third_euler = self._axpy(second, dt, third_rate)
+        second_euler = self._axpy(safe_first, dt, second_rate)
+        second = self._combine(0.75, state, 0.25, second_euler)
+        second_positive = self._kinetic_nonnegative(second)
+        safe_second = self._safe_stage_state(second, state, second_positive)
+        third_rate, third_ksgs, third_success, third_residual = self._rate(
+            time + 0.5 * dt,
+            safe_second,
+            args,
+            accept_ksgs_update=True,
+        )
+        third_euler = self._axpy(safe_second, dt, third_rate)
         candidate = self._combine(1.0 / 3.0, state, 2.0 / 3.0, third_euler)
-        successful = first_success & second_success & third_success
+        candidate = eqx.tree_at(
+            lambda value: value.ksgs_state,
+            candidate,
+            self._candidate_ksgs_state(candidate, third_ksgs),
+        )
+        candidate_positive = self._kinetic_nonnegative(candidate)
+        successful = (
+            first_success
+            & first_positive
+            & second_success
+            & second_positive
+            & third_success
+            & candidate_positive
+        )
         accepted = jax.tree.map(
             lambda proposed, current: jnp.where(successful, proposed, current),
             candidate,

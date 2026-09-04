@@ -28,6 +28,7 @@ from ._precision import FiniteVolumePrecisionPolicy
 
 MACScalarAdvection: TypeAlias = Literal["centered", "upwind"]
 MACScalarBoundaryKind: TypeAlias = Literal["periodic", "dirichlet", "neumann", "flux"]
+MACScalarSGSNumberKind: TypeAlias = Literal["prandtl", "schmidt", "none"]
 
 
 def _canonical_names(names: Sequence[str], /) -> tuple[str, ...]:
@@ -504,6 +505,184 @@ class MACScalarReaction(StrictModule, NonTrainableState):
         )
 
 
+class MACScalarSGSField(StrictModule, NonTrainableState):
+    """Explicit named scalar response to one runtime SGS eddy viscosity."""
+
+    name: str = eqx.field(static=True)
+    number_kind: MACScalarSGSNumberKind = eqx.field(static=True)
+    turbulent_number: float | None = eqx.field(static=True)
+    declaration_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        name: str,
+        /,
+        *,
+        turbulent_prandtl_number: float | None = None,
+        turbulent_schmidt_number: float | None = None,
+        no_sgs: bool = False,
+    ):
+        field_name = str(name)
+        if not field_name:
+            raise ValueError("MAC scalar SGS declarations require a field name.")
+        supplied = (
+            turbulent_prandtl_number is not None,
+            turbulent_schmidt_number is not None,
+            bool(no_sgs),
+        )
+        if sum(supplied) != 1:
+            raise ValueError(
+                "Declare exactly one turbulent Prandtl number, turbulent Schmidt "
+                "number, or no_sgs=True for every MAC LES scalar."
+            )
+        if turbulent_prandtl_number is not None:
+            kind: MACScalarSGSNumberKind = "prandtl"
+            number = float(turbulent_prandtl_number)
+        elif turbulent_schmidt_number is not None:
+            kind = "schmidt"
+            number = float(turbulent_schmidt_number)
+        else:
+            kind = "none"
+            number = None
+        if number is not None and (not np.isfinite(number) or number <= 0.0):
+            raise ValueError("Turbulent Prandtl and Schmidt numbers must be positive.")
+        self.name = field_name
+        self.number_kind = kind
+        self.turbulent_number = number
+        self.declaration_id = canonical_fingerprint(
+            {
+                "kind": "mac-scalar-sgs-field",
+                "field": field_name,
+                "number_kind": kind,
+                "turbulent_number": number,
+            }
+        )
+
+
+class MACScalarSGSPlan(StrictModule, NonTrainableState):
+    """Complete named turbulent-number contract for runtime scalar SGS fluxes."""
+
+    fields: tuple[MACScalarSGSField, ...]
+    field_names: tuple[str, ...] = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(self, fields: Sequence[MACScalarSGSField], /):
+        values = tuple(fields)
+        if not values or any(
+            not isinstance(value, MACScalarSGSField) for value in values
+        ):
+            raise TypeError("fields must contain MACScalarSGSField declarations.")
+        names = _canonical_names(tuple(value.name for value in values))
+        by_name = {value.name: value for value in values}
+        ordered = tuple(by_name[name] for name in names)
+        self.fields = ordered
+        self.field_names = names
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "mac-scalar-sgs-plan",
+                "fields": [value.declaration_id for value in ordered],
+            }
+        )
+
+    def prepare(
+        self,
+        transport: PreparedMACScalarTransport,
+        /,
+        *,
+        field_names: Sequence[str] | None = None,
+    ) -> PreparedMACScalarSGS:
+        if not isinstance(transport, PreparedMACScalarTransport):
+            raise TypeError("transport must be PreparedMACScalarTransport.")
+        names = (
+            transport.layout.field_names
+            if field_names is None
+            else _canonical_names(field_names)
+        )
+        return PreparedMACScalarSGS(self, transport, names)
+
+
+class PreparedMACScalarSGS(StrictModule, NonTrainableState):
+    """Prepared named conversion from eddy viscosity to scalar diffusivity."""
+
+    plan: MACScalarSGSPlan
+    transport: PreparedMACScalarTransport
+    fields: tuple[MACScalarSGSField, ...]
+    field_names: tuple[str, ...] = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: MACScalarSGSPlan,
+        transport: PreparedMACScalarTransport,
+        field_names: Sequence[str],
+        /,
+    ):
+        if not isinstance(plan, MACScalarSGSPlan):
+            raise TypeError("plan must be MACScalarSGSPlan.")
+        if not isinstance(transport, PreparedMACScalarTransport):
+            raise TypeError("transport must be PreparedMACScalarTransport.")
+        names = _canonical_names(field_names)
+        if not set(names).issubset(transport.layout.field_names):
+            raise ValueError("MAC scalar SGS fields must belong to the transport.")
+        if plan.field_names != names:
+            raise ValueError(
+                "MAC scalar SGS declarations must exactly match the required named "
+                f"fields {names}; got {plan.field_names}."
+            )
+        by_name = {value.name: value for value in plan.fields}
+        fields = tuple(by_name[name] for name in names)
+        for name in names:
+            for lower, upper in transport.boundaries.field_conditions(name):
+                for condition in (lower, upper):
+                    no_flux = (
+                        condition.kind == "neumann"
+                        and condition.function is None
+                        and bool(jnp.all(condition.value == 0.0))
+                    )
+                    if condition.kind not in ("periodic", "flux") and not no_flux:
+                        raise ValueError(
+                            "MAC scalar SGS supports only periodic, impermeable "
+                            "no-flux, and prescribed total-flux boundaries."
+                        )
+        self.plan = plan
+        self.transport = transport
+        self.fields = fields
+        self.field_names = names
+        self.prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-mac-scalar-sgs",
+                "plan": plan.plan_id,
+                "transport": transport.prepared_id,
+                "fields": list(names),
+                "boundary_semantics": "periodic-no-flux-or-prescribed-total-flux",
+            }
+        )
+
+    def diffusivities(self, kinematic_eddy_viscosity: ArrayLike, /) -> dict[str, Array]:
+        viscosity = jnp.asarray(
+            kinematic_eddy_viscosity,
+            dtype=self.transport.layout.dtype,
+        )
+        if viscosity.shape not in ((), self.transport.layout.cell_shape):
+            raise ValueError(
+                "Runtime MAC eddy viscosity must be scalar or match the cell shape."
+            )
+        viscosity = eqx.error_if(
+            viscosity,
+            jnp.any(~jnp.isfinite(viscosity)) | jnp.any(viscosity < 0.0),
+            "Runtime MAC eddy viscosity must be finite and nonnegative.",
+        )
+        return {
+            field.name: (
+                jnp.zeros_like(viscosity)
+                if field.turbulent_number is None
+                else viscosity
+                / jnp.asarray(field.turbulent_number, dtype=viscosity.dtype)
+            )
+            for field in self.fields
+        }
+
+
 class MACScalarProblem(StrictModule, NonTrainableState):
     """Named explicit scalar system transported on a physical MAC velocity."""
 
@@ -563,16 +742,28 @@ class MACScalarProblem(StrictModule, NonTrainableState):
 
 
 class MACScalarFluxResult(StrictModule):
-    """One named scalar stage with exact face states, fluxes, and rate pieces."""
+    """One named scalar stage with separated molecular, SGS, and total fluxes."""
 
     face_values: FaceVelocity
     advective_fluxes: FaceVelocity
+    molecular_diffusive_fluxes: FaceVelocity
+    sgs_diffusive_fluxes: FaceVelocity
+    boundary_diffusive_fluxes: FaceVelocity
     diffusive_fluxes: FaceVelocity
+    molecular_diffusivity: Array
+    sgs_diffusivity: Array
+    total_diffusivity: Array
     advective_divergence: Array
+    molecular_diffusive_divergence: Array
+    sgs_diffusive_divergence: Array
+    boundary_diffusive_divergence: Array
     diffusive_divergence: Array
     source: Array
     reaction: Array
     rate: Array
+    molecular_finite: Array
+    sgs_finite: Array
+    boundary_finite: Array
     finite: Array
     success: Array
     field_name: str = eqx.field(static=True)
@@ -590,12 +781,18 @@ class MACScalarFieldDiagnostics(StrictModule):
     variance: Array
     content_rate: Array
     advective_content_rate: Array
+    molecular_diffusive_content_rate: Array
+    sgs_diffusive_content_rate: Array
+    boundary_diffusive_content_rate: Array
     diffusive_content_rate: Array
     source_content_rate: Array
     reaction_content_rate: Array
     content_balance_defect: Array
     variance_rate: Array
     advective_variance_rate: Array
+    molecular_diffusive_variance_rate: Array
+    sgs_diffusive_variance_rate: Array
+    boundary_diffusive_variance_rate: Array
     diffusive_variance_rate: Array
     source_variance_rate: Array
     reaction_variance_rate: Array
@@ -623,6 +820,8 @@ class MACScalarStepRestriction(StrictModule):
     """Named explicit scalar advective, diffusive, and reaction restrictions."""
 
     advective: dict[str, Array]
+    molecular_diffusive: dict[str, Array]
+    sgs_diffusive: dict[str, Array]
     diffusive: dict[str, Array]
     reaction: dict[str, Array]
     selected_by_field: dict[str, Array]
@@ -815,6 +1014,50 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 )
         return tuple(output)
 
+    def _runtime_sgs_diffusivities(
+        self,
+        values: Mapping[str, ArrayLike] | None,
+        /,
+    ) -> dict[str, Array]:
+        if values is None:
+            return {
+                name: jnp.zeros((), dtype=self.layout.dtype)
+                for name in self.layout.field_names
+            }
+        supplied = dict(values)
+        if set(supplied) != set(self.layout.field_names):
+            raise ValueError(
+                "Runtime MAC scalar SGS diffusivities must exactly match "
+                f"{self.layout.field_names}."
+            )
+        output: dict[str, Array] = {}
+        for name in self.layout.field_names:
+            value = jnp.asarray(supplied[name], dtype=self.layout.dtype)
+            if value.shape not in ((), self.layout.cell_shape):
+                raise ValueError(
+                    f"Runtime scalar SGS diffusivity {name!r} must be scalar or "
+                    f"have cell shape {self.layout.cell_shape}."
+                )
+            output[name] = eqx.error_if(
+                value,
+                jnp.any(~jnp.isfinite(value)) | jnp.any(value < 0.0),
+                f"Runtime scalar SGS diffusivity {name!r} must be finite and nonnegative.",
+            )
+            for lower, upper in self.boundaries.field_conditions(name):
+                for condition in (lower, upper):
+                    if condition.kind not in ("periodic", "neumann", "flux"):
+                        raise ValueError(
+                            "Runtime MAC scalar SGS diffusion supports only periodic, "
+                            "impermeable no-flux, and prescribed total-flux boundaries."
+                        )
+                    if condition.kind == "neumann":
+                        output[name] = eqx.error_if(
+                            output[name],
+                            jnp.any(condition.value != 0.0),
+                            "Runtime MAC scalar SGS diffusion requires zero Neumann flux.",
+                        )
+        return output
+
     def evaluate(
         self,
         time: ArrayLike,
@@ -822,12 +1065,16 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         velocity: FaceVelocity,
         args: Any = None,
         /,
+        *,
+        sgs_diffusivities: Mapping[str, ArrayLike] | None = None,
     ) -> dict[str, MACScalarFluxResult]:
         time_ = _finite_array(jnp.asarray(time), "MAC scalar stage time")
         if time_.shape != ():
             raise ValueError("MAC scalar stage time must be scalar.")
         fields_ = self.layout.validate_fields(fields)
         velocity_ = self._validate_velocity(velocity)
+        sgs_active = sgs_diffusivities is not None
+        sgs_coefficients = self._runtime_sgs_diffusivities(sgs_diffusivities)
         reactions = self._reaction_rates(time_, fields_, args)
         results: dict[str, MACScalarFluxResult] = {}
         grid_id = self.layout.operators.discretization.grid.prepared_id
@@ -850,17 +1097,40 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 for face_velocity, face_value in zip(velocity_, face_values, strict=True)
             )
             advective_divergence = advection.divergence(advective_fluxes)
-            diffusive_fluxes = diffusion.fluxes(
+            molecular_diffusivity = diffusion._coefficient(diffusion.coefficient)
+            molecular_fluxes = diffusion.fluxes(
                 value,
-                diffusion.coefficient,
+                molecular_diffusivity,
                 boundary_values,
+            )
+            if sgs_active:
+                sgs_diffusivity = diffusion._coefficient(sgs_coefficients[name])
+                sgs_fluxes = diffusion.fluxes(
+                    value,
+                    sgs_diffusivity,
+                    boundary_values,
+                )
+            else:
+                sgs_diffusivity = jnp.zeros_like(molecular_diffusivity)
+                sgs_fluxes = tuple(jnp.zeros_like(flux) for flux in molecular_fluxes)
+            total_diffusivity = molecular_diffusivity + sgs_diffusivity
+            internal_fluxes = tuple(
+                molecular + sgs
+                for molecular, sgs in zip(molecular_fluxes, sgs_fluxes, strict=True)
             )
             diffusive_fluxes = self._prescribed_diffusive_fluxes(
                 time_,
                 name,
-                diffusive_fluxes,
+                internal_fluxes,
                 args,
             )
+            boundary_fluxes = tuple(
+                total - internal
+                for total, internal in zip(diffusive_fluxes, internal_fluxes, strict=True)
+            )
+            molecular_divergence = diffusion.divergence(molecular_fluxes)
+            sgs_divergence = diffusion.divergence(sgs_fluxes)
+            boundary_divergence = diffusion.divergence(boundary_fluxes)
             diffusive_divergence = diffusion.divergence(diffusive_fluxes)
             if declaration.source is None:
                 source = jnp.zeros_like(value)
@@ -881,24 +1151,58 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 -advective_divergence + diffusive_divergence + source + reaction,
                 f"MAC scalar rate {name!r}",
             )
+            molecular_finite = (
+                jnp.all(jnp.isfinite(molecular_diffusivity))
+                & jnp.all(
+                    jnp.stack(
+                        tuple(jnp.all(jnp.isfinite(value)) for value in molecular_fluxes)
+                    )
+                )
+                & jnp.all(jnp.isfinite(molecular_divergence))
+            )
+            sgs_finite = (
+                jnp.all(jnp.isfinite(sgs_diffusivity))
+                & jnp.all(
+                    jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in sgs_fluxes))
+                )
+                & jnp.all(jnp.isfinite(sgs_divergence))
+            )
+            boundary_finite = jnp.all(
+                jnp.stack(
+                    tuple(jnp.all(jnp.isfinite(value)) for value in boundary_fluxes)
+                )
+            ) & jnp.all(jnp.isfinite(boundary_divergence))
             finite = (
-                jnp.all(jnp.isfinite(rate))
+                molecular_finite
+                & sgs_finite
+                & boundary_finite
+                & jnp.all(jnp.isfinite(total_diffusivity))
+                & jnp.all(jnp.isfinite(rate))
                 & jnp.all(jnp.isfinite(advective_divergence))
                 & jnp.all(jnp.isfinite(diffusive_divergence))
                 & jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(v)) for v in face_values)))
-                & jnp.all(
-                    jnp.stack(tuple(jnp.all(jnp.isfinite(v)) for v in diffusive_fluxes))
-                )
             )
             results[name] = MACScalarFluxResult(
                 face_values=face_values,
                 advective_fluxes=advective_fluxes,
+                molecular_diffusive_fluxes=molecular_fluxes,
+                sgs_diffusive_fluxes=sgs_fluxes,
+                boundary_diffusive_fluxes=boundary_fluxes,
                 diffusive_fluxes=diffusive_fluxes,
+                molecular_diffusivity=molecular_diffusivity,
+                sgs_diffusivity=sgs_diffusivity,
+                total_diffusivity=total_diffusivity,
                 advective_divergence=advective_divergence,
+                molecular_diffusive_divergence=molecular_divergence,
+                sgs_diffusive_divergence=sgs_divergence,
+                boundary_diffusive_divergence=boundary_divergence,
                 diffusive_divergence=diffusive_divergence,
                 source=source,
                 reaction=reaction,
                 rate=rate,
+                molecular_finite=molecular_finite,
+                sgs_finite=sgs_finite,
+                boundary_finite=boundary_finite,
                 finite=finite,
                 success=finite,
                 field_name=name,
@@ -922,8 +1226,16 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         velocity: FaceVelocity,
         args: Any = None,
         /,
+        *,
+        sgs_diffusivities: Mapping[str, ArrayLike] | None = None,
     ) -> dict[str, Array]:
-        results = self.evaluate(time, fields, velocity, args)
+        results = self.evaluate(
+            time,
+            fields,
+            velocity,
+            args,
+            sgs_diffusivities=sgs_diffusivities,
+        )
         return {name: results[name].rate for name in self.layout.field_names}
 
     def diagnostics_from_fluxes(
@@ -957,7 +1269,9 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
             variance = jnp.sum(volumes * centered**2) / total_volume
             pieces = (
                 -result.advective_divergence,
-                result.diffusive_divergence,
+                result.molecular_diffusive_divergence,
+                result.sgs_diffusive_divergence,
+                result.boundary_diffusive_divergence,
                 result.source,
                 result.reaction,
             )
@@ -966,6 +1280,8 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 2.0 * jnp.sum(volumes * centered * piece) / total_volume
                 for piece in pieces
             )
+            diffusive_content_rate = sum(content_rates[1:4])
+            diffusive_variance_rate = sum(variance_rates[1:4])
             content_rate = jnp.sum(volumes * result.rate)
             variance_rate = 2.0 * jnp.sum(volumes * centered * result.rate) / total_volume
             content_defect = content_rate - sum(content_rates)
@@ -978,7 +1294,9 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                             mean,
                             variance,
                             content_rate,
+                            diffusive_content_rate,
                             variance_rate,
+                            diffusive_variance_rate,
                             content_defect,
                             variance_defect,
                         )
@@ -993,15 +1311,21 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 variance=variance,
                 content_rate=content_rate,
                 advective_content_rate=content_rates[0],
-                diffusive_content_rate=content_rates[1],
-                source_content_rate=content_rates[2],
-                reaction_content_rate=content_rates[3],
+                molecular_diffusive_content_rate=content_rates[1],
+                sgs_diffusive_content_rate=content_rates[2],
+                boundary_diffusive_content_rate=content_rates[3],
+                diffusive_content_rate=diffusive_content_rate,
+                source_content_rate=content_rates[4],
+                reaction_content_rate=content_rates[5],
                 content_balance_defect=content_defect,
                 variance_rate=variance_rate,
                 advective_variance_rate=variance_rates[0],
-                diffusive_variance_rate=variance_rates[1],
-                source_variance_rate=variance_rates[2],
-                reaction_variance_rate=variance_rates[3],
+                molecular_diffusive_variance_rate=variance_rates[1],
+                sgs_diffusive_variance_rate=variance_rates[2],
+                boundary_diffusive_variance_rate=variance_rates[3],
+                diffusive_variance_rate=diffusive_variance_rate,
+                source_variance_rate=variance_rates[4],
+                reaction_variance_rate=variance_rates[5],
                 variance_balance_defect=variance_defect,
                 finite=finite,
                 success=finite,
@@ -1029,16 +1353,28 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         velocity: FaceVelocity,
         args: Any = None,
         /,
+        *,
+        sgs_diffusivities: Mapping[str, ArrayLike] | None = None,
     ) -> MACScalarDiagnostics:
         fields_ = self.layout.validate_fields(fields)
-        results = self.evaluate(time, fields_, velocity, args)
+        results = self.evaluate(
+            time,
+            fields_,
+            velocity,
+            args,
+            sgs_diffusivities=sgs_diffusivities,
+        )
         return self.diagnostics_from_fluxes(fields_, results)
 
     def step_restriction(
         self,
         velocity: FaceVelocity,
         /,
+        *,
+        sgs_diffusivities: Mapping[str, ArrayLike] | None = None,
     ) -> MACScalarStepRestriction:
+        sgs_active = sgs_diffusivities is not None
+        sgs_coefficients = self._runtime_sgs_diffusivities(sgs_diffusivities)
         velocity_ = self._validate_velocity(velocity)
         discretization = self.layout.operators.discretization
         grid = discretization.grid
@@ -1081,6 +1417,8 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 )
             )
         advective: dict[str, Array] = {}
+        molecular_diffusive: dict[str, Array] = {}
+        sgs_diffusive: dict[str, Array] = {}
         diffusive: dict[str, Array] = {}
         reaction: dict[str, Array] = {}
         selected_by_field: dict[str, Array] = {}
@@ -1090,8 +1428,37 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
             strict=True,
         ):
             name = declaration.name
-            diffusive_rate = jnp.max(jnp.maximum(0.0, -diffusion_operator.diagonal()))
+            molecular_coefficient = diffusion_operator._coefficient(
+                diffusion_operator.coefficient
+            )
+            molecular_diagonal = diffusion_operator.diagonal_with_coefficient(
+                molecular_coefficient
+            )
+            if sgs_active:
+                sgs_coefficient = diffusion_operator._coefficient(sgs_coefficients[name])
+                sgs_diagonal = diffusion_operator.diagonal_with_coefficient(
+                    sgs_coefficient
+                )
+            else:
+                sgs_diagonal = jnp.zeros_like(molecular_diagonal)
+            molecular_rate = jnp.max(jnp.maximum(0.0, -molecular_diagonal))
+            sgs_rate = jnp.max(jnp.maximum(0.0, -sgs_diagonal))
+            diffusive_rate = jnp.max(
+                jnp.maximum(0.0, -(molecular_diagonal + sgs_diagonal))
+            )
+            safe_molecular = jnp.where(molecular_rate > 0.0, molecular_rate, 1.0)
+            safe_sgs = jnp.where(sgs_rate > 0.0, sgs_rate, 1.0)
             safe_diffusive = jnp.where(diffusive_rate > 0.0, diffusive_rate, 1.0)
+            molecular_value = jnp.where(
+                molecular_rate > 0.0,
+                1.0 / safe_molecular,
+                jnp.inf,
+            )
+            sgs_value = jnp.where(
+                sgs_rate > 0.0,
+                1.0 / safe_sgs,
+                jnp.inf,
+            )
             diffusive_value = jnp.where(
                 diffusive_rate > 0.0,
                 1.0 / safe_diffusive,
@@ -1105,6 +1472,8 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 jnp.inf,
             )
             advective[name] = advective_value
+            molecular_diffusive[name] = molecular_value
+            sgs_diffusive[name] = sgs_value
             diffusive[name] = diffusive_value
             reaction[name] = reaction_value
             selected_by_field[name] = jnp.minimum(
@@ -1117,6 +1486,8 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
         finite = ~jnp.isnan(selected)
         return MACScalarStepRestriction(
             advective=advective,
+            molecular_diffusive=molecular_diffusive,
+            sgs_diffusive=sgs_diffusive,
             diffusive=diffusive,
             reaction=reaction,
             selected_by_field=selected_by_field,
@@ -1133,6 +1504,9 @@ __all__ = [
     "MACScalarAdvection",
     "MACScalarBoundaryCondition",
     "MACScalarBoundaryKind",
+    "MACScalarSGSField",
+    "MACScalarSGSNumberKind",
+    "MACScalarSGSPlan",
     "MACScalarBoundarySet",
     "MACScalarDiagnostics",
     "MACScalarFieldDiagnostics",
@@ -1142,5 +1516,6 @@ __all__ = [
     "MACScalarReaction",
     "MACScalarStepRestriction",
     "MACScalarTransport",
+    "PreparedMACScalarSGS",
     "PreparedMACScalarTransport",
 ]

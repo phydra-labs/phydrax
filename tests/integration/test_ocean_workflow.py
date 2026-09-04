@@ -80,7 +80,7 @@ def test_stratification_restriction_detects_internal_wave_scale():
     )
     state = _state(ocean, temperature=temperature)
 
-    restriction = ocean.dynamics.step_restriction(state)
+    restriction = ocean.dynamics.step_restriction(0.0, state)
 
     assert jnp.isfinite(restriction.stratification)
     assert restriction.stratification > 0.0
@@ -122,6 +122,14 @@ def test_surface_heat_flux_updates_only_accepted_temperature_inventory():
         result.accepted_state.temperature_boundary_content,
         content_change,
         rtol=2e-10,
+        atol=2e-13,
+    )
+    assert jnp.isfinite(result.accepted_state.boundary_potential_energy)
+    assert result.accepted_state.boundary_potential_energy != 0.0
+    assert jnp.isfinite(result.accepted_state.molecular_potential_energy_mixing)
+    np.testing.assert_allclose(
+        result.accepted_state.sgs_potential_energy_mixing,
+        0.0,
         atol=2e-13,
     )
 

@@ -58,6 +58,7 @@ from .._finite_element_variational import (
     FiniteElementForm,
     InteriorFacetAction,
 )
+from .._gas_dynamics import HomogeneousMixtureCompressibleNavierStokesSystem
 from .._hyperbolic_systems import AbstractEntropyDiffusionSystem
 from ._entropy_stability import (
     boundary_entropy_evidence,
@@ -1779,7 +1780,16 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 gradient[routes],
                 backend="jax",
             )
-            flux = self.system.viscous_flux(values, gradients, context.user_args)
+            favre_rate = None
+            if isinstance(
+                self.system,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ):
+                flux, favre_rate = self.system.viscous_flux_and_favre_rate(
+                    values, gradients, context.user_args
+                )
+            else:
+                flux = self.system.viscous_flux(values, gradients, context.user_args)
             local = ein.contract(
                 "cq,cqid,cqvd->civ",
                 geometry.physical_weights,
@@ -1787,6 +1797,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 flux,
                 backend="jax",
             )
+            if favre_rate is not None:
+                local = local - ein.contract(
+                    "cq,qi,cqv->civ",
+                    geometry.physical_weights,
+                    geometry.basis_values,
+                    favre_rate.conserved_source,
+                    backend="jax",
+                )
             residual = residual.at[routes].set(local)
 
         def viscous_common(

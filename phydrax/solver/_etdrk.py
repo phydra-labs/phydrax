@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -25,6 +25,10 @@ from ._semilinear_drift import SemilinearDrift
 from ._temporal_method import TemporalMethodCapabilities
 
 
+if TYPE_CHECKING:
+    from ..equations._periodic_les import PeriodicLESStepRestriction
+
+
 def _etdrk_update(
     order: Literal[2, 4],
     drift: SemilinearDrift,
@@ -34,6 +38,7 @@ def _etdrk_update(
     step_size: Array,
     args: Any,
     stage_forcing: tuple[Array, ...] | None = None,
+    first_nonlinear: Array | None = None,
     /,
 ) -> Array:
     expected_stages = 2 if order == 2 else 4
@@ -43,7 +48,14 @@ def _etdrk_update(
         )
 
     def nonlinear(stage: int, stage_time: Array, stage_state: Array) -> Array:
-        value = drift.nonlinear(stage_time, stage_state, args)
+        if stage == 0 and first_nonlinear is not None:
+            value = jnp.asarray(first_nonlinear, dtype=stage_state.dtype)
+            if value.shape != state.shape:
+                raise ValueError(
+                    "Precomputed ETDRK first nonlinear value has an incompatible shape."
+                )
+        else:
+            value = drift.nonlinear(stage_time, stage_state, args)
         if stage_forcing is None:
             return value
         forcing = jnp.asarray(stage_forcing[stage], dtype=stage_state.dtype)
@@ -218,13 +230,14 @@ class PreparedETDRKMethod(AbstractFixedStepMethod):
         valid = finite & (defect <= self.coordinates.reality_tolerance)
         return projected, valid, defect
 
-    def step(
+    def _step_with_first_nonlinear(
         self,
         step_index: Array,
         time: Array,
         state: Array,
         step_size: Array,
         args: Any,
+        first_nonlinear: Array | None,
         /,
     ) -> FixedStepResult:
         del step_index
@@ -245,6 +258,8 @@ class PreparedETDRKMethod(AbstractFixedStepMethod):
             value,
             step,
             args,
+            None,
+            first_nonlinear,
         )
         projected, candidate_valid, candidate_defect = self._boundary_evidence(candidate)
         successful = incoming_valid & candidate_valid
@@ -273,6 +288,239 @@ class PreparedETDRKMethod(AbstractFixedStepMethod):
                 jnp.zeros((), dtype=correction_norm.dtype),
             ),
         )
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: Array,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        return self._step_with_first_nonlinear(
+            step_index,
+            time,
+            state,
+            step_size,
+            args,
+            None,
+        )
+
+
+class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
+    """ETDRK plan with an explicit current-state periodic LES stability guard."""
+
+    base_method: ETDRKMethod
+    capabilities: TemporalMethodCapabilities
+    safety_factor: float = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        base_method: ETDRKMethod,
+        /,
+        *,
+        safety_factor: float,
+    ):
+        if not isinstance(base_method, ETDRKMethod):
+            raise TypeError("base_method must be an ETDRKMethod.")
+        safety = float(safety_factor)
+        if not np.isfinite(safety) or not 0.0 < safety <= 1.0:
+            raise ValueError("safety_factor must be finite and lie in (0, 1].")
+        self.base_method = base_method
+        self.capabilities = base_method.capabilities
+        self.safety_factor = safety
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "les-stability-guarded-etdrk-method",
+                "base_method": base_method.method_id,
+                "safety_factor": safety,
+                "restriction": "periodic-algebraic-les-current-state",
+            }
+        )
+
+    def prepare(
+        self,
+        dynamics: Any,
+        /,
+        *,
+        coordinates: HermitianSpectralCoordinates,
+    ) -> PreparedLESStabilityGuardedETDRKMethod:
+        from ..equations._incompressible import (
+            CompiledIncompressibleSpectralDynamics,
+        )
+
+        if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
+            raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
+        if dynamics.algebraic_les is None:
+            raise ValueError(
+                "LES-stability-guarded ETDRK requires compiled algebraic LES."
+            )
+        if not isinstance(coordinates, HermitianSpectralCoordinates):
+            raise TypeError(
+                "coordinates must be HermitianSpectralCoordinates for LES ETDRK."
+            )
+        if (
+            coordinates.discretization.prepared_id != dynamics.discretization.prepared_id
+            or coordinates.state_shape != dynamics.state_shape
+        ):
+            raise ValueError(
+                "LES ETDRK coordinates must bind the compiled spectral "
+                "discretization and velocity state shape."
+            )
+        base = self.base_method.prepare(
+            dynamics.semilinear_drift,
+            coordinates=coordinates,
+        )
+        return PreparedLESStabilityGuardedETDRKMethod(self, base, dynamics)
+
+    def step(
+        self,
+        dynamics: Any,
+        time: ArrayLike,
+        state: ArrayLike,
+        dt: ArrayLike,
+        args: Any = None,
+        /,
+        *,
+        coordinates: HermitianSpectralCoordinates,
+    ) -> Array:
+        prepared = self.prepare(dynamics, coordinates=coordinates)
+        result = prepared.step(
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(time),
+            jnp.asarray(state),
+            jnp.asarray(dt),
+            args,
+        )
+        return result.accepted_state
+
+
+class PreparedLESStabilityGuardedETDRKMethod(AbstractFixedStepMethod):
+    """Prepared ETDRK transition guarded by one bound periodic LES realization."""
+
+    plan: LESStabilityGuardedETDRKMethod
+    base_method: PreparedETDRKMethod
+    dynamics: Any
+    capabilities: TemporalMethodCapabilities
+    order: Literal[2, 4] = eqx.field(static=True)
+    safety_factor: float = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: LESStabilityGuardedETDRKMethod,
+        base_method: PreparedETDRKMethod,
+        dynamics: Any,
+        /,
+    ):
+        from ..equations._incompressible import (
+            CompiledIncompressibleSpectralDynamics,
+        )
+
+        if not isinstance(plan, LESStabilityGuardedETDRKMethod):
+            raise TypeError("plan must be a LESStabilityGuardedETDRKMethod.")
+        if not isinstance(base_method, PreparedETDRKMethod):
+            raise TypeError("base_method must be a PreparedETDRKMethod.")
+        if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
+            raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
+        if dynamics.algebraic_les is None:
+            raise ValueError("Prepared guarded ETDRK requires algebraic LES.")
+        if base_method.drift.drift_id != dynamics.semilinear_drift.drift_id:
+            raise ValueError("Prepared ETDRK drift and compiled LES dynamics disagree.")
+        self.plan = plan
+        self.base_method = base_method
+        self.dynamics = dynamics
+        self.capabilities = base_method.capabilities
+        self.order = base_method.order
+        self.safety_factor = plan.safety_factor
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "prepared-les-stability-guarded-etdrk-method",
+                "plan": plan.method_id,
+                "base_method": base_method.method_id,
+                "compiled_dynamics": dynamics.compilation_id,
+                "prepared_les": dynamics.algebraic_les.prepared_id,
+                "safety_factor": plan.safety_factor,
+                "first_stage": "precomputed-nonlinear-reused",
+            }
+        )
+
+    def step_restriction(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> PeriodicLESStepRestriction:
+        value = self.base_method._validate_state(state)
+        stage = self.dynamics.stage(jnp.asarray(time), value, args)
+        return self.dynamics.step_restriction(
+            value,
+            algebraic_les_stage=stage.algebraic_les,
+        )
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: Array,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        value = self.base_method._validate_state(state)
+        step = jnp.asarray(step_size, dtype=value.real.dtype).reshape(())
+        step = eqx.error_if(
+            step,
+            ~(jnp.isfinite(step) & (step > 0.0)),
+            "ETDRK step size must be finite and positive.",
+        )
+        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        stage = self.dynamics.stage(start, value, args)
+        restriction = self.dynamics.step_restriction(
+            value,
+            algebraic_les_stage=stage.algebraic_les,
+        )
+        first_nonlinear = stage.rates.nonlinear_rate
+        selected = restriction.etdrk_selected.astype(step.dtype)
+        allowed = jnp.asarray(self.safety_factor, dtype=step.dtype) * selected
+        first_nonlinear_finite = jnp.all(jnp.isfinite(first_nonlinear))
+        transition_finite = restriction.finite & first_nonlinear_finite
+        stable = transition_finite & (allowed > 0.0) & (step <= allowed)
+
+        def advance(_: None) -> FixedStepResult:
+            return self.base_method._step_with_first_nonlinear(
+                step_index,
+                start,
+                value,
+                step,
+                args,
+                first_nonlinear,
+            )
+
+        def reject(_: None) -> FixedStepResult:
+            finite_limit = jnp.isfinite(allowed) & (allowed > 0.0)
+            safe_limit = jnp.where(finite_limit, allowed, jnp.ones_like(allowed))
+            violation = jnp.maximum(step / safe_limit - 1.0, 0.0)
+            residual = jnp.where(
+                transition_finite,
+                jnp.where(finite_limit, violation, jnp.zeros_like(violation)),
+                jnp.asarray(jnp.inf, dtype=step.dtype),
+            )
+            return FixedStepResult(
+                candidate_state=value,
+                accepted_state=value,
+                successful=jnp.asarray(False),
+                residual=residual,
+                iterations=jnp.asarray(0, dtype=jnp.int32),
+                work=jnp.asarray(1, dtype=jnp.int32),
+                transform_applied=jnp.asarray(False),
+                transform_correction_norm=jnp.zeros((), dtype=step.dtype),
+            )
+
+        return jax.lax.cond(stable, advance, reject, operand=None)
 
 
 def solve_etdrk(
@@ -347,4 +595,10 @@ def solve_etdrk(
     )
 
 
-__all__ = ["ETDRKMethod", "PreparedETDRKMethod", "solve_etdrk"]
+__all__ = [
+    "ETDRKMethod",
+    "LESStabilityGuardedETDRKMethod",
+    "PreparedETDRKMethod",
+    "PreparedLESStabilityGuardedETDRKMethod",
+    "solve_etdrk",
+]

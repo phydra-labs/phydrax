@@ -133,6 +133,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
     bulk_influence: Array
     bulk_influence_failed: Array
     bulk_schur: PreparedLinearSolve
+    tangential_boundary: str = eqx.field(static=True)
     zero_mode_index: int = eqx.field(static=True)
     mode_count: int = eqx.field(static=True)
     horizontal_batch_size: int = eqx.field(static=True)
@@ -154,6 +155,8 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         lower_wall_velocity: Array,
         upper_wall_velocity: Array,
         mean_values: Array,
+        lower_tangential_boundary: Array,
+        upper_tangential_boundary: Array,
         /,
         *,
         mean_kind: str,
@@ -165,6 +168,13 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
                 "Ultraspherical channel right-hand side has an incompatible shape."
             )
         dtype = modal_rhs.dtype
+        if lower_tangential_boundary.shape != (
+            batch_count,
+            2,
+        ) or upper_tangential_boundary.shape != (batch_count, 2):
+            raise ValueError(
+                "Ultraspherical tangential boundary data has an incompatible shape."
+            )
         real_dtype = modal_rhs.real.dtype
         kx = self.streamwise_wavenumbers.astype(real_dtype)
         kz = self.spanwise_wavenumbers.astype(real_dtype)
@@ -195,18 +205,34 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         helmholtz_rhs = helmholtz_rhs.at[:, : count - 2].set(
             converted_helmholtz[:, : count - 2]
         )
-        lower_tangential = self.horizontal_scale.astype(dtype) * jnp.asarray(
-            (lower_wall_velocity[0], lower_wall_velocity[2]), dtype=dtype
-        )
-        upper_tangential = self.horizontal_scale.astype(dtype) * jnp.asarray(
-            (upper_wall_velocity[0], upper_wall_velocity[2]), dtype=dtype
-        )
-        helmholtz_rhs = helmholtz_rhs.at[self.zero_mode_index, count - 2].set(
-            lower_tangential
-        )
-        helmholtz_rhs = helmholtz_rhs.at[self.zero_mode_index, count - 1].set(
-            upper_tangential
-        )
+        if self.tangential_boundary == "velocity":
+            helmholtz_rhs = helmholtz_rhs.at[self.zero_mode_index, count - 2].set(
+                lower_tangential_boundary[self.zero_mode_index]
+            )
+            helmholtz_rhs = helmholtz_rhs.at[self.zero_mode_index, count - 1].set(
+                upper_tangential_boundary[self.zero_mode_index]
+            )
+        else:
+            lower_vorticity_traction = (
+                1j * kz * lower_tangential_boundary[:, 0]
+                - 1j * kx * lower_tangential_boundary[:, 1]
+            )
+            upper_vorticity_traction = (
+                1j * kz * upper_tangential_boundary[:, 0]
+                - 1j * kx * upper_tangential_boundary[:, 1]
+            )
+            helmholtz_rhs = helmholtz_rhs.at[:, count - 2, 0].set(
+                lower_vorticity_traction
+            )
+            helmholtz_rhs = helmholtz_rhs.at[:, count - 1, 0].set(
+                upper_vorticity_traction
+            )
+            helmholtz_rhs = helmholtz_rhs.at[self.zero_mode_index, count - 2].set(
+                lower_tangential_boundary[self.zero_mode_index]
+            )
+            helmholtz_rhs = helmholtz_rhs.at[self.zero_mode_index, count - 1].set(
+                upper_tangential_boundary[self.zero_mode_index]
+            )
         helmholtz_solution, helmholtz_failed = self.helmholtz.solve(helmholtz_rhs)
 
         pressure_gradient = jnp.asarray(mean_values, dtype=real_dtype)
@@ -243,6 +269,21 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
         biharmonic_rhs = biharmonic_rhs.at[:, : count - 4, 0].set(
             converted_biharmonic[:, : count - 4]
         )
+        if self.tangential_boundary == "traction":
+            lower_longitudinal_traction = (
+                1j * kx * lower_tangential_boundary[:, 0]
+                + 1j * kz * lower_tangential_boundary[:, 1]
+            )
+            upper_longitudinal_traction = (
+                1j * kx * upper_tangential_boundary[:, 0]
+                + 1j * kz * upper_tangential_boundary[:, 1]
+            )
+            biharmonic_rhs = biharmonic_rhs.at[:, count - 2, 0].set(
+                -lower_longitudinal_traction[self.nonzero_mode_indices]
+            )
+            biharmonic_rhs = biharmonic_rhs.at[:, count - 1, 0].set(
+                -upper_longitudinal_traction[self.nonzero_mode_indices]
+            )
         nonzero_v_columns, biharmonic_failed = self.biharmonic.solve(biharmonic_rhs)
         velocity_v = jnp.zeros((batch_count, count), dtype=dtype)
         velocity_v = velocity_v.at[self.nonzero_mode_indices].set(
@@ -630,6 +671,8 @@ def prepare_ultraspherical_channel(
     if np.any(np.imag(derivative_values) != 0.0):
         raise ValueError("Chebyshev derivative data must be real-valued.")
     modal_derivative = np.asarray(np.real(derivative_values), dtype=float)
+    derivative_traces = synthesis_host[[0, -1]] @ modal_derivative
+    second_derivative_traces = derivative_traces @ modal_derivative
 
     kx_flat = np.asarray(streamwise_wavenumbers).reshape((-1,))
     kz_flat = np.asarray(spanwise_wavenumbers).reshape((-1,))
@@ -680,8 +723,14 @@ def prepare_ultraspherical_channel(
     helmholtz_bands = _replace_tau_rows(
         helmholtz_bands, helmholtz_bandwidth, count - 2, 2
     )
+    if plan.tangential_boundary == "traction":
+        helmholtz_constraints = float(plan.viscosity) * np.stack(
+            (-derivative_traces[0], derivative_traces[1])
+        )
+    else:
+        helmholtz_constraints = synthesis_host[[0, -1]]
     helmholtz_desired = np.broadcast_to(
-        synthesis_host[[0, -1]][None, ...], (horizontal_batch_size, 2, count)
+        helmholtz_constraints[None, ...], (horizontal_batch_size, 2, count)
     ).astype(complex_dtype)
     helmholtz = _prepare_batched_tau_solve(
         helmholtz_bands,
@@ -712,9 +761,22 @@ def prepare_ultraspherical_channel(
     biharmonic_bands = _replace_tau_rows(
         biharmonic_bands, biharmonic_bandwidth, count - 4, 4
     )
-    derivative_traces = synthesis_host[[0, -1]] @ modal_derivative
+    if plan.tangential_boundary == "traction":
+        biharmonic_constraints = np.concatenate(
+            (
+                synthesis_host[[0, -1]],
+                float(plan.viscosity)
+                * np.stack((-second_derivative_traces[0], second_derivative_traces[1])),
+            ),
+            axis=0,
+        )
+    else:
+        biharmonic_constraints = np.concatenate(
+            (synthesis_host[[0, -1]], derivative_traces),
+            axis=0,
+        )
     biharmonic_desired = np.broadcast_to(
-        np.concatenate((synthesis_host[[0, -1]], derivative_traces), axis=0)[None, ...],
+        biharmonic_constraints[None, ...],
         (nonzero_batch_size, 4, count),
     ).astype(complex_dtype)
     biharmonic = _prepare_batched_tau_solve(
@@ -844,6 +906,7 @@ def prepare_ultraspherical_channel(
         viscosity=plan.viscosity,
         bulk_influence=bulk_influence,
         bulk_influence_failed=influence_failed[zero_mode_index],
+        tangential_boundary=plan.tangential_boundary,
         bulk_schur=bulk_schur,
         zero_mode_index=zero_mode_index,
         mode_count=count,

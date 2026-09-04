@@ -15,11 +15,14 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
 from ..linalg import inverse
 from ._chemical_species import ChemicalPhaseKind
+from ._favre_les import FavreLESInputs, FavreLESResult, PreparedFavreLESModel
 from ._homogeneous_thermodynamics import (
     DensityEnergyStateResult,
     HomogeneousHelmholtzPlan,
+    HomogeneousThermodynamicEvaluation,
 )
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
@@ -641,6 +644,20 @@ class HomogeneousMixtureEulerSystem(
         )
 
 
+class FavreLESCoupledRate(StrictModule):
+    """Gradient-aware SGS-energy exchange for one conservative state.
+
+    ``conserved_source`` is nonzero only in the transported SGS-energy slot.
+    The total-energy source is exposed separately and is identically zero; this
+    makes production and dissipation an auditable exchange with resolved energy.
+    """
+
+    transport: FavreLESResult
+    conserved_source: Array
+    total_energy_source: Array
+    source_positivity_timestep: Array
+
+
 class HomogeneousMixtureCompressibleNavierStokesSystem(
     AbstractCharacteristicSystem,
     AbstractAdmissibleSystem,
@@ -655,12 +672,22 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
     flux is exactly zero. Supplied nonnegative Fick diffusivities are corrected
     by the local mass fractions so their diffusive species flux sums exactly to
     zero; the energy flux carries the matching partial-specific-enthalpy flux.
+
+    With the explicit ``provided-sgs-kinetic-energy`` Favre policy, conserved
+    states append ``rho*k_sgs`` after ``rho*E_total`` and primitive states
+    append ``k_sgs`` after temperature. ``rho*E_total`` includes SGS kinetic
+    energy. The isotropic SGS pressure is hyperbolic, while deviatoric work,
+    heat/species transport, and SGS-energy diffusion remain in the viscous
+    flux. Production and dissipation change only ``rho*k_sgs`` so the
+    total-energy ledger has no source.
     """
 
     inviscid: HomogeneousMixtureEulerSystem
     thermodynamics: HomogeneousHelmholtzPlan
     transport: AbstractTransportClosure
     species_diffusivities: tuple[float, ...] | None = eqx.field(static=True)
+    favre_les: PreparedFavreLESModel | None
+    transports_sgs_kinetic_energy: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -670,6 +697,7 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         /,
         *,
         species_diffusivities: ArrayLike | None = None,
+        favre_les: PreparedFavreLESModel | None = None,
         density_floor: float = 1.0e-12,
         pressure_floor: float = 1.0e-12,
         maximum_thermal_iterations: int = 80,
@@ -695,18 +723,38 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
                     "species_diffusivities must contain one finite nonnegative value per species."
                 )
             diffusivities = tuple(float(value) for value in values)
+        transports_sgs_energy = False
+        if favre_les is not None:
+            if not isinstance(favre_les, PreparedFavreLESModel):
+                raise TypeError("favre_les must be a PreparedFavreLESModel.")
+            favre_les.validate_compressible_transport_binding(
+                thermodynamics.schema.schema_id,
+                thermodynamics.schema.species_names,
+                inviscid.dimension,
+            )
+            transports_sgs_energy = (
+                favre_les.isotropic_trace_policy == "provided-sgs-kinetic-energy"
+            )
         self.inviscid = inviscid
         self.thermodynamics = thermodynamics
         self.transport = transport
         self.species_diffusivities = diffusivities
+        self.favre_les = favre_les
+        self.transports_sgs_kinetic_energy = transports_sgs_energy
         self.dimension = inviscid.dimension
-        self.component_names = inviscid.component_names
+        self.component_names = (
+            (*inviscid.component_names, "sgs_kinetic_energy")
+            if transports_sgs_energy
+            else inviscid.component_names
+        )
         self.system_id = canonical_fingerprint(
             {
                 "kind": "homogeneous-mixture-compressible-navier-stokes",
                 "inviscid": inviscid.system_id,
                 "transport": transport.closure_id,
                 "species_diffusivities": diffusivities,
+                "favre_les": None if favre_les is None else favre_les.closure_id,
+                "transports_sgs_kinetic_energy": transports_sgs_energy,
             }
         )
 
@@ -723,6 +771,12 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         return self.inviscid.energy_index
 
     @property
+    def sgs_kinetic_energy_index(self) -> int:
+        if not self.transports_sgs_kinetic_energy:
+            raise ValueError("This gas system has no transported SGS-energy slot.")
+        return self.inviscid.component_count
+
+    @property
     def density_floor(self) -> float:
         return self.inviscid.density_floor
 
@@ -730,33 +784,109 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
     def pressure_floor(self) -> float:
         return self.inviscid.pressure_floor
 
+    def _check_state(self, state: ArrayLike, name: str, /) -> Array:
+        value = jnp.asarray(state)
+        if value.ndim < 1 or value.shape[-1] != self.component_count:
+            raise ValueError(f"{name} must end in {self.component_count} components.")
+        return value
+
+    def _gas_state(self, state: ArrayLike, /) -> Array:
+        value = self._check_state(state, "Conserved state")
+        if not self.transports_sgs_kinetic_energy:
+            return value
+        gas = value[..., : self.inviscid.component_count]
+        return gas.at[..., self.energy_index].add(
+            -value[..., self.sgs_kinetic_energy_index]
+        )
+
+    def _gas_gradient(self, gradient: Array, /) -> Array:
+        if not self.transports_sgs_kinetic_energy:
+            return gradient
+        gas_gradient = gradient[..., : self.inviscid.component_count, :]
+        return gas_gradient.at[..., self.energy_index, :].add(
+            -gradient[..., self.sgs_kinetic_energy_index, :]
+        )
+
     def density(self, state: ArrayLike, /) -> Array:
-        return self.inviscid.density(state)
+        value = self._check_state(state, "Conserved state")
+        return jnp.sum(value[..., : self.species_count], axis=-1)
+
+    def sgs_kinetic_energy_density(self, state: ArrayLike, /) -> Array:
+        value = self._check_state(state, "Conserved state")
+        if not self.transports_sgs_kinetic_energy:
+            return jnp.zeros(value.shape[:-1], dtype=value.dtype)
+        return value[..., self.sgs_kinetic_energy_index]
+
+    def specific_sgs_kinetic_energy(self, state: ArrayLike, /) -> Array:
+        density = self.density(state)
+        return self.sgs_kinetic_energy_density(state) / jnp.maximum(
+            density, self.density_floor
+        )
 
     def recover_thermodynamics(self, state: ArrayLike, /) -> DensityEnergyStateResult:
-        return self.inviscid.recover_thermodynamics(state)
+        return self.inviscid.recover_thermodynamics(self._gas_state(state))
 
     def pressure(self, state: ArrayLike, /) -> Array:
-        return self.inviscid.pressure(state)
+        return self.recover_thermodynamics(state).state.pressure
 
     def temperature(self, state: ArrayLike, /) -> Array:
-        return self.inviscid.temperature(state)
+        return self.recover_thermodynamics(state).state.temperature
+
+    def frozen_sound_speed(self, state: ArrayLike, /) -> Array:
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.frozen_sound_speed(state)
+        value = self._validated_favre_conserved_state(
+            self._check_state(state, "Conserved state")
+        )
+        recovered = self.recover_thermodynamics(value)
+        squared = recovered.state.frozen_sound_speed_squared + (
+            2.0 / 3.0
+        ) * self.specific_sgs_kinetic_energy(value)
+        squared = eqx.error_if(
+            squared,
+            jnp.any(~jnp.isfinite(squared) | (squared <= 0.0)),
+            "Favre coupled sound speed must be finite and positive.",
+        )
+        return jnp.sqrt(squared)
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
-        return self.inviscid.conserved_to_primitive(state)
+        value = self._check_state(state, "Conserved state")
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.conserved_to_primitive(value)
+        value = self._validated_favre_conserved_state(value)
+        primitive = self.inviscid.conserved_to_primitive(self._gas_state(value))
+        return jnp.concatenate(
+            (primitive, self.specific_sgs_kinetic_energy(value)[..., None]),
+            axis=-1,
+        )
 
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
-        return self.inviscid.primitive_to_conserved(primitive)
+        value = self._check_state(primitive, "Primitive state")
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.primitive_to_conserved(value)
+        specific_energy = eqx.error_if(
+            value[..., self.sgs_kinetic_energy_index],
+            jnp.any(
+                ~jnp.isfinite(value[..., self.sgs_kinetic_energy_index])
+                | (value[..., self.sgs_kinetic_energy_index] < 0.0)
+            ),
+            "Transported specific SGS kinetic energy must be finite and nonnegative.",
+        )
+        gas = self.inviscid.primitive_to_conserved(
+            value[..., : self.inviscid.component_count]
+        )
+        energy_density = self.inviscid.density(gas) * specific_energy
+        gas = gas.at[..., self.energy_index].add(energy_density)
+        return jnp.concatenate((gas, energy_density[..., None]), axis=-1)
 
-    def primitive_gradients(
-        self, state: ArrayLike, conserved_gradient: ArrayLike, /
+    def _primitive_gradients_from_temperature(
+        self,
+        value: Array,
+        gradient: Array,
+        temperature: Array,
+        /,
     ) -> tuple[Array, Array, Array]:
-        value = self.inviscid._check_state(state, "Conserved state")
-        gradient = jnp.asarray(conserved_gradient)
-        if gradient.shape != value.shape + (self.dimension,):
-            raise ValueError(
-                "Conserved gradients must append one physical derivative axis."
-            )
+        gas_gradient = self._gas_gradient(gradient)
         density = self.density(value)
         momentum = value[..., self.momentum_slice]
         velocity = momentum / jnp.maximum(density[..., None], self.density_floor)
@@ -766,16 +896,15 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         velocity_gradient = (
             momentum_gradient - velocity[..., :, None] * density_gradient[..., None, :]
         ) / jnp.maximum(density[..., None, None], self.density_floor)
-        energy_gradient = gradient[..., self.energy_index, :]
+        energy_gradient = gas_gradient[..., self.energy_index, :]
         speed_squared = contract("...i,...i->...", velocity, velocity, backend="jax")
         kinetic_gradient = (
             contract("...i,...ij->...j", velocity, momentum_gradient, backend="jax")
             - 0.5 * speed_squared[..., None] * density_gradient
         )
         internal_gradient = energy_gradient - kinetic_gradient
-        primitive = self.conserved_to_primitive(value)
         caloric_gradient = self.inviscid._caloric_density_gradient(
-            primitive[..., : self.species_count], primitive[..., -1]
+            value[..., : self.species_count], temperature
         )
         volumetric_cv = caloric_gradient[..., -1]
         temperature_gradient = (
@@ -794,8 +923,37 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         )
         return velocity_gradient, temperature_gradient, species_gradient
 
-    def partial_specific_enthalpies(self, state: Array, /) -> Array:
-        evaluation = self.recover_thermodynamics(state).state
+    def primitive_gradients(
+        self, state: ArrayLike, conserved_gradient: ArrayLike, /
+    ) -> tuple[Array, Array, Array]:
+        value = self._check_state(state, "Conserved state")
+        gradient = jnp.asarray(conserved_gradient)
+        if gradient.shape != value.shape + (self.dimension,):
+            raise ValueError(
+                "Conserved gradients must append one physical derivative axis."
+            )
+        temperature = self.recover_thermodynamics(value).state.temperature
+        return self._primitive_gradients_from_temperature(value, gradient, temperature)
+
+    def _specific_sgs_kinetic_energy_gradient(
+        self,
+        value: Array,
+        gradient: Array,
+        /,
+    ) -> Array:
+        if not self.transports_sgs_kinetic_energy:
+            return jnp.zeros(value.shape[:-1] + (self.dimension,), dtype=value.dtype)
+        density = self.density(value)
+        density_gradient = jnp.sum(gradient[..., : self.species_count, :], axis=-2)
+        specific_energy = self.specific_sgs_kinetic_energy(value)
+        return (
+            gradient[..., self.sgs_kinetic_energy_index, :]
+            - specific_energy[..., None] * density_gradient
+        ) / density[..., None]
+
+    def _partial_specific_enthalpies_from_evaluation(
+        self, evaluation: HomogeneousThermodynamicEvaluation, /
+    ) -> Array:
         flat_temperature = evaluation.temperature.reshape((-1,))
         flat_density = evaluation.molar_density.reshape((-1,))
         flat_composition = evaluation.mole_fraction.reshape((-1, self.species_count))
@@ -830,6 +988,10 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         enthalpy = jax.vmap(point)(flat_temperature, flat_density, flat_composition)
         return enthalpy.reshape(evaluation.temperature.shape + (self.species_count,))
 
+    def partial_specific_enthalpies(self, state: Array, /) -> Array:
+        evaluation = self.recover_thermodynamics(state).state
+        return self._partial_specific_enthalpies_from_evaluation(evaluation)
+
     def _species_diffusive_flux(self, state: Array, species_gradient: Array, /) -> Array:
         shape = state.shape[:-1] + (self.species_count, self.dimension)
         if self.species_diffusivities is None:
@@ -848,6 +1010,112 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         raw = density[..., None, None] * diffusivity[:, None] * mass_fraction_gradient
         return raw - mass_fraction[..., :, None] * jnp.sum(raw, axis=-2)[..., None, :]
 
+    def _validated_favre_conserved_state(self, value: Array, /) -> Array:
+        species_density = value[..., : self.species_count]
+        density = jnp.sum(species_density, axis=-1)
+        successful = (
+            jnp.all(jnp.isfinite(value), axis=-1)
+            & jnp.all(species_density >= 0.0, axis=-1)
+            & (density > 0.0)
+        )
+        if self.transports_sgs_kinetic_energy:
+            successful = successful & (value[..., self.sgs_kinetic_energy_index] >= 0.0)
+        return eqx.error_if(
+            value,
+            jnp.any(~successful),
+            "Favre LES gas transport requires finite conserved fields, "
+            "nonnegative species and SGS-energy densities, and positive mixture "
+            "density.",
+        )
+
+    def _evaluate_favre_les_transport(
+        self,
+        value: Array,
+        velocity_gradient: Array,
+        temperature_gradient: Array,
+        species_gradient: Array,
+        specific_sgs_kinetic_energy_gradient: Array,
+        thermodynamics: HomogeneousThermodynamicEvaluation,
+        partial_specific_enthalpies: Array,
+        /,
+    ) -> FavreLESResult:
+        if self.favre_les is None:
+            raise ValueError("No Favre LES model is bound to this gas system.")
+        density = self.density(value)
+        density = eqx.error_if(
+            density,
+            jnp.any(~jnp.isfinite(density) | (density <= 0.0)),
+            "Favre LES transport requires finite positive mixture density.",
+        )
+        species_density = value[..., : self.species_count]
+        mass_fractions = species_density / density[..., None]
+        density_gradient = jnp.sum(species_gradient, axis=-2)
+        mass_fraction_gradient = (
+            species_gradient
+            - mass_fractions[..., :, None] * density_gradient[..., None, :]
+        ) / density[..., None, None]
+        velocity = value[..., self.momentum_slice] / density[..., None]
+        volumetric_cp = (
+            thermodynamics.molar_density * thermodynamics.molar_heat_capacity_pressure
+        )
+        specific_sgs_kinetic_energy = None
+        kinetic_energy_gradient = None
+        if self.transports_sgs_kinetic_energy:
+            specific_sgs_kinetic_energy = self.specific_sgs_kinetic_energy(value)
+            kinetic_energy_gradient = specific_sgs_kinetic_energy_gradient
+        return self.favre_les.evaluate(
+            FavreLESInputs(
+                density,
+                thermodynamics.temperature,
+                velocity,
+                velocity_gradient,
+                temperature_gradient,
+                mass_fractions,
+                mass_fraction_gradient,
+                volumetric_cp / density,
+                partial_specific_enthalpies,
+                self.favre_les.fields,
+                specific_sgs_kinetic_energy=specific_sgs_kinetic_energy,
+                specific_sgs_kinetic_energy_gradient=kinetic_energy_gradient,
+            )
+        )
+
+    def favre_les_transport(
+        self,
+        state: ArrayLike,
+        conserved_gradient: ArrayLike,
+        /,
+    ) -> FavreLESResult:
+        """Evaluate the bound Favre SGS transport from conservative gas fields."""
+        if self.favre_les is None:
+            raise ValueError("No Favre LES model is bound to this gas system.")
+        value = self._check_state(state, "Conserved state")
+        value = self._validated_favre_conserved_state(value)
+        gradient = jnp.asarray(conserved_gradient)
+        if gradient.shape != value.shape + (self.dimension,):
+            raise ValueError(
+                "Conserved gradients must append one physical derivative axis."
+            )
+        thermodynamics = self.recover_thermodynamics(value).state
+        velocity_gradient, temperature_gradient, species_gradient = (
+            self._primitive_gradients_from_temperature(
+                value, gradient, thermodynamics.temperature
+            )
+        )
+        kinetic_energy_gradient = self._specific_sgs_kinetic_energy_gradient(
+            value, gradient
+        )
+        enthalpies = self._partial_specific_enthalpies_from_evaluation(thermodynamics)
+        return self._evaluate_favre_les_transport(
+            value,
+            velocity_gradient,
+            temperature_gradient,
+            species_gradient,
+            kinetic_energy_gradient,
+            thermodynamics,
+            enthalpies,
+        )
+
     def viscous_flux(
         self,
         state: ArrayLike,
@@ -855,14 +1123,38 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         args: Any = None,
         /,
     ) -> Array:
-        value = self.inviscid._check_state(state, "Conserved state")
+        """Return diffusive flux, evaluating any coupled Favre rate once."""
+        flux, _ = self.viscous_flux_and_favre_rate(state, conserved_gradient, args)
+        return flux
+
+    def viscous_flux_and_favre_rate(
+        self,
+        state: ArrayLike,
+        conserved_gradient: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, FavreLESCoupledRate | None]:
+        """Return viscous flux and its gradient-aware SGS-energy exchange."""
+        value = self._check_state(state, "Conserved state")
+        gradient = jnp.asarray(conserved_gradient)
+        if gradient.shape != value.shape + (self.dimension,):
+            raise ValueError(
+                "Conserved gradients must append one physical derivative axis."
+            )
+        if self.favre_les is not None:
+            value = self._validated_favre_conserved_state(value)
+        recovered = self.recover_thermodynamics(value).state
         velocity = value[..., self.momentum_slice] / jnp.maximum(
             self.density(value)[..., None], self.density_floor
         )
         velocity_gradient, temperature_gradient, species_gradient = (
-            self.primitive_gradients(value, conserved_gradient)
+            self._primitive_gradients_from_temperature(
+                value, gradient, recovered.temperature
+            )
         )
-        properties = self.transport.properties(self.temperature(value), value, args)
+        properties = self.transport.properties(
+            recovered.temperature, self._gas_state(value), args
+        )
         species_flux = self._species_diffusive_flux(value, species_gradient)
         divergence = jnp.trace(velocity_gradient, axis1=-2, axis2=-1)
         identity = jnp.eye(self.dimension, dtype=value.dtype)
@@ -881,12 +1173,78 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
             contract("...i,...ij->...j", velocity, stress, backend="jax")
             + properties.thermal_conductivity[..., None] * temperature_gradient
         )
+        enthalpy = None
+        if self.species_diffusivities is not None or self.favre_les is not None:
+            enthalpy = self._partial_specific_enthalpies_from_evaluation(recovered)
         if self.species_diffusivities is not None:
-            enthalpy = self.partial_specific_enthalpies(value)
             energy_flux = energy_flux + contract(
                 "...s,...sd->...d", enthalpy, species_flux, backend="jax"
             )
-        return jnp.concatenate((species_flux, stress, energy_flux[..., None, :]), axis=-2)
+
+        favre_rate = None
+        kinetic_energy_flux = jnp.zeros(
+            value.shape[:-1] + (self.dimension,), dtype=value.dtype
+        )
+        if self.favre_les is not None:
+            kinetic_energy_gradient = self._specific_sgs_kinetic_energy_gradient(
+                value, gradient
+            )
+            favre = self._evaluate_favre_les_transport(
+                value,
+                velocity_gradient,
+                temperature_gradient,
+                species_gradient,
+                kinetic_energy_gradient,
+                recovered,
+                enthalpy,
+            )
+            species_flux = species_flux + favre.conservative_species_flux
+            if self.transports_sgs_kinetic_energy:
+                stress = (
+                    stress + favre.conservative_momentum_flux + favre.isotropic_sgs_stress
+                )
+                kinetic_energy_flux = favre.sgs_kinetic_energy_diffusion_flux
+                energy_flux = (
+                    energy_flux
+                    + favre.conservative_total_energy_flux
+                    - favre.isotropic_stress_work_flux
+                )
+                source = (
+                    jnp.zeros_like(value)
+                    .at[..., self.sgs_kinetic_energy_index]
+                    .set(favre.sgs_kinetic_energy_source)
+                )
+                favre_rate = FavreLESCoupledRate(
+                    transport=favre,
+                    conserved_source=source,
+                    total_energy_source=jnp.zeros(value.shape[:-1], dtype=value.dtype),
+                    source_positivity_timestep=favre.source_positivity_timestep(),
+                )
+            else:
+                stress = stress + favre.conservative_momentum_flux
+                energy_flux = energy_flux + favre.conservative_total_energy_flux
+
+        rows = (species_flux, stress, energy_flux[..., None, :])
+        if self.transports_sgs_kinetic_energy:
+            rows = (*rows, kinetic_energy_flux[..., None, :])
+        return jnp.concatenate(rows, axis=-2), favre_rate
+
+    def favre_les_coupled_rate(
+        self,
+        state: ArrayLike,
+        conserved_gradient: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> FavreLESCoupledRate:
+        """Return the transported SGS-energy source with no hidden state."""
+        if not self.transports_sgs_kinetic_energy:
+            raise ValueError(
+                "A coupled Favre rate requires the provided SGS kinetic-energy policy."
+            )
+        _, rate = self.viscous_flux_and_favre_rate(state, conserved_gradient, args)
+        if rate is None:
+            raise RuntimeError("Transported Favre SGS-energy rate was not evaluated.")
+        return rate
 
     def viscous_flux_from_primitive_gradients(
         self,
@@ -898,6 +1256,11 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         thermal_conductivity: ArrayLike,
         /,
     ) -> Array:
+        if self.favre_les is not None:
+            raise ValueError(
+                "Favre LES requires density, composition, and caloric state; the "
+                "primitive-gradient-only viscous flux route is unsupported."
+            )
         if self.species_diffusivities is not None:
             raise ValueError(
                 "Supplied species diffusion requires conserved species gradients."
@@ -941,9 +1304,11 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         return jnp.concatenate((species_flux, stress, energy_flux[..., None, :]), axis=-2)
 
     def maximum_diffusivity(self, state: Array, args: Any = None, /) -> Array:
-        value = self.inviscid._check_state(state, "Conserved state")
+        value = self._check_state(state, "Conserved state")
         recovered = self.recover_thermodynamics(value)
-        properties = self.transport.properties(recovered.state.temperature, value, args)
+        properties = self.transport.properties(
+            recovered.state.temperature, self._gas_state(value), args
+        )
         density = self.density(value)
         volumetric_cp = (
             recovered.state.molar_density * recovered.state.molar_heat_capacity_pressure
@@ -954,6 +1319,8 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         )
         if self.species_diffusivities is not None:
             result = jnp.maximum(result, max(self.species_diffusivities))
+        if self.favre_les is not None:
+            result = jnp.maximum(result, self.favre_les.maximum_kinematic_diffusivity())
         return result
 
     def entropy_viscous_production(
@@ -990,17 +1357,63 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         return contract("...ij,...j->...i", flux, normal_value, backend="jax")
 
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
-        return self.inviscid.physical_flux(state, axis, args)
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.physical_flux(state, axis, args)
+        del args
+        axis_value = int(axis)
+        if axis_value < 0 or axis_value >= self.dimension:
+            raise ValueError("axis is outside the physical dimension.")
+        value = self._validated_favre_conserved_state(
+            self._check_state(state, "Conserved state")
+        )
+        density = self.density(value)
+        momentum = value[..., self.momentum_slice]
+        velocity = momentum / density[..., None]
+        normal_velocity = velocity[..., axis_value]
+        isotropic_sgs_pressure = (2.0 / 3.0) * value[..., self.sgs_kinetic_energy_index]
+        total_pressure = self.pressure(value) + isotropic_sgs_pressure
+        species_flux = value[..., : self.species_count] * normal_velocity[..., None]
+        momentum_flux = momentum * normal_velocity[..., None]
+        momentum_flux = momentum_flux.at[..., axis_value].add(total_pressure)
+        energy_flux = (value[..., self.energy_index] + total_pressure) * normal_velocity
+        kinetic_energy_flux = value[..., self.sgs_kinetic_energy_index] * normal_velocity
+        return jnp.concatenate(
+            (
+                species_flux,
+                momentum_flux,
+                energy_flux[..., None],
+                kinetic_energy_flux[..., None],
+            ),
+            axis=-1,
+        )
 
     def max_wave_speed(
         self, left: Array, right: Array, axis: int, args: Any = None, /
     ) -> Array:
-        return self.inviscid.max_wave_speed(left, right, axis, args)
+        lower, upper = self.signal_bounds(left, right, axis, args)
+        return jnp.maximum(jnp.abs(lower), jnp.abs(upper))
 
     def signal_bounds(
         self, left: Array, right: Array, axis: int, args: Any = None, /
     ) -> tuple[Array, Array]:
-        return self.inviscid.signal_bounds(left, right, axis, args)
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.signal_bounds(left, right, axis, args)
+        del args
+        axis_value = int(axis)
+        if axis_value < 0 or axis_value >= self.dimension:
+            raise ValueError("axis is outside the physical dimension.")
+
+        def bounds(state):
+            value = self._validated_favre_conserved_state(
+                self._check_state(state, "Interface state")
+            )
+            velocity = value[..., self.species_count + axis_value] / self.density(value)
+            sound = self.frozen_sound_speed(value)
+            return velocity - sound, velocity + sound
+
+        left_lower, left_upper = bounds(left)
+        right_lower, right_upper = bounds(right)
+        return jnp.minimum(left_lower, right_lower), jnp.maximum(left_upper, right_upper)
 
     def normal_signal_bounds(
         self,
@@ -1010,16 +1423,152 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         args: Any = None,
         /,
     ) -> tuple[Array, Array]:
-        return self.inviscid.normal_signal_bounds(left, right, normal, args)
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.normal_signal_bounds(left, right, normal, args)
+        del args
+        normal_value = jnp.asarray(normal)
+        if normal_value.ndim == 0 or normal_value.shape[-1] != self.dimension:
+            raise ValueError("normal must end in the physical dimension.")
+
+        def bounds(state):
+            value = self._validated_favre_conserved_state(
+                self._check_state(state, "Interface state")
+            )
+            velocity = value[..., self.momentum_slice] / self.density(value)[..., None]
+            normal_velocity = contract(
+                "...d,...d->...", velocity, normal_value, backend="jax"
+            )
+            normal_norm = jnp.sqrt(
+                contract("...d,...d->...", normal_value, normal_value, backend="jax")
+            )
+            sound = self.frozen_sound_speed(value) * normal_norm
+            return normal_velocity - sound, normal_velocity + sound
+
+        left_lower, left_upper = bounds(left)
+        right_lower, right_upper = bounds(right)
+        return jnp.minimum(left_lower, right_lower), jnp.maximum(left_upper, right_upper)
 
     def admissible(self, state: Array, /) -> Array:
-        return self.inviscid.admissible(state)
+        value = self._check_state(state, "Conserved state")
+        admissible = self.inviscid.admissible(self._gas_state(value))
+        if self.transports_sgs_kinetic_energy:
+            admissible = admissible & (value[..., self.sgs_kinetic_energy_index] >= 0.0)
+        return admissible
 
     def reflect_state(self, state: Array, axis: int, /) -> Array:
-        return self.inviscid.reflect_state(state, axis)
+        axis_value = int(axis)
+        if axis_value < 0 or axis_value >= self.dimension:
+            raise ValueError("axis is outside the physical dimension.")
+        return (
+            self._check_state(state, "Conserved state")
+            .at[..., self.species_count + axis_value]
+            .multiply(-1.0)
+        )
 
     def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
-        return self.inviscid.reflect_normal_state(state, normal)
+        value = self._check_state(state, "Conserved state")
+        frame = _normal_frame(jnp.asarray(normal), self.dimension)
+        unit = frame[..., 0, :]
+        momentum = value[..., self.momentum_slice]
+        normal_momentum = contract("...d,...d->...", momentum, unit, backend="jax")
+        reflected = momentum - 2.0 * normal_momentum[..., None] * unit
+        return value.at[..., self.momentum_slice].set(reflected)
+
+    def _coupled_characteristic_basis_point(
+        self,
+        primitive: Array,
+        frame: Array,
+        normal_norm: Array,
+        /,
+    ) -> tuple[Array, Array]:
+        species_density = primitive[: self.species_count]
+        temperature = primitive[self.energy_index]
+        specific_sgs_energy = primitive[self.sgs_kinetic_energy_index]
+        thermodynamic_variables = jnp.concatenate(
+            (species_density, temperature[None], specific_sgs_energy[None])
+        )
+
+        def total_pressure(arguments):
+            local_species = arguments[: self.species_count]
+            gas_pressure = self.thermodynamics.evaluate_density_temperature(
+                local_species, arguments[self.species_count]
+            ).pressure
+            return gas_pressure + (
+                (2.0 / 3.0) * jnp.sum(local_species) * arguments[self.species_count + 1]
+            )
+
+        pressure_gradient = jax.grad(total_pressure)(thermodynamic_variables)
+        pressure_temperature = eqx.error_if(
+            pressure_gradient[self.species_count],
+            ~jnp.isfinite(pressure_gradient[self.species_count])
+            | (
+                jnp.abs(pressure_gradient[self.species_count])
+                <= jnp.finfo(primitive.dtype).tiny
+            ),
+            "Favre coupled characteristic basis requires nonzero dp/dT.",
+        )
+        thermodynamic_state = self.thermodynamics.evaluate_density_temperature(
+            species_density, temperature
+        )
+        sound = jnp.sqrt(
+            thermodynamic_state.frozen_sound_speed_squared
+            + (2.0 / 3.0) * specific_sgs_energy
+        )
+        density = jnp.sum(species_density)
+        acoustic_temperature = (
+            sound**2 * density
+            - contract(
+                "s,s->",
+                pressure_gradient[: self.species_count],
+                species_density,
+                backend="jax",
+            )
+        ) / pressure_temperature
+
+        primitive_columns = []
+        acoustic_minus = jnp.zeros_like(primitive)
+        acoustic_minus = acoustic_minus.at[: self.species_count].set(species_density)
+        acoustic_minus = acoustic_minus.at[self.momentum_slice].set(-sound * frame[0])
+        acoustic_minus = acoustic_minus.at[self.energy_index].set(acoustic_temperature)
+        primitive_columns.append(acoustic_minus)
+        for species in range(self.species_count):
+            contact_column = jnp.zeros_like(primitive)
+            contact_column = contact_column.at[species].set(1.0)
+            contact_column = contact_column.at[self.energy_index].set(
+                -pressure_gradient[species] / pressure_temperature
+            )
+            primitive_columns.append(contact_column)
+        for tangent in range(1, self.dimension):
+            shear_column = jnp.zeros_like(primitive)
+            shear_column = shear_column.at[self.momentum_slice].set(frame[tangent])
+            primitive_columns.append(shear_column)
+        kinetic_contact = jnp.zeros_like(primitive)
+        kinetic_contact = kinetic_contact.at[self.sgs_kinetic_energy_index].set(1.0)
+        kinetic_contact = kinetic_contact.at[self.energy_index].set(
+            -pressure_gradient[self.species_count + 1] / pressure_temperature
+        )
+        primitive_columns.append(kinetic_contact)
+        acoustic_plus = jnp.zeros_like(primitive)
+        acoustic_plus = acoustic_plus.at[: self.species_count].set(species_density)
+        acoustic_plus = acoustic_plus.at[self.momentum_slice].set(sound * frame[0])
+        acoustic_plus = acoustic_plus.at[self.energy_index].set(acoustic_temperature)
+        primitive_columns.append(acoustic_plus)
+
+        primitive_right = jnp.stack(tuple(primitive_columns), axis=-1)
+        conserved_jacobian = jax.jacfwd(self.primitive_to_conserved)(primitive)
+        right = contract("ij,jk->ik", conserved_jacobian, primitive_right, backend="jax")
+        normal_velocity = contract(
+            "d,d->", primitive[self.momentum_slice], frame[0], backend="jax"
+        )
+        convective = normal_norm * normal_velocity
+        speeds = jnp.stack(
+            (
+                convective - normal_norm * sound,
+                *(convective for _ in range(self.component_count - 2)),
+                convective + normal_norm * sound,
+            )
+        )
+        return right, speeds
 
     def eigensystem(
         self,
@@ -1029,7 +1578,16 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         args: Any = None,
         /,
     ) -> tuple[Array, Array, Array]:
-        return self.inviscid.eigensystem(left, right, axis, args)
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.eigensystem(left, right, axis, args)
+        axis_value = int(axis)
+        if axis_value < 0 or axis_value >= self.dimension:
+            raise ValueError("axis is outside the physical dimension.")
+        normal = jax.nn.one_hot(axis_value, self.dimension, dtype=jnp.asarray(left).dtype)
+        normal = jnp.broadcast_to(
+            normal, jnp.asarray(left).shape[:-1] + (self.dimension,)
+        )
+        return self.normal_eigensystem(left, right, normal, args)
 
     def normal_eigensystem(
         self,
@@ -1039,25 +1597,79 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         args: Any = None,
         /,
     ) -> tuple[Array, Array, Array]:
-        return self.inviscid.normal_eigensystem(left, right, normal, args)
+        if not self.transports_sgs_kinetic_energy:
+            return self.inviscid.normal_eigensystem(left, right, normal, args)
+        del args
+        left_value = self._check_state(left, "Left state")
+        right_value = self._check_state(right, "Right state")
+        if left_value.shape != right_value.shape:
+            raise ValueError("Characteristic states must have matching shapes.")
+        normal_value = jnp.asarray(normal, dtype=left_value.dtype)
+        expected_normal_shape = left_value.shape[:-1] + (self.dimension,)
+        if normal_value.shape != expected_normal_shape:
+            normal_value = jnp.broadcast_to(normal_value, expected_normal_shape)
+        frame = _normal_frame(normal_value, self.dimension)
+        normal_norm = jnp.sqrt(
+            contract("...d,...d->...", normal_value, normal_value, backend="jax")
+        )
+        primitive = 0.5 * (
+            self.conserved_to_primitive(left_value)
+            + self.conserved_to_primitive(right_value)
+        )
+        flat_primitive = primitive.reshape((-1, self.component_count))
+        flat_frame = frame.reshape((-1, self.dimension, self.dimension))
+        flat_norm = normal_norm.reshape((-1,))
+        right_matrix, speeds = jax.vmap(self._coupled_characteristic_basis_point)(
+            flat_primitive, flat_frame, flat_norm
+        )
+        right_matrix = right_matrix.reshape(
+            primitive.shape[:-1] + (self.component_count, self.component_count)
+        )
+        speeds = speeds.reshape(primitive.shape)
+        inverse_result = inverse(right_matrix)
+        left_matrix = eqx.error_if(
+            inverse_result.value,
+            jnp.any(~inverse_result.successful),
+            "Favre coupled characteristic basis is singular.",
+        )
+        return left_matrix, right_matrix, speeds
 
     def entropy(self, state: ArrayLike, /) -> Array:
-        return self.inviscid.entropy(state)
+        return self.inviscid.entropy(self._gas_state(state))
 
     def entropy_flux(self, state: ArrayLike, axis: int, /) -> Array:
-        return self.inviscid.entropy_flux(state, axis)
+        axis_value = int(axis)
+        if axis_value < 0 or axis_value >= self.dimension:
+            raise ValueError("axis is outside the physical dimension.")
+        value = self._check_state(state, "Conserved state")
+        velocity = value[..., self.species_count + axis_value] / jnp.maximum(
+            self.density(value), self.density_floor
+        )
+        return self.entropy(value) * velocity
 
     def normal_entropy_flux(self, state: ArrayLike, normal: ArrayLike, /) -> Array:
-        return self.inviscid.normal_entropy_flux(state, normal)
+        value = self._check_state(state, "Conserved state")
+        velocity = value[..., self.momentum_slice] / jnp.maximum(
+            self.density(value)[..., None], self.density_floor
+        )
+        return self.entropy(value) * contract(
+            "...d,...d->...", velocity, jnp.asarray(normal), backend="jax"
+        )
 
     def entropy_evidence(self, state: ArrayLike, /) -> Array:
-        return self.inviscid.entropy_evidence(state)
+        return self.inviscid.entropy_evidence(self._gas_state(state))
 
     def entropy_variables(self, state: Array, /) -> Array:
-        return self.inviscid.entropy_variables(state)
+        value = self._check_state(state, "Conserved state")
+        variables = self.inviscid.entropy_variables(self._gas_state(value))
+        if not self.transports_sgs_kinetic_energy:
+            return variables
+        inverse_temperature = 1.0 / self.temperature(value)
+        return jnp.concatenate((variables, inverse_temperature[..., None]), axis=-1)
 
 
 __all__ = [
+    "FavreLESCoupledRate",
     "HomogeneousMixtureCompressibleNavierStokesSystem",
     "HomogeneousMixtureEulerSystem",
 ]

@@ -128,6 +128,10 @@ class MACRigidImmersedProjectionPlan(StrictModule, NonTrainableState):
 
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
+        if dynamics.algebraic_les is not None:
+            raise ValueError(
+                "MAC rigid immersed routes do not support active algebraic LES."
+            )
         if not isinstance(rigid_markers, PreparedRigidMarkerMap):
             raise TypeError("rigid_markers must be PreparedRigidMarkerMap.")
         if not isinstance(transfer, PreparedMACMarkerTransfer):
@@ -620,10 +624,12 @@ class MACRigidImmersedEulerMethod(StrictModule, NonTrainableState):
         )
         current = self.dynamics.validate_state(fluid_state)
         velocity = self.dynamics.unpack_velocity(current)
-        _, convection, _, forcing = self.dynamics.rate_components(time, current, args)
+        components = self.dynamics.rate_components(time, current, args)
         explicit = tuple(
             -advective + source
-            for advective, source in zip(convection, forcing, strict=True)
+            for advective, source in zip(
+                components.convection, components.forcing, strict=True
+            )
         )
         rhs = tuple(
             value + step * rate for value, rate in zip(velocity, explicit, strict=True)

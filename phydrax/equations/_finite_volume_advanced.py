@@ -20,69 +20,6 @@ from .._trainable import NonTrainableState
 from ._hyperbolic_systems import AbstractAdmissibleSystem, ShallowWaterSystem
 
 
-class ResolvedGradientState(StrictModule):
-    density: Array
-    temperature: Array
-    velocity_gradient: Array
-    heat_capacity: Array
-    cell_volume: Array
-
-
-class EddyTransportProperties(StrictModule):
-    dynamic_viscosity: Array
-    thermal_conductivity: Array
-    shear_dissipation: Array
-
-
-class SmagorinskyLESClosure(StrictModule, NonTrainableState):
-    coefficient: float = eqx.field(static=True)
-    turbulent_prandtl: float = eqx.field(static=True)
-    closure_id: str = eqx.field(static=True)
-
-    def __init__(self, coefficient: float, turbulent_prandtl: float = 0.9, /):
-        coefficient_, prandtl = float(coefficient), float(turbulent_prandtl)
-        if (
-            not np.isfinite(coefficient_)
-            or coefficient_ < 0
-            or not np.isfinite(prandtl)
-            or prandtl <= 0
-        ):
-            raise ValueError("LES coefficient/Prandtl must be finite and physical.")
-        self.coefficient, self.turbulent_prandtl = coefficient_, prandtl
-        self.closure_id = canonical_fingerprint(
-            {
-                "kind": "smagorinsky-les",
-                "coefficient": coefficient_,
-                "turbulent_prandtl": prandtl,
-            }
-        )
-
-    def properties(self, state: ResolvedGradientState, /) -> EddyTransportProperties:
-        if not isinstance(state, ResolvedGradientState):
-            raise TypeError("state must be ResolvedGradientState.")
-        gradient = jnp.asarray(state.velocity_gradient)
-        dimension = gradient.shape[-1]
-        if gradient.shape[-2] != dimension:
-            raise ValueError("Velocity gradient must be square.")
-        strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
-        magnitude = jnp.sqrt(
-            2 * ein.contract("...ij,...ij->...", strain, strain, backend="jax")
-        )
-        delta = jnp.asarray(state.cell_volume) ** (1 / dimension)
-        viscosity = (
-            jnp.asarray(state.density) * (self.coefficient * delta) ** 2 * magnitude
-        )
-        conductivity = (
-            viscosity * jnp.asarray(state.heat_capacity) / self.turbulent_prandtl
-        )
-        dissipation = (
-            2
-            * viscosity
-            * ein.contract("...ij,...ij->...", strain, strain, backend="jax")
-        )
-        return EddyTransportProperties(viscosity, conductivity, dissipation)
-
-
 class InterfacialPhaseChangeEvaluation(StrictModule):
     interface_temperature: Array
     mass_rate: Array
@@ -512,12 +449,9 @@ class ShallowWaterExnerSystem(AbstractAdmissibleSystem):
 
 __all__ = [
     "BedloadSedimentPlan",
-    "EddyTransportProperties",
     "HydrostaticLayerCoupling",
     "InterfacialPhaseChangeEvaluation",
     "MultilayerShallowWaterSystem",
-    "ResolvedGradientState",
     "ShallowWaterExnerSystem",
-    "SmagorinskyLESClosure",
     "StefanPhaseChangePlan",
 ]

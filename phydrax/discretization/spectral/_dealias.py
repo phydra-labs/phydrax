@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import abc
-from math import ceil, prod
+from math import ceil, isfinite, prod
+from numbers import Integral, Real
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -23,17 +24,24 @@ from ._transfer import (
 )
 
 
-DealiasingKind: TypeAlias = Literal["none", "padding", "closure", "filter"]
+DealiasingKind: TypeAlias = Literal[
+    "none",
+    "padding",
+    "closure",
+    "filter",
+    "oversampling",
+]
 
 
 class DealiasingReport(StrictModule, NonTrainableState):
-    """Static exactness, retained shape, and evaluation-shape evidence."""
+    """Static exactness rationale and retained/evaluation-space evidence."""
 
     kind: DealiasingKind = eqx.field(static=True)
     retained_shape: tuple[int, ...] = eqx.field(static=True)
     evaluation_shape: tuple[int, ...] = eqx.field(static=True)
     maximum_polynomial_degree: int | None = eqx.field(static=True)
     exact: bool = eqx.field(static=True)
+    reason: str | None = eqx.field(static=True)
     input_bandlimit: int | None = eqx.field(static=True)
     evaluation_bandlimit: int | None = eqx.field(static=True)
     output_bandlimit: int | None = eqx.field(static=True)
@@ -48,6 +56,7 @@ class DealiasingReport(StrictModule, NonTrainableState):
         evaluation_shape: tuple[int, ...],
         maximum_polynomial_degree: int | None,
         exact: bool,
+        reason: str | None = None,
         input_bandlimit: int | None = None,
         evaluation_bandlimit: int | None = None,
         output_bandlimit: int | None = None,
@@ -76,6 +85,9 @@ class DealiasingReport(StrictModule, NonTrainableState):
         )
         output_limit = None if output_bandlimit is None else int(output_bandlimit)
         spin_ = None if spin is None else int(spin)
+        reason_ = None if reason is None else str(reason).strip()
+        if reason is not None and not reason_:
+            raise ValueError("Dealiasing exactness reason must be non-empty.")
         if any(
             value is not None and value <= 0
             for value in (input_limit, evaluation_limit, output_limit)
@@ -86,6 +98,7 @@ class DealiasingReport(StrictModule, NonTrainableState):
         self.evaluation_shape = evaluation
         self.maximum_polynomial_degree = degree
         self.exact = bool(exact)
+        self.reason = reason_
         self.input_bandlimit = input_limit
         self.evaluation_bandlimit = evaluation_limit
         self.output_bandlimit = output_limit
@@ -98,6 +111,7 @@ class DealiasingReport(StrictModule, NonTrainableState):
                 "evaluation_shape": list(evaluation),
                 "maximum_polynomial_degree": degree,
                 "exact": bool(exact),
+                **({} if reason_ is None else {"reason": reason_}),
                 "input_bandlimit": input_limit,
                 "evaluation_bandlimit": evaluation_limit,
                 "output_bandlimit": output_limit,
@@ -365,6 +379,99 @@ class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
         )
 
 
+class OversamplingDealiasingPlan(AbstractDealiasingPlan):
+    """Bounded approximate oversampling for general Fourier nonlinearities."""
+
+    factor: float = eqx.field(static=True)
+    maximum_evaluation_modes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        factor: float,
+        /,
+        *,
+        maximum_evaluation_modes: int = 16_777_216,
+    ):
+        if isinstance(factor, bool) or not isinstance(factor, Real):
+            raise TypeError("factor must be a real number.")
+        factor_ = float(factor)
+        if not isfinite(factor_) or factor_ <= 1.0:
+            raise ValueError("factor must be finite and greater than one.")
+        if isinstance(maximum_evaluation_modes, bool) or not isinstance(
+            maximum_evaluation_modes, Integral
+        ):
+            raise TypeError("maximum_evaluation_modes must be an integer.")
+        maximum = int(maximum_evaluation_modes)
+        if maximum <= 0:
+            raise ValueError("maximum_evaluation_modes must be positive.")
+        self.factor = factor_
+        self.maximum_evaluation_modes = maximum
+        self.kind = "oversampling"
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "oversampling-spectral-dealiasing",
+                "factor": factor_,
+                "maximum_evaluation_modes": maximum,
+            }
+        )
+
+    def prepare(
+        self,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
+        /,
+        *,
+        required_polynomial_degree: int | None,
+    ) -> "PreparedDealiasingPlan":
+        if not isinstance(discretization, TensorSpectralDiscretization):
+            raise TypeError(
+                "Oversampling dealiasing requires a tensor spectral discretization."
+            )
+        if any(axis.family != "fourier" for axis in discretization.axes):
+            raise ValueError(
+                "Oversampling dealiasing supports tensor Fourier bases only."
+            )
+        numerator, denominator = self.factor.as_integer_ratio()
+        target = tuple(
+            (numerator * size + denominator - 1) // denominator
+            for size in discretization.modal_shape
+        )
+        if prod(target) > self.maximum_evaluation_modes:
+            raise ValueError(
+                "Oversampling exceeds maximum_evaluation_modes before spectral "
+                "preparation."
+            )
+        basis_plans = tuple(
+            axis.plan.resized(count)
+            for axis, count in zip(discretization.axes, target, strict=True)
+        )
+        evaluation_plan = TensorSpectralPlan(
+            basis_plans,
+            axis_names=discretization.plan.axis_names,
+            field_name=discretization.plan.field_name,
+            precision=discretization.plan.precision,
+        )
+        evaluation = evaluation_plan.prepare(
+            tuple(axis.domain for axis in discretization.axes),
+            numeric_version=discretization.numeric_version,
+        )
+        return PreparedDealiasingPlan(
+            self,
+            discretization,
+            evaluation,
+            report=DealiasingReport(
+                kind="oversampling",
+                retained_shape=discretization.modal_shape,
+                evaluation_shape=target,
+                maximum_polynomial_degree=required_polynomial_degree,
+                exact=False,
+                reason=(
+                    "Finite oversampling approximates nonpolynomial evaluation and "
+                    "does not certify alias-free retained modes."
+                ),
+            ),
+        )
+
+
 class ModalFilterPlan(AbstractDealiasingPlan):
     """Approximate axis-separable modal cutoff for general nonlinearities."""
 
@@ -579,6 +686,7 @@ __all__ = [
     "ModalFilterPlan",
     "NoDealiasingPlan",
     "PaddingDealiasingPlan",
+    "OversamplingDealiasingPlan",
     "PolynomialClosureDealiasingPlan",
     "PreparedDealiasingPlan",
 ]

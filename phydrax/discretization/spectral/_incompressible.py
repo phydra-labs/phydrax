@@ -145,52 +145,125 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
 
 
 class IncompressibleSpectralDiagnostics(StrictModule):
-    """Physical, modal, and energy-balance evidence for one spectral state."""
+    """Separated physical, modal, LES, and energy-balance evidence."""
 
     kinetic_energy: Array
-    nonlinear_energy_rate: Array
+    advective_energy_rate: Array
     forcing_power: Array
-    viscous_energy_rate: Array
-    dissipation: Array
+    molecular_energy_rate: Array
+    molecular_dissipation: Array
+    algebraic_les_energy_rate: Array
+    algebraic_les_dissipation: Array
+    algebraic_les_energy_identity_defect: Array
+    projection_energy_defect: Array
+    maximum_eddy_viscosity: Array
+    algebraic_les_available: Array
+    dynamic_les_energy_rate: Array
+    dynamic_les_dissipation: Array
+    dynamic_les_energy_identity_defect: Array
+    dynamic_coefficient_minimum: Array
+    dynamic_coefficient_mean: Array
+    dynamic_coefficient_maximum: Array
+    dynamic_regularization_activity_count: Array
+    dynamic_backscatter_activity_count: Array
+    dynamic_backscatter_limit_count: Array
+    dynamic_accepted_update_count: Array
+    dynamic_rejected_update_count: Array
+    dynamic_les_available: Array
+    dynamic_evidence_finite: Array
     semidiscrete_energy_rate: Array
     energy_balance_defect: Array
     divergence_norm: Array
     imaginary_leakage: Array
     forbidden_mode_norm: Array
     pressure_gauge_residual: Array
+    finite: Array
     projector_id: str = eqx.field(static=True)
+    dynamic_les_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         kinetic_energy: ArrayLike,
-        nonlinear_energy_rate: ArrayLike,
+        advective_energy_rate: ArrayLike,
         forcing_power: ArrayLike,
-        viscous_energy_rate: ArrayLike,
-        dissipation: ArrayLike,
+        molecular_energy_rate: ArrayLike,
+        molecular_dissipation: ArrayLike,
+        algebraic_les_energy_rate: ArrayLike,
+        algebraic_les_dissipation: ArrayLike,
+        algebraic_les_energy_identity_defect: ArrayLike,
+        projection_energy_defect: ArrayLike,
+        maximum_eddy_viscosity: ArrayLike,
+        algebraic_les_available: ArrayLike,
+        dynamic_les_energy_rate: ArrayLike,
+        dynamic_les_dissipation: ArrayLike,
+        dynamic_les_energy_identity_defect: ArrayLike,
+        dynamic_coefficient_minimum: ArrayLike,
+        dynamic_coefficient_mean: ArrayLike,
+        dynamic_coefficient_maximum: ArrayLike,
+        dynamic_regularization_activity_count: ArrayLike,
+        dynamic_backscatter_activity_count: ArrayLike,
+        dynamic_backscatter_limit_count: ArrayLike,
+        dynamic_accepted_update_count: ArrayLike,
+        dynamic_rejected_update_count: ArrayLike,
+        dynamic_les_available: ArrayLike,
+        dynamic_evidence_finite: ArrayLike,
         semidiscrete_energy_rate: ArrayLike,
         energy_balance_defect: ArrayLike,
         divergence_norm: ArrayLike,
         imaginary_leakage: ArrayLike,
         forbidden_mode_norm: ArrayLike,
         pressure_gauge_residual: ArrayLike,
+        finite: ArrayLike,
         projector_id: str,
+        dynamic_les_id: str | None,
     ):
         identifier = str(projector_id)
         if not identifier:
             raise ValueError("projector_id must be non-empty.")
         self.kinetic_energy = jnp.asarray(kinetic_energy)
-        self.nonlinear_energy_rate = jnp.asarray(nonlinear_energy_rate)
+        self.advective_energy_rate = jnp.asarray(advective_energy_rate)
         self.forcing_power = jnp.asarray(forcing_power)
-        self.viscous_energy_rate = jnp.asarray(viscous_energy_rate)
-        self.dissipation = jnp.asarray(dissipation)
+        self.molecular_energy_rate = jnp.asarray(molecular_energy_rate)
+        self.molecular_dissipation = jnp.asarray(molecular_dissipation)
+        self.algebraic_les_energy_rate = jnp.asarray(algebraic_les_energy_rate)
+        self.algebraic_les_dissipation = jnp.asarray(algebraic_les_dissipation)
+        self.algebraic_les_energy_identity_defect = jnp.asarray(
+            algebraic_les_energy_identity_defect
+        )
+        self.projection_energy_defect = jnp.asarray(projection_energy_defect)
+        self.maximum_eddy_viscosity = jnp.asarray(maximum_eddy_viscosity)
+        self.algebraic_les_available = jnp.asarray(algebraic_les_available, dtype=bool)
+        self.dynamic_les_energy_rate = jnp.asarray(dynamic_les_energy_rate)
+        self.dynamic_les_dissipation = jnp.asarray(dynamic_les_dissipation)
+        self.dynamic_les_energy_identity_defect = jnp.asarray(
+            dynamic_les_energy_identity_defect
+        )
+        self.dynamic_coefficient_minimum = jnp.asarray(dynamic_coefficient_minimum)
+        self.dynamic_coefficient_mean = jnp.asarray(dynamic_coefficient_mean)
+        self.dynamic_coefficient_maximum = jnp.asarray(dynamic_coefficient_maximum)
+        self.dynamic_regularization_activity_count = jnp.asarray(
+            dynamic_regularization_activity_count
+        )
+        self.dynamic_backscatter_activity_count = jnp.asarray(
+            dynamic_backscatter_activity_count
+        )
+        self.dynamic_backscatter_limit_count = jnp.asarray(
+            dynamic_backscatter_limit_count
+        )
+        self.dynamic_accepted_update_count = jnp.asarray(dynamic_accepted_update_count)
+        self.dynamic_rejected_update_count = jnp.asarray(dynamic_rejected_update_count)
+        self.dynamic_les_available = jnp.asarray(dynamic_les_available, dtype=bool)
+        self.dynamic_evidence_finite = jnp.asarray(dynamic_evidence_finite, dtype=bool)
         self.semidiscrete_energy_rate = jnp.asarray(semidiscrete_energy_rate)
         self.energy_balance_defect = jnp.asarray(energy_balance_defect)
         self.divergence_norm = jnp.asarray(divergence_norm)
         self.imaginary_leakage = jnp.asarray(imaginary_leakage)
         self.forbidden_mode_norm = jnp.asarray(forbidden_mode_norm)
         self.pressure_gauge_residual = jnp.asarray(pressure_gauge_residual)
+        self.finite = jnp.asarray(finite, dtype=bool)
         self.projector_id = identifier
+        self.dynamic_les_id = None if dynamic_les_id is None else str(dynamic_les_id)
 
 
 __all__ = ["IncompressibleSpectralDiagnostics", "PeriodicLerayProjector"]

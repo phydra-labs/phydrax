@@ -52,7 +52,7 @@ def test_mac_compiler_projects_packs_and_diagnoses_physical_velocity():
     state = compiled.project_state(velocity)
     physical = compiled.physical_state(0.0, state)
     diagnostics = compiled.diagnostics(0.0, state)
-    restriction = compiled.step_restriction(state)
+    restriction = compiled.step_restriction(0.0, state)
 
     assert state.shape == compiled.state_shape
     assert compiled.resolved_method == "mac-symmetry-preserving-projected"
@@ -61,8 +61,9 @@ def test_mac_compiler_projects_packs_and_diagnoses_physical_velocity():
     assert diagnostics.pressure_gauge_residual < 2e-10
     assert jnp.abs(diagnostics.nonlinear_energy_rate) < 2e-9
     assert restriction.advective > 0.0
-    assert restriction.diffusive > 0.0
-    assert restriction.selected > 0.0
+    assert restriction.molecular > 0.0
+    assert jnp.isinf(restriction.sgs)
+    assert restriction.combined > 0.0
     np.testing.assert_allclose(
         operators.velocity_space.flatten(physical), state, atol=2e-10
     )

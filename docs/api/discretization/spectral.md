@@ -46,6 +46,7 @@
 ---
 
 ::: phydrax.discretization.TensorSpectralDiscretization
+
 ## Transfer and diagnostics
 
 ::: phydrax.discretization.SpectralModalTransferPlan
@@ -293,6 +294,56 @@ multi-host launch and scaling evidence remain outside this plan.
 
 ::: phydrax.discretization.SpectralGlobalDiagnostics
 
+### Distributed periodic LES
+
+`DistributedPeriodicLESPlan` places one prepared scientific action on a real slab
+or pencil JAX mesh. `compile_distributed_periodic_les` adds complete rotational
+flow, `DistributedPeriodicLESMethodPlan` adds ETDRK/SSPRK admission, and
+`DistributedPeriodicLESProductionPlan` keeps runtime segments, statistics,
+checkpoints, and returned states device-resident. No host gather occurs in the
+numerical path. Backend qualification remains exact and is never inherited. See
+the [LES guide](../../guides_large_eddy_simulation.md#distributed-periodic-fourier-action).
+
+::: phydrax.discretization.DistributedPeriodicLESPlan
+
+---
+
+::: phydrax.discretization.PreparedDistributedPeriodicLES
+
+---
+
+::: phydrax.discretization.DistributedPeriodicLESPreparationEvidence
+
+---
+
+::: phydrax.discretization.DistributedPeriodicLESStage
+
+---
+
+::: phydrax.discretization.DistributedPeriodicLESStepRestriction
+
+---
+
+::: phydrax.discretization.DistributedPeriodicLESRestartEvidence
+
+---
+
+::: phydrax.discretization.DistributedPeriodicLESParityEvidence
+
+---
+
+::: phydrax.applications.incompressible_flow.CompiledDistributedPeriodicLESDynamics
+
+---
+
+::: phydrax.applications.incompressible_flow.DistributedPeriodicLESMethodPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.DistributedPeriodicLESProductionPlan
+
+---
+
 ## Incompressible channel solves
 
 The default `ultraspherical_banded` channel route uses pressure-eliminated
@@ -303,7 +354,8 @@ or bulk-flux control; nonzero modes use wall-normal velocity/vorticity eliminati
 `dense_reference` is an explicit oracle and does not inherit banded-route production
 or qualification evidence. The preparation report gives route,
 bandwidth/rank, byte counts, pivot margin, and the required unsharded wall-normal
-axis. Variable viscosity and distributed line solves are excluded.
+axis. Implicit variable-coefficient Stokes and distributed line solves are excluded;
+channel LES adds state-dependent SGS stress explicitly.
 
 The live periodic-flow and ETDRK state is full complex.
 `HermitianSpectralCoordinates` may encode selected checkpoint leaves into independent
@@ -350,16 +402,21 @@ signed wall shears, friction magnitudes, and half-height wall coordinates.
 
 ## Incompressible spectral production
 
-`PeriodicSpectralProductionPlan` takes an already prepared Hermitian ETDRK method,
-periodic statistics, a source problem identity, absolute start/end times, nominal
-step, and checkpoint cadence. Optional constant-power forcing is either identity-
-verified as already compiled or explicitly added by the adapter; adapter wiring
-requires the supplied drift to be unforced. `SpectralChannelProductionPlan` takes
-the exact-step prepared SBDF2 method plus velocity/pressure Hermitian coordinates and
-derives its step from the method; end, output, and statistics-window bounds must lie
-on that lattice. Both prepare a durable checkpoint root before initialization.
+`PeriodicSpectralProductionPlan(dynamics, method, statistics, case, /, *, ...)`
+binds exact compiled dynamics and initial modal content. Static LES requires
+`PreparedLESStabilityGuardedETDRKMethod`; dynamic LES takes matching ordinary
+prepared ETDRK and installs a transactional dynamic wrapper with optional
+Lagrangian continuation. OU forcing is not composable with dynamic continuation.
+`DistributedPeriodicLESProductionPlan` is the device-resident slab/pencil
+counterpart. `SpectralChannelProductionPlan` uses exact-step SBDF2; its optional
+equilibrium-traction owner retains a separate restart state. See
+[Production and restart](../../guides_large_eddy_simulation.md#production-restart-and-statistics).
 
 ::: phydrax.applications.incompressible_flow.PeriodicSpectralProductionPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PeriodicSpectralProductionCase
 
 ---
 

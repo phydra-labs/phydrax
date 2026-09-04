@@ -161,7 +161,48 @@
 
 ---
 
-::: phydrax.equations.SmagorinskyLESClosure
+### Conservative low-Mach LES
+
+`UnstructuredLowMachLESPlan` is a single-device fixed-conforming 3-D tetrahedral
+constitutive transport action with Favre transport and optional static KSGS.
+`UnstructuredLowMachLESFixedStepMethod` adds a gauged pressure projection,
+forward-Euler predictor/correction, complete pressure/flux restart state, explicit
+stability/positivity bounds, and atomic rollback. It refuses 2-D/polyhedral,
+periodic/open, moving/coupled, and dynamic/low-Re KSGS routes. See the normative
+[LES equations](../equations/les.md#backend-support-and-refusals) and
+[LES guide](../../guides_large_eddy_simulation.md#unstructured-low-mach-favre-les).
+
+::: phydrax.equations.UnstructuredLowMachLESPlan
+
+---
+
+::: phydrax.equations.PreparedUnstructuredLowMachLES
+
+---
+
+::: phydrax.equations.UnstructuredLowMachLESState
+
+---
+
+::: phydrax.equations.UnstructuredLowMachLESRateResult
+
+---
+
+::: phydrax.equations.UnstructuredLowMachLESConservationEvidence
+
+---
+
+::: phydrax.solver.UnstructuredLowMachLESFixedStepMethod
+
+---
+
+::: phydrax.solver.UnstructuredLowMachLESRestartState
+
+---
+
+::: phydrax.solver.UnstructuredLowMachLESStepEvidence
+
+---
 
 ---
 

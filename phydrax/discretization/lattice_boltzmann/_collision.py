@@ -48,11 +48,36 @@ class LatticeBoltzmannCollisionDiagnostics(StrictModule):
     root_residual: Array
 
 
+class LatticeBoltzmannSmagorinskyEvidence(StrictModule):
+    """Collision-local evidence for the athermal, unit-filter-width closure."""
+
+    base_relaxation_time: Array
+    effective_relaxation_time: Array
+    molecular_kinematic_viscosity: Array
+    effective_kinematic_viscosity: Array
+    eddy_kinematic_viscosity: Array
+    nonequilibrium_stress_norm: Array
+    coefficient_active: Array
+    conserved_moment_defect: Array
+    finite: Array
+    successful: Array
+    support_satisfied: Array
+    coefficient: float = eqx.field(static=True)
+    coefficient_lower_bound: float = eqx.field(static=True)
+    coefficient_requires_finite: bool = eqx.field(static=True)
+    base_relaxation_rate_bounds: tuple[float, float] = eqx.field(static=True)
+    base_relaxation_rate_bounds_exclusive: bool = eqx.field(static=True)
+    density_lower_bound: float = eqx.field(static=True)
+    density_lower_bound_exclusive: bool = eqx.field(static=True)
+    filter_width_in_lattice_units: float = eqx.field(static=True)
+
+
 class LatticeBoltzmannCollisionResult(StrictModule):
     candidate_populations: Array
     populations: Array
     successful: Array
     diagnostics: LatticeBoltzmannCollisionDiagnostics
+    smagorinsky_evidence: LatticeBoltzmannSmagorinskyEvidence | None
 
 
 class BGKCollisionPlan(StrictModule, NonTrainableState):
@@ -379,6 +404,71 @@ def regularized_nonequilibrium(
     return weights * ein.contract("qab,...ab->...q", hermite, stress) / (2.0 * cs2**2)
 
 
+def _smagorinsky_relaxation(
+    populations: Array,
+    equilibrium: Array,
+    base_relaxation_rate: Array,
+    velocity_set: LatticeBoltzmannVelocitySet,
+    precision: LatticeBoltzmannPrecisionPolicy,
+    coefficient: float,
+    /,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
+    """Solve the local athermal SRT closure from the raw nonequilibrium stress.
+
+    The quadratic uses ``Pi_neq = sum_q(c_q c_q (f_q - f_eq_q))`` and the
+    lattice relation ``nu = cs2 * (tau - 1 / 2)`` at unit filter width.
+    """
+    rate = jnp.asarray(base_relaxation_rate, dtype=populations.dtype)
+    rate = eqx.error_if(
+        rate,
+        jnp.any(~jnp.isfinite(rate) | (rate <= 0.0) | (rate >= 2.0)),
+        "Smagorinsky base relaxation rate must lie in (0, 2).",
+    )
+    nonequilibrium = precision.compute(populations - equilibrium)
+    velocities = precision.coefficient(velocity_set.velocities)
+    stress = ein.contract("...q,qa,qb->...ab", nonequilibrium, velocities, velocities)
+    stress_squared = jnp.sum(stress**2, axis=(-2, -1))
+    positive_stress = stress_squared > 0.0
+    stress_norm = jnp.where(
+        positive_stress,
+        jnp.sqrt(jnp.where(positive_stress, stress_squared, 1.0)),
+        0.0,
+    )
+    density = jnp.sum(precision.accumulation(populations), axis=-1)
+    density_supported = jnp.isfinite(density) & (density > 0.0)
+    safe_density = jnp.where(density_supported, density, 1.0)
+    cs2 = precision.compute(velocity_set.sound_speed_squared)
+    tau0 = 1.0 / rate
+    coefficient_value = jnp.asarray(coefficient, dtype=stress_norm.dtype)
+    if coefficient == 0.0:
+        tau_eff = tau0
+    else:
+        radicand = tau0**2 + (
+            2.0
+            * jnp.sqrt(jnp.asarray(2.0, dtype=stress_norm.dtype))
+            * coefficient_value**2
+            * stress_norm
+            / (safe_density * cs2**2)
+        )
+        tau_eff = jnp.where(positive_stress, 0.5 * (tau0 + jnp.sqrt(radicand)), tau0)
+    molecular_viscosity = cs2 * (tau0 - 0.5)
+    effective_viscosity = cs2 * (tau_eff - 0.5)
+    eddy_viscosity = effective_viscosity - molecular_viscosity
+    coefficient_active = (coefficient_value > 0.0) & positive_stress & density_supported
+    support_satisfied = jnp.all(density_supported)
+    return (
+        1.0 / tau_eff,
+        tau0,
+        tau_eff,
+        molecular_viscosity,
+        effective_viscosity,
+        eddy_viscosity,
+        stress_norm,
+        coefficient_active,
+        support_satisfied,
+    )
+
+
 def _entropy(populations: Array, weights: Array) -> Array:
     positive = populations > 0.0
     safe = jnp.where(positive, populations, 1.0)
@@ -497,6 +587,7 @@ def collide_detailed(
     stabilization = jnp.asarray(1.0, dtype=populations.dtype)
     iterations = jnp.asarray(0, dtype=jnp.int32)
     root_residual = jnp.asarray(0.0, dtype=populations.dtype)
+    smagorinsky_values = None
 
     if isinstance(plan, BGKCollisionPlan):
         candidate = collide_bgk(populations, equilibrium, raw_force_source, rate)
@@ -532,17 +623,36 @@ def collide_detailed(
             + (1.0 - 0.5 * rate)[..., None] * raw_force_source
         )
     elif isinstance(plan, SmagorinskyCollisionPlan):
-        projected = regularized_nonequilibrium(
-            populations, equilibrium, velocity_set, precision
+        (
+            effective,
+            tau0,
+            tau_eff,
+            molecular_viscosity,
+            effective_viscosity,
+            eddy_viscosity,
+            stress_norm,
+            coefficient_active,
+            support_satisfied,
+        ) = _smagorinsky_relaxation(
+            populations,
+            equilibrium,
+            rate,
+            velocity_set,
+            precision,
+            plan.coefficient,
         )
-        stress_norm = jnp.sqrt(jnp.sum(projected**2, axis=-1))
-        tau0 = 1.0 / rate
-        tau_eff = 0.5 * (
-            tau0 + jnp.sqrt(tau0**2 + 36.0 * plan.coefficient**2 * stress_norm)
-        )
-        effective = 1.0 / tau_eff
         rates = effective[..., None]
         candidate = collide_bgk(populations, equilibrium, raw_force_source, effective)
+        smagorinsky_values = (
+            tau0,
+            tau_eff,
+            molecular_viscosity,
+            effective_viscosity,
+            eddy_viscosity,
+            stress_norm,
+            coefficient_active,
+            support_satisfied,
+        )
     elif isinstance(plan, CentralMomentCollisionPlan):
         basis = prepared.basis
         spectrum = prepared.spectrum
@@ -640,8 +750,51 @@ def collide_detailed(
         plan.tolerance if isinstance(plan, EntropicCollisionPlan) else jnp.inf
     )
     successful = finite & positivity & jnp.all(root_residual <= root_tolerance)
+    smagorinsky_evidence = None
+    if smagorinsky_values is not None:
+        (
+            tau0,
+            tau_eff,
+            molecular_viscosity,
+            effective_viscosity,
+            eddy_viscosity,
+            stress_norm,
+            coefficient_active,
+            support_satisfied,
+        ) = smagorinsky_values
+        evidence_finite = finite & jnp.all(
+            jnp.isfinite(tau_eff)
+            & jnp.isfinite(effective_viscosity)
+            & jnp.isfinite(stress_norm)
+        )
+        successful = successful & evidence_finite & support_satisfied
+        smagorinsky_evidence = LatticeBoltzmannSmagorinskyEvidence(
+            base_relaxation_time=tau0,
+            effective_relaxation_time=tau_eff,
+            molecular_kinematic_viscosity=molecular_viscosity,
+            effective_kinematic_viscosity=effective_viscosity,
+            eddy_kinematic_viscosity=eddy_viscosity,
+            nonequilibrium_stress_norm=stress_norm,
+            coefficient_active=coefficient_active,
+            conserved_moment_defect=jnp.maximum(
+                diagnostics.mass_error, diagnostics.momentum_error
+            ),
+            finite=evidence_finite,
+            successful=successful,
+            support_satisfied=support_satisfied,
+            coefficient=plan.coefficient,
+            coefficient_lower_bound=0.0,
+            coefficient_requires_finite=True,
+            base_relaxation_rate_bounds=(0.0, 2.0),
+            base_relaxation_rate_bounds_exclusive=True,
+            density_lower_bound=0.0,
+            density_lower_bound_exclusive=True,
+            filter_width_in_lattice_units=1.0,
+        )
     accepted = precision.population(jnp.where(successful, candidate, populations))
-    return LatticeBoltzmannCollisionResult(candidate, accepted, successful, diagnostics)
+    return LatticeBoltzmannCollisionResult(
+        candidate, accepted, successful, diagnostics, smagorinsky_evidence
+    )
 
 
 __all__ = [
@@ -653,6 +806,7 @@ __all__ = [
     "LatticeBoltzmannCollisionDiagnostics",
     "LatticeBoltzmannCollisionPlan",
     "LatticeBoltzmannCollisionResult",
+    "LatticeBoltzmannSmagorinskyEvidence",
     "MRTCollisionPlan",
     "RegularizedCollisionPlan",
     "SmagorinskyCollisionPlan",

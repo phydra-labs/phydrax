@@ -50,6 +50,7 @@ from ._collision import (
     LatticeBoltzmannCollisionDiagnostics,
     LatticeBoltzmannCollisionPlan,
     LatticeBoltzmannCollisionResult,
+    LatticeBoltzmannSmagorinskyEvidence,
     MRTCollisionPlan,
     prepare_lattice_boltzmann_collision,
     PreparedLatticeBoltzmannCollision,
