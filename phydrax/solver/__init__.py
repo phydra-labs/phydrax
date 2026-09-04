@@ -744,6 +744,14 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._guided_elastic_modes import (
+    GuidedElasticModePlan,
+    GuidedElasticModeResult,
+    GuidedElasticModeStatus,
+    prepare_guided_elastic_modes,
+    PreparedGuidedElasticModes,
+    solve_guided_elastic_modes,
+)
 from ._harmonic_constraints import HarmonicConstraint, preserve_magnetic_periods
 from ._helmholtz import (
     ExteriorHelmholtzDirichletResult2D,
@@ -3383,6 +3391,12 @@ __all__ = [
     "CompatibleMaxwell1DState",
     "CompatibleMaxwell2DPlan",
     "CompatibleMaxwell2DState",
+    "GuidedElasticModePlan",
+    "GuidedElasticModeResult",
+    "GuidedElasticModeStatus",
+    "PreparedGuidedElasticModes",
+    "prepare_guided_elastic_modes",
+    "solve_guided_elastic_modes",
     "ReducedMaxwellDiagnostics",
     "PICMovingWindowPlan",
     "PICMovingWindowResult",

@@ -46,6 +46,7 @@ class FourierModalCaseBatchResult(StrictModule):
     left_outgoing_power: Array
     right_outgoing_power: Array
     net_port_power_into_stack: Array
+    power_audit_residual: Array
     status: Array
     case_shape: tuple[int, ...] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
@@ -162,6 +163,7 @@ def solve_fourier_modal_case_batch(
         stacked(tuple(result.left_outgoing_power for result in results)),
         stacked(tuple(result.right_outgoing_power for result in results)),
         stacked(tuple(result.net_port_power_into_stack for result in results)),
+        stacked(tuple(result.power_audit_residual for result in results)),
         stacked(tuple(result.status for result in results)),
         prepared.case_shape,
         batch_id=prepared.batch_id,

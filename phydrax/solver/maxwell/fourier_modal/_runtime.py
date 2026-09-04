@@ -46,11 +46,14 @@ from ._factorization import (
 )
 from ._layer import prepare_layer_operator, PreparedLayerOperator
 from ._scattering import (
+    _port_bases,
+    _port_power_data,
+    _reference_phases,
+    _shift_scattering_with_phases,
     boundary_to_scattering,
     MaxwellPortScatteringOperator,
     prepare_fourier_modal_port_modes,
     PreparedFourierModalPortModes,
-    shift_scattering_reference_planes,
 )
 from ._sources import (
     AffineBoundaryRelation,
@@ -73,7 +76,8 @@ LayerRefreshKind: TypeAlias = Literal[
 class FourierModalSolveStatus(IntEnum):
     SUCCESS = 0
     PROPAGATION_TOLERANCE_NOT_MET = 1
-    NONFINITE_RESULT = 2
+    POWER_AUDIT_TOLERANCE_NOT_MET = 2
+    NONFINITE_RESULT = 3
 
 
 class FourierModalResourcePolicy(StrictModule, NonTrainableState):
@@ -123,6 +127,7 @@ class FourierModalSolvePolicy(StrictModule, NonTrainableState):
     boundary: BoundaryCascadePolicy
     resources: FourierModalResourcePolicy
     retain_boundary_fields: bool = eqx.field(static=True)
+    power_audit_tolerance: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -131,18 +136,24 @@ class FourierModalSolvePolicy(StrictModule, NonTrainableState):
         boundary: BoundaryCascadePolicy | None = None,
         resources: FourierModalResourcePolicy | None = None,
         retain_boundary_fields: bool = True,
+        power_audit_tolerance: float = 1.0e-6,
     ):
         boundary_ = BoundaryCascadePolicy() if boundary is None else boundary
         resources_ = FourierModalResourcePolicy() if resources is None else resources
+        audit_tolerance = float(power_audit_tolerance)
+        if not np.isfinite(audit_tolerance) or audit_tolerance < 0.0:
+            raise ValueError("power_audit_tolerance must be finite and nonnegative.")
         self.boundary = boundary_
         self.resources = resources_
         self.retain_boundary_fields = bool(retain_boundary_fields)
+        self.power_audit_tolerance = audit_tolerance
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "fourier-modal-solve-policy",
                 "boundary": boundary_.policy_id,
                 "resources": resources_.policy_id,
                 "retain_boundary_fields": self.retain_boundary_fields,
+                "power_audit_tolerance": self.power_audit_tolerance,
             }
         )
 
@@ -215,6 +226,10 @@ class PreparedFourierModalMaxwell(StrictModule):
     right_modes: PreparedFourierModalPortModes
     interface_scattering: MaxwellPortScatteringOperator
     scattering: MaxwellPortScatteringOperator
+    left_incoming_phase: Array
+    left_outgoing_phase: Array
+    right_incoming_phase: Array
+    right_outgoing_phase: Array
     total_thickness: Array
     refresh_count: int = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
@@ -252,8 +267,10 @@ class FourierModalDiagnostics(StrictModule):
     maximum_boundary_solve_residual: Array
     maximum_boundary_paired_error: Array
     scattering_conversion_residual: Array
+    maximum_power_audit_residual: Array
     finite: Array
     propagation_converged: Array
+    power_audit_passed: Array
     refresh_count: Array
 
 
@@ -275,6 +292,7 @@ class FourierModalSolveResult(StrictModule):
     left_outgoing_power: Array
     right_outgoing_power: Array
     net_port_power_into_stack: Array
+    power_audit_residual: Array
     weighted_left_incoming_power: Array
     weighted_right_incoming_power: Array
     weighted_left_outgoing_power: Array
@@ -298,21 +316,49 @@ class FourierModalConvergenceReport(StrictModule):
 def _cost_estimate(problem: FourierModalMaxwellProblem) -> FourierModalCostEstimate:
     count = problem.harmonics.harmonic_count
     layers = problem.layer_count
+    continuous_layers = tuple(
+        element
+        for element in problem.elements
+        if isinstance(element, ContinuousFourierModalLayer)
+    )
+    invariant_layer_count = layers - len(continuous_layers)
+    periodic_port_count = sum(
+        isinstance(port, PeriodicMaxwellPort)
+        for port in (problem.superstrate, problem.substrate)
+    )
     itemsize = np.dtype(problem.harmonics.plan.precision.coefficient_dtype).itemsize
     sample_points = int(np.prod(problem.harmonics.plan.sample_shape))
-    # Per layer: base and translated materials (36), the complete layer operator
-    # including retained constitutive references (42), and its boundary relation
-    # (16). Global storage covers the composed boundary (16), both port bases
-    # (16), and the interface and reference-shifted scattering operators (32).
-    matrix_elements = (94 * layers + 64) * count**2
-    tangent_field_elements = 4 * layers * sample_points
-    port_vector_elements = 18 * count
+    # An invariant layer retains two material factorizations (36), one complete
+    # operator (42), and one boundary relation (16), all in N-by-N units.
+    # A continuous layer retains a capacity-sized prefix of 4(2N)^2 boundary
+    # blocks plus its final boundary. Global storage includes both port bases,
+    # both scattering maps, and four cached reference-phase vectors.
+    continuous_matrix_elements = sum(
+        16 * (element.integration_policy.maximum_segments + 2)
+        for element in continuous_layers
+    )
+    global_matrix_elements = 64 + 8 * periodic_port_count
+    matrix_elements = (
+        94 * invariant_layer_count + continuous_matrix_elements + global_matrix_elements
+    ) * count**2
+    tangent_field_elements = 4 * invariant_layer_count * sample_points
+    segment_vector_elements = sum(
+        8 * element.integration_policy.maximum_segments + 16
+        for element in continuous_layers
+    )
+    port_vector_elements = (26 + 11 * periodic_port_count) * count
     preparation = (
-        matrix_elements + tangent_field_elements + port_vector_elements
+        matrix_elements
+        + tangent_field_elements
+        + segment_vector_elements
+        + port_vector_elements
     ) * itemsize
-    # The largest conversion forms two 4N-by-4N systems while retaining solve
-    # factors and products; three copies of each system are budgeted.
-    workspace = 6 * (4 * count) ** 2 * itemsize
+    # Port conversion retains solve factors for two 4N systems. Continuous
+    # preparation additionally holds two local operators and two CF boundaries.
+    workspace_elements = 6 * (4 * count) ** 2
+    if continuous_layers:
+        workspace_elements = max(workspace_elements, 132 * count**2)
+    workspace = workspace_elements * itemsize
     return FourierModalCostEstimate(count, layers, preparation, workspace, 4 * count)
 
 
@@ -629,10 +675,22 @@ def _finalize_prepared(
         ),
         start=jnp.asarray(0.0, dtype=dtype),
     )
-    scattering = shift_scattering_reference_planes(
+    left_incoming_phase, left_outgoing_phase = _reference_phases(
+        left_modes,
+        problem.superstrate.reference_distance,
+        "left",
+    )
+    right_incoming_phase, right_outgoing_phase = _reference_phases(
+        right_modes,
+        problem.substrate.reference_distance,
+        "right",
+    )
+    scattering = _shift_scattering_with_phases(
         interface_scattering,
-        problem.superstrate.reference_plane,
-        problem.substrate.reference_plane,
+        left_incoming_phase,
+        left_outgoing_phase,
+        right_incoming_phase,
+        right_outgoing_phase,
     )
     preparation_id = canonical_fingerprint(
         {
@@ -652,6 +710,10 @@ def _finalize_prepared(
         right_modes,
         interface_scattering,
         scattering,
+        left_incoming_phase,
+        left_outgoing_phase,
+        right_incoming_phase,
+        right_outgoing_phase,
         total_thickness,
         int(refresh_count),
         preparation_id=preparation_id,
@@ -946,7 +1008,7 @@ def _affine_stack(
     dtype = prepared.interface_scattering.s11.matrix.dtype
     affine_elements: list[AffineBoundaryRelation] = []
     source_index = 0
-    for index, element in enumerate(prepared.elements):
+    for element in prepared.elements:
         if isinstance(
             element,
             PreparedFourierModalLayer | PreparedContinuousFourierModalLayer,
@@ -965,7 +1027,7 @@ def _affine_stack(
         host_element_index = prepared.source_host_indices[source_index]
         host = prepared.elements[host_element_index]
         if not isinstance(host, PreparedFourierModalLayer):
-            raise TypeError("Prepared source host is not a finite layer.")
+            raise TypeError("Prepared source host is not a finite invariant layer.")
         affine_elements.append(
             source_plane_affine_relation(host.operator, electric, magnetic)
         )
@@ -982,25 +1044,18 @@ def _affine_stack(
 def _interface_boundary_fields(
     prepared: PreparedFourierModalMaxwell,
     excitation: FourierModalExcitation,
-    left_outgoing: Array,
-    right_outgoing: Array,
+    left_interface_outgoing: Array,
     affine_elements: tuple[AffineBoundaryRelation, ...],
     /,
 ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
-    left_phase = jnp.exp(
-        1j
-        * jnp.repeat(prepared.left_modes.longitudinal_wavevector, 2)[:, None]
-        * prepared.problem.superstrate.reference_plane
+    left_interface_incoming = (
+        prepared.left_incoming_phase[:, None] * excitation.left_incident
     )
-    right_phase = jnp.exp(
-        1j
-        * jnp.repeat(prepared.right_modes.longitudinal_wavevector, 2)[:, None]
-        * prepared.problem.substrate.reference_plane
+    left_in_e, left_in_h, left_out_e, left_out_h = _port_bases(
+        prepared.left_modes, "left"
     )
-    forward_left = left_phase * excitation.left_incident
-    backward_left = left_outgoing / left_phase
-    electric = prepared.left_modes.electric_matrix @ (forward_left + backward_left)
-    magnetic = prepared.left_modes.magnetic_matrix @ (forward_left - backward_left)
+    electric = left_in_e @ left_interface_incoming + left_out_e @ left_interface_outgoing
+    magnetic = left_in_h @ left_interface_incoming + left_out_h @ left_interface_outgoing
     electric_fields = [electric]
     magnetic_fields = [magnetic]
     for affine in affine_elements:
@@ -1016,17 +1071,75 @@ def _interface_boundary_fields(
         magnetic = magnetic_right
         electric_fields.append(electric)
         magnetic_fields.append(magnetic)
-    expected_forward = right_outgoing / right_phase
-    expected_backward = right_phase * excitation.right_incident
-    expected_electric = prepared.right_modes.electric_matrix @ (
-        expected_forward + expected_backward
-    )
-    expected_magnetic = prepared.right_modes.magnetic_matrix @ (
-        expected_forward - expected_backward
-    )
-    electric_fields[-1] = 0.5 * (electric_fields[-1] + expected_electric)
-    magnetic_fields[-1] = 0.5 * (magnetic_fields[-1] + expected_magnetic)
     return tuple(electric_fields), tuple(magnetic_fields)
+
+
+def _modal_power(weights: Array, propagating: Array, amplitudes: Array, /) -> Array:
+    return jnp.sum(
+        jnp.where(
+            propagating[:, None],
+            weights[:, None] * jnp.abs(amplitudes) ** 2,
+            0.0,
+        ),
+        axis=0,
+    )
+
+
+def _terminal_poynting(
+    electric: Array,
+    magnetic: Array,
+    harmonic_count: int,
+    cell_measure: Array,
+    /,
+) -> Array:
+    ex = electric[:harmonic_count]
+    ey = electric[harmonic_count:]
+    hx = magnetic[:harmonic_count]
+    hy = magnetic[harmonic_count:]
+    return (
+        0.5
+        * cell_measure
+        * jnp.real(jnp.sum(jnp.conj(ex) * hy - jnp.conj(ey) * hx, axis=0))
+    )
+
+
+def _power_audit_residual(
+    prepared: PreparedFourierModalMaxwell,
+    boundary_electric: tuple[Array, ...],
+    boundary_magnetic: tuple[Array, ...],
+    left_incoming_power: Array,
+    right_incoming_power: Array,
+    left_outgoing_power: Array,
+    right_outgoing_power: Array,
+    /,
+) -> Array:
+    count = prepared.problem.harmonics.harmonic_count
+    cell_measure = prepared.problem.harmonics.cell_measure
+    left_terminal = _terminal_poynting(
+        boundary_electric[0],
+        boundary_magnetic[0],
+        count,
+        cell_measure,
+    )
+    right_terminal = -_terminal_poynting(
+        boundary_electric[-1],
+        boundary_magnetic[-1],
+        count,
+        cell_measure,
+    )
+    modal_left = left_incoming_power - left_outgoing_power
+    modal_right = right_incoming_power - right_outgoing_power
+    differences = jnp.stack(
+        (modal_left - left_terminal, modal_right - right_terminal),
+        axis=0,
+    )
+    scale = jnp.sqrt(
+        left_incoming_power**2
+        + right_incoming_power**2
+        + left_outgoing_power**2
+        + right_outgoing_power**2
+    )
+    return jnp.sqrt(jnp.sum(jnp.abs(differences) ** 2, axis=0)) / jnp.maximum(scale, 1.0)
 
 
 def solve_fourier_modal_maxwell(
@@ -1042,13 +1155,19 @@ def solve_fourier_modal_maxwell(
     ):
         raise KeyError("Excitation references an unknown source plane.")
     interface = prepared.interface_scattering
+    left_interface_incoming = (
+        prepared.left_incoming_phase[:, None] * excitation.left_incident
+    )
+    right_interface_incoming = (
+        prepared.right_incoming_phase[:, None] * excitation.right_incident
+    )
     external_right = (
-        interface.s11.matrix @ excitation.left_incident
-        + interface.s12.matrix @ excitation.right_incident
+        interface.s11.matrix @ left_interface_incoming
+        + interface.s12.matrix @ right_interface_incoming
     )
     external_left = (
-        interface.s21.matrix @ excitation.left_incident
-        + interface.s22.matrix @ excitation.right_incident
+        interface.s21.matrix @ left_interface_incoming
+        + interface.s22.matrix @ right_interface_incoming
     )
     affine, affine_elements = _affine_stack(prepared, excitation)
     emitted_right, emitted_left = emitted_port_amplitudes(
@@ -1058,28 +1177,44 @@ def solve_fourier_modal_maxwell(
     )
     interface_right = external_right + emitted_right
     interface_left = external_left + emitted_left
-    left_phase = jnp.exp(
-        1j
-        * jnp.repeat(prepared.left_modes.longitudinal_wavevector, 2)[:, None]
-        * prepared.problem.superstrate.reference_plane
+    right_outgoing = prepared.right_outgoing_phase[:, None] * interface_right
+    left_outgoing = prepared.left_outgoing_phase[:, None] * interface_left
+    (
+        left_incoming_weights,
+        left_outgoing_weights,
+        left_incoming_propagating,
+        left_outgoing_propagating,
+        _,
+        _,
+    ) = _port_power_data(prepared.left_modes)
+    (
+        right_incoming_weights,
+        right_outgoing_weights,
+        right_incoming_propagating,
+        right_outgoing_propagating,
+        _,
+        _,
+    ) = _port_power_data(prepared.right_modes)
+    left_incoming_power = _modal_power(
+        left_incoming_weights,
+        left_incoming_propagating,
+        excitation.left_incident,
     )
-    right_phase = jnp.exp(
-        1j
-        * jnp.repeat(prepared.right_modes.longitudinal_wavevector, 2)[:, None]
-        * prepared.problem.substrate.reference_plane
+    right_incoming_power = _modal_power(
+        right_incoming_weights,
+        right_incoming_propagating,
+        excitation.right_incident,
     )
-    right_outgoing = right_phase * interface_right
-    left_outgoing = left_phase * interface_left
-    left_weights = jnp.abs(prepared.left_modes.flux_weights)[:, None]
-    right_weights = jnp.abs(prepared.right_modes.flux_weights)[:, None]
-    left_incoming_power = jnp.sum(
-        left_weights * jnp.abs(excitation.left_incident) ** 2, axis=0
+    left_outgoing_power = _modal_power(
+        left_outgoing_weights,
+        left_outgoing_propagating,
+        left_outgoing,
     )
-    right_incoming_power = jnp.sum(
-        right_weights * jnp.abs(excitation.right_incident) ** 2, axis=0
+    right_outgoing_power = _modal_power(
+        right_outgoing_weights,
+        right_outgoing_propagating,
+        right_outgoing,
     )
-    left_outgoing_power = jnp.sum(left_weights * jnp.abs(left_outgoing) ** 2, axis=0)
-    right_outgoing_power = jnp.sum(right_weights * jnp.abs(right_outgoing) ** 2, axis=0)
     net_port_power = (
         left_incoming_power
         + right_incoming_power
@@ -1104,9 +1239,17 @@ def solve_fourier_modal_maxwell(
     boundary_electric, boundary_magnetic = _interface_boundary_fields(
         prepared,
         excitation,
-        left_outgoing,
-        right_outgoing,
+        interface_left,
         affine_elements,
+    )
+    power_audit_residual = _power_audit_residual(
+        prepared,
+        boundary_electric,
+        boundary_magnetic,
+        left_incoming_power,
+        right_incoming_power,
+        left_outgoing_power,
+        right_outgoing_power,
     )
     layers = tuple(
         element
@@ -1118,7 +1261,14 @@ def solve_fourier_modal_maxwell(
     )
     maximum_constitutive = jnp.max(
         jnp.stack(
-            tuple(layer.operator.diagnostics.constitutive_residual for layer in layers)
+            tuple(
+                (
+                    layer.maximum_constitutive_residual
+                    if isinstance(layer, PreparedContinuousFourierModalLayer)
+                    else layer.operator.diagnostics.constitutive_residual
+                )
+                for layer in layers
+            )
             or (jnp.asarray(0.0),)
         )
     )
@@ -1150,6 +1300,10 @@ def solve_fourier_modal_maxwell(
             or (jnp.asarray(True),)
         )
     )
+    maximum_power_audit = jnp.max(power_audit_residual)
+    power_audit_passed = jnp.all(
+        power_audit_residual <= prepared.plan.policy.power_audit_tolerance
+    )
     finite = (
         jnp.all(jnp.isfinite(right_outgoing))
         & jnp.all(jnp.isfinite(left_outgoing))
@@ -1158,6 +1312,13 @@ def solve_fourier_modal_maxwell(
         & jnp.all(jnp.isfinite(left_outgoing_power))
         & jnp.all(jnp.isfinite(right_outgoing_power))
         & jnp.all(jnp.isfinite(net_port_power))
+        & jnp.all(jnp.isfinite(power_audit_residual))
+        & jnp.all(
+            jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in boundary_electric))
+        )
+        & jnp.all(
+            jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in boundary_magnetic))
+        )
     )
     status = jnp.where(
         ~finite,
@@ -1165,7 +1326,11 @@ def solve_fourier_modal_maxwell(
         jnp.where(
             ~propagation_converged,
             int(FourierModalSolveStatus.PROPAGATION_TOLERANCE_NOT_MET),
-            int(FourierModalSolveStatus.SUCCESS),
+            jnp.where(
+                ~power_audit_passed,
+                int(FourierModalSolveStatus.POWER_AUDIT_TOLERANCE_NOT_MET),
+                int(FourierModalSolveStatus.SUCCESS),
+            ),
         ),
     )
     diagnostics = FourierModalDiagnostics(
@@ -1173,8 +1338,10 @@ def solve_fourier_modal_maxwell(
         maximum_boundary_solve,
         maximum_paired,
         interface.diagnostics.conversion_residual,
+        maximum_power_audit,
         finite,
         propagation_converged,
+        power_audit_passed,
         jnp.asarray(prepared.refresh_count, dtype=jnp.int32),
     )
     provenance = FourierModalProvenance(
@@ -1194,6 +1361,7 @@ def solve_fourier_modal_maxwell(
         left_outgoing_power,
         right_outgoing_power,
         net_port_power,
+        power_audit_residual,
         weighted_left_incoming,
         weighted_right_incoming,
         weighted_left_outgoing,

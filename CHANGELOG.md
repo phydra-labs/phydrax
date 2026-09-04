@@ -20,6 +20,17 @@
   initial-condition-bound `PeriodicSpectralProductionCase`. Qualification outputs
   use the generic evidence spine, remain unsigned/unreleased candidates, and retain
   external base-profile release dependencies.
+- Added a native optics platform spanning fixed-shape ray intersections,
+  Snell/Fresnel interfaces, planar camera stacks, sequential/paraxial and bounded
+  non-sequential tracing, sampled angular-spectrum propagation, thin and coherent
+  field actions, dispersion laws, Maxwell/pupil adapters, differential Gaussian
+  beamlets, pupil/PSF/OTF/MTF analysis, atmospheric and statistical-AO models,
+  carrier-resolved nonlinear propagation, tissue radiative transport,
+  fixed-frequency guided electromagnetic and elastic modes, SBS overlaps, and an
+  optional host-only OpticStudio adapter. The Fourier-modal Maxwell boundary was
+  hardened simultaneously with outward reference distances, directional periodic
+  bases, physical unit-flux normalization, independent terminal-power auditing,
+  and segment-aware continuous-layer dense fields.
 - Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
   shared or per-series masked supports, node- and edge-aligned numerical
   PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;

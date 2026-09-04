@@ -87,15 +87,28 @@ class AbstractFourierModalPort(StrictModule):
     """Prepared-interface contract for one semi-infinite Fourier-modal exterior."""
 
     material: FrequencyMaxwellMaterial
-    reference_plane: Array
+    reference_distance: Array
     port_id: str = eqx.field(static=True)
 
 
+def _reference_distance(value: ArrayLike, /) -> Array:
+    distance = jnp.asarray(value)
+    if distance.ndim != 0 or not jnp.issubdtype(distance.dtype, jnp.number):
+        raise ValueError("reference_distance must be one numeric scalar.")
+    if jnp.issubdtype(distance.dtype, jnp.complexfloating):
+        raise ValueError("reference_distance must be real.")
+    return eqx.error_if(
+        distance,
+        (~jnp.isfinite(distance)) | (distance < 0.0),
+        "reference_distance must be finite and nonnegative.",
+    )
+
+
 class HomogeneousMaxwellPort(AbstractFourierModalPort):
-    """Homogeneous semi-infinite exterior medium and reference plane."""
+    """Homogeneous semi-infinite exterior with an outward reference distance."""
 
     material: FrequencyMaxwellMaterial
-    reference_plane: Array
+    reference_distance: Array
     port_id: str = eqx.field(static=True)
 
     def __init__(
@@ -103,7 +116,7 @@ class HomogeneousMaxwellPort(AbstractFourierModalPort):
         material: FrequencyMaxwellMaterial,
         /,
         *,
-        reference_plane: ArrayLike = 0.0,
+        reference_distance: ArrayLike = 0.0,
         port_id: str,
     ):
         if not isinstance(material, FrequencyMaxwellMaterial):
@@ -111,11 +124,8 @@ class HomogeneousMaxwellPort(AbstractFourierModalPort):
         identifier = str(port_id)
         if not identifier:
             raise ValueError("port_id must be non-empty.")
-        plane = jnp.asarray(reference_plane)
-        if plane.ndim > 0:
-            raise ValueError("reference_plane must be scalar.")
         self.material = material
-        self.reference_plane = plane
+        self.reference_distance = _reference_distance(reference_distance)
         self.port_id = identifier
 
 
@@ -131,7 +141,7 @@ class PeriodicMaxwellPort(AbstractFourierModalPort):
         factorization: AbstractFourierFactorizationPlan,
         /,
         *,
-        reference_plane: ArrayLike = 0.0,
+        reference_distance: ArrayLike = 0.0,
         mode_policy: Literal["frozen", "spectral-subspace"] = "frozen",
         port_id: str,
     ):
@@ -141,15 +151,12 @@ class PeriodicMaxwellPort(AbstractFourierModalPort):
             raise TypeError("factorization must be AbstractFourierFactorizationPlan.")
         if mode_policy not in ("frozen", "spectral-subspace"):
             raise ValueError("Unknown periodic Maxwell port mode policy.")
-        plane = jnp.asarray(reference_plane)
-        if plane.ndim:
-            raise ValueError("reference_plane must be scalar.")
         identifier = str(port_id)
         if not identifier:
             raise ValueError("port_id must be non-empty.")
         self.material = material
         self.factorization = factorization
-        self.reference_plane = plane
+        self.reference_distance = _reference_distance(reference_distance)
         self.mode_policy = mode_policy
         self.port_id = identifier
 

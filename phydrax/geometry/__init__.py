@@ -92,6 +92,11 @@ from ._interface import (
     regularized_heaviside_values,
 )
 from ._partition import BoundaryAtlasPartition, GeometryMeasurePartition
+from ._ray_intersection import (
+    intersect_ray_plane,
+    RayIntersectionResult,
+    RayIntersectionStatus,
+)
 from ._sampling import (
     AtlasSamplingPlan,
     bounded_rejection_sample,
@@ -113,6 +118,14 @@ from ._tetra_intersections import (
     TetraIntersectionResult,
     TetraIntersectionStatus,
     TetraIntersectionTolerance,
+)
+from ._triangle_ray import (
+    intersect_triangle_rays,
+    prepare_triangle_ray_query,
+    PreparedTriangleRayQuery,
+    TriangleRayIntersectionResult,
+    TriangleRayIntersectionStatus,
+    TriangleRayQueryPlan,
 )
 from ._validity import (
     GeometryValidityDisposition,
@@ -302,6 +315,15 @@ __all__ = [
     "PreparedBoundaryAtlasSurfels",
     "IntersectionResult",
     "IntersectionStatus",
+    "RayIntersectionResult",
+    "RayIntersectionStatus",
+    "intersect_ray_plane",
+    "TriangleRayQueryPlan",
+    "PreparedTriangleRayQuery",
+    "TriangleRayIntersectionStatus",
+    "TriangleRayIntersectionResult",
+    "prepare_triangle_ray_query",
+    "intersect_triangle_rays",
     "PredicateEvidence",
     "InterfaceDistanceMetrics",
     "PhaseGeometryMetrics",

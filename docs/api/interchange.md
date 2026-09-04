@@ -29,3 +29,23 @@ the inspection contract.
 ---
 
 ::: phydrax.interchange.HostInspectionConversion
+
+## Optional OpticStudio boundary
+
+The OpticStudio adapter is host-only, lazily imports the optional ZOSPy package,
+opens only owned standalone sessions, and rejects unsupported sequential features
+before mutating the vendor system.
+
+::: phydrax.interchange.opticstudio.OpticStudioBackend
+
+---
+
+::: phydrax.interchange.opticstudio.OpticStudioAnalysisRequest
+
+---
+
+::: phydrax.interchange.opticstudio.export_sequential_to_opticstudio
+
+---
+
+::: phydrax.interchange.opticstudio.run_opticstudio_analysis

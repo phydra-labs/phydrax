@@ -61,8 +61,8 @@ def test_calibration_and_refraction_keep_true_and_nominal_rigs_explicit() -> Non
         np.asarray(calibration.true_rig.cameras[0].intrinsics.focal_length),
         np.asarray(calibration.nominal_rig.cameras[0].intrinsics.focal_length),
     )
-    assert refraction.true_rig.cameras[0].refraction is not None
-    assert refraction.nominal_rig.cameras[0].refraction is None
+    assert refraction.true_rig.cameras[0].refractive_stack is not None
+    assert refraction.nominal_rig.cameras[0].refractive_stack is None
     assert bool(jnp.any(refraction.projection_valid))
 
 

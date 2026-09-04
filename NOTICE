@@ -326,6 +326,55 @@ against its own discretization, linear-operator, boundary-cascade, diagnostic,
 refresh, and provenance contracts and does not depend on the upstream package.
 See LICENSES/FMMAX-MIT.txt.
 
+Optics design references
+The geometric, paraxial, beamlet, physical-optics, atmospheric, nonlinear,
+radiative-transport, guided-mode, Brillouin, and external-adapter design study
+considered the following upstream repositories at the named commits:
+
+  ricktu288/ray-optics
+    e55947ecf4cc86724085ec07b774f85e4b7dea46 (Apache-2.0)
+  drocheam/optrace
+    7acc9fa6a4af9657d60444689de073fc0baecc51 (MIT)
+  arielmission-space/PAOS
+    865f9ba7bd0c6652af317741b155f7458a7af3d4 (BSD-3-Clause)
+  JuliaPhysics/BeamletOptics.jl
+    28c894bf90b911880d8fb444b7c9c6af3f5e34a7 (MIT)
+  ojdf/fast
+    5ca757cc62c65726deccc73412193f4c6281226b (GPL-3.0)
+  KAHR-Alpha/Aether
+    5dc631a9dc42e83ed01b67e2c694f5900b500168 (Apache-2.0)
+  NickKarpowicz/LightwaveExplorer
+    81756a954877de9306dcfae1c1ea19893c5691aa (MIT)
+  DCC-Lab/PyTissueOptics
+    515fd24e7f5dcd0d393125b3e5ec23bb14d72988 (MIT)
+  optiland/optiland
+    00c0837fbee5d66019a24a1735ff91cd4f9b2646 (MIT)
+  rafael-fuente/Incoherent-Light-Simulation
+    6aaf09231071a914eb6dcdabfe2cb10fd04e666c (BSD-3-Clause)
+  kch3782/torcwa
+    51c0d24abcd5f12dbae310614844d108b2dcb8a1 (LGPL-3.0-or-later)
+  MREYE-LUMC/ZOSPy
+    7fa5874889d69d718f642972cb1cc7cb5c066762 (MIT)
+  LouisDesdoigts/dLux
+    6ef8abe4cd800801b9df75e9a39385788f79a420 (BSD-3-Clause)
+  bjornsturmberg/EMUstack
+    815637ed4a49f18df50498b00244718cb5141a3a (GPL-3.0-or-later)
+  cbasedlf/optsim
+    e0601716a1bcb10faa2087d3e20092694df0983a (MIT)
+  garrekstemo/TransferMatrix.jl
+    c463fa1e7b28278ce9075b2c3f88cb6779067b44 (MIT)
+  bjornsturmberg/NumBAT
+    d35f873adc1e90db26cc718a20e954f8f81b0c2f (GPL-3.0)
+
+Phydrax independently implements its own immutable plans, prepared programs,
+field and ray contracts, geometry queries, propagation kernels, diagnostics,
+resource policies, qualification cases, and provenance. It does not copy,
+translate, bundle, link, import, or depend on upstream source, fixtures,
+meshes, material tables, generated outputs, GUIs, or executables. GPL/LGPL
+projects remain idea-only design references; no copyleft code or data enters
+the distribution. The optional OpticStudio adapter consumes only a separately
+installed user environment and does not redistribute vendor software or data.
+
 IREE
 Copyright 2019-2026 The IREE Authors.
 Licensed under the Apache License, Version 2.0.

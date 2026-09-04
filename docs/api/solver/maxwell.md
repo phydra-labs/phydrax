@@ -248,6 +248,26 @@ Phydrax provides complementary Maxwell substrates.
 
 ::: phydrax.solver.maxwell.fourier_modal.assess_fourier_modal_loss_convergence
 
+## Fixed-frequency guided modes
+
+::: phydrax.solver.maxwell.FixedFrequencyGuidedModePlan
+
+---
+
+::: phydrax.solver.maxwell.PreparedFixedFrequencyGuidedModes
+
+---
+
+::: phydrax.solver.maxwell.FixedFrequencyGuidedModeResult
+
+---
+
+::: phydrax.solver.maxwell.solve_fixed_frequency_guided_modes
+
+---
+
+::: phydrax.solver.maxwell.guided_mode_beta_derivative
+
 ## Equivalent-slab retrieval and local-isotropic qualification
 
 ::: phydrax.solver.maxwell.fourier_modal.MaxwellModalSweep

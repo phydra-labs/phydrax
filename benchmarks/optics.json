@@ -1,0 +1,28 @@
+{
+  "environment": {
+    "backend": "cpu",
+    "jax": "0.9.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "python": "3.12.8"
+  },
+  "evidence": {
+    "angular_spectrum_leakage": 0.0,
+    "angular_spectrum_status": 0,
+    "interface_maximum_energy_error": 4.440892098500626e-16,
+    "interface_success_fraction": 1.0
+  },
+  "problems": {
+    "ray_count": 65536,
+    "wave_complex_elements_per_component": 49152,
+    "wave_shape": [
+      128,
+      128
+    ]
+  },
+  "timings_seconds": {
+    "angular_spectrum_cold": 0.14631570898927748,
+    "angular_spectrum_warm": 0.0012207090039737523,
+    "interface_cold": 0.1912639590445906,
+    "interface_warm": 0.0033449160400778055
+  }
+}

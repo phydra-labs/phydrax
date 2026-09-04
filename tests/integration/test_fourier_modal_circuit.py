@@ -61,11 +61,11 @@ def _prepared(*, grazing=False, exterior_permittivity=1.0):
         angular_frequency=jnp.asarray(2.0),
         superstrate=SimpleNamespace(
             material=exterior,
-            reference_plane=jnp.asarray(-1.0),
+            reference_distance=jnp.asarray(1.0),
         ),
         substrate=SimpleNamespace(
             material=exterior,
-            reference_plane=jnp.asarray(3.0),
+            reference_distance=jnp.asarray(2.0),
         ),
     )
     return PreparedFourierModalMaxwell(
@@ -78,6 +78,10 @@ def _prepared(*, grazing=False, exterior_permittivity=1.0):
         modes_right,
         scattering,
         scattering,
+        jnp.ones((size,), dtype=jnp.complex128),
+        jnp.ones((size,), dtype=jnp.complex128),
+        jnp.ones((size,), dtype=jnp.complex128),
+        jnp.ones((size,), dtype=jnp.complex128),
         jnp.asarray(1.0),
         0,
         "artificial-prepared",
@@ -97,6 +101,8 @@ def test_fourier_modal_adapter_reorders_asymmetric_blocks_canonically():
         ("h0:te",),
         ("h0:te",),
     )
+    assert float(component.ports[0].references[0].reference_plane) == -1.0
+    assert float(component.ports[1].references[0].reference_plane) == 3.0
 
 
 def test_fourier_modal_adapter_rejects_grazing_modes():

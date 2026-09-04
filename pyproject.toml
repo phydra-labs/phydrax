@@ -104,6 +104,9 @@ notebooks = [
     "marimo>=0.15.2",
     "matplotlib>=3.10.8",
 ]
+opticstudio = [
+  "zospy>=2.1,<3; sys_platform == 'win32'",
+]
 robotics-mjx = [
     "mujoco>=3.12,<3.13",
     "mujoco-mjx>=3.12,<3.13",
@@ -153,6 +156,9 @@ max-line-length = 120
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
+markers = [
+    "opticstudio_live: requires a licensed local OpticStudio installation",
+]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",
     "ignore::DeprecationWarning:build123d.objects_curve:",

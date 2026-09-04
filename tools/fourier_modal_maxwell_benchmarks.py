@@ -111,6 +111,7 @@ def benchmark() -> dict[str, object]:
             "left_outgoing_power": float(result.weighted_left_outgoing_power),
             "right_outgoing_power": float(result.weighted_right_outgoing_power),
             "net_port_power_into_stack": float(result.weighted_net_port_power_into_stack),
+            "power_audit_residual": float(jnp.max(result.power_audit_residual)),
             "paired_error": float(result.diagnostics.maximum_boundary_paired_error),
             "refresh_count": refreshed.refresh_count,
         },
