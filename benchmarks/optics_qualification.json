@@ -1,0 +1,24 @@
+{
+  "accepted": true,
+  "cases": {
+    "angular_spectrum": {
+      "cropped_energy": 0.0,
+      "leakage_fraction": 0.0,
+      "maximum_field_error": 2.2916425926298183e-15,
+      "status": 0,
+      "successful": true
+    },
+    "fraunhofer": {
+      "integrated_power_error": 1.6653345369377348e-15,
+      "samples_per_airy_radius": 7.625,
+      "status": 0,
+      "valid": true
+    },
+    "refractive_interface": {
+      "energy_balance_error": 2.220446049250313e-16,
+      "reflectance_error": 0.0,
+      "status": 0,
+      "transmission_valid": true
+    }
+  }
+}

@@ -188,6 +188,13 @@ not differentiable through this API.
 `plane_wave_excitation` addresses port modes by stable harmonic ID and TE/TM label.
 Propagating modes are normalized to unit absolute longitudinal power.
 
+Both exterior port types accept a nonnegative `reference_distance` measured outward
+from the adjacent stack interface. Incident amplitudes are propagated from that
+reference to the interface before scattering; outgoing amplitudes are propagated
+back afterward. The left circuit coordinate is `−reference_distance`; the right
+coordinate is `total_thickness + reference_distance`. Periodic ports retain distinct
+incoming/outgoing invariant bases and propagation exponents throughout this path.
+
 Internal currents live at a named `FourierModalSourcePlane`. A source plane must
 split one host slot into adjacent finite layers. Both the slot ID and exact canonical
 host samples must match; an equal shape or a repeated ID with unequal values fails.
@@ -236,6 +243,11 @@ directional port fluxes: the ordinary solve does not label them reflection,
 transmission, absorption, or a power-balance certificate. Right-only and coherent
 two-sided incidence therefore retain the same unambiguous contract.
 
+`power_audit_residual` is an independent terminal check: it compares directional
+modal power with cell-integrated Poynting flux reconstructed from the terminal E/H
+fields. `POWER_AUDIT_TOLERANCE_NOT_MET` reports a basis, normalization, or terminal
+field inconsistency. It does not rename the signed port deficit as absorption.
+
 `evaluate_fourier_modal_loss` is an opt-in, independent reconstruction. Its first
 eligible envelope is real positive frequency, port drive, retained boundary fields,
 one or more finite piecewise-constant physical layers, no source planes, no
@@ -255,7 +267,7 @@ invalidates a `passive=True` claim.
 Call `fourier_modal_numeric_revision(prepared)` only at a host-materialized accepted
 point and pass it to loss evaluation. Tracers are rejected rather than omitted from
 the digest. Revision metadata separates a `physical_state_digest` over primitive
-vectors, frequency/Bloch values, ports/reference planes, raw constitutive values,
+vectors, frequency/Bloch values, ports/reference distances, raw constitutive values,
 per-layer thickness/translation, frame data, and source parents from a
 `physical_stack_digest` that removes frequency, angle, overall thickness, and sampled
 constitutive values while retaining geometry, primitive vectors, normalized layer
@@ -325,6 +337,13 @@ trace: exhausted segment capacity reports refinement required and the accepted
 epoch remains unchanged. `LateralTransformationOpticsPMLPlan` transforms every
 constitutive block and rejects singular, active, orientation-reversing, or
 nonperiodic-seam transforms.
+
+Preparation retains fixed-capacity prefix boundary relations for every accepted
+continuous segment. `fields_in_layer` selects the containing prefix, performs one
+partial fourth-order step, and evaluates the local constitutive operator at the
+requested coordinate. Its result reports the selected segment, embedded dense-output
+defect, and continuous integration status; it never substitutes one representative
+midpoint operator for a varying profile.
 
 `diffraction_order_far_field` remains the exact discrete radiation API for an
 infinite periodic stack. Continuous directions are available only through

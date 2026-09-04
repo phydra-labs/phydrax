@@ -24,12 +24,6 @@ from ._model import (
     RayResult,
     RayStatus,
 )
-from ._refraction import (
-    RefractionResult,
-    RefractionStatus,
-    RefractiveLayerStack,
-    trace_refracted_rays,
-)
 from ._rig import CameraRig
 from ._triangulation import (
     triangulate_weighted_rays,
@@ -55,14 +49,10 @@ __all__ = [
     "ProjectionStatus",
     "RayResult",
     "RayStatus",
-    "RefractiveLayerStack",
-    "RefractionResult",
-    "RefractionStatus",
     "TriangulationResult",
     "TriangulationStatus",
     "calibrate_camera_rig",
     "pixels_to_rays",
     "project_points",
-    "trace_refracted_rays",
     "triangulate_weighted_rays",
 ]

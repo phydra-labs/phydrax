@@ -98,6 +98,10 @@ benchmarks/*
 !benchmarks/map_gp_search.json
 !benchmarks/fourier_modal_maxwell.json
 !benchmarks/fourier_modal_maxwell_qualification.json
+!benchmarks/optics.json
+!benchmarks/optics_qualification.json
+!benchmarks/system_optics_qualification.json
+!benchmarks/advanced_optics.json
 !benchmarks/fourier_modal_rasterization.json
 !benchmarks/circuit_mna.json
 !benchmarks/circuit_network.json

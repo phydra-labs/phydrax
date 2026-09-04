@@ -1,12 +1,13 @@
 {
   "directional_interface_power": {
-    "left_incoming_power": 1.0000001192092896,
-    "left_outgoing_error": 1.3245476618295449e-08,
-    "left_outgoing_power": 0.11111112435658772,
-    "net_port_power_into_stack": 1.3638918339164974e-07,
+    "left_incoming_power": 0.9999999999999998,
+    "left_outgoing_error": 2.7755575615628914e-17,
+    "left_outgoing_power": 0.11111111111111108,
+    "net_port_power_into_stack": 1.1102230246251565e-16,
+    "power_audit_residual": 8.269444015575404e-17,
     "right_incoming_power": 0.0,
-    "right_outgoing_error": 3.042537044528615e-08,
-    "right_outgoing_power": 0.8888888584635184,
+    "right_outgoing_error": 2.220446049250313e-16,
+    "right_outgoing_power": 0.8888888888888886,
     "status": 0
   },
   "environment": {
@@ -17,35 +18,35 @@
   },
   "equivalent_slab_retrieval": {
     "ambiguous": false,
-    "finite_band_kramers_kronig_residual": 1.3984693822136178e-15,
-    "maximum_index_error": 1.557292429276684e-15,
-    "maximum_reconstruction_residual": 1.4049603180746372e-12,
-    "minimum_branch_margin": 5.2359877559829835,
-    "stable_fit_residual": 1.4559282834872613e-15,
+    "finite_band_kramers_kronig_residual": 1.1644397157235589e-15,
+    "maximum_index_error": 1.3364428218229542e-15,
+    "maximum_reconstruction_residual": 1.4050778743496639e-12,
+    "minimum_branch_margin": 5.235987755982984,
+    "stable_fit_residual": 1.111058617362696e-15,
     "status": 0
   },
   "local_isotropic_qualification": {
-    "angle_prediction_residual": 6.520089495776522e-08,
+    "angle_prediction_residual": 9.778693458308364e-13,
     "loss_convergence_accepted": true,
     "loss_evidence_accepted": true,
-    "minimum_branch_margin": 5.2359877559829835,
+    "minimum_branch_margin": 5.235987755982984,
     "polarization_invariance_residual": 0.0,
     "qualified": true,
     "reasons": [],
-    "reconstructed_scattering_residual": 1.4049603180746372e-12,
+    "reconstructed_scattering_residual": 1.4050778743496639e-12,
     "status": 0,
-    "thickness_invariance_residual": 8.568916246535334e-16
+    "thickness_invariance_residual": 7.846971526805356e-16
   },
   "physical_loss": {
-    "closure_difference": 1.3877787807814457e-17,
+    "closure_difference": 0.0,
     "convergence_accepted": true,
     "loss_status": 0,
-    "material_loss_difference": 1.3877787807814457e-17,
-    "net_port_power_into_stack": 0.05698538827247468,
+    "material_loss_difference": 0.0,
+    "net_port_power_into_stack": 0.05698538147928789,
     "port_power_difference": 0.0,
-    "unresolved_numerical_closure": 8.744549050143657e-09,
-    "volume_material_loss": 0.05698537952792563,
-    "z_quadrature_defect": 1.674817539445983e-07
+    "unresolved_numerical_closure": -5.130638275341326e-10,
+    "volume_material_loss": 0.056985381992351716,
+    "z_quadrature_defect": 1.6745544454549455e-07
   },
   "propagation": {
     "boundary_modal_difference": 1.6859767686498582e-12,

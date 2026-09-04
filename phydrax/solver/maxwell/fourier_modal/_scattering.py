@@ -52,32 +52,20 @@ class PreparedPeriodicPortModes(StrictModule):
     outgoing_magnetic_matrix: Array
     incoming_exponents: Array
     outgoing_exponents: Array
-    outward_flux: Array
-    propagating: Array
-    evanescent: Array
-    grazing: Array
+    incoming_flux_weights: Array
+    outgoing_flux_weights: Array
+    incoming_propagating: Array
+    outgoing_propagating: Array
+    incoming_evanescent: Array
+    outgoing_evanescent: Array
+    incoming_grazing: Array
+    outgoing_grazing: Array
     spectral_separation: Array
     conversion_residual: Array
     passivity_residual: Array
     reciprocity_residual: Array
     mode_ids: tuple[str, ...] = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
-
-    @property
-    def electric_matrix(self) -> Array:
-        return self.outgoing_electric_matrix
-
-    @property
-    def magnetic_matrix(self) -> Array:
-        return self.outgoing_magnetic_matrix
-
-    @property
-    def longitudinal_wavevector(self) -> Array:
-        return -1j * self.outgoing_exponents
-
-    @property
-    def flux_weights(self) -> Array:
-        return self.outward_flux
 
 
 PreparedFourierModalPortModes = HomogeneousPortModes | PreparedPeriodicPortModes
@@ -190,8 +178,8 @@ def prepare_homogeneous_port_modes(
     magnetic = magnetic.at[rows_x, columns_tm].set(tm_factor * tangent_x)
     magnetic = magnetic.at[rows_y, columns_tm].set(tm_factor * tangent_y)
 
-    power_te = 0.5 * jnp.real(te_factor)
-    power_tm = 0.5 * jnp.real(tm_factor)
+    power_te = 0.5 * lattice.cell_measure * jnp.real(te_factor)
+    power_tm = 0.5 * lattice.cell_measure * jnp.real(tm_factor)
     raw_power = jnp.stack((power_te, power_tm), axis=-1).reshape((-1,))
     grazing = jnp.repeat(jnp.abs(kz) <= grazing_tolerance, 2)
     propagating = (jnp.abs(jnp.imag(kz)) <= grazing_tolerance) & (
@@ -225,12 +213,21 @@ def prepare_homogeneous_port_modes(
     )
 
 
-def _modal_flux(vectors: Array, harmonic_count: int, /) -> Array:
+def _modal_flux(
+    vectors: Array,
+    harmonic_count: int,
+    cell_measure: Array,
+    /,
+) -> Array:
     ex = vectors[:harmonic_count]
     ey = vectors[harmonic_count : 2 * harmonic_count]
     hx = vectors[2 * harmonic_count : 3 * harmonic_count]
     hy = vectors[3 * harmonic_count :]
-    return 0.5 * jnp.real(jnp.sum(jnp.conj(ex) * hy - jnp.conj(ey) * hx, axis=0))
+    return (
+        0.5
+        * cell_measure
+        * jnp.real(jnp.sum(jnp.conj(ex) * hy - jnp.conj(ey) * hx, axis=0))
+    )
 
 
 def prepare_periodic_port_modes(
@@ -268,7 +265,7 @@ def prepare_periodic_port_modes(
     vectors = result.right_eigenvector_coordinates
     count = lattice.harmonic_count
     size = 2 * count
-    flux = _modal_flux(vectors, count)
+    flux = _modal_flux(vectors, count, lattice.cell_measure)
     signed_flux = outward_sign * flux
     decay = jnp.real(outward_sign * exponents)
     evanescent_all = jnp.abs(jnp.real(exponents)) > separation_tolerance
@@ -285,24 +282,26 @@ def prepare_periodic_port_modes(
     incoming_indices = jnp.argsort(jnp.where(outgoing, 1, 0))[:size]
     outgoing_vectors = vectors[:, outgoing_indices]
     incoming_vectors = vectors[:, incoming_indices]
+    outgoing_propagating = propagating_all[outgoing_indices]
+    incoming_propagating = propagating_all[incoming_indices]
+    outgoing_evanescent = evanescent_all[outgoing_indices]
+    incoming_evanescent = evanescent_all[incoming_indices]
     outgoing_flux = signed_flux[outgoing_indices]
-    propagating = propagating_all[outgoing_indices]
-    evanescent = evanescent_all[outgoing_indices]
-    normalization = jnp.where(
-        propagating,
-        jnp.sqrt(jnp.maximum(jnp.abs(outgoing_flux), separation_tolerance)),
+    incoming_flux = -signed_flux[incoming_indices]
+    outgoing_normalization = jnp.where(
+        outgoing_propagating,
+        jnp.sqrt(jnp.maximum(outgoing_flux, separation_tolerance)),
         1.0,
     )
-    outgoing_vectors = outgoing_vectors / normalization[None, :]
-    outgoing_flux = outgoing_flux / normalization**2
     incoming_normalization = jnp.where(
-        propagating_all[incoming_indices],
-        jnp.sqrt(
-            jnp.maximum(jnp.abs(signed_flux[incoming_indices]), separation_tolerance)
-        ),
+        incoming_propagating,
+        jnp.sqrt(jnp.maximum(incoming_flux, separation_tolerance)),
         1.0,
     )
+    outgoing_vectors = outgoing_vectors / outgoing_normalization[None, :]
     incoming_vectors = incoming_vectors / incoming_normalization[None, :]
+    outgoing_flux = outgoing_flux / outgoing_normalization**2
+    incoming_flux = incoming_flux / incoming_normalization**2
     separation = jnp.min(
         jnp.abs(exponents[outgoing_indices, None] - exponents[incoming_indices][None, :])
     )
@@ -318,10 +317,14 @@ def prepare_periodic_port_modes(
         outgoing_vectors[size:],
         exponents[incoming_indices],
         exponents[outgoing_indices],
+        incoming_flux,
         outgoing_flux,
-        propagating,
-        evanescent,
-        ~(propagating | evanescent),
+        incoming_propagating,
+        outgoing_propagating,
+        incoming_evanescent,
+        outgoing_evanescent,
+        ~(incoming_propagating | incoming_evanescent),
+        ~(outgoing_propagating | outgoing_evanescent),
         separation,
         jnp.max(result.diagnostics.right_relative_residuals),
         jnp.maximum(-layer.diagnostics.minimum_loss_diagonal, 0.0),
@@ -374,6 +377,37 @@ def _port_bases(
     )
 
 
+def _port_power_data(
+    modes: PreparedFourierModalPortModes,
+    /,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    if isinstance(modes, PreparedPeriodicPortModes):
+        return (
+            modes.incoming_flux_weights,
+            modes.outgoing_flux_weights,
+            modes.incoming_propagating,
+            modes.outgoing_propagating,
+            modes.incoming_grazing,
+            modes.outgoing_grazing,
+        )
+    weights = jnp.abs(modes.flux_weights)
+    return (
+        weights,
+        weights,
+        modes.propagating,
+        modes.propagating,
+        modes.grazing,
+        modes.grazing,
+    )
+
+
+def _power_normalized(modes: PreparedFourierModalPortModes, /) -> Array:
+    incoming, outgoing, incoming_active, outgoing_active, _, _ = _port_power_data(modes)
+    return jnp.all(
+        jnp.where(incoming_active, jnp.abs(incoming - 1.0) <= 1.0e-6, True)
+    ) & jnp.all(jnp.where(outgoing_active, jnp.abs(outgoing - 1.0) <= 1.0e-6, True))
+
+
 def _relative_residual(matrix: Array, solution: Array, rhs: Array) -> Array:
     residual = contract("ij,jk->ik", matrix, solution) - rhs
     denominator = jnp.maximum(jnp.sqrt(jnp.sum(jnp.abs(rhs) ** 2)), 1.0)
@@ -416,20 +450,7 @@ def boundary_to_scattering(
     diagnostics = PortScatteringDiagnostics(
         _relative_residual(left_matrix, scattering, right_matrix),
         jnp.all(jnp.isfinite(scattering)),
-        jnp.all(
-            jnp.where(
-                left_modes.propagating,
-                jnp.abs(jnp.abs(left_modes.flux_weights) - 1.0) <= 1e-6,
-                True,
-            )
-        )
-        & jnp.all(
-            jnp.where(
-                right_modes.propagating,
-                jnp.abs(jnp.abs(right_modes.flux_weights) - 1.0) <= 1e-6,
-                True,
-            )
-        ),
+        _power_normalized(left_modes) & _power_normalized(right_modes),
     )
     return MaxwellPortScatteringOperator(
         DenseLinearOperator(s11, source=space, target=space),
@@ -448,38 +469,41 @@ def _reference_phases(
     side: str,
     /,
 ) -> tuple[Array, Array]:
+    if side not in ("left", "right"):
+        raise ValueError("side must be 'left' or 'right'.")
     value = jnp.asarray(distance)
+    value = eqx.error_if(
+        value,
+        (~jnp.isfinite(value)) | (value < 0.0),
+        "Port reference distances must be finite and nonnegative.",
+    )
     if isinstance(modes, PreparedPeriodicPortModes):
-        sign = -1.0 if side == "left" else 1.0
+        incoming_sign = 1.0 if side == "left" else -1.0
+        outgoing_sign = -incoming_sign
         return (
-            jnp.exp(sign * modes.incoming_exponents * value),
-            jnp.exp(sign * modes.outgoing_exponents * value),
+            jnp.exp(incoming_sign * modes.incoming_exponents * value),
+            jnp.exp(outgoing_sign * modes.outgoing_exponents * value),
         )
     wavevector = jnp.repeat(modes.longitudinal_wavevector, 2)
     phase = jnp.exp(1j * wavevector * value)
     return phase, phase
 
 
-def shift_scattering_reference_planes(
+def _shift_scattering_with_phases(
     scattering: MaxwellPortScatteringOperator,
-    left_distance: ArrayLike,
-    right_distance: ArrayLike,
+    left_incoming_phase: Array,
+    left_outgoing_phase: Array,
+    right_incoming_phase: Array,
+    right_outgoing_phase: Array,
     /,
 ) -> MaxwellPortScatteringOperator:
-    left_in_phase, left_out_phase = _reference_phases(
-        scattering.left_modes, left_distance, "left"
-    )
-    right_in_phase, right_out_phase = _reference_phases(
-        scattering.right_modes, right_distance, "right"
-    )
-
     def phase_block(output_phase: Array, matrix: Array, input_phase: Array) -> Array:
         return output_phase[:, None] * matrix * input_phase[None, :]
 
-    s11 = phase_block(right_out_phase, scattering.s11.matrix, left_in_phase)
-    s12 = phase_block(right_out_phase, scattering.s12.matrix, right_in_phase)
-    s21 = phase_block(left_out_phase, scattering.s21.matrix, left_in_phase)
-    s22 = phase_block(left_out_phase, scattering.s22.matrix, right_in_phase)
+    s11 = phase_block(right_outgoing_phase, scattering.s11.matrix, left_incoming_phase)
+    s12 = phase_block(right_outgoing_phase, scattering.s12.matrix, right_incoming_phase)
+    s21 = phase_block(left_outgoing_phase, scattering.s21.matrix, left_incoming_phase)
+    s22 = phase_block(left_outgoing_phase, scattering.s22.matrix, right_incoming_phase)
     space = scattering.s11.source
     return MaxwellPortScatteringOperator(
         DenseLinearOperator(s11, source=space, target=space),
@@ -489,6 +513,27 @@ def shift_scattering_reference_planes(
         scattering.left_modes,
         scattering.right_modes,
         scattering.diagnostics,
+    )
+
+
+def shift_scattering_reference_planes(
+    scattering: MaxwellPortScatteringOperator,
+    left_distance: ArrayLike,
+    right_distance: ArrayLike,
+    /,
+) -> MaxwellPortScatteringOperator:
+    left_incoming, left_outgoing = _reference_phases(
+        scattering.left_modes, left_distance, "left"
+    )
+    right_incoming, right_outgoing = _reference_phases(
+        scattering.right_modes, right_distance, "right"
+    )
+    return _shift_scattering_with_phases(
+        scattering,
+        left_incoming,
+        left_outgoing,
+        right_incoming,
+        right_outgoing,
     )
 
 

@@ -1402,6 +1402,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API reference](api/phydrax.md).
 - **Inverse problems (unknown coefficients/parameters)**: represent unknowns as additional fields or domain parameters, and couple them in residual operators.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
+- **Optical systems and inverse design**: select the physical state explicitly.
+  Use `phx.optics.geometric` for fixed-route rays and paraxial maps,
+  `phx.optics.wave` for sampled coherent propagation and imaging,
+  `phx.solver.maxwell` for rigorous vector electromagnetics,
+  `phx.optics.transport` for incoherent multiple scattering, and
+  `phx.optics.sbs` for guided optical-acoustic overlap. Fixed-topology gradients
+  compose with `phx.optim`; branch, aperture, mode-cutoff, and caustic evidence
+  defines where those gradients are valid. See the [optics guide](guides_optics.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
 - **Conditional-affine chemical operators**: certify a directional mass-action

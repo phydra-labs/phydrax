@@ -16,13 +16,8 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
-from ..camera import (
-    CameraIntrinsics,
-    CameraModel,
-    CameraPose,
-    CameraRig,
-    RefractiveLayerStack,
-)
+from ...optics.geometric import PlanarRefractiveStack
+from ..camera import CameraIntrinsics, CameraModel, CameraPose, CameraRig
 from ..imaging import ImageGeometry2D
 from ..imaging._photometry import (
     CameraStackRenderResult,
@@ -349,8 +344,8 @@ class PTVSyntheticCase(StrictModule, NonTrainableState):
         self.world_coordinate_convention = "right-handed-x-y-z"
 
 
-def _refraction_stack(plan: PTVScenarioPlan) -> RefractiveLayerStack:
-    return RefractiveLayerStack(
+def _planar_refractive_stack(plan: PTVScenarioPlan) -> PlanarRefractiveStack:
+    return PlanarRefractiveStack(
         jnp.asarray(((0.0, 0.0, plan.refraction_interface_z),)),
         jnp.asarray(((0.0, 0.0, 1.0),)),
         jnp.asarray((1.0, plan.refractive_index)),
@@ -364,8 +359,10 @@ def _camera_rigs(plan: PTVScenarioPlan) -> tuple[CameraRig, CameraRig]:
         0.0 if plan.kind is PTVScenarioKind.DEGENERATE_RAYS else plan.camera_baseline
     )
     offsets = jnp.linspace(-0.5 * baseline, 0.5 * baseline, plan.camera_count)
-    refractive = (
-        _refraction_stack(plan) if plan.kind is PTVScenarioKind.REFRACTION else None
+    refractive_stack = (
+        _planar_refractive_stack(plan)
+        if plan.kind is PTVScenarioKind.REFRACTION
+        else None
     )
     true_cameras: list[CameraModel] = []
     nominal_cameras: list[CameraModel] = []
@@ -383,7 +380,7 @@ def _camera_rigs(plan: PTVScenarioPlan) -> tuple[CameraRig, CameraRig]:
                 if baseline == 0.0
                 else RigidFrame(jnp.eye(3), translation)
             ),
-            refraction=refractive,
+            refractive_stack=refractive_stack,
         )
         true_cameras.append(true_camera)
         if plan.kind is PTVScenarioKind.CALIBRATION:

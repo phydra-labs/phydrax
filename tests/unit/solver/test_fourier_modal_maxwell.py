@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -49,6 +50,144 @@ def test_fresnel_interface_complex_amplitudes_and_power() -> None:
     )
     assert float(result.right_outgoing_power[0]) == pytest.approx(
         8.0 / 9.0, rel=2e-6, abs=2e-7
+    )
+
+
+def test_reference_distances_are_applied_on_both_sides_of_interface_scattering() -> None:
+    harmonics = _harmonics()
+    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="reference-vacuum")
+    left_distance = 0.125
+    right_distance = 0.25
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.zeros((2,)),
+        fm.HomogeneousMaxwellPort(
+            vacuum,
+            reference_distance=left_distance,
+            port_id="left-reference",
+        ),
+        (),
+        fm.HomogeneousMaxwellPort(
+            vacuum,
+            reference_distance=right_distance,
+            port_id="right-reference",
+        ),
+    )
+    prepared = fm.prepare_fourier_modal_maxwell(problem)
+    excitation = fm.plane_wave_excitation(
+        prepared.scattering,
+        harmonics.plan.layout.mode_ids[0],
+        "te",
+    )
+    result = fm.solve_fourier_modal_maxwell(prepared, excitation)
+    expected = jnp.exp(2.0j * jnp.pi * (left_distance + right_distance))
+    np.testing.assert_allclose(result.right_outgoing[0, 0], expected, atol=2.0e-7)
+    np.testing.assert_allclose(result.left_outgoing, 0.0, atol=2.0e-7)
+    np.testing.assert_allclose(
+        prepared.scattering.s11.matrix[0, 0],
+        expected,
+        atol=2.0e-7,
+    )
+    assert float(result.power_audit_residual[0]) < 1.0e-7
+
+
+def test_periodic_port_reference_phase_cache_is_directional() -> None:
+    harmonics = _harmonics()
+    material = fm.FrequencyMaxwellMaterial(1.0, material_id="periodic-port-medium")
+    factorization = fm.DirectFourierFactorizationPlan()
+    left_distance = 0.1
+    right_distance = 0.2
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.zeros((2,)),
+        fm.PeriodicMaxwellPort(
+            material,
+            factorization,
+            reference_distance=left_distance,
+            port_id="periodic-left",
+        ),
+        (),
+        fm.PeriodicMaxwellPort(
+            material,
+            factorization,
+            reference_distance=right_distance,
+            port_id="periodic-right",
+        ),
+    )
+    prepared = fm.prepare_fourier_modal_maxwell(problem)
+    np.testing.assert_allclose(
+        prepared.left_incoming_phase,
+        jnp.exp(prepared.left_modes.incoming_exponents * left_distance),
+    )
+    np.testing.assert_allclose(
+        prepared.left_outgoing_phase,
+        jnp.exp(-prepared.left_modes.outgoing_exponents * left_distance),
+    )
+    np.testing.assert_allclose(
+        prepared.right_incoming_phase,
+        jnp.exp(-prepared.right_modes.incoming_exponents * right_distance),
+    )
+    np.testing.assert_allclose(
+        prepared.right_outgoing_phase,
+        jnp.exp(prepared.right_modes.outgoing_exponents * right_distance),
+    )
+
+
+def test_cell_integrated_unit_flux_and_independent_power_audit() -> None:
+    harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
+        jnp.asarray(((3.0, 0.0),))
+    )
+    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="large-cell-vacuum")
+    port = fm.HomogeneousMaxwellPort(vacuum, port_id="large-cell-port")
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.zeros((2,)),
+        port,
+        (),
+        port,
+    )
+    prepared = fm.prepare_fourier_modal_maxwell(problem)
+    mode = prepared.left_modes
+    integrated_flux = (
+        0.5
+        * harmonics.cell_measure
+        * jnp.real(
+            jnp.conj(mode.electric_matrix[0, 0]) * mode.magnetic_matrix[1, 0]
+            - jnp.conj(mode.electric_matrix[1, 0]) * mode.magnetic_matrix[0, 0]
+        )
+    )
+    np.testing.assert_allclose(integrated_flux, 1.0, atol=2.0e-7)
+    excitation = fm.plane_wave_excitation(
+        prepared.scattering,
+        harmonics.plan.layout.mode_ids[0],
+        "te",
+    )
+    result = fm.solve_fourier_modal_maxwell(prepared, excitation)
+    assert float(result.power_audit_residual[0]) < 1.0e-7
+    aperture_plan = fm.FiniteApertureFarFieldPlan(
+        jnp.asarray(((0.0, 0.0, 1.0),)),
+        fm.RectangularFiniteAperture((6.0, 1.0)),
+        1,
+    )
+    aperture = fm.finite_aperture_far_field(
+        prepared,
+        result,
+        aperture_plan,
+    )
+    np.testing.assert_allclose(aperture.aperture_power, 2.0, atol=2.0e-7)
+
+    corrupted = eqx.tree_at(
+        lambda value: value.left_modes.flux_weights,
+        prepared,
+        2.0 * prepared.left_modes.flux_weights,
+    )
+    audited = fm.solve_fourier_modal_maxwell(corrupted, excitation)
+    assert float(audited.power_audit_residual[0]) > 0.1
+    assert int(audited.status) == int(
+        fm.FourierModalSolveStatus.POWER_AUDIT_TOLERANCE_NOT_MET
     )
 
 
@@ -241,6 +380,72 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
         strict=True,
     ):
         np.testing.assert_allclose(actual, expected, rtol=1.0e-6, atol=1.0e-8)
+    varying = fm.ContinuousFourierModalLayer(
+        lambda coordinate: fm.FrequencyMaxwellMaterial(
+            2.0 + 0.5 * coordinate,
+            material_id="continuous-varying-profile",
+        ),
+        0.15,
+        factorization,
+        fm.ContinuousZIntegrationPolicy(
+            absolute_tolerance=1.0e-10,
+            relative_tolerance=1.0e-8,
+            maximum_segments=8,
+        ),
+        layer_id="varying-profile",
+    )
+
+    continuous_problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        problem.angular_frequency,
+        problem.bloch_wavevector,
+        port,
+        (varying,),
+        port,
+    )
+    prepared_stack = fm.prepare_fourier_modal_maxwell(
+        continuous_problem,
+        fm.FourierModalSolvePolicy(boundary=_boundary_policy()),
+    )
+    excitation = fm.plane_wave_excitation(
+        prepared_stack.scattering,
+        harmonics.plan.layout.mode_ids[0],
+        "te",
+    )
+    result = fm.solve_fourier_modal_maxwell(prepared_stack, excitation)
+    for offset, boundary_index in ((0.0, 0), (0.15, 1)):
+        field = fm.fields_in_layer(prepared_stack, result, 0, offset)
+        tangential_electric = jnp.concatenate(
+            (field.electric_harmonics[:, 0], field.electric_harmonics[:, 1]),
+            axis=0,
+        )
+        tangential_magnetic = jnp.concatenate(
+            (field.magnetic_harmonics[:, 0], field.magnetic_harmonics[:, 1]),
+            axis=0,
+        )
+        np.testing.assert_allclose(
+            tangential_electric,
+            result.boundary_electric_fields[boundary_index],
+            rtol=2.0e-6,
+            atol=2.0e-8,
+        )
+        np.testing.assert_allclose(
+            tangential_magnetic,
+            result.boundary_magnetic_fields[boundary_index],
+            rtol=2.0e-6,
+            atol=2.0e-8,
+        )
+    interior = fm.fields_in_layer(prepared_stack, result, 0, 0.075)
+    assert int(interior.continuous_segment_index) >= 0
+    assert bool(jnp.isfinite(interior.boundary_solve_residual))
+    assert int(interior.continuous_status) == int(prepared_stack.elements[0].status)
+    assert float(interior.continuous_segment_defect) <= float(
+        prepared_stack.elements[0].maximum_defect
+    )
+    assert (
+        prepared_stack.elements[0].segment_prefix_boundaries.a.shape[0]
+        == varying.integration_policy.maximum_segments + 1
+    )
 
     zero_pml = fm.LateralTransformationOpticsPMLPlan(
         jnp.ones(harmonics.sample_shape + (3,), dtype=jnp.complex128),
@@ -260,6 +465,24 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
     )
     assert transformed.material.material_role == "artificial_pml"
     assert transformed.material.origin_evidence_id == zero_pml.pml_id
+
+
+def test_pml_rejects_complex_off_diagonal_shear() -> None:
+    harmonics = _harmonics()
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="complex-shear-medium")
+    jacobian = jnp.broadcast_to(
+        jnp.eye(3, dtype=jnp.complex128),
+        harmonics.sample_shape + (3, 3),
+    )
+    jacobian = jacobian.at[..., 0, 1].set(0.1j)
+    plan = fm.LateralTransformationOpticsPMLPlan(
+        jacobian,
+        jnp.ones(harmonics.sample_shape, dtype=bool),
+        pml_id="complex-shear",
+    )
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="complex off-diagonal"):
+        fm.transform_fourier_modal_material(material, harmonics, plan)
 
 
 def test_continuous_profile_samples_are_never_aliased_by_material_id() -> None:
@@ -345,6 +568,33 @@ def test_resource_plan_accounts_for_retained_layer_and_global_operators() -> Non
     )
     with pytest.raises(ValueError, match="preparation byte budget"):
         fm.plan_fourier_modal_maxwell(problem, constrained)
+
+
+def test_continuous_resource_plan_accounts_for_dense_output_capacity() -> None:
+    harmonics = _harmonics()
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="continuous-resource")
+    factorization = fm.DirectFourierFactorizationPlan()
+    port = fm.HomogeneousMaxwellPort(material, port_id="continuous-resource-port")
+
+    def cost(maximum_segments: int) -> int:
+        layer = fm.ContinuousFourierModalLayer(
+            lambda coordinate: material,
+            0.1,
+            factorization,
+            fm.ContinuousZIntegrationPolicy(maximum_segments=maximum_segments),
+            layer_id=f"continuous-resource-{maximum_segments}",
+        )
+        problem = fm.FourierModalMaxwellProblem(
+            harmonics,
+            2.0 * jnp.pi,
+            jnp.zeros((2,)),
+            port,
+            (layer,),
+            port,
+        )
+        return fm.plan_fourier_modal_maxwell(problem).cost.preparation_bytes
+
+    assert cost(8) > cost(1)
 
 
 def test_boundary_composition_accumulates_initializer_and_paired_errors() -> None:
