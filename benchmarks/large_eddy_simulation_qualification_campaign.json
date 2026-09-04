@@ -1,0 +1,4456 @@
+{
+  "backend": "jax",
+  "base_profiles": [
+    {
+      "key": "incompressible-periodic",
+      "name": "incompressible-flow.candidate-periodic",
+      "provider": "phydrax",
+      "scope": "scientific",
+      "support": {
+        "attributes": {
+          "route": "periodic-spectral",
+          "spatial_method": "fourier-pseudospectral",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "incompressible-flow",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "bf1f367bcea7627af8b9c67160a7da81deed03496f7bdf47744a9c6226d3e7e4"
+      }
+    },
+    {
+      "key": "incompressible-mac",
+      "name": "incompressible-flow.candidate-mac",
+      "provider": "phydrax",
+      "scope": "scientific",
+      "support": {
+        "attributes": {
+          "route": "mac",
+          "spatial_method": "staggered-finite-volume",
+          "topology": "tensor-product"
+        },
+        "capability": "incompressible-flow",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "2d251b5c67e33a0e1e3d6773d73a295e6db150b06df948336f21401f85547638"
+      }
+    },
+    {
+      "key": "incompressible-channel",
+      "name": "incompressible-flow.candidate-channel",
+      "provider": "phydrax",
+      "scope": "scientific",
+      "support": {
+        "attributes": {
+          "route": "spectral-channel",
+          "spatial_method": "fourier-chebyshev-fourier",
+          "topology": "wall-bounded-tensor-product"
+        },
+        "capability": "incompressible-flow",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "898ccb855a99a0fc362810219d58c7f5f6051ae646f0f04d4bd7fa8072becbf9"
+      }
+    },
+    {
+      "key": "distributed-execution",
+      "name": "distributed-execution.candidate-slab",
+      "provider": "phydrax",
+      "scope": "deployment",
+      "support": {
+        "attributes": {
+          "backend": "jax",
+          "schedule": "slab",
+          "topology": "single-device"
+        },
+        "capability": "distributed-execution",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "7927cd9c5589560a6cb1849b132ba71802aeec28fb4eb8a8804f81369f0bf064"
+      }
+    },
+    {
+      "key": "compressible-flow",
+      "name": "compressible-flow.candidate-favre",
+      "provider": "phydrax",
+      "scope": "scientific",
+      "support": {
+        "attributes": {
+          "route": "favre-smooth-region",
+          "spatial_dimension": 3,
+          "topology": "tensor-product"
+        },
+        "capability": "compressible-flow",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "f9d6cd0cffb1b0d6f4ee480fe0d3e530b999b151cf6e8c8dc4dd5517104424b8"
+      }
+    },
+    {
+      "key": "unstructured-low-mach",
+      "name": "unstructured-low-mach.candidate-tetrahedral",
+      "provider": "phydrax",
+      "scope": "scientific",
+      "support": {
+        "attributes": {
+          "route": "tetrahedral-finite-volume",
+          "spatial_dimension": 3,
+          "topology": "unstructured"
+        },
+        "capability": "unstructured-low-mach",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "effdcb4c669b472d273f8bed7771732bf20a79008ab8c0e0fbba0da5eb1cde85"
+      }
+    },
+    {
+      "key": "lattice-boltzmann",
+      "name": "lattice-boltzmann.candidate-d2q9",
+      "provider": "phydrax",
+      "scope": "scientific",
+      "support": {
+        "attributes": {
+          "collision": "smagorinsky-bgk",
+          "lattice": "d2q9",
+          "topology": "periodic-lattice"
+        },
+        "capability": "lattice-boltzmann",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "d1db2b8d7c1b10dbb1843d6115382a67f403ea46d361b40c726638f170c796f9"
+      }
+    }
+  ],
+  "build_id": "phydrax-les-candidate-worktree",
+  "campaign_id": "123f61f7770f7a218b2ed6e251b9905813a669b16283176cf6d6dedf2c348cf7",
+  "capability": "large-eddy-simulation",
+  "cases": [
+    {
+      "case_id": "33a887570167b8167c5feaa1cb801ec7f4d26fae68421a1d1d1893ccc0318a03",
+      "coefficients": {
+        "model": 0.16
+      },
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "campaign": [
+          4,
+          6
+        ],
+        "operator": 6
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "82b1836e05c098e943388fafcd48bcea8dbcfa6dec6cb7d9933b5e6632edc474",
+          "evidence_kind": "scientific",
+          "name": "formula_maximum_error",
+          "predicate_id": "periodic-smagorinsky.formula_maximum_error",
+          "scope": "periodic-static",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "c9de72086f6b105c3f07beb15b12692724fee33a28d12772432b11d5415b6555",
+          "evidence_kind": "scientific",
+          "name": "formula_activity_violation",
+          "predicate_id": "periodic-smagorinsky.formula_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ff4c468fe9fef35cb412b74bfffd4681cce5c42cc286be290ab239c308cd2fc8",
+          "evidence_kind": "scientific",
+          "name": "backend_activity_violation",
+          "predicate_id": "periodic-smagorinsky.backend_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9f68b1103486bfd604fd53b4c2174fc3cad1cab1b8acf5eab62211870415aeb3",
+          "evidence_kind": "scientific",
+          "name": "coefficient_zero_operator_error",
+          "predicate_id": "periodic-smagorinsky.coefficient_zero_operator_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "922e7755d9166985bb098277e94435d7428158a1034bb5cd5a8106b870775669",
+          "evidence_kind": "scientific",
+          "name": "stress_symmetry_defect",
+          "predicate_id": "periodic-smagorinsky.stress_symmetry_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "020965a690cfaa83d08f5f4e66f0428d6bfe06cc7ed4a42af6420e8c2e82a5cb",
+          "evidence_kind": "scientific",
+          "name": "negative_energy_transfer_violation",
+          "predicate_id": "periodic-smagorinsky.negative_energy_transfer_violation",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "e10ec86f3da7b4ec30c058c9cb7ed707f2df150e890e8f6ca7c07c4ecf23c6a0",
+          "evidence_kind": "scientific",
+          "name": "operator_energy_identity_defect",
+          "predicate_id": "periodic-smagorinsky.operator_energy_identity_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be7d6137f081959fa1111fba7e668ed9d9719b6509ae8007cbf9a905937b5870",
+          "evidence_kind": "scientific",
+          "name": "hermitian_defect",
+          "predicate_id": "periodic-smagorinsky.hermitian_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "63346071c97a0885646853ccab951e1ebc7ca2003fb816f3bec9294864260893",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "periodic-smagorinsky.projection_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2057e535a28a8815ba2ab0c22fa609d3b28a31bbead51f80038fc20ed07524da",
+          "evidence_kind": "scientific",
+          "name": "projection_energy_defect",
+          "predicate_id": "periodic-smagorinsky.projection_energy_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6c56b37f805f79efd6d985a25e07cba8172e7f1f645b00eddf5623704c969e49",
+          "evidence_kind": "scientific",
+          "name": "oversampling_convergence_violation",
+          "predicate_id": "periodic-smagorinsky.oversampling_convergence_violation",
+          "scope": "periodic-static",
+          "threshold": 1e-12,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "048ad039615e39fed76c15ba315455fdfa90ba436bb9b9379b601661cf896bc6",
+          "evidence_kind": "scientific",
+          "name": "multiresolution_divergence_norm",
+          "predicate_id": "periodic-smagorinsky.multiresolution_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9a4f5d309aaa47902965037d0172efd8232fb7d8279b550f95531f218202c4a3",
+          "evidence_kind": "smoke",
+          "name": "unforced_campaign_failure",
+          "predicate_id": "periodic-smagorinsky.unforced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be31a5eb63567956d3a65485531a56ff3191a6e4aedb4ece3e29a391378c44df",
+          "evidence_kind": "smoke",
+          "name": "forced_campaign_failure",
+          "predicate_id": "periodic-smagorinsky.forced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02581808a53a136cc31d579a349fcecf3a525444e3d7147997db380e8faab7b2",
+          "evidence_kind": "scientific",
+          "name": "guard_acceptance_failure",
+          "predicate_id": "periodic-smagorinsky.guard_acceptance_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "28509f157f56f121866986e97e68014b9d4739980f5a35fd3b4afc750cdaeeed",
+          "evidence_kind": "scientific",
+          "name": "guard_rejection_failure",
+          "predicate_id": "periodic-smagorinsky.guard_rejection_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8daeac70bdd4e44b4a0efc005986c992b882f011f32ffc2bf2c660d35a8358ce",
+          "evidence_kind": "scientific",
+          "name": "guard_rollback_error",
+          "predicate_id": "periodic-smagorinsky.guard_rollback_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02d1af63bf79d788cc9ef6583c1720f55e77cc2ff60fc9c0a3bad303061b1fb2",
+          "evidence_kind": "scientific",
+          "name": "guard_coordinate_binding_failure",
+          "predicate_id": "periodic-smagorinsky.guard_coordinate_binding_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "periodic-smagorinsky",
+      "parameters": {
+        "guard_safety_factor": 0.5,
+        "model": "smagorinsky",
+        "oversampling_factors": [
+          1.5,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "predicates": [
+        "periodic-smagorinsky.formula_maximum_error",
+        "periodic-smagorinsky.formula_activity_violation",
+        "periodic-smagorinsky.backend_activity_violation",
+        "periodic-smagorinsky.coefficient_zero_operator_error",
+        "periodic-smagorinsky.stress_symmetry_defect",
+        "periodic-smagorinsky.negative_energy_transfer_violation",
+        "periodic-smagorinsky.operator_energy_identity_defect",
+        "periodic-smagorinsky.hermitian_defect",
+        "periodic-smagorinsky.projection_divergence_norm",
+        "periodic-smagorinsky.projection_energy_defect",
+        "periodic-smagorinsky.oversampling_convergence_violation",
+        "periodic-smagorinsky.multiresolution_divergence_norm",
+        "periodic-smagorinsky.unforced_campaign_failure",
+        "periodic-smagorinsky.forced_campaign_failure",
+        "periodic-smagorinsky.guard_acceptance_failure",
+        "periodic-smagorinsky.guard_rejection_failure",
+        "periodic-smagorinsky.guard_rollback_error",
+        "periodic-smagorinsky.guard_coordinate_binding_failure"
+      ],
+      "producer": "periodic-static",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "operator-and-energy-identities",
+          "name": "periodic-static-identities",
+          "reference_id": "de425e0fcf1b1ce1e421cd3f436e02e8de0333f5b4b5c4f173fce4c6127dbe47"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky",
+          "forcing": "unforced-and-forced",
+          "physics": "incompressible-unit-density",
+          "route": "periodic-fourier-static",
+          "spatial_method": "fourier-pseudospectral",
+          "temporal_method": "etdrk2-short-campaign",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "8340bb42313b79b2c514379855e56a5b295b462cb0410eb811527a3071ac7e55"
+      },
+      "timesteps": {
+        "step_size": 0.0005,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "9beca95525188aa00832a19a6a1af7ffc22d59d71ed0371472c8020aed15defd",
+      "coefficients": {
+        "model": 0.3
+      },
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "campaign": [
+          4,
+          6
+        ],
+        "operator": 6
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "82b1836e05c098e943388fafcd48bcea8dbcfa6dec6cb7d9933b5e6632edc474",
+          "evidence_kind": "scientific",
+          "name": "formula_maximum_error",
+          "predicate_id": "periodic-amd.formula_maximum_error",
+          "scope": "periodic-static",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "c9de72086f6b105c3f07beb15b12692724fee33a28d12772432b11d5415b6555",
+          "evidence_kind": "scientific",
+          "name": "formula_activity_violation",
+          "predicate_id": "periodic-amd.formula_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ff4c468fe9fef35cb412b74bfffd4681cce5c42cc286be290ab239c308cd2fc8",
+          "evidence_kind": "scientific",
+          "name": "backend_activity_violation",
+          "predicate_id": "periodic-amd.backend_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9f68b1103486bfd604fd53b4c2174fc3cad1cab1b8acf5eab62211870415aeb3",
+          "evidence_kind": "scientific",
+          "name": "coefficient_zero_operator_error",
+          "predicate_id": "periodic-amd.coefficient_zero_operator_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "922e7755d9166985bb098277e94435d7428158a1034bb5cd5a8106b870775669",
+          "evidence_kind": "scientific",
+          "name": "stress_symmetry_defect",
+          "predicate_id": "periodic-amd.stress_symmetry_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "020965a690cfaa83d08f5f4e66f0428d6bfe06cc7ed4a42af6420e8c2e82a5cb",
+          "evidence_kind": "scientific",
+          "name": "negative_energy_transfer_violation",
+          "predicate_id": "periodic-amd.negative_energy_transfer_violation",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "e10ec86f3da7b4ec30c058c9cb7ed707f2df150e890e8f6ca7c07c4ecf23c6a0",
+          "evidence_kind": "scientific",
+          "name": "operator_energy_identity_defect",
+          "predicate_id": "periodic-amd.operator_energy_identity_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be7d6137f081959fa1111fba7e668ed9d9719b6509ae8007cbf9a905937b5870",
+          "evidence_kind": "scientific",
+          "name": "hermitian_defect",
+          "predicate_id": "periodic-amd.hermitian_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "63346071c97a0885646853ccab951e1ebc7ca2003fb816f3bec9294864260893",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "periodic-amd.projection_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2057e535a28a8815ba2ab0c22fa609d3b28a31bbead51f80038fc20ed07524da",
+          "evidence_kind": "scientific",
+          "name": "projection_energy_defect",
+          "predicate_id": "periodic-amd.projection_energy_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6c56b37f805f79efd6d985a25e07cba8172e7f1f645b00eddf5623704c969e49",
+          "evidence_kind": "scientific",
+          "name": "oversampling_convergence_violation",
+          "predicate_id": "periodic-amd.oversampling_convergence_violation",
+          "scope": "periodic-static",
+          "threshold": 1e-12,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "048ad039615e39fed76c15ba315455fdfa90ba436bb9b9379b601661cf896bc6",
+          "evidence_kind": "scientific",
+          "name": "multiresolution_divergence_norm",
+          "predicate_id": "periodic-amd.multiresolution_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9a4f5d309aaa47902965037d0172efd8232fb7d8279b550f95531f218202c4a3",
+          "evidence_kind": "smoke",
+          "name": "unforced_campaign_failure",
+          "predicate_id": "periodic-amd.unforced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be31a5eb63567956d3a65485531a56ff3191a6e4aedb4ece3e29a391378c44df",
+          "evidence_kind": "smoke",
+          "name": "forced_campaign_failure",
+          "predicate_id": "periodic-amd.forced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02581808a53a136cc31d579a349fcecf3a525444e3d7147997db380e8faab7b2",
+          "evidence_kind": "scientific",
+          "name": "guard_acceptance_failure",
+          "predicate_id": "periodic-amd.guard_acceptance_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "28509f157f56f121866986e97e68014b9d4739980f5a35fd3b4afc750cdaeeed",
+          "evidence_kind": "scientific",
+          "name": "guard_rejection_failure",
+          "predicate_id": "periodic-amd.guard_rejection_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8daeac70bdd4e44b4a0efc005986c992b882f011f32ffc2bf2c660d35a8358ce",
+          "evidence_kind": "scientific",
+          "name": "guard_rollback_error",
+          "predicate_id": "periodic-amd.guard_rollback_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02d1af63bf79d788cc9ef6583c1720f55e77cc2ff60fc9c0a3bad303061b1fb2",
+          "evidence_kind": "scientific",
+          "name": "guard_coordinate_binding_failure",
+          "predicate_id": "periodic-amd.guard_coordinate_binding_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "periodic-amd",
+      "parameters": {
+        "guard_safety_factor": 0.5,
+        "model": "amd",
+        "oversampling_factors": [
+          1.5,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "predicates": [
+        "periodic-amd.formula_maximum_error",
+        "periodic-amd.formula_activity_violation",
+        "periodic-amd.backend_activity_violation",
+        "periodic-amd.coefficient_zero_operator_error",
+        "periodic-amd.stress_symmetry_defect",
+        "periodic-amd.negative_energy_transfer_violation",
+        "periodic-amd.operator_energy_identity_defect",
+        "periodic-amd.hermitian_defect",
+        "periodic-amd.projection_divergence_norm",
+        "periodic-amd.projection_energy_defect",
+        "periodic-amd.oversampling_convergence_violation",
+        "periodic-amd.multiresolution_divergence_norm",
+        "periodic-amd.unforced_campaign_failure",
+        "periodic-amd.forced_campaign_failure",
+        "periodic-amd.guard_acceptance_failure",
+        "periodic-amd.guard_rejection_failure",
+        "periodic-amd.guard_rollback_error",
+        "periodic-amd.guard_coordinate_binding_failure"
+      ],
+      "producer": "periodic-static",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "operator-and-energy-identities",
+          "name": "periodic-static-identities",
+          "reference_id": "de425e0fcf1b1ce1e421cd3f436e02e8de0333f5b4b5c4f173fce4c6127dbe47"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "amd",
+          "forcing": "unforced-and-forced",
+          "physics": "incompressible-unit-density",
+          "route": "periodic-fourier-static",
+          "spatial_method": "fourier-pseudospectral",
+          "temporal_method": "etdrk2-short-campaign",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "1850b9bc5cd646b79166ace0cebb81533d2bdfd97cc510b70e48b51bc13761c4"
+      },
+      "timesteps": {
+        "step_size": 0.0005,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "46d73917d7fe0426180d50635c8a1ea3a74fe3c9b9102fd8d14c1e45f3ab5caa",
+      "coefficients": {
+        "model": 0.12
+      },
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "campaign": [
+          4,
+          6
+        ],
+        "operator": 6
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "82b1836e05c098e943388fafcd48bcea8dbcfa6dec6cb7d9933b5e6632edc474",
+          "evidence_kind": "scientific",
+          "name": "formula_maximum_error",
+          "predicate_id": "periodic-vreman.formula_maximum_error",
+          "scope": "periodic-static",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "c9de72086f6b105c3f07beb15b12692724fee33a28d12772432b11d5415b6555",
+          "evidence_kind": "scientific",
+          "name": "formula_activity_violation",
+          "predicate_id": "periodic-vreman.formula_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ff4c468fe9fef35cb412b74bfffd4681cce5c42cc286be290ab239c308cd2fc8",
+          "evidence_kind": "scientific",
+          "name": "backend_activity_violation",
+          "predicate_id": "periodic-vreman.backend_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9f68b1103486bfd604fd53b4c2174fc3cad1cab1b8acf5eab62211870415aeb3",
+          "evidence_kind": "scientific",
+          "name": "coefficient_zero_operator_error",
+          "predicate_id": "periodic-vreman.coefficient_zero_operator_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "922e7755d9166985bb098277e94435d7428158a1034bb5cd5a8106b870775669",
+          "evidence_kind": "scientific",
+          "name": "stress_symmetry_defect",
+          "predicate_id": "periodic-vreman.stress_symmetry_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "020965a690cfaa83d08f5f4e66f0428d6bfe06cc7ed4a42af6420e8c2e82a5cb",
+          "evidence_kind": "scientific",
+          "name": "negative_energy_transfer_violation",
+          "predicate_id": "periodic-vreman.negative_energy_transfer_violation",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "e10ec86f3da7b4ec30c058c9cb7ed707f2df150e890e8f6ca7c07c4ecf23c6a0",
+          "evidence_kind": "scientific",
+          "name": "operator_energy_identity_defect",
+          "predicate_id": "periodic-vreman.operator_energy_identity_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be7d6137f081959fa1111fba7e668ed9d9719b6509ae8007cbf9a905937b5870",
+          "evidence_kind": "scientific",
+          "name": "hermitian_defect",
+          "predicate_id": "periodic-vreman.hermitian_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "63346071c97a0885646853ccab951e1ebc7ca2003fb816f3bec9294864260893",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "periodic-vreman.projection_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2057e535a28a8815ba2ab0c22fa609d3b28a31bbead51f80038fc20ed07524da",
+          "evidence_kind": "scientific",
+          "name": "projection_energy_defect",
+          "predicate_id": "periodic-vreman.projection_energy_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6c56b37f805f79efd6d985a25e07cba8172e7f1f645b00eddf5623704c969e49",
+          "evidence_kind": "scientific",
+          "name": "oversampling_convergence_violation",
+          "predicate_id": "periodic-vreman.oversampling_convergence_violation",
+          "scope": "periodic-static",
+          "threshold": 1e-12,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "048ad039615e39fed76c15ba315455fdfa90ba436bb9b9379b601661cf896bc6",
+          "evidence_kind": "scientific",
+          "name": "multiresolution_divergence_norm",
+          "predicate_id": "periodic-vreman.multiresolution_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9a4f5d309aaa47902965037d0172efd8232fb7d8279b550f95531f218202c4a3",
+          "evidence_kind": "smoke",
+          "name": "unforced_campaign_failure",
+          "predicate_id": "periodic-vreman.unforced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be31a5eb63567956d3a65485531a56ff3191a6e4aedb4ece3e29a391378c44df",
+          "evidence_kind": "smoke",
+          "name": "forced_campaign_failure",
+          "predicate_id": "periodic-vreman.forced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02581808a53a136cc31d579a349fcecf3a525444e3d7147997db380e8faab7b2",
+          "evidence_kind": "scientific",
+          "name": "guard_acceptance_failure",
+          "predicate_id": "periodic-vreman.guard_acceptance_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "28509f157f56f121866986e97e68014b9d4739980f5a35fd3b4afc750cdaeeed",
+          "evidence_kind": "scientific",
+          "name": "guard_rejection_failure",
+          "predicate_id": "periodic-vreman.guard_rejection_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8daeac70bdd4e44b4a0efc005986c992b882f011f32ffc2bf2c660d35a8358ce",
+          "evidence_kind": "scientific",
+          "name": "guard_rollback_error",
+          "predicate_id": "periodic-vreman.guard_rollback_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02d1af63bf79d788cc9ef6583c1720f55e77cc2ff60fc9c0a3bad303061b1fb2",
+          "evidence_kind": "scientific",
+          "name": "guard_coordinate_binding_failure",
+          "predicate_id": "periodic-vreman.guard_coordinate_binding_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "periodic-vreman",
+      "parameters": {
+        "guard_safety_factor": 0.5,
+        "model": "vreman",
+        "oversampling_factors": [
+          1.5,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "predicates": [
+        "periodic-vreman.formula_maximum_error",
+        "periodic-vreman.formula_activity_violation",
+        "periodic-vreman.backend_activity_violation",
+        "periodic-vreman.coefficient_zero_operator_error",
+        "periodic-vreman.stress_symmetry_defect",
+        "periodic-vreman.negative_energy_transfer_violation",
+        "periodic-vreman.operator_energy_identity_defect",
+        "periodic-vreman.hermitian_defect",
+        "periodic-vreman.projection_divergence_norm",
+        "periodic-vreman.projection_energy_defect",
+        "periodic-vreman.oversampling_convergence_violation",
+        "periodic-vreman.multiresolution_divergence_norm",
+        "periodic-vreman.unforced_campaign_failure",
+        "periodic-vreman.forced_campaign_failure",
+        "periodic-vreman.guard_acceptance_failure",
+        "periodic-vreman.guard_rejection_failure",
+        "periodic-vreman.guard_rollback_error",
+        "periodic-vreman.guard_coordinate_binding_failure"
+      ],
+      "producer": "periodic-static",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "operator-and-energy-identities",
+          "name": "periodic-static-identities",
+          "reference_id": "de425e0fcf1b1ce1e421cd3f436e02e8de0333f5b4b5c4f173fce4c6127dbe47"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "vreman",
+          "forcing": "unforced-and-forced",
+          "physics": "incompressible-unit-density",
+          "route": "periodic-fourier-static",
+          "spatial_method": "fourier-pseudospectral",
+          "temporal_method": "etdrk2-short-campaign",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "1aa41137e4210263e7c6645cc57de1b66e35f30a148576599bdd7db2d2a15233"
+      },
+      "timesteps": {
+        "step_size": 0.0005,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "4959d6a304ddc9b285272fe1d824aea56ac266416ee04c07301d964f5e632400",
+      "coefficients": {
+        "model": 0.5
+      },
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "campaign": [
+          4,
+          6
+        ],
+        "operator": 6
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "82b1836e05c098e943388fafcd48bcea8dbcfa6dec6cb7d9933b5e6632edc474",
+          "evidence_kind": "scientific",
+          "name": "formula_maximum_error",
+          "predicate_id": "periodic-wale.formula_maximum_error",
+          "scope": "periodic-static",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "c9de72086f6b105c3f07beb15b12692724fee33a28d12772432b11d5415b6555",
+          "evidence_kind": "scientific",
+          "name": "formula_activity_violation",
+          "predicate_id": "periodic-wale.formula_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ff4c468fe9fef35cb412b74bfffd4681cce5c42cc286be290ab239c308cd2fc8",
+          "evidence_kind": "scientific",
+          "name": "backend_activity_violation",
+          "predicate_id": "periodic-wale.backend_activity_violation",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9f68b1103486bfd604fd53b4c2174fc3cad1cab1b8acf5eab62211870415aeb3",
+          "evidence_kind": "scientific",
+          "name": "coefficient_zero_operator_error",
+          "predicate_id": "periodic-wale.coefficient_zero_operator_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "922e7755d9166985bb098277e94435d7428158a1034bb5cd5a8106b870775669",
+          "evidence_kind": "scientific",
+          "name": "stress_symmetry_defect",
+          "predicate_id": "periodic-wale.stress_symmetry_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "020965a690cfaa83d08f5f4e66f0428d6bfe06cc7ed4a42af6420e8c2e82a5cb",
+          "evidence_kind": "scientific",
+          "name": "negative_energy_transfer_violation",
+          "predicate_id": "periodic-wale.negative_energy_transfer_violation",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "e10ec86f3da7b4ec30c058c9cb7ed707f2df150e890e8f6ca7c07c4ecf23c6a0",
+          "evidence_kind": "scientific",
+          "name": "operator_energy_identity_defect",
+          "predicate_id": "periodic-wale.operator_energy_identity_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be7d6137f081959fa1111fba7e668ed9d9719b6509ae8007cbf9a905937b5870",
+          "evidence_kind": "scientific",
+          "name": "hermitian_defect",
+          "predicate_id": "periodic-wale.hermitian_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "63346071c97a0885646853ccab951e1ebc7ca2003fb816f3bec9294864260893",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "periodic-wale.projection_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2057e535a28a8815ba2ab0c22fa609d3b28a31bbead51f80038fc20ed07524da",
+          "evidence_kind": "scientific",
+          "name": "projection_energy_defect",
+          "predicate_id": "periodic-wale.projection_energy_defect",
+          "scope": "periodic-static",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6c56b37f805f79efd6d985a25e07cba8172e7f1f645b00eddf5623704c969e49",
+          "evidence_kind": "scientific",
+          "name": "oversampling_convergence_violation",
+          "predicate_id": "periodic-wale.oversampling_convergence_violation",
+          "scope": "periodic-static",
+          "threshold": 1e-12,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "048ad039615e39fed76c15ba315455fdfa90ba436bb9b9379b601661cf896bc6",
+          "evidence_kind": "scientific",
+          "name": "multiresolution_divergence_norm",
+          "predicate_id": "periodic-wale.multiresolution_divergence_norm",
+          "scope": "periodic-static",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9a4f5d309aaa47902965037d0172efd8232fb7d8279b550f95531f218202c4a3",
+          "evidence_kind": "smoke",
+          "name": "unforced_campaign_failure",
+          "predicate_id": "periodic-wale.unforced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "be31a5eb63567956d3a65485531a56ff3191a6e4aedb4ece3e29a391378c44df",
+          "evidence_kind": "smoke",
+          "name": "forced_campaign_failure",
+          "predicate_id": "periodic-wale.forced_campaign_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02581808a53a136cc31d579a349fcecf3a525444e3d7147997db380e8faab7b2",
+          "evidence_kind": "scientific",
+          "name": "guard_acceptance_failure",
+          "predicate_id": "periodic-wale.guard_acceptance_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "28509f157f56f121866986e97e68014b9d4739980f5a35fd3b4afc750cdaeeed",
+          "evidence_kind": "scientific",
+          "name": "guard_rejection_failure",
+          "predicate_id": "periodic-wale.guard_rejection_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8daeac70bdd4e44b4a0efc005986c992b882f011f32ffc2bf2c660d35a8358ce",
+          "evidence_kind": "scientific",
+          "name": "guard_rollback_error",
+          "predicate_id": "periodic-wale.guard_rollback_error",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "02d1af63bf79d788cc9ef6583c1720f55e77cc2ff60fc9c0a3bad303061b1fb2",
+          "evidence_kind": "scientific",
+          "name": "guard_coordinate_binding_failure",
+          "predicate_id": "periodic-wale.guard_coordinate_binding_failure",
+          "scope": "periodic-static",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "periodic-wale",
+      "parameters": {
+        "guard_safety_factor": 0.5,
+        "model": "wale",
+        "oversampling_factors": [
+          1.5,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "predicates": [
+        "periodic-wale.formula_maximum_error",
+        "periodic-wale.formula_activity_violation",
+        "periodic-wale.backend_activity_violation",
+        "periodic-wale.coefficient_zero_operator_error",
+        "periodic-wale.stress_symmetry_defect",
+        "periodic-wale.negative_energy_transfer_violation",
+        "periodic-wale.operator_energy_identity_defect",
+        "periodic-wale.hermitian_defect",
+        "periodic-wale.projection_divergence_norm",
+        "periodic-wale.projection_energy_defect",
+        "periodic-wale.oversampling_convergence_violation",
+        "periodic-wale.multiresolution_divergence_norm",
+        "periodic-wale.unforced_campaign_failure",
+        "periodic-wale.forced_campaign_failure",
+        "periodic-wale.guard_acceptance_failure",
+        "periodic-wale.guard_rejection_failure",
+        "periodic-wale.guard_rollback_error",
+        "periodic-wale.guard_coordinate_binding_failure"
+      ],
+      "producer": "periodic-static",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "operator-and-energy-identities",
+          "name": "periodic-static-identities",
+          "reference_id": "de425e0fcf1b1ce1e421cd3f436e02e8de0333f5b4b5c4f173fce4c6127dbe47"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "wale",
+          "forcing": "unforced-and-forced",
+          "physics": "incompressible-unit-density",
+          "route": "periodic-fourier-static",
+          "spatial_method": "fourier-pseudospectral",
+          "temporal_method": "etdrk2-short-campaign",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "c98b52367fbe211671b98298850c28608c2c33ff87dae5d44c83ef9ed147d115"
+      },
+      "timesteps": {
+        "step_size": 0.0005,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "74111a72e8ae1246f7066dc90acd94e7599cfcc1f87034180c59cf1c377eae25",
+      "coefficients": {},
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "resolved": 4,
+        "source": 8
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "da6a27cc25cb4a843be3f9546c088f35d2a9bb6aab4592e2c2fea2ffde883ebb",
+          "evidence_kind": "reference",
+          "name": "modal_restriction_error",
+          "predicate_id": "periodic-apriori-filter.modal_restriction_error",
+          "scope": "periodic-exact-filter",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "a67f0bdeba8a5aaed8c48d475a01c770292e00a4559923ce999fe5ef09284cb7",
+          "evidence_kind": "reference",
+          "name": "product_projection_error",
+          "predicate_id": "periodic-apriori-filter.product_projection_error",
+          "scope": "periodic-exact-filter",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "88797c776ccc4fd8e9e25f88ce8a574d875b57abc58587cc8ba55e549ee06f39",
+          "evidence_kind": "scientific",
+          "name": "stress_symmetry_defect",
+          "predicate_id": "periodic-apriori-filter.stress_symmetry_defect",
+          "scope": "periodic-exact-filter",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "5c0492fc24a86211def894fd8e151ed21350bd3894427c5302a50643a9e14cde",
+          "evidence_kind": "reference",
+          "name": "reference_binding_violation",
+          "predicate_id": "periodic-apriori-filter.reference_binding_violation",
+          "scope": "periodic-exact-filter",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "periodic-apriori-filter",
+      "parameters": {
+        "filter_semantics": "source-product-then-exact-modal-restriction"
+      },
+      "predicates": [
+        "periodic-apriori-filter.modal_restriction_error",
+        "periodic-apriori-filter.product_projection_error",
+        "periodic-apriori-filter.stress_symmetry_defect",
+        "periodic-apriori-filter.reference_binding_violation"
+      ],
+      "producer": "periodic-exact-filter",
+      "references": [
+        {
+          "kind": "reference-artifact",
+          "manifest": {
+            "artifact_name": "generated-periodic-les-apriori-reference",
+            "checksum": "35eb013fc89a3a456d71214f4d3521fb70f3c7478f35dcf9e9f77ed5a18b2193",
+            "checksum_algorithm": "sha256",
+            "commercial_use_permitted": true,
+            "export_classification": "EAR99",
+            "export_permitted": true,
+            "kind": "reference-artifact-manifest",
+            "license_id": "PHYDRA-generated-reference",
+            "lineage_ids": [
+              "analytic-trigonometric-generator"
+            ],
+            "manifest_id": "e0bfca3d5bd2198db716581bc30b0c09c17d618aeab1c57c9c475d6999db586d",
+            "nondimensionalization": {
+              "length": 1.0,
+              "velocity": 1.0
+            },
+            "redistribution_permitted": true,
+            "size_bytes": 224,
+            "training_use_permitted": true,
+            "uncertainty": {
+              "analytic_roundoff": 0.0
+            }
+          },
+          "payload": {
+            "domain": [
+              [
+                0.0,
+                6.283185307179586
+              ],
+              [
+                0.0,
+                6.283185307179586
+              ],
+              [
+                0.0,
+                6.283185307179586
+              ]
+            ],
+            "filter": "exact-sharp-fourier-projection",
+            "generator": "analytic-periodic-trigonometric-field",
+            "resolved_grid": [
+              4,
+              4,
+              4
+            ],
+            "source_grid": [
+              8,
+              8,
+              8
+            ]
+          },
+          "requested_rights": {
+            "commercial_use": true,
+            "export": false,
+            "redistribution": false,
+            "training_use": false
+          }
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "exact-reynolds-stress-target",
+          "forcing": "not-applicable",
+          "physics": "incompressible-unit-density",
+          "route": "periodic-apriori-filter",
+          "spatial_method": "matched-sharp-fourier-projection",
+          "temporal_method": "none",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "3bdd85e29a8a6875df0c2c9657374fe124b1b354a3dc8d91d29c830e00914d58"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "bfee395f493fd23b2aeddb746f157fe291e239d1d53a5083a1d5f3c577915487",
+      "coefficients": {},
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "resolved": 8,
+        "test": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "b593ccce9c855da57b08ac1d1c2233f538b6d501e120e032648bead069340966",
+          "evidence_kind": "scientific",
+          "name": "test_filter_exactness_error",
+          "predicate_id": "periodic-dynamic-smagorinsky.test_filter_exactness_error",
+          "scope": "periodic-dynamic",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "c4200b0517656db5a09b8e2279f6f63bfb8f90d1653707a8580a81a163a0d0df",
+          "evidence_kind": "scientific",
+          "name": "synthetic_coefficient_error",
+          "predicate_id": "periodic-dynamic-smagorinsky.synthetic_coefficient_error",
+          "scope": "periodic-dynamic",
+          "threshold": 3e-06,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8f8a20ffcd0bb802022fdc5fa5eae0808a1d9fd3b23996b1bcf547e37feb6280",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "periodic-dynamic-smagorinsky.projection_divergence_norm",
+          "scope": "periodic-dynamic",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ececeba30fdd4cd5f7a501e9f2a555412b32af3243ee9820dc66ef502f38e420",
+          "evidence_kind": "scientific",
+          "name": "energy_identity_defect",
+          "predicate_id": "periodic-dynamic-smagorinsky.energy_identity_defect",
+          "scope": "periodic-dynamic",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "f5e8a2f818efec21bb3aae513557650a8c89773fbf27886d306944b7c7a8700e",
+          "evidence_kind": "smoke",
+          "name": "finite_evidence_failure",
+          "predicate_id": "periodic-dynamic-smagorinsky.finite_evidence_failure",
+          "scope": "periodic-dynamic",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "01ec8dc04b7463448004ded2a481d79bb8f1015081c5af77da418c555397a435",
+          "evidence_kind": "scientific",
+          "name": "synthetic_stress_magnitude",
+          "predicate_id": "periodic-dynamic-smagorinsky.synthetic_stress_magnitude",
+          "scope": "periodic-dynamic",
+          "threshold": 1e-12,
+          "units": "stress-linf"
+        }
+      ],
+      "name": "periodic-dynamic-smagorinsky",
+      "parameters": {
+        "oversampling_factor": 2.0,
+        "synthetic_coefficient": 0.31
+      },
+      "predicates": [
+        "periodic-dynamic-smagorinsky.test_filter_exactness_error",
+        "periodic-dynamic-smagorinsky.synthetic_coefficient_error",
+        "periodic-dynamic-smagorinsky.projection_divergence_norm",
+        "periodic-dynamic-smagorinsky.energy_identity_defect",
+        "periodic-dynamic-smagorinsky.finite_evidence_failure",
+        "periodic-dynamic-smagorinsky.synthetic_stress_magnitude"
+      ],
+      "producer": "periodic-dynamic",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "known-coefficient-modeled-tensor",
+          "name": "dynamic-germano-synthetic",
+          "reference_id": "f901c8cf93ec325309ff7d062b19772bf2de2f5a009d1462e935d32aac02dc10"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "dynamic-smagorinsky-global",
+          "forcing": "not-applicable",
+          "physics": "incompressible-unit-density",
+          "route": "periodic-fourier-dynamic",
+          "spatial_method": "exact-test-filter-fourier",
+          "temporal_method": "stage-adapter",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "98e087bcd7e352655846486f6b774a8a557b5968cfafa4f5e73b7f4886ac8b1d"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "df651aaf443274ac62f4fbd9f7b4985293e7af395702e96d71e3efeaeb8ab71f",
+      "coefficients": {
+        "buoyancy": 0.2,
+        "model": 0.17,
+        "temperature_diffusivity": 0.01,
+        "tracer_diffusivity": 0.005,
+        "turbulent_prandtl": 0.7,
+        "turbulent_schmidt": 1.1,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "72892b2eae82a852342351ec6921678d1b8e0f8018c08f569ab6183dd6165d0a",
+          "evidence_kind": "scientific",
+          "name": "momentum_projection_divergence_norm",
+          "predicate_id": "mac-momentum-scalar-boussinesq.momentum_projection_divergence_norm",
+          "scope": "mac-coupled",
+          "threshold": 2e-09,
+          "units": "linf"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "80531f0fb6d01c29746ca8648fd0b5490bf141c2ca32775c4525bb715e12e3b9",
+          "evidence_kind": "scientific",
+          "name": "scalar_sgs_ratio_error",
+          "predicate_id": "mac-momentum-scalar-boussinesq.scalar_sgs_ratio_error",
+          "scope": "mac-coupled",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "cc9b962e4e09e4987b49429ed4492d19b93bb1f3d800604152a6d959f717ee45",
+          "evidence_kind": "scientific",
+          "name": "buoyancy_exchange_defect",
+          "predicate_id": "mac-momentum-scalar-boussinesq.buoyancy_exchange_defect",
+          "scope": "mac-coupled",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "64355593c926beec1961b9cef7f10fcab2df531f0a84614684f4d81e160b0759",
+          "evidence_kind": "scientific",
+          "name": "sgs_energy_identity_defect",
+          "predicate_id": "mac-momentum-scalar-boussinesq.sgs_energy_identity_defect",
+          "scope": "mac-coupled",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "179ca79a2e74929a213a8c7c3862d79c1f81b81bae36ed15402bc17fe2de031a",
+          "evidence_kind": "smoke",
+          "name": "coupled_stage_failure",
+          "predicate_id": "mac-momentum-scalar-boussinesq.coupled_stage_failure",
+          "scope": "mac-coupled",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "f19c5f68d836415bbd5f5ce096c1d81c1bb6a9c1dc0f1724e7d060f237914341",
+          "evidence_kind": "scientific",
+          "name": "momentum_sgs_action_magnitude",
+          "predicate_id": "mac-momentum-scalar-boussinesq.momentum_sgs_action_magnitude",
+          "scope": "mac-coupled",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "mac-momentum-scalar-boussinesq",
+      "parameters": {
+        "scalar_transport": "explicit-named-sgs"
+      },
+      "predicates": [
+        "mac-momentum-scalar-boussinesq.momentum_projection_divergence_norm",
+        "mac-momentum-scalar-boussinesq.scalar_sgs_ratio_error",
+        "mac-momentum-scalar-boussinesq.buoyancy_exchange_defect",
+        "mac-momentum-scalar-boussinesq.sgs_energy_identity_defect",
+        "mac-momentum-scalar-boussinesq.coupled_stage_failure",
+        "mac-momentum-scalar-boussinesq.momentum_sgs_action_magnitude"
+      ],
+      "producer": "mac-coupled",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "discrete-projection-scalar-and-buoyancy-identities",
+          "name": "mac-coupled-ledgers",
+          "reference_id": "2ab26ebc55378f8cb6d0d2c361621385546c0f02844f43e7ed9f7e4eca16a6f9"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-plus-explicit-scalar-sgs",
+          "forcing": "buoyancy",
+          "physics": "incompressible-boussinesq-scalar",
+          "route": "mac-coupled-algebraic",
+          "spatial_method": "staggered-finite-volume",
+          "temporal_method": "semidiscrete-stage",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "31d5cbe85b7b7ed67bbcca489c3154af247aa247e27a4340eaab991be624adfb"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "276713af0c2fd259cfe8c37663c2b0433ec17e2aee77637248be954ed5c24b83",
+      "coefficients": {
+        "boussinesq_expansion": 0.2,
+        "buoyancy": 0.8,
+        "diffusion": 1.3,
+        "dissipation": 1.0,
+        "eddy_viscosity": 0.12,
+        "initial_kinetic_energy": 0.0002,
+        "production_limit": 10.0,
+        "temperature_diffusivity": 0.01,
+        "turbulent_prandtl": 0.7,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "f1c5aaf4d5b86a9d44efb6a767307b21413e12391b9c00f4822418bc4c85a034",
+          "evidence_kind": "scientific",
+          "name": "negative_kinetic_energy_violation",
+          "predicate_id": "mac-prognostic-ksgs.negative_kinetic_energy_violation",
+          "scope": "mac-ksgs",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "3e8ebd39e0457a64a385f8aa7a4796e6117c565f5e27b24db631f900b3dadab8",
+          "evidence_kind": "scientific",
+          "name": "negative_eddy_viscosity_violation",
+          "predicate_id": "mac-prognostic-ksgs.negative_eddy_viscosity_violation",
+          "scope": "mac-ksgs",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2c0115f02d34970c5d2b6742aafe433a3251d244205177c05483ea98069ce64b",
+          "evidence_kind": "scientific",
+          "name": "nonfinite_rhs_violation",
+          "predicate_id": "mac-prognostic-ksgs.nonfinite_rhs_violation",
+          "scope": "mac-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "d9f1720bb9de832a1e985728f6ced8df38e5242c5b142279eb93e6def8b389e7",
+          "evidence_kind": "scientific",
+          "name": "step_restriction_failure",
+          "predicate_id": "mac-prognostic-ksgs.step_restriction_failure",
+          "scope": "mac-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "1611e837ceb4093440c3964973ed4192f9ffb3035e944d83ce075862cf11358e",
+          "evidence_kind": "smoke",
+          "name": "ksgs_stage_failure",
+          "predicate_id": "mac-prognostic-ksgs.ksgs_stage_failure",
+          "scope": "mac-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "38913f54c41d0ec6a23a578a283f4d57d495f4ed9a8bba11f254989fc9778d4f",
+          "evidence_kind": "scientific",
+          "name": "ksgs_eddy_viscosity_magnitude",
+          "predicate_id": "mac-prognostic-ksgs.ksgs_eddy_viscosity_magnitude",
+          "scope": "mac-ksgs",
+          "threshold": 1e-12,
+          "units": "viscosity-linf"
+        }
+      ],
+      "name": "mac-prognostic-ksgs",
+      "parameters": {
+        "ksgs_transport": "upwind-prognostic"
+      },
+      "predicates": [
+        "mac-prognostic-ksgs.negative_kinetic_energy_violation",
+        "mac-prognostic-ksgs.negative_eddy_viscosity_violation",
+        "mac-prognostic-ksgs.nonfinite_rhs_violation",
+        "mac-prognostic-ksgs.step_restriction_failure",
+        "mac-prognostic-ksgs.ksgs_stage_failure",
+        "mac-prognostic-ksgs.ksgs_eddy_viscosity_magnitude"
+      ],
+      "producer": "mac-ksgs",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "prognostic-k-energy-invariants",
+          "name": "ksgs-sign-and-transport",
+          "reference_id": "22518768cdd547fcbdb84448bd3527541ba59283ee8dca7fb89993b631d2b456"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "static-one-equation-ksgs",
+          "forcing": "buoyancy",
+          "physics": "incompressible-boussinesq-ksgs",
+          "route": "mac-prognostic-ksgs",
+          "spatial_method": "staggered-finite-volume",
+          "temporal_method": "semidiscrete-stage",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "d5f243388a028372f5f37494a2ca9df55dd69dc96b5eaedf47dc039731a4586b"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "1bbff61fe1eb6cd04b1c50c6a254c4038dc6d45db7a93b9e412f7303d8d217ed",
+      "coefficients": {
+        "model": 0.12,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 3
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6689dfe2db03e2680e9b0a5c82c5d253e091c8b03cdcd52a7dc7d2ac0a94a526",
+          "evidence_kind": "smoke",
+          "name": "acceptance_failure",
+          "predicate_id": "mac-frozen-imex.acceptance_failure",
+          "scope": "frozen-imex",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "67e47ce711c313f5dfb1fb90b252cfbf24f95745037154729a33d4d49a0d88fb",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "mac-frozen-imex.projection_divergence_norm",
+          "scope": "frozen-imex",
+          "threshold": 2e-07,
+          "units": "linf"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "089b0be5673181702353f52fd2524d20a4724f86a509e1668a88646d7aaedbf3",
+          "evidence_kind": "scientific",
+          "name": "inverse_identity_violation",
+          "predicate_id": "mac-frozen-imex.inverse_identity_violation",
+          "scope": "frozen-imex",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "53ea657bc467ad4c65a4d97d173ba8f2d207c8ba5d11aad20e4921c6d9da6a52",
+          "evidence_kind": "scientific",
+          "name": "frozen_stage_binding_violation",
+          "predicate_id": "mac-frozen-imex.frozen_stage_binding_violation",
+          "scope": "frozen-imex",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "7ead114599a98bc348680d0375e0976218872858456e7f1d02c16cb8a07a6d3c",
+          "evidence_kind": "scientific",
+          "name": "frozen_les_action_magnitude",
+          "predicate_id": "mac-frozen-imex.frozen_les_action_magnitude",
+          "scope": "frozen-imex",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "mac-frozen-imex",
+      "parameters": {
+        "solve_method": "iterative-variable-viscosity"
+      },
+      "predicates": [
+        "mac-frozen-imex.acceptance_failure",
+        "mac-frozen-imex.projection_divergence_norm",
+        "mac-frozen-imex.inverse_identity_violation",
+        "mac-frozen-imex.frozen_stage_binding_violation",
+        "mac-frozen-imex.frozen_les_action_magnitude"
+      ],
+      "producer": "frozen-imex",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "single-inverse-and-projected-rate",
+          "name": "frozen-imex-contract",
+          "reference_id": "197925f37c6cee7d584568d63cb870e539dd19fb3b7b85b5bba7ae255393c78d"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-frozen-at-accepted-state",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "mac-frozen-imex",
+          "spatial_method": "staggered-finite-volume",
+          "temporal_method": "imex-euler",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "7e14af743e84df98d0956667fbbc564d45f9a1f9e408d912293287c6b5a9a545"
+      },
+      "timesteps": {
+        "step_size": 0.001,
+        "steps": 1
+      }
+    },
+    {
+      "case_id": "9850b35b271ccf9a5615149945ac8b0f1dc924e1cff391c3a6dffdd98ec19243",
+      "coefficients": {
+        "model": 0.12,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 3
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "79b40f2b3133e17ce37beda9ce6d306e4817d64b58ccaff2950a9b6293ab7e60",
+          "evidence_kind": "smoke",
+          "name": "startup_failure",
+          "predicate_id": "mac-frozen-sbdf2.startup_failure",
+          "scope": "frozen-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "008fc04133b5200b6d8c2d585aa2bc5c5c5f51ecdfc5395c8932e9283df73e19",
+          "evidence_kind": "smoke",
+          "name": "acceptance_failure",
+          "predicate_id": "mac-frozen-sbdf2.acceptance_failure",
+          "scope": "frozen-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "dcff69d31877746802ecc32dedc9e8776dc38c94ca5ccff3de44eeba8664d925",
+          "evidence_kind": "scientific",
+          "name": "restart_replay_error",
+          "predicate_id": "mac-frozen-sbdf2.restart_replay_error",
+          "scope": "frozen-sbdf2",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "b71c367a0f61e9864d6f2f0f3fafaa2007de9f5e2bc4202d2de259b317dd9878",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "mac-frozen-sbdf2.projection_divergence_norm",
+          "scope": "frozen-sbdf2",
+          "threshold": 2e-07,
+          "units": "linf"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "828b41eed648082606b6c73724ab879b0eca19f52ed1c96bdbad2dda553dc9e1",
+          "evidence_kind": "scientific",
+          "name": "inverse_identity_violation",
+          "predicate_id": "mac-frozen-sbdf2.inverse_identity_violation",
+          "scope": "frozen-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "24934446f6780459623d483d633b15917fb74576125c742c5e9784dca5decfe3",
+          "evidence_kind": "scientific",
+          "name": "g_stability_failure",
+          "predicate_id": "mac-frozen-sbdf2.g_stability_failure",
+          "scope": "frozen-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "1311531c8c64221e5bf2dc4a42a1c180941e566d371bac3b24eba98ce205336d",
+          "evidence_kind": "scientific",
+          "name": "frozen_les_action_magnitude",
+          "predicate_id": "mac-frozen-sbdf2.frozen_les_action_magnitude",
+          "scope": "frozen-sbdf2",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "mac-frozen-sbdf2",
+      "parameters": {
+        "solve_method": "iterative-variable-viscosity"
+      },
+      "predicates": [
+        "mac-frozen-sbdf2.startup_failure",
+        "mac-frozen-sbdf2.acceptance_failure",
+        "mac-frozen-sbdf2.restart_replay_error",
+        "mac-frozen-sbdf2.projection_divergence_norm",
+        "mac-frozen-sbdf2.inverse_identity_violation",
+        "mac-frozen-sbdf2.g_stability_failure",
+        "mac-frozen-sbdf2.frozen_les_action_magnitude"
+      ],
+      "producer": "frozen-sbdf2",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "restart-replay-and-g-stability",
+          "name": "frozen-sbdf2-contract",
+          "reference_id": "49354d76f85c4841580852f6e98355c14b39a8199ff3b21ec7a79109cd2ac1c1"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-extrapolated-and-frozen",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "mac-frozen-sbdf2",
+          "spatial_method": "staggered-finite-volume",
+          "temporal_method": "sbdf2",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "097a8fdade8120d046a5ae7b9e46c17cb3f920391f6b4a7dd49449241ee7b58e"
+      },
+      "timesteps": {
+        "step_size": 0.001,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "9df6391fcde6549bdbe68da506f441a6c499c6797a7500b5d2db0f05fa42c073",
+      "coefficients": {
+        "model": 0.5,
+        "viscosity": 0.05
+      },
+      "dependencies": [
+        "incompressible-channel"
+      ],
+      "grids": {
+        "shape": [
+          4,
+          7,
+          4
+        ]
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "806aa685ea3e76366f827a30af3be8dd797e9374ea7b1a640486ebc4bec6d8f0",
+          "evidence_kind": "smoke",
+          "name": "solver_failure",
+          "predicate_id": "spectral-channel-wale.solver_failure",
+          "scope": "channel",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "0950d41fac342853dc1e232fd01ff0eb4d361068ffe5c87f08a9533e1585b94b",
+          "evidence_kind": "scientific",
+          "name": "divergence_norm",
+          "predicate_id": "spectral-channel-wale.divergence_norm",
+          "scope": "channel",
+          "threshold": 2e-08,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "d4059f62d2419e2c66ccc6d71f2dfd137c70c71c3d022a78e355855c824d91e6",
+          "evidence_kind": "scientific",
+          "name": "wall_residual",
+          "predicate_id": "spectral-channel-wale.wall_residual",
+          "scope": "channel",
+          "threshold": 2e-08,
+          "units": "linf"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "59f6a2c86157dc050aa6ed1b4c15054804dcc60543050d72be7922498bb5eedd",
+          "evidence_kind": "scientific",
+          "name": "energy_ledger_defect",
+          "predicate_id": "spectral-channel-wale.energy_ledger_defect",
+          "scope": "channel",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6f279842bb5e4125f1d37079beb515e0f81c838516a5c68be43d59efa59a38b0",
+          "evidence_kind": "scientific",
+          "name": "negative_subgrid_transfer_violation",
+          "predicate_id": "spectral-channel-wale.negative_subgrid_transfer_violation",
+          "scope": "channel",
+          "threshold": 1e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "3dedbfd6ab013fab38984b371415a21d4eff7170d5db6ed462d3efbe5b2e2dd8",
+          "evidence_kind": "scientific",
+          "name": "noncommutation_evidence_missing",
+          "predicate_id": "spectral-channel-wale.noncommutation_evidence_missing",
+          "scope": "channel",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "01b9cb7e92cd77188af0552baf215e5be4f970390fc95375d2193efc63b2f58e",
+          "evidence_kind": "scientific",
+          "name": "subgrid_transfer_magnitude",
+          "predicate_id": "spectral-channel-wale.subgrid_transfer_magnitude",
+          "scope": "channel",
+          "threshold": 1e-14,
+          "units": "power"
+        }
+      ],
+      "name": "spectral-channel-wale",
+      "parameters": {
+        "model": "wale"
+      },
+      "predicates": [
+        "spectral-channel-wale.solver_failure",
+        "spectral-channel-wale.divergence_norm",
+        "spectral-channel-wale.wall_residual",
+        "spectral-channel-wale.energy_ledger_defect",
+        "spectral-channel-wale.negative_subgrid_transfer_violation",
+        "spectral-channel-wale.noncommutation_evidence_missing",
+        "spectral-channel-wale.subgrid_transfer_magnitude"
+      ],
+      "producer": "channel",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "wall-divergence-and-energy-identities",
+          "name": "channel-discrete-ledger",
+          "reference_id": "79b1c521fb51b398ded801b5e59a3918d5eae07c90b17c009b50d00566f37668"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "wale",
+          "forcing": "unforced",
+          "physics": "wall-resolved-incompressible",
+          "route": "spectral-channel",
+          "spatial_method": "fourier-chebyshev-fourier",
+          "temporal_method": "channel-sbdf2",
+          "topology": "wall-bounded-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "53236defa59eb3744ab776c1ec0d741945b416b833f8ed094d6bc7211a6968ea"
+      },
+      "timesteps": {
+        "step_size": 0.0002,
+        "steps": 1
+      }
+    },
+    {
+      "case_id": "ccfdd19fd3a2c12d91e443b34aa262debcafe5672a510ce96087d70acb363cee",
+      "coefficients": {
+        "model": 0.16
+      },
+      "dependencies": [
+        "incompressible-periodic",
+        "distributed-execution"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "5b21192200194abe461a492d7a5d62f4f0cdce8a3ff2d5aec7450797b0c7d700",
+          "evidence_kind": "scientific",
+          "name": "absolute_parity_error",
+          "predicate_id": "distributed-periodic-slab.absolute_parity_error",
+          "scope": "distributed",
+          "threshold": 2e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6b7cb8def002a95cd87c846e096268e6ee800c41d6ce6fd5fbb5bc3bddd7c645",
+          "evidence_kind": "scientific",
+          "name": "relative_parity_error",
+          "predicate_id": "distributed-periodic-slab.relative_parity_error",
+          "scope": "distributed",
+          "threshold": 2e-08,
+          "units": "relative"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "35e7c4c77cd3a3073214294418af47b89de6be17ec03a9180606ad3efaef6aba",
+          "evidence_kind": "scientific",
+          "name": "parity_failure",
+          "predicate_id": "distributed-periodic-slab.parity_failure",
+          "scope": "distributed",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "fa20c00e442de2cced0018b393d6ef278a5f31ae5ab9f9eef28f6c7f6bc1602f",
+          "evidence_kind": "scientific",
+          "name": "energy_identity_defect",
+          "predicate_id": "distributed-periodic-slab.energy_identity_defect",
+          "scope": "distributed",
+          "threshold": 3e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6aa71735266a8cd3f6206a9757c248a072263c93781270655fa495eeef399c7f",
+          "evidence_kind": "operational",
+          "name": "host_gather_violation",
+          "predicate_id": "distributed-periodic-slab.host_gather_violation",
+          "scope": "distributed",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2317102c8be52c19fff749f2ffded10a2e0a359d3a4fc426770e914705d0ede9",
+          "evidence_kind": "operational",
+          "name": "qualification_inheritance_violation",
+          "predicate_id": "distributed-periodic-slab.qualification_inheritance_violation",
+          "scope": "distributed",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "179177b41b055c36559216dde87a847faa9c303f4ad0a7f4fdf7ce4c5d250084",
+          "evidence_kind": "scientific",
+          "name": "distributed_sgs_action_magnitude",
+          "predicate_id": "distributed-periodic-slab.distributed_sgs_action_magnitude",
+          "scope": "distributed",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "distributed-periodic-slab",
+      "parameters": {
+        "absolute_tolerance": 2e-08,
+        "model": "smagorinsky",
+        "oversampling_factor": 1.5,
+        "relative_tolerance": 2e-08
+      },
+      "predicates": [
+        "distributed-periodic-slab.absolute_parity_error",
+        "distributed-periodic-slab.relative_parity_error",
+        "distributed-periodic-slab.parity_failure",
+        "distributed-periodic-slab.energy_identity_defect",
+        "distributed-periodic-slab.host_gather_violation",
+        "distributed-periodic-slab.qualification_inheritance_violation",
+        "distributed-periodic-slab.distributed_sgs_action_magnitude"
+      ],
+      "producer": "distributed",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "scientific-backend-direct-comparison",
+          "name": "single-device-distributed-parity",
+          "reference_id": "4fb0e0c2c5f99f0ed88751eeb634c0682b55c94629c78738ca638fd05b7cd940"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "distributed-periodic",
+          "spatial_method": "distributed-fourier",
+          "temporal_method": "semidiscrete-stage",
+          "topology": "single-device-slab"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "2135d62c21f0f2e897177308ec513c021ecf322ef91acdf16ef16a48b4e32e0b"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "aa38c13c02e88df37aa0a3c9bc70554ed5ac545fe1ad49d63d1091ecdaafa3a9",
+      "coefficients": {
+        "filter_widths": [
+          0.05,
+          0.06,
+          0.07
+        ],
+        "fuel_schmidt": 0.7,
+        "model": 0.16,
+        "oxidizer_schmidt": 0.9,
+        "turbulent_prandtl": 0.85,
+        "viscosity_upper_bound": 0.1
+      },
+      "dependencies": [
+        "compressible-flow"
+      ],
+      "grids": {},
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "43804e5b45f05a1f1a3f3e91c59dbcd2f116a26ee61ae3f74ee18273d331cc19",
+          "evidence_kind": "scientific",
+          "name": "constant_density_reduction_error",
+          "predicate_id": "favre-compressible-smoke.constant_density_reduction_error",
+          "scope": "favre",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "0be6748a2e40d87d55c3672187e18ebf93b64fb9afc28a0acc19d08e7540641a",
+          "evidence_kind": "scientific",
+          "name": "species_flux_closure_error",
+          "predicate_id": "favre-compressible-smoke.species_flux_closure_error",
+          "scope": "favre",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "4b9b61403c6d8687dafde23a9f536d58857cd694fa19cd92f2f3e5c216624168",
+          "evidence_kind": "scientific",
+          "name": "total_energy_flux_identity_error",
+          "predicate_id": "favre-compressible-smoke.total_energy_flux_identity_error",
+          "scope": "favre",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "e77e0d98bab74764a01480c0deee20debec0b6a9719592e7b87c1a8518aa7560",
+          "evidence_kind": "smoke",
+          "name": "input_evidence_failure",
+          "predicate_id": "favre-compressible-smoke.input_evidence_failure",
+          "scope": "favre",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "492265dbae30c9b463286174436ddf5bbb2db73583bf98236d5960607b7f3893",
+          "evidence_kind": "smoke",
+          "name": "result_evidence_failure",
+          "predicate_id": "favre-compressible-smoke.result_evidence_failure",
+          "scope": "favre",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "e7ee8ed2ba5f1cdf0d916ab379527d23109c201341b986b313f91f41147ab427",
+          "evidence_kind": "scientific",
+          "name": "favre_stress_magnitude",
+          "predicate_id": "favre-compressible-smoke.favre_stress_magnitude",
+          "scope": "favre",
+          "threshold": 1e-12,
+          "units": "stress-linf"
+        }
+      ],
+      "name": "favre-compressible-smoke",
+      "parameters": {
+        "isotropic_trace_policy": "neglected"
+      },
+      "predicates": [
+        "favre-compressible-smoke.constant_density_reduction_error",
+        "favre-compressible-smoke.species_flux_closure_error",
+        "favre-compressible-smoke.total_energy_flux_identity_error",
+        "favre-compressible-smoke.input_evidence_failure",
+        "favre-compressible-smoke.result_evidence_failure",
+        "favre-compressible-smoke.favre_stress_magnitude"
+      ],
+      "producer": "favre",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "constant-density-and-conservative-flux-limits",
+          "name": "favre-transport-identities",
+          "reference_id": "0bac187bccae2be84c82dc0ec689b4ac266c3607bdbfb2e14a7cc3bf7fc2d6b1"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-effective-transport",
+          "forcing": "not-applicable",
+          "physics": "variable-density-two-species",
+          "route": "favre-compressible",
+          "spatial_method": "cell-local-contract",
+          "temporal_method": "constitutive-smoke",
+          "topology": "open-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "dac95d14405954f450b2d81e9604f33b5f4c2e629aa9d60fde507d0ab1b9a4a7"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "e680c17e7d021dc16404f47882773d0eb9d456ff5e26b56d86466f7031b810f6",
+      "coefficients": {
+        "a_schmidt": 0.7,
+        "b_schmidt": 0.8,
+        "conservation_tolerance": 2e-06,
+        "model": 0.08,
+        "turbulent_prandtl": 0.9,
+        "viscosity_upper_bound": 10.0
+      },
+      "dependencies": [
+        "unstructured-low-mach"
+      ],
+      "grids": {
+        "cells": 5
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "f1016f48d14cbb6325213fa6908d72002d982475792c4174bde74a662164f828",
+          "evidence_kind": "scientific",
+          "name": "mass_balance_residual",
+          "predicate_id": "unstructured-low-mach-smoke.mass_balance_residual",
+          "scope": "unstructured",
+          "threshold": 2e-07,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ce2a5fd216dd392caca1e8a81131f923db5b536e998e7cf2faa5d2f6b2d7012e",
+          "evidence_kind": "scientific",
+          "name": "momentum_balance_residual",
+          "predicate_id": "unstructured-low-mach-smoke.momentum_balance_residual",
+          "scope": "unstructured",
+          "threshold": 2e-07,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "0c963e9303f09286aa35c94b78f7397837be6b8dccde6a6af64c0e0f78f56b2e",
+          "evidence_kind": "scientific",
+          "name": "scalar_balance_residual",
+          "predicate_id": "unstructured-low-mach-smoke.scalar_balance_residual",
+          "scope": "unstructured",
+          "threshold": 2e-07,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "77a78c39e9d5532a558964da99000a1f497e45e8a9d294d2720b3184ae4b0519",
+          "evidence_kind": "scientific",
+          "name": "enthalpy_balance_residual",
+          "predicate_id": "unstructured-low-mach-smoke.enthalpy_balance_residual",
+          "scope": "unstructured",
+          "threshold": 2e-06,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "eebfee0c9de88495153f1709b52b4ef4926ee7395556b2ab237473f62a81915d",
+          "evidence_kind": "scientific",
+          "name": "negative_sgs_dissipation_violation",
+          "predicate_id": "unstructured-low-mach-smoke.negative_sgs_dissipation_violation",
+          "scope": "unstructured",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8e9547f41e3510cdd23b5892f76561123903dd7bd2c2e0b179244a9b596249af",
+          "evidence_kind": "smoke",
+          "name": "route_failure",
+          "predicate_id": "unstructured-low-mach-smoke.route_failure",
+          "scope": "unstructured",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "0f558ac7080f4c3a868cc44144e03ec409d26c8a8ff0bc67f58838e494d283c0",
+          "evidence_kind": "scientific",
+          "name": "sgs_flux_magnitude",
+          "predicate_id": "unstructured-low-mach-smoke.sgs_flux_magnitude",
+          "scope": "unstructured",
+          "threshold": 1e-12,
+          "units": "flux-linf"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "5c19873c63b76b2a4e9d8c30091f6ed05a1f6bdb70bdfcceb510edca9d633ab9",
+          "evidence_kind": "scientific",
+          "name": "normalized_positive_sgs_work",
+          "predicate_id": "unstructured-low-mach-smoke.normalized_positive_sgs_work",
+          "scope": "unstructured",
+          "threshold": 3e-06,
+          "units": "normalized"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "3170391f1d93c195098c88daed25e871fd6695b87fca3f94527a988b7b07110c",
+          "evidence_kind": "scientific",
+          "name": "sgs_work_dissipative_failure",
+          "predicate_id": "unstructured-low-mach-smoke.sgs_work_dissipative_failure",
+          "scope": "unstructured",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "872ddf901272d770933c2a1ead74632b1d984bc51aec739e3e19a54abb22e3eb",
+          "evidence_kind": "scientific",
+          "name": "positive_work_refusal_failure",
+          "predicate_id": "unstructured-low-mach-smoke.positive_work_refusal_failure",
+          "scope": "unstructured",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "247d2663f60ba2cb23599b029f375d2b8c5e2e6d978651911198fbca6f9cf58d",
+          "evidence_kind": "scientific",
+          "name": "algebraic_energy_status_failure",
+          "predicate_id": "unstructured-low-mach-smoke.algebraic_energy_status_failure",
+          "scope": "unstructured",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "unstructured-low-mach-smoke",
+      "parameters": {
+        "mesh": "skew-five-tetrahedra",
+        "pressure_iterations": 300,
+        "pressure_tolerance": 2e-08
+      },
+      "predicates": [
+        "unstructured-low-mach-smoke.mass_balance_residual",
+        "unstructured-low-mach-smoke.momentum_balance_residual",
+        "unstructured-low-mach-smoke.scalar_balance_residual",
+        "unstructured-low-mach-smoke.enthalpy_balance_residual",
+        "unstructured-low-mach-smoke.negative_sgs_dissipation_violation",
+        "unstructured-low-mach-smoke.route_failure",
+        "unstructured-low-mach-smoke.sgs_flux_magnitude",
+        "unstructured-low-mach-smoke.normalized_positive_sgs_work",
+        "unstructured-low-mach-smoke.sgs_work_dissipative_failure",
+        "unstructured-low-mach-smoke.positive_work_refusal_failure",
+        "unstructured-low-mach-smoke.algebraic_energy_status_failure"
+      ],
+      "producer": "unstructured",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "closed-domain-face-flux-ledgers",
+          "name": "unstructured-conservation-identities",
+          "reference_id": "0cfb922798ba6bacb7c3a755427948cb0bfbd4a4b80445bc17d671afcce1927d"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-favre",
+          "forcing": "not-applicable",
+          "physics": "variable-density-two-species",
+          "route": "unstructured-low-mach",
+          "spatial_method": "tetrahedral-finite-volume",
+          "temporal_method": "pressure-corrected-fixed-step-audit",
+          "topology": "unstructured-tetrahedral"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "dfe9c1eab7aaedce96d081d01582c13e18ddaf0996a774f2ae74a8795f6cca98"
+      },
+      "timesteps": {
+        "step_size": 0.0001,
+        "steps": 1
+      }
+    },
+    {
+      "case_id": "19625342dbb8ff97e71b661a692a770381086abfe29fec38ed7ce436ea553f23",
+      "coefficients": {
+        "amplitude": 0.05,
+        "base_relaxation_rate": 1.25,
+        "model": 0.18
+      },
+      "dependencies": [
+        "lattice-boltzmann"
+      ],
+      "grids": {
+        "resolution": 12
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ca0ad97067108850b5e0db8955eaec234a971f0fa13521eda136c6bf6e44e5f0",
+          "evidence_kind": "smoke",
+          "name": "qualification_failure",
+          "predicate_id": "lbm-smagorinsky-smoke.qualification_failure",
+          "scope": "lbm",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "0c8466b6d4adb8cd37510691a7b31b4d80adb5d5217116d820fb71ac28ba82ee",
+          "evidence_kind": "scientific",
+          "name": "molecular_reference_relative_error",
+          "predicate_id": "lbm-smagorinsky-smoke.molecular_reference_relative_error",
+          "scope": "lbm",
+          "threshold": 0.05,
+          "units": "relative"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "dc8cfeb28ef0b8e06937a7b7f5a72e21c781599724efb4c0c69b52f768eff46f",
+          "evidence_kind": "scientific",
+          "name": "maximum_mass_drift",
+          "predicate_id": "lbm-smagorinsky-smoke.maximum_mass_drift",
+          "scope": "lbm",
+          "threshold": 1e-11,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6cc40920ba764a4bd10ea83bd26a6e982cbaeeecc04bd0fe28c2e41e0a8d3c2f",
+          "evidence_kind": "scientific",
+          "name": "maximum_momentum_drift",
+          "predicate_id": "lbm-smagorinsky-smoke.maximum_momentum_drift",
+          "scope": "lbm",
+          "threshold": 1e-11,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "891716d7408f4b65d791b944349cb6552f078fa7a98332e868734bdcab46edd2",
+          "evidence_kind": "scientific",
+          "name": "additional_decay_violation",
+          "predicate_id": "lbm-smagorinsky-smoke.additional_decay_violation",
+          "scope": "lbm",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "34fce0bcb8fb38b0c1a9059c7db3cabb42b799d5be163356b417bcb897539f9d",
+          "evidence_kind": "smoke",
+          "name": "backend_evidence_failure",
+          "predicate_id": "lbm-smagorinsky-smoke.backend_evidence_failure",
+          "scope": "lbm",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "lbm-smagorinsky-smoke",
+      "parameters": {
+        "lattice": "d2q9"
+      },
+      "predicates": [
+        "lbm-smagorinsky-smoke.qualification_failure",
+        "lbm-smagorinsky-smoke.molecular_reference_relative_error",
+        "lbm-smagorinsky-smoke.maximum_mass_drift",
+        "lbm-smagorinsky-smoke.maximum_momentum_drift",
+        "lbm-smagorinsky-smoke.additional_decay_violation",
+        "lbm-smagorinsky-smoke.backend_evidence_failure"
+      ],
+      "producer": "lbm",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "analytic-exponential-mode-decay",
+          "name": "linear-molecular-shear-decay",
+          "reference_id": "3a1d1283cfa824a4e29ed6738d294f799b371b64dab41725acc1b18681ce7c8d"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-bgk",
+          "forcing": "unforced",
+          "physics": "athermal-decaying-shear",
+          "route": "lattice-boltzmann",
+          "spatial_method": "d2q9",
+          "temporal_method": "collide-stream",
+          "topology": "periodic-lattice"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "be514ae9c8301933602e26b33c3dbb9d789e3cdd1f799dabbe66e2037f00b011"
+      },
+      "timesteps": {
+        "step_size": 1.0,
+        "steps": 8
+      }
+    },
+    {
+      "case_id": "dc050b699eafdd3ec04e93cee8a93e76308ba2b54465b22928824340fa65c77c",
+      "coefficients": {
+        "model": 0.08,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "4cd6df0f91ac179121d45ff77de07f99d8b22a7a215738be6916c4151bf9779e",
+          "evidence_kind": "scientific",
+          "name": "normal_constraint_mode_violation",
+          "predicate_id": "immersed-mac-wall-stress.normal_constraint_mode_violation",
+          "scope": "immersed",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "362b1b51bead80c446be158571c6899774a314765286c1d90eaedbf8420fe766",
+          "evidence_kind": "scientific",
+          "name": "maximum_marker_slip",
+          "predicate_id": "immersed-mac-wall-stress.maximum_marker_slip",
+          "scope": "immersed",
+          "threshold": 2e-07,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "163cdd707323ad2dbe6d7c830086498191ca1729eefc7320d030b76d10681d86",
+          "evidence_kind": "scientific",
+          "name": "wall_traction_normal_defect",
+          "predicate_id": "immersed-mac-wall-stress.wall_traction_normal_defect",
+          "scope": "immersed",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "a745f4bda49c38948313b5921f701a28785d4616c185c662c597af270b648ddd",
+          "evidence_kind": "scientific",
+          "name": "wall_traction_magnitude",
+          "predicate_id": "immersed-mac-wall-stress.wall_traction_magnitude",
+          "scope": "immersed",
+          "threshold": 1e-12,
+          "units": "traction-density-l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "10f0b31aa89a173a382e30520b997a03a4aaffcd2f6701d9650a59994b2dfb1a",
+          "evidence_kind": "scientific",
+          "name": "positive_modeled_wall_power_violation",
+          "predicate_id": "immersed-mac-wall-stress.positive_modeled_wall_power_violation",
+          "scope": "immersed",
+          "threshold": 0.0,
+          "units": "power"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "e9f6d8353b39498582ca3a52c295dc642a8b31f46e6ea1d7550e1c05eba51409",
+          "evidence_kind": "scientific",
+          "name": "wall_rate_missing",
+          "predicate_id": "immersed-mac-wall-stress.wall_rate_missing",
+          "scope": "immersed",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "29fc0576f9f6465b51a4ad7ff8d283a24e10c8a87845154e1dee7a0913e50558",
+          "evidence_kind": "scientific",
+          "name": "wall_on_off_trajectory_effect",
+          "predicate_id": "immersed-mac-wall-stress.wall_on_off_trajectory_effect",
+          "scope": "immersed",
+          "threshold": 1e-12,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ca05716307c3b8463f43afcccfe46b59d1947c506a02a3120b72a02a2d125f7a",
+          "evidence_kind": "scientific",
+          "name": "impulse_balance_residual",
+          "predicate_id": "immersed-mac-wall-stress.impulse_balance_residual",
+          "scope": "immersed",
+          "threshold": 2e-07,
+          "units": "impulse"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "7d5aed566bf81cd6a01580bda7a1ca3fe788b3cd5638e8cb85f63ec1d255c517",
+          "evidence_kind": "scientific",
+          "name": "stress_work_balance_error",
+          "predicate_id": "immersed-mac-wall-stress.stress_work_balance_error",
+          "scope": "immersed",
+          "threshold": 2e-07,
+          "units": "work-rate"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "a6a6e36429a354b6ad2459d03b471c236c9bfda447e77fc78bcf003cc4b0cfec",
+          "evidence_kind": "smoke",
+          "name": "execution_failure",
+          "predicate_id": "immersed-mac-wall-stress.execution_failure",
+          "scope": "immersed",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "7afeefe435d69f28ce060f857e69d8c090bdcdc6f90f81afead3d0e573956337",
+          "evidence_kind": "scientific",
+          "name": "immersed_sgs_action_magnitude",
+          "predicate_id": "immersed-mac-wall-stress.immersed_sgs_action_magnitude",
+          "scope": "immersed",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "immersed-mac-wall-stress",
+      "parameters": {
+        "body_motion": "fixed",
+        "constraint_mode": "normal",
+        "sbdf2_evidence": "not-claimed",
+        "wall_stress": "vector-equilibrium"
+      },
+      "predicates": [
+        "immersed-mac-wall-stress.normal_constraint_mode_violation",
+        "immersed-mac-wall-stress.maximum_marker_slip",
+        "immersed-mac-wall-stress.wall_traction_normal_defect",
+        "immersed-mac-wall-stress.wall_traction_magnitude",
+        "immersed-mac-wall-stress.positive_modeled_wall_power_violation",
+        "immersed-mac-wall-stress.wall_rate_missing",
+        "immersed-mac-wall-stress.wall_on_off_trajectory_effect",
+        "immersed-mac-wall-stress.impulse_balance_residual",
+        "immersed-mac-wall-stress.stress_work_balance_error",
+        "immersed-mac-wall-stress.execution_failure",
+        "immersed-mac-wall-stress.immersed_sgs_action_magnitude"
+      ],
+      "producer": "immersed",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "normal-constraint-impulse-and-transfer-work-identities",
+          "name": "immersed-discrete-balance",
+          "reference_id": "5257e5e6447ba3014643b5765e1f9b4c9cee903f46ce9ae251ce86badd9618f0"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-plus-vector-equilibrium-wall-stress",
+          "forcing": "normal-only-marker-constraint",
+          "physics": "fixed-body-incompressible-unit-density",
+          "route": "fixed-immersed-mac-les",
+          "spatial_method": "immersed-staggered-finite-volume",
+          "temporal_method": "immersed-imex-euler",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "6a10f5a8c31ea5f7d71f93f83a48a8109e1d005568ee13b380ff318ac9cd5ef4"
+      },
+      "timesteps": {
+        "step_size": 0.0001,
+        "steps": 1
+      }
+    },
+    {
+      "case_id": "c0e688a7e71b16b8775010700b571b72d41e72912474a821b6d116c0c70d40af",
+      "coefficients": {
+        "denominator_regularization": 1e-08,
+        "lagrangian_time_scale": 0.25,
+        "safety_factor": 1.0,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "resolved": 8,
+        "test": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "1d867688c84867d8547b953ed8c2ddb470b06c37c793f34a9714bb496bd2aca5",
+          "evidence_kind": "smoke",
+          "name": "production_step_failure",
+          "predicate_id": "periodic-dynamic-production.production_step_failure",
+          "scope": "periodic-dynamic-production",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "346e9350d44acf1c181c05cc16adc58e0d310098dc4f3c80ee0968426d262a72",
+          "evidence_kind": "scientific",
+          "name": "velocity_restart_error",
+          "predicate_id": "periodic-dynamic-production.velocity_restart_error",
+          "scope": "periodic-dynamic-production",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "894d323994659d4960df3f611ddef2e050cb1416b0195318766c050e6e8b84bb",
+          "evidence_kind": "scientific",
+          "name": "continuation_restart_error",
+          "predicate_id": "periodic-dynamic-production.continuation_restart_error",
+          "scope": "periodic-dynamic-production",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "c3199135755f625f26e251bbf31f3736a3be3d5c9405cdae9867885c2b50676f",
+          "evidence_kind": "scientific",
+          "name": "continuation_update_failure",
+          "predicate_id": "periodic-dynamic-production.continuation_update_failure",
+          "scope": "periodic-dynamic-production",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "397cd38bb263ae38101628e361b31ed3047852b5da66200a27a8c2b431552b7b",
+          "evidence_kind": "scientific",
+          "name": "dynamic_statistics_failure",
+          "predicate_id": "periodic-dynamic-production.dynamic_statistics_failure",
+          "scope": "periodic-dynamic-production",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "1c43db91fa81a6f89f15d6dd21d18a113fc4282829fbb411f7ee66de665ac414",
+          "evidence_kind": "scientific",
+          "name": "sgs_shell_balance_error",
+          "predicate_id": "periodic-dynamic-production.sgs_shell_balance_error",
+          "scope": "periodic-dynamic-production",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "588160034871dabb2600011dad31f64b8e4ebd7a37968717939d33cf593816f9",
+          "evidence_kind": "scientific",
+          "name": "dynamic_sgs_transfer_magnitude",
+          "predicate_id": "periodic-dynamic-production.dynamic_sgs_transfer_magnitude",
+          "scope": "periodic-dynamic-production",
+          "threshold": 1e-16,
+          "units": "power"
+        }
+      ],
+      "name": "periodic-dynamic-production",
+      "parameters": {
+        "checkpoint_interval": 1
+      },
+      "predicates": [
+        "periodic-dynamic-production.production_step_failure",
+        "periodic-dynamic-production.velocity_restart_error",
+        "periodic-dynamic-production.continuation_restart_error",
+        "periodic-dynamic-production.continuation_update_failure",
+        "periodic-dynamic-production.dynamic_statistics_failure",
+        "periodic-dynamic-production.sgs_shell_balance_error",
+        "periodic-dynamic-production.dynamic_sgs_transfer_magnitude"
+      ],
+      "producer": "periodic-dynamic-production",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "transactional-accepted-state-and-statistics",
+          "name": "dynamic-production-restart",
+          "reference_id": "67dc7d62a9853311f2ac8d613131a7b5758bd058bd05c9cd3d0bb1fe90d3f9f6"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "lagrangian-dynamic-smagorinsky",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "periodic-dynamic-production",
+          "spatial_method": "fourier-exact-test-filter",
+          "temporal_method": "transactional-etdrk2",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "72acaecf37e9be6dae8980572ef0eb1e38d3331f4bb9a04cd13223aba0159ba4"
+      },
+      "timesteps": {
+        "step_size": 1e-06,
+        "steps": 1
+      }
+    },
+    {
+      "case_id": "99daeb9920435a1d6e08c7a98ae67d68609ac2372853b164d657dbfc6063c95d",
+      "coefficients": {
+        "buoyancy": 0.8,
+        "diffusion": 1.3,
+        "dissipation": 1.0,
+        "eddy_viscosity": 0.12,
+        "initial_kinetic_energy": 0.0002,
+        "molecular_viscosity": 0.0001,
+        "production_limit": 10.0
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "5f6e81e06677c7195a729311afd48e62c03d100b9f7ba316a8f1317a48673328",
+          "evidence_kind": "scientific",
+          "name": "accepted_update_failure",
+          "predicate_id": "mac-dynamic-ksgs.accepted_update_failure",
+          "scope": "dynamic-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "e5478d491eae9730819515452f52409131eacaefa06e58d27963f619b7172e1d",
+          "evidence_kind": "scientific",
+          "name": "negative_coefficient_violation",
+          "predicate_id": "mac-dynamic-ksgs.negative_coefficient_violation",
+          "scope": "dynamic-ksgs",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "dc301fc93badbb1f54495d9437a6de0dbed76e678e9f2edeb25d22e2fe536107",
+          "evidence_kind": "scientific",
+          "name": "rejected_restart_error",
+          "predicate_id": "mac-dynamic-ksgs.rejected_restart_error",
+          "scope": "dynamic-ksgs",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "415fac2451af725f4a702e1f1b3e6e8a7372156b9453f09c4165a0059d76dca2",
+          "evidence_kind": "scientific",
+          "name": "test_filter_binding_violation",
+          "predicate_id": "mac-dynamic-ksgs.test_filter_binding_violation",
+          "scope": "dynamic-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "88a83e09e300b2d10e7497d65161ac6d6f2696afea9150349eacc90599bcb27b",
+          "evidence_kind": "scientific",
+          "name": "dynamic_coefficient_change_magnitude",
+          "predicate_id": "mac-dynamic-ksgs.dynamic_coefficient_change_magnitude",
+          "scope": "dynamic-ksgs",
+          "threshold": 1e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "8d1f5d9442c9dcbacaa7282533a83b87bc7e4f264b7725ab7fbab4a9bfec9b76",
+          "evidence_kind": "scientific",
+          "name": "mac_sgs_action_magnitude",
+          "predicate_id": "mac-dynamic-ksgs.mac_sgs_action_magnitude",
+          "scope": "dynamic-ksgs",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "mac-dynamic-ksgs",
+      "parameters": {
+        "test_filter_ratio": 2.0
+      },
+      "predicates": [
+        "mac-dynamic-ksgs.accepted_update_failure",
+        "mac-dynamic-ksgs.negative_coefficient_violation",
+        "mac-dynamic-ksgs.rejected_restart_error",
+        "mac-dynamic-ksgs.test_filter_binding_violation",
+        "mac-dynamic-ksgs.dynamic_coefficient_change_magnitude",
+        "mac-dynamic-ksgs.mac_sgs_action_magnitude"
+      ],
+      "producer": "dynamic-ksgs",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "accepted-update-transaction",
+          "name": "dynamic-ksgs-history",
+          "reference_id": "0447b64567eaa58c9bccd725ecb872b1ce333f5ca878f30b9a38e061b274131f"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "dynamic-one-equation-ksgs",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "mac-dynamic-ksgs",
+          "spatial_method": "staggered-finite-volume-explicit-test-filter",
+          "temporal_method": "accepted-update-stage",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "5b0f96e57dac0acb11c1ee762383e06cd5fcaab5ab2d69afff3ae77b6e8e792b"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "f595cadaab6f0d4732733e91e29910d851a481a5210bfba445c23ecb2ac6f35f",
+      "coefficients": {
+        "buoyancy": 0.8,
+        "diffusion": 1.3,
+        "dissipation": 1.0,
+        "eddy_viscosity": 0.12,
+        "low_re_dissipation": 1.0,
+        "production_limit": 10.0,
+        "turbulent_prandtl": 0.7,
+        "turbulent_schmidt": 1.4,
+        "viscosity": 0.0001,
+        "wall_damping": 0.01
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8efea10942e9cce95f87b3f72bbc4f53abd95f8b2261b969cb43c3199105f791",
+          "evidence_kind": "scientific",
+          "name": "wall_distance_failure",
+          "predicate_id": "ocean-low-re-ksgs.wall_distance_failure",
+          "scope": "low-re-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "3308cc09564b9ea78a23f5026cac33bb209f562c259dc6f06746742838d7b9ed",
+          "evidence_kind": "scientific",
+          "name": "damping_violation",
+          "predicate_id": "ocean-low-re-ksgs.damping_violation",
+          "scope": "low-re-ksgs",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "aaa34e3184d73b90c3c6af8b3c24955d69d45c98ede5ae4371117f78b75cc0e5",
+          "evidence_kind": "scientific",
+          "name": "low_re_dissipation_missing",
+          "predicate_id": "ocean-low-re-ksgs.low_re_dissipation_missing",
+          "scope": "low-re-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "3cc6310e5cca608f94657ffc5cb468838546764df866600f071a3f8b14fd9406",
+          "evidence_kind": "smoke",
+          "name": "stage_failure",
+          "predicate_id": "ocean-low-re-ksgs.stage_failure",
+          "scope": "low-re-ksgs",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "ocean-low-re-ksgs",
+      "parameters": {
+        "wall_boundary": "no-slip"
+      },
+      "predicates": [
+        "ocean-low-re-ksgs.wall_distance_failure",
+        "ocean-low-re-ksgs.damping_violation",
+        "ocean-low-re-ksgs.low_re_dissipation_missing",
+        "ocean-low-re-ksgs.stage_failure"
+      ],
+      "producer": "low-re-ksgs",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "resolved-wall-distance-and-damping",
+          "name": "low-re-wall-limit",
+          "reference_id": "27f857d9dfe29e2b9a7ee842afaac29adf36a5185ef6f8f1bd520b14321e2592"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "low-re-one-equation-ksgs",
+          "forcing": "buoyancy",
+          "physics": "boussinesq-ocean-no-slip",
+          "route": "ocean-low-re-ksgs",
+          "spatial_method": "wall-bounded-staggered-finite-volume",
+          "temporal_method": "semidiscrete-stage",
+          "topology": "wall-bounded-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "93b6f4457eb54514b54b66ea74a1d6f6966fc07dd95ef8b9e5c945e4b8239c61"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "e813be70942746fae25bcf7cdd3a837b956b2d31c30f5e9f26c9d4684c4b7274",
+      "coefficients": {
+        "predictor_viscosity": 0.2
+      },
+      "dependencies": [
+        "incompressible-periodic"
+      ],
+      "grids": {
+        "count": 5
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "15cac3469b43b4171bb68b641450cd55848678d65768c6d5d9455d4fd2a2ad88",
+          "evidence_kind": "scientific",
+          "name": "momentum_conservation_defect",
+          "predicate_id": "learned-stress-periodic.momentum_conservation_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "f0832f720c07a68a60739e39df67717e4cb9c05319233c91d17a616edf1aff84",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "learned-stress-periodic.projection_divergence_norm",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "11acc17e83cf1befff865ffca23fcc2f5b17633415d61d9476793ac01e97ca77",
+          "evidence_kind": "scientific",
+          "name": "work_identity_defect",
+          "predicate_id": "learned-stress-periodic.work_identity_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2fd7255f1c44fbdb147932497eaacdfccde8d4b57f4bf939ad3945111ace2cc8",
+          "evidence_kind": "scientific",
+          "name": "stress_symmetry_defect",
+          "predicate_id": "learned-stress-periodic.stress_symmetry_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9822f2e510312ef162064d19d9de71d407f8620702268e17b5a1105fd5338c5f",
+          "evidence_kind": "scientific",
+          "name": "stress_trace_defect",
+          "predicate_id": "learned-stress-periodic.stress_trace_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "f74749d087f0c579fe98f886085a663fcc146a420483b3eca811e0d95872e9a2",
+          "evidence_kind": "scientific",
+          "name": "energy_policy_failure",
+          "predicate_id": "learned-stress-periodic.energy_policy_failure",
+          "scope": "learned-stress",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8dd4d2d5af9f765a497b84d62b0c3dcf82dad8c1e62dae646f183ba0419afc1b",
+          "evidence_kind": "smoke",
+          "name": "backend_failure",
+          "predicate_id": "learned-stress-periodic.backend_failure",
+          "scope": "learned-stress",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "422dca0d740f71a754bfbccca4ee9e548992da391d2c251da3fd2e808d403d05",
+          "evidence_kind": "scientific",
+          "name": "learned_stress_magnitude",
+          "predicate_id": "learned-stress-periodic.learned_stress_magnitude",
+          "scope": "learned-stress",
+          "threshold": 1e-12,
+          "units": "stress-linf"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "458b59476a31d0eb6112e7035fb68c6472c39f5dc8976ec5639b88b035dc219e",
+          "evidence_kind": "scientific",
+          "name": "projected_rate_magnitude",
+          "predicate_id": "learned-stress-periodic.projected_rate_magnitude",
+          "scope": "learned-stress",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "learned-stress-periodic",
+      "parameters": {
+        "artifact": "qualification-analytic-predictor",
+        "backend": "periodic",
+        "energy_policy": "dissipative"
+      },
+      "predicates": [
+        "learned-stress-periodic.momentum_conservation_defect",
+        "learned-stress-periodic.projection_divergence_norm",
+        "learned-stress-periodic.work_identity_defect",
+        "learned-stress-periodic.stress_symmetry_defect",
+        "learned-stress-periodic.stress_trace_defect",
+        "learned-stress-periodic.energy_policy_failure",
+        "learned-stress-periodic.backend_failure",
+        "learned-stress-periodic.learned_stress_magnitude",
+        "learned-stress-periodic.projected_rate_magnitude"
+      ],
+      "producer": "learned-stress",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "analytic-bound-stress-backend",
+          "name": "learned-periodic-operator",
+          "reference_id": "638f04e976da79fa940df80aa52ff8391f133a81aca5f8a835d90c21ec4ecd3b"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "bound-learned-deviatoric-stress",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "learned-stress-periodic",
+          "spatial_method": "fourier-projection",
+          "temporal_method": "semidiscrete-stage",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "29749c6255c69308db49bc60c9bdff1be90f35869d608fc1ebada49cb486e2d8"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "9a28dc789774604e7cbc3b5616b92d394aec89a4af47d588be4b6d6c5267098e",
+      "coefficients": {
+        "predictor_viscosity": 0.2
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "15cac3469b43b4171bb68b641450cd55848678d65768c6d5d9455d4fd2a2ad88",
+          "evidence_kind": "scientific",
+          "name": "momentum_conservation_defect",
+          "predicate_id": "learned-stress-mac.momentum_conservation_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-10,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "f0832f720c07a68a60739e39df67717e4cb9c05319233c91d17a616edf1aff84",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "learned-stress-mac.projection_divergence_norm",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "11acc17e83cf1befff865ffca23fcc2f5b17633415d61d9476793ac01e97ca77",
+          "evidence_kind": "scientific",
+          "name": "work_identity_defect",
+          "predicate_id": "learned-stress-mac.work_identity_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2fd7255f1c44fbdb147932497eaacdfccde8d4b57f4bf939ad3945111ace2cc8",
+          "evidence_kind": "scientific",
+          "name": "stress_symmetry_defect",
+          "predicate_id": "learned-stress-mac.stress_symmetry_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9822f2e510312ef162064d19d9de71d407f8620702268e17b5a1105fd5338c5f",
+          "evidence_kind": "scientific",
+          "name": "stress_trace_defect",
+          "predicate_id": "learned-stress-mac.stress_trace_defect",
+          "scope": "learned-stress",
+          "threshold": 2e-09,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "f74749d087f0c579fe98f886085a663fcc146a420483b3eca811e0d95872e9a2",
+          "evidence_kind": "scientific",
+          "name": "energy_policy_failure",
+          "predicate_id": "learned-stress-mac.energy_policy_failure",
+          "scope": "learned-stress",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "8dd4d2d5af9f765a497b84d62b0c3dcf82dad8c1e62dae646f183ba0419afc1b",
+          "evidence_kind": "smoke",
+          "name": "backend_failure",
+          "predicate_id": "learned-stress-mac.backend_failure",
+          "scope": "learned-stress",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "422dca0d740f71a754bfbccca4ee9e548992da391d2c251da3fd2e808d403d05",
+          "evidence_kind": "scientific",
+          "name": "learned_stress_magnitude",
+          "predicate_id": "learned-stress-mac.learned_stress_magnitude",
+          "scope": "learned-stress",
+          "threshold": 1e-12,
+          "units": "stress-linf"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "458b59476a31d0eb6112e7035fb68c6472c39f5dc8976ec5639b88b035dc219e",
+          "evidence_kind": "scientific",
+          "name": "projected_rate_magnitude",
+          "predicate_id": "learned-stress-mac.projected_rate_magnitude",
+          "scope": "learned-stress",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "learned-stress-mac",
+      "parameters": {
+        "artifact": "qualification-analytic-predictor",
+        "backend": "mac",
+        "energy_policy": "dissipative"
+      },
+      "predicates": [
+        "learned-stress-mac.momentum_conservation_defect",
+        "learned-stress-mac.projection_divergence_norm",
+        "learned-stress-mac.work_identity_defect",
+        "learned-stress-mac.stress_symmetry_defect",
+        "learned-stress-mac.stress_trace_defect",
+        "learned-stress-mac.energy_policy_failure",
+        "learned-stress-mac.backend_failure",
+        "learned-stress-mac.learned_stress_magnitude",
+        "learned-stress-mac.projected_rate_magnitude"
+      ],
+      "producer": "learned-stress",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "analytic-bound-stress-backend",
+          "name": "learned-mac-operator",
+          "reference_id": "466ff7ce765b42dca1f6f9cba9d4183f5b3a54e4b23c6b33975c11e5da1422f3"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "bound-learned-deviatoric-stress",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "learned-stress-mac",
+          "spatial_method": "staggered-finite-volume",
+          "temporal_method": "semidiscrete-stage",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "5c249f111dc7eee2c91815761b8b8271f59ae7e458a210f465fa6ec749ab6dab"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "ab12ecd008a1cd2d9e47448338d11fcbc727b3020df3b4ac486e2970398ec11b",
+      "coefficients": {
+        "density": 1.0,
+        "model": 0.15,
+        "sample_distance": 0.1,
+        "viscosity": 0.05
+      },
+      "dependencies": [
+        "incompressible-channel"
+      ],
+      "grids": {
+        "shape": [
+          4,
+          7,
+          4
+        ]
+      },
+      "metrics": [
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "d446677e0abebc7cb9658452087bb2cf06464dd209acf7dfe79a98dc4eadc3dc",
+          "evidence_kind": "scientific",
+          "name": "wall_on_off_trajectory_effect",
+          "predicate_id": "channel-mixed-wall-stress.wall_on_off_trajectory_effect",
+          "scope": "channel-wall-owner",
+          "threshold": 1e-12,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2025354ec0ee8f421424e27e0f14cb73fc68a14a0c639999ac16e25512fcbf97",
+          "evidence_kind": "scientific",
+          "name": "boundary_work_defect",
+          "predicate_id": "channel-mixed-wall-stress.boundary_work_defect",
+          "scope": "channel-wall-owner",
+          "threshold": 1e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "771dff2ee161c52cd97b1a707d93993b44dc69873a2a2db1fc214b762134ecd5",
+          "evidence_kind": "scientific",
+          "name": "wall_power_identity_error",
+          "predicate_id": "channel-mixed-wall-stress.wall_power_identity_error",
+          "scope": "channel-wall-owner",
+          "threshold": 1e-08,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "5f6764eece252980871797aa2daf6403beed7cb697d4cb506aaedeb6f194f850",
+          "evidence_kind": "scientific",
+          "name": "dissipation_failure",
+          "predicate_id": "channel-mixed-wall-stress.dissipation_failure",
+          "scope": "channel-wall-owner",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "458d697172bde0a71ee546d05b1fc5e903aad0843c65b451a103c185701e934a",
+          "evidence_kind": "smoke",
+          "name": "owner_execution_failure",
+          "predicate_id": "channel-mixed-wall-stress.owner_execution_failure",
+          "scope": "channel-wall-owner",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "7a55757feb3f800b60f146143965a465c3034e6bb9a2087ec12d8788e66adaed",
+          "evidence_kind": "scientific",
+          "name": "channel_les_viscosity_magnitude",
+          "predicate_id": "channel-mixed-wall-stress.channel_les_viscosity_magnitude",
+          "scope": "channel-wall-owner",
+          "threshold": 1e-12,
+          "units": "viscosity-linf"
+        }
+      ],
+      "name": "channel-mixed-wall-stress",
+      "parameters": {
+        "perturbation_amplitude": 0.01,
+        "tangential_owner": "wall-law-only"
+      },
+      "predicates": [
+        "channel-mixed-wall-stress.wall_on_off_trajectory_effect",
+        "channel-mixed-wall-stress.boundary_work_defect",
+        "channel-mixed-wall-stress.wall_power_identity_error",
+        "channel-mixed-wall-stress.dissipation_failure",
+        "channel-mixed-wall-stress.owner_execution_failure",
+        "channel-mixed-wall-stress.channel_les_viscosity_magnitude"
+      ],
+      "producer": "channel-wall-owner",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "mixed-traction-boundary-work",
+          "name": "channel-wall-owner",
+          "reference_id": "497f16d04e258f58d1f3e32ce0140312410b76bf4fabdf2a8d3bdc0087c9a62a"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "wale-plus-vector-equilibrium-wall-stress",
+          "forcing": "wall-traction",
+          "physics": "wall-resolved-incompressible",
+          "route": "channel-mixed-wall-stress",
+          "spatial_method": "fourier-chebyshev-fourier-traction-wall",
+          "temporal_method": "wall-owned-channel-sbdf2",
+          "topology": "wall-bounded-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "850a837e8f05f134cd64c104596f6b9e70f6746c166234ed50abcf2f317301ae"
+      },
+      "timesteps": {
+        "step_size": 1e-05,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "381ff6045196c5800bead3686dc28780a2dd1974df3e48f7b67eeb27fc7c7bb4",
+      "coefficients": {
+        "model": 0.15,
+        "viscosity": 0.05
+      },
+      "dependencies": [
+        "incompressible-channel"
+      ],
+      "grids": {
+        "shape": [
+          4,
+          7,
+          4
+        ]
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "5e0bea4d5b4e6a416e7c60c70e65b16af73db7f7981d1530e4ab0035cfe866bb",
+          "evidence_kind": "scientific",
+          "name": "advective_rate_missing",
+          "predicate_id": "channel-complete-restriction.advective_rate_missing",
+          "scope": "channel-restriction",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "4ffa4201c75ca9f6461ee8dcbb63c97b9a2d2d9964765d291a929e20ae29ef7f",
+          "evidence_kind": "scientific",
+          "name": "wall_derivative_missing",
+          "predicate_id": "channel-complete-restriction.wall_derivative_missing",
+          "scope": "channel-restriction",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ed6e2a932df1d2a3153ed6a3b311366a01ace7bb7c090b16b2e158ecc7f0db63",
+          "evidence_kind": "scientific",
+          "name": "unsafe_step_permitted",
+          "predicate_id": "channel-complete-restriction.unsafe_step_permitted",
+          "scope": "channel-restriction",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "b3b7ebf36c99b8748a2cb16b3cead172091804dccdbae7db9ea53059bf49f5da",
+          "evidence_kind": "scientific",
+          "name": "unsafe_step_state_change",
+          "predicate_id": "channel-complete-restriction.unsafe_step_state_change",
+          "scope": "channel-restriction",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "da4bd3e3c251adbe7ea9c84a23cad7e85f1a2483c0fdf62d51683dc4e4918caf",
+          "evidence_kind": "scientific",
+          "name": "unsafe_step_accepted",
+          "predicate_id": "channel-complete-restriction.unsafe_step_accepted",
+          "scope": "channel-restriction",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "ac39028d0ecf0ed8496030e133ac9594cff9920f42757eec549cf6374e222245",
+          "evidence_kind": "scientific",
+          "name": "channel_les_viscosity_magnitude",
+          "predicate_id": "channel-complete-restriction.channel_les_viscosity_magnitude",
+          "scope": "channel-restriction",
+          "threshold": 1e-12,
+          "units": "viscosity-linf"
+        }
+      ],
+      "name": "channel-complete-restriction",
+      "parameters": {
+        "perturbation_amplitude": 0.01,
+        "unsafe_factor": 2.0
+      },
+      "predicates": [
+        "channel-complete-restriction.advective_rate_missing",
+        "channel-complete-restriction.wall_derivative_missing",
+        "channel-complete-restriction.unsafe_step_permitted",
+        "channel-complete-restriction.unsafe_step_state_change",
+        "channel-complete-restriction.unsafe_step_accepted",
+        "channel-complete-restriction.channel_les_viscosity_magnitude"
+      ],
+      "producer": "channel-restriction",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "complete-explicit-bound",
+          "name": "channel-restriction-refusal",
+          "reference_id": "cb53dbbcf70d68a17ca37c53f6cf373ca395947ebcbff1309b7d826520c4e347"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "wale",
+          "forcing": "unforced",
+          "physics": "wall-resolved-incompressible",
+          "route": "channel-complete-explicit-restriction",
+          "spatial_method": "fourier-chebyshev-fourier",
+          "temporal_method": "channel-sbdf2-refusal",
+          "topology": "wall-bounded-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "bb75086a79d19838e63ec53f26283fc5b5e07c94cb18cbb6d1d6e810895449ae"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 1
+      }
+    },
+    {
+      "case_id": "a73f663681ec874798b0170b8078d9176f5f5d5732dc82c19ffcfd45457d52b7",
+      "coefficients": {
+        "mean_normal_velocity": 2.0,
+        "velocity_variance": 0.7
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "boundary_nodes": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9ed0272bacc01720e67defc83bfa06bb1db3e47a242cd6e51ff34d42ae341c90",
+          "evidence_kind": "scientific",
+          "name": "restart_replay_error",
+          "predicate_id": "stochastic-mac-inflow-owner.restart_replay_error",
+          "scope": "stochastic-mac-inflow",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "202e6448346eab07f463b3c4ae45c093cb5e1cb64285395e715730bdb19f24c6",
+          "evidence_kind": "scientific",
+          "name": "rate_closure_error",
+          "predicate_id": "stochastic-mac-inflow-owner.rate_closure_error",
+          "scope": "stochastic-mac-inflow",
+          "threshold": 1e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "dc9bbff0f71cf9966fe3ddf9fe59b1236d071a8680ef5b0533a4dce9129cdd28",
+          "evidence_kind": "scientific",
+          "name": "fluctuation_volume_flux",
+          "predicate_id": "stochastic-mac-inflow-owner.fluctuation_volume_flux",
+          "scope": "stochastic-mac-inflow",
+          "threshold": 1e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "97b267ead926dfcd5a7921067603734a35af00a9933d1ebb44e3b576fad1e8e9",
+          "evidence_kind": "scientific",
+          "name": "maximum_divergence_residual",
+          "predicate_id": "stochastic-mac-inflow-owner.maximum_divergence_residual",
+          "scope": "stochastic-mac-inflow",
+          "threshold": 1e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "41e3128c1cccf20e2122e8a18c0ad81b6cdb03ed0b385d5df556a377ff480927",
+          "evidence_kind": "smoke",
+          "name": "owner_failure",
+          "predicate_id": "stochastic-mac-inflow-owner.owner_failure",
+          "scope": "stochastic-mac-inflow",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "stochastic-mac-inflow-owner",
+      "parameters": {
+        "axis": "x",
+        "seed": 19,
+        "side": "lower"
+      },
+      "predicates": [
+        "stochastic-mac-inflow-owner.restart_replay_error",
+        "stochastic-mac-inflow-owner.rate_closure_error",
+        "stochastic-mac-inflow-owner.fluctuation_volume_flux",
+        "stochastic-mac-inflow-owner.maximum_divergence_residual",
+        "stochastic-mac-inflow-owner.owner_failure"
+      ],
+      "producer": "stochastic-mac-inflow",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "prng-restart-rate-compatibility",
+          "name": "stochastic-inflow-owner",
+          "reference_id": "cd099316266cffd1b924b686ed450bf3090108bca7c11cea89de3bbb76a746d4"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "spectral-covariance-inflow",
+          "forcing": "stochastic-boundary",
+          "physics": "velocity-inflow",
+          "route": "stochastic-mac-inflow-owner",
+          "spatial_method": "structured-mac-boundary-provider",
+          "temporal_method": "accepted-step-owner",
+          "topology": "boundary-line"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "e55d1ffe24827a447d46daaf9f10f892474b672142bbefa28b3d811c1fc1df8d"
+      },
+      "timesteps": {
+        "step_size": 0.1,
+        "steps": 1
+      }
+    },
+    {
+      "case_id": "c0d0f1337638ecfd8f0e5c1f073b1764bd60375bd0a9bc2d85dd5de3bfcb78d5",
+      "coefficients": {
+        "fuel_schmidt": 0.7,
+        "kinetic_schmidt": 0.5,
+        "model": 0.0,
+        "oxidizer_schmidt": 0.9,
+        "sgs_dissipation": 1.0,
+        "turbulent_prandtl": 0.85,
+        "viscosity_upper_bound": 0.0
+      },
+      "dependencies": [
+        "compressible-flow"
+      ],
+      "grids": {
+        "cells": 1,
+        "nodes": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "5d00eb286407e922a1b8ee67d76341fc3dbf903867262fec019b571ea19ebc3a",
+          "evidence_kind": "scientific",
+          "name": "dg_source_error",
+          "predicate_id": "favre-transported-sgs-dg.dg_source_error",
+          "scope": "favre-dg-energy",
+          "threshold": 0.0002,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "3ed54d9df2486b6b85e075423d4368017304c470888ff33d861904fa6fc14fc3",
+          "evidence_kind": "scientific",
+          "name": "total_energy_exchange_error",
+          "predicate_id": "favre-transported-sgs-dg.total_energy_exchange_error",
+          "scope": "favre-dg-energy",
+          "threshold": 0.0002,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "20f8dffc3313d61aed7b05a20c9ae1952b2f97c94608ff960e6da75c1755f5d9",
+          "evidence_kind": "scientific",
+          "name": "negative_sgs_source_missing",
+          "predicate_id": "favre-transported-sgs-dg.negative_sgs_source_missing",
+          "scope": "favre-dg-energy",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "a605461cb401563c3976e25e3534fc9664e05067c5a0654a12a1ad1bb9e328eb",
+          "evidence_kind": "scientific",
+          "name": "transported_slot_missing",
+          "predicate_id": "favre-transported-sgs-dg.transported_slot_missing",
+          "scope": "favre-dg-energy",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "favre-transported-sgs-dg",
+      "parameters": {
+        "sgs_energy_slot": "transported",
+        "viscous_formulation": "ldg"
+      },
+      "predicates": [
+        "favre-transported-sgs-dg.dg_source_error",
+        "favre-transported-sgs-dg.total_energy_exchange_error",
+        "favre-transported-sgs-dg.negative_sgs_source_missing",
+        "favre-transported-sgs-dg.transported_slot_missing"
+      ],
+      "producer": "favre-dg-energy",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "local-coupled-rate-broadcast",
+          "name": "favre-dg-source",
+          "reference_id": "f8c30b70951d86b301d94505dc2afdfeb781128b1bb9b2f9a17cdaeaab4fd59a"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky-transported-isotropic-sgs-energy",
+          "forcing": "sgs-energy-source",
+          "physics": "compressible-two-species",
+          "route": "favre-transported-sgs-energy-dg",
+          "spatial_method": "tetrahedral-nodal-dg-ldg",
+          "temporal_method": "semidiscrete-source",
+          "topology": "unstructured-tetrahedral"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "0f1db1dce3952fe66e86ac084206271e01972074e8351e5edd1b4c643025291f"
+      },
+      "timesteps": {
+        "step_size": 0.0,
+        "steps": 0
+      }
+    },
+    {
+      "case_id": "f7f1bbb7cc55f8cd3c152bddaeac98388d71e46e2a118b2d5ff415acc81998cf",
+      "coefficients": {
+        "a_schmidt": 0.7,
+        "b_schmidt": 0.8,
+        "buoyancy": 1.0,
+        "conservation_tolerance": 3e-06,
+        "diffusion": 0.8,
+        "dissipation": 1.0,
+        "eddy_viscosity": 0.12,
+        "model": 0.04,
+        "production_limit": 8.0,
+        "turbulent_prandtl": 0.9,
+        "viscosity_upper_bound": 10.0
+      },
+      "dependencies": [
+        "unstructured-low-mach"
+      ],
+      "grids": {
+        "cells": 5
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6276601bbb1a0a1ba2fc5a8bf3b9957eb47a04a5caa8eedc289b6962fb74b3f0",
+          "evidence_kind": "scientific",
+          "name": "divergence_after_norm",
+          "predicate_id": "unstructured-pressure-continuation.divergence_after_norm",
+          "scope": "unstructured-pressure",
+          "threshold": 2e-08,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ac001aebe5fd623535699a7c4715587cdac76d2fe30fd058cf09632c0936c397",
+          "evidence_kind": "scientific",
+          "name": "pressure_residual_norm",
+          "predicate_id": "unstructured-pressure-continuation.pressure_residual_norm",
+          "scope": "unstructured-pressure",
+          "threshold": 2e-08,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2bed969af12c876efdeafe33db374da0db36cd1f7dffeec340a90d8e1fe3385a",
+          "evidence_kind": "scientific",
+          "name": "mass_flux_identity_error",
+          "predicate_id": "unstructured-pressure-continuation.mass_flux_identity_error",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "caf1f3fe610db46e4469448744ff04da7684718d0b1d6dfc9f579d86e95bc719",
+          "evidence_kind": "scientific",
+          "name": "restart_replay_error",
+          "predicate_id": "unstructured-pressure-continuation.restart_replay_error",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "381a4741f629a42760dfc9da6ae967e2a81a09d24fc42f697ae9a585b2f63085",
+          "evidence_kind": "smoke",
+          "name": "continuation_failure",
+          "predicate_id": "unstructured-pressure-continuation.continuation_failure",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "699a5fad1dad878eda6b4014c388b3f23b17026a03d5171484a0b10121ae3ccf",
+          "evidence_kind": "scientific",
+          "name": "sgs_flux_magnitude",
+          "predicate_id": "unstructured-pressure-continuation.sgs_flux_magnitude",
+          "scope": "unstructured-pressure",
+          "threshold": 1e-12,
+          "units": "flux-linf"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "059389f9374abe852fdb1b8591e593a30b9aef3579925543ae22907bfa809d7a",
+          "evidence_kind": "scientific",
+          "name": "normalized_sgs_energy_balance",
+          "predicate_id": "unstructured-pressure-continuation.normalized_sgs_energy_balance",
+          "scope": "unstructured-pressure",
+          "threshold": 3e-06,
+          "units": "normalized"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "ad0cdeb169472cd800607250844ef7200156b9ef3a4c79967c08222dd289a153",
+          "evidence_kind": "scientific",
+          "name": "viscosity_owner_identity_error",
+          "predicate_id": "unstructured-pressure-continuation.viscosity_owner_identity_error",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "249db07b9a5f2dfba7bdac20bba28e0abea1eec8b9aaca421cd550009b3052f7",
+          "evidence_kind": "scientific",
+          "name": "ksgs_state_failure",
+          "predicate_id": "unstructured-pressure-continuation.ksgs_state_failure",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "72a1b12aa6e40ce97e23daf2eeb1ad694766b47e0090d83595aa5c6e42116712",
+          "evidence_kind": "scientific",
+          "name": "normalized_modeled_transfer_residual",
+          "predicate_id": "unstructured-pressure-continuation.normalized_modeled_transfer_residual",
+          "scope": "unstructured-pressure",
+          "threshold": 3e-06,
+          "units": "normalized"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "810b181e845d50f89b1981a7c0ff5195687a3844cdf613972bcd944d9fae6232",
+          "evidence_kind": "scientific",
+          "name": "energy_balanced_failure",
+          "predicate_id": "unstructured-pressure-continuation.energy_balanced_failure",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "a023438d934afc68cf50fab60a1cc750767f44377703b89e6dd337f2261a4296",
+          "evidence_kind": "scientific",
+          "name": "energy_status_failure",
+          "predicate_id": "unstructured-pressure-continuation.energy_status_failure",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "30cc79027104b8a4c8c51d479af0ba3e663c8041fca618242b76bcd8f6bc08bf",
+          "evidence_kind": "scientific",
+          "name": "executed_rhs_rebuild_error",
+          "predicate_id": "unstructured-pressure-continuation.executed_rhs_rebuild_error",
+          "scope": "unstructured-pressure",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "da19487e3eb952b2191b31064671250b3ff8ad8f9482ea24c6dd59fae67a1c81",
+          "evidence_kind": "scientific",
+          "name": "production_evidence_rebuild_error",
+          "predicate_id": "unstructured-pressure-continuation.production_evidence_rebuild_error",
+          "scope": "unstructured-pressure",
+          "threshold": 2e-12,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9fb58e436b29bc7c6cc255bf43847752e8ac55482994d086c9485a65bc96386a",
+          "evidence_kind": "scientific",
+          "name": "negative_work_refusal_failure",
+          "predicate_id": "unstructured-pressure-continuation.negative_work_refusal_failure",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9766eff97abbaa102a5fa8ba76cd8487f07e6210d198f8f1ea6464f960944f68",
+          "evidence_kind": "scientific",
+          "name": "ksgs_production_policy_failure",
+          "predicate_id": "unstructured-pressure-continuation.ksgs_production_policy_failure",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "0710b11f6fba218f70732882cfc62333f6702e26aa6c0e65136fa50d228b72ea",
+          "evidence_kind": "scientific",
+          "name": "deviatoric_face_stress_magnitude",
+          "predicate_id": "unstructured-pressure-continuation.deviatoric_face_stress_magnitude",
+          "scope": "unstructured-pressure",
+          "threshold": 1e-12,
+          "units": "flux-linf"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "41e1b6c2a2844fbcfe10700142da86c4232d49c76354b6f961642d8108c08713",
+          "evidence_kind": "scientific",
+          "name": "minimum_ksgs_raw_production_density",
+          "predicate_id": "unstructured-pressure-continuation.minimum_ksgs_raw_production_density",
+          "scope": "unstructured-pressure",
+          "threshold": 1e-12,
+          "units": "power-density"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9068335eccbb166bbeb40342e913fdea15a0b5e7232c32f63fb0b5cf06ee14fd",
+          "evidence_kind": "scientific",
+          "name": "negative_local_production_violation",
+          "predicate_id": "unstructured-pressure-continuation.negative_local_production_violation",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "power-density"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "77cbecfb340bf9ca00f9100bf90c0d2a3c9da3cac9bc3d431af80a964c1bf886",
+          "evidence_kind": "scientific",
+          "name": "production_limit_reduction_magnitude",
+          "predicate_id": "unstructured-pressure-continuation.production_limit_reduction_magnitude",
+          "scope": "unstructured-pressure",
+          "threshold": 1e-12,
+          "units": "power-density"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "e2aacbe3cb291dbcb1d402d25776eca3d6b9971d8d946941970b00f7d43d6bd4",
+          "evidence_kind": "scientific",
+          "name": "modeled_enthalpy_source_magnitude",
+          "predicate_id": "unstructured-pressure-continuation.modeled_enthalpy_source_magnitude",
+          "scope": "unstructured-pressure",
+          "threshold": 1e-12,
+          "units": "power-density"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "d6094e5358617d0a6e2c4fe6d7e31c20a7d3c2109dd310aeda8691d064f7eabd",
+          "evidence_kind": "scientific",
+          "name": "enthalpy_source_identity_error",
+          "predicate_id": "unstructured-pressure-continuation.enthalpy_source_identity_error",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "5a5637ad5ee19a4b42d451c3524bcfcfc45f2504809d9927b10f935f66389a1e",
+          "evidence_kind": "scientific",
+          "name": "thermalization_rate_magnitude",
+          "predicate_id": "unstructured-pressure-continuation.thermalization_rate_magnitude",
+          "scope": "unstructured-pressure",
+          "threshold": 1e-12,
+          "units": "power"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "0be3a605a6f0a01907a572f5d31f8c70b736023e794f4b96f8015844f3c18b44",
+          "evidence_kind": "scientific",
+          "name": "enthalpy_thermalization_balance_error",
+          "predicate_id": "unstructured-pressure-continuation.enthalpy_thermalization_balance_error",
+          "scope": "unstructured-pressure",
+          "threshold": 2e-08,
+          "units": "energy"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9501932422ab9f3d9fb1ac2dd322c41e66016951a0c407435b3fe3d48a6aa9b0",
+          "evidence_kind": "scientific",
+          "name": "modeled_energy_split_residual",
+          "predicate_id": "unstructured-pressure-continuation.modeled_energy_split_residual",
+          "scope": "unstructured-pressure",
+          "threshold": 3e-06,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "4bf1cbd4e604997dda3d8b498e1883ce379ee92076f9efb56d7abd0051046caa",
+          "evidence_kind": "scientific",
+          "name": "total_energy_balance_failure",
+          "predicate_id": "unstructured-pressure-continuation.total_energy_balance_failure",
+          "scope": "unstructured-pressure",
+          "threshold": 0.0,
+          "units": "count"
+        }
+      ],
+      "name": "unstructured-pressure-continuation",
+      "parameters": {
+        "ksgs_production_policy": "conservative-face-work-equal-cell-split",
+        "pressure_iterations": 300,
+        "pressure_tolerance": 2e-08,
+        "production_limit_disposition": "modeled-enthalpy-density-source"
+      },
+      "predicates": [
+        "unstructured-pressure-continuation.divergence_after_norm",
+        "unstructured-pressure-continuation.pressure_residual_norm",
+        "unstructured-pressure-continuation.mass_flux_identity_error",
+        "unstructured-pressure-continuation.restart_replay_error",
+        "unstructured-pressure-continuation.continuation_failure",
+        "unstructured-pressure-continuation.sgs_flux_magnitude",
+        "unstructured-pressure-continuation.normalized_sgs_energy_balance",
+        "unstructured-pressure-continuation.viscosity_owner_identity_error",
+        "unstructured-pressure-continuation.ksgs_state_failure",
+        "unstructured-pressure-continuation.normalized_modeled_transfer_residual",
+        "unstructured-pressure-continuation.energy_balanced_failure",
+        "unstructured-pressure-continuation.energy_status_failure",
+        "unstructured-pressure-continuation.executed_rhs_rebuild_error",
+        "unstructured-pressure-continuation.production_evidence_rebuild_error",
+        "unstructured-pressure-continuation.negative_work_refusal_failure",
+        "unstructured-pressure-continuation.ksgs_production_policy_failure",
+        "unstructured-pressure-continuation.deviatoric_face_stress_magnitude",
+        "unstructured-pressure-continuation.minimum_ksgs_raw_production_density",
+        "unstructured-pressure-continuation.negative_local_production_violation",
+        "unstructured-pressure-continuation.production_limit_reduction_magnitude",
+        "unstructured-pressure-continuation.modeled_enthalpy_source_magnitude",
+        "unstructured-pressure-continuation.enthalpy_source_identity_error",
+        "unstructured-pressure-continuation.thermalization_rate_magnitude",
+        "unstructured-pressure-continuation.enthalpy_thermalization_balance_error",
+        "unstructured-pressure-continuation.modeled_energy_split_residual",
+        "unstructured-pressure-continuation.total_energy_balance_failure"
+      ],
+      "producer": "unstructured-pressure",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "shared-mass-flux-pressure-continuation",
+          "name": "unstructured-pressure-step",
+          "reference_id": "70494427f53ff3f4ae532ba1d007e5a238abf5b84703669366acd2f30de2dbdc"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "static-ksgs-viscosity-owner",
+          "forcing": "pressure-correction",
+          "physics": "variable-density-two-species",
+          "production_limit_disposition": "modeled-enthalpy-density-source",
+          "production_policy": "conservative-face-work-equal-cell-split",
+          "route": "unstructured-low-mach-pressure-step",
+          "spatial_method": "tetrahedral-pressure-corrected-finite-volume",
+          "temporal_method": "fixed-step-continuation",
+          "topology": "unstructured-tetrahedral"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "c614db9bcddee5592cfdf072bbc983d82d261ad928393e97187a8715396e1794"
+      },
+      "timesteps": {
+        "step_size": 0.0002,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "76d433cd2e2e397ac8a0b3313f2549790be8db135701f36258ca605d936985ef",
+      "coefficients": {
+        "model": 0.12,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-mac"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "1128172eccd6fd881b5c10542a028eaa1e7751b5f2af03d5ccb0ab7e60583ebc",
+          "evidence_kind": "scientific",
+          "name": "restart_roundtrip_error",
+          "predicate_id": "immersed-mac-sbdf2-restart.restart_roundtrip_error",
+          "scope": "immersed-sbdf2",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "fda274fde9d6b90987a1b59cf213a211a658ec472897080103c08c5da3ea5e2f",
+          "evidence_kind": "scientific",
+          "name": "projection_divergence_norm",
+          "predicate_id": "immersed-mac-sbdf2-restart.projection_divergence_norm",
+          "scope": "immersed-sbdf2",
+          "threshold": 2e-07,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "db5ea65fe558d3434a3b5dc69b09ddb967774481cff8e53dea18a7d45c27659d",
+          "evidence_kind": "scientific",
+          "name": "marker_slip_norm",
+          "predicate_id": "immersed-mac-sbdf2-restart.marker_slip_norm",
+          "scope": "immersed-sbdf2",
+          "threshold": 2e-07,
+          "units": "l2"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "b58d26c5f85a089ae0b9bcd52ed96e6c121cf8ce9ef42f7c43652cd7be7994e8",
+          "evidence_kind": "scientific",
+          "name": "startup_balance_failure",
+          "predicate_id": "immersed-mac-sbdf2-restart.startup_balance_failure",
+          "scope": "immersed-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9aaa3171f708a07d1b0ba5a66f883a9ddb21f324e32c4cfa254409079f8662d4",
+          "evidence_kind": "scientific",
+          "name": "advanced_balance_failure",
+          "predicate_id": "immersed-mac-sbdf2-restart.advanced_balance_failure",
+          "scope": "immersed-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "dab90144fafb386530a14d52ce2c9d0c6231e10ec8cc513d7dfccee1be127c0d",
+          "evidence_kind": "smoke",
+          "name": "continuation_failure",
+          "predicate_id": "immersed-mac-sbdf2-restart.continuation_failure",
+          "scope": "immersed-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "05f63fa78007277152908c93c0e6f7b9a09eb3720eca086e47400b3ab3ce5f65",
+          "evidence_kind": "scientific",
+          "name": "constraint_mode_violation",
+          "predicate_id": "immersed-mac-sbdf2-restart.constraint_mode_violation",
+          "scope": "immersed-sbdf2",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "bd9000db7d1831d4fd2b7266a2da258492e796dc06f3dc3e638d713eca55a119",
+          "evidence_kind": "scientific",
+          "name": "advanced_impulse_balance_residual",
+          "predicate_id": "immersed-mac-sbdf2-restart.advanced_impulse_balance_residual",
+          "scope": "immersed-sbdf2",
+          "threshold": 2e-07,
+          "units": "impulse"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "1e3f1385323799512484d26cfd10acf78c874f67c18cd8911dbe260049b29c3a",
+          "evidence_kind": "scientific",
+          "name": "advanced_transfer_work_residual",
+          "predicate_id": "immersed-mac-sbdf2-restart.advanced_transfer_work_residual",
+          "scope": "immersed-sbdf2",
+          "threshold": 2e-10,
+          "units": "work-rate"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "6a9686a7cbc02a914b241f1555ede0d3c4b31e85e8b723f3d5af526f055093ff",
+          "evidence_kind": "scientific",
+          "name": "sgs_extrapolated_action_magnitude",
+          "predicate_id": "immersed-mac-sbdf2-restart.sgs_extrapolated_action_magnitude",
+          "scope": "immersed-sbdf2",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "bc6e12319b8b746665de4343d428e3ca228fc5cce4045b515a18f3f46a66fa71",
+          "evidence_kind": "scientific",
+          "name": "sgs_bulk_work_magnitude",
+          "predicate_id": "immersed-mac-sbdf2-restart.sgs_bulk_work_magnitude",
+          "scope": "immersed-sbdf2",
+          "threshold": 1e-14,
+          "units": "work"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "6c8b6892b6a38ee2c74802dbf023eed87a51cbe7f0b20676acc58198439c50e7",
+          "evidence_kind": "scientific",
+          "name": "sgs_extrapolated_work_error",
+          "predicate_id": "immersed-mac-sbdf2-restart.sgs_extrapolated_work_error",
+          "scope": "immersed-sbdf2",
+          "threshold": 2e-10,
+          "units": "work"
+        }
+      ],
+      "name": "immersed-mac-sbdf2-restart",
+      "parameters": {
+        "body_motion": "fixed",
+        "constraint_mode": "full-vector"
+      },
+      "predicates": [
+        "immersed-mac-sbdf2-restart.restart_roundtrip_error",
+        "immersed-mac-sbdf2-restart.projection_divergence_norm",
+        "immersed-mac-sbdf2-restart.marker_slip_norm",
+        "immersed-mac-sbdf2-restart.startup_balance_failure",
+        "immersed-mac-sbdf2-restart.advanced_balance_failure",
+        "immersed-mac-sbdf2-restart.continuation_failure",
+        "immersed-mac-sbdf2-restart.constraint_mode_violation",
+        "immersed-mac-sbdf2-restart.advanced_impulse_balance_residual",
+        "immersed-mac-sbdf2-restart.advanced_transfer_work_residual",
+        "immersed-mac-sbdf2-restart.sgs_extrapolated_action_magnitude",
+        "immersed-mac-sbdf2-restart.sgs_bulk_work_magnitude",
+        "immersed-mac-sbdf2-restart.sgs_extrapolated_work_error"
+      ],
+      "producer": "immersed-sbdf2",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "serialized-history-step-ledgers",
+          "name": "immersed-sbdf2-restart",
+          "reference_id": "404f87185df5ecdbb6ae709c51308af6a6547014a8521e443313d0bf352981b0"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky",
+          "forcing": "full-vector-marker-constraint",
+          "physics": "fixed-body-incompressible-unit-density",
+          "route": "fixed-immersed-mac-les-sbdf2",
+          "spatial_method": "immersed-staggered-finite-volume",
+          "temporal_method": "immersed-sbdf2",
+          "topology": "periodic-tensor-product"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "72a0829aca3ded1b6d591ff11888a819b0cc95e93d160ee66811d54a449f20e6"
+      },
+      "timesteps": {
+        "step_size": 0.001,
+        "steps": 2
+      }
+    },
+    {
+      "case_id": "c04c267f262e2ff188f40fef44d6ab2a7c1f8bbc1f354e03902af63595d985c1",
+      "coefficients": {
+        "model": 0.16,
+        "safety_factor": 0.8,
+        "viscosity": 0.01
+      },
+      "dependencies": [
+        "incompressible-periodic",
+        "distributed-execution"
+      ],
+      "grids": {
+        "count": 4
+      },
+      "metrics": [
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "2ce96e14329552d574fbd908b5947caf5c7c616bb519a014978a9c4807d0b2da",
+          "evidence_kind": "smoke",
+          "name": "production_step_failure",
+          "predicate_id": "distributed-full-flow-production.production_step_failure",
+          "scope": "distributed-production",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "dc3d42ebedb4272484a98d7628751c4ef4e4224c1ce9fe73a4c667b3cb215ffc",
+          "evidence_kind": "scientific",
+          "name": "restart_state_error",
+          "predicate_id": "distributed-full-flow-production.restart_state_error",
+          "scope": "distributed-production",
+          "threshold": 0.0,
+          "units": "absolute"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "b6e482ecf3d256888f789c8cd42b4565a7dd54f0989fd3b4ccdaf4c6354a79b2",
+          "evidence_kind": "operational",
+          "name": "sharding_failure",
+          "predicate_id": "distributed-full-flow-production.sharding_failure",
+          "scope": "distributed-production",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "9f6ba6aa8d603edd7adad54c738466588bca128864a00c9476739d1e2982207a",
+          "evidence_kind": "operational",
+          "name": "qualification_inheritance_violation",
+          "predicate_id": "distributed-full-flow-production.qualification_inheritance_violation",
+          "scope": "distributed-production",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "less-than-or-equal",
+          "criterion_id": "85945e757a02544de9c137c572d2d95bfc75f86e1f5c7ea621d8203ae462feb6",
+          "evidence_kind": "operational",
+          "name": "device_residency_failure",
+          "predicate_id": "distributed-full-flow-production.device_residency_failure",
+          "scope": "distributed-production",
+          "threshold": 0.0,
+          "units": "count"
+        },
+        {
+          "comparison": "greater-than-or-equal",
+          "criterion_id": "ca3ce44c5481f588518867a6382c5f611b41ab8b3148995a565ec6691da3e279",
+          "evidence_kind": "scientific",
+          "name": "distributed_sgs_action_magnitude",
+          "predicate_id": "distributed-full-flow-production.distributed_sgs_action_magnitude",
+          "scope": "distributed-production",
+          "threshold": 1e-12,
+          "units": "rate-linf"
+        }
+      ],
+      "name": "distributed-full-flow-production",
+      "parameters": {
+        "artifact_restart": true,
+        "checkpoint_interval": 1
+      },
+      "predicates": [
+        "distributed-full-flow-production.production_step_failure",
+        "distributed-full-flow-production.restart_state_error",
+        "distributed-full-flow-production.sharding_failure",
+        "distributed-full-flow-production.qualification_inheritance_violation",
+        "distributed-full-flow-production.device_residency_failure",
+        "distributed-full-flow-production.distributed_sgs_action_magnitude"
+      ],
+      "producer": "distributed-production",
+      "references": [
+        {
+          "kind": "native-reference",
+          "model": "artifact-checkpoint-sharding-transaction",
+          "name": "distributed-production-restart",
+          "reference_id": "cba3df86d4761ae8d5828313958585adf8ec54a5d5d9463297d132b8d5eeead8"
+        }
+      ],
+      "support": {
+        "attributes": {
+          "closure": "smagorinsky",
+          "forcing": "unforced",
+          "physics": "incompressible-unit-density",
+          "route": "distributed-full-flow-production",
+          "spatial_method": "distributed-fourier-slab",
+          "temporal_method": "transactional-etdrk2-production",
+          "topology": "single-device-slab"
+        },
+        "capability": "large-eddy-simulation",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "a685f1a51319dcd2f2de6b0e0d670d78ced0e5d029c413e9a5ba8bb1cf973700"
+      },
+      "timesteps": {
+        "step_size": 0.0001,
+        "steps": 2
+      }
+    }
+  ],
+  "environment_id": "jax-cpu-x64-finite-default",
+  "expires_at": 1820016000,
+  "issued_at": 1788480000,
+  "kind": "les-qualification-campaign",
+  "matrix_id": "e54edd2888646bef1016f1519ccbc7d9f38422e141f2c079c4f2b7b72a431f6a",
+  "precision": "float64",
+  "provider": "phydrax",
+  "reduction": "deterministic-route-native",
+  "release_index_id": "unresolved-release-index",
+  "reviewer_id": "automated-les-qualification-producer",
+  "trust_policy_id": "unresolved-release-trust-policy"
+}

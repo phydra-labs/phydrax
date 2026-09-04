@@ -105,6 +105,14 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
             raise ValueError(f"Cell velocity must have shape {shape}.")
         return value
 
+    def validate_cell_field(self, value: ArrayLike, name: str, /) -> Array:
+        array = jnp.asarray(value)
+        if array.ndim < 1 or array.shape[0] != self.discretization.cell_count:
+            raise ValueError(
+                f"{name} must begin with cell count {self.discretization.cell_count}."
+            )
+        return array
+
     def validate_face_scalar(self, value: ArrayLike, name: str, /) -> Array:
         array = jnp.asarray(value)
         shape = (self.discretization.face_measures.size,)
@@ -120,9 +128,63 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
 
     def cell_gradient(self, pressure: ArrayLike, /) -> Array:
         value = self.validate_cell_scalar(pressure, "Pressure")
-        coefficients = self.gradient.coefficients(value)
-        lengths = self.gradient.characteristic_lengths.astype(value.dtype)
-        return coefficients / lengths[:, None]
+        return self.cell_field_gradient(value, "Pressure")
+
+    def cell_field_gradient(self, value: ArrayLike, name: str, /) -> Array:
+        field = self.validate_cell_field(value, name)
+        if not jnp.issubdtype(field.dtype, jnp.inexact):
+            field = field.astype(jnp.result_type(field, float))
+        coefficients = self.gradient.coefficients(field)
+        lengths = self.gradient.characteristic_lengths.astype(field.dtype)
+        scale_shape = (field.shape[0],) + (1,) * field.ndim
+        return coefficients / lengths.reshape(scale_shape)
+
+    def nonorthogonal_face_gradient(self, value: ArrayLike, name: str, /) -> Array:
+        """Return over-relaxed face gradients with explicit skew correction."""
+
+        field = self.validate_cell_field(value, name)
+        if not jnp.issubdtype(field.dtype, jnp.inexact):
+            field = field.astype(jnp.result_type(field, float))
+        cell_gradient = self.cell_field_gradient(field, name)
+        owner = self.discretization.owner_cells
+        neighbour = self.discretization.neighbour_cells
+        safe_neighbour = jnp.maximum(neighbour, 0)
+        normal = self.unit_normals.astype(field.dtype)
+        connector = (
+            self.discretization.cell_centers[safe_neighbour]
+            - self.discretization.cell_centers[owner]
+        ).astype(field.dtype)
+        distance = self.projected_distances.astype(field.dtype)
+        tangential = connector - distance[:, None] * normal
+        owner_gradient = cell_gradient[owner]
+        average_gradient = 0.5 * (owner_gradient + cell_gradient[safe_neighbour])
+        face_count = average_gradient.shape[0]
+        vector_shape = (
+            (face_count,)
+            + (1,) * (average_gradient.ndim - 2)
+            + (self.discretization.cell_dimension,)
+        )
+        face_shape = (face_count,) + (1,) * (field.ndim - 1)
+        tangential_derivative = jnp.sum(
+            average_gradient * tangential.reshape(vector_shape),
+            axis=-1,
+        )
+        normal_derivative = (
+            field[safe_neighbour] - field[owner] - tangential_derivative
+        ) / distance.reshape(face_shape)
+        current_normal_derivative = jnp.sum(
+            average_gradient * normal.reshape(vector_shape),
+            axis=-1,
+        )
+        corrected = average_gradient + (normal_derivative - current_normal_derivative)[
+            ..., None
+        ] * normal.reshape(vector_shape)
+        interior_shape = (face_count,) + (1,) * (corrected.ndim - 1)
+        return jnp.where(
+            self.interior_faces.reshape(interior_shape),
+            corrected,
+            owner_gradient,
+        )
 
     def face_normal_gradient(self, pressure: ArrayLike, /) -> Array:
         value = self.validate_cell_scalar(pressure, "Pressure")

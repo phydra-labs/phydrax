@@ -348,18 +348,6 @@ def _production_extension_checks(lane):
         checks["reacting_flux_finite"] = bool(
             jnp.all(jnp.isfinite(reacting.physical_flux(reacting_state, 0)))
         )
-        turbulence = phx.equations.WALEPlan().kinematic_viscosity(
-            jnp.asarray((1.0,)),
-            phx.equations.TurbulenceArguments(
-                jnp.asarray(((0.1, 0.2), (-0.1, -0.1))),
-                jnp.asarray(0.02),
-                jnp.asarray(0.1),
-                jnp.asarray((0.1, 1.0)),
-            ),
-        )
-        checks["les_viscosity_nonnegative"] = bool(
-            jnp.isfinite(turbulence) & (turbulence >= 0.0)
-        )
     if lane == "release":
         forest = phx.discretization.fem.GeneralHPForest.roots(
             ("triangle", "quadrilateral"),

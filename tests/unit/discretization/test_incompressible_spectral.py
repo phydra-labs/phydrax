@@ -73,8 +73,11 @@ def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients():
     assert compiled.projector.divergence_norm(rate) < 1e-11
     assert jnp.all(jnp.isfinite(compiled.pressure_coefficients(0.0, state)))
     assert diagnostics.imaginary_leakage < 1e-12
-    assert jnp.abs(diagnostics.nonlinear_energy_rate) < 1e-10
-    assert jnp.abs(diagnostics.viscous_energy_rate + diagnostics.dissipation) < 1e-10
+    assert jnp.abs(diagnostics.advective_energy_rate) < 1e-10
+    assert (
+        jnp.abs(diagnostics.molecular_energy_rate + diagnostics.molecular_dissipation)
+        < 1e-10
+    )
     assert jnp.abs(diagnostics.energy_balance_defect) < 1e-10
     assert diagnostics.pressure_gauge_residual < 1e-12
     assert jnp.isfinite(derivative)

@@ -131,6 +131,7 @@ from ._cfd_dem import (
     CFDEMMacroStepResult,
 )
 from ._channel_flow import (
+    CHANNEL_FLOW_EXPLICIT_RESTRICTION,
     CHANNEL_FLOW_INITIAL_CONSTRAINT,
     CHANNEL_FLOW_STOKES_FAILURE,
     CHANNEL_FLOW_SUCCESS,
@@ -462,7 +463,13 @@ from ._electrostatic_pic import (
     ElectrostaticPICState,
     ElectrostaticPICStepResult,
 )
-from ._etdrk import ETDRKMethod, PreparedETDRKMethod, solve_etdrk
+from ._etdrk import (
+    ETDRKMethod,
+    LESStabilityGuardedETDRKMethod,
+    PreparedETDRKMethod,
+    PreparedLESStabilityGuardedETDRKMethod,
+    solve_etdrk,
+)
 from ._evolution_observation import (
     BoundedEvolutionObservation,
     BoundedEvolutionObservationPlan,
@@ -1084,6 +1091,7 @@ from ._mac_sharp_interface import (
 )
 from ._mac_stage_inverse_general import (
     MACOperatorStageInverseMomentum,
+    MACOperatorStageSolveResult,
     MACVariableDensityStageInverseMomentum,
     MACVariableViscosityStagePlan,
 )
@@ -1117,6 +1125,7 @@ from ._mac_variational_viscosity import (
 )
 from ._mac_viscous import (
     MAC_VISCOUS_BOUNDARY_FAILURE,
+    MAC_VISCOUS_CLOSURE_FAILURE,
     MAC_VISCOUS_HELMHOLTZ_FAILURE,
     MAC_VISCOUS_HISTORY_INVALID,
     MAC_VISCOUS_PROJECTION_FAILURE,
@@ -1127,6 +1136,7 @@ from ._mac_viscous import (
     MACHelmholtzSolvePlan,
     MACIMEXEulerMethod,
     MACIMEXEulerResult,
+    MACSBDF2GStabilityLedger,
     MACSBDF2Method,
     MACSBDF2State,
     MACSBDF2StepResult,
@@ -1992,6 +2002,20 @@ from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
+from ._unstructured_les import (
+    UNSTRUCTURED_LES_CONSERVATION_FAILURE,
+    UNSTRUCTURED_LES_ENERGY_FAILURE,
+    UNSTRUCTURED_LES_INADMISSIBLE_STATE,
+    UNSTRUCTURED_LES_PRESSURE_FAILURE,
+    UNSTRUCTURED_LES_STEP_RESTRICTION,
+    UNSTRUCTURED_LES_SUCCESS,
+    UnstructuredLowMachLESFixedStepMethod,
+    UnstructuredLowMachLESRestartState,
+    UnstructuredLowMachLESStepEvidence,
+    UnstructuredLowMachLESStepInputs,
+    UnstructuredLowMachLESStepRestriction,
+    UnstructuredLowMachLESStepResult,
+)
 from ._unstructured_stage_runtime import (
     PreparedUnstructuredSSPRK3Runtime,
     StageEpochExecutor,
@@ -2298,6 +2322,7 @@ __all__ = [
     "ConstantDelay",
     "maxwell",
     "CHANNEL_FLOW_INITIAL_CONSTRAINT",
+    "CHANNEL_FLOW_EXPLICIT_RESTRICTION",
     "CHANNEL_FLOW_STOKES_FAILURE",
     "CHANNEL_FLOW_SUCCESS",
     "ChannelFlowDiagnosticsHistory",
@@ -2557,6 +2582,8 @@ __all__ = [
     "RosenbrockWMethod",
     "ETDRKMethod",
     "PreparedETDRKMethod",
+    "LESStabilityGuardedETDRKMethod",
+    "PreparedLESStabilityGuardedETDRKMethod",
     "HermitianCoordinateEvolution",
     "HERMITIAN_COORDINATE_INVALID",
     "HydrostaticFreeSurfaceResult",
@@ -2566,10 +2593,12 @@ __all__ = [
     "MACHelmholtzSolvePlan",
     "MACIMEXEulerMethod",
     "MACIMEXEulerResult",
+    "MACSBDF2GStabilityLedger",
     "MACSBDF2Method",
     "MACSBDF2State",
     "MACSBDF2StepResult",
     "MAC_VISCOUS_BOUNDARY_FAILURE",
+    "MAC_VISCOUS_CLOSURE_FAILURE",
     "MAC_VISCOUS_HELMHOLTZ_FAILURE",
     "MAC_VISCOUS_HISTORY_INVALID",
     "MAC_VISCOUS_PROJECTION_FAILURE",
@@ -2690,6 +2719,7 @@ __all__ = [
     "MACStageInverseMomentum",
     "MACStageInverseMomentumDiagnostics",
     "MACOperatorStageInverseMomentum",
+    "MACOperatorStageSolveResult",
     "MACRigidImmersedBackwardEulerMethod",
     "MACRigidImmersedEulerMethod",
     "MACImmersedInterfaceProjectionPlan",
@@ -2836,6 +2866,18 @@ __all__ = [
     "UnstructuredPressureCorrectionResult",
     "UnstructuredPressureProjectionPlan",
     "UnstructuredPressureProjectionResult",
+    "UNSTRUCTURED_LES_CONSERVATION_FAILURE",
+    "UNSTRUCTURED_LES_ENERGY_FAILURE",
+    "UNSTRUCTURED_LES_INADMISSIBLE_STATE",
+    "UNSTRUCTURED_LES_PRESSURE_FAILURE",
+    "UNSTRUCTURED_LES_STEP_RESTRICTION",
+    "UNSTRUCTURED_LES_SUCCESS",
+    "UnstructuredLowMachLESFixedStepMethod",
+    "UnstructuredLowMachLESRestartState",
+    "UnstructuredLowMachLESStepEvidence",
+    "UnstructuredLowMachLESStepInputs",
+    "UnstructuredLowMachLESStepRestriction",
+    "UnstructuredLowMachLESStepResult",
     "FiniteVolumeALEAdvanceEvidence",
     "FiniteVolumeEmbeddedAdvanceEvidence",
     "FiniteVolumeAdvanceResult",

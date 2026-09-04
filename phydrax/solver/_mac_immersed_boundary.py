@@ -32,8 +32,10 @@ from ..discretization.finite_volume._mac_marker_transfer import (
     PreparedMACMarkerTransfer,
 )
 from ..linalg import (
+    ArraySpace,
     BlockLinearOperator,
     BlockSpace,
+    DiagonalPairing,
     DifferentiationPolicy,
     FunctionLinearOperator,
     GMRES,
@@ -92,6 +94,7 @@ class MACImmersedBoundaryProjectionResult(StrictModule):
     relation: MACMarkerRelation
     route_state: MACMarkerRouteState
     route_unchanged: Array
+    constraint_normals: Array
     differentiation_certified: Array
     transfer_diagnostics: MACMarkerTransferDiagnostics
     marker_velocity_before: Array
@@ -113,6 +116,7 @@ class MACImmersedBoundaryProjectionResult(StrictModule):
     finite: Array
     converged: Array
     pressure_block_preconditioner_id: str = eqx.field(static=True)
+    constraint_mode: str = eqx.field(static=True)
     projection_id: str = eqx.field(static=True)
 
     @property
@@ -121,7 +125,12 @@ class MACImmersedBoundaryProjectionResult(StrictModule):
 
 
 class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
-    """Closure-aware unit-density projection enforcing divergence and marker velocity."""
+    """Unit-density projection enforcing divergence and marker constraints.
+
+    The default retains the existing full-vector no-slip constraint. Supplying
+    ``marker_constraint_normals`` selects its weighted normal-only KKT restriction,
+    leaving tangential momentum to an explicit traction owner.
+    """
 
     operators: PreparedMACOperators
     boundaries: PreparedMACBoundaryPlan
@@ -281,6 +290,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         boundary_stage: MACBoundaryStageData | None = None,
         expected_routes: MACMarkerRouteState | None = None,
         allow_route_refresh: bool = False,
+        marker_constraint_normals: ArrayLike | None = None,
     ) -> MACImmersedBoundaryProjectionResult:
         stage = self._stage(boundary_stage)
         boundary = self.boundaries.correction_descriptor(stage)
@@ -316,10 +326,72 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             else self.transfer.routes_match(relation, expected_routes)
         )
         route_acceptable = route_unchanged | bool(allow_route_refresh)
-        target_velocity = self.transfer.markers.active_values(marker_state.velocity)
+        markers = self.transfer.markers
+        target_velocity = markers.active_values(marker_state.velocity)
+        normal_mode = marker_constraint_normals is not None
+        if normal_mode:
+            raw_normals = jnp.asarray(marker_constraint_normals, dtype=dtype)
+            expected_normal_shape = (markers.capacity, markers.ambient_dimension)
+            if raw_normals.shape != expected_normal_shape:
+                raise ValueError(
+                    f"marker_constraint_normals must have shape {expected_normal_shape}."
+                )
+            active_normals = markers.active_values(raw_normals)
+            normal_norm = jnp.sqrt(jnp.sum(active_normals * active_normals, axis=-1))
+            active_normals = eqx.error_if(
+                active_normals,
+                jnp.any(~jnp.isfinite(active_normals))
+                | jnp.any(~jnp.isfinite(normal_norm))
+                | jnp.any(normal_norm <= 0.0),
+                "Active marker constraint normals must be finite and nonzero.",
+            )
+            unit_normals = active_normals / normal_norm[:, None]
+            active_weights = markers.material_measure.weights[
+                markers.active_indices
+            ].astype(dtype)
+            marker_space = ArraySpace(
+                (markers.active_count,),
+                dtype=dtype,
+                pairing=DiagonalPairing(active_weights),
+            )
+
+            def gather_constraint(face_velocity):
+                sampled = self.transfer.gather(relation, face_velocity)
+                return jnp.sum(sampled * unit_normals, axis=-1)
+
+            def spread_constraint(multiplier):
+                return self.transfer.spread(relation, multiplier[:, None] * unit_normals)
+
+            def multiplier_vector(multiplier):
+                return multiplier[:, None] * unit_normals
+
+            def multiplier_coordinates(force_density):
+                return jnp.sum(force_density * unit_normals, axis=-1)
+
+            target_constraint = jnp.sum(target_velocity * unit_normals, axis=-1)
+            constraint_mode = "normal"
+        else:
+            unit_normals = jnp.zeros_like(target_velocity)
+            marker_space = markers.active_velocity_space
+
+            def gather_constraint(face_velocity):
+                return self.transfer.gather(relation, face_velocity)
+
+            def spread_constraint(multiplier):
+                return self.transfer.spread(relation, multiplier)
+
+            def multiplier_vector(multiplier):
+                return multiplier
+
+            def multiplier_coordinates(force_density):
+                return force_density
+
+            target_constraint = target_velocity
+            constraint_mode = "full-vector"
         bounded = boundary.affine_velocity(values)
         bounded = self.operators.validate_velocity(bounded)
-        marker_before = self.transfer.gather(relation, bounded)
+        marker_before_velocity = self.transfer.gather(relation, bounded)
+        marker_before = gather_constraint(bounded)
         divergence_before = self.operators.divergence(bounded)
         incoming_pressure = (
             jnp.zeros(self.operators.discretization.cell_shape, dtype=dtype)
@@ -328,28 +400,22 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         )
         if self.boundaries.closure_kind == "neumann":
             incoming_pressure = self.operators.gauge_project(incoming_pressure)
-        initial_multiplier = (
-            jnp.zeros(
-                self.transfer.markers.active_velocity_space.structure().shape,
-                dtype=dtype,
-            )
+        initial_force_density = (
+            markers.active_velocity_space.zeros()
             if marker_force_density is None
-            else self.transfer.markers.active_velocity_space.validate(
+            else markers.active_velocity_space.validate(
                 jnp.asarray(marker_force_density, dtype=dtype)
             )
         )
+        initial_multiplier = multiplier_coordinates(initial_force_density)
         ell = jnp.asarray(self.constraint_length, dtype=dtype)
         zero_pressure = jnp.zeros_like(incoming_pressure)
-        marker_space = self.transfer.markers.active_velocity_space
         marker_rank_certified = marker_space.size <= self.maximum_rank_check_size
         if marker_rank_certified:
 
             def mobility_action(multiplier):
-                return self.transfer.gather(
-                    relation,
-                    stage_inverse.apply_inverse(
-                        self.transfer.spread(relation, multiplier)
-                    ),
+                return gather_constraint(
+                    stage_inverse.apply_inverse(spread_constraint(multiplier))
                 )
 
             marker_mobility = FunctionLinearOperator(
@@ -396,9 +462,9 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         pressure_rhs = ell * (-divergence_before + boundary_divergence)
         if self.boundaries.closure_kind == "neumann":
             pressure_rhs = self.operators.compatibility_project(pressure_rhs)
-        marker_rhs = target_velocity - marker_before
+        marker_rhs = target_constraint - marker_before
         dual_space = BlockSpace(
-            (self.operators.pressure_space, self.transfer.markers.active_velocity_space),
+            (self.operators.pressure_space, marker_space),
             names=("pressure", "marker"),
         )
 
@@ -417,7 +483,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
                 physical_pressure,
                 homogeneous=self.boundaries.closure_kind == "neumann",
             )
-            spread = self.transfer.spread(relation, multiplier)
+            spread = spread_constraint(multiplier)
             return (
                 tuple(
                     derivative - force
@@ -436,7 +502,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             pressure_image = -ell * self.operators.divergence(image)
             if self.boundaries.closure_kind == "neumann":
                 pressure_image = pressure_image + mean
-            marker_image = -self.transfer.gather(relation, image)
+            marker_image = -gather_constraint(image)
             return pressure_image, marker_image
 
         zero_marker = marker_space.zeros()
@@ -511,6 +577,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             initial_guess=initial_guess,
         )
         scaled_pressure_candidate, multiplier_candidate = linear.value
+        multiplier_force_candidate = multiplier_vector(multiplier_candidate)
         velocity_correction, _ = correction(linear.value)
         stage_rhs, _ = correction_rhs(linear.value)
         inverse_momentum_diagnostics = stage_inverse.diagnostics(
@@ -529,8 +596,16 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         else:
             pressure_candidate = physical_increment
         divergence_candidate = self.operators.divergence(candidate_velocity)
-        marker_after_candidate = self.transfer.gather(relation, candidate_velocity)
-        slip_candidate = marker_after_candidate - target_velocity
+        marker_after_velocity_candidate = self.transfer.gather(
+            relation, candidate_velocity
+        )
+        constraint_after_candidate = gather_constraint(candidate_velocity)
+        slip_constraint_candidate = constraint_after_candidate - target_constraint
+        slip_candidate = (
+            slip_constraint_candidate[:, None] * unit_normals
+            if normal_mode
+            else slip_constraint_candidate
+        )
         residual = operator(linear.value)
         kkt_residual = (
             residual[0] - pressure_rhs,
@@ -542,16 +617,12 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         volumes = self.operators.discretization.cell_volumes.astype(dtype)
         rhs_norm = jnp.sqrt(
             jnp.sum(volumes * pressure_rhs**2)
-            + jnp.real(
-                self.transfer.markers.active_velocity_space.inner(marker_rhs, marker_rhs)
-            )
+            + jnp.real(marker_space.inner(marker_rhs, marker_rhs))
         )
         divergence_norm = jnp.sqrt(jnp.sum(volumes * divergence_candidate**2))
         slip_norm = jnp.sqrt(
             jnp.real(
-                self.transfer.markers.active_velocity_space.inner(
-                    slip_candidate, slip_candidate
-                )
+                marker_space.inner(slip_constraint_candidate, slip_constraint_candidate)
             )
         )
         gauge_defect = (
@@ -560,7 +631,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             else jnp.asarray(0.0, dtype=dtype)
         )
         transfer_diagnostics = self.transfer.diagnostics(
-            relation, candidate_velocity, multiplier_candidate
+            relation, candidate_velocity, multiplier_force_candidate
         )
         scale = jnp.maximum(rhs_norm, 1.0)
         tolerance = self.tolerance * scale
@@ -574,7 +645,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             )
             & inverse_momentum_diagnostics.finite
             & jnp.all(jnp.isfinite(pressure_candidate))
-            & jnp.all(jnp.isfinite(multiplier_candidate))
+            & jnp.all(jnp.isfinite(multiplier_force_candidate))
             & jnp.isfinite(kkt_residual_norm)
             & jnp.isfinite(divergence_norm)
             & jnp.isfinite(slip_norm)
@@ -647,10 +718,12 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             converged, physical_increment, jnp.zeros_like(physical_increment)
         )
         accepted_multiplier = jnp.where(
-            converged, multiplier_candidate, initial_multiplier
+            converged, multiplier_force_candidate, initial_force_density
         )
         marker_after = self.transfer.gather(relation, accepted_velocity)
-        slip = marker_after - target_velocity
+        accepted_constraint = gather_constraint(accepted_velocity)
+        slip_constraint = accepted_constraint - target_constraint
+        slip = slip_constraint[:, None] * unit_normals if normal_mode else slip_constraint
         divergence_after = self.operators.divergence(accepted_velocity)
         closure = MACPressureClosureReport(
             kind=self.boundaries.closure_kind,
@@ -671,10 +744,11 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             pressure=accepted_pressure,
             pressure_increment=accepted_increment,
             marker_force_density=accepted_multiplier,
-            candidate_marker_force_density=multiplier_candidate,
+            candidate_marker_force_density=multiplier_force_candidate,
             relation=relation,
             route_state=route_state,
             route_unchanged=route_unchanged,
+            constraint_normals=unit_normals,
             differentiation_certified=(
                 converged
                 & route_unchanged
@@ -684,7 +758,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             inverse_momentum_diagnostics=inverse_momentum_diagnostics,
             stage_inverse_id=stage_inverse.stage_id,
             transfer_diagnostics=transfer_diagnostics,
-            marker_velocity_before=marker_before,
+            marker_velocity_before=marker_before_velocity,
             marker_velocity_after=marker_after,
             marker_slip=slip,
             divergence_before=divergence_before,
@@ -701,6 +775,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             finite=finite,
             converged=converged,
             pressure_block_preconditioner_id=(self.pressure_block_preconditioner.plan_id),
+            constraint_mode=constraint_mode,
             projection_id=self.plan_id,
         )
 

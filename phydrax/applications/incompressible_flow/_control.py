@@ -611,7 +611,12 @@ class PreparedMACFlowControl(StrictModule, NonTrainableState):
             forcing_id=forcing.forcing_id,
         )
         controlled = compile_mac_incompressible_flow(
-            problem, dynamics.momentum, dynamics.projection
+            problem,
+            dynamics.momentum,
+            dynamics.projection,
+            algebraic_les=(
+                None if dynamics.algebraic_les is None else dynamics.algebraic_les.plan
+            ),
         )
         method = _bind_dynamics(plan.method, controlled)
 
@@ -870,12 +875,12 @@ class PreparedMACFlowControl(StrictModule, NonTrainableState):
             ), result.accepted
 
         def multistep(_):
-            _, convection, _, forcing = method.dynamics.rate_components(
-                state.time, state.state, args
-            )
+            components = method.dynamics.rate_components(state.time, state.state, args)
             controlled_explicit = tuple(
                 -advective + source
-                for advective, source in zip(convection, forcing, strict=True)
+                for advective, source in zip(
+                    components.convection, components.forcing, strict=True
+                )
             )
             history = MACSBDF2State(
                 time=state.time,

@@ -76,7 +76,6 @@ from ._diffusion import (
     PreparedConservativeAdvection,
     PreparedConservativeDiffusion,
 )
-from ._dyadic import DyadicFiniteVolumeDiscretization, DyadicFiniteVolumePlan
 from ._distributed import (
     FiniteVolumeDecompositionPlan,
     FiniteVolumeHaloRoute,
@@ -89,6 +88,7 @@ from ._distributed_marker_transfer import (
     DistributedMarkerOwnershipPlan,
     DistributedMarkerTransferDiagnostics,
 )
+from ._dyadic import DyadicFiniteVolumeDiscretization, DyadicFiniteVolumePlan
 from ._dynamics import (
     ConvexStateLimiterPlan,
     FiniteVolumeMethodPlan,
@@ -224,8 +224,12 @@ from ._mac_scalar import (
     MACScalarLayout,
     MACScalarProblem,
     MACScalarReaction,
+    MACScalarSGSField,
+    MACScalarSGSNumberKind,
+    MACScalarSGSPlan,
     MACScalarStepRestriction,
     MACScalarTransport,
+    PreparedMACScalarSGS,
     PreparedMACScalarTransport,
 )
 from ._mac_sharp_geometry import (
@@ -242,6 +246,11 @@ from ._mac_variable_density import (
     MACVariableDensityReport,
     MACVariableDensityTransportResult,
     PreparedMACVariableDensityOperators,
+)
+from ._mac_variational_viscosity import (
+    FrozenMACVariationalViscosityAction,
+    MACVariationalViscosityResult,
+    PreparedMACVariationalViscosityAction,
 )
 from ._mac_viscous_measures import (
     MACFreeSurfaceViscousMeasurePlan,
@@ -676,6 +685,9 @@ __all__ = [
     "MACMomentumDiagnostics",
     "MACMomentumPlan",
     "MACMomentumReport",
+    "FrozenMACVariationalViscosityAction",
+    "MACVariationalViscosityResult",
+    "PreparedMACVariationalViscosityAction",
     "MappedMACGeometryPlan",
     "MappedMACMarkerRelation",
     "MappedMACMarkerRouteState",
@@ -698,6 +710,9 @@ __all__ = [
     "MACScalarBoundaryCondition",
     "MACScalarBoundaryKind",
     "MACScalarBoundarySet",
+    "MACScalarSGSField",
+    "MACScalarSGSNumberKind",
+    "MACScalarSGSPlan",
     "MACScalarDiagnostics",
     "MACOceanForcingEvidence",
     "MACScalarFieldDiagnostics",
@@ -725,6 +740,7 @@ __all__ = [
     "PreparedHydrostaticGrid",
     "PreparedMACPassiveTracerMacCormack",
     "PreparedMACScalarTransport",
+    "PreparedMACScalarSGS",
     "PreparedMACVariableDensityOperators",
     "FiniteVolumeEntropyDiagnostics",
     "FiniteVolumeResidualDiagnostics",

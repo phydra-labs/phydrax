@@ -113,6 +113,8 @@ benchmarks/*
 !benchmarks/mac_incompressible_qualification.json
 !benchmarks/incompressible_flow_candidate_profile.json
 !benchmarks/incompressible_ou_qualification.json
+!benchmarks/large_eddy_simulation_qualification_campaign.json
+!benchmarks/large_eddy_simulation_qualification_matrix.json
 !benchmarks/immersed_commercial_qualification.json
 !benchmarks/lbm_commercial_qualification.json
 !benchmarks/unbounded_spectral.json

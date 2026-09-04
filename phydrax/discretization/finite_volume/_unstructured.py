@@ -1196,6 +1196,33 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     def state_shape(self) -> tuple[int, ...]:
         return (self.cell_count, self.component_count)
 
+    def directional_control_volume_widths(self) -> Array:
+        """Return volume-normalized directional widths from control-volume faces."""
+
+        dtype = self.cell_volumes.dtype
+        projected_area = jnp.zeros(
+            (self.cell_count, self.cell_dimension),
+            dtype=dtype,
+        )
+        face_projection = jnp.abs(self.area_vectors.astype(dtype))
+        owner = self.owner_cells
+        neighbour = self.neighbour_cells
+        interior = neighbour >= 0
+        projected_area = projected_area.at[owner].add(0.5 * face_projection)
+        projected_area = projected_area.at[jnp.maximum(neighbour, 0)].add(
+            jnp.where(interior[:, None], 0.5 * face_projection, 0.0)
+        )
+        projected_area = eqx.error_if(
+            projected_area,
+            jnp.any(~jnp.isfinite(projected_area) | (projected_area <= 0.0)),
+            "Directional control-volume projected areas must be positive and finite.",
+        )
+        volume = self.cell_volumes.astype(dtype)
+        raw_widths = volume[:, None] / projected_area
+        raw_product = jnp.prod(raw_widths, axis=-1)
+        normalization = (volume / raw_product) ** (1.0 / self.cell_dimension)
+        return raw_widths * normalization[:, None]
+
 
 def _quality_report(
     plan,

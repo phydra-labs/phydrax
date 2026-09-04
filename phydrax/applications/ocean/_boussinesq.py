@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -31,13 +31,23 @@ from ...discretization.finite_volume import (
     PreparedMACScalarTransport,
 )
 from ...discretization.finite_volume._mac_ocean import PreparedMACOceanForcing
+from ...discretization.finite_volume._mac_scalar import MACScalarSGSPlan
 from ...equations import (
     compile_mac_scalar_buoyancy,
     CompiledMACScalarBuoyancyDynamics,
     IncompressibleFlowProblem,
 )
+from ...equations._ksgs import AbstractKSGSPlan, KSGSState
+from ...equations._mac_les import MACAlgebraicLESPlan
 from ...solver import MACPressureProjectionPlan
 from ._reference import LinearSeawaterReference, OceanAxisConvention
+
+
+if TYPE_CHECKING:
+    from ...discretization.finite_volume._mac_scalar import PreparedMACScalarSGS
+    from ...equations._mac_les import PreparedMACAlgebraicLES
+    from ...equations._mac_scalar_buoyancy import PreparedMACKSGS
+    from ._step import OceanBoussinesqContinuationState
 
 
 class OceanStateView(StrictModule):
@@ -47,6 +57,8 @@ class OceanStateView(StrictModule):
     temperature: Array
     salinity: Array
     density_anomaly: Array
+    sgs_kinetic_energy: Array | None
+    ksgs_state: KSGSState | None
     state_id: str = eqx.field(static=True)
 
 
@@ -59,6 +71,10 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
     temperature_diffusivity: Array
     salinity_diffusivity: Array
     scalar_advection: MACScalarAdvection = eqx.field(static=True)
+    algebraic_les: MACAlgebraicLESPlan | None
+    scalar_sgs: MACScalarSGSPlan | None
+    ksgs: AbstractKSGSPlan | None
+    ksgs_field_name: str | None = eqx.field(static=True)
     coriolis_parameter: float = eqx.field(static=True)
     surface_stress: Array
     surface_stress_function: Any = eqx.field(static=True)
@@ -77,6 +93,10 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
         temperature_diffusivity: ArrayLike = 0.0,
         salinity_diffusivity: ArrayLike = 0.0,
         scalar_advection: MACScalarAdvection = "centered",
+        algebraic_les: MACAlgebraicLESPlan | None = None,
+        scalar_sgs: MACScalarSGSPlan | None = None,
+        ksgs: AbstractKSGSPlan | None = None,
+        ksgs_field_name: str | None = None,
         coriolis_parameter: float = 0.0,
         surface_stress: Any = None,
         surface_stress_id: str | None = None,
@@ -108,6 +128,34 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
                 )
         if scalar_advection not in ("centered", "upwind"):
             raise ValueError("Ocean scalar advection must be centered or upwind.")
+        if algebraic_les is not None and not isinstance(
+            algebraic_les, MACAlgebraicLESPlan
+        ):
+            raise TypeError("algebraic_les must be MACAlgebraicLESPlan or None.")
+        if ksgs is not None and not isinstance(ksgs, AbstractKSGSPlan):
+            raise TypeError("ksgs must be AbstractKSGSPlan or None.")
+        if algebraic_les is not None and ksgs is not None:
+            raise ValueError("Ocean algebraic LES and prognostic KSGS are alternatives.")
+        if scalar_sgs is not None and not isinstance(scalar_sgs, MACScalarSGSPlan):
+            raise TypeError("scalar_sgs must be MACScalarSGSPlan or None.")
+        closure_active = algebraic_les is not None or ksgs is not None
+        if closure_active != (scalar_sgs is not None):
+            raise ValueError(
+                "Ocean LES requires explicit named scalar SGS declarations; no "
+                "turbulent Prandtl or Schmidt numbers are defaulted."
+            )
+        if scalar_sgs is not None and scalar_sgs.field_names != reference.field_names:
+            raise ValueError(
+                "Ocean scalar SGS declarations must exactly match the named "
+                f"temperature/salinity fields {reference.field_names}."
+            )
+        kinetic_name = None if ksgs_field_name is None else str(ksgs_field_name)
+        if ksgs is not None and (
+            not kinetic_name or kinetic_name in reference.field_names
+        ):
+            raise ValueError("Ocean KSGS requires an explicit, distinct ksgs_field_name.")
+        if ksgs is None and ksgs_field_name is not None:
+            raise ValueError("ksgs_field_name is valid only with a KSGS plan.")
         if callable(surface_stress):
             stress_identifier = (
                 "" if surface_stress_id is None else str(surface_stress_id)
@@ -148,6 +196,10 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
         self.temperature_diffusivity = temperature_diffusivity_
         self.salinity_diffusivity = salinity_diffusivity_
         self.scalar_advection = scalar_advection
+        self.algebraic_les = algebraic_les
+        self.scalar_sgs = scalar_sgs
+        self.ksgs = ksgs
+        self.ksgs_field_name = kinetic_name
         self.coriolis_parameter = f
         self.surface_stress = stress
         self.surface_stress_function = stress_function
@@ -164,6 +216,12 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
                 "salinity_diffusivity": np.asarray(salinity_diffusivity_).tolist(),
                 "advection": scalar_advection,
                 "f": f,
+                "algebraic_les": (
+                    "none" if algebraic_les is None else algebraic_les.plan_id
+                ),
+                "scalar_sgs": ("none" if scalar_sgs is None else scalar_sgs.plan_id),
+                "ksgs": "none" if ksgs is None else ksgs.plan_id,
+                "ksgs_field_name": kinetic_name,
                 "surface_stress": stress_identifier,
                 "temperature_surface_flux": temperature_flux.boundary_id,
                 "salinity_surface_flux": salinity_flux.boundary_id,
@@ -203,7 +261,12 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
             tolerance=projection_tolerance,
             maximum_iterations=projection_iterations,
         )
-        layout = MACScalarLayout(operators, self.reference.field_names)
+        scalar_names = (
+            self.reference.field_names
+            if self.ksgs_field_name is None
+            else (*self.reference.field_names, self.ksgs_field_name)
+        )
+        layout = MACScalarLayout(operators, scalar_names)
         vertical_name = discretization.grid.axis_names[self.axes.vertical_axis]
         zero_gradient = MACScalarBoundaryCondition("neumann", 0.0)
         if self.axes.surface_index == -1:
@@ -223,20 +286,27 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
                 },
             },
         )
-        scalar_problem = MACScalarProblem(
-            (
+        scalar_transports = [
+            MACScalarTransport(
+                self.reference.temperature_name,
+                self.temperature_diffusivity,
+                advection=self.scalar_advection,
+            ),
+            MACScalarTransport(
+                self.reference.salinity_name,
+                self.salinity_diffusivity,
+                advection=self.scalar_advection,
+            ),
+        ]
+        if self.ksgs_field_name is not None:
+            scalar_transports.append(
                 MACScalarTransport(
-                    self.reference.temperature_name,
-                    self.temperature_diffusivity,
-                    advection=self.scalar_advection,
-                ),
-                MACScalarTransport(
-                    self.reference.salinity_name,
-                    self.salinity_diffusivity,
-                    advection=self.scalar_advection,
-                ),
+                    self.ksgs_field_name,
+                    self.viscosity,
+                    advection="upwind",
+                )
             )
-        )
+        scalar_problem = MACScalarProblem(tuple(scalar_transports))
         transport = PreparedMACScalarTransport(
             scalar_problem,
             layout,
@@ -267,6 +337,10 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
             scalar_problem,
             transport,
             self.reference.buoyancy_law(self.axes),
+            algebraic_les=self.algebraic_les,
+            scalar_sgs=self.scalar_sgs,
+            ksgs=self.ksgs,
+            ksgs_field_name=self.ksgs_field_name,
             ocean_forcing=ocean_forcing,
         )
         return PreparedCartesianBoussinesqOcean(
@@ -316,6 +390,12 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
                 "plan": plan.plan_id,
                 "dynamics": dynamics.compilation_id,
                 "boundaries": boundaries.prepared_id,
+                "scalar_sgs": (
+                    "none"
+                    if dynamics.scalar_sgs is None
+                    else dynamics.scalar_sgs.prepared_id
+                ),
+                "ksgs": ("none" if dynamics.ksgs is None else dynamics.ksgs.prepared_id),
             }
         )
 
@@ -323,35 +403,105 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
     def state_shape(self) -> tuple[int, ...]:
         return self.dynamics.state_shape
 
+    @property
+    def prepared_algebraic_les(self) -> "PreparedMACAlgebraicLES | None":
+        return self.dynamics.base_dynamics.algebraic_les
+
+    @property
+    def prepared_scalar_sgs(self) -> "PreparedMACScalarSGS | None":
+        return self.dynamics.scalar_sgs
+
+    @property
+    def prepared_ksgs(self) -> "PreparedMACKSGS | None":
+        return self.dynamics.ksgs
+
     def initial_state(
         self,
         velocity: tuple[ArrayLike, ...],
         temperature: ArrayLike,
         salinity: ArrayLike,
         /,
+        *,
+        sgs_kinetic_energy: ArrayLike | None = None,
     ) -> Array:
+        if self.plan.ksgs is None and sgs_kinetic_energy is not None:
+            raise ValueError("sgs_kinetic_energy is valid only for an ocean KSGS plan.")
+        if self.plan.ksgs is not None and sgs_kinetic_energy is None:
+            raise ValueError(
+                "Ocean KSGS initial state requires explicit nonnegative "
+                "sgs_kinetic_energy."
+            )
+        scalars: dict[str, ArrayLike] = {
+            self.plan.reference.temperature_name: temperature,
+            self.plan.reference.salinity_name: salinity,
+        }
+        if self.plan.ksgs_field_name is not None:
+            if self.plan.ksgs is None:
+                raise ValueError("Ocean KSGS field has no closure plan.")
+            ksgs_state = self.plan.ksgs.initialize_state(sgs_kinetic_energy)
+            scalars[self.plan.ksgs_field_name] = ksgs_state.kinetic_energy
         return self.dynamics.project_state(
             tuple(jnp.asarray(component) for component in velocity),
-            {
-                self.plan.reference.temperature_name: temperature,
-                self.plan.reference.salinity_name: salinity,
-            },
+            scalars,
         )
 
-    def state_view(self, state: ArrayLike, /) -> OceanStateView:
-        velocity, scalars = self.dynamics.unpack_state(state)
+    def ksgs_state(self, state: ArrayLike, /) -> KSGSState | None:
+        if self.dynamics.ksgs is None:
+            return None
+        _, scalars = self.dynamics.unpack_state(state)
+        return self.dynamics.ksgs.plan.initialize_state(
+            scalars[self.dynamics.ksgs.scalar_field_name]
+        )
+
+    def state_view(
+        self,
+        state: ArrayLike | "OceanBoussinesqContinuationState",
+        /,
+    ) -> OceanStateView:
+        from ._step import OceanBoussinesqContinuationState
+
+        continuation = (
+            state if isinstance(state, OceanBoussinesqContinuationState) else None
+        )
+        coordinates = (
+            continuation.coordinates if continuation is not None else jnp.asarray(state)
+        )
+        velocity, scalars = self.dynamics.unpack_state(coordinates)
         temperature = scalars[self.plan.reference.temperature_name]
         salinity = scalars[self.plan.reference.salinity_name]
+        kinetic_energy = (
+            None
+            if self.plan.ksgs_field_name is None
+            else scalars[self.plan.ksgs_field_name]
+        )
+        ksgs_state = (
+            continuation.ksgs_state
+            if continuation is not None and continuation.ksgs_state is not None
+            else self.ksgs_state(coordinates)
+        )
         return OceanStateView(
             velocity=velocity,
             temperature=temperature,
             salinity=salinity,
             density_anomaly=self.plan.reference.density_anomaly(temperature, salinity),
+            sgs_kinetic_energy=kinetic_energy,
+            ksgs_state=ksgs_state,
             state_id=self.prepared_id,
         )
 
-    def stable_step(self, state: ArrayLike, /) -> Array:
-        return self.dynamics.step_restriction(state).selected
+    def stable_step(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        restriction = self.dynamics.step_restriction(time, state, args)
+        return eqx.error_if(
+            restriction.selected,
+            ~restriction.success,
+            "Ocean explicit stable-step certification is unavailable.",
+        )
 
 
 __all__ = [

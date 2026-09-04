@@ -42,6 +42,13 @@ Unsupported problem/method/controller combinations fail before numerical executi
 | `GeneralizedAlphaMethod` | 2 | No | Controlled high-frequency damping |
 | `MultiratePartitionedRK` | 2 or 3 | No | Fixed-ratio synchronized subcycling |
 | `ETDRKMethod(2)` / `ETDRKMethod(4)` | 2 or 4 | No | Prepared unbatched diagonal semilinear drift |
+| `LESStabilityGuardedETDRKMethod(ETDRKMethod(...))` | 2 or 4 | No | Periodic static-LES ETDRK with current-state explicit stability refusal |
+| `PreparedPeriodicDynamicETDRKMethod` | 2 or 4 | No | Compiled dynamic LES with transactional Lagrangian continuation |
+| `PreparedMACDynamicExplicitMethod` | 1 | No | Projected periodic-uniform MAC dynamic LES with combined restriction |
+| `DistributedPeriodicLESMethodPlan` | 2--4 | No | Device-resident distributed ETDRK2/4 or SSPRK33/54 |
+| `UnstructuredLowMachLESFixedStepMethod` | 1 | No | Pressure-corrected tetrahedral LES with exact-step rollback |
+| `MACIMEXEulerMethod` | 1 | Fixed or caller-stepped | Frozen accepted-state algebraic LES or constant molecular diffusion |
+| `MACSBDF2Method` | 2 | No | Backward-Euler startup and projected-extrapolated frozen algebraic LES |
 | `ChannelSBDF2Method` | 2 | No | Backward-Euler startup and restartable channel history |
 | `GaussLegendreIRK(1..3)` | 2, 4, or 6 | No | A-stable, symplectic collocation |
 | Geometric Euler/RKMK/CF | 1--4 | No | Retraction-based manifold integration |
@@ -162,6 +169,27 @@ any step that is not exactly the prepared value. Consequently production `end_ti
 and exact-output targets must lie on the restart state's step lattice, and a retry
 policy may not request reduced steps.
 
+### LES temporal contracts
+
+`LESStabilityGuardedETDRKMethod` accepts only compiled periodic static algebraic
+LES. It evaluates the first equation stage once, reuses that nonlinear rate, and
+rejects unless the requested step is no larger than `safety_factor` times the
+current `etdrk_selected` restriction. A guarded method is refused for no-LES
+dynamics; LES production refuses ordinary prepared ETDRK.
+
+With a positive static MAC algebraic coefficient, `MACIMEXEulerMethod` freezes
+eddy viscosity from the accepted state once per attempt. `MACSBDF2Method` uses its
+backward-Euler startup and then freezes from the projected `2*u[n]-u[n-1]` state at
+the attempted time. Both use iterative variable-viscosity momentum and composite
+pressure solves, retain coefficient state/time and inverse identities, roll back
+atomically, and refuse dynamic or continuation-bearing closures. Compiled dynamic
+LES instead uses `PreparedPeriodicDynamicETDRKMethod` or
+`PreparedMACDynamicExplicitMethod`; both advance Lagrangian history only on
+accepted steps. `DistributedPeriodicLESMethodPlan` supplies sharding-preserving
+ETDRK/SSPRK, and `UnstructuredLowMachLESFixedStepMethod` owns fixed-step pressure
+correction and complete restart continuation. See
+[Large-eddy simulation](../../guides_large_eddy_simulation.md#production-restart-and-statistics).
+
 ## Bounded production execution
 
 `ProductionRunPlan` supplies an absolute end time and absolute accepted-step
@@ -175,15 +203,19 @@ failures fail the run, and checkpoint commit drains earlier publications.
 
 Route assemblers expose the public constructor boundary:
 
-- `PeriodicSpectralProductionPlan(method, statistics, *,
-  problem_id, start_time, end_time, step_size, checkpoint_interval, ...)`
-  requires the prepared ETDRK method to carry Hermitian coordinates.
+- `PeriodicSpectralProductionPlan(dynamics, method, statistics, case, /, *,
+  start_time, end_time, step_size, checkpoint_interval, ...)` requires
+  `PeriodicSpectralProductionCase` to bind compiled dynamics and initial modal
+  content. Static LES uses guarded ETDRK; dynamic LES installs transactional ETDRK.
 - `SpectralChannelProductionPlan(method, velocity_coordinates,
   pressure_coordinates, statistics, *, problem_id, start_time, end_time,
   checkpoint_interval, ...)` derives the exact step from `method`.
 - `StructuredMACProductionPlan(method, dynamics, statistics, *, start_time,
   end_time, step_size, checkpoint_interval, ...)` uses native real checkpoint
   state and may verify an already compiled constant pressure gradient.
+- `DistributedPeriodicLESProductionPlan(problem, source_plan, method, /, *,
+  case_id, initial_condition_id, ...)` uses device-resident distributed
+  ETDRK/SSPRK and requires checkpoint capacity in the source resource plan.
 
 Each route uses `plan.prepare(checkpoint_root, ...)` before
 `prepared.initialize(...)`; the prepared object exposes the same
@@ -202,6 +234,38 @@ run/resume/step/checkpoint lifecycle and an instantaneous statistics snapshot.
 ---
 
 ::: phydrax.solver.PreparedETDRKMethod
+
+---
+
+::: phydrax.solver.LESStabilityGuardedETDRKMethod
+
+---
+
+::: phydrax.solver.PreparedLESStabilityGuardedETDRKMethod
+
+---
+
+::: phydrax.solver.MACIMEXEulerMethod
+
+---
+
+::: phydrax.solver.MACSBDF2Method
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedPeriodicDynamicETDRKMethod
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedMACDynamicExplicitMethod
+
+---
+
+::: phydrax.applications.incompressible_flow.DistributedPeriodicLESMethodPlan
+
+---
+
+::: phydrax.solver.UnstructuredLowMachLESFixedStepMethod
 
 ---
 
@@ -239,6 +303,10 @@ run/resume/step/checkpoint lifecycle and an instantaneous statistics snapshot.
   and steps with those discrete choices stopped from differentiation.
 - Adaptive Rosenbrock-W uses the same realize-then-replay frozen-grid derivative.
 - Method coefficients, partitions, capacities, and requested grids are nontrainable.
+- Static prepared LES coefficients and all route/filter/discretization identities are
+  nontrainable. Algebraic invariant zero branches, dynamic clipping/history masks,
+  frozen upwind/limiter branches, and acceptance are only branchwise differentiable.
+  Failed LES stability, admissibility, or solver gates have no valid derivative claim.
 - Failed adaptive primals have no valid derivative.
 
 ## Stochastic compatibility

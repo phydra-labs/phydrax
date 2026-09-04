@@ -94,6 +94,50 @@ For explicit viscosity, use `MACVariableDensityStageInverseMomentum`.
 discrete variable-viscosity strain energy; `MACOperatorStageInverseMomentum` also
 accepts another certified SPD momentum operator.
 
+## Fixed immersed MAC LES
+
+`FixedImmersedMACLESPlan` is the integrated static LES route for prescribed
+regularized markers. It binds one `MACAlgebraicLESPlan`, the exact
+`MACImmersedBoundaryProjectionPlan`, stationary `LagrangianMarkerKinematics`,
+caller-owned fixed cell fluid fractions, and a canonical geometry identity.
+`compile_fixed_immersed_mac_les_flow` installs its prepared action in the standard
+compiled MAC equation. The exact filter/stress convention remains the one defined
+by the [LES equations API](api/equations/les.md#backend-support-and-refusals).
+
+Preparation accepts only single-device, three-dimensional, unit-density flow with
+stationary active markers, fixed marker identities and transfer routes, successful
+untruncated support, and periodic/free-slip/symmetry outer boundaries. Cell fluid
+fractions must be floating, finite, lie in `[0, 1]`, and contain active fluid.
+Directional filter widths are scaled by the cube root of active fluid fraction;
+eddy viscosity, deviatoric stress, and energy transfer are weighted by that
+fraction, and solid-cell SGS stress is zero. Moving, deforming, distributed, open,
+or changed-topology requests are refused.
+
+Without `wall_stress`, the pressure/marker solve enforces full no-slip. With a
+prepared `VectorEquilibriumWallStressPlan`, it enforces only the marker-normal
+constraint and spreads the attached equilibrium law's tangential wall-on-fluid
+traction. Active marker normals, sample distances, optional roughness, positive
+molecular viscosity, wall-law convergence, and dissipative power must all pass.
+The wall law still has no adverse-pressure-gradient, separation, or moving-wall
+claim.
+
+`plan.imex_euler_method(...)` and `plan.sbdf2_method(...)` construct the matching
+immersed accepted-time methods. Their SGS rate is explicit; pressure, marker
+constraint, and accepted history remain atomic. Stage output separates bulk SGS
+and modeled-wall rates/work. `admission_regime()` binds the existing
+prescribed-marker support tuple, so this route does not create a seventh immersed
+owner or inherit a release.
+
+Qualification case `immersed-mac-wall-stress` covers only the normal-constraint
+IMEX wall-on/off tuple: slip, nonzero wall traction, normal defect, power/rate,
+trajectory effect, wall-run impulse/work ledgers, and execution. Its
+`sbdf2_evidence=not-claimed` field is local to that tuple.
+
+Separate case `immersed-mac-sbdf2-restart` covers the full-vector-constraint SBDF2
+route, serialized continuation history, startup and advanced balance ledgers, and
+restart equivalence. Neither candidate evidence set broadens the other. See the
+[LES guide](guides_large_eddy_simulation.md#wall-stress-inflow-and-immersed-coupling).
+
 ## Rigid and deformable accepted-time coupling
 
 `RigidMarkerMapPlan` rotates body-frame markers with SO(2) or SO(3), constructs marker
@@ -201,6 +245,10 @@ force/torque/work/energy, order, covariance, interface, lubrication/contact, and
 evidence. It does not publish a release. `ImmersedDNSQualificationProfile` is the
 current unsigned candidate envelope; its nested `CapabilityProfile` and the profile
 itself both retain `released=False`.
+
+Fixed immersed MAC LES reuses the prescribed-marker admission regime while adding
+its own filter, model, cell-fraction, wall-law, and compiled-action identities.
+Passing the DNS admission does not qualify those LES-specific coordinates.
 
 ## Candidate regimes and runtime admission
 

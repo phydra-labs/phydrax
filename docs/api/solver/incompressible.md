@@ -26,6 +26,43 @@ forcing are explicit application plans; neither is injected automatically.
 
 ::: phydrax.discretization.IncompressibleSpectralDiagnostics
 
+
+## Large-eddy simulation
+Periodic static algebraic LES compiles into the named incompressible stage and uses
+a current-state ETDRK guard. Periodic dynamic LES compiles with its exact coarser
+test discretization and gains transactional ETDRK production; periodic-uniform MAC
+dynamic LES compiles with a projected explicit method. Distributed slab/pencil
+full-flow production, channel mixed traction, MAC stochastic inflow, KSGS variants,
+learned stress, pressure-stepped unstructured flow, Favre transport, and immersed
+execution retain their route-specific contracts. The normative
+[LES equations](../equations/les.md) define signs, trace, filters, formulas, identity,
+and AD; the [LES guide](../../guides_large_eddy_simulation.md) owns workflows and
+candidate/refusal status.
+
+::: phydrax.equations.PeriodicAlgebraicLESPlan
+
+---
+
+::: phydrax.equations.PeriodicDynamicLESPlan
+
+---
+
+::: phydrax.equations.MACAlgebraicLESPlan
+
+---
+
+::: phydrax.equations.MACDynamicLESPlan
+
+---
+
+::: phydrax.solver.LESStabilityGuardedETDRKMethod
+
+---
+
+::: phydrax.solver.PreparedLESStabilityGuardedETDRKMethod
+
+---
+
 ## Fourier–Chebyshev–Fourier channel flow
 
 `ChannelStokesPlan` defaults to the fixed-band, pressure-eliminated
@@ -88,6 +125,37 @@ method forbids step reduction, including output alignment and robust retry reduc
 ---
 
 ::: phydrax.solver.ChannelSBDF2State
+
+
+### Channel LES
+
+`compile_channel_les` adds retained negative SGS-stress divergence. Its variable
+wall-normal implicit filter is noncommuting with no correction.
+`ChannelLESExplicitRestriction` is the enforced complete channel-SBDF2
+advection-plus-SGS budget. The default remains wall resolved; optional
+`PreparedVectorEquilibriumWallStressChannel` replaces tangential essential data
+with equilibrium traction while retaining normal constraints. It evaluates the
+retained Chebyshev expansion at declared lower/upper off-wall sample distances,
+zeroes normal velocity, and requires stationary walls and zero prescribed pressure
+gradient.
+
+::: phydrax.equations.channel_les_filter
+
+---
+
+::: phydrax.equations.compile_channel_les
+
+---
+
+::: phydrax.equations.CompiledChannelLESDynamics
+
+---
+
+
+
+::: phydrax.applications.incompressible_flow.PreparedVectorEquilibriumWallStressChannel
+
+---
 
 ## Structured finite-volume MAC dynamics and projection
 
@@ -157,7 +225,9 @@ a separate collective matrix-free CG owner; no direct route silently gathers sha
 
 ---
 
-::: phydrax.equations.MACStepRestriction
+::: phydrax.equations.MACLESStepRestriction
+
+---
 
 ::: phydrax.solver.MACPressureRobinSide
 
@@ -192,21 +262,26 @@ Checkpoint IDs include stored content; immutable generations restore only for
 identical case, runtime, tree, and encoding identities. Full-complex Hermitian state
 leaves may use independent-real checkpoint encoding.
 
-`PeriodicModalTurbulenceStatisticsPlan` provides conservative full-complex energy,
-dissipation, nonlinear-transfer, and forcing-injection shells with explicit validity
-for derived scales and tails. `SpectralChannelStatisticsPlan` provides
+`PeriodicModalTurbulenceStatisticsPlan(dynamics, bin_edges, /, *, ...)` binds one compiled
+equation and reports conservative full-complex energy, molecular dissipation,
+advective transfer, SGS transfer, forcing injection, resolved spectral flux,
+derived scales/tails, static-SGS energy/projection evidence, and current step limits.
+`evaluate(time, velocity, args, *, stage=..., additive_forcing_rate=...,
+step_restriction=...)` rejects foreign stages or restrictions.
+`SpectralChannelStatisticsPlan` provides
 homogeneous-plane raw/central moments and separate-wall shear/friction semantics.
 `StreamingMomentPlan` places those or other real-valued observables in sample- or
 time-weighted windows with optional fixed-capacity completed blocks.
 
-`PeriodicSpectralProductionPlan` verifies matching prepared ETDRK coordinates and
-statistics. Compiled constant-power wiring verifies the forcing identity; adapter
-wiring adds forcing and therefore requires an otherwise unforced drift. Mutually
-exclusive OU forcing and realization inputs produce a
-`PreparedOUForcedETDRKMethod` whose accepted state transactionally couples velocity
-and exact OU coefficient continuation. `SpectralChannelProductionPlan` derives the
-exact step from prepared SBDF2 and requires its horizon, outputs, and statistics
-window on that lattice.
+`PeriodicSpectralProductionPlan(dynamics, method, statistics, case, /, *, ...)`
+verifies matching compiled dynamics, a `PeriodicSpectralProductionCase` bound to the
+initial modal velocity, Hermitian ETDRK coordinates, statistics, static LES action,
+and forcing identities. Compiled constant-power wiring is supported; adapter wiring
+is unavailable for guarded LES. Mutually exclusive OU forcing and realization inputs
+produce a `PreparedOUForcedETDRKMethod` whose accepted state transactionally couples
+velocity and exact OU continuation. `SpectralChannelProductionPlan` derives the exact
+step from prepared SBDF2 and requires its horizon, outputs, and statistics window on
+that lattice.
 `StructuredMACProductionPlan` binds a fixed-step method, compiled MAC dynamics, and
 `MACPlaneWallStatisticsPlan`; optional `MACConstantPressureGradientForcing` must
 already be compiled with the same identity. General feedback is instead owned by
@@ -237,6 +312,10 @@ Each production route prepares a checkpoint root before initialization.
 
 
 ::: phydrax.applications.incompressible_flow.PeriodicSpectralProductionPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PeriodicSpectralProductionCase
 
 ---
 ::: phydrax.applications.incompressible_flow.PreparedOUForcedETDRKMethod
@@ -298,6 +377,16 @@ and produces an unsigned candidate with `signed=false` and
 `CapabilityProfile.released=false`. Neither an artifact path nor the assembled
 candidate is a universal DNS or distributed-support claim.
 
+### LES campaign status
+
+`tools/large_eddy_simulation_qualification.py` produces route-exact LES candidate
+evidence through the existing `QualificationEvidence`, `QualificationMatrix`,
+`SupportTuple`, `CapabilityProfile`, `ReferenceArtifactManifest`, and
+`ResolvedRunSpec` contracts. Generated profiles remain candidate/unreleased.
+The base incompressible profile is an external release dependency; an LES campaign
+cannot manufacture or waive it. No support tuple, signature, release decision, or
+artifact status is implied by the producer or a path alone.
+
 ## Scalar and variable-density MAC dynamics
 
 ::: phydrax.discretization.MACScalarProblem
@@ -336,6 +425,13 @@ candidate is a universal DNS or distributed-support claim.
 
 ## Implicit, adaptive, and sensitivity execution
 
+Static algebraic MAC LES with a positive coefficient activates frozen
+variable-viscosity profiles in `MACIMEXEulerMethod` and `MACSBDF2Method`; those
+methods intentionally refuse dynamic continuation. Compiled periodic-uniform dynamic
+MAC instead uses `PreparedMACDynamicExplicitMethod`, with projected candidate state,
+current combined restriction, and transactional Lagrangian history. See
+[MAC and scalar LES](../../guides_large_eddy_simulation.md#mac-and-scalar-les).
+
 ::: phydrax.solver.MACHelmholtzSolvePlan
 
 ---
@@ -356,6 +452,33 @@ candidate is a universal DNS or distributed-support claim.
 
 ---
 
+
+### Integrated dynamic, distributed, learned, and unstructured LES
+
+::: phydrax.applications.incompressible_flow.PreparedPeriodicDynamicETDRKMethod
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedMACDynamicExplicitMethod
+
+---
+
+::: phydrax.applications.incompressible_flow.DistributedPeriodicLESProductionPlan
+
+---
+
+::: phydrax.equations.PeriodicLearnedStressPlan
+
+---
+
+::: phydrax.equations.MACLearnedStressPlan
+
+---
+
+::: phydrax.solver.UnstructuredLowMachLESFixedStepMethod
+
+---
+
 ::: phydrax.solver.MACFixedGridSensitivityPlan
 
 ---
@@ -363,6 +486,27 @@ candidate is a universal DNS or distributed-support claim.
 ::: phydrax.solver.MACSegmentedShadowingPlan
 
 ## Resolved, distributed, and moving-geometry execution
+
+### Fixed immersed MAC LES
+
+`FixedImmersedMACLESPlan` binds a static masked SGS action and optional attached
+equilibrium tangential wall traction to the prescribed-marker pressure constraint.
+It is single-device, unit-density, 3-D, stationary, fixed-route/topology, and limited
+to periodic/free-slip/symmetry outer boundaries. Its admission reuses the existing
+prescribed-marker owner but retains distinct filter/model/geometry/action evidence.
+See [Immersed-boundary coupling](../../guides_immersed_boundary.md#fixed-immersed-mac-les).
+
+::: phydrax.applications.incompressible_flow.FixedImmersedMACLESPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedFixedImmersedMACLES
+
+---
+
+::: phydrax.applications.incompressible_flow.compile_fixed_immersed_mac_les_flow
+
+---
 
 ::: phydrax.discretization.MACMarkerTransferPlan
 

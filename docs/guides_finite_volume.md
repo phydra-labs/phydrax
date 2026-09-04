@@ -257,6 +257,13 @@ face contributions remain separate until conservative divergence.
 
 ## Incompressible projection
 
+The LES stress sign, trace, filter/provenance, algebraic and dynamic formulas,
+KSGS/Favre equations, and exact backend refusals are normative in the
+[LES equations API](api/equations/les.md). Use the
+[LES guide](guides_large_eddy_simulation.md#mac-and-scalar-les) for complete MAC
+construction, scalar SGS, frozen implicit integration, diagnostics, and candidate
+status.
+
 `MACOperatorPlan` prepares geometry-only normal-face velocity and cell-pressure
 operators. `PreparedMACOperators` owns compatible divergence and gradient, the volume
 gauge, coefficient interpolation, weighted-adjoint evidence, and transform eligibility.
@@ -365,11 +372,14 @@ Use `solve_method="direct"`, `"transform"`, or `"hybrid"` only when preparation
 accepts that exact representation, and pass its prepared transform solve as
 `direct_solve` at execution.
 
-`compile_mac_incompressible_flow` projects every temporal rate and exposes physical
-pressure, energy, boundary, divergence, residual, gauge, and step-restriction
-evidence. Explicit SSPRK, implicit-diffusion `MACIMEXEulerMethod`, and fixed-step
-`MACSBDF2Method` consume the same compiled state. `MACHelmholtzSolvePlan` supports
-iterative, certified uniform-transform, and resource-gated transform-line routes.
+`compile_mac_incompressible_flow` projects every temporal rate and exposes pressure,
+energy, boundary, divergence, residual, gauge, and `MACLESStepRestriction` evidence.
+Static algebraic LES is 3-D with periodic/free-slip/symmetry boundaries; positive
+coefficients may use frozen iterative IMEX/SBDF2. Periodic-uniform dynamic LES is a
+mutually exclusive compiler input and uses `PreparedMACDynamicExplicitMethod` with
+projected candidates and transactional Lagrangian history. Learned stress has its
+own periodic-uniform `MACLearnedStressPlan` divergence/projection backend. No route
+silently substitutes no-slip/open/inflow boundary support.
 
 `MACFlowControlTarget` distinguishes prescribed pressure gradient, volume-weighted
 bulk velocity, and frozen-density mass flux. The last freezes one positive density
@@ -431,10 +441,13 @@ than applying Hermitian encoding.
 
 ### Scalar, variable-density, and coupled dynamics
 
-`MACScalarProblem` owns named cell scalars, conservative centered/upwind transport,
-diffusion, source/reaction ledgers, and scalar boundary conditions.
-`compile_mac_scalar_buoyancy` couples selected names through `MACBuoyancyLaw` while
-using the exact transport face interpolation for kinetic/potential exchange.
+`MACScalarProblem` owns named cell scalars and conservative transport.
+`MACScalarSGSPlan` requires one explicit Prandtl, Schmidt, or no-SGS declaration
+for each field. `compile_mac_scalar_buoyancy` accepts algebraic LES or prognostic
+KSGS as alternatives. Static/buoyant KSGS admits periodic/free-slip/symmetry;
+dynamic KSGS requires periodic-uniform binomial filtering and ratio two; low-Re
+KSGS requires at least one true no-slip wall and derives cell-center wall distance
+only from those sides.
 
 Dynamic miscible density is a separate conservative model:
 `MACVariableDensityState` stores positive cell density and face momentum, derives
@@ -458,6 +471,14 @@ and local halo metadata. `MACDistributedProjectionPlan` supplies globally reduce
 compatibility, gauge, matrix-free CG, rank agreement, and atomic rollback. Direct
 distributed transforms remain unavailable unless an explicit redistribution plan is
 added; no hidden global gather is performed.
+
+The distributed periodic LES action belongs to the spectral slab/pencil owner.
+`MACDistributedProjectionPlan` does not distribute the static or dynamic MAC LES
+constitutive evaluation, and no such qualification is inherited.
+
+`StochasticTurbulentInflowPlan.prepare_mac_boundary` is the accepted-step MAC
+inflow owner. It emits a concrete boundary provider and exact material rate from
+one committed covariance-compatible draw while preserving typed PRNG continuation.
 
 `MappedMACGeometryPlan` certifies positive mapped cell/face/dual measures,
 free-stream preservation, D/G adjointness, and pressure action. `MACALEGeometryPlan`
@@ -549,6 +570,11 @@ presented as globally smooth.
 `PreparedFiniteVolumeDynamics.linearize()` returns the residual, a matrix-free JVP, and
 a VJP pullback. Preparation, grid shape, reconstruction order, boundary kind, and AMR
 topology remain static.
+
+LES preparation identities are static. Algebraic zero/ratio branches, dynamic
+backscatter/history masks, upwind decisions, frozen coefficient refresh, and
+accepted-step rollback are branchwise; failed LES or linear/projection evidence has
+no valid derivative claim.
 
 ## Current limitations
 

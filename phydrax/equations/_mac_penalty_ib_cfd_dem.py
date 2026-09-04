@@ -98,6 +98,10 @@ class MACPenaltyIBCFDEMCouplingPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(fluid, CompiledMACIncompressibleDynamics):
             raise TypeError("fluid must be CompiledMACIncompressibleDynamics.")
+        if fluid.algebraic_les is not None:
+            raise ValueError(
+                "MAC penalty immersed coupling does not support active algebraic LES."
+            )
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
             raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
         if not isinstance(penalty, IBPenaltyPlan):
@@ -177,9 +181,7 @@ class MACPenaltyIBEvaluation(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _face_resultant(
-    plan: MACPenaltyIBCFDEMCouplingPlan, value: FaceVelocity, /
-) -> Array:
+def _face_resultant(plan: MACPenaltyIBCFDEMCouplingPlan, value: FaceVelocity, /) -> Array:
     return jnp.stack(
         tuple(
             jnp.sum(measure * component)
@@ -252,9 +254,7 @@ def evaluate_mac_penalty_ib_cfd_dem(
     fixed_reaction_force = jnp.where(fixed, -body_force, 0.0)
     fixed_reaction_torque = jnp.where(fixed, -body_torque, 0.0)
     marker_fluid_work = jnp.real(
-        markers.active_velocity_space.inner(
-            marker_fluid_velocity, fluid_force_density
-        )
+        markers.active_velocity_space.inner(marker_fluid_velocity, fluid_force_density)
     )
     fluid_work = jnp.real(
         plan.transfer.operators.velocity_space.inner(velocity, fluid_source)
@@ -337,9 +337,9 @@ def evaluate_mac_penalty_ib_cfd_dem(
         0,
         int(MACPenaltyIBStatus.TRANSFER_FAILED),
     ).astype(jnp.int32)
-    status = status | jnp.where(
-        finite, 0, int(MACPenaltyIBStatus.NONFINITE)
-    ).astype(jnp.int32)
+    status = status | jnp.where(finite, 0, int(MACPenaltyIBStatus.NONFINITE)).astype(
+        jnp.int32
+    )
     status = status | jnp.where(
         work_identity, 0, int(MACPenaltyIBStatus.WORK_IDENTITY_FAILED)
     ).astype(jnp.int32)
@@ -350,9 +350,7 @@ def evaluate_mac_penalty_ib_cfd_dem(
         slip_qualified, 0, int(MACPenaltyIBStatus.SLIP_TOLERANCE_EXCEEDED)
     ).astype(jnp.int32)
     accepted_slip = (
-        slip_qualified
-        if plan.penalty.require_slip_for_acceptance
-        else jnp.asarray(True)
+        slip_qualified if plan.penalty.require_slip_for_acceptance else jnp.asarray(True)
     )
     successful = numerically_valid & accepted_slip
     return MACPenaltyIBEvaluation(

@@ -24,6 +24,7 @@ from ..discretization import (
     DiscretizationRole,
 )
 from ..discretization.finite_volume._incompressible import FaceVelocity
+from ..discretization.finite_volume._mac_boundary import MACBoundaryStageData
 from ..discretization.finite_volume._mac_momentum import PreparedMACMomentumOperators
 from ..discretization.finite_volume._mac_ocean import (
     MACOceanForcingEvidence,
@@ -33,14 +34,48 @@ from ..discretization.finite_volume._mac_scalar import (
     MACScalarDiagnostics,
     MACScalarFluxResult,
     MACScalarProblem,
+    MACScalarSGSPlan,
     MACScalarStepRestriction,
+    PreparedMACScalarSGS,
     PreparedMACScalarTransport,
 )
+from ..discretization.finite_volume._mac_variational_viscosity import (
+    MACVariationalViscosityResult,
+    PreparedMACVariationalViscosityAction,
+)
 from ._incompressible import IncompressibleFlowProblem
+from ._ksgs import (
+    AbstractKSGSPlan,
+    BuoyancyKSGSInputs,
+    BuoyancyKSGSPlan,
+    DynamicKSGSInputs,
+    DynamicKSGSPlan,
+    KSGSInputs,
+    KSGSResult,
+    KSGSState,
+    KSGSTransportResult,
+    LowReKSGSInputs,
+    LowReKSGSPlan,
+    replace_ksgs_kinetic_energy,
+    StaticKSGSPlan,
+)
+from ._les_closures import LESFilterScale
+from ._mac_dynamic_les import (
+    MACExplicitTestFilterPlan,
+    PreparedMACExplicitTestFilter,
+)
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
     CompiledMACIncompressibleDynamics,
-    MACStepRestriction,
+    MACIncompressibleRateComponents,
+    MACLESStepRestriction,
+)
+from ._mac_les import (
+    _axis_values,
+    _cell_centered_component,
+    _periodic_center_derivative,
+    _wall_center_derivative,
+    MACAlgebraicLESPlan,
 )
 
 
@@ -85,19 +120,26 @@ def _canonical_coefficients(
 
 
 class MACBuoyancyLedger(StrictModule):
-    """Face-exact kinetic/potential Boussinesq power exchange evidence."""
+    """Face-exact kinetic/potential exchange and diffusive mixing evidence."""
 
     force: FaceVelocity
     power_by_field: dict[str, Array]
     potential_energy_rate_by_field: dict[str, Array]
+    molecular_potential_energy_mixing_by_field: dict[str, Array]
+    sgs_potential_energy_mixing_by_field: dict[str, Array]
+    boundary_potential_energy_rate_by_field: dict[str, Array]
     total_power: Array
     potential_energy_rate: Array
+    molecular_potential_energy_mixing: Array
+    sgs_potential_energy_mixing: Array
+    boundary_potential_energy_rate: Array
     exchange_defect: Array
     exchange_scale: Array
     normalized_exchange_defect: Array
     tolerance: Array
     finite: Array
     success: Array
+    potential_energy_mixing_available: bool = eqx.field(static=True)
     law_id: str = eqx.field(static=True)
     transport_id: str = eqx.field(static=True)
     momentum_id: str = eqx.field(static=True)
@@ -110,6 +152,8 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
     """Named Boussinesq acceleration from transported scalar anomalies."""
 
     gravity: Array
+    active_gravity_axes: tuple[int, ...] = eqx.field(static=True)
+    principal_gravity_axis: int | None = eqx.field(static=True)
     field_names: tuple[str, ...] = eqx.field(static=True)
     coefficients: tuple[float, ...] = eqx.field(static=True)
     references: tuple[float, ...] = eqx.field(static=True)
@@ -138,6 +182,11 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         names, coefficient_values, reference_values = _canonical_coefficients(
             coefficients, references
         )
+        gravity_host = np.asarray(gravity_)
+        active_axes = tuple(
+            axis for axis, value in enumerate(gravity_host) if value != 0.0
+        )
+        principal_axis = None if not active_axes else int(np.argmax(np.abs(gravity_host)))
         identifier = (
             canonical_fingerprint(
                 {
@@ -155,6 +204,8 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         if not identifier:
             raise ValueError("law_id must be non-empty.")
         self.gravity = gravity_
+        self.active_gravity_axes = active_axes
+        self.principal_gravity_axis = principal_axis
         self.field_names = names
         self.coefficients = coefficient_values
         self.references = reference_values
@@ -188,12 +239,24 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         fluxes = dict(scalar_fluxes)
         if set(fluxes) != set(transport.layout.field_names):
             raise ValueError("MAC buoyancy requires every named scalar flux result.")
+        discretization = momentum.operators.discretization
         force = tuple(
             jnp.zeros(layout.shape, dtype=transport.layout.dtype)
-            for layout in momentum.operators.discretization.face_layouts
+            for layout in discretization.face_layouts
         )
         power_by_field: dict[str, Array] = {}
         potential_by_field: dict[str, Array] = {}
+        molecular_mixing_by_field: dict[str, Array] = {}
+        sgs_mixing_by_field: dict[str, Array] = {}
+        boundary_potential_by_field: dict[str, Array] = {}
+        mixing_available = all(
+            not discretization.grid.structured_axes[axis].periodic
+            for axis in self.active_gravity_axes
+        )
+        gravity_coordinate = jnp.sum(
+            discretization.cell_centers * self.gravity.astype(transport.layout.dtype),
+            axis=-1,
+        )
         for name, coefficient, reference in zip(
             self.field_names,
             self.coefficients,
@@ -234,8 +297,43 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
                 )
                 for axis, dual_measure in enumerate(momentum.operators.face_dual_measures)
             )
+            potential_factor = (
+                -jnp.asarray(coefficient, dtype=transport.layout.dtype)
+                * gravity_coordinate
+            )
+            zero = jnp.asarray(0.0, dtype=transport.layout.dtype)
+            molecular_mixing = (
+                jnp.sum(
+                    discretization.cell_volumes
+                    * potential_factor
+                    * result.molecular_diffusive_divergence
+                )
+                if mixing_available
+                else zero
+            )
+            sgs_mixing = (
+                jnp.sum(
+                    discretization.cell_volumes
+                    * potential_factor
+                    * result.sgs_diffusive_divergence
+                )
+                if mixing_available
+                else zero
+            )
+            boundary_potential = (
+                jnp.sum(
+                    discretization.cell_volumes
+                    * potential_factor
+                    * result.boundary_diffusive_divergence
+                )
+                if mixing_available
+                else zero
+            )
             power_by_field[name] = power
             potential_by_field[name] = potential_rate
+            molecular_mixing_by_field[name] = molecular_mixing
+            sgs_mixing_by_field[name] = sgs_mixing
+            boundary_potential_by_field[name] = boundary_potential
         force = tuple(
             eqx.error_if(
                 component,
@@ -246,6 +344,9 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
         )
         total_power = sum(power_by_field.values())
         potential_energy_rate = sum(potential_by_field.values())
+        molecular_mixing = sum(molecular_mixing_by_field.values())
+        sgs_mixing = sum(sgs_mixing_by_field.values())
+        boundary_potential = sum(boundary_potential_by_field.values())
         exchange_defect = total_power + potential_energy_rate
         dtype = velocity_[0].dtype
         exchange_scale = jnp.maximum(
@@ -258,6 +359,9 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
             jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in force)))
             & jnp.isfinite(total_power)
             & jnp.isfinite(potential_energy_rate)
+            & jnp.isfinite(molecular_mixing)
+            & jnp.isfinite(sgs_mixing)
+            & jnp.isfinite(boundary_potential)
             & jnp.isfinite(exchange_defect)
             & jnp.isfinite(normalized_exchange_defect)
         )
@@ -265,8 +369,14 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
             force=force,
             power_by_field=power_by_field,
             potential_energy_rate_by_field=potential_by_field,
+            molecular_potential_energy_mixing_by_field=molecular_mixing_by_field,
+            sgs_potential_energy_mixing_by_field=sgs_mixing_by_field,
+            boundary_potential_energy_rate_by_field=boundary_potential_by_field,
             total_power=total_power,
             potential_energy_rate=potential_energy_rate,
+            molecular_potential_energy_mixing=molecular_mixing,
+            sgs_potential_energy_mixing=sgs_mixing,
+            boundary_potential_energy_rate=boundary_potential,
             exchange_defect=exchange_defect,
             exchange_scale=exchange_scale,
             normalized_exchange_defect=normalized_exchange_defect,
@@ -277,6 +387,7 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
                 (normalized_exchange_defect <= tolerance)
                 | jnp.asarray(not self.enforce_exchange)
             ),
+            potential_energy_mixing_available=mixing_available,
             law_id=self.law_id,
             transport_id=transport.prepared_id,
             momentum_id=momentum.prepared_id,
@@ -289,17 +400,410 @@ class MACBuoyancyLaw(StrictModule, NonTrainableState):
                     "transport": transport.prepared_id,
                     "momentum": momentum.prepared_id,
                     "projection": projection_identifier,
+                    "mixing_available": mixing_available,
                 }
             ),
         )
 
 
-class MACScalarBuoyancyStage(StrictModule):
-    """Dynamic coupled stage, separate from all prepared plan data."""
+class MACKSGSStageResult(StrictModule):
+    """One prognostic KSGS constitutive and MAC momentum stage."""
 
+    state: KSGSState
+    transport: KSGSTransportResult
+    result: KSGSResult
+    velocity_gradient: Array
+    viscosity_result: MACVariationalViscosityResult
+    finite: Array
+    success: Array
+    prepared_id: str = eqx.field(static=True)
+    boundary_stage_id: str = eqx.field(static=True)
+
+
+class PreparedMACKSGS(StrictModule, NonTrainableState):
+    """Structured-MAC runtime for prognostic KSGS closure families."""
+
+    plan: AbstractKSGSPlan
+    momentum: PreparedMACMomentumOperators
+    scalar_field_name: str = eqx.field(static=True)
+    filter_scale: LESFilterScale
+    test_filter: PreparedMACExplicitTestFilter | None
+    wall_distance: Array | None
+    viscosity_action: PreparedMACVariationalViscosityAction
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: AbstractKSGSPlan,
+        momentum: PreparedMACMomentumOperators,
+        scalar_field_name: str,
+        /,
+    ):
+        if not isinstance(
+            plan,
+            (StaticKSGSPlan, BuoyancyKSGSPlan, DynamicKSGSPlan, LowReKSGSPlan),
+        ):
+            raise TypeError("Unsupported MAC KSGS plan.")
+        if not isinstance(momentum, PreparedMACMomentumOperators):
+            raise TypeError("momentum must be PreparedMACMomentumOperators.")
+        field_name = str(scalar_field_name)
+        if not field_name:
+            raise ValueError("MAC KSGS requires a non-empty scalar field name.")
+        if momentum.dimension != 3:
+            raise ValueError("MAC KSGS requires a three-dimensional grid.")
+        grid = momentum.operators.discretization.grid
+        dynamic = isinstance(plan, DynamicKSGSPlan)
+        low_re = isinstance(plan, LowReKSGSPlan)
+        allowed_boundaries = (
+            ("no-slip", "free-slip", "symmetry") if low_re else ("free-slip", "symmetry")
+        )
+        unsupported = tuple(
+            side.kind
+            for side in momentum.boundaries.sides
+            if side.kind not in allowed_boundaries
+        )
+        if unsupported:
+            raise ValueError(
+                "MAC KSGS supports only its admitted impermeable momentum "
+                "boundary subset."
+            )
+        provenance = plan.provenance
+        resolved_filter = provenance.resolved_filter
+        boundary_class = (
+            "periodic"
+            if all(axis.periodic for axis in grid.structured_axes)
+            else "wall-bounded"
+        )
+        expected_commutation = "commuting" if dynamic else "unmodeled"
+        if (
+            resolved_filter.family != "implicit-grid-volume"
+            or resolved_filter.axis_names != grid.axis_names
+            or resolved_filter.topology != "tensor-product"
+            or resolved_filter.boundary_class != boundary_class
+            or resolved_filter.scale_rule != "volume-equivalent"
+            or resolved_filter.commutation_status != expected_commutation
+            or resolved_filter.repeated_filter_semantics != "unmodeled"
+        ):
+            raise ValueError(
+                "KSGS filter semantics do not match the admitted structured MAC "
+                "implicit grid-volume filter."
+            )
+        if provenance.discretization_id != momentum.operators.discretization.prepared_id:
+            raise ValueError("KSGS provenance does not match the MAC discretization.")
+        if provenance.regime != "incompressible-unit-density":
+            raise ValueError(
+                "MAC KSGS requires the 'incompressible-unit-density' regime."
+            )
+        widths = tuple(axis.interval_widths for axis in grid.structured_axes)
+        directional = jnp.stack(
+            tuple(
+                jnp.broadcast_to(
+                    _axis_values(width, 3, axis),
+                    momentum.operators.discretization.cell_shape,
+                )
+                for axis, width in enumerate(widths)
+            ),
+            axis=-1,
+        )
+        filter_scale = LESFilterScale(directional)
+        test_filter = (
+            MACExplicitTestFilterPlan(plan.test_filter).prepare(momentum)
+            if dynamic
+            else None
+        )
+        if dynamic and (
+            plan.test_filter_scale_ratio != 2.0
+            or test_filter is None
+            or test_filter.plan.test_filter.filter_id != plan.test_filter.filter_id
+            or test_filter.test_filter_ratio != (2.0, 2.0, 2.0)
+        ):
+            raise ValueError(
+                "Dynamic MAC KSGS requires the exact prepared periodic-uniform "
+                "binomial test-filter identity and scale ratio two."
+            )
+        wall_distance = self._resolved_wall_distance(momentum) if low_re else None
+        action = PreparedMACVariationalViscosityAction(momentum)
+        self.plan = plan
+        self.momentum = momentum
+        self.scalar_field_name = field_name
+        self.filter_scale = filter_scale
+        self.test_filter = test_filter
+        self.wall_distance = wall_distance
+        self.viscosity_action = action
+        self.prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-mac-ksgs",
+                "plan": plan.plan_id,
+                "momentum": momentum.prepared_id,
+                "field": field_name,
+                "filter": resolved_filter.filter_id,
+                "test_filter": (
+                    "none" if test_filter is None else test_filter.prepared_id
+                ),
+                "wall_distance": (
+                    "none"
+                    if wall_distance is None
+                    else "resolved-no-slip-cell-center-distance"
+                ),
+                "viscosity_action": action.action_id,
+            }
+        )
+
+    @staticmethod
+    def _resolved_wall_distance(
+        momentum: PreparedMACMomentumOperators,
+        /,
+    ) -> Array:
+        discretization = momentum.operators.discretization
+        centers = discretization.cell_centers
+        distance = jnp.full(
+            discretization.cell_shape,
+            jnp.inf,
+            dtype=momentum.operators.pressure_space.dtype,
+        )
+        no_slip_walls = 0
+        for side in momentum.boundaries.sides:
+            if side.kind != "no-slip":
+                continue
+            axis_index = discretization.grid.axis_names.index(side.axis)
+            bound_index = 0 if side.side == "lower" else 1
+            bound = discretization.grid.structured_axes[axis_index].bounds[bound_index]
+            distance = jnp.minimum(
+                distance,
+                jnp.abs(centers[..., axis_index] - bound),
+            )
+            no_slip_walls += 1
+        if no_slip_walls == 0:
+            raise ValueError(
+                "Low-Re MAC KSGS requires at least one resolved no-slip wall "
+                "for wall distance; free-slip and symmetry sides are not walls "
+                "for low-Re damping."
+            )
+        return distance
+
+    def velocity_gradient(self, velocity: FaceVelocity, /) -> Array:
+        values = self.momentum.operators.validate_velocity(velocity)
+        grid = self.momentum.operators.discretization.grid
+        centered = tuple(
+            _cell_centered_component(value, axis, grid.structured_axes[axis].periodic)
+            for axis, value in enumerate(values)
+        )
+        rows = []
+        for component_axis, (face_value, cell_value) in enumerate(
+            zip(values, centered, strict=True)
+        ):
+            derivatives = []
+            for derivative_axis, axis in enumerate(grid.structured_axes):
+                if derivative_axis == component_axis:
+                    moved = jnp.moveaxis(face_value, derivative_axis, 0)
+                    difference = (
+                        jnp.roll(moved, -1, axis=0) - moved
+                        if axis.periodic
+                        else moved[1:] - moved[:-1]
+                    )
+                    derivative = jnp.moveaxis(
+                        difference / _axis_values(axis.interval_widths, moved.ndim, 0),
+                        0,
+                        derivative_axis,
+                    )
+                elif axis.periodic:
+                    derivative = _periodic_center_derivative(
+                        cell_value,
+                        axis.interval_centers,
+                        axis.bounds[1] - axis.bounds[0],
+                        derivative_axis,
+                    )
+                else:
+                    derivative = _wall_center_derivative(
+                        cell_value,
+                        axis.interval_centers,
+                        axis.bounds[0],
+                        axis.bounds[1],
+                        derivative_axis,
+                    )
+                derivatives.append(derivative)
+            rows.append(jnp.stack(tuple(derivatives), axis=-1))
+        return jnp.stack(tuple(rows), axis=-2)
+
+    def _conservative_cell_gradient(self, field: Array, /) -> Array:
+        grid = self.momentum.operators.discretization.grid
+        derivatives = []
+        for axis_index, axis in enumerate(grid.structured_axes):
+            moved = jnp.moveaxis(field, axis_index, 0)
+            if axis.periodic:
+                lower = 0.5 * (moved + jnp.roll(moved, 1, axis=0))
+                upper = jnp.roll(lower, -1, axis=0)
+            else:
+                internal = 0.5 * (moved[:-1] + moved[1:])
+                lower = jnp.concatenate((moved[:1], internal), axis=0)
+                upper = jnp.concatenate((internal, moved[-1:]), axis=0)
+            derivative = (upper - lower) / _axis_values(
+                axis.interval_widths, moved.ndim, 0
+            )
+            derivatives.append(jnp.moveaxis(derivative, 0, axis_index))
+        return jnp.stack(tuple(derivatives), axis=-1)
+
+    @staticmethod
+    def _coefficient_free_ksgs_tensor(
+        gradient: Array,
+        filter_scale: LESFilterScale,
+        kinetic_energy: Array,
+        /,
+    ) -> Array:
+        strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
+        trace = jnp.trace(strain, axis1=-2, axis2=-1)
+        deviatoric = (
+            strain - trace[..., None, None] * jnp.eye(3, dtype=gradient.dtype) / 3.0
+        )
+        return (
+            -2.0
+            * filter_scale.equivalent_width[..., None, None]
+            * jnp.sqrt(kinetic_energy)[..., None, None]
+            * deviatoric
+        )
+
+    def prepare_transport(
+        self,
+        kinetic_energy: Array,
+        molecular_kinematic_viscosity: Array,
+        /,
+        *,
+        continuation_state: KSGSState | None = None,
+    ) -> tuple[KSGSState, KSGSTransportResult]:
+        state = (
+            self.plan.initialize_state(kinetic_energy)
+            if continuation_state is None
+            else replace_ksgs_kinetic_energy(continuation_state, kinetic_energy)
+        )
+        transport = self.plan.transport(
+            state,
+            self.filter_scale,
+            molecular_kinematic_viscosity,
+            wall_distance=self.wall_distance,
+        )
+        return state, transport
+
+    def evaluate(
+        self,
+        velocity: FaceVelocity,
+        boundary_stage: MACBoundaryStageData,
+        state: KSGSState,
+        transport: KSGSTransportResult,
+        diffusion_rate: Array,
+        molecular_kinematic_viscosity: Array,
+        buoyancy_frequency_squared: Array,
+        /,
+        *,
+        averaging_weight: ArrayLike = 1.0,
+        accept_update: ArrayLike = False,
+    ) -> MACKSGSStageResult:
+        gradient = self.velocity_gradient(velocity)
+        base_inputs = KSGSInputs(
+            gradient,
+            self.filter_scale,
+            molecular_kinematic_viscosity,
+            diffusion_rate,
+        )
+        if isinstance(self.plan, BuoyancyKSGSPlan):
+            inputs: object = BuoyancyKSGSInputs(base_inputs, buoyancy_frequency_squared)
+        elif isinstance(self.plan, DynamicKSGSPlan):
+            if self.test_filter is None:
+                raise ValueError("Dynamic MAC KSGS has no prepared test filter.")
+            cell_velocity = jnp.stack(
+                tuple(
+                    _cell_centered_component(component, axis, True)
+                    for axis, component in enumerate(velocity)
+                ),
+                axis=-1,
+            )
+            test_velocity = self.test_filter.apply(cell_velocity)
+            leonard = (
+                self.test_filter.apply(
+                    cell_velocity[..., :, None] * cell_velocity[..., None, :]
+                )
+                - test_velocity[..., :, None] * test_velocity[..., None, :]
+            )
+            test_gradient = self.test_filter.apply(gradient)
+            resolved_tensor = self._coefficient_free_ksgs_tensor(
+                gradient,
+                self.filter_scale,
+                state.kinetic_energy,
+            )
+            test_tensor = self._coefficient_free_ksgs_tensor(
+                test_gradient,
+                self.test_filter.test_filter_scale(),
+                self.test_filter.apply(state.kinetic_energy),
+            )
+            modeled = test_tensor - self.test_filter.apply(resolved_tensor)
+            shape = state.kinetic_energy.shape
+            requested_update = jnp.broadcast_to(
+                jnp.asarray(accept_update, dtype=bool), shape
+            )
+            sample_numerator = jnp.sum(leonard * modeled, axis=(-2, -1))
+            sample_denominator = jnp.sum(modeled * modeled, axis=(-2, -1))
+            accepted_update = (
+                requested_update & (sample_numerator >= 0.0) & (sample_denominator > 0.0)
+            )
+            inputs = DynamicKSGSInputs(
+                base_inputs,
+                leonard,
+                modeled,
+                jnp.broadcast_to(jnp.asarray(averaging_weight), shape),
+                accepted_update,
+            )
+        elif isinstance(self.plan, LowReKSGSPlan):
+            if self.wall_distance is None:
+                raise ValueError("Low-Re MAC KSGS has no resolved wall distance.")
+            inputs = LowReKSGSInputs(
+                base_inputs,
+                self.wall_distance,
+                self._conservative_cell_gradient(jnp.sqrt(state.kinetic_energy)),
+            )
+        else:
+            inputs = base_inputs
+        result = self.plan.evaluate(state, inputs)
+        viscosity_result = self.viscosity_action.evaluate(
+            velocity,
+            result.eddy_viscosity,
+            boundary_stage,
+        )
+        finite = (
+            jnp.all(result.evidence.finite)
+            & jnp.all(transport.finite)
+            & jnp.all(jnp.isfinite(gradient))
+            & viscosity_result.finite
+        )
+        success = (
+            finite
+            & jnp.all(result.evidence.kinetic_energy_nonnegative)
+            & jnp.all(result.evidence.eddy_viscosity_nonnegative)
+            & jnp.all(result.evidence.production_nonnegative)
+            & jnp.all(result.evidence.dissipation_nonnegative)
+            & viscosity_result.successful
+        )
+        return MACKSGSStageResult(
+            state=state,
+            transport=transport,
+            result=result,
+            velocity_gradient=gradient,
+            viscosity_result=viscosity_result,
+            finite=finite,
+            success=success,
+            prepared_id=self.prepared_id,
+            boundary_stage_id=boundary_stage.stage_id,
+        )
+
+
+class MACScalarBuoyancyStage(StrictModule):
+    """One provenance-complete coupled momentum, scalar, and buoyancy stage."""
+
+    boundary_stage: MACBoundaryStageData
     velocity: FaceVelocity
     scalars: dict[str, Array]
+    momentum_components: MACIncompressibleRateComponents
+    scalar_sgs_diffusivities: dict[str, Array]
     scalar_fluxes: dict[str, MACScalarFluxResult]
+    ksgs: MACKSGSStageResult | None
     buoyancy: MACBuoyancyLedger
     ocean_forcing: MACOceanForcingEvidence | None
     unconstrained_velocity_rate: FaceVelocity
@@ -330,6 +834,10 @@ class MACScalarBuoyancyDiagnostics(StrictModule):
     buoyancy_power: Array
     ocean_forcing_power: Array
     viscous_energy_rate: Array
+    sgs_energy_rate: Array
+    sgs_dissipation: Array
+    sgs_boundary_power: Array
+    sgs_energy_transfer: Array
     dissipation: Array
     wall_power: Array
     semidiscrete_energy_rate: Array
@@ -350,8 +858,9 @@ class MACScalarBuoyancyDiagnostics(StrictModule):
 class MACScalarBuoyancyStepRestriction(StrictModule):
     """Combined explicit momentum and named scalar stage restriction."""
 
-    momentum: MACStepRestriction
+    momentum: MACLESStepRestriction
     scalars: MACScalarStepRestriction
+    ksgs: Array
     ocean_forcing: Array
     stratification: Array
     selected: Array
@@ -371,6 +880,8 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
     momentum: PreparedMACMomentumOperators
     projection: MACPressureProjectionPlan
     transport: PreparedMACScalarTransport
+    scalar_sgs: PreparedMACScalarSGS | None
+    ksgs: PreparedMACKSGS | None
     buoyancy: MACBuoyancyLaw
     ocean_forcing: PreparedMACOceanForcing | None
     base_dynamics: CompiledMACIncompressibleDynamics
@@ -389,6 +900,8 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         transport: PreparedMACScalarTransport,
         buoyancy: MACBuoyancyLaw,
         base_dynamics: CompiledMACIncompressibleDynamics,
+        scalar_sgs: PreparedMACScalarSGS | None,
+        ksgs: PreparedMACKSGS | None,
         ocean_forcing: PreparedMACOceanForcing | None = None,
         /,
         *,
@@ -423,11 +936,33 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             raise ValueError(
                 "Ocean forcing must be prepared on the coupled MAC operators."
             )
+        if scalar_sgs is not None and (
+            not isinstance(scalar_sgs, PreparedMACScalarSGS)
+            or scalar_sgs.transport.prepared_id != transport.prepared_id
+        ):
+            raise ValueError("Prepared scalar SGS must match the coupled transport.")
+        if ksgs is not None and (
+            not isinstance(ksgs, PreparedMACKSGS)
+            or ksgs.momentum.prepared_id != momentum.prepared_id
+            or ksgs.scalar_field_name not in transport.layout.field_names
+        ):
+            raise ValueError("Prepared MAC KSGS must match momentum and scalar layout.")
+        momentum_les_active = base_dynamics.algebraic_les is not None
+        ksgs_active = ksgs is not None
+        if momentum_les_active and ksgs_active:
+            raise ValueError("Algebraic MAC LES and prognostic KSGS are alternatives.")
+        if (momentum_les_active or ksgs_active) != (scalar_sgs is not None):
+            raise ValueError(
+                "Active MAC LES requires a complete prepared scalar SGS contract, "
+                "and scalar SGS cannot be active without momentum LES or KSGS."
+            )
         self.flow_problem = flow_problem
         self.scalar_problem = scalar_problem
         self.momentum = momentum
         self.projection = projection
         self.transport = transport
+        self.scalar_sgs = scalar_sgs
+        self.ksgs = ksgs
         self.buoyancy = buoyancy
         self.ocean_forcing = ocean_forcing
         self.base_dynamics = base_dynamics
@@ -437,14 +972,25 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         self.source_hash = canonical_fingerprint(
             {
                 "flow": flow_problem.problem_id,
+                "base_dynamics": base_dynamics.compilation_id,
                 "scalars": scalar_problem.problem_id,
+                "scalar_sgs": ("none" if scalar_sgs is None else scalar_sgs.prepared_id),
+                "ksgs": "none" if ksgs is None else ksgs.prepared_id,
                 "buoyancy": buoyancy.law_id,
                 "ocean_forcing": (
                     "none" if ocean_forcing is None else ocean_forcing.plan_id
                 ),
             }
         )
-        self.resolved_method = "mac-symmetry-preserving-projected-scalar-buoyancy"
+        self.resolved_method = (
+            "mac-symmetry-preserving-projected-scalar-buoyancy"
+            if scalar_sgs is None
+            else (
+                "mac-symmetry-preserving-ksgs-projected-scalar-buoyancy"
+                if ksgs is not None
+                else "mac-symmetry-preserving-les-projected-scalar-buoyancy"
+            )
+        )
 
     @property
     def state_shape(self) -> tuple[int, ...]:
@@ -506,22 +1052,175 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         del time, args
         return self.unpack_state(state)
 
+    def _buoyancy_frequency_squared(
+        self,
+        scalars: Mapping[str, Array],
+        /,
+    ) -> Array:
+        density_anomaly = jnp.zeros(
+            self.momentum.operators.discretization.cell_shape,
+            dtype=self.momentum.operators.pressure_space.dtype,
+        )
+        for name, coefficient, reference in zip(
+            self.buoyancy.field_names,
+            self.buoyancy.coefficients,
+            self.buoyancy.references,
+            strict=True,
+        ):
+            density_anomaly = density_anomaly + coefficient * (scalars[name] - reference)
+        grid = self.momentum.operators.discretization.grid
+        frequency_squared = jnp.zeros_like(density_anomaly)
+        for axis_index in self.buoyancy.active_gravity_axes:
+            axis = grid.structured_axes[axis_index]
+            gravity_component = self.buoyancy.gravity[axis_index].astype(
+                density_anomaly.dtype
+            )
+            derivative = (
+                _periodic_center_derivative(
+                    density_anomaly,
+                    axis.interval_centers,
+                    axis.bounds[1] - axis.bounds[0],
+                    axis_index,
+                )
+                if axis.periodic
+                else _wall_center_derivative(
+                    density_anomaly,
+                    axis.interval_centers,
+                    axis.bounds[0],
+                    axis.bounds[1],
+                    axis_index,
+                )
+            )
+            frequency_squared = frequency_squared + gravity_component * derivative
+        return frequency_squared
+
     def stage(
         self,
         time: ArrayLike,
         state: ArrayLike,
         args: Any = None,
         /,
+        *,
+        ksgs_state: KSGSState | None = None,
+        accept_ksgs_update: ArrayLike = False,
     ) -> MACScalarBuoyancyStage:
         value = self.validate_state(state)
+        time_ = jnp.asarray(time)
         velocity_coordinates = value[: self.velocity_size]
         raw_velocity, scalars = self.unpack_state(value)
-        boundary_stage = self.base_dynamics.boundary_stage(time, args)
+        boundary_stage = self.base_dynamics.boundary_stage(time_, args)
         velocity = self.momentum.boundaries.enforce(
             raw_velocity,
             boundary_stage,
         )
-        scalar_fluxes = self.transport.evaluate(time, scalars, velocity, args)
+        base_components = self.base_dynamics._rate_components(
+            time_,
+            velocity_coordinates,
+            args,
+            boundary_stage,
+        )
+        ksgs_stage: MACKSGSStageResult | None = None
+        if self.scalar_sgs is None:
+            scalar_sgs_diffusivities = self.transport._runtime_sgs_diffusivities(None)
+            scalar_fluxes = self.transport.evaluate(time_, scalars, velocity, args)
+        elif self.ksgs is None:
+            les_stage = base_components.les_stage
+            if les_stage is None:
+                raise ValueError("Prepared scalar SGS requires a momentum LES stage.")
+            scalar_sgs_diffusivities = self.scalar_sgs.diffusivities(
+                les_stage.model_result.kinematic_viscosity
+            )
+            scalar_fluxes = self.transport.evaluate(
+                time_,
+                scalars,
+                velocity,
+                args,
+                sgs_diffusivities=scalar_sgs_diffusivities,
+            )
+        else:
+            molecular_viscosity = jnp.full(
+                self.transport.layout.cell_shape,
+                self.flow_problem.viscosity,
+                dtype=self.transport.layout.dtype,
+            )
+            kinetic_name = self.ksgs.scalar_field_name
+            ksgs_state, ksgs_transport = self.ksgs.prepare_transport(
+                scalars[kinetic_name],
+                molecular_viscosity,
+                continuation_state=ksgs_state,
+            )
+            scalar_sgs_diffusivities = self.scalar_sgs.diffusivities(
+                ksgs_transport.eddy_viscosity
+            )
+            scalar_sgs_diffusivities[kinetic_name] = (
+                self.ksgs.plan.coefficients.diffusion * ksgs_transport.eddy_viscosity
+            )
+            scalar_fluxes = self.transport.evaluate(
+                time_,
+                scalars,
+                velocity,
+                args,
+                sgs_diffusivities=scalar_sgs_diffusivities,
+            )
+            kinetic_flux = scalar_fluxes[kinetic_name]
+            ksgs_stage = self.ksgs.evaluate(
+                velocity,
+                boundary_stage,
+                ksgs_state,
+                ksgs_transport,
+                kinetic_flux.diffusive_divergence,
+                molecular_viscosity,
+                self._buoyancy_frequency_squared(scalars),
+                accept_update=accept_ksgs_update,
+            )
+            local_source = (
+                ksgs_stage.result.contributions.rhs
+                - ksgs_stage.result.contributions.diffusion
+            )
+            kinetic_source = kinetic_flux.source + local_source
+            kinetic_rate = kinetic_flux.rate + local_source
+            kinetic_finite = (
+                kinetic_flux.finite
+                & ksgs_stage.finite
+                & jnp.all(jnp.isfinite(kinetic_source))
+                & jnp.all(jnp.isfinite(kinetic_rate))
+            )
+            scalar_fluxes[kinetic_name] = eqx.tree_at(
+                lambda result: (
+                    result.source,
+                    result.rate,
+                    result.finite,
+                    result.success,
+                ),
+                kinetic_flux,
+                (
+                    kinetic_source,
+                    kinetic_rate,
+                    kinetic_finite,
+                    kinetic_finite & ksgs_stage.success,
+                ),
+            )
+            ksgs_rate = ksgs_stage.viscosity_result.physical_diffusive_rate
+            ksgs_unconstrained = self.momentum.boundaries.enforce_rate(
+                tuple(
+                    base + sgs
+                    for base, sgs in zip(
+                        base_components.unconstrained,
+                        ksgs_rate,
+                        strict=True,
+                    )
+                ),
+                boundary_stage,
+            )
+            base_components = MACIncompressibleRateComponents(
+                convection=base_components.convection,
+                molecular=base_components.molecular,
+                sgs=ksgs_rate,
+                forcing=base_components.forcing,
+                unconstrained=ksgs_unconstrained,
+                les_stage=None,
+                dynamic_les_stage=base_components.dynamic_les_stage,
+            )
         buoyancy = self.buoyancy.evaluate(
             velocity,
             scalar_fluxes,
@@ -532,19 +1231,14 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         ocean_forcing = (
             None
             if self.ocean_forcing is None
-            else self.ocean_forcing.evaluate(time, velocity, args)
+            else self.ocean_forcing.evaluate(time_, velocity, args)
         )
         ocean_force = (
             tuple(jnp.zeros_like(component) for component in velocity)
             if ocean_forcing is None
             else ocean_forcing.force
         )
-        unconstrained_base, _, _, _ = self.base_dynamics._rate_components(
-            jnp.asarray(time),
-            velocity_coordinates,
-            args,
-            boundary_stage,
-        )
+        unconstrained_base = base_components.unconstrained
         unconstrained = self.momentum.boundaries.homogeneous_rate(
             tuple(
                 base + buoyancy_force + ocean_force_component
@@ -573,8 +1267,23 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         scalar_rates = {
             name: scalar_fluxes[name].rate for name in self.transport.layout.field_names
         }
+        les_finite = (
+            jnp.asarray(True)
+            if base_components.les_stage is None
+            else base_components.les_stage.finite
+        )
+        les_success = (
+            jnp.asarray(True)
+            if base_components.les_stage is None
+            else base_components.les_stage.successful
+        )
+        ksgs_finite = jnp.asarray(True) if ksgs_stage is None else ksgs_stage.finite
+        ksgs_success = jnp.asarray(True) if ksgs_stage is None else ksgs_stage.success
         finite = (
-            buoyancy.finite
+            boundary_stage.finite
+            & les_finite
+            & ksgs_finite
+            & buoyancy.finite
             & (jnp.asarray(True) if ocean_forcing is None else ocean_forcing.finite)
             & jnp.all(
                 jnp.stack(
@@ -591,14 +1300,21 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         )
         success = (
             finite
+            & boundary_stage.successful
+            & les_success
+            & ksgs_success
             & projected.converged
             & buoyancy.success
             & (jnp.asarray(True) if ocean_forcing is None else ocean_forcing.success)
         )
         return MACScalarBuoyancyStage(
+            boundary_stage=boundary_stage,
             velocity=velocity,
             scalars=scalars,
+            momentum_components=base_components,
+            scalar_sgs_diffusivities=scalar_sgs_diffusivities,
             scalar_fluxes=scalar_fluxes,
+            ksgs=ksgs_stage,
             buoyancy=buoyancy,
             ocean_forcing=ocean_forcing,
             unconstrained_velocity_rate=unconstrained,
@@ -638,12 +1354,16 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         )
 
     def _stratification_step(self, scalars: Mapping[str, Array], /) -> Array:
-        gravity = np.asarray(self.buoyancy.gravity, dtype=float)
-        vertical_axis = int(np.argmax(np.abs(gravity)))
+        vertical_axis = self.buoyancy.principal_gravity_axis
+        if vertical_axis is None:
+            return jnp.asarray(
+                math.inf,
+                dtype=self.momentum.operators.pressure_space.dtype,
+            )
         centers = self.momentum.operators.discretization.grid.structured_axes[
             vertical_axis
         ].interval_centers
-        if centers.size < 2 or float(np.max(np.abs(gravity))) == 0.0:
+        if centers.size < 2:
             return jnp.asarray(
                 math.inf,
                 dtype=self.momentum.operators.pressure_space.dtype,
@@ -663,9 +1383,13 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         widths = centers[1:] - centers[:-1]
         shape = (widths.size,) + (1,) * (moved.ndim - 1)
         gradient = (moved[1:] - moved[:-1]) / widths.reshape(shape)
-        frequency = jnp.sqrt(
-            jnp.max(jnp.abs(self.buoyancy.gravity[vertical_axis] * gradient))
+        frequency_squared = jnp.max(
+            jnp.maximum(
+                self.buoyancy.gravity[vertical_axis] * gradient,
+                0.0,
+            )
         )
+        frequency = jnp.sqrt(frequency_squared)
         safe_frequency = jnp.where(frequency > 0.0, frequency, 1.0)
         return jnp.where(
             frequency > 0.0,
@@ -673,11 +1397,117 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             jnp.inf,
         )
 
-    def step_restriction(self, state: ArrayLike, /) -> MACScalarBuoyancyStepRestriction:
+    def _momentum_step_restriction_from_stage(
+        self,
+        stage: MACScalarBuoyancyStage,
+        /,
+    ) -> MACLESStepRestriction:
+        grid = self.momentum.operators.discretization.grid
+        reduction_dtype = jnp.dtype(self.momentum.precision.reduction_dtype)
+        inverse_advective = jnp.zeros(
+            self.momentum.operators.discretization.cell_shape,
+            dtype=reduction_dtype,
+        )
+        inverse_diffusive = jnp.zeros_like(inverse_advective)
+        for axis_index, axis in enumerate(grid.structured_axes):
+            component = stage.velocity[axis_index]
+            moved = jnp.moveaxis(component, axis_index, 0)
+            cell_velocity = (
+                0.5 * (moved + jnp.roll(moved, -1, axis=0))
+                if axis.periodic
+                else 0.5 * (moved[:-1] + moved[1:])
+            )
+            cell_velocity = jnp.moveaxis(cell_velocity, 0, axis_index)
+            shape = [1] * inverse_advective.ndim
+            shape[axis_index] = int(axis.interval_widths.size)
+            widths = axis.interval_widths.reshape(tuple(shape))
+            inverse_advective = inverse_advective + jnp.abs(cell_velocity) / widths
+            inverse_diffusive = inverse_diffusive + 2.0 / widths**2
+        advective_rate = jnp.max(inverse_advective)
+        viscosity = self.flow_problem.viscosity.astype(reduction_dtype)
+        molecular_rate = viscosity * jnp.max(inverse_diffusive)
+        safe_advective = jnp.where(advective_rate > 0.0, advective_rate, 1.0)
+        safe_molecular = jnp.where(molecular_rate > 0.0, molecular_rate, 1.0)
+        advective = jnp.where(
+            advective_rate > 0.0,
+            1.0 / safe_advective,
+            jnp.inf,
+        )
+        molecular = jnp.where(
+            molecular_rate > 0.0,
+            1.0 / safe_molecular,
+            jnp.inf,
+        )
+        if stage.momentum_components.les_stage is not None:
+            prepared = self.base_dynamics.algebraic_les
+            if prepared is None:
+                raise ValueError("Coupled LES stage has no prepared momentum closure.")
+            sgs = prepared.viscosity_action.explicit_step_bound(
+                stage.momentum_components.les_stage.model_result.kinematic_viscosity
+            )
+            sgs_supported = prepared.viscosity_action.restriction_supported
+        elif stage.ksgs is not None:
+            if self.ksgs is None:
+                raise ValueError("Coupled KSGS stage has no prepared closure.")
+            sgs = self.ksgs.viscosity_action.explicit_step_bound(
+                stage.ksgs.result.eddy_viscosity
+            )
+            sgs_supported = self.ksgs.viscosity_action.restriction_supported
+        else:
+            sgs = jnp.asarray(jnp.inf, dtype=reduction_dtype)
+            sgs_supported = True
+        combined = jnp.minimum(jnp.minimum(advective, molecular), sgs)
+        return MACLESStepRestriction(
+            advective=self.momentum.precision.reduction(advective),
+            molecular=self.momentum.precision.reduction(molecular),
+            sgs=self.momentum.precision.reduction(sgs),
+            combined=self.momentum.precision.reduction(combined),
+            sgs_supported=sgs_supported,
+        )
+
+    def step_restriction(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> MACScalarBuoyancyStepRestriction:
         value = self.validate_state(state)
-        velocity, scalar_fields = self.unpack_state(value)
-        momentum = self.base_dynamics.step_restriction(value[: self.velocity_size])
-        scalars = self.transport.step_restriction(velocity)
+        if self.scalar_sgs is None:
+            velocity, scalar_fields = self.unpack_state(value)
+            momentum = self.base_dynamics.step_restriction(
+                time,
+                value[: self.velocity_size],
+                args,
+            )
+            scalars = self.transport.step_restriction(velocity)
+            ksgs = jnp.asarray(jnp.inf, dtype=value.dtype)
+            closure_success = jnp.asarray(True)
+        else:
+            stage = self.stage(time, value, args)
+            scalar_fields = stage.scalars
+            momentum = self._momentum_step_restriction_from_stage(stage)
+            scalars = self.transport.step_restriction(
+                stage.velocity,
+                sgs_diffusivities=stage.scalar_sgs_diffusivities,
+            )
+            if stage.ksgs is None:
+                ksgs = jnp.asarray(jnp.inf, dtype=value.dtype)
+            else:
+                contributions = stage.ksgs.result.contributions
+                sink = (
+                    contributions.dissipation
+                    + contributions.low_re_dissipation
+                    + jnp.maximum(-contributions.buoyancy, 0.0)
+                )
+                safe_sink = jnp.where(sink > 0.0, sink, 1.0)
+                positivity_step = jnp.where(
+                    sink > 0.0,
+                    stage.ksgs.state.kinetic_energy / safe_sink,
+                    jnp.inf,
+                )
+                ksgs = jnp.min(positivity_step)
+            closure_success = stage.success & jnp.asarray(momentum.sgs_supported)
         ocean_forcing = (
             jnp.asarray(jnp.inf, dtype=value.dtype)
             if self.ocean_forcing is None
@@ -685,50 +1515,48 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         )
         stratification = self._stratification_step(scalar_fields)
         selected = jnp.minimum(
-            jnp.minimum(momentum.selected, scalars.selected),
-            jnp.minimum(ocean_forcing, stratification),
+            jnp.minimum(momentum.combined, scalars.selected),
+            jnp.minimum(ksgs, jnp.minimum(ocean_forcing, stratification)),
         )
         finite = ~jnp.isnan(selected)
         return MACScalarBuoyancyStepRestriction(
             momentum=momentum,
             scalars=scalars,
+            ksgs=ksgs,
             ocean_forcing=ocean_forcing,
             stratification=stratification,
             selected=selected,
             finite=finite,
-            success=finite & scalars.success,
+            success=finite & closure_success & scalars.success,
             compilation_id=self.compilation_id,
             momentum_id=self.momentum.prepared_id,
             transport_id=self.transport.prepared_id,
             projection_id=self.projection.plan_id,
         )
 
-    def diagnostics(
+    def diagnostics_from_stage(
         self,
-        time: ArrayLike,
-        state: ArrayLike,
-        args: Any = None,
+        stage: MACScalarBuoyancyStage,
         /,
     ) -> MACScalarBuoyancyDiagnostics:
-        value = self.validate_state(state)
-        velocity_coordinates = value[: self.velocity_size]
-        stage = self.stage(time, value, args)
-        _, convection, diffusion, forcing = self.base_dynamics.rate_components(
-            time, velocity_coordinates, args
-        )
+        if (
+            not isinstance(stage, MACScalarBuoyancyStage)
+            or stage.compilation_id != self.compilation_id
+            or stage.momentum_id != self.momentum.prepared_id
+            or stage.transport_id != self.transport.prepared_id
+            or stage.projection_id != self.projection.plan_id
+        ):
+            raise ValueError("Coupled MAC diagnostics stage provenance does not match.")
+        components = stage.momentum_components
         scalar_diagnostics = self.transport.diagnostics_from_fluxes(
             stage.scalars,
             stage.scalar_fluxes,
         )
         space = self.momentum.operators.velocity_space
-        viscosity = self.flow_problem.viscosity.astype(
-            self.momentum.operators.pressure_space.dtype
-        )
-        nonlinear_rate = tuple(-component for component in convection)
-        viscous_rate = tuple(viscosity * component for component in diffusion)
+        nonlinear_rate = tuple(-component for component in components.convection)
         kinetic_energy = 0.5 * jnp.real(space.inner(stage.velocity, stage.velocity))
         nonlinear_energy_rate = jnp.real(space.inner(stage.velocity, nonlinear_rate))
-        forcing_power = jnp.real(space.inner(stage.velocity, forcing))
+        forcing_power = jnp.real(space.inner(stage.velocity, components.forcing))
         ocean_forcing_power = (
             jnp.asarray(0.0, dtype=kinetic_energy.dtype)
             if stage.ocean_forcing is None
@@ -737,22 +1565,59 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
                 + stage.ocean_forcing.surface_stress_power
             )
         )
-        viscous_energy_rate = jnp.real(space.inner(stage.velocity, viscous_rate))
+        viscous_energy_rate = jnp.real(space.inner(stage.velocity, components.molecular))
+        sgs_energy_rate = jnp.real(space.inner(stage.velocity, components.sgs))
         semidiscrete_energy_rate = jnp.real(
             space.inner(stage.velocity, stage.velocity_rate)
         )
-        homogeneous_diffusion = self.momentum.homogeneous_laplacian(stage.velocity)
-        homogeneous_viscous_rate = viscosity * jnp.real(
-            space.inner(stage.velocity, homogeneous_diffusion)
+        momentum_diagnostics = self.momentum.diagnostics(
+            stage.velocity,
+            stage=stage.boundary_stage,
         )
-        dissipation = -homogeneous_viscous_rate
-        wall_power = viscous_energy_rate - homogeneous_viscous_rate
+        viscosity = self.flow_problem.viscosity.astype(
+            self.momentum.operators.pressure_space.dtype
+        )
+        molecular_dissipation = viscosity * momentum_diagnostics.dissipation
+        traction_power = self.momentum._boundary_traction_power(
+            stage.velocity,
+            stage.boundary_stage,
+        )
+        molecular_boundary_power = (
+            viscosity * (momentum_diagnostics.boundary_power - traction_power)
+            + traction_power
+        )
+        les_stage = components.les_stage
+        if les_stage is not None:
+            sgs_dissipation = les_stage.viscosity_result.integrated_dissipation
+            sgs_boundary_power = les_stage.boundary_power
+            sgs_energy_transfer = jnp.sum(
+                self.momentum.operators.discretization.cell_volumes
+                * les_stage.model_result.energy_transfer
+            )
+            les_finite = les_stage.finite
+            les_success = les_stage.successful
+        elif stage.ksgs is not None:
+            sgs_dissipation = stage.ksgs.viscosity_result.integrated_dissipation
+            sgs_boundary_power = stage.ksgs.viscosity_result.boundary_power
+            sgs_energy_transfer = -sgs_dissipation
+            les_finite = stage.ksgs.finite
+            les_success = stage.ksgs.success
+        else:
+            zero = jnp.asarray(0.0, dtype=kinetic_energy.dtype)
+            sgs_dissipation = zero
+            sgs_boundary_power = zero
+            sgs_energy_transfer = zero
+            les_finite = jnp.asarray(True)
+            les_success = jnp.asarray(True)
+        dissipation = molecular_dissipation + sgs_dissipation
+        wall_power = molecular_boundary_power + sgs_boundary_power
         expected = (
             forcing_power
             + ocean_forcing_power
             + stage.buoyancy.total_power
             - dissipation
             + wall_power
+            - momentum_diagnostics.open_backflow_dissipation
         )
         volumes = self.momentum.operators.discretization.cell_volumes
         pressure_residual_norm = jnp.sqrt(jnp.sum(volumes * stage.pressure_residual**2))
@@ -766,6 +1631,8 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
         finite = (
             stage.finite
             & scalar_diagnostics.finite
+            & momentum_diagnostics.finite
+            & les_finite
             & jnp.all(
                 jnp.isfinite(
                     jnp.stack(
@@ -776,6 +1643,10 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
                             stage.buoyancy.total_power,
                             ocean_forcing_power,
                             viscous_energy_rate,
+                            sgs_energy_rate,
+                            sgs_dissipation,
+                            sgs_boundary_power,
+                            sgs_energy_transfer,
                             dissipation,
                             wall_power,
                             semidiscrete_energy_rate,
@@ -788,7 +1659,13 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
                 )
             )
         )
-        success = finite & stage.success & scalar_diagnostics.success
+        success = (
+            finite
+            & stage.success
+            & scalar_diagnostics.success
+            & momentum_diagnostics.successful
+            & les_success
+        )
         return MACScalarBuoyancyDiagnostics(
             scalars=scalar_diagnostics,
             buoyancy=stage.buoyancy,
@@ -798,6 +1675,10 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             buoyancy_power=stage.buoyancy.total_power,
             ocean_forcing_power=ocean_forcing_power,
             viscous_energy_rate=viscous_energy_rate,
+            sgs_energy_rate=sgs_energy_rate,
+            sgs_dissipation=sgs_dissipation,
+            sgs_boundary_power=sgs_boundary_power,
+            sgs_energy_transfer=sgs_energy_transfer,
             dissipation=dissipation,
             wall_power=wall_power,
             semidiscrete_energy_rate=semidiscrete_energy_rate,
@@ -814,6 +1695,15 @@ class CompiledMACScalarBuoyancyDynamics(StrictModule):
             projection_id=self.projection.plan_id,
             grid_id=self.momentum.operators.discretization.grid.prepared_id,
         )
+
+    def diagnostics(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> MACScalarBuoyancyDiagnostics:
+        return self.diagnostics_from_stage(self.stage(time, state, args))
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
         stage = self.stage(time, state, args)
@@ -838,6 +1728,10 @@ def compile_mac_scalar_buoyancy(
     buoyancy: MACBuoyancyLaw,
     /,
     *,
+    algebraic_les: MACAlgebraicLESPlan | None = None,
+    scalar_sgs: MACScalarSGSPlan | None = None,
+    ksgs: AbstractKSGSPlan | None = None,
+    ksgs_field_name: str | None = None,
     ocean_forcing: PreparedMACOceanForcing | None = None,
 ) -> CompiledMACScalarBuoyancyDynamics:
     """Compile projected unit-density MAC flow with named explicit scalars."""
@@ -876,7 +1770,81 @@ def compile_mac_scalar_buoyancy(
         or ocean_forcing.operators.prepared_id != momentum.operators.prepared_id
     ):
         raise ValueError("Ocean forcing must be prepared on the coupled MAC operators.")
-    base = compile_mac_incompressible_flow(flow_problem, momentum, projection)
+    if algebraic_les is not None and not isinstance(algebraic_les, MACAlgebraicLESPlan):
+        raise TypeError("algebraic_les must be MACAlgebraicLESPlan or None.")
+    if ksgs is not None and not isinstance(ksgs, AbstractKSGSPlan):
+        raise TypeError("ksgs must be AbstractKSGSPlan or None.")
+    if algebraic_les is not None and ksgs is not None:
+        raise ValueError("Algebraic MAC LES and prognostic KSGS are alternatives.")
+    if scalar_sgs is not None and not isinstance(scalar_sgs, MACScalarSGSPlan):
+        raise TypeError("scalar_sgs must be MACScalarSGSPlan or None.")
+    les_active = algebraic_les is not None or ksgs is not None
+    if les_active != (scalar_sgs is not None):
+        raise ValueError(
+            "MAC Boussinesq LES requires an explicit complete scalar SGS "
+            "declaration; no turbulent Prandtl or Schmidt number is defaulted."
+        )
+    if ksgs is None and ksgs_field_name is not None:
+        raise ValueError("ksgs_field_name is valid only with a KSGS plan.")
+    kinetic_name = None if ksgs_field_name is None else str(ksgs_field_name)
+    if ksgs is not None and (
+        not kinetic_name or kinetic_name not in scalar_problem.field_names
+    ):
+        raise ValueError(
+            "Prognostic MAC KSGS requires an explicit transported ksgs_field_name."
+        )
+    if kinetic_name is not None:
+        declarations = {
+            declaration.name: declaration for declaration in scalar_problem.transports
+        }
+        kinetic_declaration = declarations[kinetic_name]
+        diffusivity = np.asarray(kinetic_declaration.diffusivity)
+        if (
+            diffusivity.shape != ()
+            or not np.isclose(
+                float(diffusivity),
+                float(flow_problem.viscosity),
+                rtol=0.0,
+                atol=0.0,
+            )
+            or kinetic_declaration.advection != "upwind"
+            or kinetic_declaration.source is not None
+        ):
+            raise ValueError(
+                "The prognostic KSGS scalar must use upwind advection, molecular "
+                "diffusivity equal to flow viscosity, and no independent source."
+            )
+        for lower, upper in transport.boundaries.field_conditions(kinetic_name):
+            for condition in (lower, upper):
+                no_flux = (
+                    condition.kind == "neumann"
+                    and condition.function is None
+                    and bool(jnp.all(condition.value == 0.0))
+                )
+                if condition.kind != "periodic" and not no_flux:
+                    raise ValueError(
+                        "Prognostic MAC KSGS supports only periodic or impermeable "
+                        "zero-flux scalar boundaries."
+                    )
+    base = compile_mac_incompressible_flow(
+        flow_problem,
+        momentum,
+        projection,
+        algebraic_les=algebraic_les,
+    )
+    scalar_sgs_fields = tuple(
+        name for name in transport.layout.field_names if name != kinetic_name
+    )
+    prepared_scalar_sgs = (
+        None
+        if scalar_sgs is None
+        else scalar_sgs.prepare(transport, field_names=scalar_sgs_fields)
+    )
+    prepared_ksgs = (
+        None
+        if ksgs is None or kinetic_name is None
+        else PreparedMACKSGS(ksgs, momentum, kinetic_name)
+    )
     identifier = canonical_fingerprint(
         {
             "kind": "compiled-mac-scalar-buoyancy",
@@ -885,6 +1853,13 @@ def compile_mac_scalar_buoyancy(
             "momentum": momentum.prepared_id,
             "projection": projection.plan_id,
             "transport": transport.prepared_id,
+            "algebraic_les": (
+                "none" if base.algebraic_les is None else base.algebraic_les.prepared_id
+            ),
+            "scalar_sgs": (
+                "none" if prepared_scalar_sgs is None else prepared_scalar_sgs.prepared_id
+            ),
+            "ksgs": "none" if prepared_ksgs is None else prepared_ksgs.prepared_id,
             "buoyancy": buoyancy.law_id,
             "ocean_forcing": ("none" if ocean_forcing is None else ocean_forcing.plan_id),
         }
@@ -897,6 +1872,8 @@ def compile_mac_scalar_buoyancy(
         transport,
         buoyancy,
         base,
+        prepared_scalar_sgs,
+        prepared_ksgs,
         ocean_forcing,
         compilation_id=identifier,
     )
@@ -906,8 +1883,10 @@ __all__ = [
     "CompiledMACScalarBuoyancyDynamics",
     "MACBuoyancyLaw",
     "MACBuoyancyLedger",
+    "MACKSGSStageResult",
     "MACScalarBuoyancyDiagnostics",
     "MACScalarBuoyancyStage",
     "MACScalarBuoyancyStepRestriction",
+    "PreparedMACKSGS",
     "compile_mac_scalar_buoyancy",
 ]

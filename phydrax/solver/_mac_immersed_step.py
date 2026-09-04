@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._lagrangian_marker import LagrangianMarkerKinematics
@@ -73,11 +73,16 @@ class MACImmersedBoundaryIMEXEulerResult(StrictModule):
 
 
 class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
-    """Backward-Euler diffusion followed by exact prescribed-marker projection."""
+    """Backward-Euler diffusion plus explicit forcing and marker projection.
+
+    Algebraic SGS rates are retained in the explicit partition. Optional fixed
+    marker normals select the projection's normal-only constraint.
+    """
 
     dynamics: CompiledMACIncompressibleDynamics
     projection: MACImmersedBoundaryProjectionPlan
     marker_motion: MarkerMotionProvider
+    marker_constraint_normals: Array | None
     motion_id: str = eqx.field(static=True)
     helmholtz: MACHelmholtzSolvePlan
     fixed_step_size: float | None = eqx.field(static=True)
@@ -99,6 +104,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
         allow_route_refresh: bool = False,
+        marker_constraint_normals: ArrayLike | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
     ):
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
@@ -118,6 +124,19 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         if fixed is not None and (not np.isfinite(fixed) or fixed <= 0.0):
             raise ValueError("fixed_step_size must be positive and finite.")
         viscosity = float(np.asarray(dynamics.problem.viscosity))
+        if marker_constraint_normals is None:
+            constraint_normals = None
+        else:
+            constraint_normals = jnp.asarray(
+                marker_constraint_normals,
+                dtype=projection.operators.pressure_space.dtype,
+            )
+            expected = (
+                projection.transfer.markers.capacity,
+                projection.transfer.markers.ambient_dimension,
+            )
+            if constraint_normals.shape != expected:
+                raise ValueError(f"marker_constraint_normals must have shape {expected}.")
         helmholtz = MACHelmholtzSolvePlan(
             dynamics.momentum,
             solve_method=solve_method,
@@ -132,6 +151,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         self.dynamics = dynamics
         self.projection = projection
         self.marker_motion = marker_motion
+        self.marker_constraint_normals = constraint_normals
         self.motion_id = identifier
         self.helmholtz = helmholtz
         self.fixed_step_size = fixed
@@ -145,6 +165,9 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
                 "helmholtz": helmholtz.plan_id,
                 "fixed_step_size": fixed,
                 "allow_route_refresh": bool(allow_route_refresh),
+                "marker_constraint_normals": None
+                if constraint_normals is None
+                else array_tree_fingerprint(constraint_normals),
             }
         )
 
@@ -170,10 +193,15 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         )
 
     def _explicit_rate(self, time: Array, state: Array, args: Any, /) -> FaceVelocity:
-        _, convection, _, forcing = self.dynamics.rate_components(time, state, args)
+        components = self.dynamics.rate_components(time, state, args)
         return tuple(
-            -advective + source
-            for advective, source in zip(convection, forcing, strict=True)
+            -advective + sgs + source
+            for advective, sgs, source in zip(
+                components.convection,
+                components.sgs,
+                components.forcing,
+                strict=True,
+            )
         )
 
     def step(
@@ -233,6 +261,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
             boundary_stage=boundary_stage,
             expected_routes=expected_routes,
             allow_route_refresh=self.allow_route_refresh,
+            marker_constraint_normals=self.marker_constraint_normals,
         )
         candidate_velocity = self.dynamics.momentum.boundaries.enforce(
             immersed.velocity, boundary_stage
@@ -344,7 +373,7 @@ class MACImmersedBoundarySBDF2Result(StrictModule):
 
 
 class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
-    """Fixed-step SBDF2 with exact prescribed-marker projection."""
+    """Fixed-step SBDF2 retaining algebraic SGS and marker constraints."""
 
     dynamics: CompiledMACIncompressibleDynamics
     projection: MACImmersedBoundaryProjectionPlan
@@ -370,6 +399,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
         allow_route_refresh: bool = False,
+        marker_constraint_normals: ArrayLike | None = None,
         maximum_resource_bytes: int = 512 * 1024**2,
     ):
         step = float(step_size)
@@ -387,6 +417,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
             maximum_iterations=maximum_iterations,
             linear_policy=linear_policy,
             allow_route_refresh=allow_route_refresh,
+            marker_constraint_normals=marker_constraint_normals,
             maximum_resource_bytes=maximum_resource_bytes,
         )
         viscosity = float(np.asarray(dynamics.problem.viscosity))
@@ -416,15 +447,23 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
                 "motion": str(motion_id),
                 "step_size": step,
                 "allow_route_refresh": bool(allow_route_refresh),
+                "marker_constraint_normals": None
+                if startup.marker_constraint_normals is None
+                else array_tree_fingerprint(startup.marker_constraint_normals),
                 "helmholtz": helmholtz.plan_id,
             }
         )
 
     def _explicit_rate(self, time: Array, state: Array, args: Any, /) -> FaceVelocity:
-        _, convection, _, forcing = self.dynamics.rate_components(time, state, args)
+        components = self.dynamics.rate_components(time, state, args)
         return tuple(
-            -advective + source
-            for advective, source in zip(convection, forcing, strict=True)
+            -advective + sgs + source
+            for advective, sgs, source in zip(
+                components.convection,
+                components.sgs,
+                components.forcing,
+                strict=True,
+            )
         )
 
     def initialize(
@@ -536,6 +575,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
             boundary_stage=boundary_stage,
             expected_routes=history.route_state,
             allow_route_refresh=self.startup_method.allow_route_refresh,
+            marker_constraint_normals=self.startup_method.marker_constraint_normals,
         )
         candidate_velocity = self.dynamics.momentum.boundaries.enforce(
             immersed.velocity, boundary_stage

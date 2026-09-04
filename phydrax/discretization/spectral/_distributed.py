@@ -349,6 +349,7 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
     stage_bytes: int = eqx.field(static=True)
     collective_bytes: int = eqx.field(static=True)
     checkpoint_bytes: int = eqx.field(static=True)
+    closure_bytes: int = eqx.field(static=True)
     total_bytes: int = eqx.field(static=True)
     maximum_bytes: int = eqx.field(static=True)
     accepted: bool = eqx.field(static=True)
@@ -364,6 +365,7 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
         stage_bytes: int,
         collective_bytes: int,
         checkpoint_bytes: int,
+        closure_bytes: int = 0,
         maximum_bytes: int,
         reasons: Sequence[str] = (),
     ):
@@ -376,6 +378,7 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
                 stage_bytes,
                 collective_bytes,
                 checkpoint_bytes,
+                closure_bytes,
             )
         )
         maximum = index(maximum_bytes)
@@ -397,6 +400,7 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
             self.stage_bytes,
             self.collective_bytes,
             self.checkpoint_bytes,
+            self.closure_bytes,
         ) = values
         self.total_bytes = total
         self.maximum_bytes = maximum
@@ -476,6 +480,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
     padded_modal_to_physical: tuple[SpectralTranspose, ...]
     domain_lengths: tuple[float, ...] = eqx.field(static=True)
     transform_scale: float = eqx.field(static=True)
+    padded_transform_scale: float = eqx.field(static=True)
     coefficient_dtype: str = eqx.field(static=True)
     accumulation_dtype: str = eqx.field(static=True)
     horizontal_axes: tuple[int, int] | None = eqx.field(static=True)
@@ -495,8 +500,10 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         coefficient_dtype: Any = jnp.complex64,
         accumulation_dtype: Any | None = None,
         transform_scale: float = 1.0,
+        padded_transform_scale: float | None = None,
         stage_count: int = 1,
         checkpoint_count: int = 0,
+        closure_workspace_bytes: int = 0,
         maximum_bytes: int = 2 * 1024**3,
         horizontal_axes: Sequence[int] = (0, 2),
     ):
@@ -548,14 +555,24 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 "domain_lengths must contain one finite positive value per axis."
             )
         scale = float(transform_scale)
-        if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("transform_scale must be finite and positive.")
+        padded_scale = (
+            scale if padded_transform_scale is None else float(padded_transform_scale)
+        )
+        if (
+            not np.isfinite(scale)
+            or scale <= 0.0
+            or not np.isfinite(padded_scale)
+            or padded_scale <= 0.0
+        ):
+            raise ValueError("Transform scales must be finite and positive.")
         stages = index(stage_count)
         checkpoints = index(checkpoint_count)
+        closure_workspace = index(closure_workspace_bytes)
         maximum = index(maximum_bytes)
-        if stages <= 0 or checkpoints < 0 or maximum <= 0:
+        if stages <= 0 or checkpoints < 0 or closure_workspace < 0 or maximum <= 0:
             raise ValueError(
-                "stage_count, checkpoint_count, and maximum_bytes are invalid."
+                "stage_count, checkpoint_count, closure_workspace_bytes, and "
+                "maximum_bytes are invalid."
             )
         mesh_names = topology.mesh_axis_names
         mesh_shape = topology.mesh_shape
@@ -590,7 +607,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 modal_partition = (
                     None,
                     None,
-                    (mesh_names[0], mesh_names[1]),
+                    (mesh_names[1], mesh_names[0]),
                 ) + (None,) * (rank - 3 + len(trailing))
             else:
                 physical_partition = (None,) * len(full_shape)
@@ -739,6 +756,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             stage_bytes=stage_bytes,
             collective_bytes=collective_bytes,
             checkpoint_bytes=checkpoint_bytes,
+            closure_bytes=closure_workspace,
             maximum_bytes=maximum,
             reasons=reasons,
         )
@@ -770,6 +788,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         self.padded_modal_to_physical = padded_reverse
         self.domain_lengths = lengths
         self.transform_scale = scale
+        self.padded_transform_scale = padded_scale
         self.coefficient_dtype = dtype.str
         self.accumulation_dtype = accumulation.str
         self.horizontal_axes = horizontal
@@ -795,6 +814,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 "accumulation_dtype": accumulation.str,
                 "lengths": list(lengths),
                 "transform_scale": scale,
+                "padded_transform_scale": padded_scale,
             }
         )
 
@@ -815,6 +835,17 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         if schedule != "channel" and any(family != "fourier" for family in families):
             raise ValueError("Distributed C2C plans require all-Fourier discretizations.")
         scale = prod(float(jnp.sqrt(axis.quadrature_weights[0])) for axis in axes)
+        padded_shape = kwargs.get("padded_shape")
+        if padded_shape is None:
+            padded_scale = scale
+        else:
+            padded = _positive_shape(padded_shape, "padded_shape")
+            if len(padded) != len(axes):
+                raise ValueError("padded_shape must match the discretization rank.")
+            padded_scale = prod(
+                float(jnp.sqrt(axis.length / count))
+                for axis, count in zip(axes, padded, strict=True)
+            )
         return cls(
             topology,
             discretization.modal_shape,
@@ -823,6 +854,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             coefficient_dtype=jnp.dtype(discretization.plan.precision.coefficient_dtype),
             accumulation_dtype=jnp.dtype(discretization.plan.precision.reduction_dtype),
             transform_scale=scale,
+            padded_transform_scale=padded_scale,
             **kwargs,
         )
 
@@ -836,6 +868,43 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         if representation == "physical":
             return self.padded_physical_layout if padded else self.physical_layout
         return self.padded_modal_layout if padded else self.modal_layout
+
+    def _batched_layout(
+        self,
+        global_shape: Sequence[int],
+        representation: SpectralRepresentation,
+        padded: bool,
+        /,
+    ) -> SpectralLayout:
+        shape = tuple(int(value) for value in global_shape)
+        spatial = self.padded_shape if padded else self.spatial_shape
+        rank = len(spatial)
+        if len(shape) < rank or shape[:rank] != spatial:
+            raise ValueError(
+                f"Batched spectral values must begin with shape {spatial}; got {shape}."
+            )
+        base = self._layout(representation, padded)
+        partition = base.partition[:rank] + (None,) * (len(shape) - rank)
+        return SpectralLayout(
+            shape,
+            partition,
+            representation,
+            self.topology,
+            padded=padded,
+        )
+
+    def _validate_batched(
+        self,
+        values: ArrayLike,
+        representation: SpectralRepresentation,
+        padded: bool,
+        owner: str,
+        /,
+    ) -> tuple[Array, SpectralLayout]:
+        value = jnp.asarray(values, dtype=jnp.dtype(self.coefficient_dtype))
+        layout = self._batched_layout(value.shape, representation, padded)
+        self.topology.require_available()
+        return jax.device_put(value, layout.sharding(self.topology)), layout
 
     def _validate(
         self, values: ArrayLike, layout: SpectralLayout, owner: str, /
@@ -860,10 +929,24 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             values, self._layout(representation, padded), "Spectral value"
         )
 
-    def _forward_local(self, local: Array, /) -> Array:
+    def place_batched(
+        self,
+        values: ArrayLike,
+        /,
+        *,
+        representation: SpectralRepresentation,
+        padded: bool = False,
+    ) -> Array:
+        """Place arbitrary replicated payload axes without changing spatial sharding."""
+        placed, _ = self._validate_batched(
+            values, representation, padded, "Batched spectral value"
+        )
+        return placed
+
+    def _forward_local_scaled(self, local: Array, scale: float, /) -> Array:
         rank = len(self.spatial_shape)
         if self.schedule == "pencil":
-            value = jnp.fft.fft(local * self.transform_scale, axis=2, norm="ortho")
+            value = jnp.fft.fft(local * scale, axis=2, norm="ortho")
             value = jax.lax.all_to_all(
                 value, self.topology.mesh_axis_names[1], 2, 1, tiled=True
             )
@@ -879,7 +962,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Channel layouts use execute_channel; the Chebyshev axis is not a C2C transform."
             )
-        value = local * self.transform_scale
+        value = local * scale
         for axis in range(1, rank):
             value = jnp.fft.fft(value, axis=axis, norm="ortho")
         value = jax.lax.all_to_all(
@@ -887,7 +970,13 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         )
         return jnp.fft.fft(value, axis=0, norm="ortho")
 
-    def _inverse_local(self, local: Array, /) -> Array:
+    def _forward_local(self, local: Array, /) -> Array:
+        return self._forward_local_scaled(local, self.transform_scale)
+
+    def _forward_padded_local(self, local: Array, /) -> Array:
+        return self._forward_local_scaled(local, self.padded_transform_scale)
+
+    def _inverse_local_scaled(self, local: Array, scale: float, /) -> Array:
         rank = len(self.spatial_shape)
         if self.schedule == "pencil":
             value = jnp.fft.ifft(local, axis=0, norm="ortho")
@@ -901,7 +990,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             value = jnp.fft.ifft(value, axis=2, norm="ortho")
             for axis in range(3, rank):
                 value = jnp.fft.ifft(value, axis=axis, norm="ortho")
-            return value / self.transform_scale
+            return value / scale
         if self.schedule == "channel":
             raise ValueError(
                 "Channel layouts use execute_channel; the Chebyshev axis is not a C2C transform."
@@ -912,14 +1001,21 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         )
         for axis in range(1, rank):
             value = jnp.fft.ifft(value, axis=axis, norm="ortho")
-        return value / self.transform_scale
+        return value / scale
+
+    def _inverse_local(self, local: Array, /) -> Array:
+        return self._inverse_local_scaled(local, self.transform_scale)
+
+    def _inverse_padded_local(self, local: Array, /) -> Array:
+        return self._inverse_local_scaled(local, self.padded_transform_scale)
 
     def to_modal(self, values: ArrayLike, /, *, padded: bool = False) -> Array:
         source = self._layout("physical", padded)
         target = self._layout("modal", padded)
         placed = self._validate(values, source, "Physical spectral state")
+        action = self._forward_padded_local if padded else self._forward_local
         mapped = jax.shard_map(
-            self._forward_local,
+            action,
             mesh=self.topology.mesh,
             in_specs=source.partition_spec,
             out_specs=target.partition_spec,
@@ -931,8 +1027,43 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         source = self._layout("modal", padded)
         target = self._layout("physical", padded)
         placed = self._validate(coefficients, source, "Modal spectral state")
+        action = self._inverse_padded_local if padded else self._inverse_local
         mapped = jax.shard_map(
-            self._inverse_local,
+            action,
+            mesh=self.topology.mesh,
+            in_specs=source.partition_spec,
+            out_specs=target.partition_spec,
+            check_vma=False,
+        )
+        return mapped(placed)
+
+    def to_modal_batched(self, values: ArrayLike, /, *, padded: bool = False) -> Array:
+        """Transform arbitrary trailing payload axes in one distributed C2C batch."""
+        placed, source = self._validate_batched(
+            values, "physical", padded, "Batched physical spectral state"
+        )
+        target = self._batched_layout(placed.shape, "modal", padded)
+        action = self._forward_padded_local if padded else self._forward_local
+        mapped = jax.shard_map(
+            action,
+            mesh=self.topology.mesh,
+            in_specs=source.partition_spec,
+            out_specs=target.partition_spec,
+            check_vma=False,
+        )
+        return mapped(placed)
+
+    def to_physical_batched(
+        self, coefficients: ArrayLike, /, *, padded: bool = False
+    ) -> Array:
+        """Invert arbitrary trailing payload axes without materializing them globally."""
+        placed, source = self._validate_batched(
+            coefficients, "modal", padded, "Batched modal spectral state"
+        )
+        target = self._batched_layout(placed.shape, "physical", padded)
+        action = self._inverse_padded_local if padded else self._inverse_local
+        mapped = jax.shard_map(
+            action,
             mesh=self.topology.mesh,
             in_specs=source.partition_spec,
             out_specs=target.partition_spec,
@@ -974,6 +1105,28 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             result = resize_fourier_axis(result, axis, target)
         return jax.device_put(result, self.modal_layout.sharding(self.topology))
 
+    def pad_modal_batched(self, coefficients: ArrayLike, /) -> Array:
+        """Embed retained modal fields with arbitrary replicated payload axes."""
+        value, _ = self._validate_batched(
+            coefficients, "modal", False, "Batched canonical modal state"
+        )
+        result = value
+        for axis, target in enumerate(self.padded_shape):
+            result = resize_fourier_axis(result, axis, target)
+        target_layout = self._batched_layout(result.shape, "modal", True)
+        return jax.device_put(result, target_layout.sharding(self.topology))
+
+    def unpad_modal_batched(self, coefficients: ArrayLike, /) -> Array:
+        """Restrict padded modal fields while retaining distributed sharding."""
+        value, _ = self._validate_batched(
+            coefficients, "modal", True, "Batched padded modal state"
+        )
+        result = value
+        for axis, target in enumerate(self.spatial_shape):
+            result = resize_fourier_axis(result, axis, target)
+        target_layout = self._batched_layout(result.shape, "modal", False)
+        return jax.device_put(result, target_layout.sharding(self.topology))
+
     def modal_derivative(
         self,
         coefficients: ArrayLike,
@@ -985,6 +1138,38 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
     ) -> Array:
         layout = self._layout("modal", padded)
         value = self._validate(coefficients, layout, "Modal derivative state")
+        axis_ = int(axis)
+        order_ = int(order)
+        shape = self.padded_shape if padded else self.spatial_shape
+        if axis_ < 0 or axis_ >= len(shape) or order_ < 0:
+            raise ValueError("Derivative axis/order is invalid.")
+        if order_ == 0:
+            return value
+        real_dtype = value.real.dtype
+        modes = jnp.fft.fftfreq(shape[axis_]).astype(real_dtype) * shape[axis_]
+        wave = (
+            2.0
+            * jnp.asarray(jnp.pi, dtype=real_dtype)
+            * modes
+            / self.domain_lengths[axis_]
+        )
+        multiplier_shape = [1] * value.ndim
+        multiplier_shape[axis_] = shape[axis_]
+        return value * ((1j * wave) ** order_).reshape(tuple(multiplier_shape))
+
+    def modal_derivative_batched(
+        self,
+        coefficients: ArrayLike,
+        axis: int,
+        /,
+        *,
+        order: int = 1,
+        padded: bool = False,
+    ) -> Array:
+        """Differentiate modal fields with arbitrary replicated payload axes."""
+        value, _ = self._validate_batched(
+            coefficients, "modal", padded, "Batched modal derivative state"
+        )
         axis_ = int(axis)
         order_ = int(order)
         shape = self.padded_shape if padded else self.spatial_shape
@@ -1068,7 +1253,9 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         def reduce_local(local):
             total = jnp.sum(local.astype(sum_dtype))
             squared = jnp.sum(jnp.square(jnp.abs(local)).astype(reduction_dtype))
-            maximum = jnp.max(jnp.abs(local).astype(reduction_dtype), initial=0.0)
+            maximum = jax.lax.stop_gradient(
+                jnp.max(jnp.abs(local).astype(reduction_dtype), initial=0.0)
+            )
             finite = jnp.all(jnp.isfinite(local)).astype(jnp.int32)
             if axes:
                 total = jax.lax.psum(total, axes)
@@ -1105,6 +1292,98 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             layout.used_mesh_axes,
             self.plan_id,
         )
+
+    def diagnostics_batched(
+        self,
+        values: ArrayLike,
+        /,
+        *,
+        representation: SpectralRepresentation = "modal",
+        padded: bool = False,
+    ) -> SpectralGlobalDiagnostics:
+        """Reduce arbitrary replicated payload axes over every spatial shard."""
+        value, layout = self._validate_batched(
+            values, representation, padded, "Batched diagnostic state"
+        )
+        total, maximum, norm, finite = self._global_reductions(value, layout)
+        return SpectralGlobalDiagnostics(
+            total,
+            maximum,
+            norm,
+            finite,
+            self.accumulation_dtype,
+            layout.used_mesh_axes,
+            self.plan_id,
+        )
+
+    def global_inner_product(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+        *,
+        representation: SpectralRepresentation = "modal",
+        padded: bool = False,
+    ) -> Array:
+        """Return a shard-reduced complex inner product for arbitrary payload axes."""
+        left_value, layout = self._validate_batched(
+            left, representation, padded, "Left distributed inner-product state"
+        )
+        right_value, right_layout = self._validate_batched(
+            right, representation, padded, "Right distributed inner-product state"
+        )
+        if right_layout.global_shape != layout.global_shape:
+            raise ValueError("Distributed inner-product operands must have equal shape.")
+        sum_dtype = _complex_accumulation_dtype(np.dtype(left_value.dtype))
+        reduction_dtype = np.dtype(self.accumulation_dtype)
+        if np.dtype(sum_dtype).itemsize < reduction_dtype.itemsize:
+            sum_dtype = np.dtype(
+                jnp.complex128 if reduction_dtype.itemsize > 4 else jnp.complex64
+            )
+        axes = layout.used_mesh_axes
+
+        def inner_local(left_local, right_local):
+            total = jnp.vdot(left_local.astype(sum_dtype), right_local.astype(sum_dtype))
+            return jax.lax.psum(total, axes) if axes else total
+
+        mapped = jax.shard_map(
+            inner_local,
+            mesh=self.topology.mesh,
+            in_specs=(layout.partition_spec, right_layout.partition_spec),
+            out_specs=PartitionSpec(),
+            check_vma=False,
+        )
+        return mapped(left_value, right_value)
+
+    def global_all(
+        self,
+        predicates: ArrayLike,
+        /,
+        *,
+        representation: SpectralRepresentation = "modal",
+        padded: bool = False,
+    ) -> Array:
+        """Return a replicated all-shard conjunction without a host transfer."""
+        value = jnp.asarray(predicates, dtype=bool)
+        layout = self._batched_layout(value.shape, representation, padded)
+        self.topology.require_available()
+        placed = jax.device_put(value, layout.sharding(self.topology))
+        axes = layout.used_mesh_axes
+
+        def all_local(local):
+            result = jnp.all(local).astype(jnp.int32)
+            if axes:
+                result = jax.lax.pmin(result, axes)
+            return result.astype(bool)
+
+        mapped = jax.shard_map(
+            all_local,
+            mesh=self.topology.mesh,
+            in_specs=layout.partition_spec,
+            out_specs=PartitionSpec(),
+            check_vma=False,
+        )
+        return mapped(placed)
 
     def execute_channel(
         self, action: Callable[..., ArrayLike], state: ArrayLike, /, *args, **kwargs

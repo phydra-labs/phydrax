@@ -343,6 +343,7 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
     moving: bool = eqx.field(static=True)
     fixed_topology: bool = eqx.field(static=True)
     contact_capable: bool = eqx.field(static=True)
+    marker_constraint_count_override: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -361,6 +362,7 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
         fixed_topology: bool = True,
         distributed_transfer: DistributedMACMarkerTransfer | None = None,
         lubrication: ResolvedLubricationCorrectionPlan | None = None,
+        marker_constraint_count: int | None = None,
     ):
         regime, owner_id, bound_markers, bound_geometry, contact_capable = (
             _owner_contract(owner)
@@ -430,6 +432,20 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Lubrication is only valid for moving material-body regimes."
             )
+        transfer = _owner_transfer(owner)
+        full_constraint_count = (
+            0 if transfer is None else transfer.markers.active_velocity_space.size
+        )
+        constraint_count = (
+            None if marker_constraint_count is None else int(marker_constraint_count)
+        )
+        if constraint_count is not None and (
+            constraint_count <= 0 or constraint_count > full_constraint_count
+        ):
+            raise ValueError(
+                "marker_constraint_count must be positive and cannot exceed the "
+                "owner marker coordinate count."
+            )
         self.owner = owner
         self.sharp_epoch_owner = sharp_epoch_owner
         self.support_tuple = _support_tuple(regime)
@@ -446,6 +462,7 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
         self.moving = moving_
         self.fixed_topology = fixed
         self.contact_capable = contact_capable
+        self.marker_constraint_count_override = constraint_count
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "immersed-body-regime-plan",
@@ -466,11 +483,14 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
                     None if distributed_transfer is None else distributed_transfer.plan_id
                 ),
                 "lubrication": None if lubrication is None else lubrication.plan_id,
+                "marker_constraint_count": constraint_count,
             }
         )
 
     @property
     def marker_constraint_count(self) -> int:
+        if self.marker_constraint_count_override is not None:
+            return self.marker_constraint_count_override
         transfer = _owner_transfer(self.owner)
         return 0 if transfer is None else transfer.markers.active_velocity_space.size
 

@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- Added provenance-complete LES equations and production owners: static and dynamic
+  periodic Fourier/MAC compilation; transactional dynamic ETDRK and projected MAC
+  stepping; guarded static ETDRK and frozen MAC IMEX/SBDF2; enforced channel SBDF2
+  stability with optional equilibrium-traction walls; accepted-step stochastic MAC
+  inflow; static, buoyant, periodic-dynamic, and true-no-slip low-Re KSGS; learned
+  stress Fourier/MAC divergence backends; device-resident distributed slab/pencil
+  full-flow ETDRK/SSPRK production; pressure-stepped tetrahedral low-Mach restart
+  continuation with conservative face-work KSGS production and explicit enthalpy
+  thermalization; neglected or transported-SGS-energy Favre gas flow; fixed immersed
+  MAC IMEX/SBDF2 ledgers; and collision-local LBM Smagorinsky. The public cutover
+  removes `SmagorinskyLESClosure` and `MACStepRestriction` in favor of prepared LES
+  plans and `MACLESStepRestriction`. `PeriodicModalTurbulenceStatisticsPlan` now
+  binds compiled static or dynamic dynamics, and `PeriodicSpectralProductionPlan`
+  takes `(dynamics, method, statistics, case, ...)` with an
+  initial-condition-bound `PeriodicSpectralProductionCase`. Qualification outputs
+  use the generic evidence spine, remain unsigned/unreleased candidates, and retain
+  external base-profile release dependencies.
 - Added a native optics platform spanning fixed-shape ray intersections,
   Snell/Fresnel interfaces, planar camera stacks, sequential/paraxial and bounded
   non-sequential tracing, sampled angular-spectrum propagation, thin and coherent
