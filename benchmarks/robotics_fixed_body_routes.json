@@ -1,0 +1,48 @@
+{
+  "benchmark": "robotics-fixed-body-routes",
+  "evaluation_compile_ms": 6114.1084169999995,
+  "evaluation_lower_ms": 9457.90125,
+  "evaluation_run": {
+    "count": 5,
+    "max_ms": 1.168,
+    "mean_ms": 1.0028916,
+    "median_ms": 1.04825,
+    "min_ms": 0.832375,
+    "samples_ms": [
+      1.168,
+      0.904042,
+      0.832375,
+      1.0617910000000002,
+      1.04825
+    ],
+    "std_ms": 0.119694997236476
+  },
+  "evaluations_per_second": 953.9709038874315,
+  "joint_count": 30,
+  "load_checksum_Nm": -850614.1827832911,
+  "point_count": 160,
+  "pullback_compile_ms": 10284.588582999999,
+  "pullback_lower_ms": 11433.26775,
+  "pullback_run": {
+    "count": 5,
+    "max_ms": 1.54525,
+    "mean_ms": 1.4361168,
+    "median_ms": 1.532375,
+    "min_ms": 1.210834,
+    "samples_ms": [
+      1.532375,
+      1.357083,
+      1.535042,
+      1.54525,
+      1.210834
+    ],
+    "std_ms": 0.13263526915779228
+  },
+  "pullbacks_per_second": 652.5817766538869,
+  "repeats": 5,
+  "route_count": 80,
+  "route_length_checksum_m": 234.71140928393788,
+  "timing_scope": "synchronized execution of explicitly lowered and compiled executables",
+  "virtual_power_successful": true,
+  "warmup": 1
+}

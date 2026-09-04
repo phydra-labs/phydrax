@@ -1,0 +1,18 @@
+{
+  "all_valid": true,
+  "backend": "cpu",
+  "case": {
+    "activation": 0.65,
+    "fiber_stretch_range": [
+      0.72,
+      1.38
+    ],
+    "finite": true,
+    "first_execution_seconds": 0.9845677500125021,
+    "first_piola_checksum_pa": -56656848.724429384,
+    "material_points": 10000,
+    "material_points_per_second": 1202238.26727231,
+    "steady_execution_seconds": 0.008317818748764694
+  },
+  "source": "Engelhardt et al. 2025 GASAM"
+}

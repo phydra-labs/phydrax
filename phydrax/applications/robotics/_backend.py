@@ -34,7 +34,14 @@ RoboticsDifferentiability: TypeAlias = Literal[
     "none", "conditional", "guaranteed"
 ]
 RoboticsProjectionKind: TypeAlias = Literal[
-    "qpos", "qvel", "control", "observation"
+    "qpos",
+    "qvel",
+    "control",
+    "observation",
+    "activation",
+    "length",
+    "velocity",
+    "raw-force",
 ]
 ObservationFreshness: TypeAlias = Literal[
     "state-current", "pre-step", "post-step-refreshed"
@@ -454,7 +461,16 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
         provenance: RoboticsProjectionProvenance,
         /,
     ):
-        if kind not in ("qpos", "qvel", "control", "observation"):
+        if kind not in (
+            "qpos",
+            "qvel",
+            "control",
+            "observation",
+            "activation",
+            "length",
+            "velocity",
+            "raw-force",
+        ):
             raise ValueError(f"Unknown robotics projection kind {kind!r}.")
         size_ = int(size)
         entries_ = tuple(entries)
@@ -495,7 +511,7 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
 
 
 class RoboticsProjection(StrictModule, NonTrainableState):
-    """Typed flat projection with epoch-derived observation freshness."""
+    """Typed flat projection with epoch-derived forward-field freshness."""
 
     values: Any
     index_map: RoboticsProjectionMap
@@ -519,30 +535,38 @@ class RoboticsProjection(StrictModule, NonTrainableState):
                 f"{index_map.kind} projection must end in axis size {index_map.size}; "
                 f"got shape {shape}."
             )
-        if index_map.kind == "observation":
+        epoch_bound = index_map.kind in (
+            "observation",
+            "length",
+            "velocity",
+            "raw-force",
+        )
+        if epoch_bound:
             if state_epoch is None or sample_epoch is None:
                 raise ValueError(
-                    "Observation projections require state and sample epochs."
+                    f"{index_map.kind} projections require state and sample epochs."
                 )
             state_epoch_ = jnp.asarray(state_epoch, dtype=jnp.int32)
             sample_epoch_ = jnp.asarray(sample_epoch, dtype=jnp.int32)
             if state_epoch_.shape != shape[:-1] or sample_epoch_.shape != shape[:-1]:
                 raise ValueError(
-                    "Observation epochs must have exactly the projection case axes."
+                    "Projection epochs must have exactly the projection case axes."
                 )
             state_epoch_ = eqx.error_if(
                 state_epoch_,
                 (state_epoch_ < 0) | (sample_epoch_ < 0),
-                "Observation epochs must be non-negative.",
+                "Projection epochs must be non-negative.",
             )
             sample_epoch_ = eqx.error_if(
                 sample_epoch_,
                 sample_epoch_ > state_epoch_,
-                "An observation sample cannot be newer than its state.",
+                "A projection sample cannot be newer than its state.",
             )
         else:
             if state_epoch is not None or sample_epoch is not None:
-                raise ValueError("Only observation projections bind state epochs.")
+                raise ValueError(
+                    "Only observation and forward-derived projections bind epochs."
+                )
             state_epoch_ = None
             sample_epoch_ = None
         self.values = values

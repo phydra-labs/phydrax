@@ -1,0 +1,12 @@
+{
+  "compile_and_first_seconds": 4.334841415984556,
+  "control_count": 41,
+  "device": "cpu",
+  "execution_seconds": 0.006730667024385184,
+  "iterations": 100,
+  "muscle_count": 40,
+  "provider": "mujoco-mjx:3.12.0",
+  "raw_force_checksum_N": -19533.122198371624,
+  "step_forward_snapshot_per_second": 14857.368465517657,
+  "successful": true
+}

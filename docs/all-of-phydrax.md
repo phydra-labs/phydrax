@@ -401,6 +401,32 @@ sampling robustness, hard real time, and universal MJX differentiability are
 not claimed. See [Guide → Native robotics](guides_robotics.md) and
 [API → Robotics applications](api/applications/robotics.md).
 
+### Skeletal-muscle platform
+
+`phydrax.applications.skeletal_muscle` exposes mutually exclusive, source-named
+force routes rather than one universal muscle interface. Potvin--Fuglevand 2017 owns
+deterministic relative sustained-isometric force; Fuglevand--Winter--Patla 1993 owns
+stochastic discharge/twitch force; De Groote--Fregly 2016 owns physical lumped
+activation, force-length/velocity, pennation, compliant tendon, and N scaling;
+Engelhardt GASAM 2025 owns its complete prescribed-activation continuum potential;
+MuJoCo owns provider-native actuator force. These routes cannot multiply one another.
+
+The platform also includes Liu--Brown--Yue macroscopic fatigue/recovery, explicit
+relative-to-physical force calibration, the pinned 56-state Shorten fast-twitch
+reaction model, Kvaerno-integrated one-dimensional fibers, sparse motor-unit/endplate
+routing, fixed and bounded analytic body routes, a homogenized source-calibrated
+Shorten-A2-to-GASAM adapter, feline spindle proprioception, supplied-template and
+planar-conductor surface EMG, Uchida--Umberger energetics, multimodal Gaussian
+likelihoods, causal `ControlProblem` surrogate replay, immutable external-model
+descriptors, and deterministic execution worksets/checkpoints.
+
+Every crossing binds quantity, unit, sign, support, source, force owner, and branch
+scope. Unsupported GTO simplifications, continuum tendon/aponeurosis, cellular
+stretch feedback, intramuscular/limb EMG, thermal fields, and emulated multi-device
+execution remain explicit blockers. See
+[Guide → Skeletal-muscle modeling](guides_skeletal_muscle.md) and
+[API → Skeletal-muscle applications](api/applications/skeletal_muscle.md).
+
 ### Atomistic learning and conservative dynamics
 
 `phydrax.atomistic` specializes the existing material-particle and `GraphIR`

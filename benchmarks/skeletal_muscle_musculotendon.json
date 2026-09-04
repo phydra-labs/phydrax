@@ -1,0 +1,13 @@
+{
+  "all_successful": true,
+  "evaluation_seconds": 3.855957625026349,
+  "evaluations_per_second": 2593.389495542412,
+  "force_checksum_N": 131652.48120270635,
+  "implicit_iterations": 500,
+  "implicit_roots_per_second": 1542.7906518864727,
+  "implicit_successful": true,
+  "iterations": 10000,
+  "jvp_seconds": 0.035817000025417656,
+  "jvps_per_second": 279197.02914547466,
+  "muscle_capacity": 80
+}

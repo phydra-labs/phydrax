@@ -1,0 +1,72 @@
+{
+  "all_successful": true,
+  "capacity": {
+    "largest_qualified_workload": {
+      "fiber_count": 4,
+      "node_count": 17,
+      "state_count": 3808
+    },
+    "limitation": "The recorded solver path materializes and factors a dense full-state Jacobian. Storage grows quadratically and dense LU work cubically with state count, so no scalability claim is made beyond the largest qualified workload.",
+    "qualification_boundary": "Largest workload successfully completed in this recorded run; this is neither a measured failure threshold nor evidence of scalable asymptotics."
+  },
+  "cases": [
+    {
+      "compile_and_solve_ms": 90940.90683298418,
+      "fiber_count": 1,
+      "node_count": 5,
+      "solver_steps": 109,
+      "state_count": 280,
+      "successful": true
+    },
+    {
+      "compile_and_solve_ms": 248902.85287500592,
+      "fiber_count": 4,
+      "node_count": 17,
+      "solver_steps": 107,
+      "state_count": 3808,
+      "successful": true
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "84c0f3f0b9a8fe533998ec2447d26cf84c7fb027c0d535da1a37ceb33f81b81e",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "e2ba71a742294ef5f91822779f898ceba5aacdc88afe1e6c562cb2c44eda1e99",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "solver_structure": {
+    "integrator": "Diffrax Kvaerno5 implicit ESDIRK",
+    "linear_solver": "Lineax AutoLinearSolver(well_posed=None), which selects dense LU for the untagged square full-state Jacobian",
+    "matrix_free": false,
+    "nonlinear_solver": "Diffrax VeryChord with one full-state Jacobian linearization per solver step"
+  }
+}

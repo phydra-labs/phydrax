@@ -4,19 +4,15 @@
 
 from __future__ import annotations
 
-import math
-import numbers
-import re
 from dataclasses import dataclass, field
-from decimal import Decimal
 from fractions import Fraction
 from types import MappingProxyType
 from typing import Any
 
-from ..._fingerprint import canonical_fingerprint
-
-
-_TOKEN = re.compile(r"[a-z][a-z0-9_.-]*\Z")
+from .._quantity_contract import (
+    canonical_quantity_text,
+    resolve_application_quantity,
+)
 
 
 # These are the application kernel's supported conversions, not a general-purpose
@@ -71,48 +67,6 @@ _SUPPORTED_UNIT_CONVERSIONS = MappingProxyType(
 )
 
 
-def _exact_positive_factor(value: Any, /) -> Fraction:
-    if isinstance(value, bool):
-        raise TypeError("si_factor must be a positive finite real number.")
-    if isinstance(value, Fraction):
-        factor = value
-    elif isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("si_factor must be finite.")
-        factor = Fraction(value)
-    elif isinstance(value, numbers.Integral):
-        factor = Fraction(int(value), 1)
-    elif isinstance(value, numbers.Real):
-        scalar = float(value)
-        if not math.isfinite(scalar):
-            raise ValueError("si_factor must be finite.")
-        factor = Fraction(str(scalar))
-    elif isinstance(value, str):
-        factor = Fraction(value)
-    else:
-        raise TypeError("si_factor must be a positive finite real number.")
-    if factor <= 0:
-        raise ValueError("si_factor must be positive.")
-    return factor
-
-
-def _canonical_text(value: str, role: str, /, *, allow_empty: bool = False) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{role} must be a string.")
-    if value != value.strip() or any(ord(character) < 32 for character in value):
-        raise ValueError(f"{role} must be canonical text without surrounding whitespace.")
-    if not value and not allow_empty:
-        raise ValueError(f"{role} must be non-empty.")
-    return value
-
-
-def _canonical_axes(axes: tuple[str, ...], /) -> tuple[str, ...]:
-    if isinstance(axes, str):
-        raise TypeError("axes must be a sequence of axis labels, not one string.")
-    labels = tuple(_canonical_text(axis, "axis") for axis in axes)
-    if len(labels) != len(set(labels)):
-        raise ValueError("Quantity axis labels must be unique.")
-    return labels
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -142,54 +96,31 @@ class CardiovascularQuantitySpec:
         support_association: str = "",
         reference_configuration: str = "",
     ):
-        name_ = _canonical_text(name, "name")
-        dimension = _canonical_text(physical_dimension, "physical_dimension")
-        if _TOKEN.fullmatch(name_) is None or _TOKEN.fullmatch(dimension) is None:
-            raise ValueError(
-                "Quantity names and physical dimensions must be stable tokens."
-            )
-        kernel = _canonical_text(kernel_unit, "kernel_unit")
-        si = _canonical_text(si_unit, "si_unit")
-        factor = _exact_positive_factor(si_factor)
-        route = (dimension, kernel, si)
-        if route not in _SUPPORTED_UNIT_CONVERSIONS:
-            raise ValueError(
-                "Unsupported or ambiguous cardiovascular kernel-to-SI unit route."
-            )
-        if factor != _SUPPORTED_UNIT_CONVERSIONS[route]:
-            raise ValueError("si_factor does not match the declared exact unit route.")
-        axes_ = _canonical_axes(axes)
-        sign = _canonical_text(sign_convention, "sign_convention", allow_empty=True)
-        support = _canonical_text(
-            support_association, "support_association", allow_empty=True
+        resolved = resolve_application_quantity(
+            domain="cardiovascular",
+            supported_conversions=_SUPPORTED_UNIT_CONVERSIONS,
+            name=name,
+            physical_dimension=physical_dimension,
+            kernel_unit=kernel_unit,
+            si_unit=si_unit,
+            si_factor=si_factor,
+            axes=axes,
+            sign_convention=sign_convention,
+            support_association=support_association,
+            reference_configuration=reference_configuration,
         )
-        reference = _canonical_text(
-            reference_configuration, "reference_configuration", allow_empty=True
+        object.__setattr__(self, "name", resolved.name)
+        object.__setattr__(self, "physical_dimension", resolved.physical_dimension)
+        object.__setattr__(self, "kernel_unit", resolved.kernel_unit)
+        object.__setattr__(self, "si_unit", resolved.si_unit)
+        object.__setattr__(self, "si_factor", resolved.si_factor)
+        object.__setattr__(self, "axes", resolved.axes)
+        object.__setattr__(self, "sign_convention", resolved.sign_convention)
+        object.__setattr__(self, "support_association", resolved.support_association)
+        object.__setattr__(
+            self, "reference_configuration", resolved.reference_configuration
         )
-        identity = canonical_fingerprint(
-            {
-                "kind": "cardiovascular-quantity-spec",
-                "name": name_,
-                "physical_dimension": dimension,
-                "kernel_unit": kernel,
-                "si_unit": si,
-                "si_factor": [factor.numerator, factor.denominator],
-                "axes": list(axes_),
-                "sign_convention": sign,
-                "support_association": support,
-                "reference_configuration": reference,
-            }
-        )
-        object.__setattr__(self, "name", name_)
-        object.__setattr__(self, "physical_dimension", dimension)
-        object.__setattr__(self, "kernel_unit", kernel)
-        object.__setattr__(self, "si_unit", si)
-        object.__setattr__(self, "si_factor", factor)
-        object.__setattr__(self, "axes", axes_)
-        object.__setattr__(self, "sign_convention", sign)
-        object.__setattr__(self, "support_association", support)
-        object.__setattr__(self, "reference_configuration", reference)
-        object.__setattr__(self, "quantity_id", identity)
+        object.__setattr__(self, "quantity_id", resolved.quantity_id)
 
     @property
     def spec_id(self) -> str:
@@ -560,7 +491,7 @@ CARDIOVASCULAR_QUANTITIES = MappingProxyType({spec.name: spec for spec in _SPECS
 
 def cardiovascular_quantity(name: str, /) -> CardiovascularQuantitySpec:
     """Return one canonical application quantity by stable name."""
-    name_ = _canonical_text(name, "name")
+    name_ = canonical_quantity_text(name, "name")
     if name_ not in CARDIOVASCULAR_QUANTITIES:
         raise KeyError(f"Unknown cardiovascular quantity {name_!r}.")
     return CARDIOVASCULAR_QUANTITIES[name_]

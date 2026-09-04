@@ -131,7 +131,7 @@ class MixedHyperelasticResponse(StrictModule):
     evidence: MixedHyperelasticEvidence
 
 
-class MixedHyperelasticLaw(StrictModule, NonTrainableState):
+class MixedHyperelasticLaw(StrictModule):
     """One exact or finite-bulk mixed material-point potential.
 
     The potential is Ψ_iso(J⁻¹ᐟᵈF) + p g(F) for exact incompressibility and
@@ -140,8 +140,8 @@ class MixedHyperelasticLaw(StrictModule, NonTrainableState):
     +p ∂g/∂F.
     """
 
-    isochoric_energy: IsochoricEnergy = eqx.field(static=True)
-    volumetric_constraint: VolumetricConstraint = eqx.field(static=True)
+    isochoric_energy: IsochoricEnergy
+    volumetric_constraint: VolumetricConstraint
     bulk_modulus: float | None = eqx.field(static=True)
     minimum_jacobian: float = eqx.field(static=True)
     formulation: MixedHyperelasticFormulation = eqx.field(static=True)
@@ -332,7 +332,7 @@ class MixedHyperelasticLaw(StrictModule, NonTrainableState):
         )
 
 
-class MixedHyperelasticModel(StrictModule, NonTrainableState):
+class MixedHyperelasticModel(StrictModule):
     """FE/neural material model retaining one authoritative pointwise law."""
 
     law: MixedHyperelasticLaw

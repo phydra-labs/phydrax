@@ -1,0 +1,71 @@
+{
+  "all_successful": true,
+  "cases": [
+    {
+      "all_successful": true,
+      "batch_size": 1,
+      "compile_and_first_ms": 591.1263330490328,
+      "execution_ms": 1.6795083996839821,
+      "maximum_surface_residual": 1.1102230246251565e-16,
+      "maximum_tangency_residual": 1.3542429284280489e-16,
+      "routes_per_second": 595.412324337384,
+      "sample_count": 32
+    },
+    {
+      "all_successful": true,
+      "batch_size": 128,
+      "compile_and_first_ms": 876.0244160075672,
+      "execution_ms": 0.4288166994228959,
+      "maximum_surface_residual": 2.220446049250313e-16,
+      "maximum_tangency_residual": 3.0531133177191805e-16,
+      "routes_per_second": 298495.8379005836,
+      "sample_count": 32
+    },
+    {
+      "all_successful": true,
+      "batch_size": 1024,
+      "compile_and_first_ms": 670.4113750020042,
+      "execution_ms": 2.6329874992370605,
+      "maximum_surface_residual": 3.3306690738754696e-16,
+      "maximum_tangency_residual": 3.3306690738754696e-16,
+      "routes_per_second": 388911.83505304,
+      "sample_count": 32
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "84c0f3f0b9a8fe533998ec2447d26cf84c7fb027c0d535da1a37ceb33f81b81e",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "e2ba71a742294ef5f91822779f898ceba5aacdc88afe1e6c562cb2c44eda1e99",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

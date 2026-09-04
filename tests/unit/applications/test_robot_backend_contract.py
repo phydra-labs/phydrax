@@ -195,6 +195,21 @@ def test_operation_evidence_is_casewise_and_projection_freshness_is_epoch_derive
     ]
     assert evidence.successful.tolist() == [True, False]
     assert projection.freshness.tolist() == [True, False]
+    length_map = RoboticsProjectionMap(
+        "length",
+        1,
+        (RoboticsIndexEntry("muscle", 0, 1),),
+        _provenance(),
+    )
+    length = RoboticsProjection(
+        jnp.zeros((2, 1)),
+        length_map,
+        state_epoch=jnp.asarray([3, 4]),
+        sample_epoch=jnp.asarray([2, 4]),
+    )
+    assert length.freshness.tolist() == [False, True]
+    with pytest.raises(ValueError, match="require state and sample epochs"):
+        RoboticsProjection(jnp.zeros((1,)), length_map)
     with pytest.raises(AttributeError):
         evidence.detail = "changed"
 

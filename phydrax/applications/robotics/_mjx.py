@@ -23,6 +23,7 @@ from ...backends._types import (
     BackendUnavailableError,
 )
 from ._backend import (
+    ObservationFreshness,
     ROBOTICS_OPERATIONS,
     RoboticsBackendProfile,
     RoboticsIndexEntry,
@@ -36,6 +37,7 @@ from ._backend import (
 
 
 MJXProviderRelease: TypeAlias = tuple[int, int, int]
+MJXStepObservationMode: TypeAlias = Literal["none", "pre", "post", "both"]
 
 _MJX_PROVIDER_MINOR = (3, 12)
 _MJX_JAX_DEVICES = ("cpu", "gpu", "tpu")
@@ -367,7 +369,10 @@ class MJXDataSchema(StrictModule, NonTrainableState):
                     f"MJX Data leaf {index} must have dtype {spec.dtype}; "
                     f"got {leaf.dtype}."
                 )
-            if _array_devices(leaf) != spec.devices:
+            if (
+                not isinstance(leaf, jax.core.Tracer)
+                and _array_devices(leaf) != spec.devices
+            ):
                 raise ValueError(
                     f"MJX Data leaf {index} is on a noncanonical device set."
                 )
@@ -380,6 +385,7 @@ class MJXState(StrictModule, NonTrainableState):
     opaque: Any
     epoch: Any
     sensor_epoch: Any
+    rollback_source: Any
     provenance: RoboticsProjectionProvenance = eqx.field(static=True)
     _owner: object = eqx.field(static=True)
 
@@ -388,6 +394,7 @@ class MJXState(StrictModule, NonTrainableState):
         opaque: Any,
         epoch: Any,
         sensor_epoch: Any,
+        rollback_source: Any,
         provenance: RoboticsProjectionProvenance,
         owner: object,
         /,
@@ -395,6 +402,7 @@ class MJXState(StrictModule, NonTrainableState):
         self.opaque = opaque
         self.epoch = jnp.asarray(epoch, dtype=jnp.int32)
         self.sensor_epoch = jnp.asarray(sensor_epoch, dtype=jnp.int32)
+        self.rollback_source = jnp.asarray(rollback_source, dtype=jnp.bool_)
         self.provenance = provenance
         self._owner = owner
 
@@ -405,6 +413,7 @@ class MJXObservation(StrictModule, NonTrainableState):
     projection: RoboticsProjection
     request: MJXObservationRequest
     evidence: RoboticsOperationEvidence
+    freshness: ObservationFreshness = eqx.field(static=True, default="state-current")
 
     @property
     def status(self) -> Any:
@@ -421,6 +430,9 @@ class MJXStepResult(StrictModule, NonTrainableState):
     candidate_state: MJXState
     accepted_state: MJXState
     evidence: RoboticsOperationEvidence
+    pre_step_observation: MJXObservation | None
+    post_step_observation: MJXObservation | None
+    observation_mode: MJXStepObservationMode = eqx.field(static=True)
 
     @property
     def status(self) -> Any:
@@ -429,6 +441,14 @@ class MJXStepResult(StrictModule, NonTrainableState):
     @property
     def successful(self) -> Any:
         return self.evidence.successful
+
+    @property
+    def state(self) -> MJXState:
+        return self.accepted_state
+
+    @property
+    def rolled_back(self) -> Any:
+        return ~self.evidence.successful
 
 
 class MJXRefreshResult(StrictModule, NonTrainableState):
@@ -438,6 +458,7 @@ class MJXRefreshResult(StrictModule, NonTrainableState):
     accepted_state: MJXState
     observation: MJXObservation
     evidence: RoboticsOperationEvidence
+    rollback_source_refreshed: Any
 
     @property
     def status(self) -> Any:
@@ -446,6 +467,259 @@ class MJXRefreshResult(StrictModule, NonTrainableState):
     @property
     def successful(self) -> Any:
         return self.evidence.successful
+
+
+class MJXMuscleProjectionPlan(StrictModule, NonTrainableState):
+    """Static selection of named or all compiled MuJoCo muscle actuators."""
+
+    names: tuple[str, ...] | None = eqx.field(static=True)
+
+    def __init__(self, names: Sequence[str] | None = None, /):
+        if names is None:
+            self.names = None
+            return
+        selected = tuple(str(name).strip() for name in names)
+        if not selected or any(not name for name in selected):
+            raise ValueError("names must contain at least one non-empty actuator name.")
+        if len(set(selected)) != len(selected):
+            raise ValueError("names must contain unique actuator names.")
+        self.names = selected
+
+    def prepare(self, adapter: MJXAdapter, /) -> MJXPreparedMuscleProjection:
+        return MJXPreparedMuscleProjection(adapter, self)
+
+
+class MJXMuscleSnapshot(StrictModule, NonTrainableState):
+    """Fresh provider-native muscle state and raw signed-force projections.
+
+    Length is the MuJoCo actuator transmission length in m, velocity is its
+    extension rate in m/s, and raw force is ``mjData.actuator_force`` in N.
+    Per MuJoCo's muscle convention, pulling/tensile force is negative.
+    """
+
+    activation: RoboticsProjection
+    length_m: RoboticsProjection
+    velocity_m_per_s: RoboticsProjection
+    raw_force_N: RoboticsProjection
+    evidence: RoboticsOperationEvidence
+    names: tuple[str, ...] = eqx.field(static=True)
+    force_owner: str = eqx.field(static=True, default="provider-native")
+    raw_force_sign: str = eqx.field(
+        static=True, default="negative-is-pulling-tension"
+    )
+    geometry_authority: str = eqx.field(
+        static=True, default="mujoco-compiled-transmission"
+    )
+
+    @property
+    def freshness(self) -> Any:
+        return self.length_m.freshness
+
+    @property
+    def successful(self) -> Any:
+        return self.evidence.successful
+
+
+class MJXPreparedMuscleProjection(StrictModule, NonTrainableState):
+    """Prepared fixed-shape gather/scatter for compiled built-in muscles."""
+
+    adapter: MJXAdapter
+    activation_map: RoboticsProjectionMap
+    length_map: RoboticsProjectionMap
+    velocity_map: RoboticsProjectionMap
+    raw_force_map: RoboticsProjectionMap
+    names: tuple[str, ...] = eqx.field(static=True)
+    actuator_indices: tuple[int, ...] = eqx.field(static=True)
+    activation_indices: tuple[int, ...] = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(
+        self, adapter: MJXAdapter, plan: MJXMuscleProjectionPlan, /
+    ):
+        if not isinstance(adapter, MJXAdapter):
+            raise TypeError("adapter must be MJXAdapter.")
+        if not isinstance(plan, MJXMuscleProjectionPlan):
+            raise TypeError("plan must be MJXMuscleProjectionPlan.")
+        available = adapter.muscle_actuator_names
+        if not available:
+            raise ValueError("The prepared MJX model has no compiled built-in muscles.")
+        names = available if plan.names is None else plan.names
+        missing = tuple(name for name in names if name not in available)
+        if missing:
+            raise ValueError(
+                "Requested names are not compiled built-in MuJoCo muscles: "
+                + ", ".join(missing)
+            )
+        positions = tuple(available.index(name) for name in names)
+        actuator_indices = tuple(
+            adapter.muscle_actuator_indices[position] for position in positions
+        )
+        activation_indices = tuple(
+            adapter.muscle_activation_indices[position] for position in positions
+        )
+
+        def projection_map(kind):
+            return RoboticsProjectionMap(
+                kind,
+                len(names),
+                tuple(
+                    RoboticsIndexEntry(name, index, index + 1)
+                    for index, name in enumerate(names)
+                ),
+                adapter.provenance,
+            )
+
+        self.adapter = adapter
+        self.activation_map = projection_map("activation")
+        self.length_map = projection_map("length")
+        self.velocity_map = projection_map("velocity")
+        self.raw_force_map = projection_map("raw-force")
+        self.names = names
+        self.actuator_indices = actuator_indices
+        self.activation_indices = activation_indices
+        digest = hashlib.sha256()
+        digest.update(adapter.provenance.model.encode("utf-8"))
+        digest.update(b"\x00mjx-muscle-projection-v1\x00")
+        for name in names:
+            digest.update(name.encode("utf-8"))
+            digest.update(b"\x00")
+        self.prepared_id = f"mjx-muscle-projection-sha256:{digest.hexdigest()}"
+
+    @property
+    def muscle_count(self) -> int:
+        return len(self.names)
+
+    def scatter_control(
+        self,
+        complete_control: Any | RoboticsProjection,
+        independent_excitation: Any,
+        /,
+    ) -> RoboticsProjection:
+        """Overwrite selected muscle controls in an otherwise complete control.
+
+        ``complete_control`` is mandatory so non-muscle actuator controls are
+        never silently zeroed or dropped. ``independent_excitation`` is dimensionless
+        in [0, 1] and is independent of D1's common excitation scale.
+        """
+
+        if isinstance(complete_control, RoboticsProjection):
+            if complete_control.index_map.kind != self.adapter.control_map.kind:
+                raise ValueError(
+                    "Complete control projection must have kind 'control'."
+                )
+            if complete_control.provenance != self.adapter.provenance:
+                raise ValueError("Control provenance does not match this MJX model.")
+            if (
+                complete_control.index_map.size != self.adapter.control_map.size
+                or complete_control.index_map.name_to_range
+                != self.adapter.control_map.name_to_range
+            ):
+                raise ValueError("Control layout does not match this MJX model.")
+            base_values = complete_control.values
+        else:
+            base_values = complete_control
+        base = jnp.asarray(
+            base_values, dtype=self.adapter.initial_state.opaque.ctrl.dtype
+        )
+        values = jnp.asarray(independent_excitation, dtype=base.dtype)
+        expected_base = (self.adapter.control_map.size,)
+        if base.shape[-1:] != expected_base:
+            raise ValueError(
+                "complete_control must end in the complete model control size "
+                f"{expected_base[0]}."
+            )
+        expected_excitation = base.shape[:-1] + (self.muscle_count,)
+        if values.shape != expected_excitation:
+            raise ValueError(
+                "independent_excitation must have complete shape "
+                f"{expected_excitation}."
+            )
+        values = eqx.error_if(
+            values,
+            jnp.any(~jnp.isfinite(values) | (values < 0.0) | (values > 1.0)),
+            "MuJoCo independent muscle excitation must be finite and lie in [0, 1].",
+        )
+        indices = jnp.asarray(self.actuator_indices, dtype=jnp.int32)
+        scattered = base.at[..., indices].set(values)
+        return RoboticsProjection(scattered, self.adapter.control_map)
+
+    def snapshot(self, state: MJXState | None = None, /) -> MJXMuscleSnapshot:
+        """Gather activation and forward-derived provider muscle quantities."""
+
+        resolved, _ = self.adapter._state(state)
+        data = resolved.opaque
+        actuator_indices = jnp.asarray(self.actuator_indices, dtype=jnp.int32)
+        activation_indices = jnp.asarray(self.activation_indices, dtype=jnp.int32)
+        activation = RoboticsProjection(
+            data.act[..., activation_indices], self.activation_map
+        )
+        epoch_arguments = {
+            "state_epoch": resolved.epoch,
+            "sample_epoch": resolved.sensor_epoch,
+        }
+        length = RoboticsProjection(
+            data.actuator_length[..., actuator_indices],
+            self.length_map,
+            **epoch_arguments,
+        )
+        velocity = RoboticsProjection(
+            data._impl.actuator_velocity[..., actuator_indices],
+            self.velocity_map,
+            **epoch_arguments,
+        )
+        raw_force = RoboticsProjection(
+            data.actuator_force[..., actuator_indices],
+            self.raw_force_map,
+            **epoch_arguments,
+        )
+        finite = jnp.all(
+            jnp.isfinite(
+                jnp.stack(
+                    (
+                        activation.values,
+                        length.values,
+                        velocity.values,
+                        raw_force.values,
+                    ),
+                    axis=-1,
+                )
+            ),
+            axis=(-2, -1),
+        )
+        fresh = length.freshness
+        status = jnp.where(
+            fresh,
+            jnp.where(
+                finite,
+                int(RoboticsOperationStatus.SUCCESS),
+                int(RoboticsOperationStatus.NONFINITE),
+            ),
+            int(RoboticsOperationStatus.INVALID_STATE),
+        ).astype(jnp.int32)
+        evidence = RoboticsOperationEvidence(
+            status=status,
+            finite=finite,
+            backend="mjx-jax",
+            operation="sensors",
+            implementation="MJXPreparedMuscleProjection.snapshot",
+            device=self.adapter.device,
+            dtype=self.adapter.dtype,
+            detail=(
+                "activation is state-current; length, extension velocity, and raw "
+                "signed actuator force require explicit mjx.forward freshness"
+            ),
+        )
+        return MJXMuscleSnapshot(
+            activation,
+            length,
+            velocity,
+            raw_force,
+            evidence,
+            self.names,
+        )
+
+
+
 
 
 class MJXAdapter(StrictModule, NonTrainableState):
@@ -461,6 +735,9 @@ class MJXAdapter(StrictModule, NonTrainableState):
     feature_manifest: MJXPreparedModelManifest
     data_schema: MJXDataSchema
     provenance: RoboticsProjectionProvenance
+    muscle_actuator_names: tuple[str, ...] = eqx.field(static=True)
+    muscle_actuator_indices: tuple[int, ...] = eqx.field(static=True)
+    muscle_activation_indices: tuple[int, ...] = eqx.field(static=True)
     device: str = eqx.field(static=True)
     dtype: str = eqx.field(static=True)
     _mjx: Any = eqx.field(static=True)
@@ -478,6 +755,9 @@ class MJXAdapter(StrictModule, NonTrainableState):
         feature_manifest: MJXPreparedModelManifest,
         data_schema: MJXDataSchema,
         provenance: RoboticsProjectionProvenance,
+        muscle_actuator_names: tuple[str, ...],
+        muscle_actuator_indices: tuple[int, ...],
+        muscle_activation_indices: tuple[int, ...],
         device: str,
         dtype: str,
         mjx_module: Any,
@@ -486,7 +766,9 @@ class MJXAdapter(StrictModule, NonTrainableState):
         case_shape = data_schema.validate(data)
         epoch = jnp.zeros(case_shape, dtype=jnp.int32)
         self.model = model
-        self.initial_state = MJXState(data, epoch, epoch, provenance, owner)
+        self.initial_state = MJXState(
+            data, epoch, epoch, jnp.zeros(case_shape, dtype=jnp.bool_), provenance, owner
+        )
         self.qpos_map = qpos_map
         self.qvel_map = qvel_map
         self.control_map = control_map
@@ -497,6 +779,15 @@ class MJXAdapter(StrictModule, NonTrainableState):
         self.feature_manifest = feature_manifest
         self.data_schema = data_schema
         self.provenance = provenance
+        if not (
+            len(muscle_actuator_names)
+            == len(muscle_actuator_indices)
+            == len(muscle_activation_indices)
+        ):
+            raise ValueError("Prepared MJX muscle manifest arrays must have equal size.")
+        self.muscle_actuator_names = tuple(muscle_actuator_names)
+        self.muscle_actuator_indices = tuple(muscle_actuator_indices)
+        self.muscle_activation_indices = tuple(muscle_activation_indices)
         self.device = str(device).lower()
         self.dtype = np.dtype(dtype).name
         self._mjx = mjx_module
@@ -517,6 +808,10 @@ class MJXAdapter(StrictModule, NonTrainableState):
         if resolved.opaque.impl != self._mjx.Impl.JAX:
             raise TypeError("MJX state must retain the prepared JAX implementation.")
         case_shape = self.data_schema.validate(resolved.opaque)
+        if resolved.rollback_source.shape != case_shape:
+            raise ValueError(
+                "MJX rollback-source evidence must have exactly the data case axes."
+            )
         if resolved.epoch.shape != case_shape or resolved.sensor_epoch.shape != case_shape:
             raise ValueError("MJX state epochs must have exactly the data case axes.")
         return resolved, case_shape
@@ -533,6 +828,12 @@ class MJXAdapter(StrictModule, NonTrainableState):
         resolved, _ = self._state(state)
         return RoboticsProjection(resolved.opaque.ctrl, self.control_map)
 
+    def prepare_muscle_projection(
+        self, names: Sequence[str] | None = None, /
+    ) -> MJXPreparedMuscleProjection:
+        """Prepare fixed gathers for named or all compiled built-in muscles."""
+
+        return MJXMuscleProjectionPlan(names).prepare(self)
     def observe(
         self,
         state: MJXState | None = None,
@@ -582,37 +883,109 @@ class MJXAdapter(StrictModule, NonTrainableState):
         )
         return MJXObservation(projection, request_, evidence)
 
+    def _requested_observation(
+        self,
+        refresh: MJXRefreshResult,
+        freshness: ObservationFreshness,
+        /,
+    ) -> MJXObservation:
+        observation = refresh.observation
+        refresh_evidence = refresh.evidence
+        observation_evidence = observation.evidence
+        evidence = RoboticsOperationEvidence(
+            status=jnp.where(
+                refresh_evidence.successful,
+                observation_evidence.status,
+                refresh_evidence.status,
+            ).astype(jnp.int32),
+            finite=refresh_evidence.finite & observation_evidence.finite,
+            backend="mjx-jax",
+            operation="sensors",
+            implementation="MJXAdapter.step/refresh-observation",
+            device=self.device,
+            dtype=self.dtype,
+            detail=(
+                "the requested refresh and observation must both succeed "
+                "casewise"
+            ),
+        )
+        return MJXObservation(
+            observation.projection,
+            observation.request,
+            evidence,
+            freshness,
+        )
+
     def step(
         self,
         state: MJXState | None = None,
         control: Any | RoboticsProjection | None = None,
         /,
+        *,
+        observations: MJXStepObservationMode = "none",
+        observation_request: MJXObservationRequest | None = None,
     ) -> MJXStepResult:
-        """Advance state and leave all derived fields explicitly stale."""
-        source_state, case_shape = self._state(state)
-        source = source_state.opaque
-        stepped_source = source
+        """Advance state with optional explicitly refreshed pre/post observations."""
+        transaction_state, case_shape = self._state(state)
+        if observations not in ("none", "pre", "post", "both"):
+            raise ValueError("observations must be 'none', 'pre', 'post', or 'both'.")
+        if observation_request is not None and not isinstance(
+            observation_request, MJXObservationRequest
+        ):
+            raise TypeError(
+                "observation_request must be MJXObservationRequest or None."
+            )
+
+        source_state = transaction_state
         if control is not None:
             if isinstance(control, RoboticsProjection):
+                if control.index_map.kind != self.control_map.kind:
+                    raise ValueError("Control projection must have kind 'control'.")
                 if control.provenance != self.provenance:
                     raise ValueError(
                         "Control projection provenance does not match this adapter."
                     )
-                if control.index_map.name_to_range != self.control_map.name_to_range:
-                    raise ValueError("Control projection layout does not match this adapter.")
+                if (
+                    control.index_map.size != self.control_map.size
+                    or control.index_map.name_to_range
+                    != self.control_map.name_to_range
+                ):
+                    raise ValueError(
+                        "Control projection layout does not match this adapter."
+                    )
                 control_values = control.values
             else:
                 control_values = control
-            control_array = jnp.asarray(control_values, dtype=source.ctrl.dtype)
-            if control_array.shape != source.ctrl.shape:
+            control_array = jnp.asarray(
+                control_values, dtype=transaction_state.opaque.ctrl.dtype
+            )
+            if control_array.shape != transaction_state.opaque.ctrl.shape:
                 raise ValueError(
-                    f"Control must have complete shape {source.ctrl.shape}; "
-                    f"got {control_array.shape}."
+                    "Control must have complete shape "
+                    f"{transaction_state.opaque.ctrl.shape}; got {control_array.shape}."
                 )
-            stepped_source = source.replace(ctrl=control_array)
+            source_state = MJXState(
+                transaction_state.opaque.replace(ctrl=control_array),
+                transaction_state.epoch,
+                transaction_state.sensor_epoch,
+                transaction_state.rollback_source,
+                self.provenance,
+                self._owner,
+            )
 
+        pre_step_observation = None
+        if observations in ("pre", "both"):
+            pre_refresh = self.refresh(source_state, observation_request)
+            source_state = pre_refresh.accepted_state
+            pre_step_observation = self._requested_observation(
+                pre_refresh,
+                "pre-step",
+            )
+            case_shape = self.data_schema.validate(source_state.opaque)
+
+        source = source_state.opaque
         candidate = _apply_casewise(
-            self._mjx.step, self.model, stepped_source, len(case_shape)
+            self._mjx.step, self.model, source, len(case_shape)
         )
         self.data_schema.validate(candidate)
         finite = _finite_dynamic_state(candidate, self.data_schema, case_shape)
@@ -625,13 +998,15 @@ class MJXAdapter(StrictModule, NonTrainableState):
             candidate,
             candidate_epoch,
             source_state.sensor_epoch,
+            ~finite,
             self.provenance,
             self._owner,
         )
-        accepted_state = MJXState(
+        step_accepted_state = MJXState(
             accepted,
             accepted_epoch,
             source_state.sensor_epoch,
+            ~finite,
             self.provenance,
             self._owner,
         )
@@ -653,7 +1028,102 @@ class MJXAdapter(StrictModule, NonTrainableState):
                 "dynamic floating leaf in that case is finite"
             ),
         )
-        return MJXStepResult(candidate_state, accepted_state, evidence)
+        if observations in ("pre", "both"):
+            pre_status = pre_step_observation.evidence.status
+            pre_successful = pre_step_observation.successful
+            evidence = RoboticsOperationEvidence(
+                status=jnp.where(pre_successful, evidence.status, pre_status),
+                finite=pre_step_observation.evidence.finite & evidence.finite,
+                backend="mjx-jax",
+                operation="step",
+                implementation="MJXAdapter.step",
+                device=self.device,
+                dtype=self.dtype,
+                detail=(
+                    "the requested pre-step refresh and observation and the "
+                    "complete step candidate must all succeed casewise"
+                ),
+            )
+
+        successful = evidence.successful
+        accepted_state = MJXState(
+            _select_complete_state(
+                successful,
+                transaction_state.opaque,
+                step_accepted_state.opaque,
+                case_shape,
+            ),
+            jnp.where(
+                successful,
+                step_accepted_state.epoch,
+                transaction_state.epoch,
+            ),
+            jnp.where(
+                successful,
+                step_accepted_state.sensor_epoch,
+                transaction_state.sensor_epoch,
+            ),
+            jnp.where(
+                successful,
+                step_accepted_state.rollback_source,
+                jnp.ones(case_shape, dtype=jnp.bool_),
+            ),
+            self.provenance,
+            self._owner,
+        )
+
+        post_step_observation = None
+        if observations in ("post", "both"):
+            post_refresh = self.refresh(accepted_state, observation_request)
+            post_step_observation = self._requested_observation(
+                post_refresh,
+                "post-step-refreshed",
+            )
+            post_status = post_step_observation.evidence.status
+            evidence = RoboticsOperationEvidence(
+                status=jnp.where(evidence.successful, post_status, evidence.status),
+                finite=evidence.finite & post_step_observation.evidence.finite,
+                backend="mjx-jax",
+                operation="step",
+                implementation="MJXAdapter.step",
+                device=self.device,
+                dtype=self.dtype,
+                detail=(
+                    "the complete step candidate and its requested post-step "
+                    "refresh and observation must all succeed casewise"
+                ),
+            )
+            successful = evidence.successful
+            post_state = post_refresh.accepted_state
+            accepted_state = MJXState(
+                _select_complete_state(
+                    successful,
+                    transaction_state.opaque,
+                    post_state.opaque,
+                    case_shape,
+                ),
+                jnp.where(successful, post_state.epoch, transaction_state.epoch),
+                jnp.where(
+                    successful,
+                    post_state.sensor_epoch,
+                    transaction_state.sensor_epoch,
+                ),
+                jnp.where(
+                    successful,
+                    post_state.rollback_source,
+                    jnp.ones(case_shape, dtype=jnp.bool_),
+                ),
+                self.provenance,
+                self._owner,
+            )
+        return MJXStepResult(
+            candidate_state,
+            accepted_state,
+            evidence,
+            pre_step_observation,
+            post_step_observation,
+            observations,
+        )
 
     def refresh(
         self,
@@ -675,6 +1145,7 @@ class MJXAdapter(StrictModule, NonTrainableState):
             candidate,
             source_state.epoch,
             source_state.epoch,
+            jnp.zeros(case_shape, dtype=jnp.bool_),
             self.provenance,
             self._owner,
         )
@@ -685,6 +1156,11 @@ class MJXAdapter(StrictModule, NonTrainableState):
             accepted,
             source_state.epoch,
             accepted_sensor_epoch,
+            jnp.where(
+                finite,
+                jnp.zeros(case_shape, dtype=jnp.bool_),
+                source_state.rollback_source,
+            ),
             self.provenance,
             self._owner,
         )
@@ -708,7 +1184,11 @@ class MJXAdapter(StrictModule, NonTrainableState):
             ),
         )
         return MJXRefreshResult(
-            candidate_state, accepted_state, observation, evidence
+            candidate_state,
+            accepted_state,
+            observation,
+            evidence,
+            finite & source_state.rollback_source,
         )
 
 
@@ -716,7 +1196,6 @@ def _array_devices(array: jax.Array, /) -> tuple[str, ...]:
     return tuple(
         sorted(f"{device.platform}:{device.id}" for device in array.devices())
     )
-
 
 def _data_schema(data: Any, /) -> MJXDataSchema:
     leaves, treedef = jax.tree_util.tree_flatten(data)
@@ -1117,6 +1596,75 @@ def _object_name(
     return fallback if name is None or not str(name) else str(name)
 
 
+def _muscle_actuator_manifest(
+    mujoco: Any, model: Any, /
+) -> tuple[tuple[str, ...], tuple[int, ...], tuple[int, ...]]:
+    gain = np.asarray(model.actuator_gaintype)
+    bias = np.asarray(model.actuator_biastype)
+    dynamics = np.asarray(model.actuator_dyntype)
+    muscle_mask = (
+        (gain == int(mujoco.mjtGain.mjGAIN_MUSCLE))
+        & (bias == int(mujoco.mjtBias.mjBIAS_MUSCLE))
+        & (dynamics == int(mujoco.mjtDyn.mjDYN_MUSCLE))
+    )
+    actuator_indices = tuple(
+        int(index) for index in np.flatnonzero(muscle_mask).tolist()
+    )
+    activation_addresses = np.asarray(model.actuator_actadr)
+    activation_counts = np.asarray(model.actuator_actnum)
+    length_ranges = np.asarray(model.actuator_lengthrange)
+    names: list[str] = []
+    activation_indices: list[int] = []
+    for actuator_index in actuator_indices:
+        if (
+            int(activation_counts[actuator_index]) != 1
+            or int(activation_addresses[actuator_index]) < 0
+        ):
+            raise _unsupported_model(
+                "a built-in muscle actuator must own exactly one activation state"
+            )
+        length_range = length_ranges[actuator_index]
+        if (
+            length_range.shape != (2,)
+            or not np.all(np.isfinite(length_range))
+            or not float(length_range[1]) > float(length_range[0])
+        ):
+            raise _unsupported_model(
+                "a built-in muscle actuator requires a finite increasing length range"
+            )
+        names.append(
+            _object_name(
+                mujoco,
+                model,
+                mujoco.mjtObj.mjOBJ_ACTUATOR,
+                actuator_index,
+                f"actuator-{actuator_index}",
+            )
+        )
+        activation_indices.append(int(activation_addresses[actuator_index]))
+    if len(set(names)) != len(names):
+        raise _unsupported_model("compiled muscle actuator names must be unique")
+    if len(set(activation_indices)) != len(activation_indices):
+        raise _unsupported_model(
+            "compiled built-in muscles must own distinct activation states"
+        )
+    return tuple(names), actuator_indices, tuple(activation_indices)
+
+
+def _validate_muscle_data_fields(data: Any, actuator_count: int, /) -> None:
+    expected = (actuator_count,)
+    fields = (
+        ("actuator_length", data.actuator_length),
+        ("actuator_velocity", data._impl.actuator_velocity),
+        ("actuator_force", data.actuator_force),
+    )
+    for name, field in fields:
+        if field.shape != expected:
+            raise TypeError(
+                f"Canonical MJX Data {name} must have intrinsic shape {expected}."
+            )
+
+
 def _joint_map(
     mujoco: Any,
     model: Any,
@@ -1294,15 +1842,21 @@ def prepare_mjx_adapter(
         raise TypeError("model must be an already compiled mujoco.MjModel.")
 
     feature_manifest = _prepare_feature_manifest(mujoco, model)
+    (
+        muscle_actuator_names,
+        muscle_actuator_indices,
+        muscle_activation_indices,
+    ) = _muscle_actuator_manifest(mujoco, model)
     provenance = _projection_provenance(mujoco, model, availability.versions)
     device_model = mjx.put_model(model, device=device, impl="jax")
     canonical = mjx.make_data(device_model, device=device, impl="jax")
     if not isinstance(canonical, mjx.Data) or canonical.impl != mjx.Impl.JAX:
         raise TypeError("make_data(model) must return a complete MJX-JAX Data PyTree.")
-    data_schema = _data_schema(canonical)
-    data_schema.validate(canonical)
     opaque = mjx.forward(device_model, canonical)
+    data_schema = _data_schema(opaque)
     data_schema.validate(opaque)
+    if muscle_actuator_names:
+        _validate_muscle_data_fields(opaque, int(model.nu))
     if not bool(np.asarray(_finite_dynamic_state(opaque, data_schema, ()))):
         raise ValueError("Initial mjx.forward state must be completely finite.")
 
@@ -1327,11 +1881,26 @@ def prepare_mjx_adapter(
         feature_manifest=feature_manifest,
         data_schema=data_schema,
         provenance=provenance,
+        muscle_actuator_names=muscle_actuator_names,
+        muscle_actuator_indices=muscle_actuator_indices,
+        muscle_activation_indices=muscle_activation_indices,
         device=device_name,
         dtype=opaque.qpos.dtype,
         mjx_module=mjx,
         owner=owner,
     )
+
+
+def prepare_mjx_muscle_projection(
+    adapter: MJXAdapter,
+    names: Sequence[str] | None = None,
+    /,
+) -> MJXPreparedMuscleProjection:
+    """Prepare fixed gathers/scatters for named or all built-in muscles."""
+
+    if not isinstance(adapter, MJXAdapter):
+        raise TypeError("adapter must be MJXAdapter.")
+    return MJXMuscleProjectionPlan(names).prepare(adapter)
 
 
 __all__ = [
@@ -1341,12 +1910,17 @@ __all__ = [
     "MJX_JAX_BACKEND_CAPABILITIES",
     "MJX_JAX_PROFILE",
     "MJXObservation",
+    "MJXMuscleProjectionPlan",
+    "MJXMuscleSnapshot",
     "MJXObservationRequest",
     "MJXPreparedModelManifest",
+    "MJXPreparedMuscleProjection",
     "MJXRefreshResult",
     "MJXState",
     "MJXStepResult",
+    "MJXStepObservationMode",
     "MJX_WARP_PROFILE",
     "mjx_availability",
     "prepare_mjx_adapter",
+    "prepare_mjx_muscle_projection",
 ]

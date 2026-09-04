@@ -78,7 +78,11 @@ def _pack_complex_tree(tree: Any, /) -> Any:
 
 def _unpack_complex_tree(tree: Any, /) -> Any:
     return jax.tree.map(
-        lambda value: jax.lax.complex(value.real, value.imag),
+        lambda value: (
+            jax.lax.complex(value.real, value.imag)
+            if isinstance(value, _PackedComplexLeaf)
+            else value
+        ),
         tree,
         is_leaf=lambda value: isinstance(value, _PackedComplexLeaf),
     )
