@@ -6,6 +6,7 @@ from ._model import (
     cpfem_equilibrium_form,
     CrystalPlasticityModel,
     CrystalPlasticityParameters,
+    CrystalPlasticityRoute,
     CrystalPlasticityState,
     CrystalPlasticityUpdate,
     CrystalSlipSystem,
@@ -15,6 +16,7 @@ from ._model import (
 __all__ = [
     "CrystalPlasticityModel",
     "CrystalPlasticityParameters",
+    "CrystalPlasticityRoute",
     "CrystalPlasticityState",
     "cpfem_equilibrium_form",
     "CrystalPlasticityUpdate",

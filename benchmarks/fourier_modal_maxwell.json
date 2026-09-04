@@ -6,22 +6,27 @@
     "python": "3.12.8"
   },
   "evidence": {
+    "left_incoming_power": 31.999999999999996,
+    "left_outgoing_power": 4.343046741138381,
+    "net_port_power_into_stack": 3.774047740989772e-11,
     "paired_error": 6.105202615635468e-13,
-    "power_balance_residual": 0.0,
+    "power_audit_residual": 1.6711626555897163e-16,
     "refresh_count": 1,
+    "right_incoming_power": 0.0,
+    "right_outgoing_power": 27.65695325882385,
     "status": 0
   },
   "problem": {
     "harmonic_count": 1,
     "layer_count": 1,
-    "preparation_bytes": 800,
+    "preparation_bytes": 3136,
     "rhs_count": 32,
-    "workspace_bytes": 1024
+    "workspace_bytes": 1536
   },
   "timings_seconds": {
-    "planning": 0.00032516696956008673,
-    "preparation": 17.083402541989926,
-    "solve_32_rhs": 4.706055417016614,
-    "thickness_refresh": 10.192355250008404
+    "planning": 0.0010724999592639506,
+    "preparation": 15.97730391699588,
+    "solve_32_rhs": 2.6752693749731407,
+    "thickness_refresh": 8.239759624993894
   }
 }

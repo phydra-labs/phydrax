@@ -97,6 +97,35 @@ def test_variational_compiler_reproduces_affine_dirichlet_solution():
     assert isinstance(compiled.residual_space, phx.linalg.DualSpace)
 
 
+def test_auxiliary_evaluator_receives_constraint_expanded_full_state():
+    discretization = _square_discretization()
+    constraint = phx.discretization.dirichlet_constraint(discretization, "u")
+
+    def auxiliary(state, context):
+        del context
+        return phx.equations.fem.FiniteElementAuxiliaryEvaluation(state)
+
+    form = phx.equations.FiniteElementForm(
+        "constrained-auxiliary",
+        "u",
+        (phx.equations.DiffusionAction("u"),),
+        auxiliary_evaluator=auxiliary,
+        auxiliary_id="constraint-expanded-state",
+    )
+    compiled = phx.equations.compile_finite_element_problem(
+        form,
+        discretization,
+        constraint=constraint,
+        dirichlet_values=lambda points: points[..., 0] + points[..., 1],
+    )
+    reduced = compiled.state_space.zeros()
+    _, evaluation = compiled.residual_with_auxiliary(reduced)
+
+    expected = compiled.expand(reduced)
+    assert evaluation.trial_state.shape == expected.shape
+    assert jnp.allclose(evaluation.trial_state, expected)
+
+
 def test_boundary_loading_reconstruction_and_functional_preserve_integrals():
     discretization = _square_discretization()
     form = phx.equations.FiniteElementForm(

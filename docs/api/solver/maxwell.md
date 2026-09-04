@@ -128,6 +128,22 @@ Phydrax provides complementary Maxwell substrates.
 
 ::: phydrax.solver.maxwell.fourier_modal.solve_fourier_modal_maxwell
 
+---
+
+::: phydrax.solver.maxwell.fourier_modal.fourier_modal_numeric_revision
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.fourier_modal_physical_state_digest
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.fourier_modal_physical_stack_digest
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.require_fourier_modal_numeric_revision
+
 ::: phydrax.solver.maxwell.fourier_modal.PreparedFourierModalCaseBatch
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalCaseBatchResult
@@ -176,6 +192,8 @@ Phydrax provides complementary Maxwell substrates.
 
 ::: phydrax.solver.maxwell.fourier_modal.VectorFourierFactorizationPlan
 
+::: phydrax.solver.maxwell.fourier_modal.AnalyticInterfaceFramePlan
+
 ::: phydrax.solver.maxwell.fourier_modal.JonesDirectFramePlan
 
 ::: phydrax.solver.maxwell.fourier_modal.BoundaryCascadePolicy
@@ -205,3 +223,87 @@ Phydrax provides complementary Maxwell substrates.
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalSolveResult
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalDiagnostics
+
+## Directional power and independent physical loss
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalLossPolicy
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalLossEvidence
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalLossStatus
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.evaluate_fourier_modal_loss
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalLossConvergenceEvidence
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.assess_fourier_modal_loss_convergence
+
+## Fixed-frequency guided modes
+
+::: phydrax.solver.maxwell.FixedFrequencyGuidedModePlan
+
+---
+
+::: phydrax.solver.maxwell.PreparedFixedFrequencyGuidedModes
+
+---
+
+::: phydrax.solver.maxwell.FixedFrequencyGuidedModeResult
+
+---
+
+::: phydrax.solver.maxwell.solve_fixed_frequency_guided_modes
+
+---
+
+::: phydrax.solver.maxwell.guided_mode_beta_derivative
+
+## Equivalent-slab retrieval and local-isotropic qualification
+
+::: phydrax.solver.maxwell.fourier_modal.MaxwellModalSweep
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.prepare_maxwell_modal_sweep
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.EquivalentSlabRetrievalPlan
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.EquivalentSlabRetrieval
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.EquivalentSlabRetrievalStatus
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.retrieve_equivalent_slab
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.LocalIsotropicQualificationPolicy
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.LocalIsotropicMediumQualification
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.LocalIsotropicQualificationStatus
+
+---
+
+::: phydrax.solver.maxwell.fourier_modal.qualify_local_isotropic_medium

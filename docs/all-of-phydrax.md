@@ -115,6 +115,25 @@ exact. Full-complex shell statistics conserve native modal integrals, and
 accepted-step statistical windows provide sample/time weighting and completed-block
 uncertainty.
 
+Large-eddy simulation adds filter/provenance-bound Smagorinsky, WALE, Vreman, and
+AMD stresses; explicit Germano averaging/regularization/backscatter policies;
+static, buoyant, dynamic, and low-Re backend-neutral KSGS physics; and Favre heat,
+species, momentum, and energy transport with explicit isotropic-trace policy.
+Implemented owners now include compiled static and dynamic periodic Fourier/MAC,
+transactional dynamic ETDRK and projected MAC stepping, wall-resolved or
+equilibrium-traction spectral channel, all structured-MAC KSGS families on their
+exact boundary subsets, learned-stress Fourier/MAC divergence backends,
+device-resident distributed full-flow production, pressure-stepped tetrahedral
+low-Mach continuation, neglected or transported-energy compressible Favre flow,
+fixed immersed MAC, and collision-local athermal LBM Smagorinsky. Additive
+model-error assimilation remains explicitly not identifiable as SGS stress.
+See [Guide → Large-eddy simulation](guides_large_eddy_simulation.md) and
+[API → LES equations](api/equations/les.md).
+
+LES campaign outputs use the generic qualification spine, remain
+candidate/unreleased, and retain the base incompressible profile as an external
+release dependency.
+
 Fourier--Chebyshev--Fourier channels retain primitive public velocity/pressure fields
 while the default internal Stokes route eliminates pressure into fixed-band
 ultraspherical systems with fixed-rank corrections. The zero mode owns
@@ -139,6 +158,11 @@ padded/canonical layout, precision, collective, and byte bound and performs no h
 gather. The channel schedule replicates its Chebyshev axis and does not make the
 separate `ChannelStokesPlan` a distributed line solver.
 
+`DistributedPeriodicLESPlan` places the scientific action on slab/pencil layouts;
+the application compiler adds full rotational flow, ETDRK/SSPRK, statistics, and
+device-resident checkpointed production without a host gather. Scientific/backend
+qualification remains exact and is never inherited from one-device parity.
+
 Partition-aware `DistributedLineSolvePlan` supports partitioned Thomas, bounded SPIKE,
 and balanced power-of-two PCR with explicit compatibility, gauge, residual, resource,
 and communication evidence. It operates on caller-provided arrays and is not itself a
@@ -160,13 +184,17 @@ dense control system, and atomically rejects rank, conditioning, residual, resou
 underlying-method failure. This is distinct from fixed
 `MACConstantPressureGradientForcing` and spectral channel zero-mode control.
 
-The broader MAC substrate includes dynamic wall/inflow/open closures,
-symmetry-preserving momentum, scalar/Boussinesq and conservative variable-density
-dynamics, implicit diffusion, resolved marker coupling, mapped/ALE geometry, remesh
-epochs, adaptive replay, bounded sensitivity, and route-specific statistics and
-production. `ImmersedDNSQualificationProfile` groups six exact owner support tuples,
-but remains an unsigned candidate with `released=false`; its two-phase runtime
-admission never substitutes an owner.
+The broader MAC substrate includes accepted-step stochastic inflow providers,
+symmetry-preserving momentum, scalar/Boussinesq and variable-density dynamics,
+static algebraic LES with frozen IMEX/SBDF2, periodic-uniform dynamic LES with
+transactional explicit stepping, dynamic/low-Re KSGS, periodic-uniform learned
+stress, and fixed immersed MAC LES. Spectral channel SBDF2 separately admits a
+normal-essential/equilibrium-traction owner and enforces its complete explicit
+restriction. Mapped/ALE geometry, remesh epochs, replay, sensitivity, statistics,
+and production retain their owners. `ImmersedDNSQualificationProfile` groups six
+exact owner support tuples but remains an unsigned candidate with `released=false`; its
+two-phase runtime admission never substitutes an owner or creates an immersed LES
+release.
 
 One-device execution is local. Spectral and selected MAC/LBM owners have explicit
 multi-device JAX or collective routes. Partition metadata, deployment records, and
@@ -352,19 +380,25 @@ No communication, mesh, or fallback-solver stack is introduced. See
 
 ### Native robotics as a composition
 
-`phydrax.applications.robotics` adapts bounded URDF 1.0 trees into the existing
-particle, rigid-body, joint, and reduced-articulation plans; adds local frame IK,
-immutable task environments, stable backend projections, and optional lazy MJX;
-and keeps capability, loss, freshness, status, and rollback evidence explicit.
-Reduced inverse/forward dynamics, articulated Delassus impact, status-aware
-rollouts, fixed-work sampling MPC, manifold Radau defects, inertial realization,
-and planar reduced rods remain with their existing discretization, contact,
-control, interchange, and solid-mechanics owners.
+`phydrax.applications.robotics` adapts explicitly rooted, descriptor-bounded
+URDF 1.0 trees into COM-centred particle, rigid-body, joint, and
+reduced-articulation plans. Capability-associated loss negotiation, exact
+resource manifests, mandatory inertial reference rebasing, result-preserving
+discrete transitions, accepted-state task environments, and semantic
+provenance keep conversion and rollback visible. Local frame IK, fixed-work
+control, manifold defects, and reduced rods remain with their existing
+discretization, control, interchange, and solid-mechanics owners.
 
-The native tree scope is 3-D fixed-base fixed/hinge/prismatic. It does not claim
-floating bases, ball joints, global IK, general contact-mode gradients, certified
-sampling robustness, hard real time, or universal MJX differentiability. See
-[Guide → Native robotics](guides_robotics.md) and
+Optional MJX-JAX requires a matching MuJoCo/MJX 3.12.x provider pair and binds a
+closed prepared-feature manifest, complete data schema, projection provenance,
+casewise rollback, and the `step → stale state → refresh → observe` lifecycle.
+Fixed-route articulated impact certifies material availability, Delassus
+positive-semidefiniteness, numeric revision, and contact law, but remains an
+operator utility over supplied routes. There is no collision discovery or
+atomic robot/contact step yet. The native tree scope is 3-D fixed-base
+fixed/hinge/prismatic; floating bases, ball joints, global IK, certified
+sampling robustness, hard real time, and universal MJX differentiability are
+not claimed. See [Guide → Native robotics](guides_robotics.md) and
 [API → Robotics applications](api/applications/robotics.md).
 
 ### Skeletal-muscle platform
@@ -424,8 +458,9 @@ unit systems, interaction-site coordinate maps and differentiable virtual sites,
 topology, native force-field bundles and adapters, dense/cell/Verlet and distributed
 execution, constrained NVE/NVT/NPT and rigid dynamics, polarization, implicit solvent,
 quantum-nuclear propagation, many-body and soft-matter models, H5MD/XYZ reporting and
-rerun, MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases,
-replica exchange, free-energy estimators, and committee uncertainty/acquisition. State,
+rerun, loss-audited ASE structure exchange, MDAnalysis, i-PI and PACKMOL boundaries,
+collective variables, adaptive biases, replica exchange, free-energy estimators, and
+committee uncertainty/acquisition. State,
 labels, bias history, transport resources, and analysis frames remain separate typed
 contracts. Every capacity, convergence, protocol, or physical failure is typed and
 fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
@@ -869,11 +904,36 @@ linearization and frequency response, Lyapunov/Riccati equations, Gramians,
 finite- and infinite-horizon LQR, iLQR, dense multiple shooting, implicit
 direct collocation, dense or structural-sparse prepared linear-control QPs,
 explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
-`phydrax.control.games` adds finite-horizon affine linear-quadratic
-full-state feedback Nash policies with explicit player control ownership,
-per-player values, nonsymmetric dense-LU solves, diagnostic-only rank SVDs,
-and independent curvature, stationarity, Bellman, conditioning, and causal
-failure evidence.
+`phydrax.control.games` starts with finite-horizon affine linear-quadratic
+full-state feedback Nash policies, then keeps later solution concepts separate:
+deterministic policy evaluation and nominal first-order residuals; one-step local
+quadratic suggestions and residual-globalized nonlinear iLQ; explicitly owned
+constraints; convex open-loop VE and generic GNE; nonlinear private open-loop KKT;
+and fixed-active-set feedback quasi-Nash local models. VE common multipliers,
+generic-GNE player copies, local nominal stationarity, exact LQ feedback Nash, and
+global unilateral best-response gap evidence are never treated as synonyms.
+
+`phydrax.control.stochastic` provides prepared-noise feedback rollout, empirical-risk
+and paired-policy evaluation, exact additive and multiplicative LQ recursions,
+centralized observation-before-action Gaussian-belief LQG, frozen-policy fitted
+Bellman evaluation, open-loop stochastic-maximum-principle evidence, and bounded
+one-dimensional HJB references. Game counterparts add additive/multiplicative LQG
+feedback Nash, player-owned SMP residuals, finite-sample policy-game SAA, zero-sum
+HJBI with both action orders, and all-minimizer coupled-HJB policy iteration.
+Physical actions, BSDE martingale integrands, SMP adjoints, and SMP martingale
+integrands remain distinct.
+
+Mean-field capability is layered rather than hidden behind one solver: supplied
+frozen-law response evaluation; independently induced-law MFG fixed points;
+finite-scenario conditional common-noise candidates; constrained individual,
+aggregate-generic, and aggregate-variational MFG KKT candidates; finite-population
+continuation with complete numerical and simultaneous statistical deviation bounds;
+and MFC planner stationarity with an explicit analytic or finite-particle measure
+externality. Finite-state common-information pure-prescription games and the exact
+finite-population empirical-lattice master-equation reference are separate again.
+None of these layers silently implies another layer's equilibrium or optimality
+claim.
+
 Direct collocation accepts explicit systems or controlled state-shaped DAEs,
 shared parameter coordinates, fixed or variable duration, exact sparse
 derivatives, and explicitly selected dense-native, sparse-native, or sparse
@@ -1396,6 +1456,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API reference](api/phydrax.md).
 - **Inverse problems (unknown coefficients/parameters)**: represent unknowns as additional fields or domain parameters, and couple them in residual operators.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
+- **Optical systems and inverse design**: select the physical state explicitly.
+  Use `phx.optics.geometric` for fixed-route rays and paraxial maps,
+  `phx.optics.wave` for sampled coherent propagation and imaging,
+  `phx.solver.maxwell` for rigorous vector electromagnetics,
+  `phx.optics.transport` for incoherent multiple scattering, and
+  `phx.optics.sbs` for guided optical-acoustic overlap. Fixed-topology gradients
+  compose with `phx.optim`; branch, aperture, mode-cutoff, and caustic evidence
+  defines where those gradients are valid. See the [optics guide](guides_optics.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
 - **Conditional-affine chemical operators**: certify a directional mass-action
@@ -1704,8 +1772,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   and [API → Advanced structural evidence](api/advanced_structural.md).
 - **Classical circuit networks and periodic analysis**: compose typed scattering
   networks, grounded MNA circuits, implicit device DAEs, operating points,
-  descriptors, macromodels, noise, calibration, and field coupling. Harmonic
-  balance plans fixed Fourier-collocation resources, prepares the native
+  descriptors, macromodels, noise, calibration, and field coupling. Independent
+  RMS-phasor MNA power ledgers retain supported RLC, source, and port axes without
+  confusing a wave identity with conservation. Transient and periodic ledgers keep
+  passive storage/dissipation separate from signed source and boundary power.
+  Harmonic balance plans fixed Fourier-collocation resources, prepares the native
   matrix-free nonlinear solve, and refreshes frequency and circuit coefficients
   without changing device equations. See
   [Guides → Circuit networks](guides_circuit_networks.md) and
@@ -1820,6 +1891,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.continuation` for generic parameterized residual curves, stability,
   event localization, branch switching, and fold/Hopf/pitchfork workflows.
 - `phydrax.control` for finite-horizon control, linear systems, LQR/iLQR,
-  multiple shooting, compiled QPs, and MPC.
+  multiple shooting, compiled QPs, MPC, stochastic control, deterministic and
+  stochastic games, constrained equilibria, and mean-field/finite-state references.
 - `phydrax.solver` for training, differential, delay/memory, rough, stochastic,
   controlled, probabilistic, and geometry-preserving equation solvers.

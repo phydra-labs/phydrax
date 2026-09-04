@@ -20,13 +20,16 @@ from phydrax.interchange._report import (
 )
 
 
-def _interpretation_loss() -> AdapterLoss:
+def _interpretation_loss(
+    *affected_capability_ids: str,
+) -> AdapterLoss:
     return AdapterLoss(
         "coordinates.handedness",
         "import",
         "transformed",
         "converted to the target coordinate convention",
         changes_interpretation=True,
+        affected_capability_ids=affected_capability_ids,
     )
 
 
@@ -169,7 +172,8 @@ def test_valid_report_chain_produces_one_deterministic_cumulative_report():
     backend = AdapterFormatProfile("backend", qualifiers={"storage": "native"})
     requirement = AdapterRequirement("coordinates")
     capability = AdapterCapability("coordinates")
-    loss = _interpretation_loss()
+    convention = AdapterCapability("coordinate-convention")
+    loss = _interpretation_loss(convention.capability_id)
     waiver = AdapterWaiver(loss, "the caller selected the target convention")
     parse = _stage(
         "parse",
@@ -233,3 +237,101 @@ def test_valid_report_chain_produces_one_deterministic_cumulative_report():
         prepare_backend.report_id,
     )
     assert first.report_id == second.report_id
+
+
+def test_required_executable_capability_loss_cannot_be_waived():
+    requirement = AdapterRequirement("execution")
+    capability = AdapterCapability("execution", detail="native executable state")
+    loss = AdapterLoss(
+        "state.accepted",
+        "import",
+        "dropped",
+        "accepted execution state would be discarded",
+        changes_interpretation=True,
+        affected_capability_ids=(capability.capability_id,),
+    )
+    waiver = AdapterWaiver(loss, "caller attempted to accept the loss")
+
+    result = negotiate_adapter(
+        (requirement,), (capability,), losses=(loss,), waivers=(waiver,)
+    )
+
+    assert not result.valid
+    assert result.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    assert result.waived_losses == ()
+    assert result.unwaived_losses == (loss,)
+    assert loss.affected_capability_ids == (capability.capability_id,)
+
+
+def test_unassociated_loss_cannot_bypass_required_capability_protection():
+    requirement = AdapterRequirement("execution")
+    capability = AdapterCapability("execution")
+    loss = _interpretation_loss()
+    waiver = AdapterWaiver(loss, "accepted without identifying affected capability")
+
+    result = negotiate_adapter(
+        (requirement,), (capability,), losses=(loss,), waivers=(waiver,)
+    )
+
+    assert not result.valid
+    assert result.waived_losses == ()
+    assert result.unwaived_losses == (loss,)
+
+
+def test_stale_and_semantically_unused_waivers_reject():
+    stale_loss = _interpretation_loss()
+    stale_waiver = AdapterWaiver(stale_loss, "no matching declared loss")
+    informational_loss = AdapterLoss(
+        "metadata.note",
+        "import",
+        "dropped",
+        "informational metadata is omitted",
+        changes_interpretation=False,
+    )
+    unnecessary_waiver = AdapterWaiver(
+        informational_loss, "no interpretation change needed acceptance"
+    )
+
+    stale = negotiate_adapter((), (), waivers=(stale_waiver,))
+    unnecessary = negotiate_adapter(
+        (), (), losses=(informational_loss,), waivers=(unnecessary_waiver,)
+    )
+
+    assert not stale.valid
+    assert stale.unused_waivers == (stale_waiver,)
+    assert not unnecessary.valid
+    assert unnecessary.unused_waivers == (unnecessary_waiver,)
+
+
+def test_composition_derives_optional_and_required_negotiation_status():
+    source = AdapterFormatProfile("source")
+    target = AdapterFormatProfile("target")
+    optional = AdapterRequirement("annotations", required=False)
+    required = AdapterRequirement("executable-state")
+    optional_stage = _stage(
+        "parse",
+        source,
+        target,
+        "source-id",
+        "target-id",
+        requirements=(optional,),
+    )
+    required_stage = _stage(
+        "parse",
+        source,
+        target,
+        "other-source-id",
+        "other-target-id",
+        requirements=(required,),
+    )
+
+    optional_report = compose_adapter_reports((optional_stage,))
+    required_report = compose_adapter_reports((required_stage,))
+
+    assert optional_report.valid
+    assert optional_report.status == AdapterStatus.DECLARED_LOSS
+    assert optional_report.losses == ()
+    assert optional_report.negotiation.missing_optional == (optional,)
+    assert not required_report.valid
+    assert required_report.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    assert required_report.negotiation.missing_required == (required,)

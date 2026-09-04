@@ -20,8 +20,8 @@ from ._contracts import FrequencyMaxwellMaterial
 
 
 class LateralTransformationOpticsPMLPlan(StrictModule, NonTrainableState):
-    stretch_profile: Any = eqx.field(static=True)
-    region_mask: Any = eqx.field(static=True)
+    stretch_profile: Any
+    region_mask: Any
     pml_id: str = eqx.field(static=True)
 
     def __init__(self, stretch_profile: Any, region_mask: Any, /, *, pml_id: str):
@@ -41,6 +41,7 @@ class TransformationOpticsPMLEvidence(StrictModule):
     minimum_determinant_magnitude: Array
     minimum_orientation: Array
     minimum_absorption_sign: Array
+    maximum_imaginary_off_diagonal: Array
     seam_defect: Array
     finite: Array
     passive: Array
@@ -123,26 +124,38 @@ def transform_fourier_modal_material(
     epsilon = jnp.finfo(jacobian.real.dtype).eps
     finite = jnp.all(jnp.isfinite(jacobian)) & jnp.all(jnp.isfinite(determinant))
     orientation = jnp.real(determinant)
-    absorption = jnp.min(
+    imaginary = jnp.imag(jacobian)
+    diagonal_imaginary = jnp.diagonal(imaginary, axis1=-2, axis2=-1)
+    absorption = jnp.min(jnp.where(mask[..., None], diagonal_imaginary, jnp.inf))
+    absorption = jnp.where(jnp.any(mask), absorption, 0.0)
+    diagonal_matrix = diagonal_imaginary[..., :, None] * jnp.eye(3, dtype=imaginary.dtype)
+    imaginary_off_diagonal = imaginary - diagonal_matrix
+    maximum_imaginary_off_diagonal = jnp.max(
         jnp.where(
-            mask[..., None],
-            jnp.imag(jnp.diagonal(jacobian, axis1=-2, axis2=-1)),
-            jnp.inf,
+            mask[..., None, None],
+            jnp.abs(imaginary_off_diagonal),
+            0.0,
         )
     )
-    absorption = jnp.where(jnp.any(mask), absorption, 0.0)
     seam = _seam_defect(jacobian, lattice.plan.layout.periodic_dimension)
-    passive = (absorption >= -64.0 * epsilon) & (jnp.min(orientation) > 0.0)
+    scale = jnp.maximum(jnp.max(jnp.abs(jacobian)), 1.0)
+    diagonal_complex_stretch = maximum_imaginary_off_diagonal <= 256.0 * epsilon * scale
+    passive = (
+        diagonal_complex_stretch
+        & (absorption >= -64.0 * epsilon)
+        & (jnp.min(orientation) > 0.0)
+    )
     valid = (
         finite
         & passive
         & (jnp.min(jnp.abs(determinant)) > 64.0 * epsilon)
-        & (seam <= 256.0 * epsilon * jnp.maximum(jnp.max(jnp.abs(jacobian)), 1.0))
+        & (seam <= 256.0 * epsilon * scale)
     )
     jacobian = eqx.error_if(
         jacobian,
         ~valid,
-        "TO-PML transform is nonfinite, singular, orientation reversing, or active.",
+        "TO-PML transform is nonfinite, singular, orientation reversing, active, "
+        "or has a complex off-diagonal stretch.",
     )
 
     def transform(block: Array) -> Array:
@@ -165,6 +178,8 @@ def transform_fourier_modal_material(
                 "pml": plan.pml_id,
             }
         ),
+        material_role="artificial_pml",
+        origin_evidence_id=plan.pml_id,
         passive=material.passive,
         reciprocal=material.reciprocal,
     )
@@ -172,6 +187,7 @@ def transform_fourier_modal_material(
         jnp.min(jnp.abs(determinant)),
         jnp.min(orientation),
         absorption,
+        maximum_imaginary_off_diagonal,
         seam,
         finite,
         passive,

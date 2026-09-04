@@ -80,7 +80,7 @@ class BoundaryRelation(StrictModule):
 
     @property
     def tangential_size(self) -> int:
-        return int(self.a.shape[0])
+        return int(self.a.shape[-1])
 
 
 def identity_boundary_relation(size: int, dtype: jnp.dtype, /) -> BoundaryRelation:

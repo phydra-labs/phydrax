@@ -14,10 +14,70 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..equations._les_closures import ResolvedLESFilter
 
 
 FilterKind = Literal["identity", "box", "gaussian", "spectral_cutoff"]
 FilterBoundary = Literal["periodic", "linear"]
+LESFilterPairInput = Literal["primary-resolved"]
+
+
+class LESFilterPair(StrictModule, NonTrainableState):
+    """Ordered resolved/test-filter semantics without an executable filter claim.
+
+    The pair deliberately carries the two core LES filter identities only. It does
+    not equate index-space box averaging, modal projection, coarsening, or
+    dealiasing. A later dynamic procedure must separately supply an implementation
+    matching each declared filter.
+    """
+
+    primary_filter: ResolvedLESFilter
+    test_filter: ResolvedLESFilter
+    test_filter_input: LESFilterPairInput = eqx.field(static=True)
+    pair_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        primary_filter: ResolvedLESFilter,
+        test_filter: ResolvedLESFilter,
+        /,
+        *,
+        test_filter_input: LESFilterPairInput = "primary-resolved",
+    ):
+        if not isinstance(primary_filter, ResolvedLESFilter) or not isinstance(
+            test_filter, ResolvedLESFilter
+        ):
+            raise TypeError(
+                "primary_filter and test_filter must be ResolvedLESFilter values."
+            )
+        input_semantics = str(test_filter_input).strip()
+        if input_semantics != "primary-resolved":
+            raise ValueError(
+                "The LES test filter must declare primary-resolved input semantics."
+            )
+        if primary_filter.filter_id == test_filter.filter_id:
+            raise ValueError(
+                "Primary and test LES filters must have distinct identities."
+            )
+        if (
+            primary_filter.axis_names != test_filter.axis_names
+            or primary_filter.topology != test_filter.topology
+            or primary_filter.boundary_class != test_filter.boundary_class
+        ):
+            raise ValueError(
+                "Primary and test LES filters must share axes, topology, and boundary class."
+            )
+        self.primary_filter = primary_filter
+        self.test_filter = test_filter
+        self.test_filter_input = input_semantics
+        self.pair_id = canonical_fingerprint(
+            {
+                "kind": "les-filter-pair",
+                "primary_filter": primary_filter.filter_id,
+                "test_filter": test_filter.filter_id,
+                "test_filter_input": input_semantics,
+            }
+        )
 
 
 class FilterSpec(StrictModule, NonTrainableState):
@@ -460,6 +520,8 @@ def _norm(values: Array) -> Array:
 
 
 __all__ = [
+    "LESFilterPair",
+    "LESFilterPairInput",
     "FavreFilter",
     "FilterBoundary",
     "FilterCommutationReport",

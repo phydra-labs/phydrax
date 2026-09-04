@@ -73,7 +73,7 @@ def main() -> None:
             )
         )
     result = fm.solve_fourier_modal_case_batch(prepared, tuple(excitations))
-    emitted_grid = result.reflected_power + result.transmitted_power
+    emitted_grid = result.left_outgoing_power + result.right_outgoing_power
     total = fm.integrate_brillouin_power(emitted_grid, rule)
     print(
         {

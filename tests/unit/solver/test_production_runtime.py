@@ -4,9 +4,11 @@
 
 import json
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 import phydrax as phx
 from phydrax.lifecycle._archive import migrate_configuration, rollback_configuration
@@ -102,6 +104,71 @@ def test_production_run_checkpoints_observes_triggers_and_resumes(tmp_path):
     assert (
         resumed.trigger_states[0].fire_count == result.state.trigger_states[0].fire_count
     )
+
+
+def test_production_device_resident_execution_preserves_state_and_default(
+    tmp_path, monkeypatch
+):
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    manifest = _manifest(method)
+    policy = phx.solver.CheckpointGenerationPolicy(1)
+    common = {
+        "step_size": 0.1,
+        "end_time": 0.2,
+        "maximum_steps": 2,
+        "checkpoint_interval": 10,
+        "segment_steps": 1,
+    }
+    resident_plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=0),
+        device_resident=True,
+        **common,
+    )
+    default_plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=0),
+        **common,
+    )
+    explicit_default_plan = phx.solver.ProductionRunPlan(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=0),
+        device_resident=False,
+        **common,
+    )
+    assert explicit_default_plan.plan_id == default_plan.plan_id
+    assert resident_plan.plan_id != default_plan.plan_id
+    device = jax.devices("cpu")[0]
+    mesh = Mesh(np.asarray((device,), dtype=object), ("state",))
+    sharding = NamedSharding(mesh, PartitionSpec("state"))
+    initial_array = jax.device_put(jnp.zeros((4,)), sharding)
+    resident = phx.solver.PreparedProductionRun(
+        manifest,
+        resident_plan,
+        phx.solver.DurableCheckpointStore(tmp_path / "resident", manifest, policy),
+    )
+    resident_state = resident.initial_state(initial_array)
+    with monkeypatch.context() as guard:
+        guard.setattr(
+            jax,
+            "device_get",
+            lambda *_args, **_kwargs: pytest.fail(
+                "device-resident execution gathered its state"
+            ),
+        )
+        following, transition = resident.step(resident_state)
+    assert following.accepted_state.sharding == sharding
+    assert transition.accepted_state.sharding == sharding
+
+    default = phx.solver.PreparedProductionRun(
+        manifest,
+        default_plan,
+        phx.solver.DurableCheckpointStore(tmp_path / "default", manifest, policy),
+    )
+    default_following, _ = default.step(default.initial_state(initial_array))
+    assert isinstance(default_following.accepted_state, np.ndarray)
 
 
 class _AlwaysReject(phx.solver.AbstractAcceptedStepTransform):

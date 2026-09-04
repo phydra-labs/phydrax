@@ -476,16 +476,11 @@ def periodic_spectral_qualification(
     maximum_wave = float(jnp.sqrt(jnp.max(forced.projector.wavenumber_squared)))
     statistics_plan = (
         phx.applications.incompressible_flow.PeriodicModalTurbulenceStatisticsPlan(
-            forced.projector,
+            forced,
             jnp.linspace(0.0, maximum_wave + 1.0e-12, count + 1),
-            viscosity=nu,
         )
     )
-    statistics = statistics_plan.evaluate(
-        fine.states[-1],
-        nonlinear_rate=forced.nonlinear_drift.nonlinear_rhs(fine.states[-1]),
-        forcing=forced.nonlinear_drift.forcing_rhs(final_time, fine.states[-1], None),
-    )
+    statistics = statistics_plan.evaluate(final_time, fine.states[-1])
     order = (
         math.log2(coarse_error / fine_error)
         if coarse_error > 0.0 and fine_error > 0.0

@@ -20,7 +20,12 @@ from ....discretization.spectral import (
 from ._boundary_cascade import BoundaryRelation, compose_boundary_relations
 from ._factorization import _dense_solve
 from ._layer import PreparedLayerOperator
-from ._scattering import HomogeneousPortModes, MaxwellPortScatteringOperator
+from ._scattering import (
+    _port_bases,
+    HomogeneousPortModes,
+    MaxwellPortScatteringOperator,
+    PreparedFourierModalPortModes,
+)
 
 
 class FourierModalExcitation(StrictModule):
@@ -279,20 +284,24 @@ def compose_affine_boundary_relations(
 
 def emitted_port_amplitudes(
     affine: AffineBoundaryRelation,
-    left_modes: HomogeneousPortModes,
-    right_modes: HomogeneousPortModes,
+    left_modes: PreparedFourierModalPortModes,
+    right_modes: PreparedFourierModalPortModes,
     /,
 ) -> tuple[Array, Array]:
     """Solve source-only outgoing amplitudes with no incident port field."""
     relation = affine.relation
-    wl = left_modes.electric_matrix
-    vl = left_modes.magnetic_matrix
-    wr = right_modes.electric_matrix
-    vr = right_modes.magnetic_matrix
+    _, _, left_electric, left_magnetic = _port_bases(left_modes, "left")
+    _, _, right_electric, right_magnetic = _port_bases(right_modes, "right")
     system = jnp.block(
         [
-            [wr - relation.b @ vr, -relation.a @ wl],
-            [-relation.d @ vr, -vl - relation.c @ wl],
+            [
+                right_electric - relation.b @ right_magnetic,
+                -relation.a @ left_electric,
+            ],
+            [
+                -relation.d @ right_magnetic,
+                left_magnetic - relation.c @ left_electric,
+            ],
         ]
     )
     right_hand_side = jnp.concatenate(

@@ -66,6 +66,7 @@ dependencies = [
 
 [project.optional-dependencies]
 atomistic-interop = [
+  "ase>=3.23,<4",
   "MDAnalysis>=2.8,<3",
   "openmm>=8.2,<9",
   "ParmEd>=4.3,<5",
@@ -102,6 +103,9 @@ docs = [
 notebooks = [
     "marimo>=0.15.2",
     "matplotlib>=3.10.8",
+]
+opticstudio = [
+  "zospy>=2.1,<3; sys_platform == 'win32'",
 ]
 robotics-mjx = [
     "mujoco>=3.12,<3.13",
@@ -152,6 +156,9 @@ max-line-length = 120
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
+markers = [
+    "opticstudio_live: requires a licensed local OpticStudio installation",
+]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",
     "ignore::DeprecationWarning:build123d.objects_curve:",

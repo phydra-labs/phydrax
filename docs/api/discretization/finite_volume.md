@@ -393,6 +393,46 @@ boundary, projection, pressure, resource, or underlying-method failures.
 
 ---
 
+### MAC LES and named scalar SGS
+
+Static MAC algebraic LES is a 3-D implicit-grid-volume action admitting periodic,
+free-slip, and symmetry boundaries; frozen IMEX/SBDF2 is iterative. Dynamic MAC
+LES compiles separately on periodic-uniform 3-D grids and uses projected explicit
+stepping. KSGS integrates static/buoyant, periodic-uniform dynamic, and true-no-slip
+low-Re families with exact filter/wall-distance contracts. Learned stress owns a
+periodic-uniform conservative divergence/projection backend. Every LES scalar
+declares positive Prandtl, positive Schmidt, or `no_sgs=True`. The stochastic
+inflow boundary owner commits one compatible draw/provider per accepted time.
+See [LES equations](../equations/les.md#backend-support-and-refusals).
+
+::: phydrax.discretization.MACScalarSGSField
+
+---
+
+::: phydrax.discretization.MACScalarSGSPlan
+
+---
+
+::: phydrax.discretization.PreparedMACScalarSGS
+
+---
+
+::: phydrax.equations.MACDynamicLESPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedMACDynamicExplicitMethod
+
+---
+
+::: phydrax.equations.MACLearnedStressPlan
+
+---
+
+::: phydrax.applications.incompressible_flow.PreparedStochasticTurbulentInflowMACBoundary
+
+---
+
 ### MAC plane/wall statistics and production
 
 `MACPlaneWallStatisticsPlan` supports one nonperiodic wall axis and periodic
@@ -655,6 +695,28 @@ EOS, state layout, mechanism compiler, Euler system, or FV runtime.
 ---
 
 ::: phydrax.equations.HomogeneousMixtureCompressibleNavierStokesSystem
+
+---
+
+### Compressible Favre LES transport
+
+The 3-D homogeneous compressible Navier–Stokes system binds canonical-SI
+`PreparedFavreLESModel` with exact species and transport identities. It supports
+neglected trace or an appended transported `rho*k_sgs` state with hyperbolic
+isotropic pressure, diffusive SGS-energy flux, local production/dissipation,
+positivity step, and zero total-energy source. Conserved gradients remain required;
+shock sensors, Riemann dissipation, limiting, and artificial viscosity are separate.
+See [LES equations](../equations/les.md#favre-effective-transport).
+
+::: phydrax.equations.PreparedFavreLESModel
+
+---
+
+::: phydrax.equations.FavreLESResult
+
+---
+
+::: phydrax.equations.FavreLESCoupledRate
 
 ---
 

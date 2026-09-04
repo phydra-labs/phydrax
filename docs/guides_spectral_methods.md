@@ -368,9 +368,10 @@ field recovery.
 only when the preparation report names `ultraspherical_banded`.
 `ChannelStokesPreparationReport` exposes route, bandwidth, horizontal batch,
 correction/constraint rank, operator/factor/workspace/persistent/preparation bytes,
-pivot margin, and the required unsharded wall-normal axis. Variable viscosity,
-failed pivots or constraints, and distributed spectral/line execution remain outside
-the channel contract.
+pivot margin, and the required unsharded wall-normal axis. An implicit
+variable-coefficient Stokes solve, failed pivots or constraints, and distributed
+spectral/line execution remain outside that base solver; channel LES adds its
+variable SGS stress explicitly.
 
 ## Distributed spectral execution
 
@@ -412,6 +413,13 @@ The one-device topology is the local route. A caller-supplied mesh is the actual
 multi-device route; the plan does not initialize a distributed job, invent a device,
 or claim scaling. A multi-host JAX deployment remains an external process-launch and
 platform-evidence responsibility even when its devices participate in the mesh.
+
+Static periodic LES first prepares its sharding-preserving scientific action on
+`slab` or `pencil`. `compile_distributed_periodic_les` then adds complete rotational
+flow; `DistributedPeriodicLESMethodPlan` selects ETDRK2/4 or SSPRK33/54; and
+`DistributedPeriodicLESProductionPlan` keeps segments, statistics, checkpoint state,
+and returned arrays device-resident. Resource, topology, parity, and production IDs
+remain backend-specific with `qualification_inherited=False`.
 
 ## Nonlinear evaluation and dealiasing
 
@@ -548,6 +556,12 @@ separate numerical contract.
 
 ## Incompressible periodic and channel flow
 
+Static/dynamic LES equations, filter identity, stress sign, trace policy, route
+support, and AD are normative in the
+[LES equations API](api/equations/les.md). Complete setup, frozen time integration,
+channel, distributed, scalar/ocean, Favre, and candidate status live in the
+[LES guide](guides_large_eddy_simulation.md); they are not duplicated here.
+
 `compile_periodic_incompressible_flow` prepares a velocity-only rotational
 Navier–Stokes system on a two- or three-axis Fourier tensor space. The prepared
 `PeriodicLerayProjector` removes longitudinal modes, assigns the pressure zero-mode
@@ -645,15 +659,14 @@ start/end stages or ETDRK4 at the start/half/half/end stages, and commits the
 coefficient continuation only with the fluid step. Exact OU transition and restart
 do not make the ETDRK quadrature of a time-varying acceleration exact.
 
-`PeriodicModalTurbulenceStatisticsPlan` consumes the live full-complex velocity with
-unit weight per admissible stored mode--never Hermitian multiplicities. Shell
-`integral` is the native domain integral and `density` is integral divided by bin
-width. Energy, dissipation, nonlinear transfer, and forcing injection spectra retain
-their conservative shell totals; scalar output also includes enstrophy, helicity,
-Taylor/Kolmogorov/integral scales, divergence/reality defects, and declared
-high-wavenumber energy/dissipation tail fractions with separate validity flags.
-`StreamingMomentPlan` supplies accepted-step sample- or time-weighted windows,
-second moments, extrema, histograms, and fixed-capacity completed-block uncertainty.
+`PeriodicModalTurbulenceStatisticsPlan(dynamics, bin_edges, /, *, ...)` consumes the
+live full-complex velocity and typed stage from that exact static or dynamic
+compilation. Unit weight is used per admissible stored mode. Energy, molecular
+dissipation, advective/SGS/forcing transfer, and resolved flux retain conservative
+shell totals. Dynamic output additionally binds filter-pair/averaging/
+regularization/backscatter identities and reports coefficient extrema and update
+counts. `StreamingMomentPlan` owns accepted-step sample/time weighting and
+completed-block uncertainty.
 
 `SpectralChannelStatisticsPlan` forms homogeneous-plane means, raw and central
 Reynolds moments, and separate lower/upper wall quantities. Wall shear is
@@ -667,19 +680,17 @@ viscous energy rate, positive dissipation, total semidiscrete energy rate, and t
 energy-balance defect. Exact quadratic dealiasing supports the stated rotational
 nonlinear energy identity; it is not an entropy-stability claim.
 
-`PeriodicSpectralProductionPlan` is the public production constructor for this
-periodic route. It requires an already prepared ETDRK method carrying Hermitian
-coordinates, a matching `PeriodicModalTurbulenceStatisticsPlan`, `problem_id`,
-absolute `start_time`/`end_time`, nominal `step_size`, and
-`checkpoint_interval`. Optional output times must follow the start and stay within
-the horizon. If constant-power forcing is supplied,
-`constant_power_wiring="compiled"` verifies that the prepared drift already binds
-the same forcing identity. `"adapter"` explicitly adds the forcing to the supplied
-drift, which must therefore be unforced; the adapter does not detect or remove an
-already embedded forcing term.
-Alternatively, mutually exclusive `ou_forcing` and `ou_realization` inputs prepare
-the coupled OU/ETDRK method. Its accepted state contains full-complex velocity and
-real OU coefficients; checkpoint encoding compresses only the velocity leaf.
+`PeriodicSpectralProductionPlan` now has the constructor boundary
+`(dynamics, method, statistics, case, /, *, start_time, end_time, step_size,
+checkpoint_interval, ...)`. `PeriodicSpectralProductionCase(dynamics,
+initial_velocity, /, *, case_id=...)` binds the exact source problem, compilation,
+discretization, projector, and initial modal content. The method must carry matching
+Hermitian coordinates. Static LES requires `PreparedLESStabilityGuardedETDRKMethod`.
+Dynamic LES takes matching ordinary prepared ETDRK and the production plan installs
+the transactional dynamic wrapper, including Lagrangian continuation when required.
+The two paths are mutually exclusive. Constant-power wiring remains identity-bound;
+OU forcing is not composable with dynamic continuation. Checkpoint encoding
+compresses only velocity while retaining all continuation.
 
 `SpectralChannelProductionPlan` instead accepts a prepared channel SBDF2 method,
 matching velocity and pressure Hermitian coordinates, channel statistics, and required
@@ -711,22 +722,13 @@ The legacy `tools/incompressible_spectral_benchmarks.py` command and
 smoke/performance cases only. They are not production-route qualification and do not
 establish a universal DNS claim.
 
-`tools/incompressible_flow_qualification.py` separates candidate evidence by route.
-Use `periodic-spectral` with
-`--output benchmarks/incompressible_periodic_qualification.json`, or
-`spectral-channel` with
-`--output benchmarks/incompressible_channel_qualification.json`, for the canonical
-route artifacts. A generated artifact binds
-one exact support tuple plus input, reference, and configuration identities to raw
-metrics, gates, status, failure/inconclusive reasons, and a content-derived artifact
-ID. Its `release_ready` value remains false. No result is implied merely because the
-tool or output path exists.
-
-The tool's assembly command consumes passed, existing route artifacts and emits an
-unsigned `CapabilityProfile` candidate containing their artifact IDs. The candidate
-has `signed=false` and `profile.released=false`; it is neither a release decision nor
-a global DNS badge. Runtime measurements in the legacy benchmark are not promoted
-into a qualification timing gate.
+`tools/incompressible_flow_qualification.py` continues to separate the base
+incompressible candidate routes. LES evidence is produced separately by
+`tools/large_eddy_simulation_qualification.py` through the repository's generic
+qualification contracts. Generated LES profiles remain candidate/unreleased and
+retain the base incompressible profile as an external release dependency. A tool,
+output path, passed matrix, or local parity result is not a signed release,
+distributed-scaling claim, or global DNS/LES badge.
 
 
 ## Bounded Galerkin spaces
@@ -777,6 +779,15 @@ the unbatched diagonal operator, and optional Hermitian acceptance contract once
 step, so production end/output clamping is permitted. This differs from prepared
 channel SBDF2, whose Stokes factors bind one exact step and therefore require every
 production horizon and output target to align with that step.
+
+For static periodic LES, wrap the base `ETDRKMethod` in
+`LESStabilityGuardedETDRKMethod` before preparation. The prepared guard reuses the
+first equation stage and rejects a step above its safety-scaled current-state
+`etdrk_selected` bound; it is not an adaptive controller.
+
+Dynamic periodic LES instead compiles its exact coarser test discretization and uses
+`PreparedPeriodicDynamicETDRKMethod`; its current-state restriction and continuation
+commit are part of each atomic accepted step.
 
 
 ```text

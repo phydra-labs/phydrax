@@ -20,6 +20,8 @@ from ._system import (
     ContinuousSystem,
     DiscreteStepContext,
     DiscreteSystem,
+    DiscreteTransitionEvidence,
+    DiscreteTransitionResult,
 )
 
 
@@ -60,6 +62,7 @@ class EvolutionStep(StrictModule):
     backend_id: str = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
+    transition_evidence: DiscreteTransitionEvidence | None = None
 
 
 class EvolutionTangentStep(StrictModule):
@@ -87,6 +90,7 @@ class EvolutionTrajectory(StrictModule):
     backend_id: str = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
+    transition_evidence: DiscreteTransitionEvidence | None = None
 
     @property
     def successful(self) -> Array:
@@ -191,13 +195,23 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         self.approximation_id = "exact-declared-transition"
         self.tangent_method_id = "jax-jvp:declared-transition"
 
-    def _map(self, context: DiscreteStepContext, state: Array, args: Any, /) -> Array:
+    def _map_result(
+        self, context: DiscreteStepContext, state: Array, args: Any, /
+    ) -> DiscreteTransitionResult:
         inputs = (
             None
             if self.input_policy is None
             else self.input_policy.evaluate_step(context, state, args)
         )
-        return self.system.evaluate(context, state, args, inputs=inputs)
+        return self.system.evaluate_result(context, state, args, inputs=inputs)
+
+    def _map(self, context: DiscreteStepContext, state: Array, args: Any, /) -> Array:
+        result = self._map_result(context, state, args)
+        return jnp.where(
+            result.successful,
+            result.accepted_state,
+            jnp.full_like(result.accepted_state, jnp.nan),
+        )
 
     def advance(
         self,
@@ -213,32 +227,48 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         if source.shape != () or target.shape != ():
             raise ValueError("Evolution segment coordinates must be scalar.")
         context = DiscreteStepContext(source, target, jnp.asarray(0, dtype=jnp.int32))
-        final_state = self._map(context, state_array, args)
+        transition = self._map_result(context, state_array, args)
+        final_state = transition.accepted_state
         finite = jnp.all(jnp.isfinite(final_state))
         membership = jnp.asarray(
             self.state_layout.geometry.contains(final_state), dtype=bool
         )
         if membership.shape != ():
             raise ValueError("State geometry contains() must return one scalar boolean.")
-        valid = finite & membership
+        valid = transition.successful & finite & membership
         status = jnp.where(
-            ~finite,
-            EVOLUTION_NONFINITE,
-            jnp.where(~membership, EVOLUTION_OUTSIDE_GEOMETRY, EVOLUTION_SUCCESS),
+            ~transition.successful,
+            EVOLUTION_BACKEND_FAILED,
+            jnp.where(
+                ~finite,
+                EVOLUTION_NONFINITE,
+                jnp.where(
+                    ~membership,
+                    EVOLUTION_OUTSIDE_GEOMETRY,
+                    EVOLUTION_SUCCESS,
+                ),
+            ),
         ).astype(jnp.int32)
+        evidence = DiscreteTransitionEvidence(
+            transition.candidate_state[None, ...],
+            transition.accepted_state[None, ...],
+            transition.successful[None],
+            transition.status[None],
+        )
         return EvolutionStep(
             source_coordinate=source,
             target_coordinate=target,
             final_state=final_state,
             valid=valid,
             status=status,
-            backend_status=status,
+            backend_status=transition.status,
             system_id=self.system.system_id,
             evolution_id=self.evolution_id,
             method_id=self.method_id,
             backend_id=self.backend_id,
             discretization_id=self.discretization_id,
             approximation_id=self.approximation_id,
+            transition_evidence=evidence,
         )
 
     def tangent_action(
@@ -287,6 +317,11 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
                 return geometry.inverse_retract(primal.final_state, endpoint)
 
             _, propagated = jax.jvp(local_map, (zero,), (vector,))
+        propagated = jnp.where(
+            primal.valid,
+            propagated,
+            jnp.full_like(propagated, jnp.nan),
+        )
         tangent_finite = jnp.all(jnp.isfinite(propagated))
         valid = primal.valid & tangent_finite
         status = jnp.where(
@@ -336,20 +371,74 @@ def evolve(
         source, target = coordinates
         result = evolution.advance(state, source, target, args)
         valid = prior_valid & result.valid
-        return (result.final_state, valid), (
-            result.final_state,
+        next_state = jnp.where(prior_valid, result.final_state, state)
+        evidence = result.transition_evidence
+        if evidence is None:
+            candidate = result.final_state
+            accepted = result.final_state
+            transition_successful = result.valid
+            transition_status = result.backend_status
+        else:
+            candidate = evidence.candidate_states[0]
+            accepted = evidence.accepted_states[0]
+            transition_successful = evidence.successful[0]
+            transition_status = evidence.status[0]
+        recorded_candidate = jnp.where(
+            prior_valid,
+            candidate,
+            jnp.full_like(candidate, jnp.nan),
+        )
+        recorded_accepted = jnp.where(
+            prior_valid,
+            accepted,
+            jnp.full_like(accepted, jnp.nan),
+        )
+        recorded_successful = prior_valid & transition_successful
+        recorded_status = jnp.where(
+            prior_valid,
+            transition_status,
+            jnp.asarray(0, dtype=jnp.int32),
+        ).astype(jnp.int32)
+        return (next_state, valid), (
+            next_state,
             valid,
             result.status,
             result.backend_status,
+            recorded_candidate,
+            recorded_accepted,
+            recorded_successful,
+            recorded_status,
         )
 
-    (_, _), (final_states, valid_steps, statuses, backend_statuses) = jax.lax.scan(
+    (
+        (_, _),
+        (
+            final_states,
+            valid_steps,
+            statuses,
+            backend_statuses,
+            candidate_states,
+            accepted_states,
+            transition_successful,
+            transition_status,
+        ),
+    ) = jax.lax.scan(
         step,
         (initial, initial_valid),
         (sources, targets),
     )
     states = jnp.concatenate((initial[None, ...], final_states), axis=0)
     valid = jnp.concatenate((initial_valid[None], valid_steps), axis=0)
+    transition_evidence = (
+        DiscreteTransitionEvidence(
+            candidate_states,
+            accepted_states,
+            transition_successful,
+            transition_status,
+        )
+        if isinstance(evolution.system, DiscreteSystem)
+        else None
+    )
     return EvolutionTrajectory(
         grid=grid,
         states=states,
@@ -363,6 +452,7 @@ def evolve(
         backend_id=evolution.backend_id,
         discretization_id=evolution.discretization_id,
         approximation_id=evolution.approximation_id,
+        transition_evidence=transition_evidence,
     )
 
 

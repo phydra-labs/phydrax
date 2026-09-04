@@ -151,24 +151,24 @@ class InverseFourierFactorizationPlan(AbstractFourierFactorizationPlan):
 
 
 class AnalyticInterfaceFramePlan(StrictModule):
-    """Caller-supplied periodic tangent field."""
+    """Caller-supplied periodic tangent field with explicit logical identity."""
 
     tangent_field: Array
+    frame_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, tangent_field: ArrayLike, /, *, frame_id: str | None = None):
+    def __init__(self, tangent_field: ArrayLike, /, *, frame_id: str):
         field = jnp.asarray(tangent_field)
         if field.shape[-1:] != (2,):
             raise ValueError("tangent_field must have trailing shape (2,).")
-        identifier = (
-            canonical_fingerprint(
-                {"kind": "analytic-interface-frame", "shape": list(field.shape)}
-            )
-            if frame_id is None
-            else str(frame_id)
-        )
+        identifier = str(frame_id)
+        if not identifier:
+            raise ValueError("frame_id must be non-empty.")
         self.tangent_field = field
-        self.plan_id = identifier
+        self.frame_id = identifier
+        self.plan_id = canonical_fingerprint(
+            {"kind": "analytic-interface-frame", "frame_id": identifier}
+        )
 
 
 class JonesDirectFramePlan(StrictModule, NonTrainableState):
@@ -179,6 +179,7 @@ class JonesDirectFramePlan(StrictModule, NonTrainableState):
     differentiation: FrameDifferentiation = eqx.field(static=True)
     complex_jones: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    frame_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -198,7 +199,7 @@ class JonesDirectFramePlan(StrictModule, NonTrainableState):
         self.gradient_regularization = gradient_regularization_
         self.differentiation = differentiation
         self.complex_jones = bool(complex_jones)
-        self.plan_id = canonical_fingerprint(
+        self.frame_id = canonical_fingerprint(
             {
                 "kind": "jones-direct-frame",
                 "regularization": regularization_,
@@ -206,6 +207,9 @@ class JonesDirectFramePlan(StrictModule, NonTrainableState):
                 "differentiation": differentiation,
                 "complex_jones": self.complex_jones,
             }
+        )
+        self.plan_id = canonical_fingerprint(
+            {"kind": "jones-direct-frame-plan", "frame_id": self.frame_id}
         )
 
 
@@ -239,7 +243,7 @@ class FourierFactorizationDiagnostics(StrictModule):
 
 
 class PreparedFourierMaterial(StrictModule):
-    """Convolution matrices for all constitutive tensor components."""
+    """Convolution matrices with material-slot and origin provenance."""
 
     permittivity: Array
     permeability: Array
@@ -248,6 +252,8 @@ class PreparedFourierMaterial(StrictModule):
     tangent_field: Array | None
     diagnostics: FourierFactorizationDiagnostics
     material_id: str = eqx.field(static=True)
+    material_role: Literal["physical", "artificial_pml"] = eqx.field(static=True)
+    origin_evidence_id: str = eqx.field(static=True)
     factorization_id: str = eqx.field(static=True)
 
 
@@ -455,6 +461,8 @@ def prepare_fourier_material(
         tangent_field,
         diagnostics,
         material_id=material.material_id,
+        material_role=material.material_role,
+        origin_evidence_id=material.origin_evidence_id,
         factorization_id=factorization.plan_id,
     )
     return translate_prepared_fourier_material(prepared, lattice, translation)
@@ -487,6 +495,8 @@ def translate_prepared_fourier_material(
         tangent_field,
         material.diagnostics,
         material_id=material.material_id,
+        material_role=material.material_role,
+        origin_evidence_id=material.origin_evidence_id,
         factorization_id=material.factorization_id,
     )
 

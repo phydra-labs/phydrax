@@ -27,11 +27,12 @@ from ._channel_ultraspherical import (
     prepare_ultraspherical_channel,
     PreparedUltrasphericalChannel,
 )
-from ._space import TensorSpectralDiscretization
+from ._space import _apply_axis_transform, TensorSpectralDiscretization
 
 
 ChannelMeanConstraintKind: TypeAlias = Literal["pressure_gradient", "bulk_flux"]
 ChannelStokesRoute: TypeAlias = Literal["ultraspherical_banded", "dense_reference"]
+ChannelTangentialBoundaryKind: TypeAlias = Literal["velocity", "traction"]
 
 
 class ChannelMeanConstraint(StrictModule, NonTrainableState):
@@ -74,6 +75,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
     lower_wall_velocity: Array
     upper_wall_velocity: Array
     mean_constraint: ChannelMeanConstraint
+    tangential_boundary: ChannelTangentialBoundaryKind = eqx.field(static=True)
     route: ChannelStokesRoute = eqx.field(static=True)
     maximum_factor_bytes: int = eqx.field(static=True)
     constraint_tolerance: float = eqx.field(static=True)
@@ -88,6 +90,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         lower_wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
         upper_wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
         mean_constraint: ChannelMeanConstraint | None = None,
+        tangential_boundary: ChannelTangentialBoundaryKind = "velocity",
         route: ChannelStokesRoute = "ultraspherical_banded",
         maximum_factor_bytes: int = 512 * 1024**2,
         constraint_tolerance: float = 1e-8,
@@ -123,6 +126,20 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Incompressible channel walls must have matching normal velocities."
             )
+        if tangential_boundary not in ("velocity", "traction"):
+            raise ValueError("Unknown channel tangential boundary kind.")
+        if tangential_boundary == "traction" and not bool(
+            jnp.array_equal(
+                lower[jnp.asarray((0, 2))], jnp.zeros((2,), dtype=lower.dtype)
+            )
+            & jnp.array_equal(
+                upper[jnp.asarray((0, 2))], jnp.zeros((2,), dtype=upper.dtype)
+            )
+        ):
+            raise ValueError(
+                "Traction-owned tangential walls cannot also prescribe tangential "
+                "wall velocity."
+            )
         constraint = (
             ChannelMeanConstraint() if mean_constraint is None else mean_constraint
         )
@@ -142,12 +159,13 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             raise ValueError("constraint_tolerance must be finite and positive.")
         identifier = canonical_fingerprint(
             {
-                "kind": "channel-stokes-plan-v3",
+                "kind": "channel-stokes-plan-v4",
                 "discretization": discretization.prepared_id,
                 "viscosity": float(viscosity_),
                 "lower_wall": [float(value) for value in lower],
                 "upper_wall": [float(value) for value in upper],
                 "mean_constraint": constraint.constraint_id,
+                "tangential_boundary": tangential_boundary,
                 "route": route,
                 "maximum_factor_bytes": maximum,
                 "constraint_tolerance": tolerance,
@@ -158,6 +176,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         self.lower_wall_velocity = lower
         self.upper_wall_velocity = upper
         self.mean_constraint = constraint
+        self.tangential_boundary = tangential_boundary
         self.route = route
         self.maximum_factor_bytes = maximum
         self.constraint_tolerance = tolerance
@@ -190,6 +209,8 @@ class ChannelStokesDiagnostics(StrictModule):
     momentum_constraint_residual: Array
     divergence_norm: Array
     wall_residual: Array
+    tangential_traction_residual: Array
+    boundary_power: Array
     pressure_gauge_residual: Array
     bulk_velocity: Array
     failed: Array
@@ -379,6 +400,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                     jnp.asarray(kz_value, dtype=real_dtype),
                     wall_axis.quadrature_weights,
                     zero_mode=(kx_value == 0.0 and kz_value == 0.0),
+                    tangential_boundary=plan.tangential_boundary,
                 )
                 if kx_value == 0.0 and kz_value == 0.0:
                     zero_mode_index = ix * z_axis.mode_count + iz
@@ -492,12 +514,101 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         )
         self.prepared_id = identifier
 
-    def solve(self, right_hand_side: ArrayLike, /) -> ChannelStokesSolveResult:
+    def project_horizontal_boundary(self, values: ArrayLike, /) -> Array:
+        """Project physical x-z boundary values to retained horizontal modes."""
+        array = jnp.asarray(values)
+        x_axis, _, z_axis = self.plan.discretization.axes
+        expected = (x_axis.physical_count, z_axis.physical_count)
+        if array.ndim < 2 or array.shape[:2] != expected:
+            raise ValueError(
+                f"Physical channel boundary values must begin with {expected}; "
+                f"got {array.shape}."
+            )
+        result = _apply_axis_transform(array, 0, x_axis.analyze)
+        result = _apply_axis_transform(result, 1, z_axis.analyze)
+        trailing = (1,) * (result.ndim - 2)
+        return result.astype(
+            jnp.dtype(self.plan.discretization.plan.precision.coefficient_dtype)
+        ) * self.horizontal_admissibility.reshape(
+            self.horizontal_admissibility.shape + trailing
+        )
+
+    def reconstruct_horizontal_boundary(self, modes: ArrayLike, /) -> Array:
+        """Reconstruct retained horizontal boundary modes on the x-z grid."""
+        array = jnp.asarray(modes)
+        x_axis, _, z_axis = self.plan.discretization.axes
+        expected = (x_axis.mode_count, z_axis.mode_count)
+        if array.ndim < 2 or array.shape[:2] != expected:
+            raise ValueError(
+                f"Modal channel boundary values must begin with {expected}; "
+                f"got {array.shape}."
+            )
+        result = _apply_axis_transform(array, 1, z_axis.synthesize)
+        result = _apply_axis_transform(result, 0, x_axis.synthesize)
+        return jnp.real(result)
+
+    def _tangential_boundary_modes(
+        self,
+        dtype,
+        lower_tangential_traction: ArrayLike | None,
+        upper_tangential_traction: ArrayLike | None,
+        /,
+    ) -> tuple[Array, Array]:
+        x_count, _, z_count = self.plan.discretization.modal_shape
+        expected = (x_count, z_count, 2)
+        if self.plan.tangential_boundary == "traction":
+            if lower_tangential_traction is None or upper_tangential_traction is None:
+                raise ValueError(
+                    "Traction-owned channel walls require both tangential tractions."
+                )
+            lower = jnp.asarray(lower_tangential_traction)
+            upper = jnp.asarray(upper_tangential_traction)
+            if lower.shape != expected or upper.shape != expected:
+                raise ValueError(
+                    f"Channel tangential traction modes must have shape {expected}."
+                )
+            if not jnp.issubdtype(lower.dtype, jnp.complexfloating) or not jnp.issubdtype(
+                upper.dtype, jnp.complexfloating
+            ):
+                raise TypeError("Channel tangential traction modes must be complex.")
+            admissible = self.horizontal_admissibility[..., None]
+            return (
+                (lower * admissible).astype(dtype),
+                (upper * admissible).astype(dtype),
+            )
+        if lower_tangential_traction is not None or upper_tangential_traction is not None:
+            raise ValueError(
+                "Velocity-owned channel walls do not accept tangential traction."
+            )
+        lower = jnp.zeros(expected, dtype=dtype).reshape((-1, 2))
+        upper = jnp.zeros(expected, dtype=dtype).reshape((-1, 2))
+        scale = self.horizontal_constant_scale.astype(dtype)
+        lower_values = self.plan.lower_wall_velocity[jnp.asarray((0, 2))]
+        upper_values = self.plan.upper_wall_velocity[jnp.asarray((0, 2))]
+        lower = lower.at[self.zero_mode_index].set(scale * lower_values.astype(dtype))
+        upper = upper.at[self.zero_mode_index].set(scale * upper_values.astype(dtype))
+        return lower.reshape(expected), upper.reshape(expected)
+
+    def solve(
+        self,
+        right_hand_side: ArrayLike,
+        /,
+        *,
+        lower_tangential_traction: ArrayLike | None = None,
+        upper_tangential_traction: ArrayLike | None = None,
+    ) -> ChannelStokesSolveResult:
         value = self._validate_velocity(right_hand_side, "Stokes right-hand side")
         value = value * self.horizontal_admissibility[:, None, :, None]
         modal_modes = jnp.transpose(value, (0, 2, 1, 3)).reshape(
             (-1, self.wall_normal_count, 3)
         )
+        lower_tangential, upper_tangential = self._tangential_boundary_modes(
+            value.dtype,
+            lower_tangential_traction,
+            upper_tangential_traction,
+        )
+        flat_lower_tangential = lower_tangential.reshape((-1, 2))
+        flat_upper_tangential = upper_tangential.reshape((-1, 2))
         if self.ultraspherical is not None:
             modal_velocity, modal_pressure, residual, failed, pressure_gradient = (
                 self.ultraspherical.solve(
@@ -505,6 +616,8 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                     self.plan.lower_wall_velocity,
                     self.plan.upper_wall_velocity,
                     self.plan.mean_constraint.values,
+                    flat_lower_tangential,
+                    flat_upper_tangential,
                     mean_kind=self.plan.mean_constraint.kind,
                 )
             )
@@ -522,7 +635,14 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             active_modes = self.horizontal_admissibility.reshape((-1,))
             residual = jnp.where(active_modes[:, None], residual, 0.0)
             failed = failed & active_modes
-            diagnostics = self._diagnostics(velocity, pressure, residual, failed)
+            diagnostics = self._diagnostics(
+                velocity,
+                pressure,
+                residual,
+                failed,
+                lower_tangential,
+                upper_tangential,
+            )
             return ChannelStokesSolveResult(
                 velocity=velocity,
                 pressure=pressure,
@@ -543,23 +663,17 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             physical_rhs[..., 2]
         )
         boundary_start = 3 * interior_count
-        walls = jnp.concatenate(
-            (self.plan.lower_wall_velocity, self.plan.upper_wall_velocity)
+        normal_scale = self.horizontal_constant_scale.astype(value.dtype)
+        batch_rhs = batch_rhs.at[self.zero_mode_index, boundary_start + 2].set(
+            normal_scale * self.plan.lower_wall_velocity[1].astype(value.dtype)
         )
-        wall_rhs = self.horizontal_constant_scale.astype(value.dtype) * jnp.asarray(
-            (
-                walls[0],
-                walls[3],
-                walls[1],
-                walls[4],
-                walls[2],
-                walls[5],
-            ),
-            dtype=value.dtype,
+        batch_rhs = batch_rhs.at[self.zero_mode_index, boundary_start + 3].set(
+            normal_scale * self.plan.upper_wall_velocity[1].astype(value.dtype)
         )
-        batch_rhs = batch_rhs.at[
-            self.zero_mode_index, boundary_start : boundary_start + 6
-        ].set(wall_rhs)
+        batch_rhs = batch_rhs.at[:, boundary_start].set(flat_lower_tangential[:, 0])
+        batch_rhs = batch_rhs.at[:, boundary_start + 1].set(flat_upper_tangential[:, 0])
+        batch_rhs = batch_rhs.at[:, boundary_start + 4].set(flat_lower_tangential[:, 1])
+        batch_rhs = batch_rhs.at[:, boundary_start + 5].set(flat_upper_tangential[:, 1])
         zero_vertical_upper_rhs = ein.contract(
             "j,j->",
             self.synthesis[-1],
@@ -626,7 +740,14 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         active_modes = self.horizontal_admissibility.reshape((-1,))
         residual = jnp.where(active_modes[:, None], residual, 0.0)
         failed = failed & active_modes
-        diagnostics = self._diagnostics(velocity, pressure, residual, failed)
+        diagnostics = self._diagnostics(
+            velocity,
+            pressure,
+            residual,
+            failed,
+            lower_tangential,
+            upper_tangential,
+        )
         return ChannelStokesSolveResult(
             velocity=velocity,
             pressure=pressure,
@@ -651,28 +772,86 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         residual: Array,
         failed: Array,
         /,
+        lower_tangential: Array,
+        upper_tangential: Array,
     ) -> ChannelStokesDiagnostics:
         divergence = (
             1j * self.streamwise_wavenumbers[:, None, :] * velocity[..., 0]
             + self.plan.discretization.modal_derivative(velocity[..., 1], axis=1)
             + 1j * self.spanwise_wavenumbers[:, None, :] * velocity[..., 2]
         )
-        lower = (
-            ein.contract("j,xjzc->xzc", self.synthesis[0], velocity, backend="jax")
-            / self.horizontal_constant_scale
+        lower_modes = ein.contract(
+            "j,xjzc->xzc", self.synthesis[0], velocity, backend="jax"
         )
-        upper = (
-            ein.contract("j,xjzc->xzc", self.synthesis[-1], velocity, backend="jax")
-            / self.horizontal_constant_scale
+        upper_modes = ein.contract(
+            "j,xjzc->xzc", self.synthesis[-1], velocity, backend="jax"
         )
+        lower = lower_modes / self.horizontal_constant_scale
+        upper = upper_modes / self.horizontal_constant_scale
         precision = GeometryPrecisionPolicy()
-        wall_residual = jnp.maximum(
-            precision.norm(
-                lower.at[0, 0].add(-self.plan.lower_wall_velocity).reshape((-1,))
-            ),
-            precision.norm(
-                upper.at[0, 0].add(-self.plan.upper_wall_velocity).reshape((-1,))
-            ),
+        if self.plan.tangential_boundary == "velocity":
+            wall_residual = jnp.maximum(
+                precision.norm(
+                    lower.at[0, 0].add(-self.plan.lower_wall_velocity).reshape((-1,))
+                ),
+                precision.norm(
+                    upper.at[0, 0].add(-self.plan.upper_wall_velocity).reshape((-1,))
+                ),
+            )
+        else:
+            lower_normal = self.reconstruct_horizontal_boundary(lower_modes[..., 1])
+            upper_normal = self.reconstruct_horizontal_boundary(upper_modes[..., 1])
+            wall_residual = jnp.maximum(
+                precision.norm(
+                    (lower_normal - self.plan.lower_wall_velocity[1]).reshape((-1,))
+                ),
+                precision.norm(
+                    (upper_normal - self.plan.upper_wall_velocity[1]).reshape((-1,))
+                ),
+            )
+        derivative_velocity = self.plan.discretization.modal_derivative(velocity, axis=1)
+        lower_derivative = ein.contract(
+            "j,xjzc->xzc", self.synthesis[0], derivative_velocity, backend="jax"
+        )
+        upper_derivative = ein.contract(
+            "j,xjzc->xzc", self.synthesis[-1], derivative_velocity, backend="jax"
+        )
+        tangential_indices = jnp.asarray((0, 2))
+        viscosity = self.plan.viscosity.astype(velocity.dtype)
+        actual_lower_traction = -viscosity * lower_derivative[..., tangential_indices]
+        actual_upper_traction = viscosity * upper_derivative[..., tangential_indices]
+        if self.plan.tangential_boundary == "traction":
+            lower_traction_defect = self.reconstruct_horizontal_boundary(
+                actual_lower_traction - lower_tangential
+            )
+            upper_traction_defect = self.reconstruct_horizontal_boundary(
+                actual_upper_traction - upper_tangential
+            )
+            tangential_traction_residual = jnp.maximum(
+                precision.norm(lower_traction_defect.reshape((-1,))),
+                precision.norm(upper_traction_defect.reshape((-1,))),
+            )
+            boundary_lower_traction = lower_tangential
+            boundary_upper_traction = upper_tangential
+        else:
+            tangential_traction_residual = jnp.zeros((), dtype=velocity.real.dtype)
+            boundary_lower_traction = actual_lower_traction
+            boundary_upper_traction = actual_upper_traction
+        lower_velocity = self.reconstruct_horizontal_boundary(
+            lower_modes[..., tangential_indices]
+        )
+        upper_velocity = self.reconstruct_horizontal_boundary(
+            upper_modes[..., tangential_indices]
+        )
+        lower_traction = self.reconstruct_horizontal_boundary(boundary_lower_traction)
+        upper_traction = self.reconstruct_horizontal_boundary(boundary_upper_traction)
+        x_axis, _, z_axis = self.plan.discretization.axes
+        horizontal_weights = (
+            x_axis.quadrature_weights[:, None] * z_axis.quadrature_weights[None, :]
+        )
+        boundary_power = jnp.sum(
+            horizontal_weights[..., None]
+            * (lower_velocity * lower_traction + upper_velocity * upper_traction)
         )
         pressure_profile = (
             self.synthesis @ pressure[0, :, 0]
@@ -697,6 +876,8 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             jnp.all(jnp.isfinite(velocity))
             & jnp.all(jnp.isfinite(pressure))
             & jnp.all(jnp.isfinite(residual))
+            & jnp.isfinite(tangential_traction_residual)
+            & jnp.isfinite(boundary_power)
         )
         momentum_residual = precision.norm(residual.reshape((-1,)))
         divergence_norm = precision.norm(divergence.reshape((-1,)))
@@ -705,6 +886,8 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             momentum_constraint_residual=momentum_residual,
             divergence_norm=divergence_norm,
             wall_residual=wall_residual,
+            tangential_traction_residual=tangential_traction_residual,
+            boundary_power=boundary_power,
             pressure_gauge_residual=gauge,
             bulk_velocity=bulk,
             failed=(
@@ -713,6 +896,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 | (momentum_residual > tolerance)
                 | (divergence_norm > tolerance)
                 | (wall_residual > tolerance)
+                | (tangential_traction_residual > tolerance)
                 | (gauge > tolerance)
                 | (mean_residual > tolerance)
             ),
@@ -730,6 +914,7 @@ def _channel_mode_matrix(
     /,
     *,
     zero_mode: bool,
+    tangential_boundary: ChannelTangentialBoundaryKind,
 ) -> Array:
     count = int(synthesis.shape[0])
     interior = synthesis[1:-1]
@@ -752,7 +937,15 @@ def _channel_mode_matrix(
     for component in range(3):
         for endpoint in (0, -1):
             blocks = [jnp.zeros((count,), dtype=synthesis.dtype) for _ in range(4)]
-            blocks[component] = synthesis[endpoint]
+            if component in (0, 2) and tangential_boundary == "traction":
+                normal_sign = -1.0 if endpoint == 0 else 1.0
+                blocks[component] = (
+                    normal_sign
+                    * viscosity.astype(synthesis.dtype)
+                    * (synthesis[endpoint] @ derivative)
+                )
+            else:
+                blocks[component] = synthesis[endpoint]
             rows.append(jnp.concatenate(tuple(blocks))[None, :])
     if zero_mode:
         zero_row = jnp.zeros((count,), dtype=synthesis.dtype)
@@ -821,6 +1014,7 @@ __all__ = [
     "ChannelStokesRoute",
     "ChannelStokesDiagnostics",
     "ChannelStokesPlan",
+    "ChannelTangentialBoundaryKind",
     "ChannelStokesSolveResult",
     "PreparedChannelStokesSolver",
 ]

@@ -10,28 +10,39 @@ from pathlib import Path
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._tree_math import tree_where
 from ...discretization.finite_volume import FaceVelocity, PreparedMACOperators
 from ...discretization.spectral import HermitianSpectralCoordinates
-from ...equations import CompiledMACIncompressibleDynamics
-from ...equations._incompressible import _PeriodicRotationalDrift
+from ...equations import (
+    CompiledIncompressibleSpectralDynamics,
+    CompiledMACIncompressibleDynamics,
+)
+from ...equations._dynamic_les import LagrangianDynamicLESState
 from ...solver._channel_flow import (
     ChannelSBDF2State,
     PreparedChannelSBDF2Method,
 )
-from ...solver._etdrk import _etdrk_update, ETDRKMethod, PreparedETDRKMethod
+from ...solver._etdrk import (
+    _etdrk_update,
+    ETDRKMethod,
+    PreparedETDRKMethod,
+    PreparedLESStabilityGuardedETDRKMethod,
+)
 from ...solver._fixed_step import (
     AbstractFixedStepMethod,
     FixedStepResult,
     RobustRetryPolicy,
 )
 from ...solver._production_runtime import (
+    ArtifactCheckpointStore,
     CheckpointGenerationPolicy,
     DurableCheckpointStore,
     PreparedProductionRun,
@@ -74,6 +85,79 @@ def _required_identifier(value: str, role: str, /) -> str:
     if not identifier:
         raise ValueError(f"{role} must be nonempty.")
     return identifier
+
+
+class PeriodicSpectralProductionCase(StrictModule, NonTrainableState):
+    """Exact scientific identity for one periodic production initial value."""
+
+    case_id: str = eqx.field(static=True)
+    source_problem_id: str = eqx.field(static=True)
+    initial_condition_id: str = eqx.field(static=True)
+    compilation_id: str = eqx.field(static=True)
+    discretization_id: str = eqx.field(static=True)
+    projector_id: str = eqx.field(static=True)
+    identity_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dynamics: CompiledIncompressibleSpectralDynamics,
+        initial_velocity: ArrayLike,
+        /,
+        *,
+        case_id: str,
+    ):
+        if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
+            raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
+        label = _required_identifier(case_id, "case_id")
+        velocity = dynamics.projector.validate_state(
+            initial_velocity, owner="Periodic initial velocity"
+        )
+        concrete = np.asarray(velocity)
+        if np.any(~np.isfinite(concrete)):
+            raise ValueError("Periodic initial velocity must be finite.")
+        initial_condition_id = canonical_fingerprint(
+            {
+                "kind": "periodic-spectral-initial-condition",
+                "compilation": dynamics.compilation_id,
+                "discretization": dynamics.discretization.prepared_id,
+                "projector": dynamics.projector.projector_id,
+                "field": array_tree_fingerprint(velocity),
+            }
+        )
+        self.case_id = label
+        self.source_problem_id = dynamics.problem.problem_id
+        self.initial_condition_id = initial_condition_id
+        self.compilation_id = dynamics.compilation_id
+        self.discretization_id = dynamics.discretization.prepared_id
+        self.projector_id = dynamics.projector.projector_id
+        self.identity_id = canonical_fingerprint(
+            {
+                "kind": "periodic-spectral-production-case",
+                "case": label,
+                "source_problem": self.source_problem_id,
+                "initial_condition": initial_condition_id,
+                "compilation": self.compilation_id,
+                "discretization": self.discretization_id,
+                "projector": self.projector_id,
+            }
+        )
+
+    def validate_initial_condition(self, velocity: ArrayLike, /) -> Array:
+        value = jnp.asarray(velocity)
+        candidate = canonical_fingerprint(
+            {
+                "kind": "periodic-spectral-initial-condition",
+                "compilation": self.compilation_id,
+                "discretization": self.discretization_id,
+                "projector": self.projector_id,
+                "field": array_tree_fingerprint(value),
+            }
+        )
+        if candidate != self.initial_condition_id:
+            raise ValueError(
+                "Periodic initial velocity differs from the bound initial condition."
+            )
+        return value
 
 
 def _runtime_values(
@@ -180,17 +264,6 @@ def _lattice_index(value: float, origin: float, step: float, role: str, /) -> in
     return int(nearest)
 
 
-def _compiled_periodic_forcing_id(method: PreparedETDRKMethod, /) -> str | None:
-    nonlinear = method.drift.nonlinear_drift
-    if isinstance(nonlinear, _PeriodicRotationalDrift):
-        return nonlinear.problem.forcing_id
-    if isinstance(nonlinear, _ConstantPowerPeriodicNonlinearDrift):
-        return nonlinear.forcing_id
-    raise TypeError(
-        "Compiled forcing wiring requires native periodic incompressible dynamics."
-    )
-
-
 class _ConstantPowerPeriodicNonlinearDrift(StrictModule):
     base: SemilinearDrift
     forcing: ConstantPowerFourierForcingPlan
@@ -262,29 +335,34 @@ class OUForcedPeriodicState(StrictModule):
 
 
 class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
-    """ETDRK with exact OU coefficient transitions at its stage abscissae."""
+    """ETDRK with exact OU transitions and an optional compiled LES guard."""
 
-    base: PreparedETDRKMethod
+    base: PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod
     forcing: SolenoidalOUForcingPlan
     realization: OrnsteinUhlenbeckRealization
     method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        base: PreparedETDRKMethod,
+        base: PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod,
         forcing: SolenoidalOUForcingPlan,
         realization: OrnsteinUhlenbeckRealization,
         /,
     ):
-        if not isinstance(base, PreparedETDRKMethod):
-            raise TypeError("base must be PreparedETDRKMethod.")
+        if not isinstance(
+            base, (PreparedETDRKMethod, PreparedLESStabilityGuardedETDRKMethod)
+        ):
+            raise TypeError(
+                "base must be a prepared ETDRK or LES-stability-guarded ETDRK."
+            )
         if not isinstance(forcing, SolenoidalOUForcingPlan):
             raise TypeError("forcing must be SolenoidalOUForcingPlan.")
         if not isinstance(realization, OrnsteinUhlenbeckRealization):
             raise TypeError("realization must be OrnsteinUhlenbeckRealization.")
-        if base.coordinates is None:
+        etdrk = base if isinstance(base, PreparedETDRKMethod) else base.base_method
+        if etdrk.coordinates is None:
             raise ValueError("OU-forced periodic ETDRK requires Hermitian coordinates.")
-        if forcing.discretization_id != base.coordinates.discretization.prepared_id:
+        if forcing.discretization_id != etdrk.coordinates.discretization.prepared_id:
             raise ValueError("OU forcing and ETDRK coordinates use another grid.")
         forcing._validate_realization(realization)
         self.base = base
@@ -292,30 +370,47 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
         self.realization = realization
         self.method_id = canonical_fingerprint(
             {
-                "kind": "prepared-ou-forced-etdrk-method-v1",
+                "kind": "prepared-ou-forced-etdrk-method",
                 "base": base.method_id,
                 "forcing": forcing.forcing_id,
                 "realization": realization.realization_id,
                 "stage_forcing": (
-                    "start,end" if base.order == 2 else "start,half,half,end"
+                    "start,end" if etdrk.order == 2 else "start,half,half,end"
+                ),
+                "les_guard": (
+                    None
+                    if isinstance(base, PreparedETDRKMethod)
+                    else {
+                        "dynamics": base.dynamics.compilation_id,
+                        "safety_factor": base.safety_factor,
+                        "first_stage": "compiled-stage-reused",
+                    }
                 ),
             }
         )
 
     @property
+    def etdrk(self) -> PreparedETDRKMethod:
+        return (
+            self.base
+            if isinstance(self.base, PreparedETDRKMethod)
+            else self.base.base_method
+        )
+
+    @property
     def coordinates(self) -> HermitianSpectralCoordinates:
-        coordinates = self.base.coordinates
+        coordinates = self.etdrk.coordinates
         if coordinates is None:
             raise RuntimeError("OU-forced ETDRK lost its Hermitian coordinates.")
         return coordinates
 
     @property
     def drift(self) -> SemilinearDrift:
-        return self.base.drift
+        return self.etdrk.drift
 
     @property
     def order(self) -> Literal[2, 4]:
-        return self.base.order
+        return self.etdrk.order
 
     def initial_state(
         self,
@@ -345,7 +440,8 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
         del step_index
         if not isinstance(state, OUForcedPeriodicState):
             raise TypeError("OU-forced ETDRK state has the wrong type.")
-        value = self.base._validate_state(state.velocity)
+        etdrk = self.etdrk
+        value = etdrk._validate_state(state.velocity)
         step = jnp.asarray(step_size, dtype=value.real.dtype).reshape(())
         step = eqx.error_if(
             step,
@@ -380,22 +476,65 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
                 advance.end_forcing,
             )
         )
-        _, incoming_valid, incoming_defect = self.base._boundary_evidence(value)
-        candidate_velocity = _etdrk_update(
-            self.order,
-            self.drift,
-            self.base.diagonal,
-            start,
-            value,
-            step,
-            args,
-            stages,
+        first_nonlinear = None
+        guard_valid = jnp.asarray(True)
+        guard_residual = jnp.zeros((), dtype=step.dtype)
+        if isinstance(self.base, PreparedLESStabilityGuardedETDRKMethod):
+            stage = self.base.dynamics.stage(start, value, args)
+            restriction = self.base.dynamics.step_restriction(
+                value,
+                algebraic_les_stage=stage.algebraic_les,
+            )
+            first_nonlinear = stage.rates.nonlinear_rate
+            allowed = self.base.safety_factor * restriction.etdrk_selected
+            finite_limit = jnp.isfinite(allowed) & (allowed > 0.0)
+            positive_limit = allowed > 0.0
+            guard_valid = (
+                restriction.finite
+                & jnp.all(jnp.isfinite(first_nonlinear))
+                & positive_limit
+                & (step <= allowed)
+            )
+            safe_limit = jnp.where(finite_limit, allowed, jnp.ones_like(allowed))
+            guard_residual = jnp.where(
+                restriction.finite,
+                jnp.where(
+                    finite_limit,
+                    jnp.maximum(step / safe_limit - 1.0, 0.0),
+                    jnp.zeros_like(step),
+                ),
+                jnp.asarray(jnp.inf, dtype=step.dtype),
+            )
+        _, incoming_valid, incoming_defect = etdrk._boundary_evidence(value)
+
+        def advance_velocity(_: None) -> Array:
+            return _etdrk_update(
+                self.order,
+                self.drift,
+                etdrk.diagonal,
+                start,
+                value,
+                step,
+                args,
+                stages,
+                first_nonlinear,
+            )
+
+        candidate_velocity = jax.lax.cond(
+            guard_valid,
+            advance_velocity,
+            lambda _: value,
+            operand=None,
         )
-        projected, candidate_valid, candidate_defect = self.base._boundary_evidence(
+        projected, candidate_valid, candidate_defect = etdrk._boundary_evidence(
             candidate_velocity
         )
         successful = (
-            incoming_valid & candidate_valid & advance.successful & schedule_valid
+            incoming_valid
+            & candidate_valid
+            & advance.successful
+            & schedule_valid
+            & guard_valid
         )
         accepted_velocity = jnp.where(successful, projected, value)
         accepted_forcing = SolenoidalOUForcingState(
@@ -422,8 +561,11 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
         residual = jnp.where(
             finite_transition,
             jnp.maximum(
-                jnp.maximum(incoming_defect, candidate_defect),
-                schedule_defect,
+                jnp.maximum(
+                    jnp.maximum(incoming_defect, candidate_defect),
+                    schedule_defect,
+                ),
+                guard_residual,
             ),
             jnp.asarray(jnp.inf, dtype=value.real.dtype),
         )
@@ -444,12 +586,347 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod):
 
 
 def prepare_ou_forced_periodic_method(
-    method: PreparedETDRKMethod,
+    method: PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod,
     forcing: SolenoidalOUForcingPlan,
     realization: OrnsteinUhlenbeckRealization,
     /,
 ) -> PreparedOUForcedETDRKMethod:
     return PreparedOUForcedETDRKMethod(method, forcing, realization)
+
+
+class PeriodicDynamicLESProductionState(StrictModule):
+    """Periodic velocity plus committed Lagrangian dynamic-LES history."""
+
+    velocity: Array
+    continuation_state: LagrangianDynamicLESState
+
+
+class _PeriodicDynamicNonlinearView(StrictModule):
+    dynamics: CompiledIncompressibleSpectralDynamics
+    continuation_state: LagrangianDynamicLESState | None
+
+    def nonlinear(self, time: Array, velocity: Array, args: Any, /) -> Array:
+        return self.dynamics.stage(
+            time,
+            velocity,
+            args,
+            continuation_state=self.continuation_state,
+            accepted_update_mask=True,
+        ).rates.nonlinear_rate
+
+
+class PreparedPeriodicDynamicETDRKMethod(AbstractFixedStepMethod):
+    """ETDRK route that transactionally commits dynamic-LES continuation."""
+
+    base_method: PreparedETDRKMethod
+    dynamics: CompiledIncompressibleSpectralDynamics
+    coordinates: HermitianSpectralCoordinates
+    safety_factor: float = eqx.field(static=True)
+    continuation_required: bool = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        base_method: PreparedETDRKMethod,
+        dynamics: CompiledIncompressibleSpectralDynamics,
+        /,
+        *,
+        safety_factor: float = 1.0,
+    ):
+        if not isinstance(base_method, PreparedETDRKMethod):
+            raise TypeError("base_method must be PreparedETDRKMethod.")
+        if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
+            raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
+        if dynamics.dynamic_les is None:
+            raise ValueError("Dynamic ETDRK requires compiled periodic dynamic LES.")
+        if base_method.drift.drift_id != dynamics.semilinear_drift.drift_id:
+            raise ValueError("Dynamic ETDRK and compiled dynamics disagree.")
+        if base_method.coordinates is None:
+            raise ValueError("Dynamic ETDRK requires Hermitian spectral coordinates.")
+        safety = float(safety_factor)
+        if not math.isfinite(safety) or safety <= 0.0 or safety > 1.0:
+            raise ValueError("safety_factor must be finite and in (0, 1].")
+        self.base_method = base_method
+        self.dynamics = dynamics
+        self.coordinates = base_method.coordinates
+        self.safety_factor = safety
+        self.continuation_required = dynamics.dynamic_les.continuation_required
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "prepared-periodic-dynamic-etdrk",
+                "base_method": base_method.method_id,
+                "dynamics": dynamics.compilation_id,
+                "dynamic_les": dynamics.dynamic_les.prepared_id,
+                "safety_factor": safety,
+                "continuation": (
+                    "transactional-lagrangian"
+                    if self.continuation_required
+                    else "stateless-ordinary-velocity"
+                ),
+            }
+        )
+
+    def _split_state(
+        self, state: Array | PeriodicDynamicLESProductionState, /
+    ) -> tuple[Array, LagrangianDynamicLESState | None]:
+        if self.continuation_required:
+            if not isinstance(state, PeriodicDynamicLESProductionState):
+                raise TypeError(
+                    "Lagrangian periodic dynamic LES requires "
+                    "PeriodicDynamicLESProductionState."
+                )
+            return self.coordinates.validate_state(
+                state.velocity
+            ), state.continuation_state
+        if isinstance(state, PeriodicDynamicLESProductionState):
+            raise TypeError("Stateless dynamic LES uses ordinary velocity state.")
+        return self.coordinates.validate_state(state), None
+
+    def _join_state(
+        self,
+        velocity: Array,
+        continuation_state: LagrangianDynamicLESState | None,
+        /,
+    ) -> Array | PeriodicDynamicLESProductionState:
+        if not self.continuation_required:
+            return velocity
+        if continuation_state is None:
+            raise RuntimeError("Lagrangian dynamic LES lost its continuation state.")
+        return PeriodicDynamicLESProductionState(velocity, continuation_state)
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: Array | PeriodicDynamicLESProductionState,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        del step_index
+        velocity, continuation = self._split_state(state)
+        step = jnp.asarray(step_size, dtype=velocity.real.dtype).reshape(())
+        step = eqx.error_if(
+            step,
+            ~(jnp.isfinite(step) & (step > 0.0)),
+            "Dynamic ETDRK step size must be finite and positive.",
+        )
+        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        _, incoming_valid, incoming_defect = self.base_method._boundary_evidence(velocity)
+        view = _PeriodicDynamicNonlinearView(self.dynamics, continuation)
+        candidate_velocity = _etdrk_update(
+            self.base_method.order,
+            view,
+            self.base_method.diagonal,
+            start,
+            velocity,
+            step,
+            args,
+        )
+        projected, candidate_valid, candidate_defect = (
+            self.base_method._boundary_evidence(candidate_velocity)
+        )
+        dynamic_stage = self.dynamics.dynamic_les_stage(
+            projected,
+            continuation,
+            accepted_update_mask=True,
+        )
+        if dynamic_stage is None:
+            raise RuntimeError("Compiled dynamic LES did not produce a dynamic stage.")
+        restriction = self.dynamics.step_restriction(
+            projected,
+            dynamic_les_stage=dynamic_stage,
+        )
+        successful = (
+            incoming_valid
+            & candidate_valid
+            & dynamic_stage.dynamic_result.evidence.finite
+            & dynamic_stage.algebraic_stage.finite
+            & restriction.finite
+            & (step <= self.safety_factor * restriction.etdrk_selected)
+        )
+        proposed = self._join_state(projected, dynamic_stage.continuation_state)
+        current = self._join_state(velocity, continuation)
+        accepted = tree_where(successful, proposed, current)
+        candidate = self._join_state(candidate_velocity, dynamic_stage.continuation_state)
+        residual = jnp.maximum(incoming_defect, candidate_defect)
+        correction = projected - candidate_velocity
+        correction_norm = jnp.sqrt(jnp.sum(jnp.real(correction * jnp.conj(correction))))
+        return FixedStepResult(
+            candidate_state=candidate,
+            accepted_state=accepted,
+            successful=successful,
+            residual=jnp.where(
+                successful,
+                residual,
+                jnp.maximum(residual, jnp.abs(step - restriction.etdrk_selected)),
+            ),
+            iterations=jnp.asarray(0, dtype=jnp.int32),
+            work=jnp.asarray(self.base_method.order, dtype=jnp.int32),
+            transform_applied=successful & (correction_norm > 0.0),
+            transform_correction_norm=jnp.where(
+                successful, correction_norm, jnp.zeros_like(correction_norm)
+            ),
+        )
+
+
+class MACDynamicLESProductionState(StrictModule):
+    """Flat MAC velocity plus committed Lagrangian dynamic-LES history."""
+
+    velocity: Array
+    continuation_state: LagrangianDynamicLESState
+
+
+class PreparedMACDynamicExplicitMethod(AbstractFixedStepMethod):
+    """Projected explicit-Euler MAC route with transactional dynamic history."""
+
+    dynamics: CompiledMACIncompressibleDynamics
+    safety_factor: float = eqx.field(static=True)
+    continuation_required: bool = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dynamics: CompiledMACIncompressibleDynamics,
+        /,
+        *,
+        safety_factor: float = 1.0,
+    ):
+        if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
+            raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
+        if dynamics.dynamic_les is None:
+            raise ValueError("Dynamic MAC stepping requires compiled dynamic LES.")
+        safety = float(safety_factor)
+        if not math.isfinite(safety) or safety <= 0.0 or safety > 1.0:
+            raise ValueError("safety_factor must be finite and in (0, 1].")
+        self.dynamics = dynamics
+        self.safety_factor = safety
+        self.continuation_required = dynamics.dynamic_les.continuation_required
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "prepared-mac-dynamic-explicit-euler",
+                "dynamics": dynamics.compilation_id,
+                "dynamic_les": dynamics.dynamic_les.prepared_id,
+                "safety_factor": safety,
+                "continuation": (
+                    "transactional-lagrangian"
+                    if self.continuation_required
+                    else "stateless-ordinary-velocity"
+                ),
+            }
+        )
+
+    def _split_state(
+        self, state: Array | MACDynamicLESProductionState, /
+    ) -> tuple[Array, LagrangianDynamicLESState | None]:
+        if self.continuation_required:
+            if not isinstance(state, MACDynamicLESProductionState):
+                raise TypeError(
+                    "Lagrangian MAC dynamic LES requires MACDynamicLESProductionState."
+                )
+            return self.dynamics.validate_state(state.velocity), state.continuation_state
+        if isinstance(state, MACDynamicLESProductionState):
+            raise TypeError("Stateless dynamic LES uses ordinary MAC velocity state.")
+        return self.dynamics.validate_state(state), None
+
+    def _join_state(
+        self,
+        velocity: Array,
+        continuation_state: LagrangianDynamicLESState | None,
+        /,
+    ) -> Array | MACDynamicLESProductionState:
+        if not self.continuation_required:
+            return velocity
+        if continuation_state is None:
+            raise RuntimeError("Lagrangian MAC dynamic LES lost continuation state.")
+        return MACDynamicLESProductionState(velocity, continuation_state)
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: Array | MACDynamicLESProductionState,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        del step_index
+        velocity, continuation = self._split_state(state)
+        step = jnp.asarray(
+            step_size, dtype=self.dynamics.momentum.operators.pressure_space.dtype
+        ).reshape(())
+        step = eqx.error_if(
+            step,
+            ~(jnp.isfinite(step) & (step > 0.0)),
+            "Dynamic MAC step size must be finite and positive.",
+        )
+        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        boundary = self.dynamics.boundary_stage(start, args)
+        components = self.dynamics._rate_components(
+            start,
+            velocity,
+            args,
+            boundary,
+            continuation_state=continuation,
+            accepted_update_mask=True,
+        )
+        dynamic_stage = components.dynamic_les_stage
+        if dynamic_stage is None:
+            raise RuntimeError("Compiled MAC dynamic LES did not produce a stage.")
+        rate_projection = self.dynamics.projection.project_rate(
+            components.unconstrained,
+            boundary_stage=boundary,
+        )
+        flat_rate = self.dynamics.momentum.operators.velocity_space.flatten(
+            rate_projection.rate
+        )
+        raw_candidate = velocity + step * flat_rate
+        next_boundary = self.dynamics.boundary_stage(start + step, args)
+        candidate_faces = self.dynamics.unpack_velocity(raw_candidate)
+        projected_candidate = self.dynamics.projection.project(
+            candidate_faces,
+            1.0,
+            boundary_stage=next_boundary,
+        )
+        candidate_velocity = self.dynamics.momentum.operators.velocity_space.flatten(
+            projected_candidate.velocity
+        )
+        restriction = self.dynamics.step_restriction(
+            start,
+            velocity,
+            args,
+            dynamic_les_stage=dynamic_stage,
+        )
+        successful = (
+            boundary.successful
+            & next_boundary.successful
+            & rate_projection.converged
+            & projected_candidate.converged
+            & dynamic_stage.dynamic_result.evidence.finite
+            & dynamic_stage.mac_stage.finite
+            & restriction.sgs_supported
+            & (step <= self.safety_factor * restriction.combined)
+            & jnp.all(jnp.isfinite(candidate_velocity))
+        )
+        proposed = self._join_state(candidate_velocity, dynamic_stage.continuation_state)
+        current = self._join_state(velocity, continuation)
+        accepted = tree_where(successful, proposed, current)
+        residual = jnp.maximum(
+            jnp.sqrt(jnp.sum(rate_projection.pressure_residual**2)),
+            jnp.sqrt(jnp.sum(projected_candidate.pressure_residual**2)),
+        )
+        return FixedStepResult(
+            candidate_state=proposed,
+            accepted_state=accepted,
+            successful=successful,
+            residual=residual,
+            iterations=jnp.asarray(0, dtype=jnp.int32),
+            work=jnp.asarray(1, dtype=jnp.int32),
+            transform_applied=successful,
+            transform_correction_norm=jnp.sqrt(
+                jnp.sum(jnp.abs(candidate_velocity - raw_candidate) ** 2)
+            ),
+        )
 
 
 class MACConstantPressureGradientForcing(StrictModule, NonTrainableState):
@@ -511,7 +988,7 @@ class MACConstantPressureGradientForcing(StrictModule, NonTrainableState):
 
 
 class _PeriodicStatisticsEvaluator(StrictModule):
-    method: PreparedETDRKMethod | PreparedOUForcedETDRKMethod
+    method: AbstractFixedStepMethod
     statistics: PeriodicModalTurbulenceStatisticsPlan
     forcing: ConstantPowerFourierForcingPlan | None
     ou_forcing: SolenoidalOUForcingPlan | None
@@ -520,7 +997,7 @@ class _PeriodicStatisticsEvaluator(StrictModule):
 
     def __init__(
         self,
-        method: PreparedETDRKMethod | PreparedOUForcedETDRKMethod,
+        method: AbstractFixedStepMethod,
         statistics: PeriodicModalTurbulenceStatisticsPlan,
         forcing: ConstantPowerFourierForcingPlan | None,
         ou_forcing: SolenoidalOUForcingPlan | None,
@@ -532,62 +1009,88 @@ class _PeriodicStatisticsEvaluator(StrictModule):
         self.ou_forcing = ou_forcing
         self.evaluator_id = canonical_fingerprint(
             {
-                "kind": "periodic-production-statistics-observer-v1",
+                "kind": "periodic-production-statistics-observer",
+                "dynamics": statistics.compilation_id,
                 "method": method.method_id,
                 "statistics": statistics.plan_id,
                 "forcing": None if forcing is None else forcing.forcing_id,
-                "ou_forcing": (None if ou_forcing is None else ou_forcing.forcing_id),
+                "ou_forcing": None if ou_forcing is None else ou_forcing.forcing_id,
+                "stage": "compiled-periodic-incompressible-stage",
+                "cadence": "every-accepted-step",
+                "payload": "full-shells-fields-and-sgs-evidence",
             }
         )
-        self.value_size = 4 * statistics.geometry.bin_count + 21
+        self.value_size = 6 * statistics.geometry.bin_count + 51
 
     def snapshot(
         self,
         time: ArrayLike,
-        state: ArrayLike | OUForcedPeriodicState,
+        state: (ArrayLike | OUForcedPeriodicState | PeriodicDynamicLESProductionState),
         args: Any,
         /,
     ) -> PeriodicModalTurbulenceStatistics:
+        continuation = None
         if isinstance(state, OUForcedPeriodicState):
             if self.ou_forcing is None:
                 raise TypeError("OU periodic state requires an OU statistics binding.")
             value = state.velocity
-            force = self.ou_forcing.evaluate(state.forcing_state)
+            additive_forcing = self.ou_forcing.evaluate(state.forcing_state)
+        elif isinstance(state, PeriodicDynamicLESProductionState):
+            if self.ou_forcing is not None:
+                raise TypeError("OU forcing and dynamic continuation are not composable.")
+            value = state.velocity
+            continuation = state.continuation_state
+            additive_forcing = (
+                None if self.forcing is None else self.forcing.evaluate(value).forcing
+            )
         else:
             if self.ou_forcing is not None:
                 raise TypeError("OU statistics require OUForcedPeriodicState.")
             value = jnp.asarray(state)
-            force = None if self.forcing is None else self.forcing.evaluate(value).forcing
-        nonlinear = self.method.drift.nonlinear(jnp.asarray(time), value, args)
-        if self.forcing is not None:
-            nonlinear = nonlinear - force
-        return self.statistics.evaluate(
+            additive_forcing = (
+                None if self.forcing is None else self.forcing.evaluate(value).forcing
+            )
+        stage = self.statistics.dynamics.stage(
+            jnp.asarray(time),
             value,
-            nonlinear_rate=nonlinear,
-            forcing=force,
+            args,
+            continuation_state=continuation,
+            accepted_update_mask=False,
+        )
+        return self.statistics.evaluate(
+            time,
+            value,
+            args,
+            stage=stage,
+            additive_forcing_rate=additive_forcing,
+            continuation_state=continuation,
         )
 
     def __call__(
         self,
         time: Array,
-        state: Array | OUForcedPeriodicState,
+        state: (Array | OUForcedPeriodicState | PeriodicDynamicLESProductionState),
         args: Any,
     ) -> Array:
         result = self.snapshot(time, state, args)
         shells = (
             result.energy_shells.integral,
-            result.dissipation_shells.integral,
-            result.nonlinear_transfer_shells.integral,
+            result.molecular_dissipation_shells.integral,
+            result.advective_transfer_shells.integral,
+            result.sgs_transfer_shells.integral,
             result.forcing_injection_shells.integral,
+            result.resolved_spectral_flux,
         )
         scalars = jnp.stack(
             (
                 result.kinetic_energy,
                 result.mean_kinetic_energy,
-                result.dissipation,
-                result.mean_dissipation,
-                result.nonlinear_energy_rate,
-                result.mean_nonlinear_energy_rate,
+                result.molecular_dissipation,
+                result.mean_molecular_dissipation,
+                result.advective_energy_rate,
+                result.mean_advective_energy_rate,
+                result.sgs_energy_rate,
+                result.mean_sgs_energy_rate,
                 result.forcing_power,
                 result.mean_forcing_power,
                 result.enstrophy,
@@ -599,9 +1102,61 @@ class _PeriodicStatisticsEvaluator(StrictModule):
                 result.kmax_kolmogorov,
                 result.integral_scale,
                 result.energy_tail_fraction,
-                result.dissipation_tail_fraction,
+                result.molecular_dissipation_tail_fraction,
                 result.divergence_norm,
                 result.velocity_reality_defect,
+                result.sgs_modeled_dissipation,
+                result.sgs_energy_identity_defect,
+                result.sgs_projection_energy_defect,
+                result.sgs_regularization_activity_count.astype(
+                    result.kinetic_energy.dtype
+                ),
+                result.sgs_dynamic_coefficient_minimum,
+                result.sgs_dynamic_coefficient_mean,
+                result.sgs_dynamic_coefficient_maximum,
+                result.sgs_backscatter_activity_count.astype(result.kinetic_energy.dtype),
+                result.sgs_backscatter_limit_count.astype(result.kinetic_energy.dtype),
+                result.sgs_accepted_update_count.astype(result.kinetic_energy.dtype),
+                result.sgs_rejected_update_count.astype(result.kinetic_energy.dtype),
+                result.sgs_maximum_kinematic_viscosity,
+                jnp.where(
+                    jnp.isfinite(result.sgs_advective_step_limit),
+                    result.sgs_advective_step_limit,
+                    0.0,
+                ),
+                jnp.where(
+                    jnp.isfinite(result.sgs_diffusive_step_limit),
+                    result.sgs_diffusive_step_limit,
+                    0.0,
+                ),
+                jnp.where(
+                    jnp.isfinite(result.sgs_combined_step_limit),
+                    result.sgs_combined_step_limit,
+                    0.0,
+                ),
+                jnp.where(
+                    jnp.isfinite(result.sgs_etdrk_step_limit),
+                    result.sgs_etdrk_step_limit,
+                    0.0,
+                ),
+                jnp.where(
+                    jnp.isfinite(result.sgs_fully_explicit_step_limit),
+                    result.sgs_fully_explicit_step_limit,
+                    0.0,
+                ),
+                result.sgs_available.astype(result.kinetic_energy.dtype),
+                result.sgs_regularization_available.astype(result.kinetic_energy.dtype),
+                result.sgs_stability_available.astype(result.kinetic_energy.dtype),
+                result.forcing_available.astype(result.kinetic_energy.dtype),
+                result.helicity_valid.astype(result.kinetic_energy.dtype),
+                result.taylor_microscale_valid.astype(result.kinetic_energy.dtype),
+                result.kolmogorov_scale_valid.astype(result.kinetic_energy.dtype),
+                result.integral_scale_valid.astype(result.kinetic_energy.dtype),
+                result.energy_tail_valid.astype(result.kinetic_energy.dtype),
+                result.molecular_dissipation_tail_valid.astype(
+                    result.kinetic_energy.dtype
+                ),
+                result.finite.astype(result.kinetic_energy.dtype),
                 result.successful.astype(result.kinetic_energy.dtype),
             )
         )
@@ -699,11 +1254,14 @@ class _MACStatisticsEvaluator(StrictModule):
     def snapshot(
         self,
         time: ArrayLike,
-        state: ArrayLike,
+        state: ArrayLike | MACDynamicLESProductionState,
         args: Any,
         /,
     ) -> MACPlaneWallStatistics:
-        velocity = self.dynamics.physical_state(time, state, args)
+        coordinates = (
+            state.velocity if isinstance(state, MACDynamicLESProductionState) else state
+        )
+        velocity = self.dynamics.physical_state(time, coordinates, args)
         forcing = (
             None
             if self.pressure_gradient is None
@@ -711,7 +1269,12 @@ class _MACStatisticsEvaluator(StrictModule):
         )
         return self.statistics.evaluate(velocity, forcing=forcing)
 
-    def __call__(self, time: Array, state: Array, args: Any) -> Array:
+    def __call__(
+        self,
+        time: Array,
+        state: Array | MACDynamicLESProductionState,
+        args: Any,
+    ) -> Array:
         result = self.snapshot(time, state, args)
         profiles = (
             result.mean_velocity.reshape((-1,)),
@@ -740,19 +1303,34 @@ class _PreparedProductionRoute:
     def _bind_runtime(
         self,
         plan: Any,
-        checkpoint_root: str | Path,
+        checkpoint: str | Path | ArtifactCheckpointStore,
         /,
         *,
         args: Any,
         args_id: str | None,
         publisher: ByteBoundedAsyncPublisher | None,
     ) -> None:
-        store = DurableCheckpointStore(
-            checkpoint_root,
-            plan.manifest,
-            CheckpointGenerationPolicy(plan.checkpoint_retention),
-            encoding_plan=plan.checkpoint_encoding,
-        )
+        policy = CheckpointGenerationPolicy(plan.checkpoint_retention)
+        if isinstance(checkpoint, ArtifactCheckpointStore):
+            store: DurableCheckpointStore | ArtifactCheckpointStore = checkpoint
+            if (
+                store.manifest.manifest_id != plan.manifest.manifest_id
+                or store.policy.policy_id != policy.policy_id
+                or store.encoding_plan.encoding_id != plan.checkpoint_encoding.encoding_id
+                or store.resolved_run_spec.prepared_configuration_id != plan.plan_id
+            ):
+                raise ValueError(
+                    "Artifact checkpoint store does not exactly bind this production plan."
+                )
+            resolved_run_spec = store.resolved_run_spec
+        else:
+            store = DurableCheckpointStore(
+                checkpoint,
+                plan.manifest,
+                policy,
+                encoding_plan=plan.checkpoint_encoding,
+            )
+            resolved_run_spec = None
         runtime = PreparedProductionRun(
             plan.manifest,
             plan.runtime_plan,
@@ -760,6 +1338,7 @@ class _PreparedProductionRoute:
             args=args,
             args_id=args_id,
             publisher=publisher,
+            resolved_run_spec=resolved_run_spec,
         )
         self.plan = plan
         self.manifest = plan.manifest
@@ -788,10 +1367,12 @@ class _PreparedProductionRoute:
 
 
 class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
-    """Prepared-object assembly for periodic spectral turbulence production."""
+    """Identity-closed periodic production for compiled incompressible dynamics."""
 
-    method: PreparedETDRKMethod | PreparedOUForcedETDRKMethod
+    dynamics: CompiledIncompressibleSpectralDynamics
+    method: AbstractFixedStepMethod
     statistics: PeriodicModalTurbulenceStatisticsPlan
+    case: PeriodicSpectralProductionCase
     constant_power_forcing: ConstantPowerFourierForcingPlan | None
     ou_forcing: SolenoidalOUForcingPlan | None
     ou_realization: OrnsteinUhlenbeckRealization | None
@@ -802,6 +1383,7 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
     output_schedule: ExactTimeSchedule | None
     trigger_bindings: tuple[ProductionTriggerBinding, ...]
     source_problem_id: str = eqx.field(static=True)
+    initial_condition_id: str = eqx.field(static=True)
     constant_power_wiring: ConstantPowerWiring = eqx.field(static=True)
     start_time: float = eqx.field(static=True)
     checkpoint_retention: int = eqx.field(static=True)
@@ -809,11 +1391,12 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        method: PreparedETDRKMethod,
+        dynamics: CompiledIncompressibleSpectralDynamics,
+        method: PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod,
         statistics: PeriodicModalTurbulenceStatisticsPlan,
+        case: PeriodicSpectralProductionCase,
         /,
         *,
-        problem_id: str,
         start_time: float,
         end_time: float,
         step_size: float,
@@ -835,10 +1418,18 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
         statistics_batch_duration: float | None = None,
         maximum_statistics_batches: int = 0,
     ):
-        if not isinstance(method, PreparedETDRKMethod):
-            raise TypeError("method must be PreparedETDRKMethod.")
+        if not isinstance(dynamics, CompiledIncompressibleSpectralDynamics):
+            raise TypeError("dynamics must be CompiledIncompressibleSpectralDynamics.")
+        if not isinstance(
+            method, (PreparedETDRKMethod, PreparedLESStabilityGuardedETDRKMethod)
+        ):
+            raise TypeError(
+                "method must be a prepared ETDRK or LES-stability-guarded ETDRK."
+            )
         if not isinstance(statistics, PeriodicModalTurbulenceStatisticsPlan):
             raise TypeError("statistics must be PeriodicModalTurbulenceStatisticsPlan.")
+        if not isinstance(case, PeriodicSpectralProductionCase):
+            raise TypeError("case must be PeriodicSpectralProductionCase.")
         forcing = constant_power_forcing
         if forcing is not None and not isinstance(
             forcing, ConstantPowerFourierForcingPlan
@@ -856,34 +1447,108 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
             raise TypeError("ou_realization has the wrong type.")
         if constant_power_wiring not in ("compiled", "adapter"):
             raise ValueError("constant_power_wiring must be 'compiled' or 'adapter'.")
-        coordinates = method.coordinates
+        if forcing is None and constant_power_wiring != "compiled":
+            raise ValueError(
+                "constant_power_wiring='adapter' requires constant_power_forcing."
+            )
+        guarded = isinstance(method, PreparedLESStabilityGuardedETDRKMethod)
+        dynamic = dynamics.dynamic_les is not None
+        if dynamics.algebraic_les is not None:
+            if not guarded:
+                raise ValueError(
+                    "Static periodic LES production requires "
+                    "PreparedLESStabilityGuardedETDRKMethod."
+                )
+            if method.dynamics.compilation_id != dynamics.compilation_id:
+                raise ValueError(
+                    "Guarded ETDRK and production dynamics compilation identities differ."
+                )
+            base_method = method.base_method
+        elif dynamic:
+            if guarded:
+                raise ValueError(
+                    "Dynamic periodic LES uses its transactional ETDRK route, "
+                    "not the static LES guard."
+                )
+            base_method = method
+        else:
+            if guarded:
+                raise ValueError("Guarded ETDRK cannot be bound to no-LES dynamics.")
+            base_method = method
+        if base_method.drift.drift_id != dynamics.semilinear_drift.drift_id:
+            raise ValueError("Prepared ETDRK and compiled periodic dynamics disagree.")
+        coordinates = base_method.coordinates
         if coordinates is None:
             raise ValueError(
                 "Periodic production requires full-complex Hermitian ETDRK state."
             )
-        discretization_id = coordinates.discretization.prepared_id
-        if statistics.discretization_id != discretization_id:
+        discretization_id = dynamics.discretization.prepared_id
+        projector_id = dynamics.projector.projector_id
+        if (
+            coordinates.discretization.prepared_id != discretization_id
+            or statistics.compilation_id != dynamics.compilation_id
+            or statistics.source_problem_id != dynamics.problem.problem_id
+            or statistics.discretization_id != discretization_id
+            or statistics.projector_id != projector_id
+        ):
             raise ValueError(
-                "Periodic statistics and ETDRK coordinates use another grid."
+                "Periodic dynamics, ETDRK coordinates, and statistics identities differ."
             )
-        if forcing is not None and forcing.discretization_id != discretization_id:
-            raise ValueError("Periodic forcing and ETDRK coordinates use another grid.")
-        if ou_forcing is not None and ou_forcing.discretization_id != discretization_id:
-            raise ValueError("OU forcing and ETDRK coordinates use another grid.")
-        selected_method: PreparedETDRKMethod | PreparedOUForcedETDRKMethod = method
+        if (
+            case.source_problem_id != dynamics.problem.problem_id
+            or case.compilation_id != dynamics.compilation_id
+            or case.discretization_id != discretization_id
+            or case.projector_id != projector_id
+        ):
+            raise ValueError("Periodic production case belongs to another compilation.")
+        if forcing is not None and (
+            forcing.discretization_id != discretization_id
+            or forcing.projector_id != projector_id
+        ):
+            raise ValueError("Periodic forcing belongs to another compiled grid.")
+        if ou_forcing is not None and (
+            ou_forcing.discretization_id != discretization_id
+            or ou_forcing.projector_id != projector_id
+        ):
+            raise ValueError("OU forcing belongs to another compiled grid.")
+        compiled_forcing_id = (
+            None if dynamics.problem.forcing is None else dynamics.problem.forcing_id
+        )
+        selected_method: AbstractFixedStepMethod = method
+        observer_forcing: ConstantPowerFourierForcingPlan | None = None
+        if dynamic and ou_forcing is not None:
+            raise ValueError(
+                "OU forcing is not yet composable with transactional dynamic LES state."
+            )
+        if dynamic and forcing is not None and constant_power_wiring == "adapter":
+            raise ValueError(
+                "Dynamic LES requires constant-power forcing compiled into the dynamics."
+            )
         if ou_forcing is not None and ou_realization is not None:
+            if compiled_forcing_id is not None:
+                raise ValueError("OU composition requires otherwise unforced dynamics.")
             selected_method = prepare_ou_forced_periodic_method(
                 method, ou_forcing, ou_realization
             )
         elif forcing is not None and constant_power_wiring == "adapter":
-            selected_method = prepare_constant_power_periodic_method(method, forcing)
-        elif forcing is not None:
-            compiled_forcing_id = _compiled_periodic_forcing_id(method)
-            if compiled_forcing_id != forcing.forcing_id:
+            if compiled_forcing_id is not None:
                 raise ValueError(
-                    "The compiled periodic drift does not bind the declared "
-                    "constant-power forcing."
+                    "Constant-power adapter requires otherwise unforced dynamics."
                 )
+            if guarded:
+                raise ValueError(
+                    "Constant-power adapter is unavailable for guarded LES; "
+                    "compile the forcing into the periodic dynamics."
+                )
+            selected_method = prepare_constant_power_periodic_method(base_method, forcing)
+            observer_forcing = forcing
+        elif forcing is not None and compiled_forcing_id != forcing.forcing_id:
+            raise ValueError(
+                "The compiled periodic dynamics do not bind the declared "
+                "constant-power forcing."
+            )
+        if dynamic:
+            selected_method = PreparedPeriodicDynamicETDRKMethod(base_method, dynamics)
         start, end, step, steps, interval, segment, retention = _runtime_values(
             start_time,
             end_time,
@@ -901,7 +1566,10 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
             statistics_window_end,
         )
         evaluator = _PeriodicStatisticsEvaluator(
-            selected_method, statistics, forcing, ou_forcing
+            selected_method,
+            statistics,
+            observer_forcing,
+            ou_forcing,
         )
         moment = _statistics_moment(
             evaluator,
@@ -929,18 +1597,27 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
             moments=(moment,),
             trigger_bindings=bindings,
         )
-        encoding = RuntimeCheckpointEncodingPlan(
-            (RuntimeCheckpointLeafBinding(0, coordinates, coordinates.evidence),)
+        encoding = (
+            RuntimeCheckpointEncodingPlan()
+            if (
+                isinstance(selected_method, PreparedPeriodicDynamicETDRKMethod)
+                and selected_method.continuation_required
+            )
+            else RuntimeCheckpointEncodingPlan(
+                (RuntimeCheckpointLeafBinding(0, coordinates, coordinates.evidence),)
+            )
         )
-        source_problem = _required_identifier(problem_id, "problem_id")
         case_problem_id = canonical_fingerprint(
             {
-                "kind": "periodic-spectral-production-case-v1",
-                "problem": source_problem,
+                "kind": "periodic-spectral-production-case",
+                "case": case.identity_id,
+                "source_problem": dynamics.problem.problem_id,
+                "dynamics": dynamics.compilation_id,
                 "method": selected_method.method_id,
-                "forcing": None if forcing is None else forcing.forcing_id,
+                "forcing": compiled_forcing_id,
+                "constant_power": None if forcing is None else forcing.forcing_id,
                 "forcing_wiring": constant_power_wiring,
-                "ou_forcing": (None if ou_forcing is None else ou_forcing.forcing_id),
+                "ou_forcing": None if ou_forcing is None else ou_forcing.forcing_id,
                 "ou_realization": (
                     None if ou_realization is None else ou_realization.realization_id
                 ),
@@ -960,8 +1637,10 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
             geometry_layout_id=coordinates.coordinate_id,
             dtype=coordinates.evidence.source_dtype,
         )
+        self.dynamics = dynamics
         self.method = selected_method
         self.statistics = statistics
+        self.case = case
         self.constant_power_forcing = forcing
         self.ou_forcing = ou_forcing
         self.ou_realization = ou_realization
@@ -971,13 +1650,16 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
         self.checkpoint_encoding = encoding
         self.output_schedule = output
         self.trigger_bindings = bindings
-        self.source_problem_id = source_problem
+        self.source_problem_id = dynamics.problem.problem_id
+        self.initial_condition_id = case.initial_condition_id
         self.constant_power_wiring = constant_power_wiring
         self.start_time = start
         self.checkpoint_retention = retention
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "periodic-spectral-production-plan-v1",
+                "kind": "periodic-spectral-production-plan",
+                "case": case.identity_id,
+                "dynamics": dynamics.compilation_id,
                 "manifest": manifest.manifest_id,
                 "runtime": runtime_plan.plan_id,
                 "checkpoint_encoding": encoding.encoding_id,
@@ -988,7 +1670,7 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
 
     def prepare(
         self,
-        checkpoint_root: str | Path,
+        checkpoint: str | Path | ArtifactCheckpointStore,
         /,
         *,
         args: Any = None,
@@ -997,7 +1679,7 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
     ) -> PreparedPeriodicSpectralProduction:
         return PreparedPeriodicSpectralProduction(
             self,
-            checkpoint_root,
+            checkpoint,
             args=args,
             args_id=args_id,
             publisher=publisher,
@@ -1005,12 +1687,12 @@ class PeriodicSpectralProductionPlan(StrictModule, NonTrainableState):
 
 
 class PreparedPeriodicSpectralProduction(_PreparedProductionRoute):
-    _prepared_kind = "prepared-periodic-spectral-production-v1"
+    _prepared_kind = "prepared-periodic-spectral-production"
 
     def __init__(
         self,
         plan: PeriodicSpectralProductionPlan,
-        checkpoint_root: str | Path,
+        checkpoint: str | Path | ArtifactCheckpointStore,
         /,
         *,
         args: Any = None,
@@ -1021,7 +1703,7 @@ class PreparedPeriodicSpectralProduction(_PreparedProductionRoute):
             raise TypeError("plan must be PeriodicSpectralProductionPlan.")
         self._bind_runtime(
             plan,
-            checkpoint_root,
+            checkpoint,
             args=args,
             args_id=args_id,
             publisher=publisher,
@@ -1036,22 +1718,39 @@ class PreparedPeriodicSpectralProduction(_PreparedProductionRoute):
         rng_state: Any = (),
         ou_coefficients: ArrayLike | None = None,
     ) -> ProductionRunState:
-        coordinates = self.plan.method.coordinates
-        velocity = coordinates.validate_state(modal_velocity)
+        method_coordinates = (
+            self.plan.method.coordinates
+            if isinstance(
+                self.plan.method,
+                (PreparedETDRKMethod, PreparedOUForcedETDRKMethod),
+            )
+            else self.plan.method.base_method.coordinates
+        )
+        if method_coordinates is None:
+            raise RuntimeError("Periodic production method lost its coordinates.")
+        velocity = method_coordinates.validate_state(modal_velocity)
+        velocity = self.plan.case.validate_initial_condition(velocity)
         if isinstance(self.plan.method, PreparedOUForcedETDRKMethod):
-            accepted_state: Array | OUForcedPeriodicState = (
-                self.plan.method.initial_state(
-                    velocity,
-                    self.plan.start_time,
-                    coefficients=ou_coefficients,
-                )
+            accepted_state: (
+                Array | OUForcedPeriodicState | PeriodicDynamicLESProductionState
+            ) = self.plan.method.initial_state(
+                velocity,
+                self.plan.start_time,
+                coefficients=ou_coefficients,
             )
         else:
             if ou_coefficients is not None:
                 raise ValueError(
                     "ou_coefficients require an OU-forced production method."
                 )
-            accepted_state = velocity
+            if (
+                isinstance(self.plan.method, PreparedPeriodicDynamicETDRKMethod)
+                and self.plan.method.continuation_required
+            ):
+                continuation = self.plan.dynamics.dynamic_les.initial_state(velocity)
+                accepted_state = PeriodicDynamicLESProductionState(velocity, continuation)
+            else:
+                accepted_state = velocity
         return self.runtime.initial_state(
             accepted_state,
             time=self.plan.start_time,
@@ -1062,7 +1761,7 @@ class PreparedPeriodicSpectralProduction(_PreparedProductionRoute):
     def statistics_snapshot(
         self,
         time: ArrayLike,
-        state: ArrayLike | OUForcedPeriodicState,
+        state: (ArrayLike | OUForcedPeriodicState | PeriodicDynamicLESProductionState),
         /,
     ) -> PeriodicModalTurbulenceStatistics:
         return self.plan.statistics_evaluator.snapshot(
@@ -1364,8 +2063,19 @@ class StructuredMACProductionPlan(StrictModule, NonTrainableState):
             raise TypeError("method must be AbstractFixedStepMethod.")
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
+        if dynamics.dynamic_les is not None:
+            raise ValueError(
+                "StructuredMACProductionPlan requires wall-bounded plane statistics, "
+                "which are scientifically incompatible with periodic-uniform MAC "
+                "dynamic LES; use PreparedMACDynamicExplicitMethod directly."
+            )
         if not isinstance(statistics, MACPlaneWallStatisticsPlan):
             raise TypeError("statistics must be MACPlaneWallStatisticsPlan.")
+        if isinstance(method, PreparedMACDynamicExplicitMethod):
+            raise ValueError(
+                "PreparedMACDynamicExplicitMethod requires compiled periodic-uniform "
+                "dynamic LES and cannot be bound to wall-bounded MAC production."
+            )
         pressure_gradient = constant_pressure_gradient
         if pressure_gradient is not None and not isinstance(
             pressure_gradient, MACConstantPressureGradientForcing
@@ -1535,6 +2245,20 @@ class PreparedStructuredMACProduction(_PreparedProductionRoute):
             )
         else:
             state = self.plan.dynamics.validate_state(velocity)
+        if (
+            isinstance(self.plan.method, PreparedMACDynamicExplicitMethod)
+            and self.plan.method.continuation_required
+        ):
+            face_velocity = self.plan.dynamics.physical_state(
+                self.plan.start_time, state, self.runtime.args
+            )
+            boundary = self.plan.dynamics.boundary_stage(
+                self.plan.start_time, self.runtime.args
+            )
+            continuation = self.plan.dynamics.dynamic_les.initial_state(
+                face_velocity, boundary
+            )
+            state = MACDynamicLESProductionState(state, continuation)
         return self.runtime.initial_state(
             state,
             time=self.plan.start_time,
@@ -1545,7 +2269,7 @@ class PreparedStructuredMACProduction(_PreparedProductionRoute):
     def statistics_snapshot(
         self,
         time: ArrayLike,
-        state: ArrayLike,
+        state: ArrayLike | MACDynamicLESProductionState,
         /,
     ) -> MACPlaneWallStatistics:
         return self.plan.statistics_evaluator.snapshot(
@@ -1557,10 +2281,15 @@ class PreparedStructuredMACProduction(_PreparedProductionRoute):
 
 __all__ = [
     "MACConstantPressureGradientForcing",
+    "MACDynamicLESProductionState",
     "OUForcedPeriodicState",
     "PeriodicSpectralProductionPlan",
+    "PeriodicDynamicLESProductionState",
+    "PeriodicSpectralProductionCase",
     "PreparedPeriodicSpectralProduction",
     "PreparedOUForcedETDRKMethod",
+    "PreparedPeriodicDynamicETDRKMethod",
+    "PreparedMACDynamicExplicitMethod",
     "PreparedSpectralChannelProduction",
     "PreparedStructuredMACProduction",
     "SpectralChannelProductionPlan",

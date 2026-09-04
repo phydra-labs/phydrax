@@ -1,0 +1,22 @@
+{
+  "accepted": true,
+  "cases": {
+    "atmosphere": {
+      "ensemble_realized_variance": 35.32499730342876,
+      "ensemble_variance_relative_error": 0.07164399661390501,
+      "hermitian_error": 8.01988151001841e-17,
+      "parseval_relative_error": 5.289407756571317e-16,
+      "piston": 7.355227538141662e-16,
+      "predicted_variance": 38.05113251229486,
+      "realized_variance": 40.299941040318984,
+      "status": 0,
+      "valid": true
+    },
+    "beamlet": {
+      "maximum_condition_estimate": 1.0,
+      "maximum_field_error": 1.1102230246251565e-16,
+      "status": 0,
+      "successful": true
+    }
+  }
+}

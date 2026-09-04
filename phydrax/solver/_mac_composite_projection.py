@@ -49,7 +49,7 @@ class CompositeMACProjectionPlan(StrictModule, NonTrainableState):
     divergence: AbstractLinearOperator
     gradient: AbstractLinearOperator
     inverse_momentum: AbstractLinearOperator
-    gauge_project: CompositeGaugeProjector = eqx.field(static=True)
+    gauge_project: CompositeGaugeProjector
     linear_policy: LinearSolvePolicy
     pressure_operator: FunctionLinearOperator
     tolerance: float = eqx.field(static=True)

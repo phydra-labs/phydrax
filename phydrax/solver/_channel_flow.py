@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,19 +21,27 @@ from ..discretization.spectral import (
     PreparedChannelStokesSolver,
 )
 from ..equations._channel_flow import CompiledChannelFlowDynamics
+from ..equations._channel_les import CompiledChannelLESDynamics
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._temporal_method import TemporalMethodCapabilities
+
+
+_CompiledChannelDynamics: TypeAlias = (
+    CompiledChannelFlowDynamics | CompiledChannelLESDynamics
+)
 
 
 CHANNEL_FLOW_SUCCESS = 0
 CHANNEL_FLOW_INITIAL_CONSTRAINT = -1
 CHANNEL_FLOW_STOKES_FAILURE = -2
+CHANNEL_FLOW_EXPLICIT_RESTRICTION = -3
 
 
 class ChannelSBDF2Method(StrictModule, NonTrainableState):
     """Fixed-step semi-implicit BDF2 with backward-Euler initialization."""
 
     capabilities: TemporalMethodCapabilities
+    explicit_stability_radius: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(self):
@@ -41,6 +49,7 @@ class ChannelSBDF2Method(StrictModule, NonTrainableState):
             {
                 "kind": "channel-sbdf2-method-v2",
                 "startup": "backward-euler",
+                "explicit_stability_radius": float(0.25).hex(),
                 "failure_policy": "atomic-retain-complete-history",
             }
         )
@@ -55,16 +64,22 @@ class ChannelSBDF2Method(StrictModule, NonTrainableState):
             noise_requirement="none",
             method_id=identifier,
         )
+        self.explicit_stability_radius = 0.25
         self.method_id = identifier
 
     def prepare(
         self,
-        dynamics: CompiledChannelFlowDynamics,
+        dynamics: _CompiledChannelDynamics,
         step_size: ArrayLike,
         /,
     ) -> PreparedChannelSBDF2Method:
-        if not isinstance(dynamics, CompiledChannelFlowDynamics):
-            raise TypeError("dynamics must be CompiledChannelFlowDynamics.")
+        if not isinstance(
+            dynamics, (CompiledChannelFlowDynamics, CompiledChannelLESDynamics)
+        ):
+            raise TypeError(
+                "dynamics must be CompiledChannelFlowDynamics or "
+                "CompiledChannelLESDynamics."
+            )
         raw_step = np.asarray(step_size)
         if np.iscomplexobj(raw_step):
             raise TypeError("Channel SBDF2 step_size must be real.")
@@ -165,17 +180,18 @@ class _ChannelSBDF2Transition(StrictModule):
 class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
     """Channel SBDF2 bound to one dynamics compilation and exact time step."""
 
-    dynamics: CompiledChannelFlowDynamics
+    dynamics: _CompiledChannelDynamics
     backward_euler: PreparedChannelStokesSolver
     bdf2: PreparedChannelStokesSolver
     capabilities: TemporalMethodCapabilities
+    explicit_stability_radius: float = eqx.field(static=True)
     _required_step_size: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         method: ChannelSBDF2Method,
-        dynamics: CompiledChannelFlowDynamics,
+        dynamics: _CompiledChannelDynamics,
         step_size: float,
         backward_euler: PreparedChannelStokesSolver,
         bdf2: PreparedChannelStokesSolver,
@@ -184,6 +200,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
         self.dynamics = dynamics
         self.backward_euler = backward_euler
         self.bdf2 = bdf2
+        self.explicit_stability_radius = method.explicit_stability_radius
         self.capabilities = method.capabilities
         self._required_step_size = float(step_size)
         self.method_id = canonical_fingerprint(
@@ -193,6 +210,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
                 "dynamics": dynamics.compilation_id,
                 "step_size": self.required_step_size,
                 "backward_euler": backward_euler.prepared_id,
+                "explicit_stability_radius": method.explicit_stability_radius,
                 "bdf2": bdf2.prepared_id,
             }
         )
@@ -233,11 +251,15 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
         self,
         state: ChannelSBDF2State,
         step: Array,
+        lower_tangential_traction: ArrayLike | None,
+        upper_tangential_traction: ArrayLike | None,
         /,
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
+    ) -> tuple[Array, ...]:
         def startup(_):
             solved = self.backward_euler.solve(
-                state.current_velocity / step + state.current_nonlinear_rhs
+                state.current_velocity / step + state.current_nonlinear_rhs,
+                lower_tangential_traction=lower_tangential_traction,
+                upper_tangential_traction=upper_tangential_traction,
             )
             diagnostics = solved.diagnostics
             return (
@@ -247,6 +269,8 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
                 diagnostics.momentum_constraint_residual,
                 diagnostics.divergence_norm,
                 diagnostics.wall_residual,
+                diagnostics.tangential_traction_residual,
+                diagnostics.boundary_power,
                 diagnostics.pressure_gauge_residual,
                 diagnostics.bulk_velocity,
                 diagnostics.failed,
@@ -258,7 +282,11 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
                 + 2.0 * state.current_nonlinear_rhs
                 - state.previous_nonlinear_rhs
             )
-            solved = self.bdf2.solve(right_hand_side)
+            solved = self.bdf2.solve(
+                right_hand_side,
+                lower_tangential_traction=lower_tangential_traction,
+                upper_tangential_traction=upper_tangential_traction,
+            )
             diagnostics = solved.diagnostics
             return (
                 solved.velocity,
@@ -267,6 +295,8 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
                 diagnostics.momentum_constraint_residual,
                 diagnostics.divergence_norm,
                 diagnostics.wall_residual,
+                diagnostics.tangential_traction_residual,
+                diagnostics.boundary_power,
                 diagnostics.pressure_gauge_residual,
                 diagnostics.bulk_velocity,
                 diagnostics.failed,
@@ -287,6 +317,9 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
         step_size: Array,
         args: Any,
         /,
+        *,
+        lower_tangential_traction: ArrayLike | None = None,
+        upper_tangential_traction: ArrayLike | None = None,
     ) -> _ChannelSBDF2Transition:
         del step_index
         if not isinstance(state, ChannelSBDF2State):
@@ -305,6 +338,28 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
         )
         start = jnp.asarray(time, dtype=step.dtype).reshape(())
         incoming = self.dynamics.state_diagnostics(state.current_velocity)
+        if isinstance(self.dynamics, CompiledChannelLESDynamics):
+            current_restriction = incoming.explicit_restriction
+            history_safe = jax.lax.cond(
+                state.history_count == 0,
+                lambda _: jnp.asarray(True),
+                lambda _: self.dynamics.explicit_restriction(
+                    state.previous_velocity
+                ).permits(step),
+                operand=None,
+            )
+            method_contract = (current_restriction.temporal_method == "channel-sbdf2") & (
+                current_restriction.stability_radius
+                == jnp.asarray(
+                    self.explicit_stability_radius,
+                    dtype=current_restriction.stability_radius.dtype,
+                )
+            )
+            explicit_safe = (
+                current_restriction.permits(step) & history_safe & method_contract
+            )
+        else:
+            explicit_safe = jnp.asarray(True)
         (
             velocity,
             pressure,
@@ -312,11 +367,18 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
             momentum_residual,
             divergence_norm,
             wall_residual,
+            tangential_traction_residual,
+            boundary_power,
             pressure_gauge_residual,
             bulk_velocity,
             stokes_failed,
-        ) = self._solve_arrays(state, step)
-        successful = incoming.valid & ~stokes_failed
+        ) = self._solve_arrays(
+            state,
+            step,
+            lower_tangential_traction,
+            upper_tangential_traction,
+        )
+        successful = incoming.valid & explicit_safe & ~stokes_failed
         nonlinear = jax.lax.cond(
             successful,
             lambda _: self.dynamics.nonlinear(start + step, velocity, args),
@@ -337,6 +399,8 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
             momentum_constraint_residual=momentum_residual,
             divergence_norm=divergence_norm,
             wall_residual=wall_residual,
+            tangential_traction_residual=tangential_traction_residual,
+            boundary_power=boundary_power,
             pressure_gauge_residual=pressure_gauge_residual,
             bulk_velocity=bulk_velocity,
             failed=stokes_failed,
@@ -349,9 +413,13 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod):
         status = jnp.where(
             incoming.valid,
             jnp.where(
-                stokes_failed,
-                jnp.asarray(CHANNEL_FLOW_STOKES_FAILURE, dtype=jnp.int32),
-                jnp.asarray(CHANNEL_FLOW_SUCCESS, dtype=jnp.int32),
+                ~explicit_safe,
+                jnp.asarray(CHANNEL_FLOW_EXPLICIT_RESTRICTION, dtype=jnp.int32),
+                jnp.where(
+                    stokes_failed,
+                    jnp.asarray(CHANNEL_FLOW_STOKES_FAILURE, dtype=jnp.int32),
+                    jnp.asarray(CHANNEL_FLOW_SUCCESS, dtype=jnp.int32),
+                ),
             ),
             invalid_status,
         )
@@ -408,7 +476,7 @@ class ChannelFlowSolution(StrictModule):
     pressure_gradient: Array
     diagnostics: ChannelFlowDiagnosticsHistory
     method: ChannelSBDF2Method
-    dynamics: CompiledChannelFlowDynamics
+    dynamics: _CompiledChannelDynamics
     solver_id: str = eqx.field(static=True)
 
     @property
@@ -419,7 +487,7 @@ class ChannelFlowSolution(StrictModule):
 
 
 def solve_channel_sbdf2(
-    dynamics: CompiledChannelFlowDynamics,
+    dynamics: _CompiledChannelDynamics,
     initial_state: ArrayLike,
     times: ArrayLike,
     /,
@@ -428,8 +496,17 @@ def solve_channel_sbdf2(
     args: Any = None,
 ) -> ChannelFlowSolution:
     """Integrate by scanning the same prepared atomic transition used for restart."""
-    if not isinstance(dynamics, CompiledChannelFlowDynamics):
-        raise TypeError("dynamics must be CompiledChannelFlowDynamics.")
+    if not isinstance(
+        dynamics, (CompiledChannelFlowDynamics, CompiledChannelLESDynamics)
+    ):
+        raise TypeError(
+            "dynamics must be CompiledChannelFlowDynamics or CompiledChannelLESDynamics."
+        )
+    if dynamics.stokes_plan.tangential_boundary == "traction":
+        raise ValueError(
+            "Traction-owned channel walls require an accepted-step boundary owner; "
+            "solve_channel_sbdf2 cannot synthesize wall traction."
+        )
     selected = ChannelSBDF2Method() if method is None else method
     if not isinstance(selected, ChannelSBDF2Method):
         raise TypeError("method must be ChannelSBDF2Method or None.")
@@ -453,10 +530,21 @@ def solve_channel_sbdf2(
     initial_history = prepared.initialize(initial_state, saved[0], args)
     initial = initial_history.current_velocity
     initial_evidence = dynamics.state_diagnostics(initial)
-    initial_valid = initial_evidence.valid
+    initial_constraint_valid = initial_evidence.valid
+    if isinstance(dynamics, CompiledChannelLESDynamics):
+        initial_explicit_valid = dynamics.explicit_restriction(initial).permits(
+            float(durations[0])
+        )
+    else:
+        initial_explicit_valid = jnp.asarray(True)
+    initial_valid = initial_constraint_valid & initial_explicit_valid
     initial_status = jnp.where(
-        initial_valid,
-        jnp.asarray(CHANNEL_FLOW_SUCCESS, dtype=jnp.int32),
+        initial_constraint_valid,
+        jnp.where(
+            initial_explicit_valid,
+            jnp.asarray(CHANNEL_FLOW_SUCCESS, dtype=jnp.int32),
+            jnp.asarray(CHANNEL_FLOW_EXPLICIT_RESTRICTION, dtype=jnp.int32),
+        ),
         jnp.asarray(CHANNEL_FLOW_INITIAL_CONSTRAINT, dtype=jnp.int32),
     )
     step = jnp.asarray(
@@ -574,6 +662,7 @@ def solve_channel_sbdf2(
 
 
 __all__ = [
+    "CHANNEL_FLOW_EXPLICIT_RESTRICTION",
     "CHANNEL_FLOW_INITIAL_CONSTRAINT",
     "CHANNEL_FLOW_STOKES_FAILURE",
     "CHANNEL_FLOW_SUCCESS",

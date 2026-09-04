@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._array_archive import write_array_archive
 from ..._strict import StrictModule
+from ...equations._ksgs import DynamicKSGSPlan
 from ._boussinesq import PreparedCartesianBoussinesqOcean
 from ._hydrostatic import HydrostaticOceanState, PreparedHydrostaticOcean
 from ._hydrostatic_step import (
@@ -29,6 +30,13 @@ class OceanDiagnosticView(StrictModule):
     temperature: Array
     salinity: Array
     density_anomaly: Array
+    sgs_kinetic_energy: Array | None
+    ksgs_rate: Array | None
+    ksgs_eddy_viscosity: Array | None
+    ksgs_low_re_dissipation: Array | None
+    ksgs_dynamic_coefficient: Array | None
+    ksgs_dynamic_updates: Array | None
+    ksgs_wall_distance: Array | None
     buoyancy: Array
     pressure: Array
     kinetic_energy: Array
@@ -36,8 +44,17 @@ class OceanDiagnosticView(StrictModule):
     pressure_residual_norm: Array
     temperature_content: Array
     salinity_content: Array
+    temperature_sgs_content_rate: Array
+    salinity_sgs_content_rate: Array
+    temperature_sgs_variance_rate: Array
+    salinity_sgs_variance_rate: Array
     coriolis_power: Array
     surface_stress_power: Array
+    sgs_dissipation: Array
+    molecular_potential_energy_mixing: Array
+    sgs_potential_energy_mixing: Array
+    boundary_potential_energy_rate: Array
+    potential_energy_mixing_available: Array
     buoyancy_exchange_defect: Array
     energy_balance_defect: Array
     successful: Array
@@ -53,15 +70,19 @@ def ocean_diagnostic_view(
 ) -> OceanDiagnosticView:
     if not isinstance(ocean, PreparedCartesianBoussinesqOcean):
         raise TypeError("ocean must be PreparedCartesianBoussinesqOcean.")
+    continuation = state if isinstance(state, OceanBoussinesqContinuationState) else None
     coordinates = (
-        state.coordinates
-        if isinstance(state, OceanBoussinesqContinuationState)
-        else jnp.asarray(state)
+        continuation.coordinates if continuation is not None else jnp.asarray(state)
     )
-    physical = ocean.state_view(coordinates)
-    diagnostics = ocean.dynamics.diagnostics(time, coordinates, args)
-    stage = ocean.dynamics.stage(time, coordinates, args)
-    pressure = ocean.dynamics.pressure_field(time, coordinates, args)
+    physical = ocean.state_view(state)
+    stage = ocean.dynamics.stage(
+        time,
+        coordinates,
+        args,
+        ksgs_state=None if continuation is None else continuation.ksgs_state,
+    )
+    diagnostics = ocean.dynamics.diagnostics_from_stage(stage)
+    pressure = stage.pressure
     vertical = ocean.plan.axes.vertical_axis
     gravity = ocean.plan.axes.gravity(ocean.plan.reference.gravity_magnitude)
     buoyancy = (
@@ -86,6 +107,33 @@ def ocean_diagnostic_view(
         temperature=physical.temperature,
         salinity=physical.salinity,
         density_anomaly=physical.density_anomaly,
+        sgs_kinetic_energy=physical.sgs_kinetic_energy,
+        ksgs_rate=(
+            None
+            if ocean.plan.ksgs_field_name is None
+            else stage.scalar_rates[ocean.plan.ksgs_field_name]
+        ),
+        ksgs_eddy_viscosity=(
+            None if stage.ksgs is None else stage.ksgs.result.eddy_viscosity
+        ),
+        ksgs_low_re_dissipation=(
+            None
+            if stage.ksgs is None
+            else stage.ksgs.result.contributions.low_re_dissipation
+        ),
+        ksgs_dynamic_coefficient=(
+            stage.ksgs.result.state.eddy_viscosity_coefficient
+            if stage.ksgs is not None and isinstance(ocean.plan.ksgs, DynamicKSGSPlan)
+            else None
+        ),
+        ksgs_dynamic_updates=(
+            stage.ksgs.result.state.dynamic_updates
+            if stage.ksgs is not None and isinstance(ocean.plan.ksgs, DynamicKSGSPlan)
+            else None
+        ),
+        ksgs_wall_distance=(
+            None if ocean.prepared_ksgs is None else ocean.prepared_ksgs.wall_distance
+        ),
         buoyancy=buoyancy,
         pressure=pressure,
         kinetic_energy=diagnostics.kinetic_energy,
@@ -93,8 +141,21 @@ def ocean_diagnostic_view(
         pressure_residual_norm=diagnostics.pressure_residual_norm,
         temperature_content=temperature.content,
         salinity_content=salinity.content,
+        temperature_sgs_content_rate=temperature.sgs_diffusive_content_rate,
+        salinity_sgs_content_rate=salinity.sgs_diffusive_content_rate,
+        temperature_sgs_variance_rate=temperature.sgs_diffusive_variance_rate,
+        salinity_sgs_variance_rate=salinity.sgs_diffusive_variance_rate,
         coriolis_power=coriolis_power,
         surface_stress_power=stress_power,
+        sgs_dissipation=diagnostics.sgs_dissipation,
+        molecular_potential_energy_mixing=(
+            stage.buoyancy.molecular_potential_energy_mixing
+        ),
+        sgs_potential_energy_mixing=stage.buoyancy.sgs_potential_energy_mixing,
+        boundary_potential_energy_rate=stage.buoyancy.boundary_potential_energy_rate,
+        potential_energy_mixing_available=jnp.asarray(
+            stage.buoyancy.potential_energy_mixing_available
+        ),
         buoyancy_exchange_defect=stage.buoyancy.exchange_defect,
         energy_balance_defect=diagnostics.energy_balance_defect,
         successful=diagnostics.success,
@@ -123,12 +184,35 @@ def write_ocean_output(
         "pressure_residual_norm": view.pressure_residual_norm,
         "temperature_content": view.temperature_content,
         "salinity_content": view.salinity_content,
+        "temperature_sgs_content_rate": view.temperature_sgs_content_rate,
+        "salinity_sgs_content_rate": view.salinity_sgs_content_rate,
+        "temperature_sgs_variance_rate": view.temperature_sgs_variance_rate,
+        "salinity_sgs_variance_rate": view.salinity_sgs_variance_rate,
         "coriolis_power": view.coriolis_power,
         "surface_stress_power": view.surface_stress_power,
+        "sgs_dissipation": view.sgs_dissipation,
+        "molecular_potential_energy_mixing": (view.molecular_potential_energy_mixing),
+        "sgs_potential_energy_mixing": view.sgs_potential_energy_mixing,
+        "boundary_potential_energy_rate": view.boundary_potential_energy_rate,
+        "potential_energy_mixing_available": (view.potential_energy_mixing_available),
         "buoyancy_exchange_defect": view.buoyancy_exchange_defect,
         "energy_balance_defect": view.energy_balance_defect,
         "successful": view.successful,
     }
+    if view.sgs_kinetic_energy is not None:
+        arrays["sgs_kinetic_energy"] = view.sgs_kinetic_energy
+    if view.ksgs_rate is not None:
+        arrays["ksgs_rate"] = view.ksgs_rate
+    if view.ksgs_eddy_viscosity is not None:
+        arrays["ksgs_eddy_viscosity"] = view.ksgs_eddy_viscosity
+    if view.ksgs_low_re_dissipation is not None:
+        arrays["ksgs_low_re_dissipation"] = view.ksgs_low_re_dissipation
+    if view.ksgs_dynamic_coefficient is not None:
+        arrays["ksgs_dynamic_coefficient"] = view.ksgs_dynamic_coefficient
+    if view.ksgs_dynamic_updates is not None:
+        arrays["ksgs_dynamic_updates"] = view.ksgs_dynamic_updates
+    if view.ksgs_wall_distance is not None:
+        arrays["ksgs_wall_distance"] = view.ksgs_wall_distance
     for axis, component in enumerate(view.velocity):
         arrays[f"velocity/{axis}"] = component
     return write_array_archive(
@@ -136,10 +220,7 @@ def write_ocean_output(
         manifest={
             "kind": "ocean-boussinesq-output",
             "ocean_id": ocean.prepared_id,
-            "field_names": [
-                ocean.plan.reference.temperature_name,
-                ocean.plan.reference.salinity_name,
-            ],
+            "field_names": list(ocean.transport.layout.field_names),
         },
         arrays=arrays,
     )

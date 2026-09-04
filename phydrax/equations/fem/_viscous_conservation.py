@@ -24,6 +24,7 @@ from ...discretization.fem._boundary import tensor_local_face
 from ...discretization.finite_volume._physical_boundaries import (
     PrescribedHeatFluxWallBoundary,
 )
+from .._gas_dynamics import HomogeneousMixtureCompressibleNavierStokesSystem
 from .._hyperbolic_systems import (
     AbstractEntropyDiffusionSystem,
 )
@@ -438,7 +439,16 @@ class PreparedViscousDGOperator(StrictModule):
         local = self.dynamics._local_state(value)
         gradient = self.corrected_gradient(time, value, args)
         context = self.dynamics._context(jnp.asarray(time), args)
-        flux = self.dynamics.system.viscous_flux(local, gradient, context.user_args)
+        favre_rate = None
+        if isinstance(
+            self.dynamics.system,
+            HomogeneousMixtureCompressibleNavierStokesSystem,
+        ):
+            flux, favre_rate = self.dynamics.system.viscous_flux_and_favre_rate(
+                local, gradient, context.user_args
+            )
+        else:
+            flux = self.dynamics.system.viscous_flux(local, gradient, context.user_args)
         contravariant = ein.contract(
             "c...ik,c...ak->c...ia",
             flux,
@@ -449,6 +459,8 @@ class PreparedViscousDGOperator(StrictModule):
         for axis in range(self._dimension):
             divergence = divergence + self._differentiate(contravariant[..., axis], axis)
         rate = divergence / self.dynamics.metrics.determinant[..., None]
+        if favre_rate is not None:
+            rate = rate + favre_rate.conserved_source
         local_mass = self._local_mass()
         for pair, permutation in zip(
             self.dynamics.face_pairs,
@@ -564,7 +576,15 @@ class PreparedViscousDGOperator(StrictModule):
                             traction,
                             backend="jax",
                         )
-                        common = common.at[..., -1].set(mechanical + prescribed)
+                        energy_index = (
+                            self.dynamics.system.energy_index
+                            if isinstance(
+                                self.dynamics.system,
+                                HomogeneousMixtureCompressibleNavierStokesSystem,
+                            )
+                            else -1
+                        )
+                        common = common.at[..., energy_index].set(mechanical + prescribed)
                     rate = self._add_flux_face(
                         rate,
                         local_mass,

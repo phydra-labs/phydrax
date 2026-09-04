@@ -1,0 +1,1378 @@
+{
+  "all_residuals_finite": true,
+  "all_valid": true,
+  "cases": [
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 2.7755575615628914e-17,
+        "dynamics_rms_max": 9.813077866773595e-18,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 1.3013201627387616e-12,
+        "stationarity_rms_max": 9.869913414354466e-13,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.222122958
+      },
+      "control_sizes": [
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "horizon": 6,
+      "input_fingerprint": {
+        "sha256": "48c149a1baca5b6bb0adc6c634b718903f18688e813503d540c57824aee7e464",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              4,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              6,
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              6,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "lower": {
+        "seconds": 1.73800025
+      },
+      "memory": {
+        "compiler_argument_bytes": 824,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 22624,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 17608,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 828,
+        "logical_output_bytes": 21272
+      },
+      "name": "baseline",
+      "player_count": 2,
+      "run": {
+        "count": 3,
+        "max_ms": 5.523458,
+        "mean_ms": 5.174291666666666,
+        "median_ms": 5.176875,
+        "min_ms": 4.822542,
+        "samples_ms": [
+          5.176875,
+          4.822542,
+          5.523458
+        ],
+        "std_ms": 0.2861535892632173
+      },
+      "state_size": 4,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 251014,
+        "compiler_flops": 32876,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 2.7755575615628914e-17,
+        "dynamics_rms_max": 1.3877787807814457e-17,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 1.3013201627387616e-12,
+        "stationarity_rms_max": 9.869913414354466e-13,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.338149375
+      },
+      "control_sizes": [
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "horizon": 2,
+      "input_fingerprint": {
+        "sha256": "d6e8f6f05ae6eafff091c25381f8ebf2b404c0af650a05fef798ec6f34a46a2b",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              3
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              4,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              2,
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              3
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "lower": {
+        "seconds": 1.592780333
+      },
+      "memory": {
+        "compiler_argument_bytes": 472,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 14424,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 13768,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 476,
+        "logical_output_bytes": 13072
+      },
+      "name": "horizon-2",
+      "player_count": 2,
+      "run": {
+        "count": 3,
+        "max_ms": 3.382333,
+        "mean_ms": 3.088513666666666,
+        "median_ms": 2.957125,
+        "min_ms": 2.9260829999999998,
+        "samples_ms": [
+          3.382333,
+          2.9260829999999998,
+          2.957125
+        ],
+        "std_ms": 0.20814778711504217
+      },
+      "state_size": 4,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 177450,
+        "compiler_flops": 24588,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 2.7755575615628914e-17,
+        "dynamics_rms_max": 6.938893903907228e-18,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 1.3013201627387616e-12,
+        "stationarity_rms_max": 9.869913414354466e-13,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.347808125
+      },
+      "control_sizes": [
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "horizon": 12,
+      "input_fingerprint": {
+        "sha256": "dac9bddf98a287911c0fd26db9495576739bc6301b37af2097316a02e6b6f18a",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              13
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              4,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              12,
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              12,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              13
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "lower": {
+        "seconds": 1.637300875
+      },
+      "memory": {
+        "compiler_argument_bytes": 1352,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 34924,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 24904,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 1356,
+        "logical_output_bytes": 33572
+      },
+      "name": "horizon-12",
+      "player_count": 2,
+      "run": {
+        "count": 3,
+        "max_ms": 10.524083,
+        "mean_ms": 10.117180666666668,
+        "median_ms": 10.027625,
+        "min_ms": 9.799834,
+        "samples_ms": [
+          10.524083,
+          10.027625,
+          9.799834
+        ],
+        "std_ms": 0.3023786991774087
+      },
+      "state_size": 4,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 362344,
+        "compiler_flops": 45308,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 0.0,
+        "dynamics_rms_max": 0.0,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 1.3013201627387616e-12,
+        "stationarity_rms_max": 9.869913414354466e-13,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.340709834
+      },
+      "control_sizes": [
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "horizon": 6,
+      "input_fingerprint": {
+        "sha256": "28e6099d9aec88693dc1b2fc4abddcb42d5c25e70f7b6809a1ed5536305cea3d",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              6,
+              2,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              6,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "lower": {
+        "seconds": 1.412480083
+      },
+      "memory": {
+        "compiler_argument_bytes": 472,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 16416,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 13064,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 476,
+        "logical_output_bytes": 15064
+      },
+      "name": "state-2",
+      "player_count": 2,
+      "run": {
+        "count": 3,
+        "max_ms": 4.257042,
+        "mean_ms": 3.888305666666667,
+        "median_ms": 3.8592090000000003,
+        "min_ms": 3.548666,
+        "samples_ms": [
+          4.257042,
+          3.8592090000000003,
+          3.548666
+        ],
+        "std_ms": 0.28992424453333027
+      },
+      "state_size": 2,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 153218,
+        "compiler_flops": 16245,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 2.7755575615628914e-17,
+        "dynamics_rms_max": 8.097957243519669e-18,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 1.3013201627387616e-12,
+        "stationarity_rms_max": 9.869913414354466e-13,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.313381
+      },
+      "control_sizes": [
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "horizon": 6,
+      "input_fingerprint": {
+        "sha256": "cd0f8700b60eabb94e7b5d9aa219d94465d4a60cbc16b0670f158b8070661cc7",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              8,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              8,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              6,
+              2,
+              8
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              6,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "lower": {
+        "seconds": 1.756407375
+      },
+      "memory": {
+        "compiler_argument_bytes": 1720,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 41568,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 34888,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 1724,
+        "logical_output_bytes": 40216
+      },
+      "name": "state-8",
+      "player_count": 2,
+      "run": {
+        "count": 3,
+        "max_ms": 6.146833,
+        "mean_ms": 6.030583,
+        "median_ms": 6.062583,
+        "min_ms": 5.882333,
+        "samples_ms": [
+          6.146833,
+          5.882333,
+          6.062583
+        ],
+        "std_ms": 0.11032697615119642
+      },
+      "state_size": 8,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 539854,
+        "compiler_flops": 101340,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 0.0,
+        "dynamics_rms_max": 0.0,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 1.3013201627387616e-12,
+        "stationarity_rms_max": 9.869913414354466e-13,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.232785875
+      },
+      "control_sizes": [
+        2,
+        2
+      ],
+      "dtype": "float64",
+      "horizon": 6,
+      "input_fingerprint": {
+        "sha256": "bbb55505bde062e57f9e8347235daeba94e60c5b8d00603b3f5f45fe0f91d435",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              6,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              6,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "lower": {
+        "seconds": 1.75411275
+      },
+      "memory": {
+        "compiler_argument_bytes": 1384,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 27184,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 27128,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 1388,
+        "logical_output_bytes": 25832
+      },
+      "name": "controls-2-2",
+      "player_count": 2,
+      "run": {
+        "count": 3,
+        "max_ms": 11.641250000000001,
+        "mean_ms": 9.375278,
+        "median_ms": 8.298542000000001,
+        "min_ms": 8.186041999999999,
+        "samples_ms": [
+          8.298542000000001,
+          8.186041999999999,
+          11.641250000000001
+        ],
+        "std_ms": 1.6029422720085718
+      },
+      "state_size": 4,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 397668,
+        "compiler_flops": 53889,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 0.0,
+        "dynamics_rms_max": 0.0,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 5.048461648726743e-13,
+        "stationarity_rms_max": 5.048461648726743e-13,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.064692625
+      },
+      "control_sizes": [
+        2
+      ],
+      "dtype": "float64",
+      "horizon": 6,
+      "input_fingerprint": {
+        "sha256": "3ae52dd950a3e46ee1571f43de2492a758e23d2e16a304f8d46d3e06a837f62e",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              1
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              4,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              6,
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              6,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "lower": {
+        "seconds": 1.272183625
+      },
+      "memory": {
+        "compiler_argument_bytes": 816,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 18225,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 13384,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 820,
+        "logical_output_bytes": 16905
+      },
+      "name": "players-1",
+      "player_count": 1,
+      "run": {
+        "count": 3,
+        "max_ms": 5.423542,
+        "mean_ms": 4.525264,
+        "median_ms": 4.10675,
+        "min_ms": 4.0455,
+        "samples_ms": [
+          5.423542,
+          4.10675,
+          4.0455
+        ],
+        "std_ms": 0.6356704673481905
+      },
+      "state_size": 4,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 162469,
+        "compiler_flops": 24008,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 1,
+      "certificate": {
+        "dynamics_infinity_max": 1.3877787807814457e-17,
+        "dynamics_rms_max": 4.006172263299091e-18,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 6.693395837586991e-12,
+        "stationarity_rms_max": 3.746227681157817e-12,
+        "status": 0,
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.304615583
+      },
+      "control_sizes": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "horizon": 6,
+      "input_fingerprint": {
+        "sha256": "3d9d788f24a2696a560211d7d4b15ef11f5f487b6cbb52b411f05aca0ec547f3",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              6,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              6,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 4,
+      "lower": {
+        "seconds": 1.881111916
+      },
+      "memory": {
+        "compiler_argument_bytes": 1400,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 38094,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 55976,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 1404,
+        "logical_output_bytes": 36678
+      },
+      "name": "players-4",
+      "player_count": 4,
+      "run": {
+        "count": 3,
+        "max_ms": 8.602333,
+        "mean_ms": 7.8365833333333335,
+        "median_ms": 7.570167,
+        "min_ms": 7.33725,
+        "samples_ms": [
+          7.33725,
+          7.570167,
+          8.602333
+        ],
+        "std_ms": 0.5497526693719236
+      },
+      "state_size": 4,
+      "work": {
+        "accepted_iterations_sum": 2,
+        "compiler_bytes_accessed": 797352,
+        "compiler_flops": 106967,
+        "evaluated_trials_sum": 2,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 2
+      }
+    },
+    {
+      "case_count": 8,
+      "certificate": {
+        "dynamics_infinity_max": 0.0,
+        "dynamics_rms_max": 0.0,
+        "feedback_nash_claimed": false,
+        "final_unregularized_local_valid": true,
+        "global_convergence_claimed": false,
+        "label": "LOCAL_NOMINAL_NASH_STATIONARY",
+        "stationarity_infinity_max": 1.3013201627387616e-12,
+        "stationarity_rms_max": 9.869913414354466e-13,
+        "status": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "valid": true
+      },
+      "compile": {
+        "seconds": 1.359179875
+      },
+      "control_sizes": [
+        1,
+        1
+      ],
+      "dtype": "float64",
+      "horizon": 6,
+      "input_fingerprint": {
+        "sha256": "6bb324553b17ec8cbea930cdba5c375804675726b832c327f9c3e04147a1aedc",
+        "signature": [
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.state_scales",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.control_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".plan.scaling.cost_scales",
+            "shape": [
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.initial_state",
+            "shape": [
+              8,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['A']",
+            "shape": [
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".problem.args['B']",
+            "shape": [
+              4,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedback_gain",
+            "shape": [
+              8,
+              6,
+              2,
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.feedforward",
+            "shape": [
+              8,
+              6,
+              2
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": ".initial_policy.time_grid.times",
+            "shape": [
+              7
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": ".materialization_version",
+            "shape": []
+          }
+        ]
+      },
+      "joint_control_size": 2,
+      "lower": {
+        "seconds": 1.473357084
+      },
+      "memory": {
+        "compiler_argument_bytes": 4408,
+        "compiler_generated_code_bytes": 0,
+        "compiler_output_bytes": 167328,
+        "compiler_source": "jax-compiled-executable",
+        "compiler_temporary_bytes": 98240,
+        "compiler_unavailable_reason": null,
+        "logical_input_bytes": 4412,
+        "logical_output_bytes": 165976
+      },
+      "name": "cases-8",
+      "player_count": 2,
+      "run": {
+        "count": 3,
+        "max_ms": 15.088000000000001,
+        "mean_ms": 14.409055333333333,
+        "median_ms": 14.360291,
+        "min_ms": 13.778875,
+        "samples_ms": [
+          15.088000000000001,
+          14.360291,
+          13.778875
+        ],
+        "std_ms": 0.5355592320558231
+      },
+      "state_size": 4,
+      "work": {
+        "accepted_iterations_sum": 16,
+        "compiler_bytes_accessed": 1989661,
+        "compiler_flops": 249807,
+        "evaluated_trials_sum": 16,
+        "iterations_max": 3,
+        "line_search_evaluations_sum": 16
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "2a52e8f8e125c0d9c193af56e5456f94754ebc2a7f2a42bb2fef73e0fc11c069",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "c26dd929f11e2e66bcb486deba57838a31c1f6d5534b27b079d66ef7244a0eaa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}

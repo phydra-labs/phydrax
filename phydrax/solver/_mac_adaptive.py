@@ -133,7 +133,7 @@ class MACCompositeStepController(StrictModule, NonTrainableState):
         safety = float(safety_factor)
         if not isfinite(safety) or not 0.0 < safety <= 1.0:
             raise ValueError("MAC controller safety_factor must lie in (0, 1].")
-        names = ("advective", "diffusive") + tuple(limit.name for limit in limits)
+        names = ("advective", "molecular", "sgs") + tuple(limit.name for limit in limits)
         if len(set(names)) != len(names):
             raise ValueError("MAC composite rate-limit names must be unique.")
         self.dynamics = dynamics
@@ -153,12 +153,13 @@ class MACCompositeStepController(StrictModule, NonTrainableState):
         self, time: Array, state: Array, args: Any = None, /
     ) -> MACCompositeStepRestriction:
         state_ = self.dynamics.validate_state(state)
-        built_in = self.dynamics.step_restriction(state_)
+        built_in = self.dynamics.step_restriction(time, state_, args)
         dtype = state_.dtype
         built_in_limits = jnp.stack(
             (
                 jnp.asarray(built_in.advective, dtype=dtype),
-                jnp.asarray(built_in.diffusive, dtype=dtype),
+                jnp.asarray(built_in.molecular, dtype=dtype),
+                jnp.asarray(built_in.sgs, dtype=dtype),
             )
         )
         built_in_rates = jnp.where(
@@ -176,7 +177,7 @@ class MACCompositeStepController(StrictModule, NonTrainableState):
             else jnp.concatenate((built_in_rates, jnp.stack(extra_rates)))
         )
         scales = jnp.asarray(
-            (1.0, 1.0) + tuple(limit.scale for limit in self.additional_limits),
+            (1.0, 1.0, 1.0) + tuple(limit.scale for limit in self.additional_limits),
             dtype=dtype,
         )
         valid_rates = jnp.isfinite(rates) & (rates >= 0.0)
@@ -352,6 +353,12 @@ class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
         final_time: float,
         initial_step_size: float,
     ):
+        from ._mac_viscous import MACSBDF2Method
+
+        if isinstance(method, MACSBDF2Method):
+            raise ValueError(
+                "MAC SBDF2 is fixed-step and cannot be used by adaptive rollout."
+            )
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
         if not isinstance(method, AbstractFixedStepMethod):

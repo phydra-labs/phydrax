@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..dynamics import ContinuousSystem, DiscreteStepContext, DiscreteSystem, TimeGrid
+from ..dynamics._system import DiscreteTransitionEvidence
 from ..solver._differential import DifferentialProblem
 from ..solver._diffrax_backend import solve_diffrax
 from ._parameterization import AbstractControlParameterization
@@ -59,6 +60,7 @@ def _event_where(
     return jnp.where(selector, values, replacement)
 
 
+@eqx.filter_jit
 def _batched_transition(
     system: DiscreteSystem,
     context: DiscreteStepContext,
@@ -153,7 +155,7 @@ class DiscreteControlDynamics(StrictModule):
             carry: tuple[Array, Array, Array, Array], index: Array
         ) -> tuple[
             tuple[Array, Array, Array, Array],
-            tuple[Array, Array, Array],
+            tuple[Array, Array, Array, Array, Array, Array, Array],
         ]:
             time = time_grid.times[index]
             context = DiscreteStepContext(
@@ -187,7 +189,7 @@ class DiscreteControlDynamics(StrictModule):
                 self.control_shape,
             )
             (
-                _candidate_state,
+                candidate_state,
                 accepted_state,
                 transition_successful,
                 transition_status,
@@ -201,6 +203,24 @@ class DiscreteControlDynamics(StrictModule):
                 self.state_shape,
                 self.control_shape,
             )
+            evidence_candidates = _event_where(
+                transition_valid,
+                candidate_state,
+                jnp.full_like(candidate_state, jnp.nan),
+                self.state_shape,
+            )
+            evidence_accepted = _event_where(
+                transition_valid,
+                accepted_state,
+                jnp.full_like(accepted_state, jnp.nan),
+                self.state_shape,
+            )
+            evidence_successful = transition_valid & transition_successful
+            evidence_status = jnp.where(
+                transition_valid,
+                transition_status,
+                jnp.asarray(0, dtype=jnp.int32),
+            ).astype(jnp.int32)
             next_state = _event_where(
                 transition_valid,
                 accepted_state,
@@ -232,11 +252,27 @@ class DiscreteControlDynamics(StrictModule):
                 next_valid,
                 next_backend_status,
                 next_backend_failed,
-            ), (next_state, control, next_valid)
+            ), (
+                next_state,
+                control,
+                next_valid,
+                evidence_candidates,
+                evidence_accepted,
+                evidence_successful,
+                evidence_status,
+            )
 
         (
             (_, _, transition_status, backend_failed),
-            (next_states, applied_controls, next_valid),
+            (
+                next_states,
+                applied_controls,
+                next_valid,
+                candidate_states,
+                accepted_states,
+                transition_successful,
+                per_step_status,
+            ),
         ) = jax.lax.scan(
             step,
             (
@@ -263,6 +299,12 @@ class DiscreteControlDynamics(StrictModule):
             ),
             axis=-1,
         )
+        transition_evidence = DiscreteTransitionEvidence(
+            jnp.moveaxis(candidate_states, 0, state_time_axis),
+            jnp.moveaxis(accepted_states, 0, state_time_axis),
+            jnp.moveaxis(transition_successful, 0, -1),
+            jnp.moveaxis(per_step_status, 0, -1),
+        )
         all_valid = jnp.all(valid, axis=-1)
         status = jnp.where(
             all_valid,
@@ -281,6 +323,7 @@ class DiscreteControlDynamics(StrictModule):
             valid=valid,
             status=status,
             backend_status=backend_status,
+            transition_evidence=transition_evidence,
             case_shape=cases,
             state_shape=self.state_shape,
             control_shape=self.control_shape,
@@ -548,6 +591,7 @@ class DifferentialControlDynamics(StrictModule):
             valid=valid,
             status=status,
             backend_status=backend_status,
+            transition_evidence=None,
             case_shape=cases,
             state_shape=self.state_shape,
             control_shape=self.control_shape,

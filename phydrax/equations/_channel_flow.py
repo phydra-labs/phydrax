@@ -32,7 +32,6 @@ class ChannelVelocityDiagnostics(StrictModule):
     valid: Array
 
 
-
 class CompiledChannelFlowDynamics(StrictModule):
     """Dealiased rotational channel nonlinearity plus prepared Stokes solves."""
 
@@ -128,18 +127,8 @@ class CompiledChannelFlowDynamics(StrictModule):
             self.discretization.quadrature_weights * speed_squared
         )
         x_axis, _, z_axis = self.discretization.axes
-        kx = (
-            2.0
-            * jnp.pi
-            * x_axis.modes.mode_numbers
-            / x_axis.length
-        )[:, None, None]
-        kz = (
-            2.0
-            * jnp.pi
-            * z_axis.modes.mode_numbers
-            / z_axis.length
-        )[None, None, :]
+        kx = (2.0 * jnp.pi * x_axis.modes.mode_numbers / x_axis.length)[:, None, None]
+        kz = (2.0 * jnp.pi * z_axis.modes.mode_numbers / z_axis.length)[None, None, :]
         divergence = (
             1j * kx * value[..., 0]
             + self.discretization.modal_derivative(value[..., 1], axis=1)
@@ -149,14 +138,28 @@ class CompiledChannelFlowDynamics(StrictModule):
         divergence_norm = precision.norm(divergence.reshape((-1,)))
         lower = physical[:, 0, :, :]
         upper = physical[:, -1, :, :]
-        wall_residual = jnp.maximum(
-            precision.norm(
-                (lower - self.stokes_plan.lower_wall_velocity).reshape((-1,))
-            ),
-            precision.norm(
-                (upper - self.stokes_plan.upper_wall_velocity).reshape((-1,))
-            ),
-        )
+        if self.stokes_plan.tangential_boundary == "velocity":
+            wall_residual = jnp.maximum(
+                precision.norm(
+                    (lower - self.stokes_plan.lower_wall_velocity).reshape((-1,))
+                ),
+                precision.norm(
+                    (upper - self.stokes_plan.upper_wall_velocity).reshape((-1,))
+                ),
+            )
+        else:
+            wall_residual = jnp.maximum(
+                precision.norm(
+                    (lower[..., 1] - self.stokes_plan.lower_wall_velocity[1]).reshape(
+                        (-1,)
+                    )
+                ),
+                precision.norm(
+                    (upper[..., 1] - self.stokes_plan.upper_wall_velocity[1]).reshape(
+                        (-1,)
+                    )
+                ),
+            )
         finite = jnp.all(jnp.isfinite(value)) & jnp.all(jnp.isfinite(physical))
         valid = (
             finite
@@ -170,7 +173,6 @@ class CompiledChannelFlowDynamics(StrictModule):
             finite=finite,
             valid=valid,
         )
-
 
     def nonlinear(self, time: Array, state: ArrayLike, args: Any = None, /) -> Array:
         value = self.admissible_modes(state)

@@ -54,15 +54,15 @@
 
 ---
 
-::: phydrax.discretization.ReducedSymplecticStepPolicy
+::: phydrax.discretization.ReducedSemiImplicitVelocityEulerStepPolicy
 
 ---
 
-::: phydrax.discretization.ReducedSymplecticStepDiagnostics
+::: phydrax.discretization.ReducedSemiImplicitVelocityEulerStepDiagnostics
 
 ---
 
-::: phydrax.discretization.ReducedSymplecticStepResult
+::: phydrax.discretization.ReducedSemiImplicitVelocityEulerStepResult
 
 ---
 
@@ -86,9 +86,13 @@
 
 ---
 
-::: phydrax.discretization.reduced_symplectic_step
+::: phydrax.discretization.reduced_semi_implicit_velocity_euler_step
 
-## Rigid inertial realization
+## COM-centred rigid inertial realization
+
+::: phydrax.discretization.RigidBodyMassProperties
+
+---
 
 ::: phydrax.discretization.RigidInertialCoordinates
 
@@ -106,9 +110,37 @@
 
 ---
 
+::: phydrax.discretization.RigidBodyReferenceFrameRebase
+
+---
+
+::: phydrax.discretization.RigidInertialRealization
+
+---
+
 ::: phydrax.discretization.realize_rigid_body_plans
 
-## Articulated contact
+## Fixed-route articulated contact
+
+::: phydrax.applications.contact.ContactConeProgram
+
+---
+
+::: phydrax.applications.contact.ContactConeSolverPlan
+
+---
+
+::: phydrax.applications.contact.ContactConeNumericRevision
+
+---
+
+::: phydrax.applications.contact.ContactConeEvidence
+
+---
+
+::: phydrax.applications.contact.ContactConeResult
+
+---
 
 ::: phydrax.applications.contact.make_articulated_contact_participant
 
@@ -155,6 +187,30 @@
 ---
 
 ::: phydrax.applications.contact.ArticulatedContactResult
+
+## Result-preserving discrete evolution
+
+::: phydrax.dynamics.DiscreteTransitionResult
+
+---
+
+::: phydrax.dynamics.DiscreteTransitionEvidence
+
+---
+
+::: phydrax.dynamics.DiscreteEvolution
+
+---
+
+::: phydrax.dynamics.EvolutionStep
+
+---
+
+::: phydrax.dynamics.EvolutionTrajectory
+
+---
+
+::: phydrax.dynamics.evolve
 
 ## Status-aware rollout and sampling MPC
 
@@ -283,6 +339,34 @@
 ---
 
 ::: phydrax.applications.solid_mechanics.evaluate_reduced_rod
+
+## Bounded resource contracts
+
+::: phydrax.interchange.ResourceLimits
+
+---
+
+::: phydrax.interchange.ResourceManifest
+
+---
+
+::: phydrax.interchange.BoundedResource
+
+---
+
+::: phydrax.interchange.ResourceReadError
+
+---
+
+::: phydrax.interchange.bounded_resource_from_bytes
+
+---
+
+::: phydrax.interchange.read_bounded_resource
+
+---
+
+::: phydrax.interchange.account_bounded_resource
 
 ## Interchange negotiation and composition
 

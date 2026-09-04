@@ -36,15 +36,17 @@ class PreparedFourierModalCaseBatch(StrictModule):
 
 
 class FourierModalCaseBatchResult(StrictModule):
-    """Case-shaped arrays plus the complete per-case scientific results."""
+    """Case-shaped directional port powers plus complete per-case results."""
 
     results: tuple[FourierModalSolveResult, ...]
     right_outgoing: Array
     left_outgoing: Array
-    incident_power: Array
-    reflected_power: Array
-    transmitted_power: Array
-    absorbed_power: Array
+    left_incoming_power: Array
+    right_incoming_power: Array
+    left_outgoing_power: Array
+    right_outgoing_power: Array
+    net_port_power_into_stack: Array
+    power_audit_residual: Array
     status: Array
     case_shape: tuple[int, ...] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
@@ -104,8 +106,13 @@ def prepare_brillouin_zone_maxwell(
 ) -> PreparedFourierModalCaseBatch:
     """Prepare one static stack at every wavevector of a Brillouin-zone rule."""
     if rule.lattice_preparation_id != problem.harmonics.preparation_id:
-        raise ValueError("The Brillouin rule belongs to a different lattice.")
-    wavevectors = rule.wavevectors.reshape((-1, 2))
+        raise ValueError("The Brillouin rule belongs to a different lattice layout.")
+    expected_rule = rule.plan.prepare(problem.harmonics)
+    wavevectors = eqx.error_if(
+        rule.wavevectors,
+        ~jnp.all(rule.wavevectors == expected_rule.wavevectors),
+        "The Brillouin rule primitive-vector values do not match the problem lattice.",
+    ).reshape((-1, 2))
     problems = tuple(
         FourierModalMaxwellProblem(
             problem.harmonics,
@@ -151,10 +158,12 @@ def solve_fourier_modal_case_batch(
         results,
         stacked(tuple(result.right_outgoing for result in results)),
         stacked(tuple(result.left_outgoing for result in results)),
-        stacked(tuple(result.incident_power for result in results)),
-        stacked(tuple(result.reflected_power for result in results)),
-        stacked(tuple(result.transmitted_power for result in results)),
-        stacked(tuple(result.absorbed_power for result in results)),
+        stacked(tuple(result.left_incoming_power for result in results)),
+        stacked(tuple(result.right_incoming_power for result in results)),
+        stacked(tuple(result.left_outgoing_power for result in results)),
+        stacked(tuple(result.right_outgoing_power for result in results)),
+        stacked(tuple(result.net_port_power_into_stack for result in results)),
+        stacked(tuple(result.power_audit_residual for result in results)),
         stacked(tuple(result.status for result in results)),
         prepared.case_shape,
         batch_id=prepared.batch_id,

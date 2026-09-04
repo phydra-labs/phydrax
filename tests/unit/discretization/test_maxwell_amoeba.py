@@ -164,15 +164,23 @@ def test_frequency_modes_adjoints_and_reversible_execution():
     if operator.size <= 256:
         modes = operator.eigensystem(min(2, operator.size))
         assert jnp.all(modes.residuals < 1e-7)
-    transverse = phx.solver.maxwell.TransverseMaxwellModePlan(
-        jnp.diag(jnp.asarray([4.0, 1.0])),
-        jnp.eye(2),
+    identity = jnp.eye(2, dtype=complex)
+    transverse = phx.solver.maxwell.FixedFrequencyGuidedModePlan(
+        -jnp.diag(jnp.asarray([4.0, 1.0], dtype=complex)),
+        jnp.zeros((2, 2), dtype=complex),
+        identity,
         1,
-        magnetic_reconstruction=jnp.eye(2),
-        power_pairing=jnp.eye(2),
+        angular_frequency=1.0,
+        right_electric_trace_coefficients=(identity,),
+        right_magnetic_trace_coefficients=(identity,),
+        left_electric_trace_coefficients=(identity,),
+        left_magnetic_trace_coefficients=(identity,),
+        divergence_coefficients=(jnp.zeros((1, 2), dtype=complex),),
+        power_pairing=identity,
+        target_propagation_constant=2.0,
     ).solve()
     np.testing.assert_allclose(transverse.propagation_constants, 2.0)
-    assert jnp.all(transverse.residuals < 1e-12)
+    assert jnp.all(transverse.polynomial_residuals < 1e-12)
     assert int(transverse.status) == 0
 
     report = phx.solver.maxwell.audit_directional_derivative(

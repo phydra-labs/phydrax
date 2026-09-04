@@ -719,6 +719,9 @@ class MJXPreparedMuscleProjection(StrictModule, NonTrainableState):
         )
 
 
+
+
+
 class MJXAdapter(StrictModule, NonTrainableState):
     """Prepared MJX-JAX model and its closed integrity boundary."""
 
@@ -831,7 +834,6 @@ class MJXAdapter(StrictModule, NonTrainableState):
         """Prepare fixed gathers for named or all compiled built-in muscles."""
 
         return MJXMuscleProjectionPlan(names).prepare(self)
-
     def observe(
         self,
         state: MJXState | None = None,
@@ -913,7 +915,6 @@ class MJXAdapter(StrictModule, NonTrainableState):
             evidence,
             freshness,
         )
-
 
     def step(
         self,
@@ -1195,7 +1196,6 @@ def _array_devices(array: jax.Array, /) -> tuple[str, ...]:
     return tuple(
         sorted(f"{device.platform}:{device.id}" for device in array.devices())
     )
-
 
 def _data_schema(data: Any, /) -> MJXDataSchema:
     leaves, treedef = jax.tree_util.tree_flatten(data)

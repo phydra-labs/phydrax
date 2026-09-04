@@ -270,7 +270,7 @@ def solve_construction_sequence(
         current = equilibrium.state.kinematics
         rest_lengths = inputs.rest_lengths
         stability = (
-            tangent_stability(stage.problem, inputs, current)
+            tangent_stability(stage.problem, equilibrium)
             if stage.require_tangent_stability and bool(equilibrium.successful)
             else None
         )

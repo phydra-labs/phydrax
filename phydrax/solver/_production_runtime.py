@@ -1174,6 +1174,7 @@ class ProductionRunPlan(StrictModule, NonTrainableState):
     maximum_steps: int = eqx.field(static=True)
     checkpoint_interval: int = eqx.field(static=True)
     segment_steps: int = eqx.field(static=True)
+    device_resident: bool = eqx.field(static=True)
     validator_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -1193,6 +1194,7 @@ class ProductionRunPlan(StrictModule, NonTrainableState):
         trigger_bindings: Sequence[ProductionTriggerBinding] = (),
         validator: Callable | None = None,
         validator_id: str | None = None,
+        device_resident: bool = False,
     ):
         step = float(step_size)
         end = float(end_time)
@@ -1201,6 +1203,8 @@ class ProductionRunPlan(StrictModule, NonTrainableState):
         segment = int(segment_steps)
         moments_ = tuple(moments)
         bindings = tuple(trigger_bindings)
+        if not isinstance(device_resident, bool):
+            raise TypeError("device_resident must be Boolean.")
         if validator is None:
             if validator_id is not None:
                 raise ValueError("validator_id requires a supplied validator.")
@@ -1277,25 +1281,27 @@ class ProductionRunPlan(StrictModule, NonTrainableState):
         self.maximum_steps = steps
         self.checkpoint_interval = interval
         self.segment_steps = segment
+        self.device_resident = device_resident
         self.validator_id = validator_identifier
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "production-run-plan",
-                "method": method.method_id,
-                "retry": retry_policy.policy_id,
-                "step_size": step,
-                "end_time": end,
-                "maximum_steps": steps,
-                "checkpoint_interval": interval,
-                "segment_steps": segment,
-                "output_schedule": None
-                if output_schedule is None
-                else output_schedule.schedule_id,
-                "moments": tuple(value.plan_id for value in moments_),
-                "trigger_bindings": tuple(value.binding_id for value in bindings),
-                "validator": validator_identifier,
-            }
-        )
+        identity = {
+            "kind": "production-run-plan",
+            "method": method.method_id,
+            "retry": retry_policy.policy_id,
+            "step_size": step,
+            "end_time": end,
+            "maximum_steps": steps,
+            "checkpoint_interval": interval,
+            "segment_steps": segment,
+            "output_schedule": None
+            if output_schedule is None
+            else output_schedule.schedule_id,
+            "moments": tuple(value.plan_id for value in moments_),
+            "trigger_bindings": tuple(value.binding_id for value in bindings),
+            "validator": validator_identifier,
+        }
+        if device_resident:
+            identity["device_resident"] = True
+        self.plan_id = canonical_fingerprint(identity)
 
 
 class _SegmentState(StrictModule):
@@ -1765,9 +1771,45 @@ class PreparedProductionRun:
             )
         return terminal
 
-    @staticmethod
-    def _index_tree(tree: Any, index: int, /) -> Any:
+    def _index_tree(self, tree: Any, index: int, /) -> Any:
+        if self.plan.device_resident:
+            return jax.tree.map(lambda leaf: leaf[index], tree)
         return jax.tree.map(lambda leaf: np.asarray(leaf)[index], tree)
+
+    @staticmethod
+    def _place_tree_like(value: Any, reference: Any, /) -> Any:
+        if jax.tree.structure(value) != jax.tree.structure(reference):
+            raise ValueError("Device-resident state changed its PyTree structure.")
+        return jax.tree.map(
+            lambda leaf, template: (
+                jax.device_put(leaf, template.sharding)
+                if isinstance(template, jax.Array)
+                else leaf
+            ),
+            value,
+            reference,
+        )
+
+    @classmethod
+    def _place_production_state_like(
+        cls,
+        state: ProductionRunState,
+        reference: ProductionRunState,
+        /,
+    ) -> ProductionRunState:
+        return ProductionRunState(
+            state.step_index,
+            state.time,
+            cls._place_tree_like(state.accepted_state, reference.accepted_state),
+            state.controller_state,
+            state.rng_state,
+            state.schedule_cursor,
+            state.moment_states,
+            state.trigger_states,
+            state.output_cursor,
+            state.status,
+            state.last_checkpoint_id,
+        )
 
     def _segment_initial(self, state: ProductionRunState, /) -> _SegmentState:
         return _SegmentState(
@@ -1856,6 +1898,8 @@ class PreparedProductionRun:
             snapshot = self._production_state(
                 snapshot_segment, source, "running", last_checkpoint
             )
+            if self.plan.device_resident:
+                snapshot = self._place_production_state_like(snapshot, source)
             if not accepted[index]:
                 category = (
                     "state-invalid" if method_successful[index] else "step-rejected"
@@ -1985,9 +2029,18 @@ class PreparedProductionRun:
             raise ValueError("Only ready or running production state can advance.")
         executor = self._compiled_one_step if one_step else self._compiled_segment
         final_segment, records = executor(self._segment_initial(state))
-        final_host, records_host = jax.device_get((final_segment, records))
-        current, failure = self._process_segment(state, final_host, records_host)
-        return current, failure, records_host
+        if self.plan.device_resident:
+            processed_segment, processed_records = final_segment, records
+        else:
+            processed_segment, processed_records = jax.device_get(
+                (final_segment, records)
+            )
+        current, failure = self._process_segment(
+            state, processed_segment, processed_records
+        )
+        if self.plan.device_resident:
+            current = self._place_production_state_like(current, state)
+        return current, failure, processed_records
 
     def step(
         self, state: ProductionRunState, /
@@ -1996,7 +2049,22 @@ class PreparedProductionRun:
         attempted = np.flatnonzero(np.asarray(records.attempted, dtype=bool))
         if attempted.size != 1:
             raise ValueError("Production state has already reached its horizon.")
-        return current, self._index_tree(records.result, int(attempted[0]))
+        transition = self._index_tree(records.result, int(attempted[0]))
+        if self.plan.device_resident:
+            transition = RetriedFixedStepResult(
+                candidate_state=self._place_tree_like(
+                    transition.candidate_state, state.accepted_state
+                ),
+                accepted_state=self._place_tree_like(
+                    transition.accepted_state, state.accepted_state
+                ),
+                successful=transition.successful,
+                accepted_step_size=transition.accepted_step_size,
+                retry_count=transition.retry_count,
+                attempted_step_sizes=transition.attempted_step_sizes,
+                decision_id=transition.decision_id,
+            )
+        return current, transition
 
     def run(self, state: ProductionRunState, /) -> ProductionRunResult:
         current = state

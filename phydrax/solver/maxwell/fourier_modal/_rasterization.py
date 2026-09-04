@@ -192,6 +192,8 @@ def rasterize_fourier_modal_material(
         epsilon,
         permeability,
         material_id=identifier,
+        material_role="physical",
+        origin_evidence_id=plan.plan_id,
         passive=passive,
         reciprocal=reciprocal,
     )

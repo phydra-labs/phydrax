@@ -9,7 +9,6 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import canonical_fingerprint
@@ -21,12 +20,17 @@ from ...linalg import (
     AbstractLinearOperator,
     adjoint,
     ArraySpace,
+    DenseLinearOperator,
+    eigen as eigen_api,
     FunctionLinearOperator,
     MaterializationPolicy,
     materialize,
+    OperatorProperties,
 )
 from ._cone import (
     build_contact_cone_program,
+    contact_cone_numeric_revision_matches,
+    contact_cone_result_is_certified,
     ContactConeEvidence,
     ContactConeProgram,
     ContactConeResult,
@@ -38,6 +42,8 @@ from ._materials import ContactMaterialPairTable
 
 class ArticulatedContactPreparationEvidence(StrictModule):
     kinematics_successful: Array
+    participant_routes_complete: Array
+    material_law_complete: Array
     velocity_residual: Array
     velocity_scale: Array
     velocity_consistent: Array
@@ -45,6 +51,9 @@ class ArticulatedContactPreparationEvidence(StrictModule):
     delassus_scale: Array
     minimum_delassus_diagonal: Array
     nonnegative_delassus_diagonal: Array
+    minimum_delassus_eigenvalue: Array
+    delassus_spectral_residual: Array
+    delassus_spectral_valid: Array
     finite: Array
     successful: Array
     participant_id: str = eqx.field(static=True)
@@ -78,6 +87,8 @@ class ArticulatedContactEvidence(StrictModule):
     minimum_post_normal_velocity: Array
     post_contact_feasible: Array
     certificate_tolerance: Array
+    numeric_revision_matches: Array
+    contact_equation_residual: Array
     contact_certificate_valid: Array
     finite: Array
     applied: Array
@@ -113,25 +124,23 @@ def _contact_layout(kinematics: ContactKinematicsEpoch, /) -> tuple[int, int]:
     return contact_count, 1 + tangent_dimension
 
 
-def _validate_participant_routes(
+def _participant_routes_complete(
     participant: AbstractContactParticipant,
     kinematics: ContactKinematicsEpoch,
     vertex_offset: int,
     /,
-) -> None:
+) -> Array:
     vertex_count = participant.surface_plan.vertex_count
     if vertex_offset < 0:
         raise ValueError("vertex_offset must be nonnegative.")
+    complete = []
     for batch in kinematics.batches:
-        indices = np.asarray(batch.vertex_indices) - vertex_offset
-        coefficients = np.asarray(batch.coefficients)
-        valid = np.asarray(batch.valid)
-        used = valid[:, None] & (np.abs(coefficients) > 0.0)
-        inside = (indices >= 0) & (indices < vertex_count)
-        if np.any(valid & ~np.any(used & inside, axis=1)):
-            raise ValueError(
-                "Every valid fixed route must involve the articulated participant."
-            )
+        indices = batch.vertex_indices - vertex_offset
+        used = (jnp.abs(batch.coefficients) > 0.0) & (
+            (indices >= 0) & (indices < vertex_count)
+        )
+        complete.append((~batch.valid) | jnp.any(used, axis=1))
+    return jnp.all(jnp.concatenate(tuple(complete), axis=0))
 
 
 def _route_velocity(
@@ -223,13 +232,6 @@ def _tree_where(
     return jax.tree.map(lambda yes, no: jnp.where(condition, yes, no), accepted, rejected)
 
 
-def _maximum_coordinate_difference(
-    space, left: PyTree[Array], right: PyTree[Array], /
-) -> Array:
-    difference = space.flatten(
-        jax.tree.map(lambda left_leaf, right_leaf: left_leaf - right_leaf, left, right)
-    )
-    return jnp.max(jnp.abs(difference), initial=0.0)
 
 
 def build_contact_velocity_operator(
@@ -246,7 +248,8 @@ def build_contact_velocity_operator(
         raise TypeError("participant must be AbstractContactParticipant.")
     _contact_layout(kinematics)
     offset = int(vertex_offset)
-    _validate_participant_routes(participant, kinematics, offset)
+    if offset < 0:
+        raise ValueError("vertex_offset must be nonnegative.")
     configuration_ = participant.source_space.validate(configuration)
     positions = participant.positions(configuration_)
     contact_count, local_dimension = _contact_layout(kinematics)
@@ -406,7 +409,55 @@ def prepare_articulated_contact(
     delassus_scale = jnp.maximum(
         1.0, jnp.max(jnp.abs(dense_delassus), initial=0.0)
     )
-    minimum_diagonal = jnp.min(jnp.real(jnp.diag(dense_delassus)), initial=jnp.inf)
+    minimum_diagonal = jnp.min(
+        jnp.real(jnp.diag(dense_delassus)), initial=jnp.inf
+    )
+    hermitian_delassus = 0.5 * (dense_delassus + adjoint_dense)
+    spectral_operator = DenseLinearOperator(
+        hermitian_delassus,
+        source=delassus.source,
+        target=delassus.target,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            evidence={"self_adjoint": "verified"},
+        ),
+        operator_id=f"{delassus.operator_id}/spectral-certificate",
+    )
+    spectral_result = eigen_api.eigensolve(
+        eigen_api.Eigenproblem(spectral_operator),
+        policy=eigen_api.EigenSolvePolicy(
+            eigen_api.DenseEigh(),
+            count=delassus.source.size,
+            which="smallest-algebraic",
+        ),
+    )
+    minimum_eigenvalue = jnp.min(
+        jnp.where(spectral_result.mode_mask, spectral_result.eigenvalues, jnp.inf)
+    )
+    spectral_residual = jnp.max(
+        jnp.where(
+            spectral_result.mode_mask,
+            spectral_result.diagnostics.relative_residuals,
+            0.0,
+        ),
+        initial=0.0,
+    )
+    spectral_finite = (
+        jnp.all(jnp.isfinite(spectral_result.eigenvalues))
+        & jnp.isfinite(spectral_residual)
+    )
+    spectral_valid = (
+        spectral_result.successful
+        & (spectral_result.effective_count == delassus.source.size)
+        & spectral_finite
+        & (minimum_eigenvalue >= -tolerance * delassus_scale)
+    )
+    participant_routes_complete = _participant_routes_complete(
+        participant, kinematics, int(vertex_offset)
+    )
+    material_law_complete = jnp.all(
+        (~program.valid) | program.mechanical_available
+    )
     velocity_consistent = velocity_residual <= tolerance * velocity_scale
     nonnegative_diagonal = minimum_diagonal >= -tolerance * delassus_scale
     finite = (
@@ -414,27 +465,36 @@ def prepare_articulated_contact(
         & jnp.all(jnp.isfinite(local_free))
         & jnp.all(jnp.isfinite(recorded))
         & _tree_finite(free)
+        & spectral_finite
     )
     successful = (
         kinematics.evidence.successful
+        & participant_routes_complete
+        & material_law_complete
         & velocity_consistent
         & (symmetry_residual <= tolerance * delassus_scale)
         & nonnegative_diagonal
+        & spectral_valid
         & finite
     )
     evidence = ArticulatedContactPreparationEvidence(
-        kinematics.evidence.successful,
-        velocity_residual,
-        velocity_scale,
-        velocity_consistent,
-        symmetry_residual,
-        delassus_scale,
-        minimum_diagonal,
-        nonnegative_diagonal,
-        finite,
-        successful,
-        participant.participant_id,
-        kinematics.epoch_id,
+        kinematics_successful=kinematics.evidence.successful,
+        participant_routes_complete=participant_routes_complete,
+        material_law_complete=material_law_complete,
+        velocity_residual=velocity_residual,
+        velocity_scale=velocity_scale,
+        velocity_consistent=velocity_consistent,
+        delassus_symmetry_residual=symmetry_residual,
+        delassus_scale=delassus_scale,
+        minimum_delassus_diagonal=minimum_diagonal,
+        nonnegative_delassus_diagonal=nonnegative_diagonal,
+        minimum_delassus_eigenvalue=minimum_eigenvalue,
+        delassus_spectral_residual=spectral_residual,
+        delassus_spectral_valid=spectral_valid,
+        finite=finite,
+        successful=successful,
+        participant_id=participant.participant_id,
+        kinematics_id=kinematics.epoch_id,
     )
     prepared_id = canonical_fingerprint(
         {
@@ -478,13 +538,30 @@ def apply_articulated_contact_impulse(
         lambda free, update: free + update, prepared.free_velocity, candidate_update
     )
     candidate_contact_velocity = prepared.velocity_operator.mv(candidate_post)
+    contact_velocity_update = prepared.velocity_operator.mv(candidate_update)
+    expected_contact_update = (
+        prepared.program.effective_mass @ candidate_impulse.reshape((-1,))
+    ).reshape(candidate_impulse.shape)
+    contact_equation_residual = jnp.max(
+        jnp.abs(contact_velocity_update - expected_contact_update), initial=0.0
+    )
+    law_velocity = (
+        (
+            prepared.program.effective_mass
+            + jnp.diag(prepared.program.compliance)
+        )
+        @ candidate_impulse.reshape((-1,))
+        + prepared.program.free_velocity.reshape((-1,))
+    ).reshape(candidate_impulse.shape)
     duality = contact_duality_evidence(
         prepared.velocity_operator, prepared.free_velocity, candidate_impulse
     )
     valid = prepared.program.valid
-    minimum_post_normal = jnp.min(
-        jnp.where(valid, candidate_contact_velocity[:, 0], jnp.inf),
-        initial=jnp.inf,
+    active = jnp.any(valid)
+    minimum_post_normal = jnp.where(
+        active,
+        jnp.min(jnp.where(valid, law_velocity[:, 0], jnp.inf)),
+        jnp.asarray(0.0, dtype=law_velocity.dtype),
     )
     dtype = candidate_contact_velocity.dtype
     certificate_scale = jnp.maximum(
@@ -494,14 +571,25 @@ def apply_articulated_contact_impulse(
             jnp.max(jnp.abs(candidate_contact_velocity), initial=0.0),
         ),
     )
-    tolerance = jnp.sqrt(jnp.finfo(dtype).eps) * certificate_scale
+    tolerance = jnp.maximum(
+        cone_result.evidence.certificate_tolerance,
+        jnp.sqrt(jnp.finfo(dtype).eps) * certificate_scale,
+    )
     post_feasible = minimum_post_normal >= -tolerance
+    numeric_revision_matches = contact_cone_numeric_revision_matches(
+        prepared.program, cone_result
+    )
+    cone_certificate_valid = contact_cone_result_is_certified(
+        prepared.program, cone_result
+    )
     candidate_finite = (
         jnp.all(jnp.isfinite(candidate_impulse))
         & _tree_finite(candidate_generalized)
         & _tree_finite(candidate_update)
         & _tree_finite(candidate_post)
         & jnp.all(jnp.isfinite(candidate_contact_velocity))
+        & jnp.all(jnp.isfinite(law_velocity))
+        & jnp.isfinite(contact_equation_residual)
     )
     finite = (
         prepared.evidence.finite
@@ -510,13 +598,9 @@ def apply_articulated_contact_impulse(
         & duality.finite
     )
     contact_certificate_valid = (
-        cone_result.evidence.successful
-        & (
-            cone_result.evidence.complementarity_defect
-            <= tolerance
-        )
-        & (cone_result.evidence.cone_defect <= tolerance)
-        & (cone_result.evidence.minimum_normal_impulse >= -tolerance)
+        cone_certificate_valid
+        & numeric_revision_matches
+        & (contact_equation_residual <= tolerance)
         & duality.valid
         & post_feasible
         & finite
@@ -534,27 +618,38 @@ def apply_articulated_contact_impulse(
         lambda free, increment: free + increment, prepared.free_velocity, update
     )
     post_contact_velocity = prepared.velocity_operator.mv(post)
-    unchanged = _maximum_coordinate_difference(
-        prepared.velocity_operator.source, post, prepared.free_velocity
-    ) <= tolerance
-    zero_update = jnp.max(
-        jnp.abs(prepared.velocity_operator.source.flatten(update)), initial=0.0
-    ) <= tolerance
-    zero_applied = jnp.max(jnp.abs(applied_impulse), initial=0.0) <= tolerance
-    fail_closed = successful | (unchanged & zero_update & zero_applied)
+    zero_update = (
+        jnp.max(
+            jnp.abs(prepared.velocity_operator.source.flatten(update)), initial=0.0
+        )
+        == 0.0
+    )
+    zero_generalized_output = (
+        jnp.max(
+            jnp.abs(prepared.velocity_operator.source.flatten(generalized)),
+            initial=0.0,
+        )
+        == 0.0
+    )
+    zero_applied = jnp.max(jnp.abs(applied_impulse), initial=0.0) == 0.0
+    fail_closed = successful | (
+        zero_update & zero_generalized_output & zero_applied
+    )
     evidence = ArticulatedContactEvidence(
-        prepared.evidence,
-        cone_result.evidence,
-        duality,
-        minimum_post_normal,
-        post_feasible,
-        tolerance,
-        contact_certificate_valid,
-        finite,
-        successful,
-        fail_closed,
-        successful & fail_closed,
-        prepared.prepared_id,
+        preparation=prepared.evidence,
+        cone=cone_result.evidence,
+        duality=duality,
+        minimum_post_normal_velocity=minimum_post_normal,
+        post_contact_feasible=post_feasible,
+        certificate_tolerance=tolerance,
+        numeric_revision_matches=numeric_revision_matches,
+        contact_equation_residual=contact_equation_residual,
+        contact_certificate_valid=contact_certificate_valid,
+        finite=finite,
+        applied=successful,
+        fail_closed=fail_closed,
+        successful=successful & fail_closed,
+        prepared_id=prepared.prepared_id,
     )
     return ArticulatedContactResult(
         applied_impulse,

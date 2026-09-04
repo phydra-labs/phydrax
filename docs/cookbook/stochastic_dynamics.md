@@ -497,6 +497,151 @@ the semidiscrete solver.
 This route is honest about dimensionality: it does not pretend to learn a probability
 density over thousands of nodal values.
 
+## Evaluate stochastic decisions without changing their meaning
+
+Use one identified prepared-noise bundle for a rollout. Use a disjoint bundle when
+the result is meant to describe holdout behavior:
+
+```python
+training = phx.control.stochastic.evaluate_feedback_policy(
+    controlled_problem,
+    feedback_policy,
+    training_noise,
+    policy_id="frozen-feedback-policy",
+    method="asymptotic-normal",
+    sample_role="training",
+)
+holdout = phx.control.stochastic.evaluate_feedback_policy(
+    controlled_problem,
+    feedback_policy,
+    holdout_noise,
+    policy_id="frozen-feedback-policy",
+    method="asymptotic-normal",
+    sample_role="holdout",
+)
+if not bool(training.valid) or not bool(holdout.valid):
+    raise RuntimeError(
+        f"policy evaluation failed: training={training.status}, holdout={holdout.status}"
+    )
+```
+
+`feedback_policy(context, state, args)` is called before the current noise
+increment is exposed. `training.evidence` intentionally has no coverage claim.
+`holdout.evidence` retains its requested assumptions and counts independent
+clusters, not merely paths. An interval for this fixed policy is not an interval
+for an optimal policy. `examples/stochastic_feedback_control.py` is a complete
+runnable construction of `ControlledTransitionProblem` and
+`PreparedControlledNoise`.
+
+For paired comparison, pass the same prepared bundle to both policies through
+`compare_feedback_policies`; the function reports right-minus-left return and
+requires matching realization and coupling provenance.
+
+## Select the exact LQ stochastic class
+
+These solvers are exact only within different declared model classes:
+
+| Model | Entry point | Information and noise contract |
+|---|---|---|
+| Additive, full-state, one controller | `finite_horizon_lqg_state_feedback` | Exogenous zero-mean additive noise; full state available to the policy |
+| Additive, full-state, multiple minimizers | `finite_horizon_lqg_feedback_nash` | Same common additive process; explicit player cost axis and joint-control ownership |
+| Multiplicative, one controller | `finite_horizon_multiplicative_lq_state_feedback` | Declared affine state/action noise channels and full channel covariance |
+| Multiplicative, multiple minimizers | `finite_horizon_multiplicative_lq_feedback_nash` | Common multiplicative dynamics with player-specific expected quadratic costs |
+| Centralized partial observation | `CentralizedLQGProblem` and `finite_horizon_centralized_lqg` | Gaussian prior; observation before action; policy input is a `GaussianBelief` |
+
+Check `valid`, `status`, covariance evidence, curvature, rank, solve residuals,
+stationarity, and Bellman evidence as applicable. The centralized belief solver
+rejects singular active innovations and does not project or symmetrize a covariance.
+It does not represent decentralized information, cross-correlated process and
+observation noise, or action-dependent observations. The complete additive game
+trace-correction workflow is `examples/lqg_feedback_game.py`.
+
+## Fit a frozen policy, then inspect its BSDE view
+
+First produce disjoint `ControlledPathBatch` values by rolling out the same identified
+policy on training and holdout noise. Then fit only its value:
+
+```python
+fitted_problem = phx.control.stochastic.FittedBellmanProblem(
+    training.paths,
+    holdout.paths,
+    feature_map,
+    num_features=feature_count,
+    feature_id="frozen-policy-features",
+)
+fitted_plan = phx.control.stochastic.FittedBellmanPlan(
+    ridge=1.0e-8,
+    plan_id="frozen-policy-bellman-plan",
+    minimum_training_paths=feature_count,
+)
+fitted = phx.control.stochastic.fit_frozen_policy_bellman(
+    fitted_problem, fitted_plan
+)
+if not bool(fitted.valid):
+    raise RuntimeError(f"fitted Bellman evaluation failed: {fitted.status}")
+```
+
+Inspect training and holdout residuals separately. Ridge normal-equation evidence
+does not replace the reported original normal-equation residual, and fitting never
+performs policy improvement. `bridge_fitted_bellman_to_bsde` can then evaluate this
+same frozen value on a selected current path batch. Its `physical_actions` remain
+the policy outputs; its `martingale_integrands` are BSDE $Z$ values with
+`z_shape`. They are never identified with one another.
+
+## Keep SMP, dynamic programming, and SAA separate
+
+| Workflow | Construct and evaluate | What a successful result means |
+|---|---|---|
+| Single-agent open-loop SMP | `StochasticMaximumPrincipleProblem`, then `evaluate_stochastic_maximum_principle` with supplied paths, adjoint values, martingale integrands, and pre-increment information labels | Pathwise forward/terminal/backward/measurability/conditional-stationarity evidence; a necessary condition unless separately declared convexity makes it sufficient |
+| Multi-player open-loop SMP | `OpenLoopStochasticGameSMPProblem`, then `evaluate_open_loop_stochastic_game_smp` with one adjoint pair and information ID per player | Player-owned Hamiltonian-row evidence on supplied paths, not a constructed feedback strategy |
+| HJB control reference | `DiscreteHJBProblem`, then `solve_discrete_hjb_reference` or `refine_discrete_hjb_reference` | Residual and nested-refinement evidence for one bounded scalar grid and finite action catalog |
+| Zero-sum HJBI reference | `DiscreteZeroSumHJBIProblem`, then `solve_discrete_hjbi_reference` | Both declared action orders pass and their discrete Isaacs gap is within tolerance |
+| Coupled all-minimizer HJB | `DiscreteCoupledHJBProblem` plus `CoupledHJBPolicyIterationPlan`, then `solve_coupled_hjb_reference` | One selected local feedback fixed-point branch for supplied starts, update order, damping, and bounded grid |
+| Policy-game SAA | `StochasticPolicyGameProblem`, then the `plan_stochastic_policy_game` / `prepare_stochastic_policy_game` / `solve_prepared_stochastic_policy_game` lifecycle | Local stationarity of the frozen training empirical pseudo-gradient; the untouched holdout cluster costs remain evaluation evidence only |
+
+The HJB, HJBI, and coupled-HJB results are finite-grid references, not continuum
+viscosity-solution certificates. SMP does not solve a Bellman equation. SAA does not
+turn a finite policy parameterization or empirical root into population or feedback
+Nash. `examples/hjbi_reference_game.py` exercises the separate lower/upper HJBI
+orders and all of their discrete gates.
+
+## Build mean-field evidence in explicit stages
+
+The mean-field layers are intentionally not one combined solver:
+
+1. Build an `EmpiricalMeanField` with explicit particle/time axes, weights,
+   `mean_field_id`, and `source_path_id`.
+2. Adapt one supplied law with `adapt_mean_field_control_bsde`, then evaluate a
+   `FrozenLawBestResponseProblem` using `solve_frozen_law_best_response`.
+3. If law consistency is required, provide a genuinely new
+   `induced_flow(response, args)` callback and run
+   `solve_mean_field_game_fixed_point` on a `MeanFieldGameFixedPointProblem` and
+   `MeanFieldGameFixedPointPlan`.
+4. For finite common-noise support, keep one conditional law and public history per
+   scenario in `CommonNoiseMeanFieldProblem`; run
+   `solve_common_noise_mean_field_fixed_point` without mixing the scenarios first.
+5. For individual or aggregate constraints, choose a
+   `MeanFieldConstraintConcept`, the matching `GameMultiplierLayout`, and run
+   `solve_constrained_mean_field_game`. Its result is sampled KKT evidence.
+6. For a social planner, supply the mandatory `MeanFieldExternality` and use
+   `evaluate_mean_field_control_planner`. Analytic Lions data and finite-particle
+   adjoint data with a bias bound are distinct modes.
+7. For a finite-$N$ statement, separately evaluate the finite population and every
+   unilateral deviation through `evaluate_finite_population_continuation`. An MFG
+   fixed point alone is insufficient.
+
+`examples/mean_field_game.py` runs the frozen-law and independently induced-law
+steps. A `FiniteStateCommonInformationGame` instead performs pure-prescription
+Bayesian backward induction over a declared finite public state. A
+`FiniteStateMasterEquationProblem` instead enumerates a finite physical-state and
+exact empirical-law lattice. `solve_common_information_game` and
+`solve_finite_state_master_equation_reference` therefore answer different questions;
+the master result's neighbor-transfer differences are not Lions derivatives.
+
+Every step checks its own result label, validity, status, evidence, and provenance.
+There is no silent control clipping, covariance or law repair, active-set search,
+conditional-law mixing, mixed-strategy substitution, or method fallback.
+
 ## Boundaries and verification
 
 - Spatial sine/cosine discretizations encode homogeneous boundary extensions in the

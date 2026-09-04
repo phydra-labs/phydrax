@@ -32,6 +32,28 @@ it does not label the local Gaussian transition as an exact SDE likelihood.
 - [Filtering and smoothing](../uq/filtering.md)
 - [Differential, jump, hybrid, and SPDE integration](../solver/differential.md)
 
+## Boundary with stochastic control and games
+
+This package describes random objects and path evidence; it does not infer a decision
+problem from an SDE or a BSDE. The control and game APIs deliberately keep the following
+roles separate:
+
+| Namespace | Decision or information class | Time and stochastic semantics | Evidence ceiling |
+|---|---|---|---|
+| `phydrax.stochastic` | No policy class is assumed. Realizations, trajectories, martingales, and BSDE predictors are supplied explicitly. | Realization, time, state, noise, and dependence-cluster axes are declared by their contracts. | Process, path, residual, or regression evidence only. |
+| `phydrax.control.stochastic` | One decision maker; full-state feedback, a centralized Gaussian belief, or a supplied open-loop candidate, depending on the problem type. | A physical action is chosen from pre-increment information. Prepared noise is then consumed by the transition. | Exact results only for the declared LQG classes; otherwise fixed-policy, fitted-value, finite-grid, or stochastic-maximum-principle evidence. |
+| `phydrax.control.games` | Multiple ordered players with explicit action or policy-parameter ownership and an explicitly named information pattern. | Simultaneous feedback, open-loop controls, finite prescriptions, common information, and mean-field laws are distinct contracts. | The result label states whether the object is an exact LQ feedback Nash result, local stationarity/KKT evidence, a finite-grid reference, or a mean-field candidate. |
+
+In a BSDE, $Z$ is the martingale integrand. It is not a physical control action.
+Control adapters and stochastic-maximum-principle evaluators expose the action and
+$Z$ (or the SMP martingale integrand) as separate arrays with separate shapes. See
+[Backward stochastic differential equations](bsde.md) and
+[Control](../control.md#stochastic-control-and-games).
+
+There is no universal combined stochastic-control/game solver. Each entry point rejects
+unsupported information, noise, constraint, or equilibrium semantics rather than
+silently repairing data or falling back to another method.
+
 ## Trajectory measures
 
 `trajectory_measure` exposes either masked time marginals or complete path units

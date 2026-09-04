@@ -122,6 +122,30 @@ def test_directional_scalar_diffusion_and_surface_flux_are_conservative():
         rtol=1e-11,
         atol=1e-13,
     )
+    np.testing.assert_allclose(
+        diagnostics.fields["temperature"].boundary_diffusive_content_rate,
+        -2.0e-6 * top_area,
+        rtol=1e-11,
+        atol=1e-13,
+    )
+    np.testing.assert_allclose(
+        diagnostics.fields["temperature"].molecular_diffusive_content_rate,
+        0.0,
+        atol=1e-13,
+    )
+    np.testing.assert_allclose(
+        diagnostics.fields["temperature"].sgs_diffusive_content_rate,
+        0.0,
+        atol=1e-13,
+    )
+    np.testing.assert_allclose(
+        jnp.take(results["temperature"].diffusive_fluxes[2], -1, axis=2),
+        -2.0e-6,
+    )
+    np.testing.assert_allclose(
+        jnp.take(results["temperature"].boundary_diffusive_fluxes[2], -1, axis=2),
+        -2.0e-6,
+    )
     assert jnp.isfinite(
         ocean.transport.step_restriction(velocity).diffusive["temperature"]
     )
@@ -157,7 +181,7 @@ def test_ocean_stage_and_wave_restrictions_are_finite():
     state = _rest_state(ocean)
 
     stage = ocean.dynamics.stage(0.0, state)
-    restriction = ocean.dynamics.step_restriction(state)
+    restriction = ocean.dynamics.step_restriction(0.0, state)
 
     assert bool(stage.success)
     assert jnp.isfinite(restriction.ocean_forcing)
@@ -271,6 +295,10 @@ def test_ocean_diagnostic_output_contains_named_fields(tmp_path):
         "density_anomaly",
         "buoyancy",
         "pressure",
+        "sgs_dissipation",
+        "molecular_potential_energy_mixing",
+        "sgs_potential_energy_mixing",
+        "potential_energy_mixing_available",
         "velocity/0",
         "velocity/1",
         "velocity/2",

@@ -306,9 +306,29 @@ translations, where normalized moments and smoothness grams remain invariant; ot
 degree-two motion fails explicitly. The stencil graph stays fixed and rank/condition
 failure rejects the stage.
 
-`SmagorinskyLESClosure` returns typed eddy viscosity, conductivity, and resolved shear
-dissipation from `ResolvedGradientState`. `StefanPhaseChangePlan` returns a single
-bounded interfacial mass-transfer factor and explicit mass/energy defects.
+`UnstructuredLowMachLESPlan` is the conservative constitutive route: fixed
+conforming 3-D tetrahedra, Favre transport, optional static KSGS,
+piecewise-constant upwind flux, Rhie–Chow mass flux, deferred nonorthogonal
+gradients, and closed boundaries. `UnstructuredLowMachLESFixedStepMethod` adds
+the gauged matrix-free pressure projection, exact fixed-step predictor/correction,
+complete pressure/face-flux/restart continuation, advection/diffusion/source/
+positivity bounds, conservation/energy/pressure evidence, and atomic rollback.
+It still refuses 2-D/polyhedral, periodic/open, moving/coupled,
+dynamic/low-Re KSGS, and nonzero molecular bulk viscosity. See the
+[LES guide](guides_large_eddy_simulation.md#unstructured-low-mach-favre-les).
+
+Accepted continuation stores the corrected pressure, pressure increment,
+pressure-corrected face-normal velocity, and the authoritative mass flux recomputed
+from that corrected rate; predictor flux is never committed.
+
+Static-KSGS raw production uses negative shared SGS face work, equally split
+between adjacent cells and volume normalized; negative raw production fails.
+Limiter-retained KSGS gain plus rejected production equals raw transfer, with
+the rejected amount thermalized into modeled enthalpy density. The step gates
+that split and total enthalpy-inclusive energy balance.
+
+`StefanPhaseChangePlan` returns a single bounded interfacial mass-transfer factor
+and explicit mass/energy defects.
 `VariableSurfaceTensionPolicy` evaluates nonnegative sigma and the wall/interface
 tangential Marangoni gradient without duck-typed field extraction.
 
@@ -320,10 +340,13 @@ success. A committed event advances the epoch journal atomically.
 
 ## Scope
 
-The runtime remains single-device: graph partitioning and distributed FV halos are
-not claimed. Bounded planar-faced polyhedra mean finite orientable manifold convex or
-star-shaped cells within declared face/vertex/quadrature capacities, not arbitrary
-nonmanifold or curved cells. Moving degree one supports general fixed-connectivity
-metrics; moving degree two/WENO is restricted to certified rigid translation. Remap
-derivatives are valid only for fixed intersection combinatorics. Topology selection is
-differentiated only through the DCD event/replay contract.
+The general unstructured runtime remains single-device: graph partitioning and
+distributed FV halos are not claimed. The LES specialization is narrower still:
+fixed conforming tetrahedra and fixed closed boundaries only. Bounded planar-faced
+polyhedra mean finite orientable manifold convex or star-shaped cells within
+declared face/vertex/quadrature capacities, not arbitrary nonmanifold or curved
+cells. Moving degree one supports general fixed-connectivity metrics; moving degree
+two/WENO is restricted to certified rigid translation. Remap derivatives are valid
+only for fixed intersection combinatorics. Topology selection is differentiated
+only through the DCD event/replay contract; the upwind low-Mach LES route is
+branchwise on a fixed mesh.

@@ -21,8 +21,8 @@ from phydrax.control import (
 from phydrax.discretization import (
     reduced_forward_dynamics,
     reduced_inverse_dynamics,
-    reduced_symplectic_step,
-    ReducedSymplecticStepPolicy,
+    reduced_semi_implicit_velocity_euler_step,
+    ReducedSemiImplicitVelocityEulerStepPolicy,
 )
 from phydrax.dynamics import (
     DiscreteSystem,
@@ -67,7 +67,9 @@ def _chain_urdf(joint_count: int, /) -> str:
 
 
 def _prepare_chain(joint_count: int, /):
-    adaptation = parse_urdf_text(_chain_urdf(joint_count))
+    adaptation = parse_urdf_text(
+        _chain_urdf(joint_count), root_policy="fixed_world"
+    )
     particles = adaptation.particles.prepare()
     bodies = adaptation.bodies.prepare(particles)
     graph = adaptation.joints.prepare(bodies, adaptation.reference)
@@ -124,12 +126,12 @@ def _rollout_workload(
         raise ValueError("rollout benchmarking requires at least one moving joint")
     dtype = articulation.reference_position.dtype
     gravity = jnp.zeros((3,), dtype=dtype)
-    policy = ReducedSymplecticStepPolicy(maximum_step_size=0.01)
+    policy = ReducedSemiImplicitVelocityEulerStepPolicy(maximum_step_size=0.01)
 
     def transition(context, packed_state, generalized_effort, args):
         del args
         source = articulation.unpack_state(packed_state)
-        result = reduced_symplectic_step(
+        result = reduced_semi_implicit_velocity_euler_step(
             articulation,
             source,
             generalized_effort,
@@ -152,7 +154,7 @@ def _rollout_workload(
     )
     dynamics = DiscreteControlDynamics(
         system,
-        method_id="benchmark:status-aware-symplectic-rollout",
+        method_id="benchmark:status-aware-semi-implicit-velocity-euler-rollout",
     )
     step_size = 1.0e-3
     grid = TimeGrid(

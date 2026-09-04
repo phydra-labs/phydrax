@@ -128,9 +128,16 @@ def test_solenoidal_ou_subdivision_restart_and_stage_values_are_exact():
     assert float(coordinates.reality_defect(whole.end_forcing)) < 1.0e-12
 
 
-def test_full_complex_shell_integrals_match_native_modal_totals():
+def test_compiled_periodic_statistics_keep_equation_terms_separate():
     space = _periodic_space()
-    projector = phx.discretization.PeriodicLerayProjector(space)
+    dynamics = phx.equations.compile_periodic_incompressible_flow(
+        phx.equations.IncompressibleFlowProblem(3, 0.05),
+        space,
+        phx.discretization.PseudospectralMethodPlan(
+            dealiasing=phx.discretization.PaddingDealiasingPlan(2)
+        ),
+    )
+    projector = dynamics.projector
     basis = flow.SolenoidalHermitianFourierBasis(
         projector,
         maximum_wavenumber=2.1,
@@ -144,36 +151,130 @@ def test_full_complex_shell_integrals_match_native_modal_totals():
     )
     forcing = forcing_plan.evaluate(velocity)
     statistics_plan = flow.PeriodicModalTurbulenceStatisticsPlan(
-        projector,
+        dynamics,
         jnp.linspace(0.0, 8.0, 9),
-        viscosity=0.05,
         tail_start_wavenumber=2.0,
     )
-    nonlinear = 0.25 * velocity
+    stage = dynamics.stage(jnp.asarray(0.0), velocity)
     statistics = statistics_plan.evaluate(
+        0.0,
         velocity,
-        nonlinear_rate=nonlinear,
-        forcing=forcing.forcing,
+        stage=stage,
+        additive_forcing_rate=forcing.forcing,
     )
     native_energy = 0.5 * jnp.sum(jnp.abs(velocity) ** 2)
-    native_dissipation = 0.05 * jnp.sum(
-        projector.wavenumber_squared[..., None] * jnp.abs(velocity) ** 2
+    native_molecular_dissipation = -jnp.real(
+        jnp.sum(jnp.conj(velocity) * stage.rates.molecular_rate)
     )
-    native_transfer = jnp.real(jnp.sum(jnp.conj(velocity) * nonlinear))
+    native_advective_transfer = jnp.real(
+        jnp.sum(jnp.conj(velocity) * stage.rates.advective_rate)
+    )
+
     assert bool(statistics.successful)
+    assert not bool(statistics.sgs_available)
     np.testing.assert_allclose(statistics.energy_shells.integral.sum(), native_energy)
     np.testing.assert_allclose(
-        statistics.dissipation_shells.integral.sum(), native_dissipation
+        statistics.molecular_dissipation_shells.integral.sum(),
+        native_molecular_dissipation,
     )
     np.testing.assert_allclose(
-        statistics.nonlinear_transfer_shells.integral.sum(), native_transfer
+        statistics.advective_transfer_shells.integral.sum(),
+        native_advective_transfer,
+        atol=np.finfo(float).eps,
+    )
+    np.testing.assert_array_equal(
+        statistics.sgs_transfer_shells.integral,
+        jnp.zeros_like(statistics.sgs_transfer_shells.integral),
     )
     np.testing.assert_allclose(
         statistics.forcing_injection_shells.integral.sum(),
         forcing.actual_total_power,
     )
+    np.testing.assert_allclose(
+        statistics.resolved_spectral_flux,
+        -jnp.cumsum(statistics.advective_transfer_shells.integral),
+    )
     np.testing.assert_allclose(statistics.mean_forcing_power, 0.1, rtol=1e-12)
-    assert bool(statistics.kolmogorov_scale_valid)
+    assert statistics.compilation_id == dynamics.compilation_id
+    assert statistics.sgs_filter_id is None
+    assert statistics.sgs_model_id is None
+    assert statistics.sgs_prepared_action_id is None
+
+
+def test_zero_coefficient_periodic_les_statistics_match_no_les_terms():
+    space = _periodic_space(count=4)
+    problem = phx.equations.IncompressibleFlowProblem(3, 0.05)
+    method = phx.discretization.PseudospectralMethodPlan(
+        dealiasing=phx.discretization.PaddingDealiasingPlan(2)
+    )
+    no_les = phx.equations.compile_periodic_incompressible_flow(
+        problem,
+        space,
+        method,
+    )
+    resolved_filter = phx.equations.ResolvedLESFilter(
+        "retained Fourier grid",
+        family="sharp-fourier-projection",
+        axis_names=("x", "y", "z"),
+        topology="tensor-product",
+        boundary_class="periodic",
+        scale_rule="cutoff-equivalent",
+        commutation_status="commuting",
+        repeated_filter_semantics="idempotent",
+    )
+    provenance = phx.equations.LESParameterProvenance(
+        resolved_filter,
+        space.prepared_id,
+        "three-dimensional-periodic-unit-density",
+        source_kind="user",
+        evidence_ids=(),
+    )
+    les_plan = phx.equations.PeriodicAlgebraicLESPlan(
+        phx.equations.SmagorinskyLESPlan(0.0).prepare(provenance),
+        phx.equations.PeriodicFourierGridFilterPlan(resolved_filter),
+        phx.discretization.PseudospectralMethodPlan(
+            dealiasing=phx.discretization.OversamplingDealiasingPlan(1.5)
+        ),
+    )
+    zero_les = phx.equations.compile_periodic_incompressible_flow(
+        problem,
+        space,
+        method,
+        algebraic_les=les_plan,
+    )
+    basis = flow.SolenoidalHermitianFourierBasis(
+        no_les.projector,
+        maximum_wavenumber=1.1,
+    )
+    velocity = basis.evaluate(jnp.linspace(0.2, 0.8, basis.coordinate_size))
+    plain_statistics = flow.PeriodicModalTurbulenceStatisticsPlan(
+        no_les,
+        jnp.linspace(0.0, 4.0, 5),
+    ).evaluate(0.0, velocity)
+    les_statistics = flow.PeriodicModalTurbulenceStatisticsPlan(
+        zero_les,
+        jnp.linspace(0.0, 4.0, 5),
+    ).evaluate(0.0, velocity)
+
+    np.testing.assert_allclose(
+        les_statistics.molecular_dissipation_shells.integral,
+        plain_statistics.molecular_dissipation_shells.integral,
+    )
+    np.testing.assert_allclose(
+        les_statistics.advective_transfer_shells.integral,
+        plain_statistics.advective_transfer_shells.integral,
+    )
+    np.testing.assert_allclose(les_statistics.sgs_transfer_shells.integral, 0.0)
+    np.testing.assert_allclose(les_statistics.sgs_modeled_dissipation, 0.0)
+    np.testing.assert_allclose(les_statistics.sgs_maximum_kinematic_viscosity, 0.0)
+    assert bool(les_statistics.sgs_available)
+    assert bool(les_statistics.sgs_stability_available)
+    assert les_statistics.sgs_filter_id == resolved_filter.filter_id
+    assert les_statistics.sgs_model_id == les_plan.prepared_model.model_id
+    assert les_statistics.sgs_prepared_model_id == (les_plan.prepared_model.prepared_id)
+    assert les_statistics.sgs_prepared_action_id == zero_les.algebraic_les.prepared_id
+    assert les_statistics.sgs_regularization_id is not None
+    assert not bool(les_statistics.sgs_regularization_available)
 
 
 def test_channel_couette_and_poiseuille_keep_signed_walls_separate():

@@ -23,6 +23,34 @@
 - Made high-order simplex nodal tabulation JAX-traceable through an equivalent
   Bernstein modal basis, enabling Taylor--Hood mixed finite-element closure
   conversion without NumPy tracer conversion.
+- Added provenance-complete LES equations and production owners: static and dynamic
+  periodic Fourier/MAC compilation; transactional dynamic ETDRK and projected MAC
+  stepping; guarded static ETDRK and frozen MAC IMEX/SBDF2; enforced channel SBDF2
+  stability with optional equilibrium-traction walls; accepted-step stochastic MAC
+  inflow; static, buoyant, periodic-dynamic, and true-no-slip low-Re KSGS; learned
+  stress Fourier/MAC divergence backends; device-resident distributed slab/pencil
+  full-flow ETDRK/SSPRK production; pressure-stepped tetrahedral low-Mach restart
+  continuation with conservative face-work KSGS production and explicit enthalpy
+  thermalization; neglected or transported-SGS-energy Favre gas flow; fixed immersed
+  MAC IMEX/SBDF2 ledgers; and collision-local LBM Smagorinsky. The public cutover
+  removes `SmagorinskyLESClosure` and `MACStepRestriction` in favor of prepared LES
+  plans and `MACLESStepRestriction`. `PeriodicModalTurbulenceStatisticsPlan` now
+  binds compiled static or dynamic dynamics, and `PeriodicSpectralProductionPlan`
+  takes `(dynamics, method, statistics, case, ...)` with an
+  initial-condition-bound `PeriodicSpectralProductionCase`. Qualification outputs
+  use the generic evidence spine, remain unsigned/unreleased candidates, and retain
+  external base-profile release dependencies.
+- Added a native optics platform spanning fixed-shape ray intersections,
+  Snell/Fresnel interfaces, planar camera stacks, sequential/paraxial and bounded
+  non-sequential tracing, sampled angular-spectrum propagation, thin and coherent
+  field actions, dispersion laws, Maxwell/pupil adapters, differential Gaussian
+  beamlets, pupil/PSF/OTF/MTF analysis, atmospheric and statistical-AO models,
+  carrier-resolved nonlinear propagation, tissue radiative transport,
+  fixed-frequency guided electromagnetic and elastic modes, SBS overlaps, and an
+  optional host-only OpticStudio adapter. The Fourier-modal Maxwell boundary was
+  hardened simultaneously with outward reference distances, directional periodic
+  bases, physical unit-flux normalization, independent terminal-power auditing,
+  and segment-aware continuous-layer dense fields.
 - Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
   shared or per-series masked supports, node- and edge-aligned numerical
   PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;
@@ -34,11 +62,16 @@
   learned free-energy biases, immutable atomistic learning campaigns,
   non-element molecular coarse beads with fixed-map force matching, and exact
   targeted free-energy maps with FlowJAX and alchemical endpoint adapters.
-- Added a native robotics platform with bounded, fail-closed URDF adaptation;
-  fixed-base 3-D fixed/hinge/prismatic articulation, kinematics, dynamics, and
-  local frame IK; articulated Delassus impact; status-aware rollouts, sampling
-  MPC, and manifold defects; immutable task environments; physical inertial
-  realization and reduced rods; and capability/freshness-aware optional MJX.
+- Added the native robotics Wave 0 platform: explicit-root, descriptor-relative
+  bounded URDF adaptation with exact manifests and non-waivable required
+  semantics; COM-centred rigid mass properties and reference rebasing;
+  fixed-base articulation with bounded semi-implicit velocity Euler;
+  result-preserving discrete evolution/control and accepted-state environments;
+  certified fixed-route articulated impact; local frame IK, sampling MPC,
+  manifold defects, and reduced rods; plus optional MJX gated by complete state
+  schemas, projection provenance, freshness epochs, and a matching 3.12
+  provider pair. Fixed-route impact remains an operator utility; collision
+  discovery and an atomic robot/contact step are not included.
 - Added first-class surfel discretizations with stable point ownership,
   validated oriented tangent footprints, physical surface quadrature,
   boundary-atlas and simplicial materialization, Morton primitive bounds,
@@ -98,6 +131,40 @@
   dense-LU solves, diagnostic-only rank SVDs, and independent curvature,
   stationarity, Bellman, conditioning, linear-status, and causal-failure
   evidence without regularization, pseudoinverses, clipping, or fallback.
+- Added deterministic nonlinear game evaluation, physical/dimensionless nominal
+  Nash residuals, exact-cost local quadratic policy suggestions, and
+  residual-globalized finite-horizon iLQ with fixed-capacity plan/prepare/refresh
+  execution and local nominal-stationarity evidence.
+- Added explicit player-local, player-owned-coupled, and shared game-constraint
+  ownership; sampled feasibility and multiplier layouts; convex open-loop
+  variational equilibria with common shared multipliers; generic open-loop GNEs
+  with player-specific shared-multiplier copies and optional bounded unilateral
+  best-response audits; private nonlinear open-loop KKT; and fixed-active-set
+  feedback quasi-Nash local models.
+- Added prepared-noise stochastic feedback rollout, empirical-risk and paired-policy
+  evidence, exact additive- and multiplicative-noise LQ control and feedback-Nash
+  games, centralized observation-before-action Gaussian-belief LQG, and frozen-policy
+  fitted Bellman evaluation with a BSDE bridge that keeps physical actions separate
+  from martingale integrands.
+- Added single-agent and player-owned open-loop stochastic-maximum-principle
+  residual evidence, bounded one-dimensional HJB and zero-sum HJBI references,
+  branch-explicit coupled-HJB policy iteration, and frozen-training/disjoint-holdout
+  policy-game SAA with local empirical stationarity and cluster provenance.
+- Added supplied frozen-law response evaluation, independently induced-law MFG
+  fixed-point candidates, finite-scenario conditional common-noise MFG candidates,
+  constrained individual/aggregate-generic/aggregate-variational MFG KKT evidence,
+  finite-population continuation with complete numerical and simultaneous
+  statistical deviation bounds, and MFC planner stationarity with explicit
+  analytic or finite-particle measure-externality evidence.
+- Added finite-state common-information pure-prescription Bayesian backward
+  induction and an exact finite-state, finite-population empirical-law-lattice
+  master-equation reference with Bellman, action-minimum, simplex, and discrete
+  neighbor-transfer evidence.
+- Added runnable nonlinear feedback, constrained open-loop, open-loop VE,
+  stochastic feedback, additive LQG game, HJBI reference, mean-field fixed-point,
+  and finite-state common-information examples. Each new game/control family
+  retains its exact solution concept and does not silently repair inputs or fall
+  back to a universal combined solver.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact

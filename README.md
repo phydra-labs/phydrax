@@ -86,10 +86,11 @@ Most workflows are composing a few primitives:
   exact construction-order search, standards clauses, reliability, calibration,
   evidence acquisition, and immutable digital-twin ancestry extend member-network
   mechanics without erasing model fidelity or applicability.
-- **Native robotics**: secure loss-negotiated URDF adaptation, fixed-base
-  hinge/prismatic kinematics and dynamics, local frame IK, articulated Delassus
-  contact, status-aware control, immutable environments, reduced rods, and
-  capability-gated optional MJX execution retain explicit evidence and rollback.
+- **Native robotics**: explicit-root, descriptor-relative bounded URDF adaptation;
+  COM-centred fixed-base hinge/prismatic mechanics and rebasing; local frame IK;
+  result-preserving rollout/environment rollback; certified fixed-route impact;
+  reduced rods; and freshness/schema-gated optional MJX. Fixed-route contact is
+  an operator utility, not collision discovery or an atomic robot/contact step.
   See the [robotics guide](docs/guides_robotics.md) and
   [robotics API](docs/api/applications/robotics.md).
 - **Skeletal-muscle platform**: source-pinned mean-rate and stochastic motor units,
@@ -193,6 +194,10 @@ Most workflows are composing a few primitives:
   frequency-domain scattering, respectively, with full-tensor finite layers,
   field-certificate-aware geometry rasterization, boundary cascades, current
   planes, Brillouin-zone sources, and diffraction orders.
+- **Optics**: fixed-shape geometric, sequential, paraxial, non-sequential,
+  plane-wave, Gaussian-beamlet, atmospheric, nonlinear, radiative-transport,
+  guided-mode, and stimulated-Brillouin models retain explicit approximation,
+  topology, power, resource, differentiability, and provenance evidence.
 - **Variational quantum dynamics and learning**: stable complex log amplitudes,
   connected discrete operators, validated finite symmetry sectors, persistent-chain
   local energies, damped SR, frozen R-hat/ESS diagnostics, portable exact-resume
@@ -282,6 +287,7 @@ actions, area measures, and SFNO interoperability. See the
 [particle qualification guide](docs/guides_particle_qualification.md), the
 [global spectral guide](docs/guides_spectral_methods.md), the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
+[optics guide](docs/guides_optics.md), the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), the

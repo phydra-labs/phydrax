@@ -114,6 +114,59 @@ def test_nonfinite_map_result_is_invalid_without_repair():
     assert bool(jnp.isnan(result.final_state[0]))
 
 
+
+def test_failed_finite_discrete_rollback_invalidates_evolution_and_tangent():
+    failure_status = 71
+
+    def transition(context, state, args):
+        del context, args
+        return phx.dynamics.DiscreteTransitionResult(
+            state + 100.0,
+            state,
+            jnp.asarray(False),
+            jnp.asarray(failure_status, dtype=jnp.int32),
+        )
+
+    evolution = phx.dynamics.DiscreteEvolution(
+        phx.dynamics.DiscreteSystem(
+            transition,
+            state_layout=phx.dynamics.StateLayout((1,)),
+            system_id="failed-finite-evolution",
+        )
+    )
+    trajectory = phx.dynamics.evolve(
+        evolution,
+        jnp.asarray([2.0]),
+        phx.dynamics.IterationGrid.from_steps(
+            3,
+            iteration_id="failed-finite-evolution-grid",
+        ),
+    )
+
+    np.testing.assert_allclose(trajectory.states[:, 0], jnp.asarray([2.0] * 4))
+    np.testing.assert_array_equal(
+        trajectory.valid,
+        jnp.asarray([True, False, False, False]),
+    )
+    evidence = trajectory.transition_evidence
+    assert evidence is not None
+    np.testing.assert_allclose(evidence.candidate_states[0], jnp.asarray([102.0]))
+    np.testing.assert_allclose(evidence.accepted_states[0], jnp.asarray([2.0]))
+    assert bool(jnp.all(jnp.isnan(evidence.candidate_states[1:])))
+    assert int(evidence.first_failure_step) == 0
+    assert int(evidence.first_failure_status) == failure_status
+
+    tangent = evolution.tangent_action(
+        jnp.asarray([2.0]),
+        jnp.asarray([1.0]),
+        0,
+        1,
+    )
+    assert not bool(tangent.valid)
+    assert int(tangent.status) == phx.dynamics.EVOLUTION_BACKEND_FAILED
+    assert bool(jnp.isnan(tangent.tangent[0]))
+
+
 def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system():
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.ContinuousSystem(

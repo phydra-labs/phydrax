@@ -27,6 +27,10 @@ AnalysisNodeKind = Literal[
     "reynolds_enthalpy_flux",
     "favre_enthalpy_flux",
     "source_residual",
+    "periodic_les_reynolds_stress",
+    "periodic_les_stress_divergence",
+    "periodic_les_energy_transfer",
+    "periodic_les_scalar_flux",
 ]
 ClosureTargetKind = Literal[
     "sgs_stress",
@@ -34,6 +38,9 @@ ClosureTargetKind = Literal[
     "species_flux",
     "enthalpy_flux",
     "source",
+    "sgs_stress_divergence",
+    "sgs_transfer",
+    "scalar_flux",
 ]
 
 
@@ -156,6 +163,10 @@ class ClosureAnalysisNode(StrictModule, NonTrainableState):
                 "reynolds_enthalpy_flux",
                 "favre_enthalpy_flux",
                 "source_residual",
+                "periodic_les_reynolds_stress",
+                "periodic_les_stress_divergence",
+                "periodic_les_energy_transfer",
+                "periodic_les_scalar_flux",
             )
             or not inputs
             or any(not value for value in inputs)
@@ -256,7 +267,16 @@ class ClosureTarget(StrictModule, NonTrainableState):
         schema = str(schema_id).strip()
         if (
             kind
-            not in ("sgs_stress", "sgs_energy", "species_flux", "enthalpy_flux", "source")
+            not in (
+                "sgs_stress",
+                "sgs_energy",
+                "species_flux",
+                "enthalpy_flux",
+                "source",
+                "sgs_stress_divergence",
+                "sgs_transfer",
+                "scalar_flux",
+            )
             or not schema
         ):
             raise ValueError("Closure target metadata is invalid.")

@@ -1,16 +1,52 @@
 {
+  "directional_interface_power": {
+    "left_incoming_power": 0.9999999999999998,
+    "left_outgoing_error": 2.7755575615628914e-17,
+    "left_outgoing_power": 0.11111111111111108,
+    "net_port_power_into_stack": 1.1102230246251565e-16,
+    "power_audit_residual": 8.269444015575404e-17,
+    "right_incoming_power": 0.0,
+    "right_outgoing_error": 2.220446049250313e-16,
+    "right_outgoing_power": 0.8888888888888886,
+    "status": 0
+  },
   "environment": {
     "backend": "cpu",
     "jax": "0.9.2",
     "platform": "macOS-15.7.2-arm64-arm-64bit",
     "python": "3.12.8"
   },
-  "interface": {
-    "reflection": 0.11111112435658772,
-    "reflection_error": 1.3245476618295449e-08,
+  "equivalent_slab_retrieval": {
+    "ambiguous": false,
+    "finite_band_kramers_kronig_residual": 1.1644397157235589e-15,
+    "maximum_index_error": 1.3364428218229542e-15,
+    "maximum_reconstruction_residual": 1.4050778743496639e-12,
+    "minimum_branch_margin": 5.235987755982984,
+    "stable_fit_residual": 1.111058617362696e-15,
+    "status": 0
+  },
+  "local_isotropic_qualification": {
+    "angle_prediction_residual": 9.778693458308364e-13,
+    "loss_convergence_accepted": true,
+    "loss_evidence_accepted": true,
+    "minimum_branch_margin": 5.235987755982984,
+    "polarization_invariance_residual": 0.0,
+    "qualified": true,
+    "reasons": [],
+    "reconstructed_scattering_residual": 1.4050778743496639e-12,
     "status": 0,
-    "transmission": 0.8888888584635184,
-    "transmission_error": 3.042537044528615e-08
+    "thickness_invariance_residual": 7.846971526805356e-16
+  },
+  "physical_loss": {
+    "closure_difference": 0.0,
+    "convergence_accepted": true,
+    "loss_status": 0,
+    "material_loss_difference": 0.0,
+    "net_port_power_into_stack": 0.05698538147928789,
+    "port_power_difference": 0.0,
+    "unresolved_numerical_closure": -5.130638275341326e-10,
+    "volume_material_loss": 0.056985381992351716,
+    "z_quadrature_defect": 1.6745544454549455e-07
   },
   "propagation": {
     "boundary_modal_difference": 1.6859767686498582e-12,

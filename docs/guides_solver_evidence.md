@@ -15,9 +15,10 @@ artifact that carries the observations, thresholds, and verdict.
 - **Numerical-reference evidence** compares deterministic float64 or complex128 results
   against an analytical or independently assembled oracle and reports original-equation
   absolute and relative residuals.
-- **Invariant evidence** covers circuit KCL/KVL and gauge compatibility, and Maxwell
-  chain identity, Gauss continuity, magnetic closedness, harmonic periods, energy,
-  power, and dissipation signs.
+- **Invariant evidence** covers the conservation, compatibility, gauge, symmetry,
+  trace, divergence, energy/work/dissipation-sign, flux-sharing, and restart
+  identities required by the exact route, including circuit, Maxwell, and LES
+  specialization-specific ledgers.
 - **Derivative evidence** compares directional derivatives of named real controls with
   centered finite differences. Topology, port ordering, mode selection, rank changes,
   singular solves, parsed files, padding layouts, and shard layouts are ineligible
@@ -83,6 +84,23 @@ for every required gate and satisfy its dependency graph. HMAC support is suitab
 local registries and sealed CI secrets; it is not a claim that any candidate shipped
 with signed evidence. `ReferenceArtifactManifest` separately binds offline reference
 files, checksums, provenance, units, and nondimensionalization.
+
+### LES evidence
+
+`tools/large_eddy_simulation_qualification.py` must publish through these same generic
+contracts. A LES result binds the exact resolved/test filters, parameter provenance,
+prepared closure/action, base compilation, discretization, temporal method,
+boundary/geometry route, reference manifest, resolved run, environment, and raw
+diagnostics. Applicable predicates include stress symmetry/trace, divergence and
+reality, conservation, modal or variational work, SGS transfer sign/policy, timestep
+restriction, scalar/KSGS/Favre closure, restart, and backend/resource evidence.
+
+The producer does not define another evidence or gate schema. Generated LES profiles
+remain candidate/unreleased even after a matrix passes. The corresponding base
+incompressible profile is an external release dependency and cannot be inferred,
+signed, or waived by the LES campaign. One-device distributed parity never supplies
+multi-device scaling or release evidence. See the
+[LES guide](guides_large_eddy_simulation.md#qualification-and-release-boundary).
 
 ## Configuration and lifecycle
 

@@ -17,7 +17,10 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ._boundary_cascade import prepare_layer_boundary
-from ._continuous import PreparedContinuousFourierModalLayer
+from ._continuous import (
+    continuous_boundary_at,
+    PreparedContinuousFourierModalLayer,
+)
 from ._factorization import _dense_solve
 from ._layer import recover_longitudinal_fields
 from ._runtime import (
@@ -25,7 +28,7 @@ from ._runtime import (
     PreparedFourierModalLayer,
     PreparedFourierModalMaxwell,
 )
-from ._scattering import HomogeneousPortModes, PreparedPeriodicPortModes
+from ._scattering import _port_bases, _port_power_data, HomogeneousPortModes
 
 
 class FourierModalFieldResult(StrictModule):
@@ -34,6 +37,11 @@ class FourierModalFieldResult(StrictModule):
     electric_field: Array
     magnetic_field: Array
     longitudinal_offset: Array
+    boundary_solve_residual: Array
+    local_constitutive_residual: Array
+    continuous_segment_defect: Array
+    continuous_segment_index: Array
+    continuous_status: Array
     layer_id: str = eqx.field(static=True)
 
 
@@ -78,7 +86,10 @@ def fields_in_layer(
     if not result.boundary_electric_fields:
         raise ValueError("The prepared solve did not retain boundary fields.")
     element_index, layer = _prepared_layer_location(prepared, layer_index)
-    offset = jnp.asarray(longitudinal_offset, dtype=layer.operator.matrix.real.dtype)
+    offset = jnp.asarray(
+        longitudinal_offset,
+        dtype=jnp.result_type(layer.layer.thickness, jnp.float32),
+    )
     if offset.ndim > 0:
         raise ValueError("longitudinal_offset must be scalar.")
     offset = eqx.error_if(
@@ -88,16 +99,33 @@ def fields_in_layer(
     )
     left_electric = result.boundary_electric_fields[element_index]
     left_magnetic = result.boundary_magnetic_fields[element_index]
-    partial = prepare_layer_boundary(
-        layer.operator, offset, prepared.plan.policy.boundary
-    )
-    magnetic = _dense_solve(
-        partial.d,
-        left_magnetic - partial.c @ left_electric,
-    )
+    if isinstance(layer, PreparedContinuousFourierModalLayer):
+        partial, operator, integration_defect, segment_index = continuous_boundary_at(
+            layer,
+            prepared.problem,
+            offset,
+            prepared.plan.policy.boundary,
+        )
+        continuous_status = layer.status
+    else:
+        operator = layer.operator
+        partial = prepare_layer_boundary(operator, offset, prepared.plan.policy.boundary)
+        integration_defect = jnp.asarray(0.0, dtype=offset.dtype)
+        segment_index = jnp.asarray(-1, dtype=jnp.int32)
+        continuous_status = jnp.asarray(-1, dtype=jnp.int32)
+    magnetic_rhs = left_magnetic - partial.c @ left_electric
+    magnetic = _dense_solve(partial.d, magnetic_rhs)
     electric = partial.a @ left_electric + partial.b @ magnetic
+    residual_denominator = jnp.maximum(
+        jnp.sqrt(jnp.sum(jnp.abs(magnetic_rhs) ** 2)),
+        1.0,
+    )
+    boundary_solve_residual = (
+        jnp.sqrt(jnp.sum(jnp.abs(partial.d @ magnetic - magnetic_rhs) ** 2))
+        / residual_denominator
+    )
     tangential = jnp.concatenate((electric, magnetic), axis=0)
-    electric_z, magnetic_z = recover_longitudinal_fields(layer.operator, tangential)
+    electric_z, magnetic_z = recover_longitudinal_fields(operator, tangential)
     count = prepared.problem.harmonics.harmonic_count
     electric_harmonics = jnp.stack(
         (electric[:count], electric[count:], electric_z),
@@ -120,6 +148,11 @@ def fields_in_layer(
         electric_field,
         magnetic_field,
         offset,
+        boundary_solve_residual,
+        operator.diagnostics.constitutive_residual,
+        integration_defect,
+        segment_index,
+        continuous_status,
         layer_id=layer.layer.layer_id,
     )
 
@@ -355,12 +388,7 @@ def finite_aperture_far_field(
         raise ValueError("side must be 'left' or 'right'.")
     modes = prepared.right_modes if side == "right" else prepared.left_modes
     amplitudes = result.right_outgoing if side == "right" else result.left_outgoing
-    if isinstance(modes, PreparedPeriodicPortModes):
-        electric_matrix = modes.outgoing_electric_matrix
-        magnetic_matrix = modes.outgoing_magnetic_matrix
-    else:
-        electric_matrix = modes.electric_matrix
-        magnetic_matrix = modes.magnetic_matrix
+    _, _, electric_matrix, magnetic_matrix = _port_bases(modes, side)
     tangential_electric = contract("ij,jr->ir", electric_matrix, amplitudes)
     tangential_magnetic = contract("ij,jr->ir", magnetic_matrix, amplitudes)
     count = prepared.problem.harmonics.harmonic_count
@@ -418,13 +446,18 @@ def finite_aperture_far_field(
     electric = jnp.where(mask[:, :, None], electric, 0.0)
     magnetic = jnp.where(mask[:, :, None], magnetic, 0.0)
     power = jnp.where(mask, power, 0.0)
-    aperture_power = aperture_measure * jnp.sum(
-        jnp.where(
-            modes.propagating[:, None],
-            jnp.abs(modes.flux_weights)[:, None] * jnp.abs(amplitudes) ** 2,
-            0.0,
-        ),
-        axis=0,
+    _, outgoing_weights, _, outgoing_propagating, _, _ = _port_power_data(modes)
+    aperture_power = (
+        aperture_measure
+        / prepared.problem.harmonics.cell_measure
+        * jnp.sum(
+            jnp.where(
+                outgoing_propagating[:, None],
+                outgoing_weights[:, None] * jnp.abs(amplitudes) ** 2,
+                0.0,
+            ),
+            axis=0,
+        )
     )
     angular_power = jnp.sum(power, axis=0) / jnp.maximum(jnp.sum(plan.active), 1)
     defect = jnp.abs(angular_power - aperture_power) / jnp.maximum(
