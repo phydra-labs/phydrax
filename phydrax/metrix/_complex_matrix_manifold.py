@@ -92,6 +92,8 @@ class UnitaryGroup(AbstractLieGroup):
     group_id: str = eqx.field(static=True)
     point_shape: tuple[int, int] = eqx.field(static=True)
 
+    algebra_shape: tuple[int, ...] = eqx.field(static=True)
+
     def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
         dimension_ = int(dimension)
         if dimension_ < 1:
@@ -102,6 +104,7 @@ class UnitaryGroup(AbstractLieGroup):
         self.tolerance = float(tolerance)
         self.group_id = f"lie-group:u:{dimension_}"
         self.point_shape = (dimension_, dimension_)
+        self.algebra_shape = (dimension_ * dimension_,)
 
     def _matrix(self, value: ArrayLike, name: str, /) -> Array:
         matrix = _array_with_trailing_shape(value, self.point_shape, name)
@@ -139,6 +142,40 @@ class UnitaryGroup(AbstractLieGroup):
         )
         return _unitary_logarithm(matrix, traceless=False)
 
+    def hat(self, coordinates: ArrayLike, /) -> Array:
+        values = jnp.asarray(coordinates)
+        if values.shape[-1:] != self.algebra_shape:
+            raise ValueError(
+                "Unitary algebra coordinates must have trailing shape "
+                f"{self.algebra_shape}."
+            )
+        dtype = jnp.result_type(values.dtype, jnp.complex64)
+        matrix = jnp.zeros(values.shape[:-1] + self.point_shape, dtype=dtype)
+        diagonal = 1j * values[..., : self.dimension].astype(dtype)
+        indices = jnp.arange(self.dimension)
+        matrix = matrix.at[..., indices, indices].set(diagonal)
+        cursor = self.dimension
+        for row in range(self.dimension):
+            for column in range(row + 1, self.dimension):
+                entry = values[..., cursor].astype(dtype) + 1j * values[
+                    ..., cursor + 1
+                ].astype(dtype)
+                matrix = matrix.at[..., row, column].set(entry)
+                matrix = matrix.at[..., column, row].set(-jnp.conj(entry))
+                cursor += 2
+        return matrix
+
+    def vee(self, algebra: ArrayLike, /) -> Array:
+        matrix = self.project_algebra(algebra)
+        coordinates = [
+            jnp.imag(matrix[..., index, index]) for index in range(self.dimension)
+        ]
+        for row in range(self.dimension):
+            for column in range(row + 1, self.dimension):
+                entry = matrix[..., row, column]
+                coordinates.extend((jnp.real(entry), jnp.imag(entry)))
+        return jnp.stack(tuple(coordinates), axis=-1)
+
 
 class SpecialUnitaryGroup(AbstractLieGroup):
     """Dense special-unitary group SU(n)."""
@@ -148,6 +185,7 @@ class SpecialUnitaryGroup(AbstractLieGroup):
     tolerance: float = eqx.field(static=True)
     group_id: str = eqx.field(static=True)
     point_shape: tuple[int, int] = eqx.field(static=True)
+    algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(self, dimension: int, /, *, tolerance: float = 1e-7):
         if int(dimension) < 2:
@@ -157,6 +195,7 @@ class SpecialUnitaryGroup(AbstractLieGroup):
         self.tolerance = self.unitary.tolerance
         self.group_id = f"lie-group:su:{self.dimension}"
         self.point_shape = self.unitary.point_shape
+        self.algebra_shape = (self.dimension * self.dimension - 1,)
 
     def identity(self, *, dtype: Any = jnp.complex128) -> Array:
         return self.unitary.identity(dtype=dtype)
@@ -191,6 +230,42 @@ class SpecialUnitaryGroup(AbstractLieGroup):
             "Special-unitary logarithm requires an SU(n) matrix.",
         )
         return self.project_algebra(_unitary_logarithm(matrix, traceless=True))
+
+    def hat(self, coordinates: ArrayLike, /) -> Array:
+        values = jnp.asarray(coordinates)
+        if values.shape[-1:] != self.algebra_shape:
+            raise ValueError(
+                "Special-unitary algebra coordinates must have trailing shape "
+                f"{self.algebra_shape}."
+            )
+        dtype = jnp.result_type(values.dtype, jnp.complex64)
+        matrix = jnp.zeros(values.shape[:-1] + self.point_shape, dtype=dtype)
+        diagonal_values = values[..., : self.dimension - 1].astype(dtype)
+        final_diagonal = -jnp.sum(diagonal_values, axis=-1, keepdims=True)
+        diagonal = 1j * jnp.concatenate((diagonal_values, final_diagonal), axis=-1)
+        indices = jnp.arange(self.dimension)
+        matrix = matrix.at[..., indices, indices].set(diagonal)
+        cursor = self.dimension - 1
+        for row in range(self.dimension):
+            for column in range(row + 1, self.dimension):
+                entry = values[..., cursor].astype(dtype) + 1j * values[
+                    ..., cursor + 1
+                ].astype(dtype)
+                matrix = matrix.at[..., row, column].set(entry)
+                matrix = matrix.at[..., column, row].set(-jnp.conj(entry))
+                cursor += 2
+        return matrix
+
+    def vee(self, algebra: ArrayLike, /) -> Array:
+        matrix = self.project_algebra(algebra)
+        coordinates = [
+            jnp.imag(matrix[..., index, index]) for index in range(self.dimension - 1)
+        ]
+        for row in range(self.dimension):
+            for column in range(row + 1, self.dimension):
+                entry = matrix[..., row, column]
+                coordinates.extend((jnp.real(entry), jnp.imag(entry)))
+        return jnp.stack(tuple(coordinates), axis=-1)
 
 
 class UnitaryManifold(AbstractGeodesicManifold):

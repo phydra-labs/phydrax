@@ -7,6 +7,7 @@ from __future__ import annotations
 import abc
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -22,7 +23,10 @@ class _AbstractUnitCoordinateStateGeometry(AbstractStateGeometry):
     geometry_id: str = eqx.field(static=True)
     retraction_method: str = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
-    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_exact_inverse: bool = eqx.field(static=True)
+    supports_exact_differential: bool = eqx.field(static=True)
+    supports_transport: bool = eqx.field(static=True)
+    supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
     @abc.abstractmethod
@@ -44,7 +48,10 @@ class _AbstractUnitCoordinateStateGeometry(AbstractStateGeometry):
         )
         self.retraction_method = "normalized-addition"
         self.trivial = False
-        self.supports_exact_pullback = False
+        self.supports_exact_inverse = True
+        self.supports_exact_differential = True
+        self.supports_transport = True
+        self.supports_isometric_transport = True
         self.supports_commutator_free = False
 
     def _value(self, value: ArrayLike, owner: str, /) -> Array:
@@ -66,12 +73,6 @@ class _AbstractUnitCoordinateStateGeometry(AbstractStateGeometry):
         point = self._value(state, "Unit algebra state")
         tangent = self._value(vector, "Unit algebra tangent")
         return tangent - jnp.vdot(point, tangent) * point
-
-    def to_local(self, state: ArrayLike, tangent: ArrayLike, /) -> Array:
-        return self.project_tangent(state, tangent)
-
-    def from_local(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
-        return self.project_tangent(state, local_tangent)
 
     def retract(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
         point = self._value(state, "Unit algebra state")
@@ -96,17 +97,92 @@ class _AbstractUnitCoordinateStateGeometry(AbstractStateGeometry):
         )
         return target / overlap - base
 
-    def pullback(
+    def cut_locus_margin(self, state: ArrayLike, point: ArrayLike, /) -> Array:
+        base = self._value(state, "Unit algebra state")
+        target = self._value(point, "Unit algebra target")
+        return jnp.abs(jnp.vdot(base, target))
+
+    def retraction_jvp(
         self,
         state: ArrayLike,
         local_tangent: ArrayLike,
+        local_velocity: ArrayLike,
+        /,
+    ) -> Array:
+        base = self._value(state, "Unit algebra state")
+        local = self._value(local_tangent, "Unit algebra local tangent")
+        direction = self._value(local_velocity, "Unit algebra local velocity")
+        return jax.jvp(
+            lambda value: self.retract(base, value),
+            (local,),
+            (direction,),
+        )[1]
+
+    def retraction_inverse_jvp(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
         tangent: ArrayLike,
         /,
     ) -> Array:
-        del state, local_tangent, tangent
-        raise ValueError(
-            "Normalized unit-algebra retraction has no exact pullback contract."
+        base = self._value(state, "Unit algebra state")
+        target = self._value(point, "Unit algebra target")
+        velocity = self.project_tangent(target, tangent)
+        return jax.jvp(
+            lambda value: self.inverse_retract(base, value),
+            (target,),
+            (velocity,),
+        )[1]
+
+    def retraction_vjp(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        base = self._value(state, "Unit algebra state")
+        local = self._value(local_tangent, "Unit algebra local tangent")
+        target_cotangent = self._value(cotangent, "Unit algebra physical cotangent")
+        return jax.linear_transpose(
+            lambda direction: self.retraction_jvp(base, local, direction),
+            jnp.zeros_like(local),
+        )(target_cotangent)[0]
+
+    def transport_tangent(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        source = self._value(state, "Unit algebra transport source")
+        target = self._value(point, "Unit algebra transport target")
+        source_tangent = self.project_tangent(source, tangent)
+        overlap = jnp.vdot(source, target)
+        denominator = eqx.error_if(
+            1.0 + overlap,
+            1.0 + overlap <= self.tolerance,
+            "Unit algebra transport reaches the antipodal cut locus.",
         )
+        return source_tangent - (jnp.vdot(target, source_tangent) / denominator) * (
+            source + target
+        )
+
+    def transport_cotangent_pullback(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        source = self._value(state, "Unit algebra transport source")
+        target = self._value(point, "Unit algebra transport target")
+        target_cotangent = self._value(cotangent, "Unit algebra physical cotangent")
+        return jax.linear_transpose(
+            lambda tangent: self.transport_tangent(source, target, tangent),
+            jnp.zeros_like(source),
+        )(target_cotangent)[0]
 
 
 class UnitComplexStateGeometry(_AbstractUnitCoordinateStateGeometry):

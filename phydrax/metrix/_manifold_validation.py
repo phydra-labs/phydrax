@@ -76,41 +76,48 @@ class ManifoldValidationReport(StrictModule):
 
 
 class StateGeometryValidationReport(StrictModule):
-    """Aggregate numerical checks of a differential-equation state geometry."""
+    """Aggregate numerical checks of a four-space state geometry."""
 
     valid: Array
     contains: Array
-    projection_idempotence_residual: Array
-    local_roundtrip_residual: Array
     retraction_origin_residual: Array
     retraction_differential_residual: Array
     inverse_retraction_residual: Array
-    pullback_residual: Array
+    inverse_differential_residual: Array
+    vjp_duality_residual: Array
+    identity_transport_residual: Array
+    transport_roundtrip_residual: Array
+    transport_duality_residual: Array
+    transport_isometry_residual: Array
 
     def __init__(
         self,
         *,
         valid: Array,
         contains: Array,
-        projection_idempotence_residual: Array,
-        local_roundtrip_residual: Array,
         retraction_origin_residual: Array,
         retraction_differential_residual: Array,
         inverse_retraction_residual: Array,
-        pullback_residual: Array,
+        inverse_differential_residual: Array,
+        vjp_duality_residual: Array,
+        identity_transport_residual: Array,
+        transport_roundtrip_residual: Array,
+        transport_duality_residual: Array,
+        transport_isometry_residual: Array,
     ):
         self.valid = jnp.asarray(valid, dtype=bool)
         self.contains = jnp.asarray(contains, dtype=bool)
-        self.projection_idempotence_residual = jnp.asarray(
-            projection_idempotence_residual
-        )
-        self.local_roundtrip_residual = jnp.asarray(local_roundtrip_residual)
         self.retraction_origin_residual = jnp.asarray(retraction_origin_residual)
         self.retraction_differential_residual = jnp.asarray(
             retraction_differential_residual
         )
         self.inverse_retraction_residual = jnp.asarray(inverse_retraction_residual)
-        self.pullback_residual = jnp.asarray(pullback_residual)
+        self.inverse_differential_residual = jnp.asarray(inverse_differential_residual)
+        self.vjp_duality_residual = jnp.asarray(vjp_duality_residual)
+        self.identity_transport_residual = jnp.asarray(identity_transport_residual)
+        self.transport_roundtrip_residual = jnp.asarray(transport_roundtrip_residual)
+        self.transport_duality_residual = jnp.asarray(transport_duality_residual)
+        self.transport_isometry_residual = jnp.asarray(transport_isometry_residual)
 
 
 def validate_manifold(
@@ -220,7 +227,7 @@ def validate_state_geometry(
     tolerance: float = 1e-5,
     raise_on_error: bool = True,
 ) -> StateGeometryValidationReport:
-    """Validate state-geometry retraction and coordinate laws at one state."""
+    """Validate inverse, differential, VJP, and transport four-space laws."""
 
     if not isinstance(geometry, AbstractStateGeometry):
         raise TypeError("geometry must be an AbstractStateGeometry.")
@@ -231,62 +238,76 @@ def validate_state_geometry(
     state_array = jnp.asarray(state)
     ambient = jnp.asarray(ambient_vector)
     if ambient.shape != state_array.shape:
-        raise ValueError("ambient_vector must have the same shape as state.")
+        raise ValueError("ambient_vector must have the same shape as state storage.")
 
     contains = jnp.asarray(geometry.contains(state_array), dtype=bool).reshape(())
-    tangent = geometry.project_tangent(state_array, ambient)
-    projected_twice = geometry.project_tangent(state_array, tangent)
-    projection_idempotence_residual = _relative_residual(projected_twice, tangent)
-    local = geometry.to_local(state_array, tangent)
-    recovered_tangent = geometry.from_local(state_array, local)
-    local_roundtrip_residual = _relative_residual(recovered_tangent, tangent)
-
-    zero = jnp.zeros_like(state_array)
-    origin = geometry.retract(state_array, zero)
-    retraction_origin_residual = _relative_residual(origin, state_array)
-    _, retraction_velocity = jax.jvp(
-        lambda value: geometry.retract(state_array, value),
-        (zero,),
-        (local,),
+    tangent = jnp.asarray(geometry.project_tangent(state_array, ambient))
+    zero_local = jnp.asarray(geometry.inverse_retract(state_array, state_array))
+    local_velocity = jnp.asarray(
+        geometry.retraction_inverse_jvp(state_array, state_array, tangent)
     )
-    retraction_differential_residual = _relative_residual(retraction_velocity, tangent)
+    origin = jnp.asarray(geometry.retract(state_array, zero_local))
+    retraction_origin_residual = _relative_residual(origin, state_array)
+    recovered_tangent = jnp.asarray(
+        geometry.retraction_jvp(state_array, zero_local, local_velocity)
+    )
+    retraction_differential_residual = _relative_residual(recovered_tangent, tangent)
 
-    step = jnp.asarray(step_scale, dtype=state_array.dtype) * local
-    destination = geometry.retract(state_array, step)
-    inverse_step = geometry.inverse_retract(state_array, destination)
-    inverse_retraction_residual = _relative_residual(inverse_step, step)
-    if geometry.supports_exact_pullback:
-        target_tangent = geometry.project_tangent(destination, ambient)
-        pulled = geometry.pullback(state_array, step, target_tangent)
-        _, pushed = jax.jvp(
-            lambda value: geometry.retract(state_array, value),
-            (step,),
-            (pulled,),
-        )
-        pullback_residual = _relative_residual(pushed, target_tangent)
-    else:
-        pullback_residual = jnp.asarray(0.0, dtype=state_array.dtype)
-
+    step = jnp.asarray(step_scale, dtype=zero_local.dtype) * local_velocity
+    destination = jnp.asarray(geometry.retract(state_array, step))
+    target_tangent = jnp.asarray(
+        geometry.retraction_jvp(state_array, step, local_velocity)
+    )
+    chart = geometry.chart_evidence(
+        state_array,
+        step,
+        local_velocity,
+        target_tangent,
+    )
+    transport = geometry.transport_evidence(
+        state_array,
+        destination,
+        tangent,
+        geometry.transport_tangent(state_array, destination, tangent),
+    )
+    inverse_differential_residual = jnp.maximum(
+        chart.forward_inverse_differential_residual,
+        chart.inverse_forward_differential_residual,
+    )
     residuals = jnp.stack(
         (
-            projection_idempotence_residual,
-            local_roundtrip_residual,
             retraction_origin_residual,
             retraction_differential_residual,
-            inverse_retraction_residual,
-            pullback_residual,
+            chart.inverse_roundtrip_residual,
+            inverse_differential_residual,
+            chart.vjp_duality_residual,
+            transport.identity_residual,
+            transport.roundtrip_residual,
+            transport.duality_residual,
+            transport.isometry_residual,
         )
     )
-    valid = contains & jnp.all(jnp.isfinite(residuals)) & jnp.all(residuals <= tolerance)
+    valid = (
+        contains
+        & chart.source_membership
+        & chart.target_membership
+        & transport.source_membership
+        & transport.target_membership
+        & jnp.all(jnp.isfinite(residuals))
+        & jnp.all(residuals <= tolerance)
+    )
     report = StateGeometryValidationReport(
         valid=valid,
         contains=contains,
-        projection_idempotence_residual=projection_idempotence_residual,
-        local_roundtrip_residual=local_roundtrip_residual,
         retraction_origin_residual=retraction_origin_residual,
         retraction_differential_residual=retraction_differential_residual,
-        inverse_retraction_residual=inverse_retraction_residual,
-        pullback_residual=pullback_residual,
+        inverse_retraction_residual=chart.inverse_roundtrip_residual,
+        inverse_differential_residual=inverse_differential_residual,
+        vjp_duality_residual=chart.vjp_duality_residual,
+        identity_transport_residual=transport.identity_residual,
+        transport_roundtrip_residual=transport.roundtrip_residual,
+        transport_duality_residual=transport.duality_residual,
+        transport_isometry_residual=transport.isometry_residual,
     )
     if raise_on_error and not bool(jax.device_get(valid)):
         raise ValueError("State-geometry law validation failed.")

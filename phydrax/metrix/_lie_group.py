@@ -8,6 +8,7 @@ from abc import abstractmethod
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
@@ -28,6 +29,19 @@ def _skew(matrix: Array, /) -> Array:
 def _matrix_shape(value: ArrayLike, shape: tuple[int, int], name: str, /) -> Array:
     array = jnp.asarray(value)
     if array.shape[-2:] != shape:
+        raise ValueError(f"{name} must have trailing shape {shape}; got {array.shape}.")
+    return array
+
+
+def _coordinate_shape(
+    value: ArrayLike,
+    shape: tuple[int, ...],
+    name: str,
+    /,
+) -> Array:
+    array = jnp.asarray(value)
+    rank = len(shape)
+    if array.ndim < rank or (rank and array.shape[-rank:] != shape):
         raise ValueError(f"{name} must have trailing shape {shape}; got {array.shape}.")
     return array
 
@@ -59,27 +73,28 @@ def _rotation_log(rotation: Array, dimension: int, /) -> Array:
         angle = jnp.arctan2(rotation[..., 1, 0], rotation[..., 0, 0])
         generator = jnp.asarray(((0.0, -1.0), (1.0, 0.0)), dtype=rotation.dtype)
         return angle[..., None, None] * generator
+    skew = _skew(rotation)
+    sine_vector = _so3_vee(skew)
+    sine_squared = jnp.sum(sine_vector * sine_vector, axis=-1)
+    near_zero = sine_squared < 1.0e-10
+    safe_sine = jnp.sqrt(jnp.where(near_zero, 1.0, sine_squared))
     cosine = jnp.clip(
         (jnp.trace(rotation, axis1=-2, axis2=-1) - 1.0) / 2.0,
         -1.0,
         1.0,
     )
-    angle = jnp.arccos(cosine)
-    sine = jnp.sin(angle)
-    near_zero = jnp.abs(angle) < 1e-5
-    near_pi = jnp.abs(jnp.pi - angle) < 1e-5
     rotation = eqx.error_if(
         rotation,
-        jnp.any(near_pi),
+        jnp.any(near_zero & (cosine < 0.0)),
         "The principal SO(3) logarithm is ill-conditioned at rotations by pi.",
     )
-    safe_sine = jnp.where(near_zero, 1.0, sine)
+    safe_angle = jnp.arctan2(safe_sine, cosine)
     factor = jnp.where(
         near_zero,
-        0.5 + angle**2 / 12.0 + 7.0 * angle**4 / 720.0,
-        angle / (2.0 * safe_sine),
+        1.0 + sine_squared / 6.0 + 3.0 * sine_squared * sine_squared / 40.0,
+        safe_angle / safe_sine,
     )
-    return factor[..., None, None] * (rotation - _transpose(rotation))
+    return factor[..., None, None] * skew
 
 
 class AbstractLieGroup(StrictModule):
@@ -87,6 +102,7 @@ class AbstractLieGroup(StrictModule):
 
     group_id: AbstractAttribute[str]
     point_shape: AbstractAttribute[tuple[int, int]]
+    algebra_shape: AbstractAttribute[tuple[int, ...]]
 
     @abstractmethod
     def identity(self, *, dtype: Any = jnp.float64) -> Array:
@@ -114,6 +130,14 @@ class AbstractLieGroup(StrictModule):
 
     @abstractmethod
     def log(self, point: ArrayLike, /) -> Array:
+        raise NotImplementedError
+
+    @abstractmethod
+    def hat(self, coordinates: ArrayLike, /) -> Array:
+        raise NotImplementedError
+
+    @abstractmethod
+    def vee(self, algebra: ArrayLike, /) -> Array:
         raise NotImplementedError
 
     def lie_bracket(self, left: ArrayLike, right: ArrayLike, /) -> Array:
@@ -155,6 +179,7 @@ class SpecialOrthogonalGroup(AbstractLieGroup):
     manifold: SpecialOrthogonalManifold
     group_id: str = eqx.field(static=True)
     point_shape: tuple[int, int] = eqx.field(static=True)
+    algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(self, dimension: int, /, *, tolerance: float = 1e-6):
         dimension_value = int(dimension)
@@ -169,6 +194,7 @@ class SpecialOrthogonalGroup(AbstractLieGroup):
         )
         self.group_id = f"lie-group:so:{dimension_value}"
         self.point_shape = (dimension_value, dimension_value)
+        self.algebra_shape = (1,) if dimension_value == 2 else (3,)
 
     def identity(self, *, dtype: Any = jnp.float64) -> Array:
         return jnp.eye(self.dimension, dtype=dtype)
@@ -230,6 +256,7 @@ class SpecialEuclideanGroup(AbstractLieGroup):
     rotation_group: SpecialOrthogonalGroup
     group_id: str = eqx.field(static=True)
     point_shape: tuple[int, int] = eqx.field(static=True)
+    algebra_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(self, spatial_dimension: int, /, *, tolerance: float = 1e-6):
         dimension = int(spatial_dimension)
@@ -240,6 +267,7 @@ class SpecialEuclideanGroup(AbstractLieGroup):
         self.rotation_group = SpecialOrthogonalGroup(dimension, tolerance=tolerance)
         self.group_id = f"lie-group:se:{dimension}"
         self.point_shape = (dimension + 1, dimension + 1)
+        self.algebra_shape = (3,) if dimension == 2 else (6,)
 
     def identity(self, *, dtype: Any = jnp.float64) -> Array:
         return jnp.eye(self.spatial_dimension + 1, dtype=dtype)
@@ -301,22 +329,22 @@ class SpecialEuclideanGroup(AbstractLieGroup):
         translation = matrix[..., : self.spatial_dimension, -1]
         omega = _rotation_log(rotation, self.spatial_dimension)
         if self.spatial_dimension == 2:
-            angle = omega[..., 1, 0]
+            angle_squared = omega[..., 1, 0] ** 2
         else:
-            angle = jnp.linalg.norm(_so3_vee(omega), axis=-1)
-        near_zero = jnp.abs(angle) < 1e-5
-        angle_squared = angle**2
+            rotation_coordinates = _so3_vee(omega)
+            angle_squared = jnp.sum(rotation_coordinates * rotation_coordinates, axis=-1)
+        near_zero = angle_squared < 1.0e-10
         safe_angle_squared = jnp.where(near_zero, 1.0, angle_squared)
-        safe_angle = jnp.where(near_zero, 1.0, angle)
+        safe_angle = jnp.sqrt(safe_angle_squared)
         first_coefficient = jnp.where(
             near_zero,
-            0.5 - angle_squared / 24.0,
-            (1.0 - jnp.cos(angle)) / safe_angle_squared,
+            0.5 - angle_squared / 24.0 + angle_squared * angle_squared / 720.0,
+            (1.0 - jnp.cos(safe_angle)) / safe_angle_squared,
         )
         second_coefficient = jnp.where(
             near_zero,
-            1.0 / 6.0 - angle_squared / 120.0,
-            (angle - jnp.sin(angle)) / (safe_angle_squared * safe_angle),
+            1.0 / 6.0 - angle_squared / 120.0 + angle_squared * angle_squared / 5040.0,
+            (safe_angle - jnp.sin(safe_angle)) / (safe_angle_squared * safe_angle),
         )
         identity = jnp.broadcast_to(
             jnp.eye(self.spatial_dimension, dtype=matrix.dtype),
@@ -360,107 +388,321 @@ class SpecialEuclideanGroup(AbstractLieGroup):
         return jnp.concatenate((translation, rotation), axis=-1)
 
 
+def _lie_cut_locus_margin(
+    group: AbstractLieGroup,
+    local: ArrayLike,
+    /,
+) -> Array:
+    coordinates = jnp.asarray(local)
+    if isinstance(group, SpecialOrthogonalGroup):
+        rotation = coordinates
+    elif isinstance(group, SpecialEuclideanGroup):
+        rotation = coordinates[..., group.spatial_dimension :]
+    else:
+        return jnp.asarray(1.0, dtype=coordinates.dtype)
+    return jnp.maximum(
+        jnp.asarray(jnp.pi, dtype=coordinates.dtype) - jnp.linalg.norm(rotation, axis=-1),
+        jnp.asarray(0.0, dtype=coordinates.dtype),
+    )
+
+
 class LieGroupStateGeometry(AbstractStateGeometry):
-    """State-space adapter using left-trivialized matrix Lie-group increments."""
+    """Matrix Lie-group geometry with left increments and body velocities."""
 
     group: AbstractLieGroup
+    convention: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
     retraction_method: str = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
-    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_exact_inverse: bool = eqx.field(static=True)
+    supports_exact_differential: bool = eqx.field(static=True)
+    supports_transport: bool = eqx.field(static=True)
+    supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(self, group: AbstractLieGroup, /):
         if not isinstance(group, AbstractLieGroup):
             raise TypeError("LieGroupStateGeometry requires an AbstractLieGroup.")
         self.group = group
-        self.geometry_id = f"state-geometry:{group.group_id}:left"
-        self.retraction_method = "group-exponential"
+        self.convention = "body"
+        self.geometry_id = f"state-geometry:{group.group_id}:left:body"
+        self.retraction_method = "left-group-exponential"
         self.trivial = False
-        self.supports_exact_pullback = False
+        self.supports_exact_inverse = True
+        self.supports_exact_differential = True
+        self.supports_transport = True
+        self.supports_isometric_transport = True
         self.supports_commutator_free = True
 
     def contains(self, state: ArrayLike, /) -> Array:
         return self.group.contains(state)
 
     def project_tangent(self, state: ArrayLike, vector: ArrayLike, /) -> Array:
-        return self.from_local(state, self.to_local(state, vector))
-
-    def to_local(self, state: ArrayLike, tangent: ArrayLike, /) -> Array:
-        return self.group.left_trivialize(state, tangent)
-
-    def from_local(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
-        return self.group.left_untrivialize(state, local_tangent)
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        ambient = _matrix_shape(
+            vector, self.group.point_shape, "Ambient Lie-group tangent"
+        )
+        if ambient.shape != point.shape:
+            raise ValueError("Ambient Lie-group tangent must match point shape.")
+        return self.group.vee(self.group.left_trivialize(point, ambient))
 
     def retract(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
-        return self.group.compose(state, self.group.exp(local_tangent))
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        local = _coordinate_shape(
+            local_tangent, self.group.algebra_shape, "Lie-group local tangent"
+        )
+        return self.group.compose(point, self.group.exp(self.group.hat(local)))
 
     def inverse_retract(self, state: ArrayLike, point: ArrayLike, /) -> Array:
-        relative = self.group.compose(self.group.inverse(state), point)
-        return self.group.log(relative)
+        anchor = _matrix_shape(state, self.group.point_shape, "Lie-group chart anchor")
+        target = _matrix_shape(point, self.group.point_shape, "Lie-group chart point")
+        relative = self.group.compose(self.group.inverse(anchor), target)
+        return self.group.vee(self.group.log(relative))
 
-    def pullback(
+    def retraction_jvp(
         self,
         state: ArrayLike,
         local_tangent: ArrayLike,
+        local_velocity: ArrayLike,
+        /,
+    ) -> Array:
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        local = _coordinate_shape(
+            local_tangent, self.group.algebra_shape, "Lie-group local tangent"
+        )
+        direction = _coordinate_shape(
+            local_velocity, self.group.algebra_shape, "Lie-group local velocity"
+        )
+        target, ambient_tangent = jax.jvp(
+            lambda value: self.retract(point, value),
+            (local,),
+            (direction,),
+        )
+        return self.project_tangent(target, ambient_tangent)
+
+    def retraction_inverse_jvp(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
         tangent: ArrayLike,
         /,
     ) -> Array:
-        del state, local_tangent, tangent
-        raise ValueError(
-            "LieGroupStateGeometry does not claim an exact exponential pullback."
+        anchor = _matrix_shape(state, self.group.point_shape, "Lie-group chart anchor")
+        target = _matrix_shape(point, self.group.point_shape, "Lie-group chart point")
+        velocity = _coordinate_shape(
+            tangent, self.group.algebra_shape, "Lie-group physical tangent"
+        )
+        ambient_tangent = self.group.left_untrivialize(target, self.group.hat(velocity))
+        return jax.jvp(
+            lambda value: self.inverse_retract(anchor, value),
+            (target,),
+            (ambient_tangent,),
+        )[1]
+
+    def retraction_vjp(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        local = _coordinate_shape(
+            local_tangent, self.group.algebra_shape, "Lie-group local tangent"
+        )
+        target_cotangent = _coordinate_shape(
+            cotangent, self.group.algebra_shape, "Lie-group physical cotangent"
+        )
+        return jax.linear_transpose(
+            lambda direction: self.retraction_jvp(point, local, direction),
+            jnp.zeros_like(local),
+        )(target_cotangent)[0]
+
+    def transport_tangent(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        _matrix_shape(state, self.group.point_shape, "Transport source point")
+        _matrix_shape(point, self.group.point_shape, "Transport target point")
+        return _coordinate_shape(
+            tangent, self.group.algebra_shape, "Body physical tangent"
+        )
+
+    def transport_cotangent_pullback(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        _matrix_shape(state, self.group.point_shape, "Transport source point")
+        _matrix_shape(point, self.group.point_shape, "Transport target point")
+        return _coordinate_shape(
+            cotangent, self.group.algebra_shape, "Body physical cotangent"
+        )
+
+    def cut_locus_margin(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        /,
+    ) -> Array:
+        return _lie_cut_locus_margin(
+            self.group,
+            self.inverse_retract(state, point),
         )
 
 
 class RightLieGroupStateGeometry(AbstractStateGeometry):
-    """State-space adapter using right-trivialized Lie-group increments."""
+    """Matrix Lie-group geometry with right increments and spatial velocities."""
 
     group: AbstractLieGroup
+    convention: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
     retraction_method: str = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
-    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_exact_inverse: bool = eqx.field(static=True)
+    supports_exact_differential: bool = eqx.field(static=True)
+    supports_transport: bool = eqx.field(static=True)
+    supports_isometric_transport: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(self, group: AbstractLieGroup, /):
         if not isinstance(group, AbstractLieGroup):
             raise TypeError("RightLieGroupStateGeometry requires an AbstractLieGroup.")
         self.group = group
-        self.geometry_id = f"state-geometry:{group.group_id}:right"
+        self.convention = "spatial"
+        self.geometry_id = f"state-geometry:{group.group_id}:right:spatial"
         self.retraction_method = "right-group-exponential"
         self.trivial = False
-        self.supports_exact_pullback = False
+        self.supports_exact_inverse = True
+        self.supports_exact_differential = True
+        self.supports_transport = True
+        self.supports_isometric_transport = True
         self.supports_commutator_free = True
 
     def contains(self, state: ArrayLike, /) -> Array:
         return self.group.contains(state)
 
     def project_tangent(self, state: ArrayLike, vector: ArrayLike, /) -> Array:
-        return self.from_local(state, self.to_local(state, vector))
-
-    def to_local(self, state: ArrayLike, tangent: ArrayLike, /) -> Array:
-        return self.group.right_trivialize(state, tangent)
-
-    def from_local(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
-        return self.group.right_untrivialize(state, local_tangent)
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        ambient = _matrix_shape(
+            vector, self.group.point_shape, "Ambient Lie-group tangent"
+        )
+        if ambient.shape != point.shape:
+            raise ValueError("Ambient Lie-group tangent must match point shape.")
+        return self.group.vee(self.group.right_trivialize(point, ambient))
 
     def retract(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
-        return self.group.compose(self.group.exp(local_tangent), state)
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        local = _coordinate_shape(
+            local_tangent, self.group.algebra_shape, "Lie-group local tangent"
+        )
+        return self.group.compose(self.group.exp(self.group.hat(local)), point)
 
     def inverse_retract(self, state: ArrayLike, point: ArrayLike, /) -> Array:
-        relative = self.group.compose(point, self.group.inverse(state))
-        return self.group.log(relative)
+        anchor = _matrix_shape(state, self.group.point_shape, "Lie-group chart anchor")
+        target = _matrix_shape(point, self.group.point_shape, "Lie-group chart point")
+        relative = self.group.compose(target, self.group.inverse(anchor))
+        return self.group.vee(self.group.log(relative))
 
-    def pullback(
+    def retraction_jvp(
         self,
         state: ArrayLike,
         local_tangent: ArrayLike,
+        local_velocity: ArrayLike,
+        /,
+    ) -> Array:
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        local = _coordinate_shape(
+            local_tangent, self.group.algebra_shape, "Lie-group local tangent"
+        )
+        direction = _coordinate_shape(
+            local_velocity, self.group.algebra_shape, "Lie-group local velocity"
+        )
+        target, ambient_tangent = jax.jvp(
+            lambda value: self.retract(point, value),
+            (local,),
+            (direction,),
+        )
+        return self.project_tangent(target, ambient_tangent)
+
+    def retraction_inverse_jvp(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
         tangent: ArrayLike,
         /,
     ) -> Array:
-        del state, local_tangent, tangent
-        raise ValueError(
-            "RightLieGroupStateGeometry does not claim an exact exponential pullback."
+        anchor = _matrix_shape(state, self.group.point_shape, "Lie-group chart anchor")
+        target = _matrix_shape(point, self.group.point_shape, "Lie-group chart point")
+        velocity = _coordinate_shape(
+            tangent, self.group.algebra_shape, "Lie-group physical tangent"
+        )
+        ambient_tangent = self.group.right_untrivialize(target, self.group.hat(velocity))
+        return jax.jvp(
+            lambda value: self.inverse_retract(anchor, value),
+            (target,),
+            (ambient_tangent,),
+        )[1]
+
+    def retraction_vjp(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        point = _matrix_shape(state, self.group.point_shape, "Lie-group point")
+        local = _coordinate_shape(
+            local_tangent, self.group.algebra_shape, "Lie-group local tangent"
+        )
+        target_cotangent = _coordinate_shape(
+            cotangent, self.group.algebra_shape, "Lie-group physical cotangent"
+        )
+        return jax.linear_transpose(
+            lambda direction: self.retraction_jvp(point, local, direction),
+            jnp.zeros_like(local),
+        )(target_cotangent)[0]
+
+    def transport_tangent(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        _matrix_shape(state, self.group.point_shape, "Transport source point")
+        _matrix_shape(point, self.group.point_shape, "Transport target point")
+        return _coordinate_shape(
+            tangent, self.group.algebra_shape, "Spatial physical tangent"
+        )
+
+    def transport_cotangent_pullback(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        _matrix_shape(state, self.group.point_shape, "Transport source point")
+        _matrix_shape(point, self.group.point_shape, "Transport target point")
+        return _coordinate_shape(
+            cotangent, self.group.algebra_shape, "Spatial physical cotangent"
+        )
+
+    def cut_locus_margin(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        /,
+    ) -> Array:
+        return _lie_cut_locus_margin(
+            self.group,
+            self.inverse_retract(state, point),
         )
 
 

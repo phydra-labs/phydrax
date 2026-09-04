@@ -34,13 +34,16 @@ class LinearizationProvenance(StrictModule):
 
 
 class AffineControlLinearization(StrictModule):
-    r"""Batched affine local model at explicit operating points.
+    r"""Batched local model at explicit operating points.
 
-    For a discrete model, ``dynamics_value`` is the next state and
-    ``affine_offset`` gives :math:`x^+ = A x + B u + a`. For a differential
-    model it gives :math:`\dot x = A x + B u + a`. The output model is
-    :math:`y = C x + D u + c`. State, control, and output axes are flattened
-    only in the matrices; operating-point values retain their declared shapes.
+    State columns are canonical local coordinates. Discrete state rows are
+    ``inverse_retract(nominal_next, perturbed_next)``: perturbed minus nominal
+    next state in the nominal-next chart. They are therefore zero at the
+    operating point and the identity transition has an identity local state
+    Jacobian. Differential state rows are physical rates pulled into the
+    operating state's retraction chart. Output rows retain the output callback's
+    ordinary Euclidean coordinates.
+    Operating-point values retain their declared point/control shapes.
     """
 
     operating_time: Array
@@ -57,6 +60,7 @@ class AffineControlLinearization(StrictModule):
     valid: Array
     provenance: LinearizationProvenance
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_local_size: int = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
     output_shape: tuple[int, ...] = eqx.field(static=True)
 
@@ -124,6 +128,13 @@ def _linearize(
         raise ValueError("linearization_id must be a non-empty string.")
     state_shape = _physical_shape(dynamics.state_shape, owner="state_shape")
     control_shape = _physical_shape(dynamics.control_shape, owner="control_shape")
+    state_layout = dynamics.system.state_layout
+    geometry = state_layout.geometry
+    if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
+        raise ValueError(
+            "Control linearization requires exact inverse-retraction and "
+            "retraction-differential geometry."
+        )
     states = _inexact(state)
     controls = _inexact(control)
     times = _inexact(time)
@@ -159,17 +170,30 @@ def _linearize(
     target_times = jnp.broadcast_to(target_times, case_shape)
     step_indices = jnp.broadcast_to(step_indices, case_shape)
 
-    state_size = prod(state_shape)
+    point_size = prod(state_shape)
+    local_size = state_layout.local_size
     control_size = prod(control_shape)
     case_count = prod(case_shape) if case_shape else 1
-    flat_states = states.reshape((case_count, state_size))
+    flat_states = states.reshape((case_count, point_size))
     flat_controls = controls.reshape((case_count, control_size))
     flat_times = times.reshape((case_count,))
     flat_target_times = target_times.reshape((case_count,))
     flat_step_indices = step_indices.reshape((case_count,))
     system = dynamics.system
+    local_template = jnp.asarray(
+        geometry.inverse_retract(
+            flat_states[0].reshape(state_shape),
+            flat_states[0].reshape(state_shape),
+        )
+    )
+    if local_template.size != local_size:
+        raise ValueError(
+            "State geometry inverse_retract output size must match "
+            "state_layout.local_size."
+        )
+    local_shape = local_template.shape
 
-    def evaluate_dynamics(t, target_t, index, flat_state, flat_control):
+    def evaluate_physical(t, target_t, index, flat_state, flat_control):
         state_value = flat_state.reshape(state_shape)
         control_value = flat_control.reshape(control_shape)
         if system_type == "discrete":
@@ -200,41 +224,95 @@ def _linearize(
             raise ValueError(
                 f"Control dynamics output must have shape {state_shape}; got {array.shape}."
             )
-        return array.reshape((state_size,)), successful
+        return array.reshape((point_size,)), successful
 
-    dynamics_value, dynamics_successful = jax.vmap(evaluate_dynamics)(
+    dynamics_value, dynamics_successful = jax.vmap(evaluate_physical)(
         flat_times,
         flat_target_times,
         flat_step_indices,
         flat_states,
         flat_controls,
     )
+    zero_local = jnp.zeros((case_count, local_size), dtype=states.dtype)
+    zero_control = jnp.zeros((case_count, control_size), dtype=controls.dtype)
+
+    def evaluate_local_dynamics(
+        t,
+        target_t,
+        index,
+        flat_anchor,
+        flat_nominal_control,
+        flat_nominal_next,
+        flat_local,
+        flat_control_delta,
+    ):
+        anchor = flat_anchor.reshape(state_shape)
+        local = flat_local.reshape(local_shape)
+        perturbed_state = jnp.asarray(geometry.retract(anchor, local))
+        perturbed_control = (flat_nominal_control + flat_control_delta).reshape(
+            control_shape
+        )
+        flat_value, successful = evaluate_physical(
+            t,
+            target_t,
+            index,
+            perturbed_state.reshape((point_size,)),
+            perturbed_control.reshape((control_size,)),
+        )
+        value = flat_value.reshape(state_shape)
+        if system_type == "discrete":
+            nominal_next = flat_nominal_next.reshape(state_shape)
+            coordinates = jnp.asarray(geometry.inverse_retract(nominal_next, value))
+        else:
+            physical = jnp.asarray(geometry.project_tangent(perturbed_state, value))
+            coordinates = jnp.asarray(
+                geometry.retraction_inverse_jvp(anchor, perturbed_state, physical)
+            )
+        if coordinates.size != local_size:
+            raise ValueError(
+                "State geometry local dynamics output size must match "
+                "state_layout.local_size."
+            )
+        return coordinates.reshape((local_size,)), successful
+
+    local_dynamics_value, local_successful = jax.vmap(evaluate_local_dynamics)(
+        flat_times,
+        flat_target_times,
+        flat_step_indices,
+        flat_states,
+        flat_controls,
+        dynamics_value,
+        zero_local,
+        zero_control,
+    )
     (state_matrix, control_matrix), differentiated_successful = jax.vmap(
-        jax.jacfwd(evaluate_dynamics, argnums=(3, 4), has_aux=True)
+        jax.jacfwd(evaluate_local_dynamics, argnums=(6, 7), has_aux=True)
     )(
         flat_times,
         flat_target_times,
         flat_step_indices,
         flat_states,
         flat_controls,
+        dynamics_value,
+        zero_local,
+        zero_control,
     )
-    affine_offset = (
-        dynamics_value
-        - ein.contract("...ij,...j->...i", state_matrix, flat_states)
-        - ein.contract("...ij,...j->...i", control_matrix, flat_controls)
-    )
+    if geometry.trivial:
+        affine_offset = (
+            dynamics_value
+            - ein.contract("...ij,...j->...i", state_matrix, flat_states)
+            - ein.contract("...ij,...j->...i", control_matrix, flat_controls)
+        )
+    else:
+        affine_offset = local_dynamics_value
 
     if output is None:
         output_shape = state_shape
-        output_size = state_size
-        output_value = flat_states
-        output_matrix = jnp.broadcast_to(
-            jnp.eye(state_size, dtype=states.dtype),
-            (case_count, state_size, state_size),
-        )
-        feedthrough_matrix = jnp.zeros(
-            (case_count, state_size, control_size), dtype=states.dtype
-        )
+
+        def output_function(t, state_value, control_value):
+            del t, control_value
+            return state_value
+
     else:
         first_output = _inexact(
             output(
@@ -245,38 +323,60 @@ def _linearize(
             )
         )
         output_shape = tuple(first_output.shape)
-        output_size = prod(output_shape) if output_shape else 1
 
-        def evaluate_output(t, flat_state, flat_control):
-            value = _inexact(
-                output(
-                    t,
-                    flat_state.reshape(state_shape),
-                    flat_control.reshape(control_shape),
-                    args,
-                )
-            )
-            if value.shape != output_shape:
-                raise ValueError(
-                    f"output must have shape {output_shape}; got {value.shape}."
-                )
-            return value.reshape((output_size,))
+        def output_function(t, state_value, control_value):
+            return output(t, state_value, control_value, args)
 
-        output_value = jax.vmap(evaluate_output)(flat_times, flat_states, flat_controls)
-        output_matrix, feedthrough_matrix = jax.vmap(
-            jax.jacfwd(evaluate_output, argnums=(1, 2))
-        )(flat_times, flat_states, flat_controls)
+    output_size = prod(output_shape) if output_shape else 1
 
-    output_offset = (
-        output_value
-        - ein.contract("...ij,...j->...i", output_matrix, flat_states)
-        - ein.contract("...ij,...j->...i", feedthrough_matrix, flat_controls)
+    def evaluate_output(
+        t,
+        flat_anchor,
+        flat_nominal_control,
+        flat_local,
+        flat_control_delta,
+    ):
+        anchor = flat_anchor.reshape(state_shape)
+        state_value = jnp.asarray(
+            geometry.retract(anchor, flat_local.reshape(local_shape))
+        )
+        control_value = (flat_nominal_control + flat_control_delta).reshape(control_shape)
+        value = _inexact(output_function(t, state_value, control_value))
+        if value.shape != output_shape:
+            raise ValueError(f"output must have shape {output_shape}; got {value.shape}.")
+        return value.reshape((output_size,))
+
+    output_value = jax.vmap(evaluate_output)(
+        flat_times,
+        flat_states,
+        flat_controls,
+        zero_local,
+        zero_control,
     )
+    output_matrix, feedthrough_matrix = jax.vmap(
+        jax.jacfwd(evaluate_output, argnums=(3, 4))
+    )(
+        flat_times,
+        flat_states,
+        flat_controls,
+        zero_local,
+        zero_control,
+    )
+    if geometry.trivial:
+        output_offset = (
+            output_value
+            - ein.contract("...ij,...j->...i", output_matrix, flat_states)
+            - ein.contract("...ij,...j->...i", feedthrough_matrix, flat_controls)
+        )
+    else:
+        output_offset = output_value
+
     finite_parts = (
         flat_times.reshape((case_count, 1)),
         flat_states,
         flat_controls,
         dynamics_value,
+        local_dynamics_value,
         output_value,
         state_matrix,
         control_matrix,
@@ -285,8 +385,12 @@ def _linearize(
         feedthrough_matrix,
         output_offset,
     )
-    valid = jnp.ones((case_count,), dtype=bool)
-    valid = valid & dynamics_successful & differentiated_successful
+    valid = (
+        jnp.ones((case_count,), dtype=bool)
+        & dynamics_successful
+        & local_successful
+        & differentiated_successful
+    )
     for part in finite_parts:
         valid = valid & jnp.all(jnp.isfinite(part.reshape((case_count, -1))), axis=-1)
 
@@ -297,10 +401,10 @@ def _linearize(
         operating_control=controls,
         dynamics_value=dynamics_value.reshape(case_shape + state_shape),
         output_value=output_value.reshape(case_shape + output_shape),
-        state_matrix=state_matrix.reshape(case_shape + (state_size, state_size)),
-        control_matrix=control_matrix.reshape(case_shape + (state_size, control_size)),
-        affine_offset=affine_offset.reshape(case_shape + (state_size,)),
-        output_matrix=output_matrix.reshape(case_shape + (output_size, state_size)),
+        state_matrix=state_matrix.reshape(case_shape + (local_size, local_size)),
+        control_matrix=control_matrix.reshape(case_shape + (local_size, control_size)),
+        affine_offset=affine_offset.reshape(case_shape + (local_size,)),
+        output_matrix=output_matrix.reshape(case_shape + (output_size, local_size)),
         feedthrough_matrix=feedthrough_matrix.reshape(
             case_shape + (output_size, control_size)
         ),
@@ -313,6 +417,7 @@ def _linearize(
             system_type=system_type,
         ),
         state_shape=state_shape,
+        state_local_size=local_size,
         control_shape=control_shape,
         output_shape=output_shape,
     )

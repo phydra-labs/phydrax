@@ -8,6 +8,10 @@
       show_root_heading: true
       members_order: source
 
+Soft-robot-specific rods, actuators, contact, continuum tasks, observations,
+inference, floating/hybrid plants, FEM, MPM, and the MJX plant lifecycle are
+grouped in the [soft robotics API](soft_robotics.md).
+
 ## Reduced articulation
 
 ::: phydrax.discretization.ReducedArticulationPlan
@@ -276,7 +280,43 @@
 
 ::: phydrax.control.manifold_radau_collocation_defects
 
-## Reduced rods
+## Shared complete plant lifecycle
+
+::: phydrax.dynamics.AbstractDiscretePlant
+
+---
+
+::: phydrax.dynamics.PlantRuntimeState
+
+---
+
+::: phydrax.dynamics.PlantStepContext
+
+---
+
+::: phydrax.dynamics.PlantResetResult
+
+---
+
+::: phydrax.dynamics.PlantStepResult
+
+---
+
+::: phydrax.dynamics.PlantCheckpoint
+
+---
+
+::: phydrax.dynamics.PlantReplayResult
+
+---
+
+::: phydrax.dynamics.PlantStateVectorCodec
+
+---
+
+::: phydrax.dynamics.ControlVectorCodec
+
+## Reduced rod maps
 
 ::: phydrax.applications.solid_mechanics.ReducedRodPlan
 
@@ -286,55 +326,15 @@
 
 ---
 
-::: phydrax.applications.solid_mechanics.ReducedRodState
+::: phydrax.applications.solid_mechanics.lift_configuration
 
 ---
 
-::: phydrax.applications.solid_mechanics.ReducedRodLiftEvidence
+::: phydrax.applications.solid_mechanics.lift_velocity_operator
 
 ---
 
-::: phydrax.applications.solid_mechanics.ReducedRodPowerEvidence
-
----
-
-::: phydrax.applications.solid_mechanics.ReducedRodStrainEvidence
-
----
-
-::: phydrax.applications.solid_mechanics.ReducedRodEvaluation
-
----
-
-::: phydrax.applications.solid_mechanics.prepare_reduced_rod
-
----
-
-::: phydrax.applications.solid_mechanics.reduced_rod_lift_operator
-
----
-
-::: phydrax.applications.solid_mechanics.lift_reduced_rod_state
-
----
-
-::: phydrax.applications.solid_mechanics.lift_reduced_rod_velocity
-
----
-
-::: phydrax.applications.solid_mechanics.pullback_reduced_rod_loads
-
----
-
-::: phydrax.applications.solid_mechanics.reduced_rod_power_evidence
-
----
-
-::: phydrax.applications.solid_mechanics.reduced_rod_potential_energy
-
----
-
-::: phydrax.applications.solid_mechanics.reduced_rod_kinetic_energy
+::: phydrax.applications.solid_mechanics.lift_effort_pullback_operator
 
 ---
 

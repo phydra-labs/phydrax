@@ -272,23 +272,62 @@ def test_diffuse_fixed_history_neural_block_is_bounded_and_irreversible():
     assert form.field_names == ("displacement", "damage")
 
 
-def test_crack_face_contact_mapping_preserves_gap_and_action_reaction():
+def test_crack_face_contact_mapping_preserves_gap_action_reaction_and_topology_state():
     fracture = phx.applications.fracture
     contact = phx.applications.contact
     _, state = _sharp_state()
+    materials = contact.ContactMaterialPairTable.uniform(
+        normal_stiffness=100.0,
+        static_friction=0.0,
+        dynamic_friction=0.0,
+        restitution=0.0,
+        adhesion_energy=0.0,
+        thermal_conductance=0.0,
+        electrical_conductance=0.0,
+        wear_coefficient=0.0,
+        hardness=1.0,
+        roughness=0.0,
+    )
     adapter = fracture.CrackFaceContactAdapter(
         state.topology,
-        contact.PenaltyContactLaw(100.0),
+        contact.CompliantNormalContactLaw(),
+        materials,
     )
-    accepted = adapter.accepted_state()
+    accepted = adapter.initial_state()
     zero = jnp.zeros_like(state.geometry.vertices)
     closing = jnp.broadcast_to(jnp.asarray([0.0, -0.1]), zero.shape)
 
     evaluation = adapter.evaluate(accepted, closing, zero)
+    batch = evaluation.kinematics.batches[0]
+    active = evaluation.closure.batches[0].normal.active
 
     assert adapter.topology_id == state.topology.topology_id
-    assert evaluation.query.configuration.epoch == state.topology.topology_version
-    assert jnp.all(evaluation.gap < 0.0)
-    assert jnp.all(evaluation.active)
-    assert jnp.allclose(evaluation.action_reaction_defect, 0.0)
+    assert evaluation.candidate_epoch.epoch_id == adapter.candidate_epoch.epoch_id
+    assert jnp.all(jnp.where(batch.valid, batch.gap < 0.0, True))
+    assert jnp.all(jnp.where(batch.valid, active, True))
+    assert jnp.allclose(evaluation.assembly.action_reaction_residual, 0.0)
     assert jnp.array_equal(adapter.segment_ids, state.geometry.segment_ids)
+    assert evaluation.rollback() is accepted
+    committed = evaluation.commit()
+
+    topology = state.topology
+    next_topology = fracture.SharpCrackTopology(
+        topology.geometry,
+        topology.cut_cell_ids,
+        topology.split_cell_ids,
+        topology.tip_cell_ids,
+        topology.cell_segment_ids,
+        topology.heaviside_vertex_ids,
+        topology.branch_vertex_ids,
+        mesh_id=topology.mesh_id,
+        classification_margin=topology.classification_margin,
+        topology_version=topology.topology_version + 1,
+    )
+    next_adapter = fracture.CrackFaceContactAdapter(
+        next_topology,
+        contact.CompliantNormalContactLaw(),
+        materials,
+    )
+    transfer = next_adapter.transfer_state(adapter, committed)
+    assert bool(transfer.evidence.successful)
+    assert transfer.state.state_version == committed.state_version + 1

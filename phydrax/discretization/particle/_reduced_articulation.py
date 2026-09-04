@@ -110,14 +110,17 @@ class ArticulationDualityEvidence(StrictModule):
 
 
 class _ReducedArticulationStateGeometry(AbstractStateGeometry):
-    state_size: int = eqx.field(static=True, default=0)
-    nq: int = eqx.field(static=True, default=0)
-    hinge_dof_indices: tuple[int, ...] = eqx.field(static=True, default=())
-    geometry_id: str = eqx.field(static=True, default="")
-    retraction_method: str = "reduced-articulation-scalar-joints"
-    trivial: bool = False
-    supports_exact_pullback: bool = True
-    supports_commutator_free: bool = True
+    state_size: int = eqx.field(static=True)
+    nq: int = eqx.field(static=True)
+    hinge_dof_indices: tuple[int, ...] = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+    supports_exact_inverse: bool = eqx.field(static=True)
+    supports_exact_differential: bool = eqx.field(static=True)
+    supports_transport: bool = eqx.field(static=True)
+    supports_isometric_transport: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -127,10 +130,29 @@ class _ReducedArticulationStateGeometry(AbstractStateGeometry):
         geometry_id: str,
         /,
     ):
-        self.state_size = int(state_size)
-        self.nq = int(nq)
-        self.hinge_dof_indices = tuple(int(index) for index in hinge_dof_indices)
-        self.geometry_id = str(geometry_id)
+        state_size_ = int(state_size)
+        nq_ = int(nq)
+        hinge_indices = tuple(int(index) for index in hinge_dof_indices)
+        identifier = str(geometry_id)
+        if state_size_ <= 0 or nq_ < 0 or nq_ > state_size_:
+            raise ValueError("Reduced-articulation state dimensions are invalid.")
+        if len(set(hinge_indices)) != len(hinge_indices) or any(
+            index < 0 or index >= nq_ for index in hinge_indices
+        ):
+            raise ValueError("Hinge coordinates must be unique configuration indices.")
+        if not identifier:
+            raise ValueError("geometry_id must be nonempty.")
+        self.state_size = state_size_
+        self.nq = nq_
+        self.hinge_dof_indices = hinge_indices
+        self.geometry_id = identifier
+        self.retraction_method = "reduced-articulation-scalar-joints"
+        self.trivial = False
+        self.supports_exact_inverse = True
+        self.supports_exact_differential = True
+        self.supports_transport = True
+        self.supports_isometric_transport = True
+        self.supports_commutator_free = True
 
     def _state(self, value: ArrayLike, name: str, /) -> Array:
         array = jnp.asarray(value)
@@ -140,36 +162,37 @@ class _ReducedArticulationStateGeometry(AbstractStateGeometry):
             )
         return array
 
+    def _local(self, value: ArrayLike, name: str, /) -> Array:
+        local = self._state(value, name)
+        if self.hinge_dof_indices:
+            indices = jnp.asarray(self.hinge_dof_indices, dtype=jnp.int32)
+            local = eqx.error_if(
+                local,
+                jnp.any(jnp.abs(local[indices]) >= jnp.pi),
+                "A hinge retraction reaches the principal-angle cut locus.",
+            )
+        return local
+
     def contains(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
         if value.shape != (self.state_size,):
             return jnp.asarray(False)
         return jnp.all(jnp.isfinite(value))
 
-    def project_tangent(
-        self, state: ArrayLike, vector: ArrayLike, /
-    ) -> Array:
+    def project_tangent(self, state: ArrayLike, vector: ArrayLike, /) -> Array:
         self._state(state, "State")
         return self._state(vector, "Tangent")
 
-    def to_local(self, state: ArrayLike, tangent: ArrayLike, /) -> Array:
-        return self.project_tangent(state, tangent)
-
-    def from_local(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
-        return self.project_tangent(state, local_tangent)
-
     def retract(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
         base = self._state(state, "State")
-        local = self._state(local_tangent, "Local tangent")
+        local = self._local(local_tangent, "Local tangent")
         configuration = _configuration_increment(
             base[: self.nq],
             local[: self.nq],
             jnp.asarray(1.0, dtype=base.dtype),
             self.hinge_dof_indices,
         )
-        return jnp.concatenate(
-            (configuration, base[self.nq :] + local[self.nq :])
-        )
+        return jnp.concatenate((configuration, base[self.nq :] + local[self.nq :]))
 
     def inverse_retract(self, state: ArrayLike, point: ArrayLike, /) -> Array:
         base = self._state(state, "State")
@@ -177,18 +200,78 @@ class _ReducedArticulationStateGeometry(AbstractStateGeometry):
         configuration = _configuration_delta(
             base[: self.nq], target[: self.nq], self.hinge_dof_indices
         )
+        if self.hinge_dof_indices:
+            indices = jnp.asarray(self.hinge_dof_indices, dtype=jnp.int32)
+            margin = jnp.pi - jnp.abs(configuration[indices])
+            target = eqx.error_if(
+                target,
+                jnp.any(margin <= 8.0 * jnp.finfo(target.dtype).eps),
+                "A hinge inverse retraction reaches the principal-angle cut locus.",
+            )
         return jnp.concatenate((configuration, target[self.nq :] - base[self.nq :]))
 
-    def pullback(
+    def retraction_jvp(
         self,
         state: ArrayLike,
         local_tangent: ArrayLike,
-        tangent: ArrayLike,
+        local_velocity: ArrayLike,
         /,
     ) -> Array:
         self._state(state, "State")
-        self._state(local_tangent, "Local tangent")
-        return self._state(tangent, "Retraction tangent")
+        self._local(local_tangent, "Local tangent")
+        return self._state(local_velocity, "Local velocity")
+
+    def retraction_inverse_jvp(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        self.inverse_retract(state, point)
+        return self._state(tangent, "Physical tangent")
+
+    def retraction_vjp(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        self._state(state, "State")
+        self._local(local_tangent, "Local tangent")
+        return self._state(cotangent, "Physical cotangent")
+
+    def transport_tangent(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        self._state(state, "Transport source")
+        self._state(point, "Transport target")
+        return self._state(tangent, "Physical tangent")
+
+    def transport_cotangent_pullback(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        cotangent: ArrayLike,
+        /,
+    ) -> Array:
+        self._state(state, "Transport source")
+        self._state(point, "Transport target")
+        return self._state(cotangent, "Physical cotangent")
+
+    def cut_locus_margin(self, state: ArrayLike, point: ArrayLike, /) -> Array:
+        base = self._state(state, "State")
+        target = self._state(point, "Point")
+        if not self.hinge_dof_indices:
+            return jnp.asarray(1.0, dtype=base.dtype)
+        indices = jnp.asarray(self.hinge_dof_indices, dtype=jnp.int32)
+        delta = _principal_angle(target[indices] - base[indices])
+        return jnp.min(jnp.pi - jnp.abs(delta))
 
 
 class ReducedArticulationPlan(StrictModule, NonTrainableState):
@@ -317,9 +400,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         if not isinstance(bodies, PreparedRigidBodySet):
             raise TypeError("graph.bodies must be a PreparedRigidBodySet.")
         if bodies.ambient_dimension != 3:
-            raise ValueError(
-                "Reduced articulation currently requires three dimensions."
-            )
+            raise ValueError("Reduced articulation currently requires three dimensions.")
         expected_vector_shape = (bodies.capacity, 3)
         if (
             reference.position.shape != expected_vector_shape
@@ -327,9 +408,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             or reference.orientation.shape != (bodies.capacity, 4)
             or reference.angular_velocity.shape != expected_vector_shape
         ):
-            raise ValueError(
-                "Reference rigid-body kinematics have incompatible shapes."
-            )
+            raise ValueError("Reference rigid-body kinematics have incompatible shapes.")
         reference_leaves = (
             reference.position,
             reference.velocity,
@@ -470,9 +549,11 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             )
 
         active_indices = np.flatnonzero(active).astype(np.int32)
-        declared_indices = set(parent_plan_indices.tolist()) | set(
-            child_plan_indices.tolist()
-        ) | {root_index}
+        declared_indices = (
+            set(parent_plan_indices.tolist())
+            | set(child_plan_indices.tolist())
+            | {root_index}
+        )
         if declared_indices != set(active_indices.tolist()):
             raise ValueError(
                 "Articulation tree is disconnected from active rigid-body support."
@@ -514,9 +595,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
                 body_order.append(child)
                 remaining.remove(edge)
         if reached != set(active_indices.tolist()):
-            raise ValueError(
-                "Articulation edges do not form one connected rooted tree."
-            )
+            raise ValueError("Articulation edges do not form one connected rooted tree.")
 
         parent_indices = parent_plan_indices[edge_order]
         child_indices = child_plan_indices[edge_order]
@@ -529,24 +608,16 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         position_host = np.asarray(reference.position)
         orientation = reference.orientation
         rotation_host = np.asarray(quaternion_rotation_matrix(orientation))
-        reference_translation = np.empty(
-            (plan.edge_count, 3), dtype=position_host.dtype
-        )
-        reference_rotation = np.empty(
-            (plan.edge_count, 3, 3), dtype=position_host.dtype
-        )
-        reference_orientation = np.empty(
-            (plan.edge_count, 4), dtype=position_host.dtype
-        )
+        reference_translation = np.empty((plan.edge_count, 3), dtype=position_host.dtype)
+        reference_rotation = np.empty((plan.edge_count, 3, 3), dtype=position_host.dtype)
+        reference_orientation = np.empty((plan.edge_count, 4), dtype=position_host.dtype)
         axes = np.zeros((plan.edge_count, 3), dtype=position_host.dtype)
         anchors = np.zeros((plan.edge_count, 3), dtype=position_host.dtype)
-        for ordered_edge, (source_edge, row) in enumerate(
-            zip(edge_order, ordered_rows)
-        ):
+        for ordered_edge, (source_edge, row) in enumerate(zip(edge_order, ordered_rows)):
             parent = int(parent_indices[ordered_edge])
             child = int(child_indices[ordered_edge])
-            reference_translation[ordered_edge] = (
-                rotation_host[parent].T @ (position_host[child] - position_host[parent])
+            reference_translation[ordered_edge] = rotation_host[parent].T @ (
+                position_host[child] - position_host[parent]
             )
             reference_rotation[ordered_edge] = (
                 rotation_host[parent].T @ rotation_host[child]
@@ -616,6 +687,14 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
                 [f"q:{int(ordered_joint_ids[edge])}" for edge in dof_joints]
                 + [f"v:{int(ordered_joint_ids[edge])}" for edge in dof_joints]
             )
+            local_components = tuple(
+                [f"delta_q:{int(ordered_joint_ids[edge])}" for edge in dof_joints]
+                + [f"delta_v:{int(ordered_joint_ids[edge])}" for edge in dof_joints]
+            )
+            tangent_components = tuple(
+                [f"q_rate:{int(ordered_joint_ids[edge])}" for edge in dof_joints]
+                + [f"v_rate:{int(ordered_joint_ids[edge])}" for edge in dof_joints]
+            )
             geometry = _ReducedArticulationStateGeometry(
                 state_size,
                 nq,
@@ -627,6 +706,10 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
                 axes=("articulation_state",),
                 component_names=state_components,
                 geometry=geometry,
+                local_space=ArraySpace((state_size,)),
+                tangent_space=ArraySpace((state_size,)),
+                local_component_names=local_components,
+                tangent_component_names=tangent_components,
                 layout_id=f"state-layout:reduced-articulation:{prepared_id}",
             )
             input_layout: InputLayout | None = InputLayout(
@@ -734,9 +817,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
     ) -> Array:
         if isinstance(state_or_configuration, ReducedArticulationState):
             if velocity is not None:
-                raise ValueError(
-                    "velocity must be omitted when packing a state object."
-                )
+                raise ValueError("velocity must be omitted when packing a state object.")
             configuration = self._configuration(
                 state_or_configuration.configuration, "State configuration"
             )
@@ -774,18 +855,14 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         step = jnp.asarray(step_size, dtype=point.dtype)
         if step.shape != ():
             raise ValueError("step_size must be scalar.")
-        return _configuration_increment(
-            point, tangent, step, self._hinge_dof_indices
-        )
+        return _configuration_increment(point, tangent, step, self._hinge_dof_indices)
 
     def configuration_difference(
         self, reference: ArrayLike, point: ArrayLike, /
     ) -> Array:
         reference_array = self._configuration(reference, "Reference configuration")
         point_array = self._configuration(point, "Point configuration")
-        return _configuration_delta(
-            reference_array, point_array, self._hinge_dof_indices
-        )
+        return _configuration_delta(reference_array, point_array, self._hinge_dof_indices)
 
     def _poses(self, configuration: Array, /) -> tuple[Array, Array]:
         position = self.reference_position
@@ -851,15 +928,11 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             child_position = position[child]
             parent_rotation = quaternion_rotation_matrix(orientation[parent])
             if kind == int(RigidJointKind.HINGE):
-                axis_world = contract(
-                    "ij,j->i", parent_rotation, self.parent_axes[edge]
-                )
+                axis_world = contract("ij,j->i", parent_rotation, self.parent_axes[edge])
                 anchor_world = parent_position + contract(
                     "ij,j->i", parent_rotation, self.parent_anchors[edge]
                 )
-                child_angular = (
-                    parent_angular + generalized_velocity[dof] * axis_world
-                )
+                child_angular = parent_angular + generalized_velocity[dof] * axis_world
                 anchor_velocity = parent_linear + jnp.cross(
                     parent_angular, anchor_world - parent_position
                 )
@@ -867,9 +940,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
                     child_angular, child_position - anchor_world
                 )
             elif kind == int(RigidJointKind.PRISMATIC):
-                axis_world = contract(
-                    "ij,j->i", parent_rotation, self.parent_axes[edge]
-                )
+                axis_world = contract("ij,j->i", parent_rotation, self.parent_axes[edge])
                 child_angular = parent_angular
                 child_linear = (
                     parent_linear
@@ -937,13 +1008,9 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         self, configuration: ArrayLike, generalized_velocity: ArrayLike, /
     ) -> Array:
         configuration_array = self._configuration(configuration, "Configuration")
-        velocity_array = self._velocity(
-            generalized_velocity, "Generalized velocity"
-        )
+        velocity_array = self._velocity(generalized_velocity, "Generalized velocity")
         position, orientation = self._poses(configuration_array)
-        return self._body_velocity_from_poses(
-            velocity_array, position, orientation
-        )
+        return self._body_velocity_from_poses(velocity_array, position, orientation)
 
     def _body_index(self, body_id: int, /) -> int:
         if isinstance(body_id, bool) or not isinstance(body_id, Integral):
@@ -1022,18 +1089,14 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             body_velocity = self._body_velocity_from_poses(
                 generalized_velocity, position, orientation
             )[index]
-            frame_linear = body_velocity[:3] + jnp.cross(
-                body_velocity[3:], offset_world
-            )
+            frame_linear = body_velocity[:3] + jnp.cross(body_velocity[3:], offset_world)
             return jnp.concatenate((frame_linear, body_velocity[3:]))
 
         return FunctionLinearOperator(
             action,
             source=source,
             target=target,
-            operator_id=(
-                f"{self.prepared_id}:frame-jacobian:{int(body_id)}"
-            ),
+            operator_id=(f"{self.prepared_id}:frame-jacobian:{int(body_id)}"),
         )
 
     def body_load_pullback(
@@ -1046,9 +1109,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         if not isinstance(load, RigidBodyLoad):
             raise TypeError("load must be a RigidBodyLoad.")
         configuration_array = self._configuration(configuration, "Configuration")
-        velocity_array = self._velocity(
-            generalized_velocity, "Generalized velocity"
-        )
+        velocity_array = self._velocity(generalized_velocity, "Generalized velocity")
         force = jnp.asarray(load.force, dtype=configuration_array.dtype)
         torque = jnp.asarray(load.torque, dtype=configuration_array.dtype)
         expected = (self.graph.bodies.capacity, 3)
@@ -1084,11 +1145,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(body_velocity))
             & jnp.all(jnp.isfinite(generalized_load))
             & jnp.all(
-                jnp.isfinite(
-                    jnp.stack(
-                        (body_power, generalized_power, residual, scale)
-                    )
-                )
+                jnp.isfinite(jnp.stack((body_power, generalized_power, residual, scale)))
             )
         )
         evidence = ArticulationDualityEvidence(

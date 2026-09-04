@@ -30,9 +30,7 @@ RoboticsOperation: TypeAlias = Literal[
     "jvp",
     "vjp",
 ]
-RoboticsDifferentiability: TypeAlias = Literal[
-    "none", "conditional", "guaranteed"
-]
+RoboticsDifferentiability: TypeAlias = Literal["none", "conditional", "guaranteed"]
 RoboticsProjectionKind: TypeAlias = Literal[
     "qpos",
     "qvel",
@@ -141,9 +139,7 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
         if differentiability not in _DIFFERENTIABILITY_RANK:
             raise ValueError("Unknown robotics differentiability level.")
         solvers_ = _normalized_values(solvers, "solvers")
-        contact_features_ = _normalized_values(
-            contact_features, "contact_features"
-        )
+        contact_features_ = _normalized_values(contact_features, "contact_features")
         reason_ = str(reason).strip()
         if supported and (not devices_ or not dtypes_):
             raise ValueError("Supported operations must declare devices and dtypes.")
@@ -161,7 +157,9 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
         self.contact_features = contact_features_
         self.reason = reason_
 
-    def rejection_reason(self, requirement: RoboticsOperationRequirement, /) -> str | None:
+    def rejection_reason(
+        self, requirement: RoboticsOperationRequirement, /
+    ) -> str | None:
         """Return the first unmet condition, or ``None`` when accepted."""
         if not isinstance(requirement, RoboticsOperationRequirement):
             raise TypeError("requirement must be RoboticsOperationRequirement.")
@@ -416,6 +414,7 @@ class RoboticsIndexEntry(StrictModule, NonTrainableState):
     def indices(self) -> tuple[int, ...]:
         return tuple(range(self.start, self.stop))
 
+
 class RoboticsProjectionProvenance(StrictModule, NonTrainableState):
     """Immutable origin of one prepared-model projection layout."""
 
@@ -443,6 +442,17 @@ class RoboticsProjectionProvenance(StrictModule, NonTrainableState):
         self.unit_system = _identifier(unit_system, "unit_system")
         self.frame_convention = _identifier(frame_convention, "frame_convention")
 
+    @property
+    def identity(self) -> tuple[str, str, str, str, str, str]:
+        """Return the complete deterministic projection-origin identity."""
+        return (
+            self.model,
+            self.compiler,
+            self.provider,
+            self.asset,
+            self.unit_system,
+            self.frame_convention,
+        )
 
 
 class RoboticsProjectionMap(StrictModule, NonTrainableState):
@@ -483,7 +493,9 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
         cursor = 0
         for entry in entries_:
             if entry.start != cursor:
-                raise ValueError("Projection entries must form contiguous ordered ranges.")
+                raise ValueError(
+                    "Projection entries must form contiguous ordered ranges."
+                )
             cursor = entry.stop
         if cursor != size_:
             raise ValueError("Projection entries must cover the complete projection.")
@@ -501,6 +513,23 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
     @property
     def name_to_range(self) -> tuple[tuple[str, tuple[int, int]], ...]:
         return tuple((entry.name, (entry.start, entry.stop)) for entry in self.entries)
+
+    @property
+    def identity(
+        self,
+    ) -> tuple[
+        RoboticsProjectionKind,
+        int,
+        tuple[tuple[str, tuple[int, int]], ...],
+        tuple[str, str, str, str, str, str],
+    ]:
+        """Return the complete deterministic projection-map identity."""
+        return (
+            self.kind,
+            self.size,
+            self.name_to_range,
+            self.provenance.identity,
+        )
 
     def entry(self, name: str, /) -> RoboticsIndexEntry:
         name_ = str(name)
@@ -535,16 +564,32 @@ class RoboticsProjection(StrictModule, NonTrainableState):
                 f"{index_map.kind} projection must end in axis size {index_map.size}; "
                 f"got shape {shape}."
             )
-        epoch_bound = index_map.kind in (
+        has_state_epoch = state_epoch is not None
+        has_sample_epoch = sample_epoch is not None
+        requires_epoch = index_map.kind in (
             "observation",
             "length",
             "velocity",
             "raw-force",
         )
-        if epoch_bound:
-            if state_epoch is None or sample_epoch is None:
+        if requires_epoch and not (has_state_epoch and has_sample_epoch):
+            raise ValueError(
+                f"{index_map.kind} projections require state and sample epochs."
+            )
+        if index_map.kind not in (
+            "observation",
+            "control",
+            "length",
+            "velocity",
+            "raw-force",
+        ) and (has_state_epoch or has_sample_epoch):
+            raise ValueError(
+                "Only observation, control, and forward-derived projections bind epochs."
+            )
+        if has_state_epoch or has_sample_epoch:
+            if not (has_state_epoch and has_sample_epoch):
                 raise ValueError(
-                    f"{index_map.kind} projections require state and sample epochs."
+                    "Epoch-bound projections require both state and sample epochs."
                 )
             state_epoch_ = jnp.asarray(state_epoch, dtype=jnp.int32)
             sample_epoch_ = jnp.asarray(sample_epoch, dtype=jnp.int32)
@@ -563,10 +608,6 @@ class RoboticsProjection(StrictModule, NonTrainableState):
                 "A projection sample cannot be newer than its state.",
             )
         else:
-            if state_epoch is not None or sample_epoch is not None:
-                raise ValueError(
-                    "Only observation and forward-derived projections bind epochs."
-                )
             state_epoch_ = None
             sample_epoch_ = None
         self.values = values
@@ -614,8 +655,7 @@ class RoboticsOperationEvidence(StrictModule, NonTrainableState):
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         if status_.shape != finite_.shape:
             raise ValueError(
-                "Robotics operation status and finite evidence must have equal "
-                "case axes."
+                "Robotics operation status and finite evidence must have equal case axes."
             )
         status_ = eqx.error_if(
             status_,

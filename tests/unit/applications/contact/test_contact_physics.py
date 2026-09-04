@@ -55,11 +55,8 @@ def _finite_element_contact_case(*, friction=False):
         jnp.asarray((10, 11), dtype=jnp.int64),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
-        pair_policy=phx.discretization.ContactPairPolicy(
-            2,
-            body_ids=jnp.ones((2,), dtype=jnp.int64),
-            static_mask=jnp.ones((2,), dtype=bool),
-        ),
+        body_ids=1,
+        static_mask=True,
     )
     static = phx.discretization.PreparedCollisionSurface(
         static_plan,

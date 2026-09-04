@@ -4,6 +4,14 @@
 
 """Dynamical-system, pathwise-evolution, analysis, and identification contracts."""
 
+from .._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
+from .._identity import (
+    callable_payload,
+    ExecutableSignature,
+    NumericRevision,
+    SemanticProvenance,
+    strict_module_payload,
+)
 from . import analysis, identification
 from ._affine import affine_exponential_step, AffineExponentialResult
 from ._cell_enclosure import CellMapEnclosure
@@ -59,6 +67,27 @@ from ._model_system import (
     discrete_model_system,
     DiscreteModelTransition,
 )
+from ._plant import (
+    AbstractDiscretePlant,
+    ArrayDiscreteSystemPlant,
+    PlantCheckpoint,
+    PlantParameters,
+    PlantProposal,
+    PlantReplayResult,
+    PlantResetResult,
+    PlantRuntimeState,
+    PlantStepContext,
+    PlantStepResult,
+)
+from ._plant_codec import (
+    ControlVectorCodec,
+    EncodedControl,
+    EncodedPlantState,
+    EncodedPlantVector,
+    PlantPowerEvidence,
+    PlantStateVectorCodec,
+    PlantVectorRole,
+)
 from ._second_order import (
     SecondOrderDifferentialProblem,
     SecondOrderDifferentialSystem,
@@ -94,6 +123,30 @@ from .identification import (
 
 
 __all__ = [
+    "AbstractDiscretePlant",
+    "ArrayDiscreteSystemPlant",
+    "ArrayLeafSchema",
+    "ArrayPyTreeSchema",
+    "ControlVectorCodec",
+    "EncodedControl",
+    "EncodedPlantState",
+    "EncodedPlantVector",
+    "ExecutableSignature",
+    "NumericRevision",
+    "PlantCheckpoint",
+    "PlantParameters",
+    "PlantPowerEvidence",
+    "PlantProposal",
+    "PlantReplayResult",
+    "PlantResetResult",
+    "PlantRuntimeState",
+    "PlantStateVectorCodec",
+    "PlantStepContext",
+    "PlantStepResult",
+    "PlantVectorRole",
+    "SemanticProvenance",
+    "callable_payload",
+    "strict_module_payload",
     "analysis",
     "identification",
     "AffineExponentialResult",

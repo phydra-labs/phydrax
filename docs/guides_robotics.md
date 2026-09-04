@@ -33,8 +33,8 @@ simulation claim.
 | Status-aware rollout and MPC | `phydrax.control` | `DiscreteControlDynamics`, `ControlTrajectory`, `plan_sampling_mpc` |
 | Manifold transcription | `phydrax.control` | `manifold_radau_stages`, `manifold_radau_collocation_defects` |
 | Task environments | `phydrax.applications.robotics` | `AbstractRobotTask`, `AbstractRobotEnvironmentWrapper`, `PreparedRobotEnvironment` |
-| Reduced flexible members | `phydrax.applications.solid_mechanics` | `ReducedRodPlan`, `PreparedReducedRod`, `evaluate_reduced_rod` |
-| Optional provider execution | `phydrax.applications.robotics` | `RoboticsBackendProfile`, `RoboticsProjectionProvenance`, `MJXDataSchema`, `MJXAdapter` |
+| Reduced and continuum soft robotics | `phydrax.applications.solid_mechanics`, `phydrax.applications.contact`, `phydrax.applications.robotics` | spatial rods, PCS/GVS reconstruction, tendon/contact/floating/hybrid/FEM/MPM profiles |
+| Optional provider execution | `phydrax.applications.robotics` | `RoboticsBackendProfile`, `RoboticsProjectionProvenance`, `MJXPreparedModelManifest`, `MJXAdapter` |
 
 Plans and prepared objects are immutable PyTrees. Stable IDs bind topology,
 layouts, reference frames, and provider projections. Runtime arrays remain
@@ -415,104 +415,76 @@ steps, mechanics success/status, and source/candidate indices. With auto-reset,
 Fixed work and immutable state improve compilation and auditability; they are
 not a hard real-time scheduling guarantee.
 
-## Reduced flexible rods
+## Soft robotics composition
 
-`ReducedRodPlan` defines a finite planar strain basis over an existing prepared
-Cosserat rod. Stretch/shear basis shape is
-`(segments, 2, coordinates)` and bend/twist basis shape is
-`(segments - 1, 1, coordinates)`. The combined basis must have full column
-rank. Optional fixed base position and orientation choose the reconstruction
-anchor.
+Spatial rods now use the shared four-space geometry and true-dual operator
+contracts. Native discrete rods, PCS/GVS bases and physical reconstruction,
+materials, reduced dynamics and integrators, tendons and advanced actuator
+evaluators, continuum tasks and observations, calibration/co-design/control,
+floating rods, rigid–soft composition, fixed-mesh FEM, fixed-topology MPM, and
+MJX each retain separate ownership and capability evidence.
 
-`prepare_reduced_rod` currently accepts only extensible planar `PreparedRod`
-values. `ReducedRodState` packs coefficients and coefficient velocities.
-`lift_reduced_rod_state` and `lift_reduced_rod_velocity` reconstruct native
-states and rates through the exact lift JVP;
-`pullback_reduced_rod_loads` applies the transpose action.
-`evaluate_reduced_rod` reports native mechanics, generalized internal load,
-energy, strain reconstruction, quadrature, fixed-base, and virtual-power
-evidence. This is a reduced flexible-member model, not a ball-joint or
-floating-base extension of rigid articulation.
+The atomic reduced-rod contact plant adds collision discovery for its exact
+fixed-base spatial circular-capsule plane/self-contact profile, with
+fixed-capacity search, persistent route-keyed history, conservative-advancement
+CCD, frictionless or isotropic Coulomb response, and full-interval-or-rollback
+semantics. This does not broaden the rigid-articulation contact utility above:
+rigid articulation contact still requires caller-supplied fixed routes.
 
-## Optional MJX lifecycle, schema, and provenance
+See [Soft robotics](guides_soft_robotics.md) for the full geometry, plant,
+codec/replay, rod, actuator, contact, observation, inference, floating, hybrid,
+FEM, MPM, and qualified/excluded capability contracts.
+
+## Optional MJX plant lifecycle and provenance
 
 Importing the robotics package does not require MuJoCo or MJX.
-`mjx_availability()` probes both `mujoco` and `mujoco-mjx`; the two
-distributions must have exactly matching base releases in the qualified 3.12.x
-minor. `prepare_mjx_adapter` performs the lazy import and requires an already
-compiled public `mujoco.MjModel`. Missing, mismatched, or unsupported providers
-raise the shared explicit backend error rather than selecting a fallback.
+`mjx_availability()` probes both `mujoco` and `mujoco-mjx`; their base releases
+must match exactly in the qualified 3.12.x minor. `prepare_mjx_adapter` performs
+the lazy import and requires an already compiled public `mujoco.MjModel`.
+Missing, mismatched, unsupported, or unqualified providers fail explicitly.
 
-Before execution, negotiate exact `RoboticsOperationRequirement` values against
-a `RoboticsBackendProfile`. Requirements may constrain operation, device,
-dtype, minimum differentiability, solver, and contact feature. Profiles list
-one capability per operation plus exclusions. `profile.negotiate` returns all
-rejections; `profile.require` raises on the first unmet requirement and never
-weakens a request. `MJX_JAX_PROFILE` declares conditional—not
-guaranteed—differentiability. `MJX_WARP_PROFILE` is only a capability
-declaration; the prepared adapter in this release is MJX-JAX.
+Preparation builds `MJXPreparedModelManifest`, the closed feature set actually
+present in the model. Unsupported enums, feature bits, collision combinations,
+flexible bodies, plugin state, and the other declared exclusions fail before
+transfer. `MJXAdapter` is an `AbstractDiscretePlant`; its public `state_schema`
+describes the canonical complete `mjx.Data` PyTree, and `MJXState` binds that
+opaque payload to state and sensor epochs.
 
-Preparation first builds `MJXPreparedModelManifest`, the closed feature set
-actually present in the accepted model: integrator, solver, cone and Jacobian
-mode; joint and geometry types; collision-pair features; actuator bias,
-dynamics, gain, and transmission types; equality and sensor types; tendon-wrap
-types; and enabled feature bits. Unsupported enum values, collision
-combinations, flexible bodies, plugin state, and the other declared exclusions
-fail before transfer instead of disappearing from a coarse profile.
-
-`MJXDataSchema` records the complete canonical `mjx.Data` PyTree definition,
-intrinsic `qpos` shape, and one `MJXArrayLeafSpec` per leaf with intrinsic shape,
-dtype, device set, and initial-finiteness evidence. Validation requires the same
-tree and leaf count, a single common set of leading case axes, and exact
-intrinsic shape, dtype, and devices for every JAX array leaf. `MJXState` also
-binds adapter ownership, this complete opaque data, state/sensor epochs, and
-`RoboticsProjectionProvenance`. That provenance records the compiled model and
-asset digest, exact compiler/provider releases, unit system, and frame
-convention; qpos, qvel, control, and observation maps all carry it.
-
-The normal sensor-bearing lifecycle uses an `MJXObservationRequest`:
+The shared plant lifecycle is:
 
 ```python
-stepped = adapter.step(state, control)
-stale_state = stepped.accepted_state
-refreshed = adapter.refresh(stale_state, request)
-fresh_state = refreshed.accepted_state
-observation = adapter.observe(fresh_state, request)
+reset = adapter.reset(key, adapter.parameters)
+command = adapter.control(reset.accepted_state)
+stepped = adapter.step(context, reset.accepted_state, command, adapter.parameters)
+refreshed = adapter.refresh(stepped.accepted_state, request)
+observation = adapter.observe(refreshed.accepted_state, request)
 ```
-Inspect `stepped.successful/status` and `refreshed.successful/status`; only a
-successful refreshed case has current derived fields.
 
-`step` returns `MJXStepResult`; it accepts no observation request and returns no
-observation. Each successful case advances its state epoch while retaining its
-sensor epoch, so derived sensor data are stale. `observe` returns
-`MJXObservation` and derives freshness from those epochs; a sensor-bearing
-request on stale data reports `INVALID_STATE` instead of relabeling old
-samples. `refresh` runs `mjx.forward`, advances the sensor epoch only for
-accepted cases, and returns `MJXRefreshResult`, including the requested fresh
-observation as `refreshed.observation`.
+Inspect the shared `PlantStepResult.successful/status` and
+`MJXRefreshResult.successful/status`. A successful step advances the state epoch
+while leaving derived sensors stale. A sensor-bearing observation is valid only
+after successful refresh. Step and refresh retain failed complete cases.
 
-Step and refresh are casewise and complete-state fail closed. A case is accepted
-only when every dynamic floating leaf is finite. Failure retains that case's
-entire source `mjx.Data` and epochs—never a partially finite foreign state—and
-reports `NONFINITE`. A request that excludes sensors may still project current
-qpos, qvel, or control directly, but it does not make stale derived fields
-fresh.
+`MJX_JAX_PROFILE` supports only `step` and `sensors` on its exact device,
+dtype, solver, and contact-feature tuples, with conditional differentiability.
+The other robotics operations have no adapter callable. `MJX_WARP_PROFILE`
+marks every operation unsupported because no MJX-Warp adapter callable is
+implemented.
 
 ## Limits to keep visible
 
-The delivered native tree is 3-D and fixed-base with fixed, hinge, and
-prismatic joints. Floating bases and ball joints are outside this reduced path.
-Frame IK is local, not global. Fixed-route articulated contact requires
-caller-supplied routes: there is no collision discovery and no atomic
-robot/contact step yet, so this release does not claim a production robot
-collision/contact simulator. Sampling MPC reports finite sampled work, not
-certified robustness or global optimality. Immutable fixed-work execution is
-not hard real time. The MJX path is optional, capability-gated, tied to a
-matching 3.12.x provider pair, and only conditionally differentiable for the
-operations its prepared profile declares.
+The native reduced rigid tree remains 3-D fixed-base fixed/hinge/prismatic;
+floating bases and ball joints are outside that articulation profile. Frame and
+continuum IK are local, not global. Sampling MPC and SQP do not certify global
+optimality or robust stability. Fixed work is not hard real time. Soft robotics
+claims apply only to the exact capability tuples and exclusions in the soft
+robotics guide and to runtime evidence for the caller's prepared device, dtype,
+capacities, tolerances, and provider releases.
 
 See the [robotics API reference](api/applications/robotics.md), the
-`examples/robotics_articulation.py` workflow, and the standalone
-`tools/robotics_articulation_benchmarks.py` benchmark. The benchmark reports
-native timings and evidence only; it makes no crossover or speedup claim
-because it measures no reference implementation.
+[soft robotics API reference](api/applications/soft_robotics.md),
+`examples/robotics_articulation.py`, `examples/soft_robot_tendon.py`,
+`examples/soft_robot_contact.py`, `tools/robotics_articulation_benchmarks.py`,
+and `tools/robotics_soft_rod_benchmarks.py`. Each benchmark reports native
+timings and evidence only; neither makes a crossover or speedup claim without a
+measured reference implementation.

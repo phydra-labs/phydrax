@@ -1,10 +1,12 @@
 """Project one provider-native MuJoCo muscle through the MJX adapter."""
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import mujoco
 
 from phydrax.applications.robotics import prepare_mjx_adapter
+from phydrax.dynamics import PlantStepContext
 
 
 xml = """
@@ -34,10 +36,25 @@ xml = """
 model = mujoco.MjModel.from_xml_string(xml)
 adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
 muscles = adapter.prepare_muscle_projection()
-complete_control = muscles.scatter_control(
-    adapter.control().values.at[1].set(0.1), jnp.asarray([0.65])
+source = adapter.reset(jax.random.key(7), adapter.parameters).accepted_state
+base_control = adapter.control(source)
+base_control = eqx.tree_at(
+    lambda control: control.values,
+    base_control,
+    base_control.values.at[1].set(0.1),
 )
-stepped = adapter.step(adapter.initial_state, complete_control)
+complete_control = muscles.scatter_control(base_control, jnp.asarray([0.65]))
+context = PlantStepContext(
+    source.time,
+    source.time + jnp.asarray(model.opt.timestep, dtype=source.time.dtype),
+    source.step_index,
+)
+stepped = adapter.step(
+    context,
+    source,
+    complete_control,
+    adapter.parameters,
+)
 refreshed = adapter.refresh(stepped.accepted_state)
 snapshot = muscles.snapshot(refreshed.accepted_state)
 

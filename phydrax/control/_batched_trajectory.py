@@ -18,10 +18,13 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..dynamics._system import DiscreteTransitionEvidence
 from ..linalg import prepare_local_block_factorization, solve_local_blocks
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
+from ._dynamics import DiscreteControlDynamics
 from ._ilqr import (
+    _evaluate_ilqr_flow,
     _flow_map,
     _local_model,
     _trajectory_cost,
@@ -84,6 +87,14 @@ def plan_ilqr(
         raise TypeError("problem must be a ControlProblem.")
     if problem.path_constraints or problem.terminal_constraints:
         raise ValueError("iLQR supports unconstrained ControlProblem values only.")
+    state_layout = problem.dynamics.system.state_layout
+    if (
+        not state_layout.geometry.supports_exact_inverse
+        or not state_layout.geometry.supports_exact_differential
+    ):
+        raise ValueError(
+            "iLQR requires exact inverse-retraction and retraction-differential geometry."
+        )
     values = _validate_solver_options(
         max_iterations=max_iterations,
         regularization=regularization,
@@ -158,26 +169,90 @@ def prepare_ilqr(
 
 
 def _rollout(problem, flow, initial_state, controls):
-    times = problem.time_grid.times
 
     def step(carry, inputs):
         state, active, failed_step = carry
         index, control = inputs
         index = jnp.asarray(index, dtype=jnp.int32)
-        candidate = jnp.asarray(
-            flow(times[index], times[index + 1], index, state, control)
+        control_finite = jnp.all(jnp.isfinite(control))
+        attempted = active & control_finite
+
+        def evaluate_transition(values):
+            current_state, current_control = values
+            return _evaluate_ilqr_flow(
+                problem,
+                flow,
+                index,
+                current_state,
+                current_control,
+            )
+
+        def skip_transition(values):
+            current_state, _ = values
+            unavailable = jnp.full_like(current_state, jnp.nan)
+            return (
+                unavailable,
+                unavailable,
+                jnp.asarray(False),
+                jnp.asarray(0, dtype=jnp.int32),
+            )
+
+        candidate, accepted, transition_successful, transition_status = jax.lax.cond(
+            attempted,
+            evaluate_transition,
+            skip_transition,
+            (state, control),
         )
-        valid = active & jnp.all(jnp.isfinite(control)) & jnp.all(jnp.isfinite(candidate))
-        next_state = jnp.where(valid, candidate, state)
+        successful = attempted & transition_successful
+        next_valid = successful & jnp.all(jnp.isfinite(accepted))
+        next_state = jnp.where(
+            attempted,
+            accepted,
+            jnp.full_like(accepted, jnp.nan),
+        )
+        recorded_candidate = jnp.where(
+            attempted,
+            candidate,
+            jnp.full_like(candidate, jnp.nan),
+        )
+        recorded_accepted = jnp.where(
+            attempted,
+            accepted,
+            jnp.full_like(accepted, jnp.nan),
+        )
+        recorded_status = jnp.where(
+            attempted,
+            transition_status,
+            jnp.asarray(0, dtype=jnp.int32),
+        ).astype(jnp.int32)
         failed_step = jnp.where(
-            active & (~valid) & (failed_step < 0),
+            active & (~next_valid) & (failed_step < 0),
             index,
             failed_step,
         ).astype(jnp.int32)
-        return (next_state, valid, failed_step), (next_state, valid)
+        return (next_state, next_valid, failed_step), (
+            next_state,
+            next_valid,
+            recorded_candidate,
+            recorded_accepted,
+            attempted,
+            successful,
+            recorded_status,
+        )
 
     initial_valid = jnp.all(jnp.isfinite(initial_state))
-    (_, active, failed_step), (tail, valid_tail) = jax.lax.scan(
+    (
+        (_, active, failed_step),
+        (
+            tail,
+            valid_tail,
+            candidates,
+            accepted,
+            attempted,
+            successful,
+            status,
+        ),
+    ) = jax.lax.scan(
         step,
         (initial_state, initial_valid, jnp.asarray(-1, dtype=jnp.int32)),
         (
@@ -187,9 +262,28 @@ def _rollout(problem, flow, initial_state, controls):
     )
     states = jnp.concatenate((initial_state[None], tail), axis=0)
     valid = jnp.concatenate((initial_valid[None], valid_tail), axis=0)
-    objective, cost_valid = _trajectory_cost(problem, states, controls)
-    objective = jnp.where(active & cost_valid, objective, jnp.inf)
-    return states, controls, valid, objective, failed_step
+    objective, cost_valid = jax.lax.cond(
+        active,
+        lambda _: _trajectory_cost(problem, states, controls),
+        lambda _: (
+            jnp.asarray(jnp.inf, dtype=states.real.dtype),
+            jnp.asarray(False),
+        ),
+        None,
+    )
+    objective = jnp.where(cost_valid, objective, jnp.inf)
+    evidence = (
+        DiscreteTransitionEvidence(
+            candidates,
+            accepted,
+            attempted,
+            successful,
+            status,
+        )
+        if isinstance(problem.dynamics, DiscreteControlDynamics)
+        else None
+    )
+    return states, controls, valid, objective, failed_step, evidence
 
 
 def _feedback_rollout(
@@ -202,35 +296,115 @@ def _feedback_rollout(
     feedback,
     step_size,
 ):
-    times = problem.time_grid.times
-    state_size = prod(problem.state_shape)
+    state_layout = problem.dynamics.system.state_layout
+    geometry = state_layout.geometry
+    state_size = state_layout.local_size
     control_size = prod(problem.control_shape)
 
     def step(carry, inputs):
         state, active, failed_step = carry
         index, nominal_state, nominal_control, feedforward_, feedback_ = inputs
         index = jnp.asarray(index, dtype=jnp.int32)
-        delta = state.reshape((state_size,)) - nominal_state.reshape((state_size,))
+        delta = jax.lax.cond(
+            active,
+            lambda _: jnp.asarray(geometry.inverse_retract(nominal_state, state)).reshape(
+                (state_size,)
+            ),
+            lambda _: jnp.zeros((state_size,), dtype=state.dtype),
+            None,
+        )
         correction = ein.contract("ij,j->i", feedback_, delta)
         control = (
             nominal_control.reshape((control_size,))
             + step_size * feedforward_
             + correction
         ).reshape(problem.control_shape)
-        candidate = jnp.asarray(
-            flow(times[index], times[index + 1], index, state, control)
+        control_finite = jnp.all(jnp.isfinite(control))
+        attempted = active & control_finite
+
+        def evaluate_transition(values):
+            current_state, current_control = values
+            return _evaluate_ilqr_flow(
+                problem,
+                flow,
+                index,
+                current_state,
+                current_control,
+            )
+
+        def skip_transition(values):
+            current_state, _ = values
+            unavailable = jnp.full_like(current_state, jnp.nan)
+            return (
+                unavailable,
+                unavailable,
+                jnp.asarray(False),
+                jnp.asarray(0, dtype=jnp.int32),
+            )
+
+        candidate, accepted, transition_successful, transition_status = jax.lax.cond(
+            attempted,
+            evaluate_transition,
+            skip_transition,
+            (state, control),
         )
-        valid = active & jnp.all(jnp.isfinite(control)) & jnp.all(jnp.isfinite(candidate))
-        next_state = jnp.where(valid, candidate, state)
+        successful = attempted & transition_successful
+        next_valid = successful & jnp.all(jnp.isfinite(accepted))
+        next_state = jnp.where(
+            attempted,
+            accepted,
+            jnp.full_like(accepted, jnp.nan),
+        )
+        recorded_control = jnp.where(
+            active,
+            control,
+            jnp.full_like(control, jnp.nan),
+        )
+        recorded_candidate = jnp.where(
+            attempted,
+            candidate,
+            jnp.full_like(candidate, jnp.nan),
+        )
+        recorded_accepted = jnp.where(
+            attempted,
+            accepted,
+            jnp.full_like(accepted, jnp.nan),
+        )
+        recorded_status = jnp.where(
+            attempted,
+            transition_status,
+            jnp.asarray(0, dtype=jnp.int32),
+        ).astype(jnp.int32)
         failed_step = jnp.where(
-            active & (~valid) & (failed_step < 0),
+            active & (~next_valid) & (failed_step < 0),
             index,
             failed_step,
         ).astype(jnp.int32)
-        return (next_state, valid, failed_step), (next_state, control, valid)
+        return (next_state, next_valid, failed_step), (
+            next_state,
+            recorded_control,
+            next_valid,
+            recorded_candidate,
+            recorded_accepted,
+            attempted,
+            successful,
+            recorded_status,
+        )
 
     initial_valid = jnp.all(jnp.isfinite(initial_state))
-    (_, active, failed_step), (tail, controls, valid_tail) = jax.lax.scan(
+    (
+        (_, active, failed_step),
+        (
+            tail,
+            controls,
+            valid_tail,
+            candidates,
+            accepted,
+            attempted,
+            successful,
+            status,
+        ),
+    ) = jax.lax.scan(
         step,
         (initial_state, initial_valid, jnp.asarray(-1, dtype=jnp.int32)),
         (
@@ -243,9 +417,51 @@ def _feedback_rollout(
     )
     states = jnp.concatenate((initial_state[None], tail), axis=0)
     valid = jnp.concatenate((initial_valid[None], valid_tail), axis=0)
-    objective, cost_valid = _trajectory_cost(problem, states, controls)
-    objective = jnp.where(active & cost_valid, objective, jnp.inf)
-    return states, controls, valid, objective, failed_step
+    objective, cost_valid = jax.lax.cond(
+        active,
+        lambda _: _trajectory_cost(problem, states, controls),
+        lambda _: (
+            jnp.asarray(jnp.inf, dtype=states.real.dtype),
+            jnp.asarray(False),
+        ),
+        None,
+    )
+    objective = jnp.where(cost_valid, objective, jnp.inf)
+    evidence = (
+        DiscreteTransitionEvidence(
+            candidates,
+            accepted,
+            attempted,
+            successful,
+            status,
+        )
+        if isinstance(problem.dynamics, DiscreteControlDynamics)
+        else None
+    )
+    return states, controls, valid, objective, failed_step, evidence
+
+
+def _select_transition_evidence(
+    select: Array,
+    candidate: DiscreteTransitionEvidence | None,
+    current: DiscreteTransitionEvidence | None,
+    /,
+) -> DiscreteTransitionEvidence | None:
+    if candidate is None:
+        if current is not None:
+            raise ValueError("iLQR transition evidence types must remain consistent.")
+        return None
+    if current is None:
+        raise ValueError("iLQR transition evidence types must remain consistent.")
+    return jax.tree_util.tree_map(
+        lambda candidate_value, current_value: jnp.where(
+            select,
+            candidate_value,
+            current_value,
+        ),
+        candidate,
+        current,
+    )
 
 
 def _backward(model, regularization):
@@ -360,7 +576,7 @@ def _backward(model, regularization):
 def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: Array):
     plan = prepared.plan
     problem = prepared.problem
-    states, controls, valid, objective, failed_step = _rollout(
+    states, controls, valid, objective, failed_step, transition_evidence = _rollout(
         problem, prepared.flow, initial_state, initial_controls
     )
     iterations = plan.maximum_iterations
@@ -372,12 +588,13 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
         states,
         controls,
         valid,
+        transition_evidence,
         objective,
         jnp.zeros(
             (
                 problem.time_grid.num_steps,
                 prod(problem.control_shape),
-                prod(problem.state_shape),
+                problem.dynamics.system.state_layout.local_size,
             ),
             dtype=controls.dtype,
         ),
@@ -404,6 +621,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
             states_,
             controls_,
             valid_,
+            transition_evidence_,
             objective_,
             feedback_,
             active,
@@ -439,6 +657,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
                 states_,
                 controls_,
                 valid_,
+                transition_evidence_,
                 objective_,
                 jnp.asarray(0.0),
                 jnp.asarray(jnp.nan),
@@ -447,65 +666,86 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
                 failed_step_,
             )
 
+            can_search = backward_valid & (~gradient_converged)
+
             def search(search_index, search_carry):
-                (
-                    found,
-                    best_states,
-                    best_controls,
-                    best_valid,
-                    best_objective,
-                    best_step,
-                    best_expected,
-                    best_actual,
-                    evaluations,
-                    search_failed,
-                ) = search_carry
-                step_size = plan.initial_step_size * plan.line_search_decay**search_index
-                candidate = _feedback_rollout(
-                    problem,
-                    prepared.flow,
-                    initial_state,
-                    states_,
-                    controls_,
-                    feedforward,
-                    feedback,
-                    step_size,
-                )
-                (
-                    candidate_states,
-                    candidate_controls,
-                    candidate_valid,
-                    candidate_objective,
-                    candidate_failed,
-                ) = candidate
-                expected = -(step_size * linear + step_size**2 * quadratic)
-                actual = objective_ - candidate_objective
-                acceptable = (
-                    (~found)
-                    & backward_valid
-                    & (~gradient_converged)
-                    & jnp.all(candidate_valid)
-                    & jnp.isfinite(candidate_objective)
-                    & jnp.isfinite(expected)
-                    & (expected > 0)
-                    & (actual > 0)
-                    & (actual >= plan.armijo * expected)
-                )
-                return (
-                    found | acceptable,
-                    jnp.where(acceptable, candidate_states, best_states),
-                    jnp.where(acceptable, candidate_controls, best_controls),
-                    jnp.where(acceptable, candidate_valid, best_valid),
-                    jnp.where(acceptable, candidate_objective, best_objective),
-                    jnp.where(acceptable, step_size, best_step),
-                    jnp.where(acceptable, expected, best_expected),
-                    jnp.where(acceptable, actual, best_actual),
-                    jnp.where(acceptable, search_index + 1, evaluations),
-                    jnp.where(
-                        (candidate_failed >= 0) & (search_failed < 0),
-                        candidate_failed,
+                found = search_carry[0]
+
+                def attempt(_):
+                    (
+                        _,
+                        best_states,
+                        best_controls,
+                        best_valid,
+                        best_transition_evidence,
+                        best_objective,
+                        best_step,
+                        _,
+                        _,
+                        _,
                         search_failed,
-                    ),
+                    ) = search_carry
+                    step_size = (
+                        plan.initial_step_size * plan.line_search_decay**search_index
+                    )
+                    (
+                        candidate_states,
+                        candidate_controls,
+                        candidate_valid,
+                        candidate_objective,
+                        candidate_failed,
+                        candidate_transition_evidence,
+                    ) = _feedback_rollout(
+                        problem,
+                        prepared.flow,
+                        initial_state,
+                        states_,
+                        controls_,
+                        feedforward,
+                        feedback,
+                        step_size,
+                    )
+                    expected = -(step_size * linear + step_size**2 * quadratic)
+                    actual = objective_ - candidate_objective
+                    acceptable = (
+                        jnp.all(candidate_valid)
+                        & jnp.isfinite(candidate_objective)
+                        & jnp.isfinite(expected)
+                        & (expected > 0)
+                        & (actual > 0)
+                        & (actual >= plan.armijo * expected)
+                    )
+                    return (
+                        acceptable,
+                        jnp.where(acceptable, candidate_states, best_states),
+                        jnp.where(acceptable, candidate_controls, best_controls),
+                        jnp.where(acceptable, candidate_valid, best_valid),
+                        _select_transition_evidence(
+                            acceptable,
+                            candidate_transition_evidence,
+                            best_transition_evidence,
+                        ),
+                        jnp.where(
+                            acceptable,
+                            candidate_objective,
+                            best_objective,
+                        ),
+                        jnp.where(acceptable, step_size, best_step),
+                        expected,
+                        actual,
+                        jnp.asarray(search_index + 1, dtype=jnp.int32),
+                        jnp.where(
+                            (candidate_failed >= 0) & (search_failed < 0),
+                            candidate_failed,
+                            search_failed,
+                        ),
+                    )
+
+                return jax.lax.cond(
+                    found | (~can_search),
+                    lambda _: search_carry,
+                    attempt,
+                    None,
                 )
 
             search = jax.lax.fori_loop(0, plan.line_search_steps, search, search_initial)
@@ -514,6 +754,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
                 next_states,
                 next_controls,
                 next_valid,
+                next_transition_evidence,
                 next_objective,
                 step_size,
                 expected,
@@ -550,6 +791,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
                 next_states,
                 next_controls,
                 next_valid,
+                next_transition_evidence,
                 next_objective,
                 jnp.where(backward_valid, feedback, feedback_),
                 next_active,
@@ -592,13 +834,15 @@ def solve_prepared_ilqr(
     outputs = jax.vmap(lambda state, control: _solve_case(prepared, state, control))(
         initial_states, controls
     )
-    reshaped = tuple(
-        value.reshape(problem.case_shape + value.shape[1:]) for value in outputs
+    reshaped = jax.tree_util.tree_map(
+        lambda value: value.reshape(problem.case_shape + value.shape[1:]),
+        outputs,
     )
     (
         states,
         controls,
         valid,
+        transition_evidence,
         objective,
         feedback,
         active,
@@ -621,20 +865,26 @@ def solve_prepared_ilqr(
         states,
         controls,
         feedback,
-        state_shape=problem.state_shape,
+        state_layout=problem.dynamics.system.state_layout,
         control_shape=problem.control_shape,
         policy_id=policy_name,
     )
     trajectory_status = jnp.where(
         jnp.all(valid, axis=-1), CONTROL_SUCCESS, CONTROL_DYNAMICS_FAILED
     ).astype(jnp.int32)
+    trajectory_backend_status = (
+        transition_evidence.first_failure_status
+        if transition_evidence is not None
+        else trajectory_status
+    )
     trajectory = ControlTrajectory(
         time_grid=problem.time_grid,
         states=states,
         controls=controls,
         valid=valid,
         status=trajectory_status,
-        backend_status=trajectory_status,
+        backend_status=trajectory_backend_status,
+        transition_evidence=transition_evidence,
         case_shape=problem.case_shape,
         state_shape=problem.state_shape,
         control_shape=problem.control_shape,

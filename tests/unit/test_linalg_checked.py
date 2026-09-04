@@ -6,6 +6,7 @@ import jax.numpy as jnp
 
 import phydrax.linalg as la
 from phydrax.linalg._certificates import StabilityLowerBound
+from phydrax.linalg._operators import dual_transpose, DualTransposeLinearOperator
 from phydrax.linalg._policies import (
     LinearDerivativeSolvePolicy,
     LinearSolveCheckPolicy,
@@ -75,6 +76,161 @@ def test_block_actions_preserve_every_column_and_transpose_adjoint_duality():
             jnp.conj(source_block) * source_weights[:, None] * adjoint_image,
             axis=0,
         ),
+    )
+
+
+def test_dual_pair_and_dual_transpose_obey_algebraic_duality():
+    matrix = jnp.asarray(
+        [[1.0 + 0.5j, -2.0j], [3.0, 0.5 - 1.0j]],
+        dtype=jnp.complex128,
+    )
+    vector = jnp.asarray([2.0 - 1.0j, -1.0 + 0.25j], dtype=jnp.complex128)
+    covector = jnp.asarray([0.25 + 2.0j, 4.0 - 0.5j], dtype=jnp.complex128)
+
+    for source_weights, target_weights in (
+        (None, None),
+        (
+            jnp.asarray([2.0, 5.0], dtype=jnp.float64),
+            jnp.asarray([3.0, 7.0], dtype=jnp.float64),
+        ),
+    ):
+        source_pairing = (
+            None if source_weights is None else la.DiagonalPairing(source_weights)
+        )
+        target_pairing = (
+            None if target_weights is None else la.DiagonalPairing(target_weights)
+        )
+        source = la.ArraySpace(
+            (2,),
+            dtype=jnp.complex128,
+            pairing=source_pairing,
+            space_id=f"dual-source-{source_weights is not None}",
+        )
+        target = la.ArraySpace(
+            (2,),
+            dtype=jnp.complex128,
+            pairing=target_pairing,
+            space_id=f"dual-target-{target_weights is not None}",
+        )
+        operator = la.DenseLinearOperator(matrix, source=source, target=target)
+        transposed = dual_transpose(operator)
+        source_dual = la.DualSpace(source)
+        target_dual = la.DualSpace(target)
+
+        assert isinstance(transposed, DualTransposeLinearOperator)
+        assert transposed.source.compatible(target_dual)
+        assert transposed.target.compatible(source_dual)
+        assert jnp.allclose(
+            target_dual.pair(covector, operator.mv(vector)),
+            source_dual.pair(transposed.mv(covector), vector),
+        )
+        assert jnp.allclose(transposed.mv(covector), matrix.T @ covector)
+
+
+def test_dual_transpose_is_distinct_from_weighted_hilbert_adjoint():
+    source_weights = jnp.asarray([2.0, 5.0], dtype=jnp.float64)
+    target_weights = jnp.asarray([3.0, 7.0], dtype=jnp.float64)
+    source = la.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=la.DiagonalPairing(source_weights),
+        space_id="weighted-dual-source",
+    )
+    target = la.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=la.DiagonalPairing(target_weights),
+        space_id="weighted-dual-target",
+    )
+    matrix = jnp.asarray([[1.0, -2.0], [3.0, 0.5]], dtype=jnp.float64)
+    operator = la.DenseLinearOperator(matrix, source=source, target=target)
+    covector = jnp.asarray([0.25, 4.0], dtype=jnp.float64)
+
+    algebraic = dual_transpose(operator)
+    hilbert = la.adjoint(operator)
+    expected_hilbert = (
+        jnp.reciprocal(source_weights)[:, None] * matrix.T * target_weights[None, :]
+    ) @ covector
+
+    assert isinstance(algebraic.source, la.DualSpace)
+    assert hilbert.source.compatible(target)
+    assert hilbert.target.compatible(source)
+    assert jnp.allclose(algebraic.mv(covector), matrix.T @ covector)
+    assert jnp.allclose(hilbert.mv(covector), expected_hilbert)
+    assert not jnp.allclose(algebraic.mv(covector), hilbert.mv(covector))
+
+
+def test_dual_transpose_preserves_composition_and_identity():
+    source = la.ArraySpace((2,), dtype=jnp.float64, space_id="composition-source")
+    middle = la.ArraySpace((3,), dtype=jnp.float64, space_id="composition-middle")
+    target = la.ArraySpace((2,), dtype=jnp.float64, space_id="composition-target")
+    right = la.DenseLinearOperator(
+        jnp.asarray([[1.0, 2.0], [-1.0, 0.5], [3.0, -2.0]]),
+        source=source,
+        target=middle,
+    )
+    left = la.DenseLinearOperator(
+        jnp.asarray([[2.0, -1.0, 0.25], [0.0, 4.0, -3.0]]),
+        source=middle,
+        target=target,
+    )
+    covector = jnp.asarray([1.5, -0.25], dtype=jnp.float64)
+    composed_transpose = dual_transpose(left @ right)
+    reverse_composition = dual_transpose(right) @ dual_transpose(left)
+
+    assert composed_transpose.source.compatible(la.DualSpace(target))
+    assert composed_transpose.target.compatible(la.DualSpace(source))
+    assert jnp.allclose(
+        composed_transpose.mv(covector),
+        reverse_composition.mv(covector),
+    )
+
+    identity = la.IdentityLinearOperator(source)
+    dual_identity = dual_transpose(identity)
+    source_covector = jnp.asarray([3.0, -2.0], dtype=jnp.float64)
+    assert dual_identity.source.compatible(la.DualSpace(source))
+    assert dual_identity.target.compatible(la.DualSpace(source))
+    assert jnp.allclose(dual_identity.mv(source_covector), source_covector)
+    assert dual_transpose(dual_identity) is identity
+
+
+def test_mass_and_inverse_mass_compose_between_primal_and_dual():
+    weights = jnp.asarray([2.0, 3.0, 5.0], dtype=jnp.float64)
+    primal = la.ArraySpace(
+        (3,),
+        dtype=jnp.float64,
+        pairing=la.DiagonalPairing(weights),
+        space_id="mass-primal",
+    )
+    dual = la.DualSpace(primal)
+    mass = la.DenseLinearOperator(
+        jnp.diag(weights),
+        source=primal,
+        target=dual,
+        operator_id="mass-map",
+    )
+    inverse_mass = la.DenseLinearOperator(
+        jnp.diag(jnp.reciprocal(weights)),
+        source=dual,
+        target=primal,
+        operator_id="inverse-mass-map",
+    )
+    vector = jnp.asarray([1.5, -2.0, 0.25], dtype=jnp.float64)
+    covector = jnp.asarray([4.0, -3.0, 2.0], dtype=jnp.float64)
+    test_vector = jnp.asarray([-1.0, 0.5, 3.0], dtype=jnp.float64)
+
+    primal_identity = inverse_mass @ mass
+    dual_identity = mass @ inverse_mass
+
+    assert primal_identity.source.compatible(primal)
+    assert primal_identity.target.compatible(primal)
+    assert dual_identity.source.compatible(dual)
+    assert dual_identity.target.compatible(dual)
+    assert jnp.allclose(primal_identity.mv(vector), vector)
+    assert jnp.allclose(dual_identity.mv(covector), covector)
+    assert jnp.allclose(
+        dual.pair(mass.mv(vector), test_vector),
+        primal.inner(vector, test_vector),
     )
 
 

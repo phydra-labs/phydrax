@@ -7,6 +7,7 @@ from math import prod
 import h5py
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -506,29 +507,73 @@ def test_periodic_dfib_preserves_divergence_free_no_slip_state():
     assert result.slip_norm < 1.0e-9
 
 
-def test_deformable_contact_residual_uses_native_geometry_transpose():
-    prepared = phx.applications.contact.DeformableMPMContactPlan(
-        jnp.asarray([0]),
-        jnp.asarray([[0.0, 0.0]]),
-        jnp.asarray([[0.0, 1.0]]),
-        activation_distance=0.1,
-    ).prepare(1)
-    contact = phx.applications.contact.DeformableMPMContactAdapter(
-        prepared,
-        phx.applications.contact.PenaltyContactLaw(10.0),
+def test_deformable_contact_residual_uses_canonical_participant_transpose():
+    contact = phx.applications.contact
+    collision = phx.discretization.contact
+    query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
+    surface_space = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
+    query = contact.prepare_point_contact_participant(
+        query_space,
+        jnp.asarray([[0.0, 0.3]]),
+        vertex_ids=jnp.asarray([0]),
+        body_ids=jnp.asarray([0]),
+        physical_radius=jnp.asarray([0.1]),
     )
+    surface_plan = collision.CollisionSurfacePlan(
+        jnp.asarray([1, 2]),
+        ambient_dimension=2,
+        edges=jnp.asarray([[0, 1]], dtype=jnp.int32),
+        body_ids=1,
+        material_ids=0,
+        static_mask=True,
+        physical_radius=0.1,
+    )
+    surface = collision.LinearContactParticipant(
+        collision.PreparedCollisionSurface(
+            surface_plan,
+            jnp.asarray([[-1.0, 0.0], [1.0, 0.0]]),
+            collision.selection_collision_operator(surface_space, jnp.asarray([0, 1])),
+        )
+    )
+    scene = collision.ContactParticipantScene((query, surface))
+    search = collision.DenseContactSearchPlan(
+        edge_vertex_capacity=4,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.4,
+    )
+    materials = contact.ContactMaterialPairTable.uniform(
+        normal_stiffness=10.0,
+        static_friction=0.0,
+        dynamic_friction=0.0,
+        restitution=0.0,
+        adhesion_energy=0.0,
+        thermal_conductance=0.0,
+        electrical_conductance=0.0,
+        wear_coefficient=0.0,
+        hardness=1.0,
+        roughness=0.0,
+    )
+    closure = contact.ContactClosurePlan(contact.CompliantNormalContactLaw(), materials)
+    route_state = contact.ContactRouteState.empty(0, 1, closure.closure_id)
+    rest = scene.positions((query_space.zeros(), surface_space.zeros()))
     position = jnp.asarray([[0.3, -0.2]])
     velocity = jnp.asarray([[0.4, -0.5]])
     residual_plan = phx.solver.DeformableContactResidualPlan(
-        contact,
+        scene,
+        search,
+        closure,
+        route_state,
+        rest,
         lambda q, v, _args: (q, v),
-        lambda q, _v, _args: (
-            jnp.zeros_like(q),
-            jnp.broadcast_to(jnp.asarray([0.1, -0.2]), q.shape),
+        lambda _q, _v, _args: (
+            surface_space.zeros(),
+            jnp.broadcast_to(jnp.asarray([0.1, -0.2]), surface_space.shape),
         ),
-        lambda query, _surface, _args: query,
+        lambda query_force, _surface_force, _args: query_force,
         kinematics_id="identity-nodes",
         assembly_id="query-residual",
+        activation_distance=0.4,
     )
     residual = residual_plan.evaluate(position, velocity)
 

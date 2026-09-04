@@ -5,6 +5,7 @@
 from math import factorial
 
 import diffrax as dfx
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -121,4 +122,45 @@ def test_young_rough_delay_supports_bounded_history_functionals():
             problem,
             _smooth_control(times),
             solver=phx.solver.Davie(),
+        )
+
+
+def test_rough_delay_euler_preserves_quaternion_point_tangent_roles():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.15, -0.2, 0.1])
+    times = jnp.asarray([0.0, 0.1, 0.2])
+    problem = phx.solver.RoughDelayDifferentialProblem(
+        lambda time, state, memory, args: angular_velocity[:, None],
+        lambda time, args: base,
+        (phx.solver.ConstantDelay("past", 0.1),),
+        t0=0.0,
+        driver_dimension=1,
+        geometry=geometry,
+    )
+
+    solution = phx.solver.solve_rough_delay(
+        problem,
+        _smooth_control(times),
+        solver=phx.solver.RoughEuler(),
+    )
+
+    expected = geometry.retract(base, 0.2 * angular_velocity)
+    assert problem.state_shape == (4,)
+    assert problem.local_shape == (3,)
+    assert problem.tangent_shape == (3,)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
+
+
+def test_rough_delay_rejects_point_shaped_quaternion_tangent():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    with pytest.raises(ValueError, match="physical tangent shape"):
+        phx.solver.RoughDelayDifferentialProblem(
+            lambda time, state, memory, args: jnp.zeros((4, 1)),
+            lambda time, args: jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            (phx.solver.ConstantDelay("past", 0.1),),
+            t0=0.0,
+            driver_dimension=1,
+            geometry=geometry,
         )

@@ -264,12 +264,17 @@ def conversion_state_admissible(state: ParticleConversionState, /) -> Array:
 
 
 class ParticleConversionStateGeometry(AbstractStateGeometry):
+    """Additive four-space geometry with frozen particle-route leaves."""
+
     state_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
-    retraction_method: str = "conservative-extensive-addition"
-    trivial: bool = True
-    supports_exact_pullback: bool = True
-    supports_commutator_free: bool = True
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+    supports_exact_inverse: bool = eqx.field(static=True)
+    supports_exact_differential: bool = eqx.field(static=True)
+    supports_transport: bool = eqx.field(static=True)
+    supports_isometric_transport: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(self, state_id: str, /):
         identifier = str(state_id)
@@ -277,6 +282,13 @@ class ParticleConversionStateGeometry(AbstractStateGeometry):
             raise ValueError("state_id must be nonempty.")
         self.state_id = identifier
         self.geometry_id = f"state-geometry:particle-conversion:{identifier}"
+        self.retraction_method = "conservative-extensive-addition"
+        self.trivial = True
+        self.supports_exact_inverse = True
+        self.supports_exact_differential = True
+        self.supports_transport = True
+        self.supports_isometric_transport = True
+        self.supports_commutator_free = True
 
     def contains(self, state, /):
         return conversion_state_admissible(state)
@@ -284,34 +296,82 @@ class ParticleConversionStateGeometry(AbstractStateGeometry):
     def project_tangent(self, state, vector, /):
         return _continuous_tangent(state, vector)
 
-    def to_local(self, state, tangent, /):
-        return _continuous_tangent(state, tangent)
-
-    def from_local(self, state, local_tangent, /):
-        return _continuous_tangent(state, local_tangent)
-
     def retract(self, state, local_tangent, /):
+        local = _continuous_tangent(state, local_tangent)
         return jax.tree.map(
             lambda base, tangent: base + tangent if eqx.is_inexact_array(base) else base,
             state,
-            local_tangent,
+            local,
         )
 
     def inverse_retract(self, state, point, /):
+        target = _require_frozen_compatible(state, point)
         return jax.tree.map(
-            lambda base, target: (
-                target - base if eqx.is_inexact_array(base) else jnp.zeros_like(base)
+            lambda base, value: (
+                value - base if eqx.is_inexact_array(base) else jnp.zeros_like(base)
             ),
             state,
-            point,
+            target,
         )
 
-    def pullback(self, state, local_tangent, tangent, /):
-        del local_tangent
-        return _continuous_tangent(state, tangent)
+    def retraction_jvp(self, state, local_tangent, local_velocity, /):
+        _continuous_tangent(state, local_tangent)
+        return _continuous_tangent(state, local_velocity)
+
+    def retraction_inverse_jvp(self, state, point, tangent, /):
+        result = _continuous_tangent(point, tangent)
+        return _require_frozen_compatible(state, point, result)
+
+    def retraction_vjp(self, state, local_tangent, cotangent, /):
+        _continuous_tangent(state, local_tangent)
+        return _continuous_tangent(state, cotangent)
+
+    def transport_tangent(self, state, point, tangent, /):
+        result = _continuous_tangent(state, tangent)
+        return _require_frozen_compatible(state, point, result)
+
+    def transport_cotangent_pullback(self, state, point, cotangent, /):
+        result = _continuous_tangent(state, cotangent)
+        return _require_frozen_compatible(state, point, result)
+
+    def cut_locus_margin(self, state, point, /):
+        dtype = next(
+            leaf.dtype for leaf in jax.tree.leaves(state) if eqx.is_inexact_array(leaf)
+        )
+        margin = jnp.asarray(1.0, dtype=dtype)
+        return _require_frozen_compatible(state, point, margin)
+
+
+def _matching_tree_leaves(reference, value, name):
+    reference_leaves, reference_structure = jax.tree.flatten(reference)
+    value_leaves, value_structure = jax.tree.flatten(value)
+    if reference_structure != value_structure:
+        raise ValueError(f"{name} must preserve the particle-conversion structure.")
+    for reference_leaf, value_leaf in zip(reference_leaves, value_leaves, strict=True):
+        if jnp.shape(reference_leaf) != jnp.shape(value_leaf):
+            raise ValueError(f"{name} leaf shapes must match the state.")
+    return reference_leaves, value_leaves
+
+
+def _require_frozen_compatible(state, point, value=None):
+    state_leaves, point_leaves = _matching_tree_leaves(state, point, "Point")
+    compatible = jnp.asarray(True)
+    for base, target in zip(state_leaves, point_leaves, strict=True):
+        if not eqx.is_inexact_array(base):
+            compatible = compatible & jnp.all(jnp.asarray(base) == jnp.asarray(target))
+    checked = point if value is None else value
+    return jax.tree.map(
+        lambda leaf: eqx.error_if(
+            leaf,
+            ~compatible,
+            "Particle-conversion points have incompatible frozen route leaves.",
+        ),
+        checked,
+    )
 
 
 def _continuous_tangent(state, vector):
+    _matching_tree_leaves(state, vector, "Tangent")
     return jax.tree.map(
         lambda base, tangent: (
             tangent if eqx.is_inexact_array(base) else jnp.zeros_like(base)

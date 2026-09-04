@@ -36,6 +36,7 @@ from ...linalg import (
     AbstractVectorSpace,
     ArraySpace,
     BlockSpace,
+    DualSpace,
 )
 
 
@@ -80,6 +81,7 @@ class RigidContactParticipant(AbstractContactParticipant):
     local_vertices: Array
     vertex_owner: Array
     body_count: int = eqx.field(static=True)
+    contact_space: ArraySpace
     space: BlockSpace
     _participant_id: str = eqx.field(static=True)
     _capabilities: ContactCapability = eqx.field(static=True)
@@ -107,6 +109,13 @@ class RigidContactParticipant(AbstractContactParticipant):
             owner.dtype, np.integer
         ):
             raise TypeError("Rigid vertex owners must be one integer vector.")
+        for primitive in (np.asarray(plan.edges), np.asarray(plan.faces)):
+            if primitive.size and np.any(
+                np.any(owner[primitive] != owner[primitive, :1], axis=1)
+            ):
+                raise ValueError(
+                    "Rigid collision primitives cannot span distinct body owners."
+                )
         if bodies <= 0 or np.any(owner < 0) or np.any(owner >= bodies):
             raise ValueError("Rigid vertex owner is invalid.")
         angular_dimension = 1 if plan.ambient_dimension == 2 else 3
@@ -121,6 +130,7 @@ class RigidContactParticipant(AbstractContactParticipant):
         self.local_vertices = vertices
         self.vertex_owner = jnp.asarray(owner, dtype=jnp.int32)
         self.body_count = bodies
+        self.contact_space = ArraySpace(vertices.shape, dtype=vertices.dtype)
         self.space = space
         self._participant_id = canonical_fingerprint(
             {
@@ -134,12 +144,20 @@ class RigidContactParticipant(AbstractContactParticipant):
             ContactCapability.STATIC_DISTANCE
             | ContactCapability.NONLINEAR_TRAJECTORY
             | ContactCapability.DIFFERENTIABLE_KINEMATICS
-            | ContactCapability.FORCE_PULLBACK
+            | ContactCapability.EFFORT_PULLBACK
         )
 
     @property
     def source_space(self) -> AbstractVectorSpace:
         return self.space
+
+    @property
+    def tangent_space(self) -> AbstractVectorSpace:
+        return self.space
+
+    @property
+    def contact_velocity_space(self) -> ArraySpace:
+        return self.contact_space
 
     @property
     def surface_plan(self) -> CollisionSurfacePlan:
@@ -182,12 +200,12 @@ class RigidContactParticipant(AbstractContactParticipant):
             rotational = jnp.cross(angular_velocity[self.vertex_owner], world_offset)
         return linear_velocity[self.vertex_owner] + rotational
 
-    def force_pullback(self, state: PyTree, surface_force: ArrayLike, /):
+    def effort_pullback(self, state: PyTree, surface_effort: ArrayLike, /):
         translation, rotation_vector = self.space.validate(state)
         del translation
-        force = jnp.asarray(surface_force, dtype=self.local_vertices.dtype)
-        if force.shape != self.local_vertices.shape:
-            raise ValueError("Rigid surface force has invalid shape.")
+        effort = self.contact_effort_space.validate(
+            jnp.asarray(surface_effort, dtype=self.local_vertices.dtype)
+        )
         rotation = _rigid_rotation(rotation_vector)
         arm = contract(
             "vij,vj->vi",
@@ -195,24 +213,24 @@ class RigidContactParticipant(AbstractContactParticipant):
             self.local_vertices,
         )
         body_force = (
-            jnp.zeros((self.body_count, self.plan.ambient_dimension), dtype=force.dtype)
+            jnp.zeros((self.body_count, self.plan.ambient_dimension), dtype=effort.dtype)
             .at[self.vertex_owner]
-            .add(force)
+            .add(effort)
         )
         if self.plan.ambient_dimension == 2:
-            torque_value = arm[:, 0] * force[:, 1] - arm[:, 1] * force[:, 0]
+            torque_value = arm[:, 0] * effort[:, 1] - arm[:, 1] * effort[:, 0]
             body_torque = (
-                jnp.zeros((self.body_count, 1), dtype=force.dtype)
+                jnp.zeros((self.body_count, 1), dtype=effort.dtype)
                 .at[self.vertex_owner, 0]
                 .add(torque_value)
             )
         else:
             body_torque = (
-                jnp.zeros((self.body_count, 3), dtype=force.dtype)
+                jnp.zeros((self.body_count, 3), dtype=effort.dtype)
                 .at[self.vertex_owner]
-                .add(jnp.cross(arm, force))
+                .add(jnp.cross(arm, effort))
             )
-        return body_force, body_torque
+        return DualSpace(self.tangent_space).validate((body_force, body_torque))
 
     def trajectory_bounds(
         self, start_state: PyTree, end_state: PyTree, /
@@ -250,17 +268,18 @@ def make_articulated_contact_participant(
     *,
     tangent_space: AbstractVectorSpace | None = None,
     velocity_action: Callable[[PyTree, PyTree], Array] | None = None,
-    pullback_action: Callable[[PyTree, Array], PyTree] | None = None,
+    effort_pullback_action: Callable[[PyTree, Array], PyTree] | None = None,
     bounds_action: Callable[[PyTree, PyTree], tuple[Array, Array]] | None = None,
     participant_id: str | None = None,
 ) -> FunctionContactParticipant:
+    tangent = source_space if tangent_space is None else tangent_space
     return FunctionContactParticipant(
         plan,
         source_space,
         forward_kinematics,
-        tangent_space=tangent_space,
+        tangent_space=tangent,
         velocity_action=velocity_action,
-        pullback_action=pullback_action,
+        effort_pullback_action=effort_pullback_action,
         bounds_action=bounds_action,
         participant_id=participant_id,
     )
@@ -272,9 +291,16 @@ def prepare_point_contact_participant(
     /,
     *,
     vertex_ids: ArrayLike | None = None,
-    body_ids: ArrayLike | None = None,
-    material_ids: ArrayLike | None = None,
-    minimum_separation: ArrayLike = 0.0,
+    participant_ids: ArrayLike | int = 0,
+    body_ids: ArrayLike | int = 0,
+    material_ids: ArrayLike | int | None = None,
+    patch_ids: ArrayLike | int = 0,
+    static_mask: ArrayLike | bool = False,
+    physical_radius: ArrayLike | float = 0.0,
+    solver_clearance: ArrayLike | float = 0.0,
+    proxy_error: ArrayLike | float = 0.0,
+    allowed_participant_pairs: ArrayLike | None = None,
+    excluded_vertex_pairs: ArrayLike | None = None,
     precision: ContactPrecisionPolicy | None = None,
 ) -> LinearContactParticipant:
     reference = jnp.asarray(reference_positions)
@@ -288,18 +314,25 @@ def prepare_point_contact_participant(
         if vertex_ids is None
         else jnp.asarray(vertex_ids)
     )
-    policy = ContactPairPolicy(
+    pair_policy = ContactPairPolicy(
         count,
-        body_ids=body_ids,
-        material_ids=material_ids,
+        allowed_participant_pairs=allowed_participant_pairs,
+        excluded_vertex_pairs=excluded_vertex_pairs,
     )
     plan = CollisionSurfacePlan(
         identifiers,
         ambient_dimension=dimension,
         edges=jnp.empty((0, 2), dtype=jnp.int32),
         codimensional_mask=jnp.ones((count,), dtype=bool),
-        pair_policy=policy,
-        minimum_separation=minimum_separation,
+        pair_policy=pair_policy,
+        participant_ids=participant_ids,
+        body_ids=body_ids,
+        material_ids=material_ids,
+        patch_ids=patch_ids,
+        static_mask=static_mask,
+        physical_radius=physical_radius,
+        solver_clearance=solver_clearance,
+        proxy_error=proxy_error,
         allow_isolated_vertices=True,
     )
     surface = PreparedCollisionSurface(

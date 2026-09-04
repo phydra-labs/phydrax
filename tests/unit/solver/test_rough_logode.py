@@ -281,6 +281,63 @@ def test_logode_local_retraction_preserves_special_orthogonal_state():
     )
 
 
+def test_logode_preserves_quaternion_point_local_and_tangent_spaces():
+    times = jnp.linspace(0.0, 1.0, 5)
+    total_increment = 0.4
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        (total_increment * times)[:, None],
+        depth=2,
+        coarse_indices=(0, 2, 4),
+    )
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: angular_velocity[:, None],
+        base,
+        driver_dimension=1,
+        geometry=geometry,
+    )
+
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        solver=phx.solver.LogODE(),
+    )
+
+    expected = geometry.retract(base, total_increment * angular_velocity)
+    assert problem.state_shape == (4,)
+    assert problem.local_shape == (3,)
+    assert problem.tangent_shape == (3,)
+    assert solution.successful
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert bool(geometry.contains(solution.states[-1]))
+
+
+def test_linear_logode_rejects_unequal_quaternion_spaces():
+    times = jnp.asarray([0.0, 1.0])
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        times[:, None],
+        depth=1,
+    )
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.ones((3, 1)),
+        jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+        driver_dimension=1,
+        geometry=geometry,
+    )
+
+    with pytest.raises(ValueError, match="equal point, local, and tangent spaces"):
+        phx.solver.solve_rough_differential(
+            problem,
+            control,
+            solver=phx.solver.LinearLogODE((jnp.eye(4),)),
+        )
+
+
 def test_logode_local_retraction_preserves_spd_state_and_refines():
     times = jnp.linspace(0.0, 1.0, 9)
     total_increment = 0.7

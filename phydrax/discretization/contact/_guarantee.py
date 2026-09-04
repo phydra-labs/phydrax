@@ -30,7 +30,7 @@ class ContactCapability(IntFlag):
     LINEAR_TRAJECTORY = 1 << 1
     NONLINEAR_TRAJECTORY = 1 << 2
     DIFFERENTIABLE_KINEMATICS = 1 << 3
-    FORCE_PULLBACK = 1 << 4
+    EFFORT_PULLBACK = 1 << 4
     REMESH_TRANSFER = 1 << 5
     DISTRIBUTED = 1 << 6
     GPU_COMPILED = 1 << 7

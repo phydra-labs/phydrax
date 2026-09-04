@@ -39,9 +39,14 @@ def test_euclidean_local_retraction_preserves_state_shaped_contract():
     assert retraction.retraction_id == "geometry:test-euclidean:local-retraction"
     assert retraction.resolved_method == "addition"
     assert jnp.array_equal(retraction(increment), base + increment)
+    point = retraction(increment)
     assert jnp.array_equal(
-        retraction.pullback(increment, 2.0 * increment),
+        retraction.inverse_jvp(point, 2.0 * increment),
         2.0 * increment,
+    )
+    assert jnp.array_equal(
+        retraction.vjp(increment, 3.0 * increment),
+        3.0 * increment,
     )
     assert bool(geometry.contains(base))
     assert jnp.array_equal(geometry.project_tangent(base, increment), increment)
@@ -85,7 +90,10 @@ def test_special_orthogonal_retractions_preserve_group(method):
     assert bool(geometry.contains(point))
     assert jnp.allclose(point.T @ point, jnp.eye(3), atol=1e-10)
     assert jnp.linalg.det(point) > 0.0
-    assert jnp.allclose(geometry.to_local(base, base @ local), local)
+    assert jnp.allclose(
+        geometry.retraction_jvp(base, jnp.zeros_like(local), local),
+        base @ local,
+    )
     assert jnp.allclose(geometry.inverse_retract(base, point), local, atol=2e-10)
     midpoint = geometry.interpolate(base, point, 0.5)
     assert bool(geometry.contains(midpoint))
@@ -93,29 +101,26 @@ def test_special_orthogonal_retractions_preserve_group(method):
 
 
 @pytest.mark.parametrize("method", ["exponential", "cayley"])
-def test_so_pullback_inverts_noncommuting_retraction_jvp(method):
+def test_so_inverse_jvp_inverts_noncommuting_retraction_jvp(method):
     geometry = SpecialOrthogonalStateGeometry(3, retraction=method)
     base = jnp.eye(3)
     local = jnp.array([[0.0, -0.4, 0.2], [0.4, 0.0, -0.3], [-0.2, 0.3, 0.0]])
     direction = jnp.array([[0.0, 0.15, -0.1], [-0.15, 0.0, 0.25], [0.1, -0.25, 0.0]])
-    _, tangent = jax.jvp(
-        lambda value: geometry.retract(base, value),
-        (local,),
-        (direction,),
-    )
+    point = geometry.retract(base, local)
+    tangent = geometry.retraction_jvp(base, local, direction)
     step = 1e-5
     finite_difference = (
         geometry.retract(base, local + step * direction)
         - geometry.retract(base, local - step * direction)
     ) / (2.0 * step)
-    recovered = jax.jit(geometry.pullback)(base, local, tangent)
+    recovered = jax.jit(geometry.retraction_inverse_jvp)(base, point, tangent)
 
     assert jnp.linalg.norm(local @ direction - direction @ local) > 0.01
     assert jnp.allclose(tangent, finite_difference, atol=2e-10)
     assert jnp.allclose(recovered, direction, atol=2e-9)
 
 
-def test_so_exponential_pullback_preserves_tiny_float32_velocity():
+def test_so_exponential_inverse_jvp_preserves_tiny_float32_velocity():
     geometry = SpecialOrthogonalStateGeometry(3)
     base = jnp.eye(3, dtype=jnp.float32)
     local = jnp.asarray(
@@ -126,18 +131,15 @@ def test_so_exponential_pullback_preserves_tiny_float32_velocity():
         [[0.0, 1e-7, -2e-7], [-1e-7, 0.0, 1.5e-7], [2e-7, -1.5e-7, 0.0]],
         dtype=jnp.float32,
     )
-    _, tangent = jax.jvp(
-        lambda value: geometry.retract(base, value),
-        (local,),
-        (direction,),
-    )
-    recovered = geometry.pullback(base, local, tangent)
+    point = geometry.retract(base, local)
+    tangent = geometry.retraction_jvp(base, local, direction)
+    recovered = geometry.retraction_inverse_jvp(base, point, tangent)
 
     assert jnp.linalg.norm(recovered) > 0.0
     assert jnp.allclose(recovered, direction, rtol=5e-4, atol=1e-11)
 
 
-def test_so_exponential_pullback_solves_heterogeneous_batches_independently():
+def test_so_exponential_inverse_jvp_solves_heterogeneous_batches_independently():
     geometry = SpecialOrthogonalStateGeometry(3)
     bases = jnp.broadcast_to(jnp.eye(3), (3, 3, 3))
     locals = jnp.array(
@@ -156,12 +158,13 @@ def test_so_exponential_pullback_solves_heterogeneous_batches_independently():
     )
     scales = jnp.array([1e-8, 0.2, 1e-4])[:, None, None]
     directions = scales * direction_shapes
-    _, tangents = jax.jvp(
-        lambda values: geometry.retract(bases, values),
-        (locals,),
-        (directions,),
+    points = geometry.retract(bases, locals)
+    tangents = geometry.retraction_jvp(bases, locals, directions)
+    recovered = jax.jit(geometry.retraction_inverse_jvp)(
+        bases,
+        points,
+        tangents,
     )
-    recovered = jax.jit(geometry.pullback)(bases, locals, tangents)
     relative_errors = jnp.linalg.norm(
         recovered - directions,
         axis=(-2, -1),
@@ -171,7 +174,7 @@ def test_so_exponential_pullback_solves_heterogeneous_batches_independently():
     assert jnp.all(relative_errors < 3e-9)
 
 
-def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch):
+def test_so_exponential_inverse_jvp_does_not_materialize_full_jacobian(monkeypatch):
     geometry = SpecialOrthogonalStateGeometry(5)
     local = jnp.diag(jnp.ones(4), 1) - jnp.diag(jnp.ones(4), -1)
     direction = 0.1 * (jnp.diag(jnp.ones(3), 2) - jnp.diag(jnp.ones(3), -2))
@@ -182,10 +185,10 @@ def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch)
     )
 
     def reject_full_jacobian(*args, **kwargs):
-        raise AssertionError("SO pullback must remain matrix-free")
+        raise AssertionError("SO inverse JVP must remain matrix-free")
 
     monkeypatch.setattr(jax, "jacfwd", reject_full_jacobian)
-    recovered = geometry.pullback(jnp.eye(5), local, tangent)
+    recovered = geometry.retraction_inverse_jvp(jnp.eye(5), point, tangent)
     _, reconstructed = jax.jvp(
         lambda value: geometry.retract(jnp.eye(5), value),
         (local,),
@@ -197,7 +200,7 @@ def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch)
     assert jnp.linalg.norm(reconstructed - tangent) / jnp.linalg.norm(tangent) < 2e-8
 
 
-def test_so_exponential_inverse_rejects_rotations_outside_local_neighborhood():
+def test_so_exponential_inverse_supports_principal_rotations_and_rejects_cut_locus():
     geometry = SpecialOrthogonalStateGeometry(2)
     radius = jnp.asarray(0.499)
     angle = 2.0 * jnp.arctan(radius)
@@ -215,10 +218,18 @@ def test_so_exponential_inverse_rejects_rotations_outside_local_neighborhood():
     )
     assert jnp.allclose(recovered, supported, atol=2e-12)
     assert jnp.allclose(recovered_tangent, direction, atol=2e-11)
-    local = jnp.array([[0.0, -2.0], [2.0, 0.0]])
-    point = geometry.retract(jnp.eye(2), local)
-    with pytest.raises(Exception, match="principal local rotation"):
-        geometry.inverse_retract(jnp.eye(2), point)
+
+    wide_local = jnp.array([[0.0, -2.0], [2.0, 0.0]])
+    wide_point = geometry.retract(jnp.eye(2), wide_local)
+    assert jnp.allclose(
+        geometry.inverse_retract(jnp.eye(2), wide_point),
+        wide_local,
+        atol=2e-11,
+    )
+
+    cut_locus = -jnp.eye(2)
+    with pytest.raises(Exception, match="rotation-by-pi cut locus"):
+        geometry.inverse_retract(jnp.eye(2), cut_locus)
 
 
 def test_spd_congruence_retraction_and_inverse_are_positive_definite():
@@ -237,7 +248,7 @@ def test_spd_congruence_retraction_and_inverse_are_positive_definite():
     assert jnp.isfinite(gradient)
 
 
-def test_spd_pullback_inverts_retraction_differential():
+def test_spd_inverse_jvp_inverts_retraction_differential():
     geometry = SymmetricPositiveDefiniteStateGeometry(2)
     base = jnp.array([[2.0, 0.35], [0.35, 1.2]])
     local = jnp.array([[0.25, -0.12], [-0.12, -0.08]])
@@ -247,7 +258,8 @@ def test_spd_pullback_inverts_retraction_differential():
         geometry.retract(base, local + epsilon * direction)
         - geometry.retract(base, local - epsilon * direction)
     ) / (2.0 * epsilon)
-    recovered = geometry.pullback(base, local, tangent)
+    point = geometry.retract(base, local)
+    recovered = geometry.retraction_inverse_jvp(base, point, tangent)
     assert jnp.allclose(recovered, direction, rtol=2e-7, atol=2e-8)
 
 
@@ -314,12 +326,18 @@ def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     base = jnp.array([1.0, 0.0, 0.0])
     point = sphere.retract(base, jnp.array([0.0, 0.2, 0.0]))
     assert bool(sphere.contains(point))
-    assert not sphere.supports_exact_pullback
+    assert not sphere.supports_exact_inverse
+    assert not sphere.supports_exact_differential
+    assert not sphere.supports_transport
     assert not sphere.supports_commutator_free
     with pytest.raises(ValueError, match="inverse_retraction callable"):
         sphere.inverse_retract(base, point)
     with pytest.raises(ValueError, match="inverse_retraction callable"):
         sphere.interpolate(base, point, 1.0)
+    with pytest.raises(ValueError, match="retraction_jvp_action callable"):
+        sphere.retraction_jvp(base, jnp.zeros(3), jnp.ones(3))
+    with pytest.raises(ValueError, match="tangent_transport_action callable"):
+        sphere.transport_tangent(base, point, jnp.ones(3))
 
     pointwise = PointwiseStateGeometry(
         SpecialOrthogonalStateGeometry(2),
@@ -330,6 +348,138 @@ def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     points = pointwise.retract(states, locals_)
     assert bool(pointwise.contains(points))
     assert points.shape == states.shape
+
+
+def test_unequal_embedded_spaces_preserve_exact_differential_roles():
+    scale = jnp.array([2.0, 3.0])
+    geometry = EmbeddedStateGeometry(
+        membership=lambda state: jnp.all(jnp.isfinite(state)),
+        tangent_projection=lambda state, ambient: ambient[:2],
+        retraction=lambda state, local: state.at[:2].add(scale * local),
+        inverse_retraction=lambda state, point: (point[:2] - state[:2]) / scale,
+        retraction_jvp_action=lambda state, local, velocity: scale * velocity,
+        retraction_inverse_jvp_action=(lambda state, point, tangent: tangent / scale),
+        retraction_vjp_action=lambda state, local, cotangent: scale * cotangent,
+        tangent_transport_action=lambda state, point, tangent: tangent,
+        cotangent_transport_pullback_action=(lambda state, point, cotangent: cotangent),
+        geometry_id="state-geometry:unequal-affine",
+        retraction_method="scaled-affine",
+        isometric_transport=True,
+    )
+    source = jnp.array([1.0, -2.0, 4.0])
+    local = jnp.array([0.25, -0.5])
+    direction = jnp.array([-0.3, 0.2])
+    cotangent = jnp.array([1.5, -0.75])
+    retraction = geometry.local_retraction(source)
+    point = retraction.evaluate(local)
+    tangent = retraction.jvp(local, direction)
+    local_covector = retraction.vjp(local, cotangent)
+
+    assert point.shape == (3,)
+    assert tangent.shape == (2,)
+    assert local_covector.shape == (2,)
+    assert jnp.allclose(retraction.inverse_jvp(point, tangent), direction)
+    assert jnp.allclose(local_covector, scale * cotangent)
+    assert jnp.allclose(
+        jnp.sum(cotangent * tangent),
+        jnp.sum(local_covector * direction),
+    )
+    assert bool(retraction.chart_evidence(local, direction, cotangent).valid)
+    assert bool(
+        geometry.transport_evidence(
+            source,
+            point,
+            direction,
+            cotangent,
+            require_isometry=True,
+        ).valid
+    )
+
+
+def test_pointwise_geometry_routes_unequal_role_shapes_over_leading_axes():
+    scale = jnp.array([2.0, 3.0])
+    geometry = EmbeddedStateGeometry(
+        membership=lambda state: jnp.all(jnp.isfinite(state)),
+        tangent_projection=lambda state, ambient: ambient[:2],
+        retraction=lambda state, local: state.at[:2].add(scale * local),
+        inverse_retraction=lambda state, point: (point[:2] - state[:2]) / scale,
+        retraction_jvp_action=lambda state, local, velocity: scale * velocity,
+        retraction_inverse_jvp_action=(lambda state, point, tangent: tangent / scale),
+        retraction_vjp_action=lambda state, local, cotangent: scale * cotangent,
+        tangent_transport_action=lambda state, point, tangent: tangent,
+        cotangent_transport_pullback_action=(lambda state, point, cotangent: cotangent),
+        geometry_id="state-geometry:pointwise-unequal",
+        retraction_method="scaled-affine",
+    )
+    pointwise = PointwiseStateGeometry(
+        geometry,
+        (3,),
+        local_shape=(2,),
+        tangent_shape=(2,),
+    )
+    states = jnp.arange(12.0).reshape((4, 3))
+    locals_ = jnp.full((4, 2), 0.1)
+    directions = jnp.full((4, 2), -0.2)
+    cotangents = jnp.full((4, 2), 0.3)
+    points = pointwise.retract(states, locals_)
+    tangents = pointwise.retraction_jvp(states, locals_, directions)
+    local_covectors = pointwise.retraction_vjp(states, locals_, cotangents)
+
+    assert points.shape == (4, 3)
+    assert tangents.shape == (4, 2)
+    assert local_covectors.shape == (4, 2)
+    assert jnp.allclose(
+        pointwise.retraction_inverse_jvp(states, points, tangents),
+        directions,
+    )
+    assert jnp.allclose(
+        jnp.sum(cotangents * tangents),
+        jnp.sum(local_covectors * directions),
+    )
+
+
+@pytest.mark.parametrize(
+    "geometry,base,local,direction,cotangent",
+    [
+        (
+            SpecialOrthogonalStateGeometry(2),
+            jnp.eye(2),
+            jnp.array([[0.0, -0.1], [0.1, 0.0]]),
+            jnp.array([[0.0, 0.2], [-0.2, 0.0]]),
+            jnp.array([[0.1, -0.4], [0.3, -0.2]]),
+        ),
+        (
+            SymmetricPositiveDefiniteStateGeometry(2),
+            jnp.array([[2.0, 0.1], [0.1, 1.5]]),
+            jnp.array([[0.1, -0.02], [-0.02, -0.08]]),
+            jnp.array([[-0.04, 0.03], [0.03, 0.05]]),
+            jnp.array([[0.2, -0.1], [-0.1, 0.3]]),
+        ),
+    ],
+)
+def test_matrix_geometry_vjp_and_transport_certify_algebraic_duality(
+    geometry,
+    base,
+    local,
+    direction,
+    cotangent,
+):
+    point = geometry.retract(base, local)
+    tangent = geometry.retraction_jvp(base, local, direction)
+    local_covector = geometry.retraction_vjp(base, local, cotangent)
+    assert jnp.allclose(
+        jnp.sum(cotangent * tangent),
+        jnp.sum(local_covector * direction),
+        rtol=2e-6,
+        atol=2e-7,
+    )
+    evidence = geometry.transport_evidence(
+        base,
+        point,
+        geometry.project_tangent(base, direction),
+        cotangent,
+    )
+    assert bool(evidence.valid)
 
 
 def test_state_geometry_benchmark_records_manifold_residuals():

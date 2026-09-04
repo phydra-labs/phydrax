@@ -18,6 +18,65 @@ from ._stencils import ContactStencilKind
 from ._surface import PreparedCollisionScene
 
 
+def _scene_excluded_vertex_pairs(scene: PreparedCollisionScene, /) -> np.ndarray:
+    pairs: list[tuple[int, int]] = []
+    for surface_index, surface in enumerate(scene.surfaces):
+        offset = scene.vertex_offsets[surface_index]
+        for left, right in np.asarray(
+            surface.plan.pair_policy.excluded_vertex_pairs
+        ).tolist():
+            pairs.append(
+                (
+                    min(offset + int(left), offset + int(right)),
+                    max(offset + int(left), offset + int(right)),
+                )
+            )
+    return np.asarray(sorted(set(pairs)), dtype=np.int32).reshape((-1, 2))
+
+
+def _primitive_vertices(scene: PreparedCollisionScene, /) -> np.ndarray:
+    vertices = [(index, -1, -1) for index in range(scene.vertex_count)]
+    vertices.extend(
+        (int(left), int(right), -1) for left, right in np.asarray(scene.edges)
+    )
+    vertices.extend(
+        (int(first), int(second), int(third))
+        for first, second, third in np.asarray(scene.faces)
+    )
+    return np.asarray(vertices, dtype=np.int32)
+
+
+def _primitive_pair_is_legal(
+    scene: PreparedCollisionScene,
+    left_feature: int,
+    right_feature: int,
+    primitive_vertices: np.ndarray,
+    excluded: set[tuple[int, int]],
+    /,
+) -> bool:
+    left_vertices = tuple(
+        int(value) for value in primitive_vertices[left_feature] if value >= 0
+    )
+    right_vertices = tuple(
+        int(value) for value in primitive_vertices[right_feature] if value >= 0
+    )
+    if set(left_vertices) & set(right_vertices):
+        return False
+    static = np.asarray(scene.feature_static_mask, dtype=bool)
+    if bool(static[left_feature]) and bool(static[right_feature]):
+        return False
+    participants = np.asarray(scene.feature_participant_ids, dtype=np.int64)
+    if not scene.pair_policy.allows(
+        int(participants[left_feature]), int(participants[right_feature])
+    ):
+        return False
+    return not any(
+        (min(left, right), max(left, right)) in excluded
+        for left in left_vertices
+        for right in right_vertices
+    )
+
+
 class CompiledCandidateBatch(StrictModule):
     vertex_indices: Array
     valid: Array
@@ -78,6 +137,13 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
     tree_left: Array
     tree_right: Array
     node_leaf_count: Array
+    primitive_vertices: Array
+    feature_participant_ids: Array
+    feature_static_mask: Array
+    feature_contact_extent: Array
+    allowed_participant_pairs: Array
+    excluded_vertex_pairs: Array
+    unrestricted_pairs: bool = eqx.field(static=True)
     vertex_count: int = eqx.field(static=True)
     ambient_dimension: int = eqx.field(static=True)
     hierarchy_root: int = eqx.field(static=True)
@@ -127,9 +193,9 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "LBVH traversal visit budget exceeds int32 evidence capacity."
             )
-        primitive_count = (
-            scene.vertex_count + int(scene.edges.shape[0]) + int(scene.faces.shape[0])
-        )
+        primitive_vertices = _primitive_vertices(scene)
+        primitive_count = int(primitive_vertices.shape[0])
+        excluded = _scene_excluded_vertex_pairs(scene)
         left, right, leaf_count, root, hierarchy_depth = _balanced_morton_hierarchy(
             primitive_count
         )
@@ -138,6 +204,17 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         self.tree_left = jnp.asarray(left, dtype=jnp.int32)
         self.tree_right = jnp.asarray(right, dtype=jnp.int32)
         self.node_leaf_count = jnp.asarray(leaf_count, dtype=jnp.int32)
+        self.primitive_vertices = jnp.asarray(primitive_vertices, dtype=jnp.int32)
+        self.feature_participant_ids = jnp.asarray(
+            scene.feature_participant_ids, dtype=jnp.int64
+        )
+        self.feature_static_mask = jnp.asarray(scene.feature_static_mask, dtype=bool)
+        self.feature_contact_extent = jnp.asarray(scene.feature_contact_extent)
+        self.allowed_participant_pairs = jnp.asarray(
+            scene.pair_policy.allowed_participant_pairs, dtype=jnp.int64
+        )
+        self.excluded_vertex_pairs = jnp.asarray(excluded, dtype=jnp.int32)
+        self.unrestricted_pairs = scene.pair_policy.unrestricted
         self.vertex_count = scene.vertex_count
         self.ambient_dimension = scene.ambient_dimension
         self.hierarchy_root = root
@@ -208,6 +285,9 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         )
         primitive_min = jnp.concatenate((point_min, edge_min, face_min), axis=0)
         primitive_max = jnp.concatenate((point_max, edge_max, face_max), axis=0)
+        inflation = self.feature_contact_extent.astype(start.dtype)[:, None]
+        primitive_min = primitive_min - inflation
+        primitive_max = primitive_max + inflation
         finite_bounds = jnp.all(jnp.isfinite(primitive_min)) & jnp.all(
             jnp.isfinite(primitive_max)
         )
@@ -332,6 +412,43 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 & ~stack_overflow
             )
 
+        def pair_policy_legal(first_feature, second_feature):
+            nonstatic = ~(
+                self.feature_static_mask[first_feature]
+                & self.feature_static_mask[second_feature]
+            )
+            participant_pair = jnp.sort(
+                jnp.stack(
+                    (
+                        self.feature_participant_ids[first_feature],
+                        self.feature_participant_ids[second_feature],
+                    )
+                )
+            )
+            participant_allowed = self.unrestricted_pairs | jnp.any(
+                jnp.all(
+                    self.allowed_participant_pairs == participant_pair[None, :],
+                    axis=1,
+                )
+            )
+            left_vertices = self.primitive_vertices[first_feature]
+            right_vertices = self.primitive_vertices[second_feature]
+            left_grid = left_vertices[:, None]
+            right_grid = right_vertices[None, :]
+            valid_vertices = (left_grid >= 0) & (right_grid >= 0)
+            low = jnp.minimum(left_grid, right_grid)
+            high = jnp.maximum(left_grid, right_grid)
+            candidate_pairs = jnp.stack((low, high), axis=-1)
+            excluded = jnp.any(
+                valid_vertices[..., None]
+                & jnp.all(
+                    candidate_pairs[..., None, :]
+                    == self.excluded_vertex_pairs[None, None, :, :],
+                    axis=-1,
+                )
+            )
+            return nonstatic & participant_allowed & ~excluded
+
         def record_leaf_pair(first, second, current_outputs):
             (
                 edge_vertex_output,
@@ -346,6 +463,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             first_kind = primitive_kind[original_first]
             second_kind = primitive_kind[original_second]
             minus_one = jnp.asarray(-1, dtype=jnp.int32)
+            feature_legal = pair_policy_legal(original_first, original_second)
             if (self.ambient_dimension == 2 or not self.faces.size) and self.edges.size:
                 is_edge_vertex = ((first_kind == 0) & (second_kind == 1)) | (
                     (first_kind == 1) & (second_kind == 0)
@@ -369,7 +487,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                     edge_vertex_output,
                     edge_vertex_count,
                     row,
-                    is_edge_vertex & legal,
+                    is_edge_vertex & legal & feature_legal,
                     self.edge_vertex_capacity,
                 )
             elif self.faces.size:
@@ -389,7 +507,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                     face_vertex_output,
                     face_vertex_count,
                     face_row,
-                    is_face_vertex & face_legal,
+                    is_face_vertex & face_legal & feature_legal,
                     self.face_vertex_capacity,
                 )
                 if self.edges.size:
@@ -420,7 +538,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                         edge_edge_output,
                         edge_edge_count,
                         edge_row,
-                        is_edge_edge & edge_legal,
+                        is_edge_edge & edge_legal & feature_legal,
                         self.edge_edge_capacity,
                     )
             return (
@@ -674,6 +792,9 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
     edge_vertex_pairs: Array
     edge_edge_pairs: Array
     face_vertex_pairs: Array
+    edge_vertex_radius: Array
+    edge_edge_radius: Array
+    face_vertex_radius: Array
     edges: Array
     faces: Array
     edge_vertex_capacity: int = eqx.field(static=True)
@@ -706,23 +827,55 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
             raise ValueError("activation_distance must be finite and positive.")
         edges = np.asarray(scene.edges, dtype=np.int32)
         faces = np.asarray(scene.faces, dtype=np.int32)
-        edge_vertex = []
-        edge_edge = []
-        face_vertex = []
+        primitives = _primitive_vertices(scene)
+        excluded_array = _scene_excluded_vertex_pairs(scene)
+        excluded = {(int(pair[0]), int(pair[1])) for pair in excluded_array.tolist()}
+        extent = np.asarray(scene.feature_contact_extent, dtype=float)
+        edge_offset = scene.vertex_count
+        face_offset = edge_offset + edges.shape[0]
+        edge_vertex: list[tuple[int, int]] = []
+        edge_vertex_radius: list[float] = []
+        edge_edge: list[tuple[int, int]] = []
+        edge_edge_radius: list[float] = []
+        face_vertex: list[tuple[int, int]] = []
+        face_vertex_radius: list[float] = []
         if scene.ambient_dimension == 2 or faces.size == 0:
             for vertex in range(scene.vertex_count):
-                for edge_index, edge in enumerate(edges):
-                    if vertex not in edge:
+                for edge_index in range(edges.shape[0]):
+                    edge_feature = edge_offset + edge_index
+                    if _primitive_pair_is_legal(
+                        scene, vertex, edge_feature, primitives, excluded
+                    ):
                         edge_vertex.append((vertex, edge_index))
+                        edge_vertex_radius.append(
+                            activation + extent[vertex] + extent[edge_feature]
+                        )
         else:
             for vertex in range(scene.vertex_count):
-                for face_index, face in enumerate(faces):
-                    if vertex not in face:
+                for face_index in range(faces.shape[0]):
+                    face_feature = face_offset + face_index
+                    if _primitive_pair_is_legal(
+                        scene, vertex, face_feature, primitives, excluded
+                    ):
                         face_vertex.append((vertex, face_index))
+                        face_vertex_radius.append(
+                            activation + extent[vertex] + extent[face_feature]
+                        )
             for first in range(edges.shape[0]):
                 for second in range(first + 1, edges.shape[0]):
-                    if not set(edges[first]).intersection(edges[second]):
+                    first_feature = edge_offset + first
+                    second_feature = edge_offset + second
+                    if _primitive_pair_is_legal(
+                        scene,
+                        first_feature,
+                        second_feature,
+                        primitives,
+                        excluded,
+                    ):
                         edge_edge.append((first, second))
+                        edge_edge_radius.append(
+                            activation + extent[first_feature] + extent[second_feature]
+                        )
         self.edge_vertex_pairs = jnp.asarray(
             np.asarray(edge_vertex, dtype=np.int32).reshape((-1, 2))
         )
@@ -734,6 +887,9 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
         )
         self.edges = jnp.asarray(edges)
         self.faces = jnp.asarray(faces)
+        self.edge_vertex_radius = jnp.asarray(edge_vertex_radius)
+        self.edge_edge_radius = jnp.asarray(edge_edge_radius)
+        self.face_vertex_radius = jnp.asarray(face_vertex_radius)
         (
             self.edge_vertex_capacity,
             self.edge_edge_capacity,
@@ -791,7 +947,7 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
             edge_min,
             edge_max,
             self.edges,
-            self.activation_distance,
+            self.edge_vertex_radius.astype(start.dtype),
         )
         edge_edge = _pack_compiled_same_pairs(
             ContactStencilKind.EDGE_EDGE,
@@ -800,7 +956,7 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
             edge_min,
             edge_max,
             self.edges,
-            self.activation_distance,
+            self.edge_edge_radius.astype(start.dtype),
         )
         face_vertex = _pack_compiled_pairs(
             ContactStencilKind.FACE_VERTEX,
@@ -811,7 +967,7 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
             face_min,
             face_max,
             self.faces,
-            self.activation_distance,
+            self.face_vertex_radius.astype(start.dtype),
         )
         count = (
             edge_vertex.actual_count + edge_edge.actual_count + face_vertex.actual_count

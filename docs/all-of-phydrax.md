@@ -378,28 +378,44 @@ No communication, mesh, or fallback-solver stack is introduced. See
 [Guide → Partitioned multiphysics coupling](guides_partitioned_coupling.md) and
 [API → Solver → Partitioned coupling](api/solver/coupling.md).
 
-### Native robotics as a composition
+### Native rigid and soft robotics as a composition
 
 `phydrax.applications.robotics` adapts explicitly rooted, descriptor-bounded
-URDF 1.0 trees into COM-centred particle, rigid-body, joint, and
-reduced-articulation plans. Capability-associated loss negotiation, exact
-resource manifests, mandatory inertial reference rebasing, result-preserving
-discrete transitions, accepted-state task environments, and semantic
-provenance keep conversion and rollback visible. Local frame IK, fixed-work
-control, manifold defects, and reduced rods remain with their existing
-discretization, control, interchange, and solid-mechanics owners.
+URDF trees into COM-centred rigid plans and supplies continuum tasks,
+observations, calibration, fixed-mode co-design, control, hybrid ports, and
+FEM/MPM/MJX plant profiles. Shared `phydrax.dynamics` plants keep complete
+payload, clock, PRNG, candidate/accepted state, checkpoint, codec, and replay
+evidence intact. `phydrax.metrix` four-space geometry and `phydrax.linalg`
+true duals prevent point storage, local perturbations, physical tangents, and
+covectors from being conflated.
 
-Optional MJX-JAX requires a matching MuJoCo/MJX 3.12.x provider pair and binds a
-closed prepared-feature manifest, complete data schema, projection provenance,
-casewise rollback, and the `step → stale state → refresh → observe` lifecycle.
-Fixed-route articulated impact certifies material availability, Delassus
-positive-semidefiniteness, numeric revision, and contact law, but remains an
-operator utility over supplied routes. There is no collision discovery or
-atomic robot/contact step yet. The native tree scope is 3-D fixed-base
-fixed/hinge/prismatic; floating bases, ball joints, global IK, certified
-sampling robustness, hard real time, and universal MJX differentiability are
-not claimed. See [Guide → Native robotics](guides_robotics.md) and
-[API → Robotics applications](api/applications/robotics.md).
+Spatial native rods, PCS/GVS bases and reconstruction, constitutive worksets,
+reduced dynamics and integrators, tendons, advanced actuator evaluators, and
+floating plants remain owned by `phydrax.applications.solid_mechanics`.
+Canonical circular-capsule features, fixed-capacity dense/BVH search, persistent
+route-keyed history, conservative-advancement CCD, and composite response live
+in `phydrax.applications.contact`. The atomic reduced-rod contact plant qualifies
+only fixed-base spatial circular-capsule plane/self contact with either
+frictionless or isotropic Coulomb response; it covers the complete requested
+interval or retains the complete source transaction.
+
+Fixed-mesh FEM supports only prepared implicit-Newmark step and declared region
+sensor routes, and explicitly excludes contact, remeshing, and fracture.
+Fixed-topology explicit MPM supports only prepared step and particle-region/
+grid-surface sensor routes, and excludes contact, AMR, and topology change.
+Optional MJX-JAX requires an exactly matched MuJoCo/MJX 3.12.x pair, validates a
+closed prepared-feature manifest, and implements the shared plant transaction
+plus `step → stale sensors → refresh → observe`; there is no separate public MJX
+schema or step-result type. MJX-Warp has a declaration but no adapter callable.
+
+No broad production-readiness, safety, hard-real-time, universal
+differentiability, or global optimization claim follows from these surfaces.
+Each claim is restricted to the prepared capability tuple, device, dtype,
+capacity, tolerance, provider release, and observed runtime evidence. See
+[Guide → Native robotics](guides_robotics.md),
+[Guide → Soft robotics](guides_soft_robotics.md),
+[API → Robotics applications](api/applications/robotics.md), and
+[API → Soft robotics](api/applications/soft_robotics.md).
 
 ### Skeletal-muscle platform
 

@@ -234,6 +234,7 @@ nav:
         - DEM rigid bodies and shapes: "guides_dem_rigid_bodies.md"
         - Constrained rigid-body dynamics: "guides_constrained_rigid_bodies.md"
         - Native robotics: "guides_robotics.md"
+        - Soft robotics: "guides_soft_robotics.md"
         - Robotics muscle routes and MJX projections: "guides_robotics_muscle_routes.md"
         - Extended constrained and deformable mechanics: "guides_extended_mechanics.md"
         - Deformable contact: "guides_deformable_contact.md"
@@ -456,6 +457,7 @@ nav:
             - Fixed-capacity AMR: "api/discretization/amr.md"
         - Deformable-contact applications: "api/applications/contact.md"
         - Robotics applications: "api/applications/robotics.md"
+        - Soft robotics applications: "api/applications/soft_robotics.md"
         - Computational topology:
             - Overview: "api/topology/index.md"
             - Exact homology: "api/topology/homology.md"

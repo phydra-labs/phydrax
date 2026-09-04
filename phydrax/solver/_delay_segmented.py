@@ -831,6 +831,11 @@ def solve_diffrax_delay_segmented(
         isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(host_inputs)
     )
     bounded = segment_policy is not None
+    if traced and not bounded and not isinstance(adjoint, SegmentedDelayAdjoint):
+        raise TypeError(
+            "The segmented host driver cannot be traced; provide an explicit "
+            "FixedCapacitySegmentPolicy for compiled execution."
+        )
     if traced or bounded:
         if not isinstance(adjoint, SegmentedDelayAdjoint):
             raise TypeError(
@@ -1043,12 +1048,13 @@ def solve_diffrax_delay_segmented(
         owner="Initial segmented delay state",
     )
     initial_computed_derivative = (
-        jax.tree.map(jnp.zeros_like, problem.initial_state)
+        jnp.zeros(problem.tangent_shape, dtype=problem.initial_state.dtype)
         if stochastic or not problem.neutral
         else problem.initial_right_derivative
     )
-    packed_derivative = state_adapter.pack_state(
+    packed_derivative = state_adapter.pack_tangent(
         initial_computed_derivative,
+        problem.tangent_shape,
         owner="Initial segmented delay derivative",
     )
     real_dtype = jax.tree.leaves(packed_initial)[0].real.dtype
@@ -1058,14 +1064,20 @@ def solve_diffrax_delay_segmented(
         initial_derivative=(
             None
             if problem.history_derivative is None
-            else _CoordinateDelayDerivative(problem.history_derivative, state_adapter)
+            else _CoordinateDelayDerivative(
+                problem.history_derivative,
+                state_adapter,
+                problem.tangent_shape,
+            )
         ),
         delay_terms=problem.delay_terms,
         initial_time=solve_start,
         state_shape=problem.state_shape,
+        tangent_shape=problem.tangent_shape,
         geometry=problem.state_geometry,
         state_adapter=state_adapter,
         backend_shape=state_adapter.backend_shape,
+        backend_tangent_shape=tuple(int(size) for size in packed_derivative.shape),
         computed_history=EmptyDelayHistory(
             packed_initial,
             packed_derivative,
@@ -1503,7 +1515,11 @@ def solve_diffrax_delay_segmented(
             interpolations=tuple(archive_interpolations),
         )
         if state_adapter.active:
-            interpolation = _CoordinateDelayInterpolation(interpolation, state_adapter)
+            interpolation = _CoordinateDelayInterpolation(
+                interpolation,
+                state_adapter,
+                problem.tangent_shape,
+            )
     solver_name = type(selected_solver).__name__
     extension = (
         "srkmk-wiener-path"

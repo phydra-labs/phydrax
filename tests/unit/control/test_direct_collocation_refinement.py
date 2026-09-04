@@ -3,6 +3,27 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.control._direct_collocation_refinement import _maximum_state_error
+
+
+def test_refinement_state_error_ignores_quaternion_pose_sign():
+    geometry = phx.metrix.QuaternionPoseStateGeometry()
+    local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
+    state_layout = phx.dynamics.StateLayout(
+        (7,),
+        geometry=geometry,
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:refinement-quaternion-pose",
+    )
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    references = jnp.stack((pose, pose.at[4:].add(0.1)))
+    points = references.at[:, :4].multiply(-1.0)
+
+    assert jnp.allclose(
+        _maximum_state_error(state_layout, references, points),
+        0.0,
+    )
 
 
 def _source_result(*, bounds=None):

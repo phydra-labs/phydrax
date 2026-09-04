@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from itertools import product
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -153,8 +154,8 @@ class PreparedIGASplinePatchProxy(StrictModule, NonTrainableState):
     def positions(self, control_displacement: ArrayLike, /) -> Array:
         return self.proxy.positions(control_displacement)
 
-    def pullback(self, proxy_dual: ArrayLike, /) -> Array:
-        return self.proxy.pullback(proxy_dual)
+    def effort_pullback(self, proxy_effort: ArrayLike, /) -> Array:
+        return self.proxy.effort_pullback(proxy_effort)
 
 
 class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
@@ -192,7 +193,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
         controls = np.asarray(patch_control_indices)
         vertex_patch = np.asarray(proxy_vertex_patch_indices)
         error = np.asarray(patch_approximation_error, dtype=float)
-        patch_count = len(atlas.patches)
+        patch_count = len(atlas.topologies)
         if (
             controls.ndim != 2
             or controls.shape[0] != patch_count
@@ -322,7 +323,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
             )
         return PreparedIGASplinePatchProxy(
             proxy,
-            tuple(patch.patch_id for patch in self.atlas.patches),
+            self.atlas.patch_ids,
             self.geometry_certificate_id,
             self.plan_id,
         )
@@ -361,7 +362,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
             lower,
             upper,
             inflation,
-            tuple(patch.patch_id for patch in self.atlas.patches),
+            self.atlas.patch_ids,
             self.geometry_certificate_id,
             finite,
             conservative,
@@ -600,8 +601,8 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
             not plus_name
             or not minus_name
             or plus_name == minus_name
-            or plus_name not in overlay.participant_names
-            or minus_name not in overlay.participant_names
+            or plus_name not in overlay.atlas.patch_ids
+            or minus_name not in overlay.atlas.patch_ids
         ):
             raise ValueError(
                 "IGA mortar participants must be distinct overlay participants."
@@ -739,7 +740,7 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
         minus_knot_values = tuple(minus_knots)
         plus_degree_values = tuple(int(value) for value in plus_degrees)
         minus_degree_values = tuple(int(value) for value in minus_degrees)
-        dimension = len(overlay.axis_breaks)
+        dimension = len(plus_knot_values)
         if (
             dimension not in (1, 2)
             or len(plus_knot_values) != dimension
@@ -748,8 +749,46 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
             or len(minus_degree_values) != dimension
         ):
             raise ValueError("IGA mortar trace dimensions must match the overlay.")
+        common_breaks = []
+        for plus_knot, minus_knot, plus_degree, minus_degree in zip(
+            plus_knot_values,
+            minus_knot_values,
+            plus_degree_values,
+            minus_degree_values,
+            strict=True,
+        ):
+            plus_axis = np.asarray(plus_knot, dtype=float)
+            minus_axis = np.asarray(minus_knot, dtype=float)
+            if (
+                plus_degree < 0
+                or minus_degree < 0
+                or plus_axis.ndim != 1
+                or minus_axis.ndim != 1
+                or plus_axis.size <= 2 * plus_degree
+                or minus_axis.size <= 2 * minus_degree
+            ):
+                raise ValueError("IGA mortar knot vectors and degrees are inconsistent.")
+            lower = max(plus_axis[plus_degree], minus_axis[minus_degree])
+            upper = min(
+                plus_axis[-plus_degree - 1],
+                minus_axis[-minus_degree - 1],
+            )
+            if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+                raise ValueError("IGA mortar trace parameter domains do not overlap.")
+            merged = np.unique(np.concatenate((plus_axis, minus_axis)))
+            interior = merged[(merged > lower) & (merged < upper)]
+            common_breaks.append(
+                np.concatenate(
+                    (
+                        np.asarray((lower,)),
+                        interior,
+                        np.asarray((upper,)),
+                    )
+                )
+            )
         points, reference_weight, cells, bounds = _common_quadrature(
-            overlay.axis_breaks, quadrature_order
+            tuple(common_breaks),
+            quadrature_order,
         )
         plus_basis = _tensor_basis_matrix(
             plus_knot_values,
@@ -764,12 +803,18 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
             minus_rational_weights,
         )
         normal = (
-            np.asarray(reference_normal(points), dtype=float)
+            np.asarray(
+                cast(Callable[[np.ndarray], ArrayLike], reference_normal)(points),
+                dtype=float,
+            )
             if callable(reference_normal)
             else np.asarray(reference_normal, dtype=float)
         )
         jacobian = (
-            np.asarray(surface_jacobian(points), dtype=float)
+            np.asarray(
+                cast(Callable[[np.ndarray], ArrayLike], surface_jacobian)(points),
+                dtype=float,
+            )
             if callable(surface_jacobian)
             else np.asarray(surface_jacobian, dtype=float)
         )

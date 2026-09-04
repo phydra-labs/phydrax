@@ -155,7 +155,7 @@ class DiscreteControlDynamics(StrictModule):
             carry: tuple[Array, Array, Array, Array], index: Array
         ) -> tuple[
             tuple[Array, Array, Array, Array],
-            tuple[Array, Array, Array, Array, Array, Array, Array],
+            tuple[Array, Array, Array, Array, Array, Array, Array, Array],
         ]:
             time = time_grid.times[index]
             context = DiscreteStepContext(
@@ -215,7 +215,8 @@ class DiscreteControlDynamics(StrictModule):
                 jnp.full_like(accepted_state, jnp.nan),
                 self.state_shape,
             )
-            evidence_successful = transition_valid & transition_successful
+            evidence_attempted = transition_valid
+            evidence_successful = evidence_attempted & transition_successful
             evidence_status = jnp.where(
                 transition_valid,
                 transition_status,
@@ -258,6 +259,7 @@ class DiscreteControlDynamics(StrictModule):
                 next_valid,
                 evidence_candidates,
                 evidence_accepted,
+                evidence_attempted,
                 evidence_successful,
                 evidence_status,
             )
@@ -270,6 +272,7 @@ class DiscreteControlDynamics(StrictModule):
                 next_valid,
                 candidate_states,
                 accepted_states,
+                transition_attempted,
                 transition_successful,
                 per_step_status,
             ),
@@ -302,6 +305,7 @@ class DiscreteControlDynamics(StrictModule):
         transition_evidence = DiscreteTransitionEvidence(
             jnp.moveaxis(candidate_states, 0, state_time_axis),
             jnp.moveaxis(accepted_states, 0, state_time_axis),
+            jnp.moveaxis(transition_attempted, 0, -1),
             jnp.moveaxis(transition_successful, 0, -1),
             jnp.moveaxis(per_step_status, 0, -1),
         )

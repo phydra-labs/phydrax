@@ -81,20 +81,12 @@ def _lower_triangular_factors(
         (count, _SPATIAL_DIMENSION, _SPATIAL_DIMENSION),
         dtype=coordinates.dtype,
     )
-    diagonal = _stable_softplus(
-        coordinates[:, (0, 2, 5)], positive_floor, finite_ceiling
-    )
+    diagonal = _stable_softplus(coordinates[:, (0, 2, 5)], positive_floor, finite_ceiling)
     factors[:, 0, 0] = diagonal[:, 0]
-    factors[:, 1, 0] = np.clip(
-        coordinates[:, 1], -finite_ceiling, finite_ceiling
-    )
+    factors[:, 1, 0] = np.clip(coordinates[:, 1], -finite_ceiling, finite_ceiling)
     factors[:, 1, 1] = diagonal[:, 1]
-    factors[:, 2, 0] = np.clip(
-        coordinates[:, 3], -finite_ceiling, finite_ceiling
-    )
-    factors[:, 2, 1] = np.clip(
-        coordinates[:, 4], -finite_ceiling, finite_ceiling
-    )
+    factors[:, 2, 0] = np.clip(coordinates[:, 3], -finite_ceiling, finite_ceiling)
+    factors[:, 2, 1] = np.clip(coordinates[:, 4], -finite_ceiling, finite_ceiling)
     factors[:, 2, 2] = diagonal[:, 2]
     return factors
 
@@ -110,18 +102,12 @@ def _factor_coordinates(
         raise ValueError("Covariance factors are outside the coordinate image.")
     return np.stack(
         (
-            _inverse_softplus(
-                factors[:, 0, 0], positive_floor, finite_ceiling
-            ),
+            _inverse_softplus(factors[:, 0, 0], positive_floor, finite_ceiling),
             factors[:, 1, 0],
-            _inverse_softplus(
-                factors[:, 1, 1], positive_floor, finite_ceiling
-            ),
+            _inverse_softplus(factors[:, 1, 1], positive_floor, finite_ceiling),
             factors[:, 2, 0],
             factors[:, 2, 1],
-            _inverse_softplus(
-                factors[:, 2, 2], positive_floor, finite_ceiling
-            ),
+            _inverse_softplus(factors[:, 2, 2], positive_floor, finite_ceiling),
         ),
         axis=-1,
     )
@@ -262,9 +248,7 @@ class RigidInertialParameters(StrictModule, NonTrainableState):
         central_second_moment = 0.5 * traces[:, None, None] * identity - inertia
         inertia_eigenvalues = _symmetric_eigenvalues(inertia)
         central_eigenvalues = _symmetric_eigenvalues(central_second_moment)
-        if np.any(inertia_eigenvalues <= 0.0) or np.any(
-            central_eigenvalues <= 0.0
-        ):
+        if np.any(inertia_eigenvalues <= 0.0) or np.any(central_eigenvalues <= 0.0):
             raise ValueError(
                 "inertia_com must be SPD and obey strict principal-moment "
                 "triangle inequalities."
@@ -287,9 +271,7 @@ class RigidInertialParameters(StrictModule, NonTrainableState):
         if not np.all(np.isfinite(inertia_body_origin)) or not np.all(
             np.isfinite(pseudo_inertia)
         ):
-            raise ValueError(
-                "Realized inertial parameters exceed finite numeric range."
-            )
+            raise ValueError("Realized inertial parameters exceed finite numeric range.")
         parameterization = str(parameterization_id).strip()
         coordinates = str(coordinates_id).strip()
         if not parameterization or not coordinates:
@@ -319,7 +301,6 @@ class RigidInertialParameters(StrictModule, NonTrainableState):
                 ),
             }
         )
-
 
 
 class RigidInertialEvaluation(StrictModule, NonTrainableState):
@@ -384,67 +365,64 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
             inertia_eigenvalues, axis=-1
         )
         body_eigenvalues = _symmetric_eigenvalues(inertia_body)
+        body_triangle_margin = np.trace(inertia_body, axis1=-2, axis2=-1) - 2.0 * np.max(
+            body_eigenvalues, axis=-1
+        )
         pseudo_eigenvalues = _symmetric_eigenvalues(pseudo)
         reconstructed_masses = pseudo[:, 3, 3]
         reconstructed_offsets = pseudo[:, :3, 3] / reconstructed_masses[:, None]
         spatial_second_moment = pseudo[:, :3, :3]
-        central_second_moment = spatial_second_moment - (
-            pseudo[:, :3, 3, None] * pseudo[:, None, 3, :3]
-        ) / reconstructed_masses[:, None, None]
+        central_second_moment = (
+            spatial_second_moment
+            - (pseudo[:, :3, 3, None] * pseudo[:, None, 3, :3])
+            / reconstructed_masses[:, None, None]
+        )
         reconstructed_inertia_com = (
-            np.trace(central_second_moment, axis1=-2, axis2=-1)[:, None, None]
-            * identity
+            np.trace(central_second_moment, axis1=-2, axis2=-1)[:, None, None] * identity
             - central_second_moment
         )
         reconstructed_inertia_body = (
-            np.trace(spatial_second_moment, axis1=-2, axis2=-1)[:, None, None]
-            * identity
+            np.trace(spatial_second_moment, axis1=-2, axis2=-1)[:, None, None] * identity
             - spatial_second_moment
         )
+        parameter_finite = np.isfinite(masses) & np.all(np.isfinite(offsets), axis=-1)
+        inertia_com_finite = np.all(np.isfinite(inertia_com), axis=(-2, -1))
+        inertia_body_finite = np.all(np.isfinite(inertia_body), axis=(-2, -1))
+        pseudo_inertia_finite = np.all(np.isfinite(pseudo), axis=(-2, -1))
         finite = (
-            np.isfinite(masses)
-            & np.all(np.isfinite(offsets), axis=-1)
-            & np.all(np.isfinite(inertia_com), axis=(-2, -1))
-            & np.all(np.isfinite(inertia_body), axis=(-2, -1))
-            & np.all(np.isfinite(pseudo), axis=(-2, -1))
+            parameter_finite
+            & inertia_com_finite
+            & inertia_body_finite
+            & pseudo_inertia_finite
         )
         positive_mass = masses >= positive_floor
         inertia_spd = inertia_eigenvalues[:, 0] > 0.0
         triangle = triangle_margin > 0.0
         central_eigenvalues = _symmetric_eigenvalues(
-            0.5
-            * np.trace(inertia_com, axis1=-2, axis2=-1)[:, None, None]
-            * identity
+            0.5 * np.trace(inertia_com, axis1=-2, axis2=-1)[:, None, None] * identity
             - inertia_com
         )
         pseudo_spd = positive_mass & (central_eigenvalues[:, 0] > 0.0)
-        body_inertia_spd = inertia_spd
-        body_triangle = triangle
+        body_inertia_spd = body_eigenvalues[:, 0] > 0.0
+        body_triangle = body_triangle_margin > 0.0
         mass_residual = np.abs(reconstructed_masses - masses)
         offset_residual = _finite_norm(reconstructed_offsets - offsets, (-1,))
-        inertia_residual = _finite_norm(
-            reconstructed_inertia_com - inertia_com, (-2, -1)
-        )
-        body_residual = _finite_norm(
-            reconstructed_inertia_body - inertia_body, (-2, -1)
-        )
+        inertia_residual = _finite_norm(reconstructed_inertia_com - inertia_com, (-2, -1))
+        body_residual = _finite_norm(reconstructed_inertia_body - inertia_body, (-2, -1))
         source_masses = np.asarray(source.mass_properties.masses)
         source_inertia = np.asarray(source.mass_properties.inertia_com)
-        if (
-            source_masses.shape != (count,)
-            or source_inertia.shape != inertia_com.shape
-        ):
+        if source_masses.shape != (count,) or source_inertia.shape != inertia_com.shape:
             raise ValueError("Source prepared data does not match parameter capacity.")
         source_mass_residual = np.abs(masses - source_masses)
-        source_inertia_residual = _finite_norm(
-            inertia_com - source_inertia, (-2, -1)
-        )
+        source_inertia_residual = _finite_norm(inertia_com - source_inertia, (-2, -1))
         inertia_condition = _matrix_condition_numbers(inertia_eigenvalues)
         pseudo_condition = _matrix_condition_numbers(pseudo_eigenvalues)
         body_condition = _matrix_condition_numbers(body_eigenvalues)
         evidence_finite = (
             np.isfinite(inertia_eigenvalues[:, 0])
             & np.isfinite(triangle_margin)
+            & np.isfinite(body_eigenvalues[:, 0])
+            & np.isfinite(body_triangle_margin)
             & np.isfinite(inertia_condition)
             & np.isfinite(pseudo_condition)
             & np.isfinite(body_condition)
@@ -462,6 +440,8 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
             and np.all(inertia_spd)
             and np.all(triangle)
             and np.all(pseudo_spd)
+            and np.all(body_inertia_spd)
+            and np.all(body_triangle)
         )
         self.parameters = parameters
         self.finite_mask = jnp.asarray(finite)
@@ -475,10 +455,8 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
         self.body_origin_triangle_inequality_mask = jnp.asarray(body_triangle)
         self.minimum_inertia_eigenvalue = jnp.asarray(inertia_eigenvalues[:, 0])
         self.minimum_triangle_margin = jnp.asarray(triangle_margin)
-        self.minimum_body_origin_inertia_eigenvalue = jnp.asarray(
-            inertia_eigenvalues[:, 0]
-        )
-        self.minimum_body_origin_triangle_margin = jnp.asarray(triangle_margin)
+        self.minimum_body_origin_inertia_eigenvalue = jnp.asarray(body_eigenvalues[:, 0])
+        self.minimum_body_origin_triangle_margin = jnp.asarray(body_triangle_margin)
         self.inertia_condition_number = jnp.asarray(inertia_condition)
         self.pseudo_inertia_condition_number = jnp.asarray(pseudo_condition)
         self.body_origin_inertia_condition_number = jnp.asarray(body_condition)
@@ -493,6 +471,33 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
         self.finite_ceiling = finite_ceiling
         self.source_prepared_id = source.prepared_id
         self.requires_repreparation = True
+        evidence = array_tree_fingerprint(
+            {
+                "finite": finite,
+                "evidence_finite": evidence_finite,
+                "coordinate_saturation": saturation,
+                "positive_mass": positive_mass,
+                "inertia_spd": inertia_spd,
+                "triangle_inequality": triangle,
+                "pseudo_inertia_spd": pseudo_spd,
+                "body_origin_inertia_spd": body_inertia_spd,
+                "body_origin_triangle_inequality": body_triangle,
+                "minimum_inertia_eigenvalue": inertia_eigenvalues[:, 0],
+                "minimum_triangle_margin": triangle_margin,
+                "minimum_body_origin_inertia_eigenvalue": body_eigenvalues[:, 0],
+                "minimum_body_origin_triangle_margin": body_triangle_margin,
+                "inertia_condition_number": inertia_condition,
+                "pseudo_inertia_condition_number": pseudo_condition,
+                "body_origin_inertia_condition_number": body_condition,
+                "mass_reconstruction_residual": mass_residual,
+                "center_of_mass_reconstruction_residual": offset_residual,
+                "inertia_reconstruction_residual": inertia_residual,
+                "body_origin_reconstruction_residual": body_residual,
+                "source_mass_residual": source_mass_residual,
+                "source_inertia_residual": source_inertia_residual,
+                "valid": np.asarray(valid),
+            }
+        )
         self.evaluation_id = canonical_fingerprint(
             {
                 "kind": "rigid-inertial-evaluation",
@@ -500,8 +505,7 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
                 "parameters": parameters.parameters_id,
                 "positive_floor": positive_floor,
                 "finite_ceiling": finite_ceiling,
-                "coordinate_saturation": array_tree_fingerprint(saturation),
-                "valid": valid,
+                "evidence": evidence,
                 "requires_repreparation": True,
             }
         )
@@ -526,18 +530,14 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
         if not isinstance(source, PreparedRigidBodySet):
             raise TypeError("source must be a PreparedRigidBodySet.")
         if source.ambient_dimension != _SPATIAL_DIMENSION:
-            raise ValueError(
-                "Rigid inertial parameterization requires three dimensions."
-            )
+            raise ValueError("Rigid inertial parameterization requires three dimensions.")
         source_masses = np.asarray(source.mass_properties.masses)
         source_inertia = np.asarray(source.mass_properties.inertia_com)
         dtype = source_masses.dtype
         default_floor, finite_ceiling = _coordinate_image(dtype)
         identity = np.eye(_SPATIAL_DIMENSION, dtype=dtype)
         central_second_moment = (
-            0.5
-            * np.trace(source_inertia, axis1=-2, axis2=-1)[:, None, None]
-            * identity
+            0.5 * np.trace(source_inertia, axis1=-2, axis2=-1)[:, None, None] * identity
             - source_inertia
         )
         source_covariance = central_second_moment / source_masses[:, None, None]
@@ -549,7 +549,9 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
                 float(
                     np.min(
                         source_factors[
-                            :, np.arange(_SPATIAL_DIMENSION), np.arange(_SPATIAL_DIMENSION)
+                            :,
+                            np.arange(_SPATIAL_DIMENSION),
+                            np.arange(_SPATIAL_DIMENSION),
                         ]
                     )
                 ),
@@ -625,9 +627,7 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
             raise ValueError("center_of_mass_offsets are outside the coordinate image.")
         identity = np.eye(_SPATIAL_DIMENSION, dtype=inertia_com.dtype)
         central_second_moment = (
-            0.5
-            * np.trace(inertia_com, axis1=-2, axis2=-1)[:, None, None]
-            * identity
+            0.5 * np.trace(inertia_com, axis1=-2, axis2=-1)[:, None, None] * identity
             - inertia_com
         )
         covariance = central_second_moment / masses[:, None, None]
@@ -680,9 +680,7 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
         factors = _lower_triangular_factors(
             covariance_coordinates, self.positive_floor, self.finite_ceiling
         )
-        offsets = np.clip(
-            raw_offsets, -self.finite_ceiling, self.finite_ceiling
-        )
+        offsets = np.clip(raw_offsets, -self.finite_ceiling, self.finite_ceiling)
         raw_covariance = factors @ np.swapaxes(factors, -1, -2)
         identity = np.eye(_SPATIAL_DIMENSION, dtype=raw_covariance.dtype)
         covariance = raw_covariance
@@ -691,22 +689,18 @@ class RigidInertialParameterization(StrictModule, NonTrainableState):
             - covariance
         )
         raw_mass_positive = np.logaddexp(0.0, mass_coordinates)
-        raw_diagonal_positive = np.logaddexp(
-            0.0, covariance_coordinates[:, (0, 2, 5)]
-        )
+        raw_diagonal_positive = np.logaddexp(0.0, covariance_coordinates[:, (0, 2, 5)])
         saturation = (
             (raw_mass_positive <= self.positive_floor)
             | (raw_mass_positive >= self.finite_ceiling - self.positive_floor)
             | np.any(raw_diagonal_positive <= self.positive_floor, axis=-1)
             | np.any(
-                raw_diagonal_positive
-                >= self.finite_ceiling - self.positive_floor,
+                raw_diagonal_positive >= self.finite_ceiling - self.positive_floor,
                 axis=-1,
             )
             | np.any(np.abs(raw_offsets) > self.finite_ceiling, axis=-1)
             | np.any(
-                np.abs(covariance_coordinates[:, (1, 3, 4)])
-                > self.finite_ceiling,
+                np.abs(covariance_coordinates[:, (1, 3, 4)]) > self.finite_ceiling,
                 axis=-1,
             )
         )
@@ -762,12 +756,9 @@ class RigidInertialRealization(StrictModule, NonTrainableState):
                 "reference_frame_rebase must be RigidBodyReferenceFrameRebase."
             )
         if (
-            reference_frame_rebase.source_prepared_id
-            != evaluation.source_prepared_id
-            or reference_frame_rebase.target_particle_plan_id
-            != particle_plan.plan_id
-            or reference_frame_rebase.target_body_plan_id
-            != rigid_body_plan.plan_id
+            reference_frame_rebase.source_prepared_id != evaluation.source_prepared_id
+            or reference_frame_rebase.target_particle_plan_id != particle_plan.plan_id
+            or reference_frame_rebase.target_body_plan_id != rigid_body_plan.plan_id
         ):
             raise ValueError("Realization plans/evaluation do not match its rebase.")
         self.particle_plan = particle_plan

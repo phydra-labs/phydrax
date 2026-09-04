@@ -282,23 +282,24 @@ def test_stochastic_neutral_problem_is_rejected_before_execution():
         )
 
 
-def test_nontrivial_manifold_neutral_term_requires_tangent_transport():
+def test_nontrivial_manifold_neutral_term_uses_geometry_transport():
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
-    with pytest.raises(ValueError, match="explicit tangent transport"):
-        phx.solver.DelayDifferentialProblem(
-            lambda time, state, memory, args: jnp.zeros_like(state),
-            lambda time, args: jnp.eye(2),
-            (
-                phx.solver.DerivativeDelay(
-                    "velocity",
-                    phx.solver.ConstantDelay("lag", 0.5),
-                ),
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["velocity"],
+        lambda time, args: jnp.eye(2),
+        (
+            phx.solver.DerivativeDelay(
+                "velocity",
+                phx.solver.ConstantDelay("lag", 0.5),
             ),
-            t0=0.0,
-            t1=0.5,
-            history_derivative=lambda time, args: jnp.zeros((2, 2)),
-            state_geometry=geometry,
-        )
+        ),
+        t0=0.0,
+        t1=0.5,
+        history_derivative=lambda time, args: jnp.zeros((2, 2)),
+        state_geometry=geometry,
+    )
+    assert problem.neutral
+    assert jnp.allclose(problem.initial_right_derivative, jnp.zeros((2, 2)))
 
 
 def test_manifold_neutral_transport_must_return_current_state_tangent():

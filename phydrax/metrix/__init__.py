@@ -265,6 +265,11 @@ from ._quantum_density import (
     uhlmann_alignment,
     UhlmannAlignment,
 )
+from ._quaternion_state_geometry import (
+    QuaternionConvention,
+    QuaternionPoseStateGeometry,
+    ScalarFirstQuaternionStateGeometry,
+)
 from ._semi_riemannian import (
     causal_character,
     CausalCharacter,
@@ -296,6 +301,8 @@ from ._state_geometry import (
     LocalRetraction,
     PointwiseStateGeometry,
     SpecialOrthogonalStateGeometry,
+    StateChartEvidence,
+    StateTransportEvidence,
     SymmetricPositiveDefiniteStateGeometry,
 )
 from ._statistics import frechet_mean, frechet_objective, FrechetMeanResult
@@ -436,6 +443,9 @@ __all__ = [
     "MetricGeodesicResult",
     "MetricJet",
     "ProductStateGeometry",
+    "QuaternionConvention",
+    "QuaternionPoseStateGeometry",
+    "ScalarFirstQuaternionStateGeometry",
     "ProductStateGeometryBlock",
     "MetricSignature",
     "MetricValidationReport",
@@ -454,6 +464,8 @@ __all__ = [
     "SphereLaplacianLevels",
     "SphereManifold",
     "StateGeometryValidationReport",
+    "StateChartEvidence",
+    "StateTransportEvidence",
     "StiefelManifold",
     "SymmetricPositiveDefiniteStateGeometry",
     "UnitaryGroup",

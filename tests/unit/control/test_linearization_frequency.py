@@ -15,11 +15,66 @@ from phydrax.control import (
     linearize_differential_dynamics,
     linearize_discrete_dynamics,
 )
+from phydrax.control._dynamics import DiscreteControlDynamics
+from phydrax.dynamics import DiscreteSystem, InputLayout, StateLayout
 from phydrax.dynamics._system import DiscreteTransitionResult
+from phydrax.linalg import ArraySpace
+from phydrax.metrix import QuaternionPoseStateGeometry
 from tests._control_systems import (
     make_differential_control_dynamics,
     make_discrete_control_dynamics,
 )
+
+
+def test_quaternion_pose_discrete_linearization_is_six_dimensional_and_sign_invariant():
+    geometry = QuaternionPoseStateGeometry()
+    local_space = ArraySpace((6,), dtype=jnp.float32)
+    state_layout = StateLayout(
+        (7,),
+        geometry=geometry,
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:quaternion-pose-linearization",
+    )
+    system = DiscreteSystem(
+        lambda context, state, control, args: state,
+        state_layout=state_layout,
+        input_layout=InputLayout((1,), roles="control"),
+        system_id="test:quaternion-pose-identity",
+    )
+    dynamics = DiscreteControlDynamics(system)
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    equivalent = pose.at[:4].multiply(-1.0)
+
+    positive = linearize_discrete_dynamics(
+        dynamics,
+        0.0,
+        pose,
+        jnp.zeros((1,)),
+        target_time=1.0,
+        step_index=0,
+    )
+    negative = linearize_discrete_dynamics(
+        dynamics,
+        0.0,
+        equivalent,
+        jnp.zeros((1,)),
+        target_time=1.0,
+        step_index=0,
+    )
+
+    assert positive.state_local_size == 6
+    assert positive.state_matrix.shape == (6, 6)
+    assert positive.control_matrix.shape == (6, 1)
+    np.testing.assert_allclose(positive.state_matrix, jnp.eye(6), atol=2.0e-6)
+    np.testing.assert_allclose(negative.state_matrix, positive.state_matrix, atol=2.0e-6)
+    np.testing.assert_allclose(negative.control_matrix, positive.control_matrix)
+    np.testing.assert_allclose(positive.control_matrix, 0.0)
+    np.testing.assert_allclose(positive.affine_offset, 0.0)
+    assert jnp.all(jnp.isfinite(positive.state_matrix))
+    assert jnp.all(jnp.isfinite(negative.state_matrix))
+    assert bool(positive.valid)
+    assert bool(negative.valid)
 
 
 def test_nonlinear_input_output_linearization_has_affine_offsets():
@@ -92,7 +147,6 @@ def test_discrete_linearization_preserves_batched_operating_points():
     np.testing.assert_allclose(result.feedthrough_matrix[:, 0, 0], 0.0)
     assert bool(jnp.all(result.valid))
     assert result.provenance.system_type == "discrete"
-
 
 
 def test_discrete_linearization_rejects_finite_failed_rollbacks():

@@ -87,9 +87,7 @@ def test_capability_negotiation_accepts_only_declared_operation_conditions():
             RoboticsOperationRequirement("step", dtype="float64"),
             RoboticsOperationRequirement("step", solver="pgs"),
             RoboticsOperationRequirement("step", contact_feature="sdf"),
-            RoboticsOperationRequirement(
-                "step", minimum_differentiability="guaranteed"
-            ),
+            RoboticsOperationRequirement("step", minimum_differentiability="guaranteed"),
             RoboticsOperationRequirement("jvp"),
             RoboticsOperationRequirement("sensors"),
         )
@@ -120,9 +118,7 @@ def test_profiles_are_per_operation_and_never_claim_universal_differentiability(
         for capability in MJX_WARP_PROFILE.operations
     )
     assert MJX_JAX_PROFILE.capability("step").solvers == ("cg", "newton")
-    assert "sphere-cylinder" in MJX_JAX_PROFILE.capability(
-        "step"
-    ).contact_features
+    assert "sphere-cylinder" in MJX_JAX_PROFILE.capability("step").contact_features
     assert not MJX_WARP_PROFILE.capability("jvp").supported
     assert {
         capability.operation
@@ -148,6 +144,19 @@ def test_projection_maps_are_complete_stable_and_immutable():
 
     assert index_map.names == ("base", "hinge")
     assert index_map.name_to_range == (("base", (0, 3)), ("hinge", (3, 4)))
+    assert index_map.identity == (
+        "qpos",
+        4,
+        (("base", (0, 3)), ("hinge", (3, 4))),
+        (
+            "probe-model",
+            "probe-compiler",
+            "probe-provider",
+            "probe-asset",
+            "si",
+            "world",
+        ),
+    )
     assert index_map.entry("base").indices == (0, 1, 2)
     assert projection.values.shape == (2, 4)
     with pytest.raises(AttributeError):

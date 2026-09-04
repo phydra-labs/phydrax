@@ -28,11 +28,19 @@ class ContactKinematicsBatch(StrictModule):
     """Fixed-capacity local interface kinematics independent of contact law."""
 
     vertex_indices: Array
+    left_feature_ids: Array
+    right_feature_ids: Array
+    left_feature_indices: Array
+    right_feature_indices: Array
     route_keys: Array
+    left_participant_ids: Array
+    right_participant_ids: Array
     left_body_ids: Array
     right_body_ids: Array
     left_material_ids: Array
     right_material_ids: Array
+    left_patch_ids: Array
+    right_patch_ids: Array
     coefficients: Array
     normal: Array
     tangent_basis: Array
@@ -133,8 +141,9 @@ def evaluate_contact_kinematics_batch(
     if activation_distance is not None:
         threshold = jnp.asarray(activation_distance, dtype=current.dtype)
         valid = valid & (gap < threshold)
-    left_vertex = jnp.clip(batch.vertex_indices[:, 0], 0, scene.vertex_count - 1)
-    right_vertex = jnp.clip(_right_endpoint(batch), 0, scene.vertex_count - 1)
+    feature_count = scene.vertex_count + scene.edge_count + scene.face_count
+    left_feature = jnp.clip(batch.left_feature_indices, 0, feature_count - 1)
+    right_feature = jnp.clip(batch.right_feature_indices, 0, feature_count - 1)
     finite_per_route = (
         jnp.isfinite(distance)
         & jnp.isfinite(gap)
@@ -151,11 +160,19 @@ def evaluate_contact_kinematics_batch(
     )
     return ContactKinematicsBatch(
         batch.vertex_indices,
+        batch.left_feature_ids,
+        batch.right_feature_ids,
+        batch.left_feature_indices,
+        batch.right_feature_indices,
         batch.route_keys,
-        scene.vertex_body_ids[left_vertex],
-        scene.vertex_body_ids[right_vertex],
-        scene.vertex_material_ids[left_vertex],
-        scene.vertex_material_ids[right_vertex],
+        scene.feature_participant_ids[left_feature],
+        scene.feature_participant_ids[right_feature],
+        scene.feature_body_ids[left_feature],
+        scene.feature_body_ids[right_feature],
+        scene.feature_material_ids[left_feature],
+        scene.feature_material_ids[right_feature],
+        scene.feature_patch_ids[left_feature],
+        scene.feature_patch_ids[right_feature],
         evaluation.distance.coefficients,
         normal,
         tangent,

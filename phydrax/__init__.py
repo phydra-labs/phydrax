@@ -65,6 +65,14 @@ from . import (
 )
 from . import artifacts, events, observation
 from ._array_archive import ArrayArchiveLimits
+from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
+from ._identity import (
+    callable_payload,
+    ExecutableSignature,
+    NumericRevision,
+    SemanticProvenance,
+    strict_module_payload,
+)
 from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
@@ -136,6 +144,13 @@ __all__ = [
     "tensor_network",
     "tensor_train",
     "weighting",
+    "ArrayLeafSchema",
+    "ArrayPyTreeSchema",
+    "ExecutableSignature",
+    "NumericRevision",
+    "SemanticProvenance",
+    "callable_payload",
+    "strict_module_payload",
     "ArrayArchiveLimits",
     "DimensionalScaleContract",
     "LengthCoordinateKind",

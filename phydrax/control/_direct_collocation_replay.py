@@ -8,6 +8,7 @@ from math import isfinite
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
@@ -87,7 +88,11 @@ class DirectCollocationReplayPolicy(StrictModule):
 
 
 class DirectCollocationReplayEvidence(StrictModule):
-    """Independent causal DAE solution and discrepancy against collocation."""
+    """Independent causal DAE solution and local discrepancy against collocation.
+
+    ``state_discrepancy`` is expressed by ``inverse_retract`` at each
+    collocated reference point, never by subtracting point storage.
+    """
 
     input_policy: HeldInputPolicy
     solution: DifferentialAlgebraicSolution
@@ -180,9 +185,14 @@ def replay_direct_collocation(
         case_shape=(),
         state_shape=problem.state_shape,
         control_shape=problem.control_shape,
+        state_geometry=problem.state_layout.geometry,
     )
     collocated = view.evaluate_state(replay_grid.times)
-    discrepancy = solution.states - collocated
+    discrepancy = jax.vmap(
+        lambda reference, point: jnp.asarray(
+            problem.state_layout.geometry.inverse_retract(reference, point)
+        ).reshape((problem.state_layout.local_size,))
+    )(collocated, solution.states)
     maximum = jnp.max(jnp.abs(discrepancy), initial=0.0)
     terminal = jnp.max(jnp.abs(discrepancy[-1]), initial=0.0)
     algebraic = jnp.max(solution.constraint_norm, initial=0.0)

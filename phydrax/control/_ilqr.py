@@ -21,7 +21,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
-from ..dynamics import DiscreteStepContext, TimeGrid
+from ..dynamics import DiscreteStepContext, StateLayout, TimeGrid
 from ..dynamics._system import DiscreteTransitionEvidence
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
@@ -84,15 +84,15 @@ class ILQRPolicy(AbstractControlParameterization):
 
     The policy has no free coefficients: pass an empty array to ``evaluate`` or
     ``ControlProblem.rollout``. Without a state, evaluation returns the nominal
-    open-loop controls. With a state it applies
-    ``u_nominal + feedback @ (state - state_nominal)``. No control clipping is
-    performed.
+    open-loop controls. With a state it applies feedback to
+    ``inverse_retract(state_nominal, state)``. No control clipping is performed.
     """
 
     time_grid: TimeGrid
     nominal_states: Array
     nominal_controls: Array
     feedback: Array
+    state_layout: StateLayout
     state_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
 
@@ -104,7 +104,7 @@ class ILQRPolicy(AbstractControlParameterization):
         feedback: ArrayLike,
         /,
         *,
-        state_shape: tuple[int, ...],
+        state_layout: StateLayout,
         control_shape: tuple[int, ...],
         policy_id: str,
     ):
@@ -113,9 +113,13 @@ class ILQRPolicy(AbstractControlParameterization):
         states = jnp.asarray(nominal_states)
         controls = jnp.asarray(nominal_controls)
         gains = jnp.asarray(feedback)
-        state_shape_ = tuple(int(size) for size in state_shape)
+        if not isinstance(state_layout, StateLayout):
+            raise TypeError("ILQRPolicy state_layout must be a StateLayout.")
+        if not state_layout.geometry.supports_exact_inverse:
+            raise ValueError("ILQRPolicy requires exact inverse-retraction geometry.")
+        state_shape_ = state_layout.shape
         control_shape_ = tuple(int(size) for size in control_shape)
-        state_size = int(np.prod(state_shape_))
+        state_size = state_layout.local_size
         control_size = int(np.prod(control_shape_))
         trailing_states = (time_grid.num_times,) + state_shape_
         if (
@@ -147,6 +151,7 @@ class ILQRPolicy(AbstractControlParameterization):
         self.nominal_states = states
         self.nominal_controls = controls
         self.feedback = gains
+        self.state_layout = state_layout
         self.state_shape = state_shape_
         self.case_shape = case_shape_
         self.control_shape = control_shape_
@@ -156,14 +161,21 @@ class ILQRPolicy(AbstractControlParameterization):
 
     @property
     def feedforward(self) -> Array:
-        """Affine intercepts in the equivalent ``feedback @ state + b`` form."""
-        state_size = int(np.prod(self.state_shape))
+        """Affine intercepts, using local state coordinates for feedback."""
         control_size = int(np.prod(self.control_shape))
-        states = self.nominal_states[..., :-1, :].reshape(
-            self.case_shape + (self.time_grid.num_steps, state_size)
-        )
         controls = self.nominal_controls.reshape(
             self.case_shape + (self.time_grid.num_steps, control_size)
+        )
+        if not self.state_layout.geometry.trivial:
+            return controls.reshape(
+                self.case_shape + (self.time_grid.num_steps,) + self.control_shape
+            )
+        states = jnp.take(
+            self.nominal_states,
+            jnp.arange(self.time_grid.num_steps),
+            axis=len(self.case_shape),
+        ).reshape(
+            self.case_shape + (self.time_grid.num_steps, self.state_layout.local_size)
         )
         intercept = controls - ein.contract("...tij,...tj->...ti", self.feedback, states)
         return intercept.reshape(
@@ -216,17 +228,29 @@ class ILQRPolicy(AbstractControlParameterization):
                 f"ILQRPolicy state must have shape {expected_state_shape}; "
                 f"got {states.shape}."
             )
+        nominal_nodes = jnp.take(
+            self.nominal_states,
+            jnp.arange(self.time_grid.num_steps),
+            axis=len(self.case_shape),
+        )
         nominal_states = jnp.take(
-            self.nominal_states[..., :-1, :],
+            nominal_nodes,
             indices,
             axis=len(self.case_shape),
         )
         gains = jnp.take(self.feedback, indices, axis=len(self.case_shape))
-        state_size = int(np.prod(self.state_shape))
+        local_size = self.state_layout.local_size
         control_size = int(np.prod(self.control_shape))
         prefix = self.case_shape + tuple(query.shape)
-        flat_delta = (states - nominal_states).reshape(prefix + (state_size,))
-        flat_gains = gains.reshape(prefix + (control_size, state_size))
+        sample_count = int(np.prod(prefix)) if prefix else 1
+        flat_states = states.reshape((sample_count,) + self.state_shape)
+        flat_nominal = nominal_states.reshape((sample_count,) + self.state_shape)
+        flat_delta = jax.vmap(
+            lambda nominal, point: jnp.asarray(
+                self.state_layout.geometry.inverse_retract(nominal, point)
+            ).reshape((local_size,))
+        )(flat_nominal, flat_states).reshape(prefix + (local_size,))
+        flat_gains = gains.reshape(prefix + (control_size, local_size))
         correction = ein.contract("...ij,...j->...i", flat_gains, flat_delta)
         return nominal_controls + correction.reshape(prefix + self.control_shape)
 
@@ -378,35 +402,14 @@ def _flow_map(
     problem: ControlProblem,
     differential_flow: DifferentialControlFlow | None,
     /,
-) -> tuple[ILQRFlow, str, str]:
+) -> tuple[ILQRFlow | None, str, str]:
     dynamics = problem.dynamics
     if isinstance(dynamics, DiscreteControlDynamics):
         if differential_flow is not None:
             raise ValueError(
                 "differential_flow must be None for DiscreteControlDynamics."
             )
-
-        def discrete_step(
-            t0: Array,
-            t1: Array,
-            step_index: Array,
-            state: Array,
-            control: Array,
-        ) -> Array:
-            context = DiscreteStepContext(t0, t1, step_index)
-            result = dynamics.system.evaluate_result(
-                context,
-                state,
-                problem.args,
-                inputs=control,
-            )
-            return jnp.where(
-                result.successful,
-                result.accepted_state,
-                jnp.full_like(result.accepted_state, jnp.nan),
-            )
-
-        return discrete_step, problem.time_grid.time_id, "backend:jax:discrete-flow-jvp"
+        return None, problem.time_grid.time_id, "backend:jax:discrete-flow-jvp"
 
     if not isinstance(dynamics, DifferentialControlDynamics):
         raise TypeError("Unsupported control dynamics type for iLQR.")
@@ -471,8 +474,8 @@ def _trajectory_cost(
 
 def _evaluate_ilqr_flow(
     problem: ControlProblem,
-    flow: ILQRFlow,
-    step: int,
+    flow: ILQRFlow | None,
+    step: int | Array,
     state: Array,
     control: Array,
     /,
@@ -493,6 +496,8 @@ def _evaluate_ilqr_flow(
             result.successful,
             result.status,
         )
+    if flow is None:
+        raise ValueError("Differential iLQR evaluation requires an explicit flow.")
     value = jnp.asarray(flow(time, target_time, step_index, state, control))
     return (
         value,
@@ -505,7 +510,7 @@ def _evaluate_ilqr_flow(
 def _open_loop_rollout(
     problem: ControlProblem,
     controls: Array,
-    flow: ILQRFlow,
+    flow: ILQRFlow | None,
     /,
 ) -> tuple[
     Array,
@@ -519,12 +524,16 @@ def _open_loop_rollout(
     valid: list[Array] = [jnp.all(jnp.isfinite(problem.initial_state))]
     candidates: list[Array] = []
     accepted: list[Array] = []
+    transition_attempted: list[Array] = []
     transition_successful: list[Array] = []
     transition_status: list[Array] = []
     failed_step = -1
     active = _host_bool(valid[0])
     for step in range(problem.time_grid.num_steps):
-        if active:
+        attempted = False
+        control_finite = _host_bool(jnp.all(jnp.isfinite(controls[step])))
+        if active and control_finite:
+            attempted = True
             candidate, next_state, successful, backend_status = _evaluate_ilqr_flow(
                 problem,
                 flow,
@@ -536,15 +545,14 @@ def _open_loop_rollout(
                 raise ValueError(
                     "The selected iLQR flow must return exactly dynamics state_shape."
                 )
-            next_valid = (
-                jnp.all(jnp.isfinite(controls[step]))
-                & successful
-                & jnp.all(jnp.isfinite(next_state))
-            )
+            next_valid = successful & jnp.all(jnp.isfinite(next_state))
             active = _host_bool(next_valid)
             if not active:
                 failed_step = step
         else:
+            if active:
+                failed_step = step
+            active = False
             candidate = jnp.full(
                 problem.state_shape, jnp.nan, dtype=problem.initial_state.dtype
             )
@@ -556,7 +564,8 @@ def _open_loop_rollout(
             next_valid = jnp.asarray(False)
         candidates.append(candidate)
         accepted.append(next_state)
-        transition_successful.append(successful)
+        transition_attempted.append(jnp.asarray(attempted))
+        transition_successful.append(jnp.asarray(attempted) & successful)
         transition_status.append(backend_status)
         states.append(next_state)
         valid.append(next_valid)
@@ -573,6 +582,7 @@ def _open_loop_rollout(
         DiscreteTransitionEvidence(
             jnp.stack(candidates),
             jnp.stack(accepted),
+            jnp.stack(transition_attempted),
             jnp.stack(transition_successful),
             jnp.stack(transition_status),
         )
@@ -596,7 +606,7 @@ def _feedback_rollout(
     feedforward: Array,
     feedback: Array,
     step_size: float,
-    flow: ILQRFlow,
+    flow: ILQRFlow | None,
     /,
 ) -> tuple[
     Array,
@@ -606,43 +616,56 @@ def _feedback_rollout(
     Array,
     DiscreteTransitionEvidence | None,
 ]:
-    state_size = int(np.prod(problem.state_shape))
+    state_layout = problem.dynamics.system.state_layout
+    geometry = state_layout.geometry
+    state_size = state_layout.local_size
     control_size = int(np.prod(problem.control_shape))
     states: list[Array] = [problem.initial_state]
     controls: list[Array] = []
     valid: list[Array] = [jnp.all(jnp.isfinite(problem.initial_state))]
     candidates: list[Array] = []
     accepted: list[Array] = []
+    transition_attempted: list[Array] = []
     transition_successful: list[Array] = []
     transition_status: list[Array] = []
     failed_step = -1
     active = _host_bool(valid[0])
     for step in range(problem.time_grid.num_steps):
+        attempted = False
         if active:
-            state_delta = states[-1].reshape((state_size,)) - nominal_states[
-                step
-            ].reshape((state_size,))
+            state_delta = jnp.asarray(
+                geometry.inverse_retract(nominal_states[step], states[-1])
+            ).reshape((state_size,))
             control = (
                 nominal_controls[step].reshape((control_size,))
                 + step_size * feedforward[step]
                 + feedback[step] @ state_delta
             ).reshape(problem.control_shape)
-            candidate, next_state, successful, backend_status = _evaluate_ilqr_flow(
-                problem,
-                flow,
-                step,
-                states[-1],
-                control,
-            )
-            if tuple(next_state.shape) != problem.state_shape:
-                raise ValueError(
-                    "The selected iLQR flow must return exactly dynamics state_shape."
+            control_finite = _host_bool(jnp.all(jnp.isfinite(control)))
+            if control_finite:
+                attempted = True
+                candidate, next_state, successful, backend_status = _evaluate_ilqr_flow(
+                    problem,
+                    flow,
+                    step,
+                    states[-1],
+                    control,
                 )
-            next_valid = (
-                jnp.all(jnp.isfinite(control))
-                & successful
-                & jnp.all(jnp.isfinite(next_state))
-            )
+                if tuple(next_state.shape) != problem.state_shape:
+                    raise ValueError(
+                        "The selected iLQR flow must return exactly dynamics state_shape."
+                    )
+                next_valid = successful & jnp.all(jnp.isfinite(next_state))
+            else:
+                candidate = jnp.full(
+                    problem.state_shape, jnp.nan, dtype=nominal_states.dtype
+                )
+                next_state = jnp.full(
+                    problem.state_shape, jnp.nan, dtype=nominal_states.dtype
+                )
+                successful = jnp.asarray(False)
+                backend_status = jnp.asarray(0, dtype=jnp.int32)
+                next_valid = jnp.asarray(False)
             active = _host_bool(next_valid)
             if not active:
                 failed_step = step
@@ -650,9 +673,7 @@ def _feedback_rollout(
             control = jnp.full(
                 problem.control_shape, jnp.nan, dtype=nominal_controls.dtype
             )
-            candidate = jnp.full(
-                problem.state_shape, jnp.nan, dtype=nominal_states.dtype
-            )
+            candidate = jnp.full(problem.state_shape, jnp.nan, dtype=nominal_states.dtype)
             next_state = jnp.full(
                 problem.state_shape, jnp.nan, dtype=nominal_states.dtype
             )
@@ -662,7 +683,8 @@ def _feedback_rollout(
         controls.append(control)
         candidates.append(candidate)
         accepted.append(next_state)
-        transition_successful.append(successful)
+        transition_attempted.append(jnp.asarray(attempted))
+        transition_successful.append(jnp.asarray(attempted) & successful)
         transition_status.append(backend_status)
         states.append(next_state)
         valid.append(next_valid)
@@ -680,6 +702,7 @@ def _feedback_rollout(
         DiscreteTransitionEvidence(
             jnp.stack(candidates),
             jnp.stack(accepted),
+            jnp.stack(transition_attempted),
             jnp.stack(transition_successful),
             jnp.stack(transition_status),
         )
@@ -700,10 +723,12 @@ def _local_model(
     problem: ControlProblem,
     states: Array,
     controls: Array,
-    flow: ILQRFlow,
+    flow: ILQRFlow | None,
     /,
 ) -> _LocalModel:
-    state_size = int(np.prod(problem.state_shape))
+    state_layout = problem.dynamics.system.state_layout
+    geometry = state_layout.geometry
+    state_size = state_layout.local_size
     control_size = int(np.prod(problem.control_shape))
     total_size = state_size + control_size
     dynamics_state: list[Array] = []
@@ -716,24 +741,41 @@ def _local_model(
 
     for step in range(problem.time_grid.num_steps):
         time = problem.time_grid.times[step]
-        next_time = problem.time_grid.times[step + 1]
+        anchor = states[step]
+        nominal_next = states[step + 1]
         nominal = jnp.concatenate(
             (
-                states[step].reshape((state_size,)),
+                jnp.zeros((state_size,), dtype=states.dtype),
                 controls[step].reshape((control_size,)),
             )
         )
+        local_template = jnp.asarray(geometry.inverse_retract(anchor, anchor))
+        if local_template.size != state_size:
+            raise ValueError(
+                "iLQR geometry local coordinates must match state_layout.local_size."
+            )
+        local_shape = local_template.shape
 
         def flattened_flow(joint: Array) -> Array:
-            state = joint[:state_size].reshape(problem.state_shape)
+            state = jnp.asarray(
+                geometry.retract(anchor, joint[:state_size].reshape(local_shape))
+            )
             control = joint[state_size:].reshape(problem.control_shape)
-            return flow(
-                time,
-                next_time,
-                jnp.asarray(step, dtype=jnp.int32),
+            _, accepted_state, successful, _ = _evaluate_ilqr_flow(
+                problem,
+                flow,
+                step,
                 state,
                 control,
+            )
+            next_error = jnp.asarray(
+                geometry.inverse_retract(nominal_next, accepted_state)
             ).reshape((state_size,))
+            return jnp.where(
+                successful & jnp.all(jnp.isfinite(accepted_state)),
+                next_error,
+                jnp.full_like(next_error, jnp.nan),
+            )
 
         basis = jnp.eye(total_size, dtype=nominal.dtype)
         columns = jax.vmap(
@@ -746,7 +788,9 @@ def _local_model(
         def stage_cost(joint: Array) -> Array:
             if problem.running_cost is None:
                 return jnp.asarray(0.0, dtype=joint.dtype)
-            state = joint[:state_size].reshape(problem.state_shape)
+            state = jnp.asarray(
+                geometry.retract(anchor, joint[:state_size].reshape(local_shape))
+            )
             control = joint[state_size:].reshape(problem.control_shape)
             value = jnp.asarray(problem.running_cost(time, state, control, problem.args))
             if value.shape != ():
@@ -762,15 +806,25 @@ def _local_model(
         running_control_hessian.append(hessian[state_size:, state_size:])
         running_control_state_hessian.append(hessian[state_size:, :state_size])
 
-    terminal_state = states[-1].reshape((state_size,))
+    terminal_anchor = states[-1]
+    terminal_local = jnp.zeros((state_size,), dtype=states.dtype)
+    terminal_template = jnp.asarray(
+        geometry.inverse_retract(terminal_anchor, terminal_anchor)
+    )
 
-    def terminal_cost(flat_state: Array) -> Array:
+    def terminal_cost(local_coordinates: Array) -> Array:
         if problem.terminal_cost is None:
-            return jnp.asarray(0.0, dtype=flat_state.dtype)
+            return jnp.asarray(0.0, dtype=local_coordinates.dtype)
+        terminal_state = jnp.asarray(
+            geometry.retract(
+                terminal_anchor,
+                local_coordinates.reshape(terminal_template.shape),
+            )
+        )
         value = jnp.asarray(
             problem.terminal_cost(
                 problem.time_grid.times[-1],
-                flat_state.reshape(problem.state_shape),
+                terminal_state,
                 problem.args,
             )
         )
@@ -778,8 +832,8 @@ def _local_model(
             raise ValueError("TerminalCost must return a scalar during iLQR.")
         return value
 
-    terminal_gradient = jax.grad(terminal_cost)(terminal_state)
-    terminal_hessian = jax.hessian(terminal_cost)(terminal_state)
+    terminal_gradient = jax.grad(terminal_cost)(terminal_local)
+    terminal_hessian = jax.hessian(terminal_cost)(terminal_local)
     terminal_hessian = 0.5 * (terminal_hessian + terminal_hessian.T)
     a = jnp.stack(dynamics_state)
     b = jnp.stack(dynamics_control)
@@ -967,6 +1021,14 @@ def solve_ilqr(
     if not jnp.issubdtype(controls.dtype, jnp.inexact):
         controls = controls.astype(float)
     flow, discretization_id, backend_id = _flow_map(problem, differential_flow)
+    state_layout = problem.dynamics.system.state_layout
+    if (
+        not state_layout.geometry.supports_exact_inverse
+        or not state_layout.geometry.supports_exact_differential
+    ):
+        raise ValueError(
+            "iLQR requires exact inverse-retraction and retraction-differential geometry."
+        )
     (
         states,
         controls,
@@ -989,7 +1051,7 @@ def solve_ilqr(
         (
             problem.time_grid.num_steps,
             int(np.prod(problem.control_shape)),
-            int(np.prod(problem.state_shape)),
+            state_layout.local_size,
         ),
         dtype=controls.dtype,
     )
@@ -1099,7 +1161,7 @@ def solve_ilqr(
         states,
         controls,
         final_feedback,
-        state_shape=problem.state_shape,
+        state_layout=state_layout,
         control_shape=problem.control_shape,
         policy_id=policy_name,
     )

@@ -108,6 +108,20 @@ def stage_time_extent(solver: dfx.AbstractSolver, /) -> Array:
     return jnp.maximum(1.0, jnp.max(stages))
 
 
+def _requires_geometric_solver(problem: _DelayProblemContract, /) -> bool:
+    geometry = problem.state_geometry
+    if geometry is None:
+        return False
+    if not geometry.trivial:
+        return True
+    if not isinstance(problem, DelayDifferentialProblem):
+        return False
+    return (
+        problem.local_shape != problem.state_shape
+        or problem.tangent_shape != problem.state_shape
+    )
+
+
 def resolve_delay_solver(
     problem: _DelayProblemContract,
     solver: Any | None,
@@ -117,16 +131,19 @@ def resolve_delay_solver(
 
     if solver is None:
         geometry = problem.state_geometry
+        intrinsic = _requires_geometric_solver(problem)
         if problem.stochastic:
-            if geometry is not None and not geometry.trivial:
+            if intrinsic:
+                assert geometry is not None
                 if problem.interpretation == "ito":
                     raise ValueError(
-                        "Nontrivial Itô geometry requires an explicit second-order "
+                        "Intrinsic Itô geometry requires an explicit second-order "
                         "geometric interpretation."
                     )
                 return SRKMK(geometry)
             return dfx.Euler() if problem.interpretation == "ito" else dfx.EulerHeun()
-        if geometry is not None and not geometry.trivial:
+        if intrinsic:
+            assert geometry is not None
             return RKMK(geometry)
         return dfx.Tsit5()
     if not isinstance(solver, dfx.AbstractSolver):
@@ -147,19 +164,20 @@ def _validate_geometry(
                 "A geometric solver requires the delay problem to declare state_geometry."
             )
         return
-    if not geometry.trivial and not geometric:
+    intrinsic = _requires_geometric_solver(problem)
+    if intrinsic and not geometric:
         raise ValueError(
-            "A nontrivial state_geometry requires an AbstractGeometricSolver; "
-            f"got {type(solver).__name__}."
+            "A nontrivial state_geometry or unequal point/local/tangent spaces "
+            f"require an AbstractGeometricSolver; got {type(solver).__name__}."
         )
     if geometric and solver.geometry.geometry_id != geometry.geometry_id:
         raise ValueError(
             "Geometric solver and delay problem must carry the same state_geometry_id."
         )
-    if problem.stochastic and not geometry.trivial:
+    if problem.stochastic and intrinsic:
         if problem.interpretation == "ito":
             raise ValueError(
-                "Nontrivial Itô geometry requires an explicit second-order geometric "
+                "Intrinsic Itô geometry requires an explicit second-order geometric "
                 "interpretation."
             )
         if not isinstance(solver, SRKMK):

@@ -4,6 +4,103 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
+def test_direct_collocation_decision_uses_six_pose_coordinates():
+    geometry = phx.metrix.QuaternionPoseStateGeometry()
+    local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
+    state_layout = phx.dynamics.StateLayout(
+        (7,),
+        geometry=geometry,
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:direct-collocation-pose",
+    )
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    anchors = jnp.stack((pose, pose))
+    layout = phx.control.DirectCollocationDecisionLayout(
+        state_layout=state_layout,
+        state_anchors=anchors,
+        state_array_shape=(2, 7),
+        control_array_shape=(1, 1),
+        parameter_space=None,
+        state_scale=jnp.ones((2, 6)),
+        control_scale=jnp.ones((1, 1)),
+        parameter_scale=None,
+        duration_scale=jnp.asarray(1.0),
+        variable_duration=False,
+        layout_id="test:direct-collocation-pose-decision",
+    )
+    equivalent = anchors.at[:, :4].multiply(-1.0)
+    coordinates = layout.pack(
+        phx.control.DirectCollocationDecision(
+            equivalent,
+            jnp.zeros((1, 1)),
+            None,
+            None,
+        )
+    )
+    decoded = layout.unpack(coordinates)
+
+    assert layout.state_coordinate_shape == (2, 6)
+    assert coordinates.shape == (13,)
+    assert jnp.allclose(
+        jax.vmap(geometry.inverse_retract)(equivalent, decoded.states),
+        0.0,
+    )
+
+
+def test_direct_collocation_pose_defect_uses_exact_six_dimensional_tangent():
+    geometry = phx.metrix.QuaternionPoseStateGeometry()
+    local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
+    state_layout = phx.dynamics.StateLayout(
+        (7,),
+        geometry=geometry,
+        local_space=local_space,
+        tangent_space=local_space,
+        layout_id="test:direct-collocation-pose-defect",
+    )
+    system = phx.dynamics.ContinuousSystem(
+        lambda time, state, control, args: jnp.zeros_like(state),
+        state_layout=state_layout,
+        input_layout=phx.dynamics.InputLayout((1,), roles="control"),
+        system_id="test:direct-collocation-stationary-pose",
+    )
+    pose = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.2, -0.4, 0.7])
+    equivalent = pose.at[:4].multiply(-1.0)
+    problem = phx.control.TrajectoryOptimizationProblem(
+        system,
+        initial_state=pose,
+        problem_id="test:direct-collocation-pose-problem",
+    )
+    mesh = phx.discretization.TemporalMesh(
+        jnp.asarray([0.0, 1.0]),
+        role="collocation",
+        mesh_id="test:direct-collocation-pose-mesh",
+    )
+    plan = phx.control.DirectCollocationPlan(
+        mesh,
+        method=phx.solver.ThetaMethod(0.5, endpoint=False),
+        derivatives=phx.control.DirectCollocationDerivativePolicy(verify=False),
+        plan_id="test:direct-collocation-pose-plan",
+    )
+
+    compilation = phx.control.compile_direct_collocation(
+        problem,
+        plan,
+        jnp.stack((pose, equivalent)),
+        jnp.zeros((1, 1)),
+    )
+    values = compilation.values(compilation.initial_coordinates)
+
+    assert compilation.decision_layout.state_coordinate_shape == (2, 6)
+    assert values.stage_states.shape == (1, 7)
+    assert values.state_rates.shape == (1, 6)
+    assert values.dynamics.shape == (1, 6)
+    assert values.initial.shape == (6,)
+    assert jnp.allclose(values.state_rates, 0.0)
+    assert jnp.allclose(values.dynamics, 0.0)
+    assert jnp.allclose(values.initial, 0.0)
+
+
 def _mesh(nodes=(0.0, 0.25, 1.0), *, identity="direct-mesh"):
     return phx.discretization.TemporalMesh(
         jnp.asarray(nodes),
@@ -174,8 +271,7 @@ def test_input_aware_dae_and_shared_parameters_compile_as_one_sparse_nlp():
 
 def test_sparse_jacobian_action_matches_direct_jvp():
     problem = _integrator_problem(
-        trajectory_cost=lambda trajectory, args: 0.1
-        * jnp.sum(trajectory.states**2)
+        trajectory_cost=lambda trajectory, args: 0.1 * jnp.sum(trajectory.states**2)
     )
     plan = _plan(
         phx.solver.ThetaMethod(0.5, endpoint=False),

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 from phydrax.applications.cardiovascular.hemodynamics._ale import (
@@ -329,22 +330,70 @@ def test_conforming_ale_qualifies_gcl_and_rolls_back_on_minimum_gap():
 
 
 def _contact_residual():
-    prepared = phx.applications.contact.DeformableMPMContactPlan(
-        jnp.asarray([0]),
-        jnp.asarray([[0.0, 0.0]]),
-        jnp.asarray([[0.0, 1.0]]),
-        activation_distance=0.2,
-    ).prepare(1)
-    adapter = phx.applications.contact.DeformableMPMContactAdapter(
-        prepared, phx.applications.contact.PenaltyContactLaw(20.0)
+    contact = phx.applications.contact
+    collision = phx.discretization.contact
+    query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
+    surface_space = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
+    query = contact.prepare_point_contact_participant(
+        query_space,
+        jnp.asarray([[0.0, 0.1]]),
+        vertex_ids=jnp.asarray([0]),
+        body_ids=jnp.asarray([0]),
+        physical_radius=jnp.asarray([0.1]),
     )
+    surface_plan = collision.CollisionSurfacePlan(
+        jnp.asarray([1, 2]),
+        ambient_dimension=2,
+        edges=jnp.asarray([[0, 1]], dtype=jnp.int32),
+        body_ids=1,
+        material_ids=0,
+        static_mask=True,
+        physical_radius=0.1,
+    )
+    surface = collision.LinearContactParticipant(
+        collision.PreparedCollisionSurface(
+            surface_plan,
+            jnp.asarray([[-1.0, 0.0], [1.0, 0.0]]),
+            collision.selection_collision_operator(surface_space, jnp.asarray([0, 1])),
+        )
+    )
+    scene = collision.ContactParticipantScene((query, surface))
+    search = collision.DenseContactSearchPlan(
+        edge_vertex_capacity=4,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.3,
+    )
+    materials = contact.ContactMaterialPairTable.uniform(
+        normal_stiffness=20.0,
+        static_friction=0.0,
+        dynamic_friction=0.0,
+        restitution=0.0,
+        adhesion_energy=0.0,
+        thermal_conductance=0.0,
+        electrical_conductance=0.0,
+        wear_coefficient=0.0,
+        hardness=1.0,
+        roughness=0.0,
+    )
+    closure = contact.ContactClosurePlan(contact.CompliantNormalContactLaw(), materials)
+    route_state = contact.ContactRouteState.empty(0, 1, closure.closure_id)
+    rest = scene.positions((query_space.zeros(), surface_space.zeros()))
     return phx.solver.DeformableContactResidualPlan(
-        adapter,
+        scene,
+        search,
+        closure,
+        route_state,
+        rest,
         lambda q, v, _args: (q, v),
-        lambda q, _v, _args: (jnp.zeros_like(q), jnp.zeros_like(q)),
-        lambda query, _surface, _args: query,
+        lambda _q, _v, _args: (
+            surface_space.zeros(),
+            surface_space.zeros(),
+        ),
+        lambda query_force, _surface_force, _args: query_force,
         kinematics_id="leaflet-node",
         assembly_id="leaflet-contact-residual",
+        activation_distance=0.3,
     )
 
 

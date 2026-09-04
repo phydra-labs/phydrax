@@ -415,6 +415,10 @@ class DelayHistoryView(eqx.Module):
     computed_history: _ComputedDelayHistory
     state_shape: tuple[int, ...] = eqx.field(static=True)
     geometry: AbstractStateGeometry | None
+    derivative_shape: tuple[int, ...] | None = eqx.field(
+        static=True,
+        default=None,
+    )
 
     def value(self, time: Array, /, *, left: bool = True) -> Array:
         def from_initial(query):
@@ -446,14 +450,27 @@ class DelayHistoryView(eqx.Module):
         return value
 
     def derivative(self, time: Array, /, *, left: bool = True) -> Array:
+        use_initial = (time < self.initial_time) | ((time == self.initial_time) & left)
         if self.initial_derivative is None:
-            raise ValueError("Delay history does not define a derivative callback.")
+            value = self.computed_history.derivative(time, left=left)
+            return eqx.error_if(
+                value,
+                use_initial,
+                "Delay history does not define a derivative callback.",
+            )
         initial_derivative = self.initial_derivative
 
         def from_initial(query):
             value = jnp.asarray(initial_derivative(query, self.args))
-            if value.shape != self.state_shape:
-                raise ValueError("Delay history derivative changed its declared shape.")
+            expected = (
+                self.state_shape
+                if self.derivative_shape is None
+                else self.derivative_shape
+            )
+            if value.shape != expected:
+                raise ValueError(
+                    "Delay history derivative changed its declared tangent shape."
+                )
             return value
 
         def from_computed(query):

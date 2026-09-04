@@ -454,9 +454,10 @@ def manifold_radau_stages(
     tangents = jnp.asarray(stage_tangents)
     if tangents.shape[0] != method.stage_count:
         raise ValueError("stage_tangents leading axis must equal stage_count.")
+    local_shape = tangents.shape[1:]
     flat = tangents.reshape((method.stage_count, -1))
     local_stages = ein.contract("ij,jd->id", method.A, flat).reshape(tangents.shape)
-    local_endpoint = ein.contract("j,jd->d", method.b, flat).reshape(anchor_.shape)
+    local_endpoint = ein.contract("j,jd->d", method.b, flat).reshape(local_shape)
     stages = jax.vmap(lambda local: geometry.retract(anchor_, local))(local_stages)
     endpoint = geometry.retract(anchor_, local_endpoint)
     contained = jnp.concatenate(
@@ -548,25 +549,25 @@ def manifold_radau_collocation_defects(
 ) -> ManifoldRadauCollocationDefects:
     """Evaluate fixed-grid Radau defects in one anchored local chart.
 
-    Node states and every local rate have the same array shape. On each
-    interval, ``stage_local_rates`` are derivatives of coordinates in the
-    retraction anchored at the left node. Radau combinations are evaluated in
-    that chart, and endpoint differences use ``inverse_retract`` at the same
-    anchor.
+    Node states are points, while every local rate has the geometry's local
+    shape, which need not equal point storage. On each interval,
+    ``stage_local_rates`` are derivatives of coordinates in the retraction
+    anchored at the left node. Radau combinations are evaluated in that chart.
+    Endpoint defects are observed minus predicted: the supplied right endpoint's
+    coordinates minus the integrated endpoint coordinates in that shared chart.
 
-    Explicit ``dynamics(time, state, control, args)`` returns a state-shaped
-    physical rate. The inverse differential declared by ``geometry.pullback``
-    maps it into the anchored stage coordinates. Implicit
+    Explicit ``dynamics(time, state, control, args)`` returns a point-storage
+    ambient rate. Projection and the exact inverse retraction differential map
+    it into anchored local coordinates. Implicit
     ``dynamics(time, state, state_rate, control, args)`` receives the physical
-    rate produced by the anchored retraction JVP; its state-shaped tangent
-    residual is pulled back through that same differential.
+    tangent produced by ``retraction_jvp``; its physical-tangent residual is
+    mapped through ``retraction_inverse_jvp``.
 
-    Exact inverse-differential capability is required. If it is unavailable,
+    Exact inverse and differential capabilities are required. If unavailable,
     the evaluator returns non-finite sentinel stage defects and invalid typed
-    evidence rather than substituting the unrelated ``to_local`` or
-    ``from_local`` maps. Chart evidence also checks the endpoint round-trip and
-    JVP/pullback consistency. Equation evidence requires finite stage and
-    endpoint defects bounded by ``equation_tolerance``.
+    evidence. Chart evidence checks endpoint round trips and exact differential
+    inverse consistency. Equation evidence requires finite stage and endpoint
+    defects bounded by ``equation_tolerance``.
     """
 
     if not isinstance(method, RadauIIAMethod):
@@ -600,12 +601,17 @@ def manifold_radau_collocation_defects(
     state_shape = states_.shape[1:]
     if any(size == 0 for size in state_shape):
         raise ValueError("Manifold state points must be nonempty.")
-    expected_rate_shape = (intervals, method.stage_count) + state_shape
-    if rates.shape != expected_rate_shape:
+    if rates.ndim < 3 or rates.shape[:2] != (
+        intervals,
+        method.stage_count,
+    ):
         raise ValueError(
-            "stage_local_rates must have shape "
-            f"{expected_rate_shape}; got {rates.shape}."
+            f"stage_local_rates must begin with (interval, stage); got {rates.shape}."
         )
+    local_shape = rates.shape[2:]
+    if any(size == 0 for size in local_shape):
+        raise ValueError("Manifold local rates must be nonempty.")
+    expected_rate_shape = (intervals, method.stage_count) + local_shape
     if controls_.ndim < 1 or controls_.shape[0] != intervals:
         raise ValueError("controls must provide one value per Radau interval.")
     widths = times_[1:] - times_[:-1]
@@ -614,40 +620,98 @@ def manifold_radau_collocation_defects(
         jnp.any(~jnp.isfinite(times_)) | jnp.any(widths <= 0),
         "Manifold Radau interval times must be finite and increasing.",
     )
+    stage_times = times_[:-1, None] + widths[:, None] * method.c[None, :]
+    if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
+        sentinel_dtype = jnp.result_type(states_.dtype, rates.dtype, jnp.float32)
+        stage_states = jnp.full(
+            (intervals, method.stage_count) + state_shape,
+            jnp.nan,
+            dtype=sentinel_dtype,
+        )
+        predicted_endpoints = jnp.full(
+            (intervals,) + state_shape,
+            jnp.nan,
+            dtype=sentinel_dtype,
+        )
+        stage_defects = jnp.full(
+            expected_rate_shape,
+            jnp.nan,
+            dtype=sentinel_dtype,
+        )
+        endpoint_defects = jnp.full(
+            (intervals,) + local_shape,
+            jnp.nan,
+            dtype=sentinel_dtype,
+        )
+        invalid = jnp.zeros((intervals,), dtype=bool)
+        contained = jnp.zeros(
+            (intervals, method.stage_count + 3),
+            dtype=bool,
+        )
+        evidence = ManifoldCollocationEvidence(
+            invalid,
+            contained,
+            invalid,
+            invalid,
+            jnp.asarray(False),
+            chart_tolerance_,
+            equation_tolerance_,
+        )
+        return ManifoldRadauCollocationDefects(
+            stage_times,
+            stage_states,
+            predicted_endpoints,
+            stage_defects,
+            endpoint_defects,
+            evidence,
+            configuration_convention,
+            tangent_convention,
+            implicit,
+            geometry.geometry_id,
+            method.method_id,
+        )
+    tangent_template = jnp.asarray(
+        geometry.retraction_jvp(
+            states_[0],
+            jnp.zeros(local_shape, dtype=rates.dtype),
+            jnp.zeros(local_shape, dtype=rates.dtype),
+        )
+    )
+    tangent_shape = tangent_template.shape
+    expected_tangent_shape = (intervals, method.stage_count) + tangent_shape
 
     flat_rates = rates.reshape((intervals, method.stage_count, -1))
     stage_local = (
         widths[:, None, None] * ein.contract("ij,njd->nid", method.A, flat_rates)
-    ).reshape(rates.shape)
+    ).reshape(expected_rate_shape)
     endpoint_local = (
         widths[:, None] * ein.contract("j,njd->nd", method.b, flat_rates)
-    ).reshape((intervals,) + state_shape)
-    stage_times = times_[:-1, None] + widths[:, None] * method.c[None, :]
+    ).reshape((intervals,) + local_shape)
     anchors = states_[:-1]
     right_endpoints = states_[1:]
 
     def retract_stages(anchor, local):
-        return jax.vmap(lambda value: jnp.asarray(geometry.retract(anchor, value)))(
-            local
-        )
+        return jax.vmap(lambda value: jnp.asarray(geometry.retract(anchor, value)))(local)
 
     stage_states = jax.vmap(retract_stages)(anchors, stage_local)
-    if stage_states.shape != expected_rate_shape:
+    expected_stage_state_shape = (
+        intervals,
+        method.stage_count,
+    ) + state_shape
+    if stage_states.shape != expected_stage_state_shape:
         raise ValueError(
-            "geometry.retract must preserve the state shape at every Radau stage."
+            "geometry.retract must return point-shaped states at every Radau stage."
         )
     predicted_endpoints = jax.vmap(
         lambda anchor, local: jnp.asarray(geometry.retract(anchor, local))
     )(anchors, endpoint_local)
     if predicted_endpoints.shape != (intervals,) + state_shape:
-        raise ValueError("geometry.retract must preserve endpoint state shape.")
+        raise ValueError("geometry.retract must preserve endpoint point shape.")
     observed_endpoint_local = jax.vmap(
         lambda anchor, point: jnp.asarray(geometry.inverse_retract(anchor, point))
     )(anchors, right_endpoints)
-    if observed_endpoint_local.shape != (intervals,) + state_shape:
-        raise ValueError(
-            "geometry.inverse_retract must return state-shaped coordinates."
-        )
+    if observed_endpoint_local.shape != (intervals,) + local_shape:
+        raise ValueError("geometry.inverse_retract must return the declared local shape.")
 
     observed_endpoint_reconstructions = jax.vmap(
         lambda anchor, local: jnp.asarray(geometry.retract(anchor, local))
@@ -678,42 +742,40 @@ def manifold_radau_collocation_defects(
 
     def projected_physical(point, ambient):
         projected = jnp.asarray(geometry.project_tangent(point, ambient))
-        if projected.shape != point.shape:
-            raise ValueError("geometry.project_tangent must preserve state shape.")
+        if projected.shape != tangent_shape:
+            raise ValueError(
+                "geometry.project_tangent must return the physical tangent shape."
+            )
         return projected
 
-    def anchored_pullback(anchor, local, tangent):
-        coordinate_rate = jnp.asarray(geometry.pullback(anchor, local, tangent))
-        if coordinate_rate.shape != anchor.shape:
+    def anchored_inverse_jvp(anchor, point, tangent):
+        coordinate_rate = jnp.asarray(
+            geometry.retraction_inverse_jvp(anchor, point, tangent)
+        )
+        if coordinate_rate.shape != local_shape:
             raise ValueError(
-                "geometry.pullback must return state-shaped stage-coordinate rates."
+                "geometry.retraction_inverse_jvp must return the local rate shape."
             )
         return coordinate_rate
 
     def anchored_jvp(anchor, local, coordinate_rate):
-        _, physical_rate = jax.jvp(
-            lambda coordinates: jnp.asarray(geometry.retract(anchor, coordinates)),
-            (local,),
-            (coordinate_rate,),
+        physical_rate = jnp.asarray(
+            geometry.retraction_jvp(anchor, local, coordinate_rate)
         )
-        if physical_rate.shape != anchor.shape:
+        if physical_rate.shape != tangent_shape:
             raise ValueError(
-                "The anchored retraction JVP must return state-shaped physical rates."
+                "geometry.retraction_jvp must return the physical tangent shape."
             )
         return physical_rate
 
-    def pullback_interval(anchor, local, tangent):
+    def inverse_jvp_interval(anchor, points, tangents):
         return jax.vmap(
-            lambda coordinates, vector: anchored_pullback(
-                anchor, coordinates, vector
-            )
-        )(local, tangent)
+            lambda point, vector: anchored_inverse_jvp(anchor, point, vector)
+        )(points, tangents)
 
     def jvp_interval(anchor, local, coordinate_rate):
         return jax.vmap(
-            lambda coordinates, velocity: anchored_jvp(
-                anchor, coordinates, velocity
-            )
+            lambda coordinates, velocity: anchored_jvp(anchor, coordinates, velocity)
         )(local, coordinate_rate)
 
     def interval_finite(value):
@@ -730,29 +792,18 @@ def manifold_radau_collocation_defects(
     differential_finite = jnp.ones((intervals,), dtype=bool)
     differential_valid = jnp.ones((intervals,), dtype=bool)
 
-    if not geometry.supports_exact_pullback:
-        sentinel_dtype = jnp.result_type(rates.dtype, jnp.float32)
-        stage_defects = jnp.full(
-            expected_rate_shape,
-            jnp.nan,
-            dtype=sentinel_dtype,
-        )
-        tangent_equation_valid = jnp.zeros((intervals,), dtype=bool)
-        dynamics_finite = jnp.zeros((intervals,), dtype=bool)
-        differential_finite = jnp.zeros((intervals,), dtype=bool)
-        differential_valid = jnp.zeros((intervals,), dtype=bool)
-    elif implicit:
+    if implicit:
         ambient_rates = jax.vmap(jvp_interval)(anchors, stage_local, rates)
-        if ambient_rates.shape != expected_rate_shape:
+        if ambient_rates.shape != expected_tangent_shape:
             raise ValueError(
-                "The anchored retraction JVP must preserve the stage-rate shape."
+                "geometry.retraction_jvp must return physical stage tangents."
             )
-        recovered_rates = jax.vmap(pullback_interval)(
-            anchors, stage_local, ambient_rates
+        recovered_rates = jax.vmap(inverse_jvp_interval)(
+            anchors, stage_states, ambient_rates
         )
         if recovered_rates.shape != expected_rate_shape:
             raise ValueError(
-                "geometry.pullback must preserve the stage-rate shape."
+                "geometry.retraction_inverse_jvp must preserve local stage rates."
             )
 
         def interval_equations(t, y, y_dot, control):
@@ -765,23 +816,20 @@ def manifold_radau_collocation_defects(
         ambient_equations = jax.vmap(interval_equations)(
             stage_times, stage_states, ambient_rates, controls_
         )
-        if ambient_equations.shape != expected_rate_shape:
+        if ambient_equations.shape != expected_tangent_shape:
             raise ValueError(
-                "Implicit dynamics must return one state-shaped tangent residual "
-                "per stage."
+                "Implicit dynamics must return one physical-tangent residual per stage."
             )
-        projected_equations = jax.vmap(jax.vmap(projected_physical))(
-            stage_states, ambient_equations
-        )
-        stage_defects = jax.vmap(pullback_interval)(
-            anchors, stage_local, projected_equations
+        projected_equations = ambient_equations
+        stage_defects = jax.vmap(inverse_jvp_interval)(
+            anchors, stage_states, projected_equations
         )
         reconstructed_equations = jax.vmap(jvp_interval)(
             anchors, stage_local, stage_defects
         )
-        if reconstructed_equations.shape != expected_rate_shape:
+        if reconstructed_equations.shape != expected_tangent_shape:
             raise ValueError(
-                "The anchored retraction JVP must preserve the equation shape."
+                "geometry.retraction_jvp must reconstruct physical equations."
             )
         rate_inverse_error = interval_error(recovered_rates, rates)
         equation_inverse_error = interval_error(
@@ -813,34 +861,34 @@ def manifold_radau_collocation_defects(
     else:
 
         def interval_fields(t, y, control):
-            return jax.vmap(
-                lambda ti, yi: jnp.asarray(dynamics(ti, yi, control, args))
-            )(t, y)
+            return jax.vmap(lambda ti, yi: jnp.asarray(dynamics(ti, yi, control, args)))(
+                t, y
+            )
 
-        ambient_fields = jax.vmap(interval_fields)(
-            stage_times, stage_states, controls_
-        )
-        if ambient_fields.shape != expected_rate_shape:
+        ambient_fields = jax.vmap(interval_fields)(stage_times, stage_states, controls_)
+        if (
+            ambient_fields.shape
+            != (
+                intervals,
+                method.stage_count,
+            )
+            + state_shape
+        ):
             raise ValueError(
-                "Explicit dynamics must return one state-shaped vector per stage."
+                "Explicit dynamics must return one point-storage ambient vector "
+                "per stage."
             )
         projected_fields = jax.vmap(jax.vmap(projected_physical))(
             stage_states, ambient_fields
         )
-        local_fields = jax.vmap(pullback_interval)(
-            anchors, stage_local, projected_fields
+        local_fields = jax.vmap(inverse_jvp_interval)(
+            anchors, stage_states, projected_fields
         )
-        reconstructed_fields = jax.vmap(jvp_interval)(
-            anchors, stage_local, local_fields
-        )
-        if reconstructed_fields.shape != expected_rate_shape:
-            raise ValueError(
-                "The anchored retraction JVP must preserve the vector-field shape."
-            )
+        reconstructed_fields = jax.vmap(jvp_interval)(anchors, stage_local, local_fields)
+        if reconstructed_fields.shape != expected_tangent_shape:
+            raise ValueError("geometry.retraction_jvp must reconstruct physical fields.")
         stage_defects = rates - local_fields
-        field_inverse_error = interval_error(
-            reconstructed_fields, projected_fields
-        )
+        field_inverse_error = interval_error(reconstructed_fields, projected_fields)
         differential_finite = (
             interval_finite(projected_fields)
             & interval_finite(local_fields)
@@ -866,9 +914,7 @@ def manifold_radau_collocation_defects(
         & interval_finite(predicted_endpoints)
         & interval_finite(observed_endpoint_reconstructions)
     )
-    equation_finite = interval_finite(stage_defects) & interval_finite(
-        endpoint_defects
-    )
+    equation_finite = interval_finite(stage_defects) & interval_finite(endpoint_defects)
     input_finite = (
         jnp.isfinite(times_[:-1])
         & jnp.isfinite(times_[1:])
@@ -884,10 +930,13 @@ def manifold_radau_collocation_defects(
         & differential_finite
         & equation_finite
     )
+    round_trip_errors = jax.vmap(
+        lambda point, reconstruction: jnp.asarray(
+            geometry.inverse_retract(point, reconstruction)
+        )
+    )(right_endpoints, observed_endpoint_reconstructions)
     chart_error = jnp.max(
-        jnp.abs(observed_endpoint_reconstructions - right_endpoints).reshape(
-            (intervals, -1)
-        ),
+        jnp.abs(round_trip_errors).reshape((intervals, -1)),
         axis=1,
     )
     chart_valid = (

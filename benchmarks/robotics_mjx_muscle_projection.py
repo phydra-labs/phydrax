@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 
 from phydrax.applications.robotics import prepare_mjx_adapter
+from phydrax.dynamics import PlantStepContext
 
 
 def _xml(muscles: int) -> str:
@@ -51,11 +52,24 @@ def benchmark(muscles: int, iterations: int) -> dict[str, object]:
     adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
     projection = adapter.prepare_muscle_projection()
     excitation = jnp.linspace(0.05, 0.95, muscles)
-    control = projection.scatter_control(adapter.control(), excitation)
 
     def rollout(initial):
         def step(state, _):
-            stepped = adapter.step(state, control)
+            control = projection.scatter_control(
+                adapter.control(state),
+                excitation,
+            )
+            context = PlantStepContext(
+                state.time,
+                state.time + jnp.asarray(model.opt.timestep, dtype=state.time.dtype),
+                state.step_index,
+            )
+            stepped = adapter.step(
+                context,
+                state,
+                control,
+                adapter.parameters,
+            )
             refreshed = adapter.refresh(stepped.accepted_state)
             snapshot = projection.snapshot(refreshed.accepted_state)
             return refreshed.accepted_state, (
@@ -65,13 +79,14 @@ def benchmark(muscles: int, iterations: int) -> dict[str, object]:
 
         return jax.lax.scan(step, initial, xs=None, length=iterations)
 
+    initial = adapter.reset(jax.random.key(7), adapter.parameters).accepted_state
     action = eqx.filter_jit(rollout)
     start = time.perf_counter()
-    first = action(adapter.initial_state)
+    first = action(initial)
     first[1][0].block_until_ready()
     compile_and_first_s = time.perf_counter() - start
     start = time.perf_counter()
-    result = action(adapter.initial_state)
+    result = action(initial)
     result[1][0].block_until_ready()
     elapsed = time.perf_counter() - start
     return {

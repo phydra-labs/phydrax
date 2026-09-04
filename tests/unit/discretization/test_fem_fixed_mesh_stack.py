@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 
@@ -169,25 +170,42 @@ def test_observation_restart_and_result_roundtrip(tmp_path):
 
 
 def test_contact_search_and_cut_quadrature_are_deterministic():
-    contact = phx.applications.contact
-    slave = contact.ContactSurface(
-        "slave",
+    collision = phx.discretization.contact
+    source = phx.linalg.ArraySpace((6, 2), dtype=np.float64)
+    slave_plan = collision.CollisionSurfacePlan(
         jnp.asarray([3, 4]),
-        jnp.asarray([[0.5, 0.1], [0.6, 0.1]]),
-        jnp.asarray([[0, 1]], dtype=jnp.int32),
-        jnp.asarray([30]),
+        ambient_dimension=2,
+        edges=jnp.asarray([[0, 1]], dtype=jnp.int32),
     )
-    master = contact.ContactSurface(
-        "master",
+    master_plan = collision.CollisionSurfacePlan(
         jnp.asarray([5, 6, 7, 8]),
-        jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
-        jnp.asarray([[0, 1], [2, 3]], dtype=jnp.int32),
-        jnp.asarray([10, 20]),
+        ambient_dimension=2,
+        edges=jnp.asarray([[0, 1], [2, 3]], dtype=jnp.int32),
+        body_ids=1,
+        material_ids=0,
     )
-    query = contact.ContactQueryPlan(
-        contact.ContactConfiguration(slave, master, epoch=0)
-    ).execute()
-    assert query.patches.minus_facet_ids[0] == 10
+    slave = collision.PreparedCollisionSurface(
+        slave_plan,
+        jnp.asarray([[0.5, 0.1], [0.6, 0.1]]),
+        collision.selection_collision_operator(source, jnp.asarray([0, 1])),
+    )
+    master = collision.PreparedCollisionSurface(
+        master_plan,
+        jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
+        collision.selection_collision_operator(source, jnp.asarray([2, 3, 4, 5])),
+    )
+    scene = collision.PreparedCollisionScene((slave, master))
+    search = collision.DenseContactSearchPlan(
+        edge_vertex_capacity=16,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.5,
+    )
+    epoch = search.build(scene, scene.positions(source.zeros()))
+    repeated = search.build(scene, scene.positions(source.zeros()))
+    np.testing.assert_array_equal(
+        epoch.edge_vertex.route_keys, repeated.edge_vertex.route_keys
+    )
 
     mesh = _mesh()
     fracture = phx.applications.fracture

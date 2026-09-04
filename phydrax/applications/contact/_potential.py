@@ -353,10 +353,14 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         )
         edge_offset = self.scene.vertex_count
         left_edge = jnp.clip(
-            batch.left_feature_ids - edge_offset, 0, max(self.scene.edge_count - 1, 0)
+            batch.left_feature_indices - edge_offset,
+            0,
+            max(self.scene.edge_count - 1, 0),
         ).astype(jnp.int32)
         right_edge = jnp.clip(
-            batch.right_feature_ids - edge_offset, 0, max(self.scene.edge_count - 1, 0)
+            batch.right_feature_indices - edge_offset,
+            0,
+            max(self.scene.edge_count - 1, 0),
         ).astype(jnp.int32)
         value = (
             self._barrier(
@@ -457,8 +461,8 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             return self.energy(value, epoch, rest_positions=rest, stiffness=scale)
 
         energy, gradient = jax.value_and_grad(objective)(current)
-        surface_force = -gradient
-        state_force = self.scene.pullback(surface_force)
+        surface_effort = -gradient
+        state_force = self.scene.effort_pullback(surface_effort)
         vertex_measure, edge_measure = self._measures(rest)
         ev = self._edge_vertex_energy(current, rest, epoch, vertex_measure)
         fv = self._face_vertex_energy(current, rest, epoch, vertex_measure)
@@ -466,17 +470,18 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         minimum_gap = jnp.min(jnp.stack((ev[1], fv[1], ee[1])))
         active_contacts = ev[2] + fv[2] + ee[2]
         minimum_feature = jnp.min(jnp.stack((fv[3], ee[3])))
-        action_reaction = jnp.sum(surface_force, axis=0)
+        action_reaction = jnp.sum(surface_effort, axis=0)
         if self.scene.ambient_dimension == 3:
-            moment = jnp.sum(jnp.cross(current, surface_force), axis=0)
+            moment = jnp.sum(jnp.cross(current, surface_effort), axis=0)
         else:
             moment = jnp.sum(
-                current[:, 0] * surface_force[:, 1] - current[:, 1] * surface_force[:, 0]
+                current[:, 0] * surface_effort[:, 1]
+                - current[:, 1] * surface_effort[:, 0]
             )[None]
         complementarity = jnp.asarray(0.0, dtype=current.dtype)
         finite = (
             jnp.isfinite(energy)
-            & jnp.all(jnp.isfinite(surface_force))
+            & jnp.all(jnp.isfinite(surface_effort))
             & jnp.all(jnp.isfinite(action_reaction))
             & jnp.all(jnp.isfinite(moment))
         )
@@ -485,7 +490,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         successful = epoch.successful & finite & nonnegative & (minimum_gap > 0.0)
         return ContactPotentialEvaluation(
             energy,
-            surface_force,
+            surface_effort,
             state_force,
             minimum_gap,
             active_contacts,

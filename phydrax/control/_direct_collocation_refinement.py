@@ -17,6 +17,7 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import TemporalMesh
+from ..dynamics import StateLayout
 from ..optim import AbstractMinimizationMethod, Bounds, OptimizationTermination
 from ._direct_collocation import (
     compile_direct_collocation,
@@ -55,6 +56,24 @@ def _nonnegative(value: float, owner: str, /) -> float:
 
 def _maximum_absolute(value: Array, /) -> Array:
     return jnp.max(jnp.abs(value), initial=jnp.asarray(0.0, dtype=value.dtype))
+
+
+def _maximum_state_error(
+    state_layout: StateLayout,
+    references: Array,
+    points: Array,
+    /,
+) -> Array:
+    if references.shape != points.shape:
+        raise ValueError("State error operands must have identical shapes.")
+    flat_references = references.reshape((-1,) + state_layout.shape)
+    flat_points = points.reshape((-1,) + state_layout.shape)
+    local_errors = jax.vmap(
+        lambda reference, point: jnp.asarray(
+            state_layout.geometry.inverse_retract(reference, point)
+        ).reshape((state_layout.local_size,))
+    )(flat_references, flat_points)
+    return _maximum_absolute(local_errors)
 
 
 def _tree_error(left: Any, right: Any, /) -> Array:
@@ -273,7 +292,9 @@ def _refined_bounds(
     if not _bound_is_reusable(source.states, problem.state_shape):
         raise ValueError("Mesh-shaped state bounds require a refinement bound provider.")
     if not _bound_is_reusable(source.controls, problem.control_shape):
-        raise ValueError("Mesh-shaped control bounds require a refinement bound provider.")
+        raise ValueError(
+            "Mesh-shaped control bounds require a refinement bound provider."
+        )
     return source
 
 
@@ -286,6 +307,7 @@ def _view(result: DirectCollocationResult, /) -> TrajectoryOptimizationView:
         case_shape=problem.case_shape,
         state_shape=problem.state_shape,
         control_shape=problem.control_shape,
+        state_geometry=problem.state_layout.geometry,
     )
 
 
@@ -349,9 +371,7 @@ def refine_direct_collocation(
         duration = result.duration
         target_times = (
             target_mesh.t0
-            + (target_mesh.nodes - target_mesh.t0)
-            * duration
-            / target_mesh.duration
+            + (target_mesh.nodes - target_mesh.t0) * duration / target_mesh.duration
         )
     else:
         duration = None
@@ -367,8 +387,16 @@ def refine_direct_collocation(
         duration,
     )
     target_positions = np.searchsorted(target_nodes, source_nodes)
-    old_node_states = jnp.take(states, jnp.asarray(target_positions), axis=len(result.compilation.problem.case_shape))
-    old_node_error = _maximum_absolute(old_node_states - result.decision.states)
+    old_node_states = jnp.take(
+        states,
+        jnp.asarray(target_positions),
+        axis=len(result.compilation.problem.case_shape),
+    )
+    old_node_error = _maximum_state_error(
+        result.compilation.problem.state_layout,
+        result.decision.states,
+        old_node_states,
+    )
     transferred_control = source_view.evaluate_control(stage_times)
     control_error = _maximum_absolute(controls - transferred_control)
     parameter_error = _tree_error(decision.parameters, result.decision.parameters)
@@ -455,7 +483,10 @@ def solve_refined_direct_collocation(
         )
     current = initial_result
     levels: list[DirectCollocationRefinementLevel] = []
-    if float(current.diagnostics.maximum_off_grid_defect) <= policy.off_grid_defect_tolerance:
+    if (
+        float(current.diagnostics.maximum_off_grid_defect)
+        <= policy.off_grid_defect_tolerance
+    ):
         return _study(
             initial_result,
             levels,
@@ -508,13 +539,13 @@ def solve_refined_direct_collocation(
         source_view = _view(current)
         target_view = _view(target)
         common_times = current.trajectory.time_grid.times
-        state_change = _maximum_absolute(
-            target_view.evaluate_state(common_times) - source_view.states
+        state_change = _maximum_state_error(
+            current.compilation.problem.state_layout,
+            source_view.states,
+            target_view.evaluate_state(common_times),
         )
         theta = current.compilation.plan.method.theta
-        source_stage_times = (
-            (1.0 - theta) * common_times[:-1] + theta * common_times[1:]
-        )
+        source_stage_times = (1.0 - theta) * common_times[:-1] + theta * common_times[1:]
         control_change = _maximum_absolute(
             target_view.evaluate_control(source_stage_times)
             - source_view.evaluate_control(source_stage_times)

@@ -3,6 +3,7 @@
 #
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -61,6 +62,88 @@ def _compiled_dem(
         neighborhood=neighborhood_,
         execution=execution,
     )
+
+
+def _dem_role_value(state, scale):
+    return jax.tree.map(
+        lambda leaf: (
+            jnp.full_like(leaf, scale)
+            if eqx.is_inexact_array(leaf)
+            else jnp.zeros_like(leaf)
+        ),
+        state,
+    )
+
+
+def _dem_tree_pair(reference, covector, vector):
+    products = (
+        jnp.vdot(covector_leaf, vector_leaf)
+        for base, covector_leaf, vector_leaf in zip(
+            jax.tree.leaves(reference),
+            jax.tree.leaves(covector),
+            jax.tree.leaves(vector),
+            strict=True,
+        )
+        if eqx.is_inexact_array(base)
+    )
+    return sum(products, start=jnp.asarray(0.0))
+
+
+def test_dem_state_geometry_certifies_four_spaces_and_frozen_routes():
+    compiled = _compiled_dem()
+    state = compiled.initialize_state(
+        0.0,
+        jnp.asarray([[0.0, 0.0], [0.9, 0.0]]),
+        jnp.zeros((2, 2)),
+    )
+    geometry = compiled.dynamics.state_geometry
+    local = _dem_role_value(state, 1.0e-4)
+    direction = _dem_role_value(state, -2.0e-4)
+    cotangent = _dem_role_value(state, 3.0e-4)
+
+    point = geometry.retract(state, local)
+    recovered = geometry.inverse_retract(state, point)
+    for expected, actual in zip(
+        jax.tree.leaves(local),
+        jax.tree.leaves(recovered),
+        strict=True,
+    ):
+        assert jnp.allclose(actual, expected)
+
+    pushed = geometry.retraction_jvp(state, local, direction)
+    inverse_pushed = geometry.retraction_inverse_jvp(state, point, pushed)
+    pulled = geometry.retraction_vjp(state, local, cotangent)
+    assert _dem_tree_pair(state, cotangent, pushed) == pytest.approx(
+        _dem_tree_pair(state, pulled, direction)
+    )
+    for expected, actual in zip(
+        jax.tree.leaves(direction),
+        jax.tree.leaves(inverse_pushed),
+        strict=True,
+    ):
+        assert jnp.allclose(actual, expected)
+
+    transported = geometry.transport_tangent(state, point, pushed)
+    transport_pullback = geometry.transport_cotangent_pullback(
+        state,
+        point,
+        cotangent,
+    )
+    assert _dem_tree_pair(state, cotangent, transported) == pytest.approx(
+        _dem_tree_pair(state, transport_pullback, pushed)
+    )
+    assert jnp.array_equal(
+        point.particle_history.pair_keys,
+        state.particle_history.pair_keys,
+    )
+
+    incompatible = eqx.tree_at(
+        lambda value: value.particle_history.pair_keys,
+        point,
+        point.particle_history.pair_keys.at[0, 0].add(1),
+    )
+    with pytest.raises(Exception, match="incompatible frozen route"):
+        geometry.inverse_retract(state, incompatible)
 
 
 def test_linear_sphere_contact_has_action_reaction_and_torque_balance():

@@ -465,11 +465,24 @@ class PreparedLeafletContactWorkflow(StrictModule, NonTrainableState):
         return LeafletFSIState(configuration_, velocity_, fluid_state)
 
     def _contact_evidence(
-        self, result: DeformableContactResidualEvaluation, /
+        self,
+        result: DeformableContactResidualEvaluation,
+        configuration: Array,
+        /,
     ) -> LeafletContactEvidence:
-        gap = result.contact.geometry.gap
-        pressure = result.contact.normal_pressure
-        balance = result.contact.transpose.balance_residual
+        contact = result.contact
+        gap = jnp.asarray(configuration)[..., -1].reshape((-1,))
+        pressure = jnp.concatenate(
+            tuple(
+                jnp.where(kinematics.valid, response.normal.traction, 0.0)
+                for kinematics, response in zip(
+                    contact.kinematics.batches,
+                    contact.closure.batches,
+                    strict=True,
+                )
+            )
+        )
+        balance = contact.assembly.action_reaction_residual
         minimum_gap = jnp.min(gap)
         maximum_penetration = jnp.max(jnp.maximum(-gap, 0.0))
         force_balance_residual = jnp.sqrt(jnp.sum(balance**2))
@@ -479,7 +492,10 @@ class PreparedLeafletContactWorkflow(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(pressure))
             & jnp.isfinite(force_balance_residual)
         )
-        native_successful = jnp.asarray(result.successful)
+        activation_distance = self.plan.contact.activation_distance
+        native_successful = jnp.asarray(result.successful) & (
+            True if activation_distance is None else minimum_gap < activation_distance
+        )
         successful = (
             native_successful
             & finite
@@ -511,7 +527,8 @@ class PreparedLeafletContactWorkflow(StrictModule, NonTrainableState):
     ) -> LeafletContactTransition:
         if not isinstance(state, LeafletFSIState):
             raise TypeError("state must be LeafletFSIState.")
-        if isinstance(self.plan.fluid_route, ImmersedLeafletRoute):
+        fluid_route = self.plan.fluid_route
+        if isinstance(fluid_route, ImmersedLeafletRoute):
             if not isinstance(state.fluid_state, ImmersedLeafletFluidState):
                 raise TypeError("Leaflet state does not match its immersed route.")
         elif not isinstance(state.fluid_state, CutCellLeafletFluidState):
@@ -521,7 +538,10 @@ class PreparedLeafletContactWorkflow(StrictModule, NonTrainableState):
         contact_before = self.plan.contact.evaluate(
             state.configuration, state.velocity, args
         )
-        before_evidence = self._contact_evidence(contact_before)
+        before_evidence = self._contact_evidence(
+            contact_before,
+            state.configuration,
+        )
         structural = self.plan.structural_advance(
             start,
             step,
@@ -550,15 +570,30 @@ class PreparedLeafletContactWorkflow(StrictModule, NonTrainableState):
         contact_candidate = self.plan.contact.evaluate(
             candidate_configuration, candidate_velocity, args
         )
-        candidate_contact_evidence = self._contact_evidence(contact_candidate)
-        candidate_fluid_state, fluid_evidence = self.plan.fluid_route.evaluate(
+        candidate_contact_evidence = self._contact_evidence(
+            contact_candidate,
             candidate_configuration,
-            candidate_velocity,
-            start + step,
-            step,
-            state.fluid_state,
-            args,
         )
+        if isinstance(fluid_route, ImmersedLeafletRoute):
+            assert isinstance(state.fluid_state, ImmersedLeafletFluidState)
+            candidate_fluid_state, fluid_evidence = fluid_route.evaluate(
+                candidate_configuration,
+                candidate_velocity,
+                start + step,
+                step,
+                state.fluid_state,
+                args,
+            )
+        else:
+            assert isinstance(state.fluid_state, CutCellLeafletFluidState)
+            candidate_fluid_state, fluid_evidence = fluid_route.evaluate(
+                candidate_configuration,
+                candidate_velocity,
+                start + step,
+                step,
+                state.fluid_state,
+                args,
+            )
         finite_state = (
             jnp.isfinite(start)
             & jnp.isfinite(step)

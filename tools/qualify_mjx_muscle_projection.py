@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from phydrax.applications.robotics import prepare_mjx_adapter
+from phydrax.dynamics import PlantStepContext
 
 
 _MODEL = """
@@ -45,19 +46,32 @@ def qualify(steps: int) -> dict[str, object]:
     model = mujoco.MjModel.from_xml_string(_MODEL)
     adapter = prepare_mjx_adapter(model, device=jax.devices("cpu")[0])
     projection = adapter.prepare_muscle_projection()
-    state = adapter.initial_state
-    control = projection.scatter_control(adapter.control(state), jnp.asarray([0.65]))
+    state = adapter.reset(jax.random.key(7), adapter.parameters).accepted_state
     for _ in range(steps):
-        result = adapter.step(state, control)
+        control = projection.scatter_control(
+            adapter.control(state),
+            jnp.asarray([0.65]),
+        )
+        context = PlantStepContext(
+            state.time,
+            state.time + jnp.asarray(model.opt.timestep, dtype=state.time.dtype),
+            state.step_index,
+        )
+        result = adapter.step(
+            context,
+            state,
+            control,
+            adapter.parameters,
+        )
         if not bool(result.successful):
             raise RuntimeError("MJX candidate failed before provider comparison.")
         state = result.accepted_state
     host = mujoco.MjData(model)
-    host.qpos[:] = np.asarray(state.opaque.qpos)
-    host.qvel[:] = np.asarray(state.opaque.qvel)
-    host.act[:] = np.asarray(state.opaque.act)
-    host.ctrl[:] = np.asarray(state.opaque.ctrl)
-    host.time = float(np.asarray(state.opaque.time))
+    host.qpos[:] = np.asarray(state.payload.opaque.qpos)
+    host.qvel[:] = np.asarray(state.payload.opaque.qvel)
+    host.act[:] = np.asarray(state.payload.opaque.act)
+    host.ctrl[:] = np.asarray(state.payload.opaque.ctrl)
+    host.time = float(np.asarray(state.payload.opaque.time))
     mujoco.mj_forward(model, host)
     refreshed = adapter.refresh(state)
     if not bool(refreshed.successful):

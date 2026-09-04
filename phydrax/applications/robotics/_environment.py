@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from math import prod
 from types import BuiltinFunctionType, FunctionType, MethodType
@@ -17,14 +17,19 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
-from ...dynamics._system import (
-    DiscreteStepContext,
-    DiscreteSystem,
-    DiscreteTransitionResult,
+from ...dynamics._plant import (
+    AbstractDiscretePlant,
+    ArrayDiscreteSystemPlant,
+    PlantParameters,
+    PlantRuntimeState,
+    PlantStepContext,
 )
+from ...dynamics._system import DiscreteSystem
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -40,11 +45,53 @@ def _shape(value: tuple[int, ...], owner: str, /) -> tuple[int, ...]:
     return shape
 
 
-def _key_data(key: ArrayLike, /) -> Array:
+def _case_shape(value: Sequence[int], ndim: int, /) -> tuple[int, ...]:
+    shape = tuple(int(size) for size in value)
+    if len(shape) != ndim:
+        raise ValueError(f"case_shape must contain exactly {ndim} dimensions.")
+    if any(size <= 0 for size in shape):
+        raise ValueError("case_shape dimensions must be positive.")
+    return shape
+
+
+def _key_data(key: ArrayLike, case_shape: tuple[int, ...], /) -> Array:
+    array = jnp.asarray(key)
+    if array.dtype == jnp.dtype(jnp.uint32) and array.shape == case_shape + (2,):
+        return array
     data = jnp.asarray(jax.random.key_data(key), dtype=jnp.uint32)
-    if data.shape != (2,):
-        raise ValueError("Robot environment PRNG keys must have shape (2,).")
+    if data.shape != case_shape + (2,):
+        raise ValueError(
+            f"Robot environment PRNG key data must have shape {case_shape + (2,)}."
+        )
     return data
+
+
+def _split_key_data(key: Array, count: int, /) -> tuple[Array, ...]:
+    if count <= 0:
+        raise ValueError("PRNG split count must be positive.")
+    case_shape = key.shape[:-1]
+    typed = jax.random.wrap_key_data(key)
+    flat = jnp.reshape(typed, (-1,))
+    split = jax.vmap(lambda item: jax.random.split(item, count))(flat)
+    data = jnp.reshape(
+        jax.random.key_data(split),
+        case_shape + (count, 2),
+    )
+    return tuple(data[..., index, :] for index in range(count))
+
+
+def _select_keys(
+    selector: Array,
+    candidate: Array,
+    source: Array,
+    case_shape: tuple[int, ...],
+    /,
+) -> Array:
+    candidate_data = jax.random.key_data(candidate)
+    source_data = jax.random.key_data(source)
+    selected = jnp.where(selector[..., None], candidate_data, source_data)
+    return jax.random.wrap_key_data(selected) if source.shape == case_shape else selected
+
 
 def _type_id(value: Any, /) -> str:
     cls = value if isinstance(value, type) else type(value)
@@ -120,6 +167,7 @@ def _provenance_value(value: Any, owner: str, /) -> Any:
         f"{owner} contains unsupported provenance value of type {_type_id(value)}."
     )
 
+
 def _callable_provenance(value: Callable[..., Any], owner: str, /) -> Any:
     if isinstance(value, (FunctionType, BuiltinFunctionType)):
         return {
@@ -143,8 +191,14 @@ def _callable_provenance(value: Callable[..., Any], owner: str, /) -> Any:
     return {"type": _type_id(value)}
 
 
-def _tree_all_finite(tree: Any, owner: str, /) -> Array:
-    finite: list[Array] = []
+def _tree_case_all_finite(
+    tree: Any,
+    case_shape: tuple[int, ...],
+    owner: str,
+    /,
+) -> Array:
+    finite = jnp.ones(case_shape, dtype=bool)
+    case_ndim = len(case_shape)
     for leaf in jax.tree.leaves(tree):
         array = jnp.asarray(leaf)
         if not (
@@ -152,10 +206,11 @@ def _tree_all_finite(tree: Any, owner: str, /) -> Array:
             or jnp.issubdtype(array.dtype, jnp.bool_)
         ):
             raise TypeError(f"{owner} must be a PyTree of numeric array leaves.")
-        finite.append(jnp.all(jnp.isfinite(array)))
-    if not finite:
-        return jnp.asarray(True)
-    return jnp.all(jnp.stack(tuple(finite)))
+        if array.shape[:case_ndim] != case_shape:
+            raise ValueError(f"{owner} leaves must begin with the plant case shape.")
+        axes = tuple(range(case_ndim, array.ndim))
+        finite = finite & jnp.all(jnp.isfinite(array), axis=axes)
+    return finite
 
 
 def _finite_or_zero_tree(tree: Any, /) -> Any:
@@ -168,23 +223,76 @@ def _finite_or_zero_tree(tree: Any, /) -> Any:
         tree,
     )
 
+
 def _error_if_tree(tree: Any, predicate: Array, message: str, /) -> Any:
     return jax.tree.map(
-        lambda value: eqx.error_if(value, predicate, message),
+        lambda value: eqx.error_if(value, jnp.any(predicate), message),
         tree,
     )
 
 
-def _select_tree(predicate: Array, candidate: Any, source: Any, /) -> Any:
-    return jax.tree.map(
-        lambda proposed, previous: jnp.where(predicate, proposed, previous),
-        candidate,
-        source,
+def _select_tree(
+    predicate: Array,
+    candidate: Any,
+    source: Any,
+    case_shape: tuple[int, ...],
+    /,
+) -> Any:
+    if jax.tree.structure(candidate) != jax.tree.structure(source):
+        raise ValueError("Candidate and source environment PyTrees must match.")
+    case_ndim = len(case_shape)
+
+    def select(proposed: Any, previous: Any) -> Array:
+        proposed_array = jnp.asarray(proposed)
+        previous_array = jnp.asarray(previous)
+        if proposed_array.shape != previous_array.shape:
+            raise ValueError("Candidate and source environment leaf shapes must match.")
+        if proposed_array.shape[:case_ndim] != case_shape:
+            raise ValueError("Environment state leaves must begin with the case shape.")
+        expanded = jnp.reshape(
+            predicate,
+            case_shape + (1,) * (proposed_array.ndim - case_ndim),
+        )
+        return jnp.where(expanded, proposed_array, previous_array)
+
+    return jax.tree.map(select, candidate, source)
+
+
+def _select_plant_state(
+    plant: AbstractDiscretePlant,
+    predicate: Array,
+    candidate: PlantRuntimeState,
+    source: PlantRuntimeState,
+    case_shape: tuple[int, ...],
+    /,
+) -> PlantRuntimeState:
+    return PlantRuntimeState(
+        plant.state_schema.select_cases(
+            predicate,
+            candidate.payload,
+            source.payload,
+        ),
+        jnp.where(predicate, candidate.time, source.time),
+        jnp.where(predicate, candidate.step_index, source.step_index),
+        _select_keys(predicate, candidate.key, source.key, case_shape),
+        source.semantic_provenance_id,
+        source.numeric_revision_id,
+        source.state_schema_id,
+        source.execution_signature_id,
+    )
+
+
+def _plant_ids(plant: AbstractDiscretePlant, /) -> tuple[str, str, str, str]:
+    return (
+        plant.semantic_provenance.semantic_id,
+        plant.numeric_revision.revision_id,
+        plant.state_schema.schema_id,
+        plant.execution_signature.signature_id,
     )
 
 
 class RobotTaskEvaluation(StrictModule):
-    """Task-owned outputs at one accepted plant and task state."""
+    """Task-owned outputs at one accepted complete plant state."""
 
     observation: Array
     terminated: Array
@@ -192,7 +300,7 @@ class RobotTaskEvaluation(StrictModule):
 
 
 class RobotTaskTransition(StrictModule):
-    """Task-owned candidate state and outputs for one plant transition."""
+    """Task-owned candidate state and outputs for one accepted plant transition."""
 
     task_state: Any
     observation: Array
@@ -211,32 +319,32 @@ class AbstractRobotTask(StrictModule):
     descriptor_shape: AbstractAttribute[tuple[int, ...]]
 
     @abstractmethod
-    def initialize(self, plant_state: Array, key: Array, /) -> Any:
-        """Return fixed-structure task state for a freshly initialized plant."""
+    def initialize(self, plant_state: PlantRuntimeState, key: Array, /) -> Any:
+        """Return fixed-structure task state for a freshly accepted plant state."""
         raise NotImplementedError
 
     @abstractmethod
     def evaluate(
         self,
-        plant_state: Array,
+        plant_state: PlantRuntimeState,
         task_state: Any,
         /,
     ) -> RobotTaskEvaluation:
-        """Observe and classify one accepted task state without changing it."""
+        """Observe and classify one accepted complete plant state."""
         raise NotImplementedError
 
     @abstractmethod
     def transition(
         self,
-        context: DiscreteStepContext,
-        source_plant_state: Array,
-        accepted_plant_state: Array,
-        action: Array,
+        context: PlantStepContext,
+        source_plant_state: PlantRuntimeState,
+        accepted_plant_state: PlantRuntimeState,
+        action: Any,
         task_state: Any,
         key: Array,
         /,
     ) -> RobotTaskTransition:
-        """Evaluate reward and termination for one mechanics-accepted plant step."""
+        """Evaluate one mechanics-accepted complete plant transition."""
         raise NotImplementedError
 
 
@@ -259,7 +367,7 @@ class AbstractRobotEnvironmentWrapper(StrictModule):
     @abstractmethod
     def initialize(
         self,
-        plant_state: Array,
+        plant_state: PlantRuntimeState,
         task_state: Any,
         key: Array,
         /,
@@ -270,9 +378,9 @@ class AbstractRobotEnvironmentWrapper(StrictModule):
     @abstractmethod
     def transition(
         self,
-        context: DiscreteStepContext,
+        context: PlantStepContext,
         wrapper_state: Any,
-        plant_state: Array,
+        plant_state: PlantRuntimeState,
         task_state: Any,
         observation: Array,
         terminated: Array,
@@ -286,10 +394,9 @@ class AbstractRobotEnvironmentWrapper(StrictModule):
 class RobotEnvironmentState(StrictModule):
     """Complete accepted runtime state for one immutable robot environment."""
 
-    plant_state: Array
+    plant_state: PlantRuntimeState
     key: Array
-    clock: Array
-    step_index: Array
+    episode_step_index: Array
     task_state: Any
     wrapper_states: tuple[Any, ...]
     environment_id: str = eqx.field(static=True)
@@ -297,7 +404,7 @@ class RobotEnvironmentState(StrictModule):
 
 
 class RobotEnvironmentReset(StrictModule):
-    """Fresh environment state and its task-owned outputs."""
+    """Fresh environment state and task-owned outputs."""
 
     state: RobotEnvironmentState
     observation: Array
@@ -313,14 +420,19 @@ class RobotEnvironmentEvidence(StrictModule):
     attempted: Array
     repeat_successful: Array
     repeat_status: Array
+    repeat_backend_status: Array
+    plant_evidence: tuple[Any, ...]
     accepted: Array
     rollback_applied: Array
     mechanics_successful: Array
     mechanics_status: Array
-    source_step_index: Array
-    candidate_step_index: Array
+    source_episode_step_index: Array
+    candidate_episode_step_index: Array
     environment_id: str = eqx.field(static=True)
-    system_id: str = eqx.field(static=True)
+    plant_semantic_provenance_id: str = eqx.field(static=True)
+    plant_numeric_revision_id: str = eqx.field(static=True)
+    plant_state_schema_id: str = eqx.field(static=True)
+    plant_execution_signature_id: str = eqx.field(static=True)
     task_id: str = eqx.field(static=True)
     wrapper_ids: tuple[str, ...] = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
@@ -368,48 +480,55 @@ class _RobotSubstep(StrictModule):
     task: RobotTaskTransition
     wrapper_truncated: Array
     outputs_finite: Array
+    plant_attempted: Array
     mechanics_successful: Array
     mechanics_status: Array
+    backend_status: Array
+    plant_evidence: Any
 
 
 class PreparedRobotEnvironment(StrictModule, NonTrainableState):
-    """Prepared composition of one array-state plant, task, and wrapper stack."""
+    """Prepared composition of one complete-state plant, task, and wrappers."""
 
-    system: DiscreteSystem
-    initializer: Callable[[Array], ArrayLike]
+    plant: AbstractDiscretePlant
+    parameters: PlantParameters
     task: AbstractRobotTask
     wrappers: tuple[AbstractRobotEnvironmentWrapper, ...]
     step_size: float = eqx.field(static=True)
     action_repeat: int = eqx.field(static=True)
     auto_reset: bool = eqx.field(static=True)
-    initializer_id: str = eqx.field(static=True)
     environment_id: str = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        system: DiscreteSystem,
-        initializer: Callable[[Array], ArrayLike],
+        plant: AbstractDiscretePlant,
+        parameters: PlantParameters,
         task: AbstractRobotTask,
         wrappers: tuple[AbstractRobotEnvironmentWrapper, ...] = (),
         /,
         *,
-        initializer_id: str,
-        step_size: float | None = None,
+        step_size: float,
         environment_id: str | None = None,
     ):
-        if not isinstance(system, DiscreteSystem):
-            raise TypeError("system must be a DiscreteSystem.")
-        if system.input_layout is None:
-            raise ValueError("Robot environments require a system InputLayout.")
-        if len(system.state_layout.shape) != 1:
-            raise ValueError("Robot plant state must use a rank-1 StateLayout.")
-        if len(system.input_layout.shape) != 1:
-            raise ValueError("Robot actions must use a rank-1 InputLayout.")
-        if any(role != "control" for role in system.input_layout.roles):
-            raise ValueError("Every robot environment input must have role 'control'.")
-        if not callable(initializer):
-            raise TypeError("initializer must be callable.")
+        if not isinstance(plant, AbstractDiscretePlant):
+            raise TypeError("plant must be an AbstractDiscretePlant.")
+        if plant.control_schema is None:
+            raise ValueError("Robot environments require a plant control_schema.")
+        if not isinstance(parameters, PlantParameters):
+            raise TypeError("parameters must be PlantParameters.")
+        if parameters.schema_id != plant.parameter_schema.schema_id:
+            raise ValueError("PlantParameters schema_id does not match the plant.")
+        if (
+            parameters.numeric_revision.semantic_id
+            != plant.semantic_provenance.semantic_id
+        ):
+            raise ValueError(
+                "PlantParameters semantic provenance does not match the plant."
+            )
+        if parameters.numeric_revision.revision_id != plant.numeric_revision.revision_id:
+            raise ValueError("PlantParameters numeric revision does not match the plant.")
+        plant.parameter_schema.validate(parameters.values)
         if not isinstance(task, AbstractRobotTask):
             raise TypeError("task must be an AbstractRobotTask.")
         wrapper_tuple = tuple(wrappers)
@@ -421,15 +540,14 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 "wrappers must contain only AbstractRobotEnvironmentWrapper instances."
             )
 
-        task_id = _identifier(task.task_id, "task_id")
-        observation_shape = _shape(task.observation_shape, "observation_shape")
-        descriptor_shape = _shape(task.descriptor_shape, "descriptor_shape")
+        _identifier(task.task_id, "task_id")
+        _shape(task.observation_shape, "observation_shape")
+        _shape(task.descriptor_shape, "descriptor_shape")
         reward_names = tuple(str(name) for name in task.reward_component_names)
         if not reward_names or any(not name for name in reward_names):
             raise ValueError("reward_component_names must contain non-empty names.")
         if len(set(reward_names)) != len(reward_names):
             raise ValueError("reward_component_names must be unique.")
-        del observation_shape, descriptor_shape
 
         wrapper_ids: list[str] = []
         repeats: list[int] = []
@@ -444,67 +562,29 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             if not isinstance(wrapper.auto_reset, bool):
                 raise TypeError("Wrapper auto_reset must be bool.")
 
-        resolved_step = system.step_size if step_size is None else float(step_size)
-        if resolved_step is None:
-            raise ValueError(
-                "step_size is required when the DiscreteSystem has no fixed step_size."
-            )
-        resolved_step = float(resolved_step)
+        resolved_step = float(step_size)
         if not np.isfinite(resolved_step) or resolved_step <= 0.0:
             raise ValueError("step_size must be finite and positive.")
-        if system.step_size is not None and not np.isclose(
-            resolved_step,
-            system.step_size,
-            rtol=system.step_rtol,
-            atol=system.step_atol,
-        ):
-            raise ValueError("step_size must match the DiscreteSystem fixed step_size.")
-
-        initialization_id = _identifier(initializer_id, "initializer_id")
         resolved_repeat = prod(repeats) if repeats else 1
-        resolved_auto_reset = any(
-            wrapper.auto_reset for wrapper in wrapper_tuple
-        )
+        resolved_auto_reset = any(wrapper.auto_reset for wrapper in wrapper_tuple)
+        plant_ids = _plant_ids(plant)
         provenance_id = canonical_fingerprint(
             {
-                "system": {
-                    "system_id": system.system_id,
-                    "transition": _callable_provenance(
-                        system.transition,
-                        "system transition",
-                    ),
-                    "step_size": system.step_size,
-                    "step_rtol": system.step_rtol,
-                    "step_atol": system.step_atol,
-                    "minimum_step_size": system.minimum_step_size,
-                    "maximum_step_size": system.maximum_step_size,
+                "plant": {
+                    "semantic_provenance_id": plant_ids[0],
+                    "numeric_revision_id": plant_ids[1],
+                    "state_schema_id": plant_ids[2],
+                    "execution_signature_id": plant_ids[3],
                 },
-                "state_layout": _provenance_value(
-                    system.state_layout,
-                    "state_layout",
-                ),
-                "input_layout": _provenance_value(
-                    system.input_layout,
-                    "input_layout",
-                ),
-                "initializer": {
-                    "initializer_id": initialization_id,
-                    "callable": _callable_provenance(
-                        initializer,
-                        "initializer",
-                    ),
-                },
+                "parameter_schema_id": parameters.schema_id,
                 "task": _provenance_value(task, "task"),
                 "wrappers": _provenance_value(wrapper_tuple, "wrappers"),
                 "step_size": resolved_step,
                 "action_repeat": resolved_repeat,
-                "horizons": [
-                    wrapper.horizon for wrapper in wrapper_tuple
-                ],
+                "horizons": [wrapper.horizon for wrapper in wrapper_tuple],
                 "auto_reset": resolved_auto_reset,
                 "prng_representation": {
                     "format": "legacy-key-data",
-                    "shape": [2],
                     "dtype": "uint32",
                     "implementation": str(
                         jax.config.jax_default_prng_impl  # ty: ignore[unresolved-attribute]
@@ -514,14 +594,13 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         )
         generated_id = f"robot-environment:{provenance_id}"
 
-        self.system = system
-        self.initializer = initializer
+        self.plant = plant
+        self.parameters = parameters
         self.task = task
         self.wrappers = wrapper_tuple
         self.step_size = resolved_step
         self.action_repeat = resolved_repeat
         self.auto_reset = resolved_auto_reset
-        self.initializer_id = initialization_id
         self.environment_id = (
             generated_id
             if environment_id is None
@@ -532,6 +611,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
     def _check_task_evaluation(
         self,
         evaluation: RobotTaskEvaluation,
+        case_shape: tuple[int, ...],
         /,
     ) -> RobotTaskEvaluation:
         if not isinstance(evaluation, RobotTaskEvaluation):
@@ -539,19 +619,22 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         observation = jnp.asarray(evaluation.observation)
         terminated = jnp.asarray(evaluation.terminated, dtype=bool)
         descriptor = jnp.asarray(evaluation.descriptor)
-        if observation.shape != self.task.observation_shape:
+        if observation.shape != case_shape + self.task.observation_shape:
             raise ValueError(
-                "Task observation shape does not match task.observation_shape."
+                "Task observation shape does not match the case and observation shapes."
             )
-        if terminated.shape != ():
-            raise ValueError("Task terminated must be scalar.")
-        if descriptor.shape != self.task.descriptor_shape:
-            raise ValueError("Task descriptor shape does not match task.descriptor_shape.")
+        if terminated.shape != case_shape:
+            raise ValueError("Task terminated must have the plant case shape.")
+        if descriptor.shape != case_shape + self.task.descriptor_shape:
+            raise ValueError(
+                "Task descriptor shape does not match the case and descriptor shapes."
+            )
         return RobotTaskEvaluation(observation, terminated, descriptor)
 
     def _check_task_transition(
         self,
         transition: RobotTaskTransition,
+        case_shape: tuple[int, ...],
         /,
     ) -> RobotTaskTransition:
         if not isinstance(transition, RobotTaskTransition):
@@ -560,18 +643,20 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         rewards = jnp.asarray(transition.reward_components)
         terminated = jnp.asarray(transition.terminated, dtype=bool)
         descriptor = jnp.asarray(transition.descriptor)
-        if observation.shape != self.task.observation_shape:
+        if observation.shape != case_shape + self.task.observation_shape:
             raise ValueError(
-                "Task observation shape does not match task.observation_shape."
+                "Task observation shape does not match the case and observation shapes."
             )
-        if rewards.shape != (len(self.task.reward_component_names),):
+        if rewards.shape != case_shape + (len(self.task.reward_component_names),):
             raise ValueError(
-                "Task reward_components must have one scalar per declared name."
+                "Task reward_components must have one scalar per declared name and case."
             )
-        if terminated.shape != ():
-            raise ValueError("Task terminated must be scalar.")
-        if descriptor.shape != self.task.descriptor_shape:
-            raise ValueError("Task descriptor shape does not match task.descriptor_shape.")
+        if terminated.shape != case_shape:
+            raise ValueError("Task terminated must have the plant case shape.")
+        if descriptor.shape != case_shape + self.task.descriptor_shape:
+            raise ValueError(
+                "Task descriptor shape does not match the case and descriptor shapes."
+            )
         return RobotTaskTransition(
             transition.task_state,
             observation,
@@ -580,58 +665,141 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             descriptor,
         )
 
-    def _reset(self, key: Array, /) -> RobotEnvironmentReset:
-        keys = jax.random.split(key, len(self.wrappers) + 3)
-        plant_state = jnp.asarray(self.initializer(keys[1]))
-        if not jnp.issubdtype(plant_state.dtype, jnp.inexact):
-            plant_state = plant_state.astype(float)
-        if plant_state.shape != self.system.state_layout.shape:
-            raise ValueError(
-                "initializer returned shape "
-                f"{plant_state.shape}; expected {self.system.state_layout.shape}."
+    def _validate_plant_state(self, state: PlantRuntimeState, /) -> tuple[int, ...]:
+        if not isinstance(state, PlantRuntimeState):
+            raise TypeError(
+                "RobotEnvironmentState plant_state must be PlantRuntimeState."
             )
-        plant_state = _error_if_tree(
-            plant_state,
-            ~_tree_all_finite(plant_state, "initializer output"),
-            "Robot environment initializer output must be finite.",
+        observed = (
+            state.semantic_provenance_id,
+            state.numeric_revision_id,
+            state.state_schema_id,
+            state.execution_signature_id,
         )
-        task_state = self.task.initialize(plant_state, keys[2])
+        for name, observed_id, expected_id in zip(
+            (
+                "semantic provenance",
+                "numeric revision",
+                "state schema",
+                "execution signature",
+            ),
+            observed,
+            _plant_ids(self.plant),
+            strict=True,
+        ):
+            if observed_id != expected_id:
+                raise ValueError(
+                    f"RobotEnvironmentState plant {name} does not match this plant."
+                )
+        case_shape = self.plant.state_schema.validate(state.payload)
+        if state.time.shape != case_shape or state.step_index.shape != case_shape:
+            raise ValueError("Plant time and step_index must have the plant case shape.")
+        _key_data(state.key, case_shape)
+        return case_shape
+
+    def _safe_plant_state(
+        self,
+        state: PlantRuntimeState,
+        valid: Array,
+        case_shape: tuple[int, ...],
+        /,
+    ) -> PlantRuntimeState:
+        payload = self.plant.state_schema.select_cases(
+            valid,
+            state.payload,
+            self.plant.state_schema.zeros(case_shape),
+        )
+        return PlantRuntimeState(
+            payload,
+            jnp.where(valid, state.time, jnp.zeros_like(state.time)),
+            jnp.where(valid, state.step_index, jnp.zeros_like(state.step_index)),
+            state.key,
+            state.semantic_provenance_id,
+            state.numeric_revision_id,
+            state.state_schema_id,
+            state.execution_signature_id,
+        )
+
+    def _select_environment_state(
+        self,
+        predicate: Array,
+        candidate: RobotEnvironmentState,
+        source: RobotEnvironmentState,
+        case_shape: tuple[int, ...],
+        /,
+    ) -> RobotEnvironmentState:
+        return RobotEnvironmentState(
+            _select_plant_state(
+                self.plant,
+                predicate,
+                candidate.plant_state,
+                source.plant_state,
+                case_shape,
+            ),
+            _select_keys(predicate, candidate.key, source.key, case_shape),
+            jnp.where(
+                predicate,
+                candidate.episode_step_index,
+                source.episode_step_index,
+            ),
+            _select_tree(
+                predicate,
+                candidate.task_state,
+                source.task_state,
+                case_shape,
+            ),
+            _select_tree(
+                predicate,
+                candidate.wrapper_states,
+                source.wrapper_states,
+                case_shape,
+            ),
+            source.environment_id,
+            source.provenance_id,
+        )
+
+    def _reset(
+        self,
+        plant_key: Array,
+        environment_key: Array,
+        case_shape: tuple[int, ...],
+        /,
+    ) -> RobotEnvironmentReset:
+        plant_reset = self.plant.reset(
+            plant_key,
+            self.parameters,
+            case_shape=case_shape,
+            initial_time=jnp.zeros(case_shape),
+        )
+        plant_state = plant_reset.accepted_state
+        keys = _split_key_data(
+            _key_data(environment_key, case_shape),
+            len(self.wrappers) + 2,
+        )
+        task_state = self.task.initialize(plant_state, keys[1])
         raw_evaluation = self.task.evaluate(plant_state, task_state)
-        evaluation = self._check_task_evaluation(raw_evaluation)
+        evaluation = self._check_task_evaluation(raw_evaluation, case_shape)
         wrapper_states = tuple(
             wrapper.initialize(plant_state, task_state, wrapper_key)
-            for wrapper, wrapper_key in zip(self.wrappers, keys[3:], strict=True)
+            for wrapper, wrapper_key in zip(self.wrappers, keys[2:], strict=True)
         )
-        reset_outputs_finite = _tree_all_finite(
+        reset_outputs_finite = _tree_case_all_finite(
             (task_state, wrapper_states, raw_evaluation),
+            case_shape,
             "robot environment reset outputs",
         )
         message = "Robot environment reset outputs must be finite."
-        plant_state = _error_if_tree(
-            plant_state,
-            ~reset_outputs_finite,
-            message,
-        )
-        task_state = _error_if_tree(
-            task_state,
-            ~reset_outputs_finite,
-            message,
-        )
+        task_state = _error_if_tree(task_state, ~reset_outputs_finite, message)
         wrapper_states = _error_if_tree(
             wrapper_states,
             ~reset_outputs_finite,
             message,
         )
-        evaluation = _error_if_tree(
-            evaluation,
-            ~reset_outputs_finite,
-            message,
-        )
+        evaluation = _error_if_tree(evaluation, ~reset_outputs_finite, message)
         state = RobotEnvironmentState(
             plant_state,
             keys[0],
-            jnp.asarray(0.0, dtype=plant_state.dtype),
-            jnp.asarray(0, dtype=jnp.int32),
+            jnp.zeros(case_shape, dtype=jnp.int32),
             task_state,
             wrapper_states,
             self.environment_id,
@@ -646,68 +814,64 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             self.provenance_id,
         )
 
-    def reset(self, key: ArrayLike, /) -> RobotEnvironmentReset:
-        """Initialize the plant, task, wrappers, PRNG stream, and episode clock."""
-        return self._reset(_key_data(key))
+    def reset(
+        self,
+        key: ArrayLike,
+        /,
+        *,
+        case_shape: Sequence[int] = (),
+    ) -> RobotEnvironmentReset:
+        """Initialize separate plant and episode transactions from one root key."""
+        resolved_case_shape = _case_shape(
+            case_shape,
+            self.plant.state_schema.case_ndim,
+        )
+        plant_key, environment_key = _split_key_data(
+            _key_data(key, resolved_case_shape),
+            2,
+        )
+        return self._reset(plant_key, environment_key, resolved_case_shape)
 
     def _substep(
         self,
         state: RobotEnvironmentState,
-        action: Array,
-        args: Any,
+        plant_action: Any,
+        task_action: Any,
+        case_shape: tuple[int, ...],
         /,
     ) -> _RobotSubstep:
-        target_clock = state.clock + self.step_size
-        clock_finite = _tree_all_finite(
-            (state.clock, target_clock),
-            "robot environment clock",
+        target_time = state.plant_state.time + self.step_size
+        context = PlantStepContext(
+            state.plant_state.time,
+            target_time,
+            state.plant_state.step_index,
         )
-        context = DiscreteStepContext(
-            jnp.where(clock_finite, state.clock, jnp.zeros_like(state.clock)),
-            jnp.where(
-                clock_finite,
-                target_clock,
-                jnp.asarray(self.step_size, dtype=target_clock.dtype),
-            ),
-            state.step_index,
-        )
-        plant = self.system.evaluate_result(
+        plant_result = self.plant.step(
             context,
             state.plant_state,
-            args,
-            inputs=action,
+            plant_action,
+            self.parameters,
         )
-        if not isinstance(plant, DiscreteTransitionResult):
-            raise TypeError("DiscreteSystem.evaluate_result returned an invalid result.")
-        accepted_plant_finite = _tree_all_finite(
-            plant.accepted_state,
-            "mechanics accepted state",
-        )
-        safe_accepted_plant = jnp.where(
-            accepted_plant_finite,
-            plant.accepted_state,
-            jnp.zeros_like(plant.accepted_state),
-        )
-        keys = jax.random.split(state.key, len(self.wrappers) + 2)
+        accepted_plant = plant_result.accepted_state
+        keys = _split_key_data(state.key, len(self.wrappers) + 2)
         raw_task = self.task.transition(
             context,
             state.plant_state,
-            safe_accepted_plant,
-            action,
+            accepted_plant,
+            task_action,
             state.task_state,
             keys[1],
         )
-        task = self._check_task_transition(raw_task)
-        task_outputs_finite = _tree_all_finite(
+        task = self._check_task_transition(raw_task, case_shape)
+        task_outputs_finite = _tree_case_all_finite(
             raw_task,
+            case_shape,
             "task transition outputs",
         )
         safe_task = _finite_or_zero_tree(task)
-        outputs_finite = (
-            clock_finite & accepted_plant_finite & task_outputs_finite
-        )
+        outputs_finite = task_outputs_finite
         wrapper_states: list[Any] = []
-        wrapper_truncated = jnp.asarray(False)
+        wrapper_truncated = jnp.zeros(case_shape, dtype=bool)
         for wrapper, wrapper_state, wrapper_key in zip(
             self.wrappers,
             state.wrapper_states,
@@ -717,7 +881,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             update = wrapper.transition(
                 context,
                 wrapper_state,
-                safe_accepted_plant,
+                accepted_plant,
                 safe_task.task_state,
                 safe_task.observation,
                 safe_task.terminated,
@@ -725,38 +889,37 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             )
             if not isinstance(update, RobotEnvironmentWrapperTransition):
                 raise TypeError(
-                    "wrapper.transition must return "
-                    "RobotEnvironmentWrapperTransition."
+                    "wrapper.transition must return RobotEnvironmentWrapperTransition."
                 )
-            outputs_finite = outputs_finite & _tree_all_finite(
+            outputs_finite = outputs_finite & _tree_case_all_finite(
                 update,
+                case_shape,
                 "wrapper transition outputs",
             )
             truncated = jnp.asarray(update.truncated, dtype=bool)
-            if truncated.shape != ():
-                raise ValueError("Wrapper truncated must be scalar.")
+            if truncated.shape != case_shape:
+                raise ValueError("Wrapper truncated must have the plant case shape.")
             wrapper_states.append(update.wrapper_state)
             wrapper_truncated = wrapper_truncated | truncated
             if wrapper.horizon is not None:
                 wrapper_truncated = wrapper_truncated | (
-                    context.step_index + 1 >= int(wrapper.horizon)
+                    state.episode_step_index + 1 >= int(wrapper.horizon)
                 )
 
         runtime_state = (
             keys[0],
-            target_clock,
-            context.step_index + 1,
+            state.episode_step_index + jnp.asarray(1, dtype=jnp.int32),
             task.task_state,
             tuple(wrapper_states),
             self.environment_id,
             self.provenance_id,
         )
         candidate = RobotEnvironmentState(
-            plant.candidate_state,
+            plant_result.candidate_state,
             *runtime_state,
         )
         commit = RobotEnvironmentState(
-            plant.accepted_state,
+            accepted_plant,
             *runtime_state,
         )
         return _RobotSubstep(
@@ -765,15 +928,17 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             task,
             wrapper_truncated,
             outputs_finite,
-            plant.successful,
-            plant.status,
+            plant_result.attempted,
+            plant_result.attempted & plant_result.successful,
+            plant_result.status,
+            plant_result.backend_status,
+            plant_result.evidence,
         )
 
     def step(
         self,
         state: RobotEnvironmentState,
-        action: ArrayLike,
-        args: Any = None,
+        action: Any,
         /,
     ) -> RobotEnvironmentTransition:
         """Propose one fixed-work repeated action and atomically commit or roll back."""
@@ -787,148 +952,200 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             )
         if len(state.wrapper_states) != len(self.wrappers):
             raise ValueError("RobotEnvironmentState wrapper state count is incompatible.")
-        if state.plant_state.shape != self.system.state_layout.shape:
-            raise ValueError("RobotEnvironmentState plant_state shape is incompatible.")
-        if state.key.shape != (2,) or state.key.dtype != jnp.dtype(jnp.uint32):
+        case_shape = self._validate_plant_state(state.plant_state)
+        if state.key.shape != case_shape + (2,) or state.key.dtype != jnp.dtype(
+            jnp.uint32
+        ):
             raise ValueError(
-                "RobotEnvironmentState key must use uint32 key data with shape (2,)."
+                "RobotEnvironmentState episode key must use uint32 key data with "
+                "the plant case shape."
             )
-        if state.clock.shape != () or state.step_index.shape != ():
-            raise ValueError("RobotEnvironmentState clock and step_index must be scalar.")
-
-        input_layout = self.system.input_layout
-        assert input_layout is not None
-
-        action_array = jnp.asarray(action)
-        if not jnp.issubdtype(action_array.dtype, jnp.inexact):
-            action_array = action_array.astype(float)
-        if action_array.shape != input_layout.shape:
+        if state.episode_step_index.shape != case_shape:
             raise ValueError(
-                f"action must have shape {input_layout.shape}; got {action_array.shape}."
+                "RobotEnvironmentState episode_step_index must have the plant case shape."
             )
 
-        source_state_finite = _tree_all_finite(
+        control_schema = self.plant.control_schema
+        assert control_schema is not None
+        action_case_shape = control_schema.validate(action)
+        if action_case_shape not in ((), case_shape):
+            raise ValueError("Action case shape must be shared or match the plant cases.")
+        safe_action = _finite_or_zero_tree(action)
+
+        payload_finite = (
+            self.plant.state_schema.finite_mask(state.plant_state.payload)
+            if self.plant.require_finite_state
+            else jnp.ones(case_shape, dtype=bool)
+        )
+        plant_runtime_finite = (
+            payload_finite
+            & jnp.isfinite(state.plant_state.time)
+            & (state.plant_state.step_index >= 0)
+        )
+        environment_state_finite = _tree_case_all_finite(
             (
-                state.plant_state,
                 state.key,
-                state.clock,
-                state.step_index,
+                state.episode_step_index,
                 state.task_state,
                 state.wrapper_states,
             ),
+            case_shape,
             "RobotEnvironmentState",
+        ) & (state.episode_step_index >= 0)
+        safe_plant = self._safe_plant_state(
+            state.plant_state,
+            plant_runtime_finite,
+            case_shape,
         )
-        action_finite = _tree_all_finite(action_array, "action")
-        safe_state = _finite_or_zero_tree(state)
-        safe_action = jnp.where(
-            action_finite,
-            action_array,
-            jnp.zeros_like(action_array),
+        safe_state = RobotEnvironmentState(
+            safe_plant,
+            _finite_or_zero_tree(state.key),
+            jnp.where(
+                state.episode_step_index >= 0,
+                state.episode_step_index,
+                jnp.zeros_like(state.episode_step_index),
+            ),
+            _finite_or_zero_tree(state.task_state),
+            _finite_or_zero_tree(state.wrapper_states),
+            state.environment_id,
+            state.provenance_id,
         )
         raw_source_evaluation = self.task.evaluate(
             safe_state.plant_state,
             safe_state.task_state,
         )
-        source_evaluation = self._check_task_evaluation(raw_source_evaluation)
-        source_outputs_finite = _tree_all_finite(
+        source_evaluation = self._check_task_evaluation(
             raw_source_evaluation,
+            case_shape,
+        )
+        source_outputs_finite = _tree_case_all_finite(
+            raw_source_evaluation,
+            case_shape,
             "task evaluation outputs",
         )
         initial_valid = (
-            source_state_finite & action_finite & source_outputs_finite
+            plant_runtime_finite & environment_state_finite & source_outputs_finite
         )
 
         working = safe_state
         last_candidate = state
         candidate_observation = source_evaluation.observation
         candidate_descriptor = source_evaluation.descriptor
+        result_dtype = jnp.result_type(
+            *jax.tree.leaves(state.plant_state.payload),
+            *jax.tree.leaves(action),
+        )
         accumulated_rewards = jnp.zeros(
-            (len(self.task.reward_component_names),),
-            dtype=jnp.result_type(state.plant_state, action_array),
+            case_shape + (len(self.task.reward_component_names),),
+            dtype=result_dtype,
         )
         active = initial_valid
-        all_mechanics_successful = jnp.asarray(True)
-        all_outputs_finite = jnp.asarray(True)
-        terminated = jnp.asarray(False)
-        truncated = jnp.asarray(False)
-        last_status = jnp.asarray(0, dtype=jnp.int32)
+        all_mechanics_successful = jnp.ones(case_shape, dtype=bool)
+        all_outputs_finite = jnp.ones(case_shape, dtype=bool)
+        terminated = jnp.zeros(case_shape, dtype=bool)
+        truncated = jnp.zeros(case_shape, dtype=bool)
+        last_status = jnp.zeros(case_shape, dtype=jnp.int32)
         attempted_values: list[Array] = []
         successful_values: list[Array] = []
         status_values: list[Array] = []
+        backend_status_values: list[Array] = []
+        plant_evidence_values: list[Any] = []
 
         for _ in range(self.action_repeat):
-            attempted = active
-            proposal = self._substep(working, safe_action, args)
+            proposal = self._substep(working, action, safe_action, case_shape)
+            attempted = active & proposal.plant_attempted
             mechanics_successful = jnp.asarray(
-                proposal.mechanics_successful, dtype=bool
+                proposal.mechanics_successful,
+                dtype=bool,
             )
-            mechanics_status = jnp.asarray(proposal.mechanics_status, dtype=jnp.int32)
-            if mechanics_successful.shape != () or mechanics_status.shape != ():
-                raise ValueError("Mechanics successful and status outputs must be scalar.")
+            mechanics_status = jnp.asarray(
+                proposal.mechanics_status,
+                dtype=jnp.int32,
+            )
+            backend_status = jnp.asarray(
+                proposal.backend_status,
+                dtype=jnp.int32,
+            )
+            for name, value in (
+                ("mechanics successful", mechanics_successful),
+                ("mechanics status", mechanics_status),
+                ("backend status", backend_status),
+            ):
+                if value.shape != case_shape:
+                    raise ValueError(f"Plant {name} must have the plant case shape.")
 
-            last_candidate = _select_tree(
-                attempted,
+            last_candidate = self._select_environment_state(
+                active,
                 proposal.candidate_state,
                 last_candidate,
+                case_shape,
             )
-            commit_substep = (
-                attempted & mechanics_successful & proposal.outputs_finite
-            )
-            working = _select_tree(
+            commit_substep = attempted & mechanics_successful & proposal.outputs_finite
+            working = self._select_environment_state(
                 commit_substep,
                 proposal.commit_state,
                 working,
+                case_shape,
+            )
+            observation_mask = jnp.reshape(
+                active,
+                case_shape + (1,) * len(self.task.observation_shape),
+            )
+            descriptor_mask = jnp.reshape(
+                active,
+                case_shape + (1,) * len(self.task.descriptor_shape),
             )
             candidate_observation = jnp.where(
-                attempted,
+                observation_mask,
                 proposal.task.observation,
                 candidate_observation,
             )
             candidate_descriptor = jnp.where(
-                attempted,
+                descriptor_mask,
                 proposal.task.descriptor,
                 candidate_descriptor,
             )
             accumulated_rewards = accumulated_rewards + jnp.where(
-                commit_substep,
+                commit_substep[..., None],
                 proposal.task.reward_components,
                 jnp.zeros_like(proposal.task.reward_components),
             )
             terminated_now = commit_substep & proposal.task.terminated
             truncated_now = (
-                commit_substep
-                & ~proposal.task.terminated
-                & proposal.wrapper_truncated
+                commit_substep & ~proposal.task.terminated & proposal.wrapper_truncated
             )
             terminated = terminated | terminated_now
             truncated = truncated | truncated_now
             all_mechanics_successful = all_mechanics_successful & (
-                ~attempted | mechanics_successful
+                ~active | (proposal.plant_attempted & mechanics_successful)
             )
-            all_outputs_finite = all_outputs_finite & (
-                ~attempted | proposal.outputs_finite
-            )
-            last_status = jnp.where(attempted, mechanics_status, last_status)
+            all_outputs_finite = all_outputs_finite & (~active | proposal.outputs_finite)
+            last_status = jnp.where(active, mechanics_status, last_status)
             attempted_values.append(attempted)
             successful_values.append(attempted & mechanics_successful)
             status_values.append(
-                jnp.where(attempted, mechanics_status, jnp.asarray(0, jnp.int32))
+                jnp.where(active, mechanics_status, jnp.asarray(0, jnp.int32))
             )
+            backend_status_values.append(
+                jnp.where(active, backend_status, jnp.asarray(0, jnp.int32))
+            )
+            plant_evidence_values.append(proposal.plant_evidence)
             active = (
                 active
+                & proposal.plant_attempted
                 & mechanics_successful
                 & proposal.outputs_finite
                 & ~terminated_now
                 & ~truncated_now
             )
 
-        candidate_total_reward = jnp.sum(accumulated_rewards)
-        aggregate_outputs_finite = _tree_all_finite(
+        candidate_total_reward = jnp.sum(accumulated_rewards, axis=-1)
+        aggregate_outputs_finite = _tree_case_all_finite(
             (
-                working.plant_state,
+                working.plant_state.time,
+                working.plant_state.step_index,
                 working.key,
-                working.clock,
-                working.step_index,
+                working.episode_step_index,
                 working.task_state,
                 working.wrapper_states,
                 candidate_observation,
@@ -936,6 +1153,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 accumulated_rewards,
                 candidate_descriptor,
             ),
+            case_shape,
             "robot environment transition outputs",
         )
         accepted = (
@@ -944,63 +1162,80 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
             & all_outputs_finite
             & aggregate_outputs_finite
         )
-        accepted_state = _select_tree(accepted, working, state)
-        final_observation = jnp.where(
+        accepted_state = self._select_environment_state(
             accepted,
+            working,
+            state,
+            case_shape,
+        )
+        observation_mask = jnp.reshape(
+            accepted,
+            case_shape + (1,) * len(self.task.observation_shape),
+        )
+        descriptor_mask = jnp.reshape(
+            accepted,
+            case_shape + (1,) * len(self.task.descriptor_shape),
+        )
+        final_observation = jnp.where(
+            observation_mask,
             candidate_observation,
             source_evaluation.observation,
         )
         descriptor = jnp.where(
-            accepted,
+            descriptor_mask,
             candidate_descriptor,
             source_evaluation.descriptor,
         )
         reward_components = jnp.where(
-            accepted,
+            accepted[..., None],
             accumulated_rewards,
             jnp.zeros_like(accumulated_rewards),
         )
         terminated = accepted & terminated
         truncated = accepted & truncated
-        total_reward = jnp.sum(reward_components)
+        total_reward = jnp.sum(reward_components, axis=-1)
 
         reset_performed = accepted & (terminated | truncated) & self.auto_reset
         if self.auto_reset:
-            no_reset = RobotEnvironmentReset(
-                accepted_state,
-                final_observation,
-                terminated,
-                descriptor,
-                self.environment_id,
-                self.provenance_id,
-            )
-            fresh = jax.lax.cond(
-                reset_performed,
-                lambda key: self._reset(key),
-                lambda key: no_reset,
+            fresh = self._reset(
+                accepted_state.plant_state.key,
                 accepted_state.key,
+                case_shape,
             )
-            reset_state = fresh.state
-            observation = fresh.observation
+            reset_state = self._select_environment_state(
+                reset_performed,
+                fresh.state,
+                accepted_state,
+                case_shape,
+            )
+            reset_observation_mask = jnp.reshape(
+                reset_performed,
+                case_shape + (1,) * len(self.task.observation_shape),
+            )
+            observation = jnp.where(
+                reset_observation_mask,
+                fresh.observation,
+                final_observation,
+            )
         else:
             reset_state = accepted_state
             observation = final_observation
 
-        attempted_array = jnp.stack(tuple(attempted_values))
-        successful_array = jnp.stack(tuple(successful_values))
-        status_array = jnp.stack(tuple(status_values))
+        plant_ids = _plant_ids(self.plant)
         evidence = RobotEnvironmentEvidence(
-            attempted_array,
-            successful_array,
-            status_array,
+            jnp.stack(tuple(attempted_values)),
+            jnp.stack(tuple(successful_values)),
+            jnp.stack(tuple(status_values)),
+            jnp.stack(tuple(backend_status_values)),
+            tuple(plant_evidence_values),
             accepted,
             ~accepted,
             all_mechanics_successful,
             last_status,
-            state.step_index,
-            last_candidate.step_index,
+            state.episode_step_index,
+            last_candidate.episode_step_index,
             self.environment_id,
-            self.system.system_id,
+            *plant_ids,
             self.task.task_id,
             tuple(wrapper.wrapper_id for wrapper in self.wrappers),
             self.provenance_id,
@@ -1024,6 +1259,160 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
         )
 
 
+def prepare_array_robot_environment(
+    system: DiscreteSystem,
+    initializer: Callable[[Array], ArrayLike],
+    task: AbstractRobotTask,
+    wrappers: tuple[AbstractRobotEnvironmentWrapper, ...] = (),
+    /,
+    *,
+    initializer_id: str,
+    reset_fallback: ArrayLike,
+    parameter_values: Any | None = None,
+    parameter_schema: ArrayPyTreeSchema | None = None,
+    semantic_provenance: SemanticProvenance | None = None,
+    numeric_revision: NumericRevision | None = None,
+    execution_signature: ExecutableSignature | None = None,
+    case_ndim: int = 0,
+    control_dtype: Any | None = None,
+    step_size: float | None = None,
+    environment_id: str | None = None,
+) -> PreparedRobotEnvironment:
+    """Adapt one legacy array ``DiscreteSystem`` to the complete plant lifecycle."""
+    if not isinstance(system, DiscreteSystem):
+        raise TypeError("system must be a DiscreteSystem.")
+    if system.input_layout is None:
+        raise ValueError("Robot environments require a system InputLayout.")
+    if len(system.state_layout.shape) != 1:
+        raise ValueError("Robot plant state must use a rank-1 StateLayout.")
+    if len(system.input_layout.shape) != 1:
+        raise ValueError("Robot actions must use a rank-1 InputLayout.")
+    if any(role != "control" for role in system.input_layout.roles):
+        raise ValueError("Every robot environment input must have role 'control'.")
+    if not callable(initializer):
+        raise TypeError("initializer must be callable.")
+    initialization_id = _identifier(initializer_id, "initializer_id")
+    fallback = jnp.asarray(reset_fallback)
+    if fallback.shape != system.state_layout.shape:
+        raise ValueError("reset_fallback must match the DiscreteSystem state shape.")
+
+    resolved_step = system.step_size if step_size is None else float(step_size)
+    if resolved_step is None:
+        raise ValueError(
+            "step_size is required when the DiscreteSystem has no fixed step_size."
+        )
+    resolved_step = float(resolved_step)
+    if not np.isfinite(resolved_step) or resolved_step <= 0.0:
+        raise ValueError("step_size must be finite and positive.")
+    if system.step_size is not None and not np.isclose(
+        resolved_step,
+        system.step_size,
+        rtol=system.step_rtol,
+        atol=system.step_atol,
+    ):
+        raise ValueError("step_size must match the DiscreteSystem fixed step_size.")
+
+    semantics = (
+        SemanticProvenance(
+            {
+                "kind": "array-discrete-system-robot-plant",
+                "system_id": system.system_id,
+                "transition": _callable_provenance(
+                    system.transition,
+                    "system transition",
+                ),
+                "state_layout": _provenance_value(
+                    system.state_layout,
+                    "state_layout",
+                ),
+                "input_layout": _provenance_value(
+                    system.input_layout,
+                    "input_layout",
+                ),
+                "initializer": {
+                    "initializer_id": initialization_id,
+                    "callable": _callable_provenance(initializer, "initializer"),
+                },
+                "step_size": system.step_size,
+                "step_rtol": system.step_rtol,
+                "step_atol": system.step_atol,
+                "minimum_step_size": system.minimum_step_size,
+                "maximum_step_size": system.maximum_step_size,
+            }
+        )
+        if semantic_provenance is None
+        else semantic_provenance
+    )
+    if not isinstance(semantics, SemanticProvenance):
+        raise TypeError("semantic_provenance must be SemanticProvenance or None.")
+
+    values = (
+        () if parameter_values is None and parameter_schema is None else parameter_values
+    )
+    resolved_parameter_schema = parameter_schema
+    if resolved_parameter_schema is None and parameter_values is not None:
+        resolved_parameter_schema = ArrayPyTreeSchema.from_tree(values, case_ndim=0)
+    revision = (
+        NumericRevision(
+            semantics,
+            {
+                "parameter_values": values,
+                "reset_fallback": fallback,
+            },
+        )
+        if numeric_revision is None
+        else numeric_revision
+    )
+    if not isinstance(revision, NumericRevision):
+        raise TypeError("numeric_revision must be NumericRevision or None.")
+    executable = (
+        ExecutableSignature(
+            shapes={
+                "state": system.state_layout.shape,
+                "control": system.input_layout.shape,
+            },
+            dtypes={
+                "state": fallback.dtype,
+                "control": fallback.dtype if control_dtype is None else control_dtype,
+            },
+            algorithm_facts={
+                "case_ndim": int(case_ndim),
+                "step_size": resolved_step,
+                "system_id": system.system_id,
+            },
+        )
+        if execution_signature is None
+        else execution_signature
+    )
+    if not isinstance(executable, ExecutableSignature):
+        raise TypeError("execution_signature must be ExecutableSignature or None.")
+
+    plant = ArrayDiscreteSystemPlant(
+        system,
+        initializer,
+        reset_fallback=fallback,
+        semantic_provenance=semantics,
+        numeric_revision=revision,
+        execution_signature=executable,
+        parameter_schema=resolved_parameter_schema,
+        case_ndim=case_ndim,
+        control_dtype=control_dtype,
+    )
+    parameters = PlantParameters(
+        values,
+        plant.parameter_schema.schema_id,
+        revision,
+    )
+    return PreparedRobotEnvironment(
+        plant,
+        parameters,
+        task,
+        wrappers,
+        step_size=resolved_step,
+        environment_id=environment_id,
+    )
+
+
 __all__ = [
     "AbstractRobotEnvironmentWrapper",
     "AbstractRobotTask",
@@ -1035,4 +1424,5 @@ __all__ = [
     "RobotEnvironmentWrapperTransition",
     "RobotTaskEvaluation",
     "RobotTaskTransition",
+    "prepare_array_robot_environment",
 ]

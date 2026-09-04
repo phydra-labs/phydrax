@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite, prod
-from typing import Any, Protocol
+from typing import Any, cast, Protocol
 
 import diffrax as dfx
 import equinox as eqx
@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..linalg import AbstractRealCoordinateMap
+from ..linalg import AbstractLinearOperator, AbstractRealCoordinateMap
 from ..stochastic._wiener import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._differential_ir import lower_deterministic_problem
@@ -28,9 +28,11 @@ from ._diffrax_state_packing import (
     DiffraxComplexStatePolicy,
 )
 from ._geometric import (
+    _physical_tangent,
     AbstractGeometricSolver,
     CommutatorFreeSolver,
     GeometricEuler,
+    GeometricODETerm,
     RKMK,
     SeparableHamiltonianVectorField,
     SRKMK,
@@ -141,7 +143,9 @@ class _VectorizedDenseInterpolation(eqx.Module):
         )(self.interpolation)
         values = self.state_adapter.unpack_values(values, 2)
         if self.state_adapter.tree_mode:
-            source_specs = self.state_adapter.coordinates.source_space.structure()
+            coordinates = self.state_adapter.coordinates
+            assert coordinates is not None
+            source_specs = coordinates.source_space.structure()
             reshaped = jax.tree.map(
                 lambda value, spec: value.reshape(
                     self.sample_shape + query.shape + tuple(spec.shape)
@@ -184,12 +188,32 @@ def _realized_wiener_path(
     return brownian, jnp.asarray(path_sign, dtype=dtype)
 
 
-def _vector_field(function, state_adapter: _PreparedDiffraxStateAdapter, /):
+def _vector_field(
+    function,
+    state_adapter: _PreparedDiffraxStateAdapter,
+    geometry,
+    tangent_shape,
+    /,
+):
     def evaluate(t, state, args):
         public_state = state_adapter.unpack_state(state)
         public_args = state_adapter.unpack_args(args)
-        value = function(t, public_state, public_args)
-        return state_adapter.pack_state(value, owner="Vector field")
+        value = jnp.asarray(function(t, public_state, public_args))
+        if geometry is None:
+            return state_adapter.pack_state(value, owner="Vector field")
+        if tangent_shape is None:
+            raise RuntimeError("Geometric vector field lacks a prepared tangent shape.")
+        tangent = _physical_tangent(
+            geometry,
+            public_state,
+            value,
+            "Vector field",
+        )
+        return state_adapter.pack_tangent(
+            tangent,
+            tangent_shape,
+            owner="Vector field",
+        )
 
     return evaluate
 
@@ -205,53 +229,75 @@ def _combined_diffusion(
     def evaluate(time, state, args):
         public_state = state_adapter.unpack_state(state)
         public_args = state_adapter.unpack_args(args)
-        state_shape = tuple(jnp.shape(public_state))
+        tangent_shape = problem.tangent_shape
+        if tangent_shape is None:
+            raise RuntimeError("Stochastic array problem lacks a tangent shape.")
         if not structured:
             columns = []
             for term in problem.wiener_terms:
-                value = term.coefficient_array(time, public_state, public_args)
-                expected_shape = state_shape + term.noise_shape
-                if tuple(value.shape) != expected_shape:
-                    raise ValueError(
-                        f"WienerTerm {term.name!r} coefficient must return shape "
-                        f"{expected_shape}; got {value.shape}."
-                    )
-                columns.append(value.reshape(state_shape + (term.noise_size,)))
+                value = term.coefficient_array(
+                    time,
+                    public_state,
+                    public_args,
+                    output_shape=tangent_shape,
+                )
+                columns.append(value.reshape(tangent_shape + (term.noise_size,)))
             combined = path_sign * jnp.concatenate(columns, axis=-1)
-            return state_adapter.pack_diffusion(combined, problem.noise_shape)
+            return state_adapter.pack_diffusion(
+                combined,
+                problem.noise_shape,
+                output_shape=tangent_shape,
+            )
 
         if problem.noise_layout is None:
             raise RuntimeError("Structured Wiener terms require a noise layout.")
+        noise_layout = problem.noise_layout
+        assert noise_layout is not None
         coefficients = tuple(
-            term.coefficient_operator(time, public_state, public_args)
+            term.coefficient_operator(
+                time,
+                public_state,
+                public_args,
+                output_shape=tangent_shape,
+            )
             if term.representation == "operator"
-            else term.coefficient_array(time, public_state, public_args)
+            else term.coefficient_array(
+                time,
+                public_state,
+                public_args,
+                output_shape=tangent_shape,
+            )
             for term in problem.wiener_terms
         )
 
         def apply(control):
             flat_control = jnp.asarray(control).reshape(problem.noise_shape)
-            total = jnp.zeros_like(public_state)
+            total = jnp.zeros(tangent_shape, dtype=public_state.dtype)
             for term, block, coefficient in zip(
                 problem.wiener_terms,
-                problem.noise_layout.blocks,
+                noise_layout.blocks,
                 coefficients,
                 strict=True,
             ):
                 local = flat_control[block.start : block.stop].reshape(block.shape)
                 if term.representation == "operator":
-                    contribution = coefficient.mv(local)
+                    contribution = cast(AbstractLinearOperator, coefficient).mv(local)
                 elif term.representation == "diagonal":
-                    contribution = coefficient * local
+                    contribution = jnp.asarray(coefficient) * local
                 else:
-                    matrix = coefficient.reshape(
-                        (int(public_state.size), term.noise_size)
+                    tangent_size = prod(tangent_shape) if tangent_shape else 1
+                    matrix = jnp.asarray(coefficient).reshape(
+                        (tangent_size, term.noise_size)
                     )
                     contribution = ein.contract(
                         "ij,j->i", matrix, local.reshape((term.noise_size,))
-                    ).reshape(state_shape)
+                    ).reshape(tangent_shape)
                 total = total + contribution
-            return state_adapter.pack_state(path_sign * total, owner="Diffusion action")
+            return state_adapter.pack_tangent(
+                path_sign * total,
+                tangent_shape,
+                owner="Diffusion action",
+            )
 
         return lx.FunctionLinearOperator(
             apply,
@@ -355,6 +401,21 @@ def _validated_realization_interval(
     return start, end
 
 
+def _requires_geometric_solver(
+    problem: DifferentialProblem | SplitDifferentialProblem,
+    /,
+) -> bool:
+    geometry = problem.state_geometry
+    if geometry is None:
+        return False
+    if not geometry.trivial:
+        return True
+    if not isinstance(problem, DifferentialProblem):
+        return False
+    point_shape = tuple(int(size) for size in problem.initial_state.shape)
+    return problem.local_shape != point_shape or problem.tangent_shape != point_shape
+
+
 def _validated_state_geometry_solver(
     problem: DifferentialProblem | SplitDifferentialProblem,
     solver: Any,
@@ -368,24 +429,25 @@ def _validated_state_geometry_solver(
                 "A geometric solver requires DifferentialProblem state_geometry."
             )
         return
-    if not geometry.trivial and not geometric:
+    requires_geometric = _requires_geometric_solver(problem)
+    if requires_geometric and not geometric:
         raise ValueError(
-            "A nontrivial state_geometry requires an AbstractGeometricSolver; "
-            f"got {type(solver).__name__}."
+            "A nontrivial state_geometry or unequal point/local/tangent spaces "
+            f"require an AbstractGeometricSolver; got {type(solver).__name__}."
         )
     if geometric and solver.geometry.geometry_id != geometry.geometry_id:
         raise ValueError(
             "Geometric solver and DifferentialProblem must carry the same "
             "state_geometry_id."
         )
-    if problem.stochastic and not geometry.trivial:
+    if problem.stochastic and requires_geometric:
         if problem.interpretation == "ito":
             raise ValueError(
-                "Nontrivial state geometry supports explicit Stratonovich dynamics "
-                "only; generic Itô geometry is not implemented."
+                "Intrinsic Itô geometry is not implemented; state geometry "
+                "supports explicit Stratonovich dynamics only."
             )
         if not isinstance(solver, SRKMK):
-            raise ValueError("A stochastic nontrivial state_geometry requires SRKMK.")
+            raise ValueError("A stochastic intrinsic state_geometry requires SRKMK.")
     if not problem.stochastic and isinstance(solver, SRKMK):
         raise ValueError("SRKMK requires a stochastic DifferentialProblem.")
 
@@ -487,11 +549,9 @@ def _solver_precision(
 def _equation_form(problem: DifferentialProblem | SplitDifferentialProblem, /) -> str:
     if isinstance(problem, SplitDifferentialProblem):
         return "additive-ode"
-    geometry = problem.state_geometry
-    nontrivial_geometry = geometry is not None and not geometry.trivial
     if problem.stochastic:
-        return "geometric-sde" if nontrivial_geometry else "sde"
-    return "geometric-ode" if nontrivial_geometry else "explicit-ode"
+        return "geometric-sde" if _requires_geometric_solver(problem) else "sde"
+    return "geometric-ode" if _requires_geometric_solver(problem) else "explicit-ode"
 
 
 def _validated_method_form(
@@ -526,12 +586,13 @@ def _resolved_solver(
         return solver
     if isinstance(problem, SplitDifferentialProblem):
         return dfx.KenCarp4(root_finder=optx.Newton(rtol=1e-8, atol=1e-10))
-    if problem.state_geometry is not None and not problem.state_geometry.trivial:
+    if _requires_geometric_solver(problem):
+        assert problem.state_geometry is not None
         if problem.stochastic:
             if problem.interpretation == "ito":
                 raise ValueError(
-                    "Nontrivial state geometry supports explicit Stratonovich "
-                    "dynamics only."
+                    "Intrinsic Itô geometry is not implemented; state geometry "
+                    "supports explicit Stratonovich dynamics only."
                 )
             return SRKMK(problem.state_geometry)
         return RKMK(problem.state_geometry)
@@ -706,8 +767,8 @@ def _native_solution(
         lowered = lower_deterministic_problem(problem)
         assert lowered.implicit_rhs is not None
         terms = dfx.MultiTerm(
-            dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter)),
-            dfx.ODETerm(_vector_field(lowered.implicit_rhs, state_adapter)),
+            dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter, None, None)),
+            dfx.ODETerm(_vector_field(lowered.implicit_rhs, state_adapter, None, None)),
         )
         start = problem.t0
         end = problem.t1
@@ -738,7 +799,14 @@ def _native_solution(
             real_dtype,
         )
         terms = dfx.MultiTerm(
-            dfx.ODETerm(_vector_field(problem.drift, state_adapter)),
+            dfx.ODETerm(
+                _vector_field(
+                    problem.drift,
+                    state_adapter,
+                    problem.state_geometry,
+                    problem.tangent_shape,
+                )
+            ),
             dfx.ControlTerm(
                 _combined_diffusion(problem, signed_path, state_adapter),
                 brownian,
@@ -755,10 +823,20 @@ def _native_solution(
                 raise TypeError(
                     "Separable Hamiltonian solves require native real state packing."
                 )
-            terms = dfx.ODETerm(problem.drift)
+            terms = dfx.ODETerm(cast(Any, problem.drift))
         else:
             lowered = lower_deterministic_problem(problem)
-            terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter))
+            term_type = (
+                GeometricODETerm if problem.state_geometry is not None else dfx.ODETerm
+            )
+            terms = term_type(
+                _vector_field(
+                    lowered.explicit_rhs,
+                    state_adapter,
+                    problem.state_geometry,
+                    problem.tangent_shape,
+                )
+            )
     time_dtype = jnp.asarray(jax.tree.leaves(resolved_initial_state)[0]).real.dtype
     start = precision.coefficient(jnp.asarray(start, dtype=time_dtype))
     end = precision.coefficient(jnp.asarray(end, dtype=time_dtype))

@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..dynamics import DiscreteStepContext
+from ..dynamics import DiscreteStepContext, StateLayout
 from ..optim import (
     AbstractStructuredNonlinearMethod,
     compile_structured_minimization,
@@ -57,12 +57,16 @@ MULTIPLE_SHOOTING_NONFINITE = 6
 
 
 class MultipleShootingDecisionLayout(StrictModule):
-    """Immutable state-first layout for one slack-free shooting decision vector."""
+    """Immutable retraction-local layout for one shooting decision vector."""
 
+    state_layout: StateLayout
+    state_anchors: Array
     num_steps: int = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    local_shape: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
     state_size: int = eqx.field(static=True)
+    point_size: int = eqx.field(static=True)
     control_size: int = eqx.field(static=True)
     num_state_variables: int = eqx.field(static=True)
     num_control_variables: int = eqx.field(static=True)
@@ -73,25 +77,55 @@ class MultipleShootingDecisionLayout(StrictModule):
     def __init__(
         self,
         num_steps: int,
-        state_shape: tuple[int, ...],
+        state_layout: StateLayout,
         control_shape: tuple[int, ...],
+        state_anchors: ArrayLike,
         /,
     ):
         steps = int(num_steps)
-        states = tuple(int(size) for size in state_shape)
+        if not isinstance(state_layout, StateLayout):
+            raise TypeError("state_layout must be a StateLayout.")
+        geometry = state_layout.geometry
+        if (
+            not geometry.supports_exact_inverse
+            or not geometry.supports_exact_differential
+        ):
+            raise ValueError(
+                "MultipleShootingDecisionLayout requires exact inverse-retraction "
+                "and retraction-differential geometry."
+            )
+        states = state_layout.shape
         controls = tuple(int(size) for size in control_shape)
         if steps < 1:
             raise ValueError("Multiple shooting requires at least one segment.")
         if any(size <= 0 for size in states + controls):
             raise ValueError("State and control dimensions must be positive.")
-        state_size = prod(states)
+        anchors = jnp.asarray(state_anchors)
+        expected_anchors = (steps + 1,) + states
+        if anchors.shape != expected_anchors:
+            raise ValueError(
+                f"state_anchors must have shape {expected_anchors}; got {anchors.shape}."
+            )
+        local_template = jnp.asarray(
+            state_layout.geometry.inverse_retract(anchors[0], anchors[0])
+        )
+        if local_template.size != state_layout.local_size:
+            raise ValueError(
+                "State geometry local output size must match state_layout.local_size."
+            )
+        state_size = state_layout.local_size
+        point_size = state_layout.size
         control_size = prod(controls)
         state_variables = (steps + 1) * state_size
         control_variables = steps * control_size
+        self.state_layout = state_layout
+        self.state_anchors = anchors
         self.num_steps = steps
         self.state_shape = states
+        self.local_shape = tuple(local_template.shape)
         self.control_shape = controls
         self.state_size = state_size
+        self.point_size = point_size
         self.control_size = control_size
         self.num_state_variables = state_variables
         self.num_control_variables = control_variables
@@ -113,9 +147,20 @@ class MultipleShootingDecisionLayout(StrictModule):
                 f"control_nodes must have shape {expected_controls}; "
                 f"got {controls.shape}."
             )
+        if self.state_layout.geometry.trivial:
+            state_coordinates = states.reshape((self.num_steps + 1, self.state_size))
+        else:
+            state_coordinates = jax.vmap(
+                lambda anchor, point: jnp.asarray(
+                    self.state_layout.geometry.inverse_retract(anchor, point)
+                ).reshape((self.state_size,))
+            )(self.state_anchors, states)
         dtype = jnp.result_type(states, controls, jnp.float32)
         return jnp.concatenate(
-            (states.astype(dtype).reshape(-1), controls.astype(dtype).reshape(-1))
+            (
+                state_coordinates.astype(dtype).reshape(-1),
+                controls.astype(dtype).reshape(-1),
+            )
         )
 
     def unpack(self, decision: ArrayLike, /) -> tuple[Array, Array]:
@@ -126,9 +171,19 @@ class MultipleShootingDecisionLayout(StrictModule):
             )
         state_start, state_stop = self.state_slice
         control_start, control_stop = self.control_slice
-        states = vector[state_start:state_stop].reshape(
-            (self.num_steps + 1,) + self.state_shape
+        state_coordinates = vector[state_start:state_stop].reshape(
+            (self.num_steps + 1, self.state_size)
         )
+        if self.state_layout.geometry.trivial:
+            states = state_coordinates.reshape((self.num_steps + 1,) + self.state_shape)
+        else:
+            states = jax.vmap(
+                lambda anchor, local: jnp.asarray(
+                    self.state_layout.geometry.retract(
+                        anchor, local.reshape(self.local_shape)
+                    )
+                )
+            )(self.state_anchors, state_coordinates)
         controls = vector[control_start:control_stop].reshape(
             (self.num_steps,) + self.control_shape
         )
@@ -136,7 +191,13 @@ class MultipleShootingDecisionLayout(StrictModule):
 
 
 class MultipleShootingLinearization(StrictModule):
-    """Exact residuals and local derivatives defining one dense SQP subproblem."""
+    """Exact residuals and local derivatives defining one dense SQP subproblem.
+
+    Every continuity row is the observed node minus its predicted node, expressed
+    by ``inverse_retract(predicted, observed)``. ``equality_jacobian`` is the
+    derivative of those same residuals, so the QP equation is
+    ``jacobian @ step = -residual``.
+    """
 
     quadratic_program: QuadraticProgram
     layout: MultipleShootingDecisionLayout
@@ -665,6 +726,18 @@ def _objective_function(
     return running + terminal
 
 
+def _continuity_defect(
+    layout: MultipleShootingDecisionLayout,
+    predicted: Array,
+    observed: Array,
+    /,
+) -> Array:
+    """Return the observed-minus-predicted defect in the prediction's chart."""
+    return jnp.asarray(
+        layout.state_layout.geometry.inverse_retract(predicted, observed)
+    ).reshape((layout.state_size,))
+
+
 def _equality_function(
     problem: ControlProblem,
     layout: MultipleShootingDecisionLayout,
@@ -674,7 +747,12 @@ def _equality_function(
     solver_options: dict[str, Any],
 ) -> Array:
     states, controls = layout.unpack(decision)
-    rows = [(states[0] - problem.initial_state).reshape(-1)]
+    geometry = layout.state_layout.geometry
+    rows = [
+        jnp.asarray(geometry.inverse_retract(problem.initial_state, states[0])).reshape(
+            (layout.state_size,)
+        )
+    ]
     for segment in range(layout.num_steps):
         predicted = _segment_state(
             problem,
@@ -683,7 +761,7 @@ def _equality_function(
             controls[segment],
             solver_options=solver_options,
         )
-        rows.append((predicted - states[segment + 1]).reshape(-1))
+        rows.append(_continuity_defect(layout, predicted, states[segment + 1]))
     return jnp.concatenate(rows)
 
 
@@ -729,7 +807,10 @@ def _nonlinear_values(
     solver_options: dict[str, Any],
 ) -> _NonlinearValues:
     states, controls = layout.unpack(decision)
-    boundary = states[0] - problem.initial_state
+    geometry = layout.state_layout.geometry
+    boundary = jnp.asarray(
+        geometry.inverse_retract(problem.initial_state, states[0])
+    ).reshape((layout.state_size,))
     defects = []
     valid = []
     for segment in range(layout.num_steps):
@@ -740,7 +821,7 @@ def _nonlinear_values(
             controls[segment],
             solver_options=solver_options,
         )
-        defects.append(predicted - states[segment + 1])
+        defects.append(_continuity_defect(layout, predicted, states[segment + 1]))
         valid.append(segment_valid)
     continuity = jnp.stack(defects)
     integration_valid = jnp.stack(valid)
@@ -885,15 +966,26 @@ def linearize_multiple_shooting(
     integration_max_steps: int | None = 4096,
     integration_throw: bool = False,
 ) -> MultipleShootingLinearization:
-    """Quadratize cost and linearize exact shooting/constraint residuals."""
+    """Quadratize cost and linearize exact observed-minus-predicted defects."""
     _validate_problem(problem)
     regularization = float(hessian_regularization)
     if not isfinite(regularization) or regularization < 0.0:
         raise ValueError("hessian_regularization must be finite and nonnegative.")
+    state_layout = problem.dynamics.system.state_layout
+    geometry = state_layout.geometry
+    if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
+        raise ValueError(
+            "Multiple shooting requires exact inverse-retraction and "
+            "retraction-differential geometry."
+        )
+    state_nodes_ = jnp.asarray(state_nodes)
     layout = MultipleShootingDecisionLayout(
-        problem.time_grid.num_steps, problem.state_shape, problem.control_shape
+        problem.time_grid.num_steps,
+        state_layout,
+        problem.control_shape,
+        state_nodes_,
     )
-    decision = layout.pack(state_nodes, control_nodes)
+    decision = layout.pack(state_nodes_, control_nodes)
     options = _solver_options(
         solver=solver,
         stepsize_controller=stepsize_controller,
@@ -1074,7 +1166,6 @@ def _history(
 
 def _seed_nodes(
     problem: ControlProblem,
-    layout: MultipleShootingDecisionLayout,
     initial_states: ArrayLike | ControlTrajectory | None,
     initial_controls: ArrayLike | None,
     initial_trajectory: ControlTrajectory | None,
@@ -1112,14 +1203,15 @@ def _seed_nodes(
         states_input = trajectory.states
         controls_input = trajectory.controls
 
+    num_steps = problem.time_grid.num_steps
     if controls_input is None:
         controls = jnp.zeros(
-            (layout.num_steps,) + layout.control_shape,
+            (num_steps,) + problem.control_shape,
             dtype=problem.initial_state.dtype,
         )
     else:
         controls = jnp.asarray(controls_input)
-    expected_controls = (layout.num_steps,) + layout.control_shape
+    expected_controls = (num_steps,) + problem.control_shape
     if tuple(controls.shape) != expected_controls:
         raise ValueError(
             f"initial_controls must have shape {expected_controls}; got {controls.shape}."
@@ -1141,7 +1233,7 @@ def _seed_nodes(
         states = trajectory_seed.states
     else:
         states = jnp.asarray(states_input)
-    expected_states = (layout.num_steps + 1,) + layout.state_shape
+    expected_states = (num_steps + 1,) + problem.state_shape
     if tuple(states.shape) != expected_states:
         raise ValueError(
             f"initial_states must have shape {expected_states}; got {states.shape}."
@@ -1211,9 +1303,13 @@ def solve_multiple_shooting(
         line_search_contraction=line_search_contraction,
         max_line_search_iterations=max_line_search_iterations,
     )
-    layout = MultipleShootingDecisionLayout(
-        problem.time_grid.num_steps, problem.state_shape, problem.control_shape
-    )
+    state_layout = problem.dynamics.system.state_layout
+    geometry = state_layout.geometry
+    if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
+        raise ValueError(
+            "Multiple shooting requires exact inverse-retraction and "
+            "retraction-differential geometry."
+        )
     options = _solver_options(
         solver=solver,
         stepsize_controller=stepsize_controller,
@@ -1227,11 +1323,16 @@ def solve_multiple_shooting(
     )
     state_nodes, control_nodes = _seed_nodes(
         problem,
-        layout,
         initial_states,
         initial_controls,
         initial_trajectory,
         solver_options=options,
+    )
+    layout = MultipleShootingDecisionLayout(
+        problem.time_grid.num_steps,
+        state_layout,
+        problem.control_shape,
+        state_nodes,
     )
     decision = layout.pack(state_nodes, control_nodes)
     dtype = decision.dtype
@@ -1252,9 +1353,11 @@ def solve_multiple_shooting(
         status = MULTIPLE_SHOOTING_NONFINITE
     else:
         for _ in range(max_iterations):
+            current_states, current_controls = layout.unpack(decision)
             linearization = linearize_multiple_shooting(
                 problem,
-                *layout.unpack(decision),
+                current_states,
+                current_controls,
                 hessian_regularization=hessian_regularization,
                 solver=solver,
                 stepsize_controller=stepsize_controller,
@@ -1266,6 +1369,9 @@ def solve_multiple_shooting(
                 integration_max_steps=integration_max_steps,
                 integration_throw=integration_throw,
             )
+            layout = linearization.layout
+            decision = layout.pack(current_states, current_controls)
+            values = _nonlinear_values(problem, layout, decision, solver_options=options)
             if not bool(np.asarray(jnp.all(linearization.integration_valid))):
                 status = MULTIPLE_SHOOTING_INTEGRATION_FAILED
                 break
@@ -1439,7 +1545,12 @@ def solve_multiple_shooting(
         control_nodes,
         solver_options=_rollout_solver_options(problem, options),
     )
-    rollout_state_error = _maximum_abs(rollout_result.trajectory.states - state_nodes)
+    rollout_errors = jax.vmap(
+        lambda reference, point: jnp.asarray(
+            state_layout.geometry.inverse_retract(reference, point)
+        ).reshape((state_layout.local_size,))
+    )(state_nodes, rollout_result.trajectory.states)
+    rollout_state_error = _maximum_abs(rollout_errors)
     rollout_valid = (
         jnp.all(rollout_result.trajectory.successful)
         & jnp.all(rollout_result.sampled_loss.valid)
@@ -1515,12 +1626,21 @@ def compile_structured_multiple_shooting(
 ) -> StructuredMultipleShootingCompilation:
     """Lower fixed-topology multiple shooting to the canonical structured NLP."""
     _validate_problem(problem)
+    state_layout = problem.dynamics.system.state_layout
+    geometry = state_layout.geometry
+    if not geometry.supports_exact_inverse or not geometry.supports_exact_differential:
+        raise ValueError(
+            "Structured multiple shooting requires exact inverse-retraction and "
+            "retraction-differential geometry."
+        )
+    anchors = jnp.asarray(initial_states)
     layout = MultipleShootingDecisionLayout(
         problem.time_grid.num_steps,
-        problem.state_shape,
+        state_layout,
         problem.control_shape,
+        anchors,
     )
-    initial = layout.pack(initial_states, initial_controls)
+    initial = layout.pack(anchors, initial_controls)
     options = {} if solver_options is None else dict(solver_options)
     equality_size = (layout.num_steps + 1) * layout.state_size
     inequality_size = layout.num_steps * len(problem.path_constraints) + len(

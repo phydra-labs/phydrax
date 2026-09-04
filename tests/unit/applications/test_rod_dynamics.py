@@ -62,7 +62,7 @@ def _one_segment_inextensible_rod():
 
 def test_rod_exposes_shared_collision_surface_map():
     rod = _planar_rod()
-    surface = rod.collision_surface(minimum_separation=0.02)
+    surface = rod.collision_surface(physical_radius=0.01)
     scene = phx.discretization.PreparedCollisionScene((surface,))
     state = jnp.zeros((rod.plan.node_count, rod.plan.dimension))
     epoch = phx.discretization.SweepAndPruneContactSearchPlan(
@@ -73,7 +73,7 @@ def test_rod_exposes_shared_collision_surface_map():
     ).build(scene, scene.positions(state))
 
     assert surface.plan.edge_count == rod.plan.segment_count
-    assert surface.plan.minimum_separation == pytest.approx(0.02)
+    assert surface.plan.physical_radius == pytest.approx(0.01)
     assert jnp.array_equal(scene.positions(state), rod.plan.rest_positions)
     assert bool(epoch.successful)
 

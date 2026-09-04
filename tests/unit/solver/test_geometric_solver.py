@@ -93,18 +93,20 @@ def test_problem_validates_membership_and_rejects_ordinary_solver():
         geometry_id="state-geometry:test-embedded",
         retraction_method="test-addition",
     )
-    with pytest.raises(ValueError, match="exact pullback"):
+    with pytest.raises(ValueError, match="exact retraction differential"):
         phx.solver.RKMK(embedded)
     exact_embedded = phx.metrix.EmbeddedStateGeometry(
         membership=lambda state: jnp.asarray(True),
         tangent_projection=lambda state, vector: vector,
         retraction=lambda state, tangent: state + tangent,
         inverse_retraction=lambda state, point: point - state,
-        retraction_pullback=lambda state, local, tangent: tangent,
+        retraction_jvp_action=lambda state, local, velocity: velocity,
+        retraction_inverse_jvp_action=lambda state, point, tangent: tangent,
+        retraction_vjp_action=lambda state, local, cotangent: cotangent,
         geometry_id="state-geometry:test-exact-embedded",
         retraction_method="test-addition",
     )
-    assert exact_embedded.supports_exact_pullback
+    assert exact_embedded.supports_exact_differential
     assert isinstance(phx.solver.RKMK(exact_embedded), phx.solver.RKMK)
 
 
@@ -352,6 +354,116 @@ def test_geometric_event_uses_on_manifold_interpolation():
     _assert_so(solution.evaluate(jnp.asarray([0.2, event_time])))
 
 
+@pytest.mark.parametrize(
+    "solver_factory",
+    (
+        lambda geometry: phx.solver.GeometricEuler(geometry),
+        lambda geometry: phx.solver.RKMK(geometry, method="midpoint"),
+        lambda geometry: phx.solver.CommutatorFreeSolver(geometry),
+    ),
+)
+def test_quaternion_solver_step_consumes_physical_tangent_space(solver_factory):
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+    term = dfx.ODETerm(
+        lambda time, state, args: angular_velocity,
+    )
+    solver = solver_factory(geometry)
+
+    actual = solver.step(
+        term,
+        jnp.asarray(0.0),
+        jnp.asarray(0.25),
+        base,
+        None,
+        None,
+        False,
+    )[0]
+    expected = geometry.retract(base, 0.25 * angular_velocity)
+
+    assert actual.shape == (4,)
+    assert jnp.allclose(actual, expected, rtol=2e-6, atol=2e-7)
+    assert bool(geometry.contains(actual))
+
+
+def test_quaternion_chart_jvp_vjp_duality_and_inverse_jvp_are_distinct_roles():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    local = jnp.asarray([0.3, -0.2, 0.1])
+    local_velocity = jnp.asarray([-0.4, 0.25, 0.15])
+    physical_cotangent = jnp.asarray([0.7, -0.1, 0.5])
+
+    point = geometry.retract(base, local)
+    physical_tangent = geometry.retraction_jvp(
+        base,
+        local,
+        local_velocity,
+    )
+    recovered_velocity = geometry.retraction_inverse_jvp(
+        base,
+        point,
+        physical_tangent,
+    )
+    local_cotangent = geometry.retraction_vjp(
+        base,
+        local,
+        physical_cotangent,
+    )
+
+    assert jnp.allclose(recovered_velocity, local_velocity, atol=2e-6)
+    assert jnp.allclose(
+        jnp.vdot(physical_cotangent, physical_tangent),
+        jnp.vdot(local_cotangent, local_velocity),
+        atol=2e-6,
+    )
+
+
+def test_quaternion_solver_rejects_point_storage_as_physical_tangent():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    solver = phx.solver.GeometricEuler(geometry)
+    invalid = dfx.ODETerm(
+        lambda time, state, args: jnp.zeros_like(state),
+    )
+
+    with pytest.raises(ValueError, match="physical tangent shape"):
+        solver.step(
+            invalid,
+            jnp.asarray(0.0),
+            jnp.asarray(0.1),
+            jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            None,
+            None,
+            False,
+        )
+
+
+def test_diffrax_backend_preserves_unequal_quaternion_roles():
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+    problem = phx.solver.DifferentialProblem(
+        lambda time, state, args: angular_velocity,
+        base,
+        t0=0.0,
+        t1=0.2,
+        state_geometry=geometry,
+    )
+
+    solution = phx.solver.solve_diffrax(
+        problem,
+        save_times=jnp.asarray([0.0, 0.1, 0.2]),
+        solver=phx.solver.RKMK(geometry, method="midpoint"),
+        dt0=0.1,
+    )
+
+    expected = geometry.retract(base, 0.2 * angular_velocity)
+    assert problem.tangent_shape == (3,)
+    assert problem.local_shape == (3,)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
+
+
 def test_srkmk_spd_corrector_uses_base_local_retraction():
     geometry = phx.metrix.SymmetricPositiveDefiniteStateGeometry(2)
     base = jnp.array([[2.0, 0.35], [0.35, 1.1]])
@@ -380,10 +492,10 @@ def test_srkmk_spd_corrector_uses_base_local_retraction():
 
     retraction = geometry.local_retraction(base)
     noise_increment = 0.2 * constant_field
-    first = retraction.pullback(jnp.zeros_like(base), noise_increment)
+    first = retraction.inverse_jvp(base, noise_increment)
     predictor = retraction.evaluate(first)
-    corrected = retraction.pullback(
-        first,
+    corrected = retraction.inverse_jvp(
+        predictor,
         geometry.project_tangent(predictor, noise_increment),
     )
     expected = retraction.evaluate(0.5 * (first + corrected))

@@ -645,7 +645,7 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
         vertex_ids: ArrayLike | None = None,
         body_id: int = 0,
         patch_id: int = 0,
-        minimum_separation: float | None = None,
+        physical_radius: float | None = None,
     ) -> PreparedCollisionSurface:
         """Expose the shell through the shared exact-map collision interface."""
         identifiers = (
@@ -657,23 +657,22 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
             identifiers.dtype, np.integer
         ):
             raise TypeError("vertex_ids must be one integer ID per shell node.")
-        separation = (
-            float(jnp.max(self.plan.thickness))
-            if minimum_separation is None
-            else float(minimum_separation)
+        radius = (
+            0.5 * float(jnp.max(self.plan.thickness))
+            if physical_radius is None
+            else float(physical_radius)
         )
-        policy = ContactPairPolicy(
-            self.node_count,
-            body_ids=np.full((self.node_count,), int(body_id), dtype=np.int64),
-            patch_ids=np.full((self.node_count,), int(patch_id), dtype=np.int64),
-            static_mask=np.asarray(self.fixed_mask, dtype=bool),
-        )
+        policy = ContactPairPolicy(self.node_count)
         topology = CollisionSurfacePlan(
             identifiers,
             ambient_dimension=3,
             faces=self.plan.triangles,
             pair_policy=policy,
-            minimum_separation=separation,
+            participant_ids=0,
+            body_ids=int(body_id),
+            patch_ids=int(patch_id),
+            static_mask=np.asarray(self.fixed_mask, dtype=bool),
+            physical_radius=radius,
         )
         dtype = np.dtype(self.reference_positions.dtype)
         source = ArraySpace((self.node_count, 3), dtype=dtype)

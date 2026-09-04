@@ -62,16 +62,19 @@
   learned free-energy biases, immutable atomistic learning campaigns,
   non-element molecular coarse beads with fixed-map force matching, and exact
   targeted free-energy maps with FlowJAX and alchemical endpoint adapters.
-- Added the native robotics Wave 0 platform: explicit-root, descriptor-relative
-  bounded URDF adaptation with exact manifests and non-waivable required
-  semantics; COM-centred rigid mass properties and reference rebasing;
-  fixed-base articulation with bounded semi-implicit velocity Euler;
-  result-preserving discrete evolution/control and accepted-state environments;
-  certified fixed-route articulated impact; local frame IK, sampling MPC,
-  manifold defects, and reduced rods; plus optional MJX gated by complete state
-  schemas, projection provenance, freshness epochs, and a matching 3.12
-  provider pair. Fixed-route impact remains an operator utility; collision
-  discovery and an atomic robot/contact step are not included.
+- Added the native rigid and soft robotics platform: explicit-root bounded URDF
+  adaptation; four-space state geometry and true-dual mechanics; complete atomic
+  plant, codec, checkpoint, and replay contracts; spatial native rods; PCS/GVS
+  basis, reconstruction, materials, reduced dynamics, and integrators; atomic
+  contact-free tendon and circular-capsule plane/self-contact plants; capstan,
+  pressure, intrinsic-strain, variable-stiffness, and affine-magnetic actuator
+  evaluators; continuum IK, observations, calibration, fixed-mode co-design, and
+  sampling MPC; floating and fixed-topology rigid–soft composition; fixed-mesh
+  FEM and fixed-topology MPM profiles; and an MJX-JAX complete-state plant gated
+  by an exact 3.12.x provider pair and closed feature manifest. Added
+  self-contained tendon/contact examples and a deterministic soft-rod benchmark
+  matrix with evidence, residual, work, and storage reporting. Support claims
+  remain limited to each exact declared capability tuple and runtime evidence.
 - Added first-class surfel discretizations with stable point ownership,
   validated oriented tangent footprints, physical surface quadrature,
   boundary-atlas and simplicial materialization, Morton primitive bounds,

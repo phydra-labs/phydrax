@@ -59,11 +59,11 @@ def test_product_state_geometry_composes_euclidean_blocks():
             ),
         )
     )
-    state = geometry.combine((jnp.asarray((1.0, 2.0)), jnp.asarray((0.5,))))
+    state = geometry.combine_point((jnp.asarray((1.0, 2.0)), jnp.asarray((0.5,))))
     step = jnp.asarray((0.1, -0.2, 0.3))
     assert bool(geometry.contains(state))
     assert jnp.allclose(geometry.retract(state, step), state + step)
-    assert geometry.split(state)[0] == pytest.approx(jnp.asarray((1.0, 2.0)))
+    assert geometry.split_point(state)[0] == pytest.approx(jnp.asarray((1.0, 2.0)))
 
 
 def test_axial_member_equilibrium_matches_closed_form_and_derivative():

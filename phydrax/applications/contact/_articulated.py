@@ -18,9 +18,10 @@ from ...discretization.contact._kinematics import ContactKinematicsEpoch
 from ...discretization.contact._participant import AbstractContactParticipant
 from ...linalg import (
     AbstractLinearOperator,
-    adjoint,
     ArraySpace,
     DenseLinearOperator,
+    dual_transpose,
+    DualSpace,
     eigen as eigen_api,
     FunctionLinearOperator,
     MaterializationPolicy,
@@ -162,9 +163,7 @@ def _route_velocity(
         gathered = jnp.where(inside[..., None], vertex_velocity[safe], 0.0)
         relative = jnp.sum(batch.coefficients[..., None] * gathered, axis=1)
         normal = jnp.sum(relative * batch.normal, axis=-1, keepdims=True)
-        tangent = jnp.sum(
-            batch.tangent_basis * relative[..., :, None], axis=-2
-        )
+        tangent = jnp.sum(batch.tangent_basis * relative[..., :, None], axis=-2)
         local = jnp.concatenate((normal, tangent), axis=-1)
         values.append(jnp.where(batch.valid[:, None], local, 0.0))
     return jnp.concatenate(tuple(values), axis=0)
@@ -198,9 +197,7 @@ def _surface_impulse(
             local_indices < participant.surface_plan.vertex_count
         )
         safe = jnp.clip(local_indices, 0, participant.surface_plan.vertex_count - 1)
-        surface = surface.at[safe].add(
-            jnp.where(inside[..., None], route_impulse, 0.0)
-        )
+        surface = surface.at[safe].add(jnp.where(inside[..., None], route_impulse, 0.0))
         start = stop
     return surface
 
@@ -232,8 +229,6 @@ def _tree_where(
     return jax.tree.map(lambda yes, no: jnp.where(condition, yes, no), accepted, rejected)
 
 
-
-
 def build_contact_velocity_operator(
     participant: AbstractContactParticipant,
     configuration: PyTree[Any],
@@ -253,19 +248,14 @@ def build_contact_velocity_operator(
     configuration_ = participant.source_space.validate(configuration)
     positions = participant.positions(configuration_)
     contact_count, local_dimension = _contact_layout(kinematics)
-    contact_space = ArraySpace(
-        (contact_count, local_dimension), dtype=positions.dtype
-    )
+    contact_space = ArraySpace((contact_count, local_dimension), dtype=positions.dtype)
 
     def action(rates):
-        return _route_velocity(
-            participant, configuration_, kinematics, rates, offset
-        )
+        return _route_velocity(participant, configuration_, kinematics, rates, offset)
 
-    def transpose_action(local):
-        surface = _surface_impulse(participant, kinematics, local, offset)
-        pulled = participant.force_pullback(configuration_, surface)
-        return participant.tangent_space.riesz(pulled)
+    def transpose_action(local_effort):
+        surface_effort = _surface_impulse(participant, kinematics, local_effort, offset)
+        return participant.effort_pullback(configuration_, surface_effort)
 
     return FunctionLinearOperator(
         action,
@@ -298,13 +288,14 @@ def build_delassus_operator(
     if velocity_operator.batch_shape or inverse_mass_operator.batch_shape:
         raise ValueError("Articulated contact operators cannot be operator-batched.")
     tangent = velocity_operator.source
-    if not inverse_mass_operator.source.compatible(tangent) or not (
+    tangent_dual = DualSpace(tangent)
+    if not inverse_mass_operator.source.compatible(tangent_dual) or not (
         inverse_mass_operator.target.compatible(tangent)
     ):
         raise ValueError(
-            "inverse_mass_operator must be an endomorphism of the contact tangent space."
+            "inverse_mass_operator must map the contact tangent dual to its tangent."
         )
-    return velocity_operator @ inverse_mass_operator @ adjoint(velocity_operator)
+    return velocity_operator @ inverse_mass_operator @ dual_transpose(velocity_operator)
 
 
 def contact_duality_evidence(
@@ -318,12 +309,13 @@ def contact_duality_evidence(
     if not isinstance(velocity_operator, AbstractLinearOperator):
         raise TypeError("velocity_operator must be AbstractLinearOperator.")
     velocity = velocity_operator.source.validate(generalized_velocity)
-    impulse = velocity_operator.target.validate(contact_impulse)
+    contact_effort_space = DualSpace(velocity_operator.target)
+    impulse = contact_effort_space.validate(contact_impulse)
     local_velocity = velocity_operator.mv(velocity)
-    generalized_impulse = velocity_operator.adjoint_mv(impulse)
-    contact_power = velocity_operator.target.inner(local_velocity, impulse)
-    generalized_power = velocity_operator.source.inner(
-        velocity, generalized_impulse
+    generalized_impulse = dual_transpose(velocity_operator).mv(impulse)
+    contact_power = contact_effort_space.pair(impulse, local_velocity)
+    generalized_power = DualSpace(velocity_operator.source).pair(
+        generalized_impulse, velocity
     )
     residual = contact_power - generalized_power
     scale = jnp.maximum(
@@ -403,20 +395,14 @@ def prepare_articulated_contact(
     dtype = dense_delassus.dtype
     tolerance = jnp.finfo(dtype).eps * max(64, 8 * delassus.source.size)
     adjoint_dense = jnp.conj(jnp.swapaxes(dense_delassus, -1, -2))
-    symmetry_residual = jnp.max(
-        jnp.abs(dense_delassus - adjoint_dense), initial=0.0
-    )
-    delassus_scale = jnp.maximum(
-        1.0, jnp.max(jnp.abs(dense_delassus), initial=0.0)
-    )
-    minimum_diagonal = jnp.min(
-        jnp.real(jnp.diag(dense_delassus)), initial=jnp.inf
-    )
+    symmetry_residual = jnp.max(jnp.abs(dense_delassus - adjoint_dense), initial=0.0)
+    delassus_scale = jnp.maximum(1.0, jnp.max(jnp.abs(dense_delassus), initial=0.0))
+    minimum_diagonal = jnp.min(jnp.real(jnp.diag(dense_delassus)), initial=jnp.inf)
     hermitian_delassus = 0.5 * (dense_delassus + adjoint_dense)
     spectral_operator = DenseLinearOperator(
         hermitian_delassus,
-        source=delassus.source,
-        target=delassus.target,
+        source=velocity_operator.target,
+        target=velocity_operator.target,
         properties=OperatorProperties(
             self_adjoint=True,
             evidence={"self_adjoint": "verified"},
@@ -442,9 +428,8 @@ def prepare_articulated_contact(
         ),
         initial=0.0,
     )
-    spectral_finite = (
-        jnp.all(jnp.isfinite(spectral_result.eigenvalues))
-        & jnp.isfinite(spectral_residual)
+    spectral_finite = jnp.all(jnp.isfinite(spectral_result.eigenvalues)) & jnp.isfinite(
+        spectral_residual
     )
     spectral_valid = (
         spectral_result.successful
@@ -455,9 +440,7 @@ def prepare_articulated_contact(
     participant_routes_complete = _participant_routes_complete(
         participant, kinematics, int(vertex_offset)
     )
-    material_law_complete = jnp.all(
-        (~program.valid) | program.mechanical_available
-    )
+    material_law_complete = jnp.all((~program.valid) | program.mechanical_available)
     velocity_consistent = velocity_residual <= tolerance * velocity_scale
     nonnegative_diagonal = minimum_diagonal >= -tolerance * delassus_scale
     finite = (
@@ -531,8 +514,12 @@ def apply_articulated_contact_impulse(
     if cone_result.evidence.program_id != prepared.program.program_id:
         raise ValueError("Cone result does not belong to the prepared contact program.")
 
-    candidate_impulse = prepared.velocity_operator.target.validate(cone_result.impulse)
-    candidate_generalized = prepared.velocity_operator.adjoint_mv(candidate_impulse)
+    candidate_impulse = DualSpace(prepared.velocity_operator.target).validate(
+        cone_result.impulse
+    )
+    candidate_generalized = dual_transpose(prepared.velocity_operator).mv(
+        candidate_impulse
+    )
     candidate_update = prepared.inverse_mass_operator.mv(candidate_generalized)
     candidate_post = jax.tree.map(
         lambda free, update: free + update, prepared.free_velocity, candidate_update
@@ -546,10 +533,7 @@ def apply_articulated_contact_impulse(
         jnp.abs(contact_velocity_update - expected_contact_update), initial=0.0
     )
     law_velocity = (
-        (
-            prepared.program.effective_mass
-            + jnp.diag(prepared.program.compliance)
-        )
+        (prepared.program.effective_mass + jnp.diag(prepared.program.compliance))
         @ candidate_impulse.reshape((-1,))
         + prepared.program.free_velocity.reshape((-1,))
     ).reshape(candidate_impulse.shape)
@@ -608,20 +592,17 @@ def apply_articulated_contact_impulse(
     successful = prepared.evidence.successful & contact_certificate_valid
 
     zero_impulse = jnp.zeros_like(candidate_impulse)
-    zero_generalized = prepared.velocity_operator.source.zeros()
+    zero_generalized = DualSpace(prepared.velocity_operator.source).zeros()
+    zero_update = prepared.velocity_operator.source.zeros()
     applied_impulse = jnp.where(successful, candidate_impulse, zero_impulse)
-    generalized = _tree_where(
-        successful, candidate_generalized, zero_generalized
-    )
-    update = _tree_where(successful, candidate_update, zero_generalized)
+    generalized = _tree_where(successful, candidate_generalized, zero_generalized)
+    update = _tree_where(successful, candidate_update, zero_update)
     post = jax.tree.map(
         lambda free, increment: free + increment, prepared.free_velocity, update
     )
     post_contact_velocity = prepared.velocity_operator.mv(post)
     zero_update = (
-        jnp.max(
-            jnp.abs(prepared.velocity_operator.source.flatten(update)), initial=0.0
-        )
+        jnp.max(jnp.abs(prepared.velocity_operator.source.flatten(update)), initial=0.0)
         == 0.0
     )
     zero_generalized_output = (
@@ -632,9 +613,7 @@ def apply_articulated_contact_impulse(
         == 0.0
     )
     zero_applied = jnp.max(jnp.abs(applied_impulse), initial=0.0) == 0.0
-    fail_closed = successful | (
-        zero_update & zero_generalized_output & zero_applied
-    )
+    fail_closed = successful | (zero_update & zero_generalized_output & zero_applied)
     evidence = ArticulatedContactEvidence(
         preparation=prepared.evidence,
         cone=cone_result.evidence,

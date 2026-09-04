@@ -154,6 +154,7 @@ def _restart_history(
             computed_history=archive,
             state_shape=problem.state_shape,
             geometry=problem.state_geometry,
+            derivative_shape=problem.tangent_shape,
         ),
         restart_time=time,
         restart_state=state,
@@ -200,9 +201,11 @@ def _event_memory(
         delay_terms=problem.delay_terms,
         initial_time=problem.t0,
         state_shape=problem.state_shape,
+        tangent_shape=problem.tangent_shape,
         geometry=problem.state_geometry,
         state_adapter=state_adapter,
         backend_shape=state_adapter.backend_shape,
+        backend_tangent_shape=problem.tangent_shape,
         computed_history=archive,
     )
     memory, _ = context._memory(time, state, problem.args)

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 
@@ -167,34 +168,76 @@ def _continuation_bifurcation():
 
 def _contact():
     contact = phx.applications.contact
-    plus = contact.ContactSurface(
-        "plus",
+    collision = phx.discretization.contact
+    source = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
+    moving_plan = collision.CollisionSurfacePlan(
         jnp.asarray((10, 11)),
-        jnp.asarray(((0.25, -0.1), (0.75, 0.2))),
-        jnp.asarray(((0, 1),), dtype=jnp.int32),
-        jnp.asarray((100,)),
+        ambient_dimension=2,
+        edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
+        minimum_separation=0.2,
     )
-    minus = contact.ContactSurface(
-        "minus",
+    fixed_plan = collision.CollisionSurfacePlan(
         jnp.asarray((20, 21)),
-        jnp.asarray(((0.0, 0.0), (1.0, 0.0))),
-        jnp.asarray(((0, 1),), dtype=jnp.int32),
-        jnp.asarray((200,)),
+        ambient_dimension=2,
+        edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
+        pair_policy=collision.ContactPairPolicy(
+            2,
+            body_ids=jnp.ones((2,), dtype=jnp.int64),
+            material_ids=jnp.zeros((2,), dtype=jnp.int64),
+            static_mask=jnp.ones((2,), dtype=bool),
+        ),
+        minimum_separation=0.2,
     )
-    query = contact.ContactQueryPlan(
-        contact.ContactConfiguration(plus, minus, epoch=0, search_radius=1.0)
-    ).execute()
-    operator = contact.FixedEpochContactOperator(query, contact.PenaltyContactLaw(100.0))
-    evaluation = operator.evaluate(operator.accepted_state())
-    passed = jnp.all(evaluation.finite) & jnp.all(
-        evaluation.action_reaction_defect < 1.0e-12
+    moving = collision.PreparedCollisionSurface(
+        moving_plan,
+        jnp.asarray(((0.25, 0.1), (0.75, 0.2))),
+        collision.selection_collision_operator(source, jnp.asarray((0, 1))),
+    )
+    fixed = collision.PreparedCollisionSurface(
+        fixed_plan,
+        jnp.asarray(((0.0, 0.0), (1.0, 0.0))),
+        collision.static_collision_operator(source, 2, 2),
+    )
+    scene = collision.PreparedCollisionScene((moving, fixed))
+    positions = scene.positions(source.zeros())
+    search = collision.DenseContactSearchPlan(
+        edge_vertex_capacity=8,
+        edge_edge_capacity=0,
+        face_vertex_capacity=0,
+        activation_distance=0.3,
+    )
+    epoch = search.build(scene, positions)
+    kinematics = collision.evaluate_contact_kinematics(
+        scene, epoch, positions, jnp.zeros_like(positions), 1.0
+    )
+    materials = contact.ContactMaterialPairTable.uniform(
+        normal_stiffness=100.0,
+        static_friction=0.0,
+        dynamic_friction=0.0,
+        restitution=0.0,
+        adhesion_energy=0.0,
+        thermal_conductance=0.0,
+        electrical_conductance=0.0,
+        wear_coefficient=0.0,
+        hardness=1.0,
+        roughness=0.0,
+    )
+    closure = contact.ContactClosurePlan(contact.CompliantNormalContactLaw(), materials)
+    initial = contact.ContactRouteState.empty(0, 1, closure.closure_id)
+    transition = contact.remap_contact_route_state(initial, kinematics)
+    evaluation = contact.evaluate_contact_closure(
+        closure, kinematics, transition.candidate
+    )
+    assembly = contact.assemble_smooth_contact(kinematics, evaluation, positions)
+    passed = assembly.finite & jnp.all(
+        jnp.abs(assembly.action_reaction_residual) < 1.0e-12
     )
     return {
         "passed": bool(passed),
-        "pairs": len(query.patches.pair_ids),
-        "minimum_gap": float(jnp.min(query.patches.gaps)),
+        "pairs": int(kinematics.evidence.active_contacts),
+        "minimum_gap": float(kinematics.evidence.minimum_gap),
         "action_reaction_defect": float(
-            jnp.max(jnp.abs(evaluation.action_reaction_defect))
+            jnp.max(jnp.abs(assembly.action_reaction_residual))
         ),
     }
 

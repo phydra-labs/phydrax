@@ -224,7 +224,7 @@ def test_diffusion_bound_and_stage_commit_fail_closed():
     with pytest.raises(ValueError, match="diffusion-only bound"):
         diffusion_only.prepare(runtime.diffusion_step_limit_ms * 1.01)
 
-    singular_values = runtime.geometry.combine(
+    singular_values = runtime.geometry.combine_point(
         (
             jnp.full((runtime.plan.node_count,), -runtime.plan.reaction.mu2),
             jnp.zeros((runtime.plan.node_count,)),

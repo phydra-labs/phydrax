@@ -530,6 +530,25 @@ def _validate_topology(
         )
 
 
+def _validate_storage_coordinate_geometry(
+    problem: NonlinearOpenLoopGameProblem,
+    /,
+) -> None:
+    layout = problem.dynamics.system.state_layout
+    if (
+        not layout.geometry.trivial
+        or layout.size != layout.local_size
+        or layout.size != layout.tangent_size
+    ):
+        raise ValueError(
+            "Open-loop game KKT storage-coordinate trajectories require trivial "
+            "Euclidean geometry and equal point/local/tangent sizes; got "
+            f"geometry_id={layout.geometry.geometry_id!r}, "
+            f"trivial={layout.geometry.trivial}, point_size={layout.size}, "
+            f"local_size={layout.local_size}, tangent_size={layout.tangent_size}."
+        )
+
+
 def _rollout_and_costs_single(
     problem: NonlinearOpenLoopGameProblem,
     initial_state: Array,
@@ -827,6 +846,7 @@ def prepare_open_loop_game_kkt(
     """Prepare the private nonlinear KKT mixed-complementarity solve."""
 
     _validate_topology(plan, problem)
+    _validate_storage_coordinate_geometry(problem)
     resolved_constraint_args = (
         problem.args if constraint_args is _UNSET else constraint_args
     )
@@ -905,6 +925,7 @@ def refresh_open_loop_game_kkt(
     if not isinstance(prepared, PreparedOpenLoopGameKKT):
         raise TypeError("prepared must be PreparedOpenLoopGameKKT.")
     _validate_topology(prepared.plan, problem)
+    _validate_storage_coordinate_geometry(problem)
     dtype = problem.initial_state.dtype
     controls = (
         prepared.initial_controls

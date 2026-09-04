@@ -166,12 +166,40 @@ def test_failed_finite_rollback_remains_invalid_and_preserves_backend_status():
     np.testing.assert_allclose(evidence.accepted_states[0], jnp.asarray([2.0]))
     assert bool(jnp.isnan(evidence.candidate_states[1, 0]))
     np.testing.assert_array_equal(evidence.successful, jnp.asarray([False, False]))
+    np.testing.assert_array_equal(evidence.attempted, jnp.asarray([True, False]))
     np.testing.assert_array_equal(
         evidence.status,
         jnp.asarray([failure_status, 0], dtype=jnp.int32),
     )
     assert int(evidence.first_failure_step) == 0
     assert int(evidence.first_failure_status) == failure_status
+
+
+def test_invalid_control_and_post_failure_steps_are_unattempted():
+    grid, parameterization = _grid_and_parameterization()
+    dynamics = _dynamics(
+        lambda context, state, control, args: state + control,
+        system_id="invalid-control-transition",
+    )
+
+    trajectory = dynamics.rollout(
+        grid,
+        jnp.asarray([2.0]),
+        parameterization,
+        jnp.asarray([[jnp.nan], [1.0]]),
+        problem_id="invalid-control",
+    )
+
+    evidence = trajectory.transition_evidence
+    assert evidence is not None
+    np.testing.assert_array_equal(evidence.attempted, jnp.asarray([False, False]))
+    np.testing.assert_array_equal(evidence.successful, jnp.asarray([False, False]))
+    np.testing.assert_array_equal(
+        evidence.status,
+        jnp.zeros((2,), dtype=jnp.int32),
+    )
+    assert int(evidence.first_failure_step) == -1
+    assert int(evidence.first_failure_status) == 0
 
 
 def test_successful_result_and_legacy_rollouts_agree_under_batching_and_jit():
@@ -234,6 +262,11 @@ def test_successful_result_and_legacy_rollouts_agree_under_batching_and_jit():
         result_evidence.accepted_states,
     )
     np.testing.assert_array_equal(
+        legacy_evidence.attempted,
+        result_evidence.attempted,
+    )
+    assert bool(jnp.all(legacy_evidence.attempted))
+    np.testing.assert_array_equal(
         legacy_evidence.successful,
         result_evidence.successful,
     )
@@ -295,6 +328,10 @@ def test_batched_result_failures_preserve_per_case_validity_and_status():
     np.testing.assert_array_equal(
         evidence.first_failure_status,
         jnp.asarray([0, failure_status], dtype=jnp.int32),
+    )
+    np.testing.assert_array_equal(
+        evidence.attempted,
+        jnp.asarray([[True, True], [True, False]]),
     )
     np.testing.assert_array_equal(
         evidence.status,

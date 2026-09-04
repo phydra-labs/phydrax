@@ -6,6 +6,10 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax.discretization.contact._surface import (
+    CollisionFeatureKind,
+    CollisionFeaturePolicy,
+)
 
 
 def _two_segment_scene(*, envelope=0.0):
@@ -14,7 +18,7 @@ def _two_segment_scene(*, envelope=0.0):
         jnp.asarray((0, 1), dtype=jnp.int64),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
-        minimum_separation=jnp.asarray((0.01, 0.02)),
+        physical_radius=jnp.asarray((0.005, 0.01)),
     )
     moving = phx.discretization.PreparedCollisionSurface(
         moving_plan,
@@ -25,12 +29,9 @@ def _two_segment_scene(*, envelope=0.0):
         jnp.asarray((10, 11), dtype=jnp.int64),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
-        pair_policy=phx.discretization.ContactPairPolicy(
-            2,
-            body_ids=jnp.ones((2,), dtype=jnp.int64),
-            material_ids=jnp.ones((2,), dtype=jnp.int64),
-            static_mask=jnp.ones((2,), dtype=bool),
-        ),
+        body_ids=1,
+        material_ids=1,
+        static_mask=True,
     )
     static = phx.discretization.PreparedCollisionSurface(
         static_plan,
@@ -55,7 +56,7 @@ def _candidate_rows(batch):
 
 def test_per_vertex_separation_and_certified_ccd_guarantee():
     source, scene, search = _two_segment_scene()
-    np.testing.assert_allclose(scene.minimum_separation[:2], (0.01, 0.02))
+    np.testing.assert_allclose(scene.feature_physical_radius[:2], (0.005, 0.01))
     start = scene.positions(source.zeros())
     end_state = jnp.broadcast_to(jnp.asarray((0.0, -1.0)), source.shape)
     end = scene.positions(end_state)
@@ -98,19 +99,14 @@ def test_independent_participants_search_and_force_duality():
         jnp.asarray((0, 1)),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),)),
-        pair_policy=phx.discretization.ContactPairPolicy(
-            2, material_ids=jnp.zeros((2,), dtype=jnp.int64)
-        ),
+        material_ids=0,
     )
     plan_b = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((2, 3)),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),)),
-        pair_policy=phx.discretization.ContactPairPolicy(
-            2,
-            body_ids=jnp.ones((2,), dtype=jnp.int64),
-            material_ids=jnp.ones((2,), dtype=jnp.int64),
-        ),
+        body_ids=1,
+        material_ids=1,
     )
     surface_a = phx.discretization.PreparedCollisionSurface(
         plan_a,
@@ -148,7 +144,7 @@ def test_proxy_implicit_and_trajectory_bounds_are_explicit():
         jnp.asarray((0, 1, 2)),
         ambient_dimension=3,
         faces=jnp.asarray(((0, 1, 2),)),
-        minimum_separation=0.01,
+        physical_radius=0.005,
     )
     proxy = phx.discretization.ContactProxyPlan(
         topology, jnp.asarray((0.001, 0.002, 0.003)), certified=True
@@ -156,7 +152,18 @@ def test_proxy_implicit_and_trajectory_bounds_are_explicit():
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
         phx.discretization.selection_collision_operator(source, jnp.arange(3)),
     )
-    sphere = phx.discretization.SphereContactGeometry((0.0, 0.0, 0.0), 1.0)
+    analytic = CollisionFeaturePolicy(
+        jnp.asarray((100,), dtype=jnp.int64),
+        jnp.asarray((int(CollisionFeatureKind.ANALYTIC),), dtype=jnp.int32),
+        participant_ids=1,
+        body_ids=1,
+        material_ids=1,
+        patch_ids=1,
+        provenance_id="closure-substrate-sphere",
+    )
+    sphere = phx.discretization.SphereContactGeometry(
+        (0.0, 0.0, 0.0), 1.0, feature_policy=analytic
+    )
     sphere_evaluation = sphere.evaluate(jnp.asarray(((2.0, 0.0, 0.0),)))
     cubic = phx.discretization.CubicHermiteContactTrajectory(
         jnp.zeros((1, 3)),
@@ -168,8 +175,8 @@ def test_proxy_implicit_and_trajectory_bounds_are_explicit():
     samples = jnp.stack(tuple(cubic.evaluate(t) for t in jnp.linspace(0.0, 1.0, 21)))
 
     np.testing.assert_allclose(
-        proxy.surface.plan.vertex_minimum_separation,
-        (0.011, 0.012, 0.013),
+        proxy.surface.plan.feature_policy.contact_extent[:3],
+        (0.006, 0.007, 0.008),
     )
     np.testing.assert_allclose(sphere_evaluation.signed_distance, 1.0)
     assert bool(proxy.evidence.successful)
