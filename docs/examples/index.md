@@ -156,6 +156,83 @@ The scripts report measurement validity and scientific error evidence. They
 distinguish image displacement from physical velocity and reconstructed
 particle identities from latent synthetic particle IDs.
 
+## Skeletal-muscle motor units
+
+The public sustained-isometric motor-unit example is directly runnable:
+
+```text
+python examples/skeletal_muscle_motor_units.py
+```
+
+It reports source and plan identities, relative force, capacity loss, recruitment,
+and complete transition success. The output is not force in newtons or a dynamic
+musculotendon simulation. Qualification and benchmark entry points are:
+
+```text
+python tools/skeletal_muscle_motor_unit_qualification.py
+python benchmarks/skeletal_muscle_motor_units.py
+```
+
+The remaining source-bounded skeletal and provider examples are:
+
+```text
+python examples/skeletal_motor_units_fuglevand_1993.py
+python examples/skeletal_fatigue_liu_2002.py
+python examples/skeletal_force_calibration.py
+python examples/skeletal_muscle_fast_twitch.py
+python examples/skeletal_muscle_fibers.py
+python examples/skeletal_muscle_motor_territories.py
+python examples/skeletal_musculotendon_de_groote_fregly_2016.py
+python examples/skeletal_muscle_continuum.py
+python examples/skeletal_muscle_proprioception.py
+python examples/skeletal_muscle_emg.py
+python examples/skeletal_muscle_energetics.py
+python examples/skeletal_muscle_multimodal_uq.py
+python examples/skeletal_muscle_control_replay.py
+python examples/skeletal_muscle_interchange_worksets.py
+python examples/robotics_fixed_body_muscle_route.py
+python examples/robotics_analytic_wrap.py
+python examples/robotics_mjx_muscle_projection.py
+```
+
+Qualification entry points:
+
+```text
+python tools/skeletal_motor_units_qualification.py
+python tools/skeletal_fatigue_qualification.py
+python tools/skeletal_force_calibration_qualification.py
+python tools/skeletal_muscle_cell_qualification.py
+python tools/skeletal_muscle_fiber_qualification.py
+python tools/qualify_de_groote_fregly_2016.py
+python tools/qualify_fixed_body_route.py
+python tools/qualify_analytic_route_wrap.py
+python tools/qualify_mjx_muscle_projection.py
+python tools/skeletal_muscle_continuum_qualification.py
+python tools/skeletal_proprioception_qualification.py
+python tools/skeletal_muscle_emg_qualification.py
+python tools/skeletal_muscle_energetics_qualification.py
+python tools/skeletal_muscle_interchange_qualification.py
+```
+
+Benchmark entry points:
+
+```text
+python benchmarks/skeletal_motor_units.py
+python benchmarks/skeletal_fatigue.py
+python benchmarks/skeletal_force_calibration.py
+python benchmarks/skeletal_muscle_cell.py
+python benchmarks/skeletal_muscle_fibers.py
+python benchmarks/skeletal_muscle_musculotendon.py
+python benchmarks/skeletal_muscle_continuum.py
+python benchmarks/skeletal_muscle_proprioception.py
+python benchmarks/skeletal_muscle_emg.py
+python benchmarks/skeletal_muscle_energetics.py
+python benchmarks/skeletal_muscle_execution_worksets.py
+python benchmarks/robotics_fixed_body_routes.py
+python benchmarks/robotics_analytic_wrap.py
+python benchmarks/robotics_mjx_muscle_projection.py
+```
+
 ## Cardiovascular platform
 
 The public end-to-end script uses only canonical facades:

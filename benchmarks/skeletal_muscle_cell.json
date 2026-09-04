@@ -1,0 +1,29 @@
+{
+  "all_successful": true,
+  "benchmark": "skeletal-muscle-shorten-2007-complete-rhs",
+  "environment": {
+    "backend": "cpu",
+    "jax": "0.9.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit"
+  },
+  "evidence": {
+    "finite": true,
+    "integration_finite": true,
+    "rate_norm": 64094.82629079217
+  },
+  "model_id": "pmr-shorten-2007-fast-twitch:637da9ef28f7992e40fe79947364a51a38ec818c:e14e2aeffeb7b935017414a5ef53c06e43ed6b5fd4d7a92f07e0518b48b413c1",
+  "problem": {
+    "algebraic_count": 71,
+    "cell_count": 4096,
+    "integration_repeats": 3,
+    "repeats": 20,
+    "state_count": 56
+  },
+  "throughput_cell_rhs_per_second": 1656515.3856123374,
+  "timings_seconds": {
+    "complete_rhs": 0.0024726604024181142,
+    "integrate_source_pulse_1_ms": 0.22839270834811032,
+    "integration_lower_and_compile": 12.430490875034593,
+    "lower_and_compile": 0.5277245409670286
+  }
+}

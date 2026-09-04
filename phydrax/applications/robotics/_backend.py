@@ -34,7 +34,14 @@ RoboticsDifferentiability: TypeAlias = Literal[
     "none", "conditional", "guaranteed"
 ]
 RoboticsProjectionKind: TypeAlias = Literal[
-    "qpos", "qvel", "control", "observation"
+    "qpos",
+    "qvel",
+    "control",
+    "observation",
+    "activation",
+    "length",
+    "velocity",
+    "raw-force",
 ]
 ObservationFreshness: TypeAlias = Literal[
     "state-current", "pre-step", "post-step-refreshed"
@@ -104,8 +111,8 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
     devices: tuple[str, ...] = eqx.field(static=True)
     dtypes: tuple[str, ...] = eqx.field(static=True)
     differentiability: RoboticsDifferentiability = eqx.field(static=True)
-    solver_exclusions: tuple[str, ...] = eqx.field(static=True)
-    contact_exclusions: tuple[str, ...] = eqx.field(static=True)
+    solvers: tuple[str, ...] = eqx.field(static=True)
+    contact_features: tuple[str, ...] = eqx.field(static=True)
     reason: str = eqx.field(static=True)
 
     def __init__(
@@ -118,8 +125,8 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
         devices: Sequence[str] = (),
         dtypes: Sequence[str] = (),
         differentiability: RoboticsDifferentiability = "none",
-        solver_exclusions: Sequence[str] = (),
-        contact_exclusions: Sequence[str] = (),
+        solvers: Sequence[str] = (),
+        contact_features: Sequence[str] = (),
         reason: str = "",
     ):
         operation_ = _operation(operation)
@@ -133,11 +140,9 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
             raise ValueError("dtypes must contain unique canonical values.")
         if differentiability not in _DIFFERENTIABILITY_RANK:
             raise ValueError("Unknown robotics differentiability level.")
-        solver_exclusions_ = _normalized_values(
-            solver_exclusions, "solver_exclusions"
-        )
-        contact_exclusions_ = _normalized_values(
-            contact_exclusions, "contact_exclusions"
+        solvers_ = _normalized_values(solvers, "solvers")
+        contact_features_ = _normalized_values(
+            contact_features, "contact_features"
         )
         reason_ = str(reason).strip()
         if supported and (not devices_ or not dtypes_):
@@ -152,8 +157,8 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
         self.devices = devices_
         self.dtypes = dtypes_
         self.differentiability = differentiability
-        self.solver_exclusions = solver_exclusions_
-        self.contact_exclusions = contact_exclusions_
+        self.solvers = solvers_
+        self.contact_features = contact_features_
         self.reason = reason_
 
     def rejection_reason(self, requirement: RoboticsOperationRequirement, /) -> str | None:
@@ -176,11 +181,15 @@ class RoboticsOperationCapability(StrictModule, NonTrainableState):
                 f"requires {requirement.minimum_differentiability} differentiability; "
                 f"only {self.differentiability} is declared"
             )
-        if requirement.solver in self.solver_exclusions:
-            return f"solver {requirement.solver!r} is explicitly excluded"
-        if requirement.contact_feature in self.contact_exclusions:
+        if requirement.solver is not None and requirement.solver not in self.solvers:
+            return f"solver {requirement.solver!r} is not in the closed support set"
+        if (
+            requirement.contact_feature is not None
+            and requirement.contact_feature not in self.contact_features
+        ):
             return (
-                f"contact feature {requirement.contact_feature!r} is explicitly excluded"
+                f"contact feature {requirement.contact_feature!r} is not in the "
+                "closed support set"
             )
         return None
 
@@ -407,6 +416,34 @@ class RoboticsIndexEntry(StrictModule, NonTrainableState):
     def indices(self) -> tuple[int, ...]:
         return tuple(range(self.start, self.stop))
 
+class RoboticsProjectionProvenance(StrictModule, NonTrainableState):
+    """Immutable origin of one prepared-model projection layout."""
+
+    model: str = eqx.field(static=True)
+    compiler: str = eqx.field(static=True)
+    provider: str = eqx.field(static=True)
+    asset: str = eqx.field(static=True)
+    unit_system: str = eqx.field(static=True)
+    frame_convention: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        compiler: str,
+        provider: str,
+        asset: str,
+        unit_system: str,
+        frame_convention: str,
+    ):
+        self.model = _identifier(model, "model")
+        self.compiler = _identifier(compiler, "compiler")
+        self.provider = _identifier(provider, "provider")
+        self.asset = _identifier(asset, "asset")
+        self.unit_system = _identifier(unit_system, "unit_system")
+        self.frame_convention = _identifier(frame_convention, "frame_convention")
+
+
 
 class RoboticsProjectionMap(StrictModule, NonTrainableState):
     """Canonical, immutable name-to-range map for one flat projection."""
@@ -414,15 +451,26 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
     kind: RoboticsProjectionKind = eqx.field(static=True)
     size: int = eqx.field(static=True)
     entries: tuple[RoboticsIndexEntry, ...]
+    provenance: RoboticsProjectionProvenance
 
     def __init__(
         self,
         kind: RoboticsProjectionKind,
         size: int,
         entries: Sequence[RoboticsIndexEntry],
+        provenance: RoboticsProjectionProvenance,
         /,
     ):
-        if kind not in ("qpos", "qvel", "control", "observation"):
+        if kind not in (
+            "qpos",
+            "qvel",
+            "control",
+            "observation",
+            "activation",
+            "length",
+            "velocity",
+            "raw-force",
+        ):
             raise ValueError(f"Unknown robotics projection kind {kind!r}.")
         size_ = int(size)
         entries_ = tuple(entries)
@@ -439,9 +487,12 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
             cursor = entry.stop
         if cursor != size_:
             raise ValueError("Projection entries must cover the complete projection.")
+        if not isinstance(provenance, RoboticsProjectionProvenance):
+            raise TypeError("provenance must be RoboticsProjectionProvenance.")
         self.kind = kind
         self.size = size_
         self.entries = entries_
+        self.provenance = provenance
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -460,11 +511,12 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
 
 
 class RoboticsProjection(StrictModule, NonTrainableState):
-    """Typed flat backend projection whose final axis follows a stable map."""
+    """Typed flat projection with epoch-derived forward-field freshness."""
 
     values: Any
     index_map: RoboticsProjectionMap
-    freshness: ObservationFreshness = eqx.field(static=True)
+    state_epoch: Array | None
+    sample_epoch: Array | None
 
     def __init__(
         self,
@@ -472,7 +524,8 @@ class RoboticsProjection(StrictModule, NonTrainableState):
         index_map: RoboticsProjectionMap,
         /,
         *,
-        freshness: ObservationFreshness = "state-current",
+        state_epoch: Any | None = None,
+        sample_epoch: Any | None = None,
     ):
         if not isinstance(index_map, RoboticsProjectionMap):
             raise TypeError("index_map must be RoboticsProjectionMap.")
@@ -482,17 +535,59 @@ class RoboticsProjection(StrictModule, NonTrainableState):
                 f"{index_map.kind} projection must end in axis size {index_map.size}; "
                 f"got shape {shape}."
             )
-        if freshness not in ("state-current", "pre-step", "post-step-refreshed"):
-            raise ValueError(f"Unknown observation freshness {freshness!r}.")
-        if index_map.kind != "observation" and freshness != "state-current":
-            raise ValueError("Only observation projections carry step freshness.")
+        epoch_bound = index_map.kind in (
+            "observation",
+            "length",
+            "velocity",
+            "raw-force",
+        )
+        if epoch_bound:
+            if state_epoch is None or sample_epoch is None:
+                raise ValueError(
+                    f"{index_map.kind} projections require state and sample epochs."
+                )
+            state_epoch_ = jnp.asarray(state_epoch, dtype=jnp.int32)
+            sample_epoch_ = jnp.asarray(sample_epoch, dtype=jnp.int32)
+            if state_epoch_.shape != shape[:-1] or sample_epoch_.shape != shape[:-1]:
+                raise ValueError(
+                    "Projection epochs must have exactly the projection case axes."
+                )
+            state_epoch_ = eqx.error_if(
+                state_epoch_,
+                (state_epoch_ < 0) | (sample_epoch_ < 0),
+                "Projection epochs must be non-negative.",
+            )
+            sample_epoch_ = eqx.error_if(
+                sample_epoch_,
+                sample_epoch_ > state_epoch_,
+                "A projection sample cannot be newer than its state.",
+            )
+        else:
+            if state_epoch is not None or sample_epoch is not None:
+                raise ValueError(
+                    "Only observation and forward-derived projections bind epochs."
+                )
+            state_epoch_ = None
+            sample_epoch_ = None
         self.values = values
         self.index_map = index_map
-        self.freshness = freshness
+        self.state_epoch = state_epoch_
+        self.sample_epoch = sample_epoch_
+
+    @property
+    def provenance(self) -> RoboticsProjectionProvenance:
+        return self.index_map.provenance
+
+    @property
+    def freshness(self) -> Array:
+        """Return casewise freshness derived only from bound state epochs."""
+        if self.state_epoch is None or self.sample_epoch is None:
+            return jnp.asarray(True)
+        return self.sample_epoch == self.state_epoch
 
 
 class RoboticsOperationEvidence(StrictModule, NonTrainableState):
-    """Typed numerical status and execution facts for one backend operation."""
+    """Typed casewise numerical status and execution facts."""
 
     status: Array
     finite: Array
@@ -501,7 +596,6 @@ class RoboticsOperationEvidence(StrictModule, NonTrainableState):
     implementation: str = eqx.field(static=True)
     device: str = eqx.field(static=True)
     dtype: str = eqx.field(static=True)
-    observation_freshness: tuple[ObservationFreshness, ...] = eqx.field(static=True)
     detail: str = eqx.field(static=True)
 
     def __init__(
@@ -514,25 +608,23 @@ class RoboticsOperationEvidence(StrictModule, NonTrainableState):
         implementation: str,
         device: str,
         dtype: Any,
-        observation_freshness: Sequence[ObservationFreshness] = (),
         detail: str,
     ):
         status_ = jnp.asarray(status, dtype=jnp.int32)
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
-        if status_.shape != () or finite_.shape != ():
-            raise ValueError("Robotics operation status and finite evidence must be scalar.")
+        if status_.shape != finite_.shape:
+            raise ValueError(
+                "Robotics operation status and finite evidence must have equal "
+                "case axes."
+            )
         status_ = eqx.error_if(
             status_,
-            (status_ < int(RoboticsOperationStatus.SUCCESS))
-            | (status_ > int(RoboticsOperationStatus.PROVIDER_FAILURE)),
+            jnp.any(
+                (status_ < int(RoboticsOperationStatus.SUCCESS))
+                | (status_ > int(RoboticsOperationStatus.PROVIDER_FAILURE))
+            ),
             "Unknown robotics operation status.",
         )
-        freshness_ = tuple(observation_freshness)
-        if any(
-            value not in ("state-current", "pre-step", "post-step-refreshed")
-            for value in freshness_
-        ):
-            raise ValueError("Unknown observation freshness evidence.")
         self.status = status_
         self.finite = finite_
         self.backend = _identifier(backend, "backend")
@@ -540,7 +632,6 @@ class RoboticsOperationEvidence(StrictModule, NonTrainableState):
         self.implementation = _identifier(implementation, "implementation")
         self.device = _identifier(device, "device").lower()
         self.dtype = np.dtype(dtype).name
-        self.observation_freshness = freshness_
         self.detail = _identifier(detail, "detail")
 
     @property
@@ -563,5 +654,6 @@ __all__ = [
     "RoboticsProjection",
     "RoboticsProjectionKind",
     "RoboticsProjectionMap",
+    "RoboticsProjectionProvenance",
     "RoboticsRequirementRejection",
 ]

@@ -4,6 +4,7 @@
 
 import math
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -376,6 +377,25 @@ def test_prepared_reference_identity_binds_rules_actions_and_precision():
     assert baseline.prepared_id != other_precision.prepared_id
     assert baseline.report.report_id != fewer_actions.report.report_id
     assert baseline.report.precision_id != other_precision.report.precision_id
+
+
+def test_higher_order_simplex_integer_points_match_floating_tabulation():
+    family = SimplexNodalFamily("triangle", 4)
+    integer_points = jnp.asarray(((0, 0), (1, 0), (0, 1)), dtype=jnp.int32)
+    floating_points = integer_points.astype(float)
+
+    integer_values, integer_gradients = family.tabulate(integer_points)
+    floating_values, floating_gradients = family.tabulate(floating_points)
+
+    np.testing.assert_allclose(integer_values, floating_values, atol=2.0e-10)
+    np.testing.assert_allclose(integer_gradients, floating_gradients, atol=2.0e-10)
+    np.testing.assert_allclose(
+        jax.jacfwd(lambda point: family.tabulate(point[None, :])[0][0])(
+            floating_points[0]
+        ),
+        floating_gradients[0],
+        atol=2.0e-10,
+    )
 
 
 @pytest.mark.parametrize(

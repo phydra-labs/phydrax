@@ -4,6 +4,16 @@
 
 """Robot-model adaptation, kinematics, environments, and backend boundaries."""
 
+from ._analytic_wrap import (
+    AnalyticWrapEvaluation,
+    AnalyticWrapEvidence,
+    AnalyticWrapStatus,
+    PlanarCylinderRouteWrapPlan,
+    PreparedPlanarCylinderRouteWrap,
+    PreparedSphereRouteWrap,
+    SphereRouteWrapPlan,
+    WrapSense,
+)
 from ._backend import (
     ObservationFreshness,
     ROBOTICS_OPERATIONS,
@@ -19,6 +29,7 @@ from ._backend import (
     RoboticsProjection,
     RoboticsProjectionKind,
     RoboticsProjectionMap,
+    RoboticsProjectionProvenance,
     RoboticsRequirementRejection,
 )
 from ._environment import (
@@ -32,6 +43,13 @@ from ._environment import (
     RobotEnvironmentWrapperTransition,
     RobotTaskEvaluation,
     RobotTaskTransition,
+)
+from ._fixed_body_route import (
+    FixedBodyRouteEvaluation,
+    FixedBodyRouteEvidence,
+    FixedBodyRoutePlan,
+    FixedBodyRoutePullbackEvidence,
+    PreparedFixedBodyRoute,
 )
 from ._ik import (
     frame_pose_transform,
@@ -53,10 +71,20 @@ from ._mjx import (
     MJX_JAX_PROFILE,
     MJX_WARP_PROFILE,
     MJXAdapter,
+    MJXArrayLeafSpec,
+    MJXDataSchema,
+    MJXMuscleProjectionPlan,
+    MJXMuscleSnapshot,
+    MJXObservation,
+    MJXObservationRequest,
+    MJXPreparedModelManifest,
+    MJXPreparedMuscleProjection,
+    MJXRefreshResult,
     MJXState,
-    MJXStepObservationRequest,
+    MJXStepObservationMode,
     MJXStepResult,
     prepare_mjx_adapter,
+    prepare_mjx_muscle_projection,
 )
 from ._urdf import (
     parse_urdf_file,
@@ -71,6 +99,9 @@ from ._urdf import (
 
 
 __all__ = [
+    "AnalyticWrapEvaluation",
+    "AnalyticWrapEvidence",
+    "AnalyticWrapStatus",
     "AbstractRobotEnvironmentWrapper",
     "AbstractRobotTask",
     "FrameInverseKinematicsPlan",
@@ -79,6 +110,10 @@ __all__ = [
     "FramePoseTask",
     "FramePositionTask",
     "FrameTask",
+    "FixedBodyRouteEvaluation",
+    "FixedBodyRouteEvidence",
+    "FixedBodyRoutePlan",
+    "FixedBodyRoutePullbackEvidence",
     "FrameTaskResidual",
     "IKChartEvidence",
     "IKFeasibilityEvidence",
@@ -89,10 +124,23 @@ __all__ = [
     "MJX_JAX_PROFILE",
     "MJX_WARP_PROFILE",
     "MJXState",
-    "MJXStepObservationRequest",
+    "MJXArrayLeafSpec",
+    "MJXDataSchema",
+    "MJXObservation",
+    "MJXMuscleProjectionPlan",
+    "MJXMuscleSnapshot",
+    "MJXObservationRequest",
+    "MJXPreparedModelManifest",
+    "MJXPreparedMuscleProjection",
+    "MJXRefreshResult",
     "MJXStepResult",
+    "MJXStepObservationMode",
     "ObservationFreshness",
+    "PlanarCylinderRouteWrapPlan",
+    "PreparedPlanarCylinderRouteWrap",
+    "PreparedSphereRouteWrap",
     "PreparedRobotEnvironment",
+    "PreparedFixedBodyRoute",
     "ROBOTICS_OPERATIONS",
     "RobotAdaptation",
     "RobotEnvironmentEvidence",
@@ -115,7 +163,9 @@ __all__ = [
     "RoboticsProjection",
     "RoboticsProjectionKind",
     "RoboticsProjectionMap",
+    "RoboticsProjectionProvenance",
     "RoboticsRequirementRejection",
+    "SphereRouteWrapPlan",
     "URDFFormatEvidence",
     "URDFImportError",
     "URDFJointEvidence",
@@ -125,4 +175,6 @@ __all__ = [
     "parse_urdf_file",
     "parse_urdf_text",
     "prepare_mjx_adapter",
+    "prepare_mjx_muscle_projection",
+    "WrapSense",
 ]

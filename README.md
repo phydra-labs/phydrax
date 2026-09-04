@@ -92,6 +92,19 @@ Most workflows are composing a few primitives:
   capability-gated optional MJX execution retain explicit evidence and rollback.
   See the [robotics guide](docs/guides_robotics.md) and
   [robotics API](docs/api/applications/robotics.md).
+- **Skeletal-muscle platform**: source-pinned mean-rate and stochastic motor units,
+  macroscopic fatigue/recovery, explicit force calibration, complete Shorten
+  fast-twitch cellular kinetics, stimulated one-dimensional fibers and sparse motor
+  territories, De Groote--Fregly compliant musculotendon dynamics, body-attached and
+  bounded analytic routes, GASAM continuum mechanics, surface-EMG observations,
+  feline spindle proprioception, phenomenological energetics, multimodal UQ, causal
+  surrogate replay, immutable external-model descriptors, and homogeneous execution
+  worksets preserve one force owner, explicit units, branch-local derivatives, and
+  transactional rollback. Unsupported tendon/aponeurosis continuum, reverse cellular
+  mechanics, GTO simplifications, thermal fields, and emulated multi-device execution
+  remain fail-closed rather than approximated. See the
+  [skeletal-muscle guide](docs/guides_skeletal_muscle.md) and
+  [skeletal-muscle API](docs/api/applications/skeletal_muscle.md).
 - **Atomistic learning, force fields, and sampling**: scale-identified structures,
   interaction-site coordinate maps, stable-ID topology, classical/learned/many-body
   energy programs, polarization, dense/cell/Verlet and distributed execution,

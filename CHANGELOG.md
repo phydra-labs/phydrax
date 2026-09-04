@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Added
+- Added a source-pinned Potvin--Fuglevand 2017 sustained-isometric skeletal
+  motor-unit population with exact quantity semantics, trainable numeric parameters,
+  explicit central/peripheral fatigue mechanisms, hard-branch differentiation
+  evidence, transactional rollback, a generic discrete-dynamics view, qualification,
+  examples, documentation, and scaling benchmarks.
+- Expanded the skeletal-muscle platform with source-named stochastic motor-unit
+  discharge/twitch force, macroscopic fatigue/recovery, physical force calibration,
+  complete Shorten fast-twitch cellular kinetics, event-aligned one-dimensional
+  fibers and sparse endplate territories, De Groote--Fregly explicit/implicit
+  musculotendon dynamics, fixed and bounded analytic route geometry, GASAM
+  continuum mechanics and source-calibrated cell coupling, surface EMG, feline
+  spindle proprioception, Uchida--Umberger energetics, multimodal UQ, causal exact
+  surrogate replay, immutable external-model interchange, and deterministic
+  execution worksets/checkpoints. Each route retains one force owner, explicit
+  units/provenance, fixed branch scope, and fail-closed evidence; source-blocked
+  GTO, continuum tendon/aponeurosis, reverse cellular mechanics, thermal fields,
+  and real multi-device paths are not approximated.
+- Made high-order simplex nodal tabulation JAX-traceable through an equivalent
+  Bernstein modal basis, enabling Taylor--Hood mixed finite-element closure
+  conversion without NumPy tracer conversion.
 - Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
   shared or per-series masked supports, node- and edge-aligned numerical
   PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;

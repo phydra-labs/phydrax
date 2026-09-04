@@ -992,3 +992,29 @@ def test_prepared_real_coordinate_tree_keeps_pytree_callbacks_public_and_backend
     assert solution.temporal_evidence.state_coordinates.evidence_id == (
         coordinates.evidence.evidence_id
     )
+
+
+def test_real_coordinate_tree_preserves_noncomplex_argument_leaves():
+    initial = {"x": jnp.asarray([0.0], dtype=jnp.float64)}
+    coordinates = phx.linalg.prepare_real_coordinate_tree(initial, {"x": None})
+    problem = phx.solver.DifferentialProblem(
+        lambda time, state, args: {
+            "x": jnp.where(args["enabled"], args["rate"], 0.0)
+        },
+        initial,
+        t0=0.0,
+        t1=0.2,
+        args={
+            "enabled": jnp.asarray(True),
+            "rate": jnp.asarray([2.0], dtype=jnp.float64),
+        },
+    )
+    solution = phx.solver.solve_diffrax(
+        problem,
+        save_times=jnp.asarray([0.0, 0.2]),
+        solver=dfx.Euler(),
+        dt0=0.01,
+        state_coordinates=coordinates,
+    )
+
+    assert jnp.allclose(solution.states["x"][-1], 0.4)

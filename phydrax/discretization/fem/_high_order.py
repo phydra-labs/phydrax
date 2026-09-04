@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from math import comb
+from math import comb, factorial
 from numbers import Integral
 from typing import Literal
 
@@ -541,9 +541,24 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                 mp.warp_and_blend_nodes(dimension, p, node_tuples), dtype=float
             )
             nodes = 0.5 * (unit_nodes.T + 1.0)
-        basis = mp.orthonormal_basis_for_space(space, mp.Simplex(dimension))
-        modal = np.stack(
-            tuple(np.asarray(function(unit_nodes)) for function in basis.functions),
+        barycentric_nodes = np.concatenate(
+            (1.0 - np.sum(nodes, axis=1, keepdims=True), nodes),
+            axis=1,
+        )
+        exponents = np.asarray(
+            tuple((p - sum(index),) + tuple(index) for index in node_tuples),
+            dtype=int,
+        )
+        multinomial = np.asarray(
+            tuple(
+                factorial(p)
+                / np.prod(tuple(factorial(int(value)) for value in exponent))
+                for exponent in exponents
+            ),
+            dtype=float,
+        )
+        modal = multinomial[None, :] * np.prod(
+            barycentric_nodes[:, None, :] ** exponents[None, :, :],
             axis=-1,
         )
         coefficients = np.linalg.solve(modal, np.eye(space.space_dim))
@@ -567,36 +582,61 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         )
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
-        points_ = np.asarray(points, dtype=float)
+        points_ = jnp.asarray(points)
         dimension = {"triangle": 2, "tetrahedron": 3}[self.cell_kind]
         if points_.ndim != 2 or points_.shape[-1] != dimension:
             raise ValueError("Simplex tabulation points have incompatible shape.")
-        unit_points = (2.0 * points_ - 1.0).T
-        space = mp.PN(dimension, self.order)
-        basis = mp.orthonormal_basis_for_space(space, mp.Simplex(dimension))
-        modal = np.stack(
-            tuple(np.asarray(function(unit_points)) for function in basis.functions),
+        if not jnp.issubdtype(points_.dtype, jnp.inexact):
+            points_ = points_.astype(float)
+        barycentric = jnp.concatenate(
+            (1.0 - jnp.sum(points_, axis=-1, keepdims=True), points_),
             axis=-1,
         )
-        modal_gradients = np.stack(
+        exponents = jnp.asarray(self.multiindices, dtype=jnp.int32)
+        multinomial = jnp.asarray(
             tuple(
-                np.stack(
-                    tuple(np.asarray(value) for value in gradient(unit_points)), axis=-1
-                )
-                for gradient in basis.gradients
+                factorial(self.order)
+                / np.prod(tuple(factorial(int(value)) for value in exponent))
+                for exponent in self.multiindices
             ),
-            axis=1,
+            dtype=points_.dtype,
         )
-        coefficients = np.asarray(self.coefficients)
+        modal = multinomial[None, :] * jnp.prod(
+            barycentric[:, None, :] ** exponents[None, :, :],
+            axis=-1,
+        )
+        coefficients = jnp.asarray(self.coefficients, dtype=points_.dtype)
         values = modal @ coefficients
-        gradients = np.stack(
-            tuple(
-                (2.0 * modal_gradients[..., axis]) @ coefficients
-                for axis in range(dimension)
-            ),
-            axis=-1,
-        )
-        return jnp.asarray(values), jnp.asarray(gradients)
+        gradient_components = []
+        for axis in range(dimension):
+            zero_exponents = exponents.at[:, 0].add(-1)
+            axis_exponents = exponents.at[:, axis + 1].add(-1)
+            zero_term = (
+                multinomial[None, :]
+                * exponents[None, :, 0]
+                * jnp.prod(
+                    barycentric[:, None, :]
+                    ** jnp.maximum(zero_exponents, 0)[None, :, :],
+                    axis=-1,
+                )
+            )
+            axis_term = (
+                multinomial[None, :]
+                * exponents[None, :, axis + 1]
+                * jnp.prod(
+                    barycentric[:, None, :]
+                    ** jnp.maximum(axis_exponents, 0)[None, :, :],
+                    axis=-1,
+                )
+            )
+            modal_gradient = jnp.where(
+                exponents[None, :, axis + 1] > 0,
+                axis_term,
+                0.0,
+            ) - jnp.where(exponents[None, :, 0] > 0, zero_term, 0.0)
+            gradient_components.append(modal_gradient @ coefficients)
+        gradients = jnp.stack(tuple(gradient_components), axis=-1)
+        return values, gradients
 
     def finite_element(self) -> FiniteElementSpec:
         from ._reference_topology import reference_cell_topology
