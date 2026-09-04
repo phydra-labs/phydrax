@@ -12,6 +12,7 @@ import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
+from ...units import ANGSTROM, ELECTRONVOLT
 from .._types import AtomicStructure, AtomisticScaleContract
 
 
@@ -252,10 +253,8 @@ def _require_ase_scale(scale: AtomisticScaleContract, /) -> None:
     if not isinstance(scale, AtomisticScaleContract):
         raise TypeError("scale must be an AtomisticScaleContract.")
     if (
-        scale.length_unit.strip().lower() != "angstrom"
-        or scale.energy_unit.strip().lower() != "electronvolt"
-        or scale.length_to_reference != 1.0
-        or scale.energy_to_reference != 1.0
+        scale.length_unit.unit_id != ANGSTROM.unit_id
+        or scale.energy_unit.unit_id != ELECTRONVOLT.unit_id
     ):
         raise AdapterError(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,

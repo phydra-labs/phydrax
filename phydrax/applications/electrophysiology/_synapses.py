@@ -18,6 +18,7 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 def _positive(value: float, name: str, /, *, allow_zero: bool = False) -> float:
@@ -79,6 +80,7 @@ class CurrentSynapse(StrictModule, NonTrainableState):
                 "kind": "current-synapse-v1",
                 "time_constant_ms": tau,
                 "current_scale_nA": scale,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
         self.kind = int(SynapseKind.CURRENT)
@@ -112,6 +114,7 @@ class ConductanceSynapse(StrictModule, NonTrainableState):
                 "time_constant_ms": tau,
                 "conductance_scale_uS": scale,
                 "reversal_mV": reversal,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
         self.kind = int(SynapseKind.CONDUCTANCE)
@@ -174,6 +177,7 @@ class SynapseConnection(StrictModule, NonTrainableState):
                 "delay_steps": delay_steps,
                 "weight": weight_,
                 "model": model.model_id,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -258,6 +262,7 @@ class SynapseNetworkPlan(StrictModule, NonTrainableState):
                 "dt_ms": step,
                 "connections": [value.connection_id for value in values],
                 "slot_ids": list(slots),
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -411,6 +416,7 @@ class SynapseRelationEvent(StrictModule):
                 "reversal_mV": float(reversal_mV),
                 "time_constant_ms": float(time_constant_ms),
                 "delay_steps": delay_steps,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -750,6 +756,7 @@ class PairSTDPPlan(StrictModule, NonTrainableState):
                 "minimum_weight": lower,
                 "maximum_weight": upper,
                 "trace_bound": bound,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 

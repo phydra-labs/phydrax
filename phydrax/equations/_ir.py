@@ -5,8 +5,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fractions import Fraction
 from math import isfinite
-from typing import Any, Literal
+from numbers import Integral, Real
+from typing import Any, Literal, TypeAlias
+
+from phydrax.units import DIMENSIONLESS, DimensionSignature
 
 
 PDERepresentation = Literal[
@@ -20,6 +24,7 @@ PDERepresentation = Literal[
 PDECoordinateKind = Literal["space", "time"]
 PDEConditionKind = Literal["initial", "boundary", "interface"]
 PDERegionKind = Literal["interior", "boundary", "interface", "initial"]
+PDELiteral: TypeAlias = int | float | Fraction
 PDEExpressionOp = Literal[
     "constant",
     "coordinate",
@@ -87,8 +92,24 @@ def _finite_values(
     return tuple(_finite_float(value, name) for value in values)
 
 
-def _dimension(values: tuple[float, ...] | list[float], /) -> tuple[float, ...]:
-    return _finite_values(values, "PDE physical dimensions")
+def _literal(value: PDELiteral, name: str, /) -> PDELiteral:
+    if isinstance(value, bool) or not isinstance(value, (Real, Fraction)):
+        raise TypeError(f"{name} must be an integer, fraction, or float.")
+    if isinstance(value, Fraction):
+        return value
+    if isinstance(value, Integral):
+        return int(value)
+    return _finite_float(value, name)
+
+
+def _exact_integer_literal(value: PDELiteral | None, /) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Fraction):
+        return value.numerator if value.denominator == 1 else None
+    return int(value) if value.is_integer() else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +119,7 @@ class PDECoordinate:
     name: str
     kind: PDECoordinateKind
     size: int = 1
-    physical_dimension: tuple[float, ...] = ()
+    dimension: DimensionSignature = DIMENSIONLESS
     bounds: tuple[float, float] | None = None
     periodic: bool = False
 
@@ -108,9 +129,8 @@ class PDECoordinate:
         if int(self.size) <= 0:
             raise ValueError("PDE coordinate size must be positive.")
         object.__setattr__(self, "size", int(self.size))
-        object.__setattr__(
-            self, "physical_dimension", _dimension(self.physical_dimension)
-        )
+        if not isinstance(self.dimension, DimensionSignature):
+            raise TypeError("PDE coordinate dimension must be a DimensionSignature.")
         if self.bounds is not None:
             bounds = _finite_values(
                 [self.bounds[0], self.bounds[1]],
@@ -129,7 +149,7 @@ class PDEField:
     representation: PDERepresentation = "scalar"
     components: int = 1
     coordinates: tuple[str, ...] = ()
-    physical_dimension: tuple[float, ...] = ()
+    dimension: DimensionSignature = DIMENSIONLESS
     scale: tuple[float, ...] = (1.0,)
     component_names: tuple[str, ...] = ()
 
@@ -149,9 +169,8 @@ class PDEField:
             raise ValueError("PDE field components must be positive.")
         object.__setattr__(self, "components", int(self.components))
         object.__setattr__(self, "coordinates", tuple(self.coordinates))
-        object.__setattr__(
-            self, "physical_dimension", _dimension(self.physical_dimension)
-        )
+        if not isinstance(self.dimension, DimensionSignature):
+            raise TypeError("PDE field dimension must be a DimensionSignature.")
         scales = _finite_values(list(self.scale), "PDE field scale")
         if len(scales) not in (1, self.components) or any(
             value <= 0.0 for value in scales
@@ -173,7 +192,7 @@ class PDEParameter:
     name: str
     value: float | tuple[float, ...] | None = None
     components: int = 1
-    physical_dimension: tuple[float, ...] = ()
+    dimension: DimensionSignature = DIMENSIONLESS
     scale: tuple[float, ...] = (1.0,)
     functional: bool = False
 
@@ -183,9 +202,8 @@ class PDEParameter:
                 "PDE parameters require a name and positive component count."
             )
         object.__setattr__(self, "components", int(self.components))
-        object.__setattr__(
-            self, "physical_dimension", _dimension(self.physical_dimension)
-        )
+        if not isinstance(self.dimension, DimensionSignature):
+            raise TypeError("PDE parameter dimension must be a DimensionSignature.")
         scales = _finite_values(list(self.scale), "PDE parameter scale")
         if len(scales) not in (1, self.components) or any(item <= 0.0 for item in scales):
             raise ValueError(
@@ -209,26 +227,27 @@ class PDEExpression:
 
     op: PDEExpressionOp
     args: tuple["PDEExpression", ...] = ()
-    value: float | None = None
+    value: PDELiteral | None = None
     symbol: str | None = None
     coordinate: str | None = None
     axis: int | None = None
     order: int = 1
     region: str | None = None
-    physical_dimension: tuple[float, ...] = ()
+    dimension: DimensionSignature = DIMENSIONLESS
 
     def __post_init__(self) -> None:
         if self.op not in _VALID_OPS:
             raise ValueError(f"Unknown PDE expression operation {self.op!r}.")
         object.__setattr__(self, "args", tuple(self.args))
-        object.__setattr__(
-            self, "physical_dimension", _dimension(self.physical_dimension)
-        )
+        if not isinstance(self.dimension, DimensionSignature):
+            raise TypeError("PDE expression dimension must be a DimensionSignature.")
+        if self.op != "constant" and not self.dimension.is_dimensionless:
+            raise ValueError("Only PDE constant expressions may declare a dimension.")
         if self.value is not None:
             object.__setattr__(
                 self,
                 "value",
-                _finite_float(self.value, "PDE expression value"),
+                _literal(self.value, "PDE expression value"),
             )
         if int(self.order) <= 0:
             raise ValueError("PDE derivative order must be positive.")
@@ -239,15 +258,15 @@ class PDEExpression:
     @classmethod
     def constant(
         cls,
-        value: float,
+        value: PDELiteral,
         /,
         *,
-        physical_dimension: tuple[float, ...] = (),
+        dimension: DimensionSignature = DIMENSIONLESS,
     ) -> "PDEExpression":
         return cls(
             "constant",
-            value=float(value),
-            physical_dimension=physical_dimension,
+            value=value,
+            dimension=dimension,
         )
 
     @classmethod
@@ -348,10 +367,11 @@ class PDEExpression:
 def as_expression(value: Any, /) -> PDEExpression:
     if isinstance(value, PDEExpression):
         return value
-    if isinstance(value, (int, float)):
-        return PDEExpression.constant(float(value))
+    if isinstance(value, (Real, Fraction)) and not isinstance(value, bool):
+        return PDEExpression.constant(value)
     raise TypeError(
-        "PDE expressions only accept numeric constants or PDEExpression nodes."
+        "PDE expressions only accept integer, fraction, or float constants "
+        "and PDEExpression nodes."
     )
 
 
@@ -471,6 +491,7 @@ __all__ = [
     "PDEEquation",
     "PDEExpression",
     "PDEExpressionOp",
+    "PDELiteral",
     "PDEField",
     "PDEParameter",
     "PDEProblemIR",

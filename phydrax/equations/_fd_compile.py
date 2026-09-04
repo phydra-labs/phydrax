@@ -484,7 +484,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         if op == "coordinate":
             return self._coordinate(str(expression.symbol))
         if op == "constant":
-            return jnp.asarray(expression.value)
+            return jnp.asarray(float(expression.value))
         if op == "divergence" and set(
             _expression_axes(expression, self.coordinate_axes)
         ) == set(self.spatial_axes):

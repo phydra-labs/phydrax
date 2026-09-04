@@ -176,7 +176,7 @@ class AtomisticRerunPlan(StrictModule):
             coordinate_domain=reporter.coordinate_domain,
             system_id=frame.system_id,
             topology_id=frame.topology_id,
-            unit_system_id=frame.unit_system_id,
+            units=frame.units,
             source_id=f"{frame.source_id}:rerun:{self.plan_id}",
         )
 
@@ -203,6 +203,14 @@ class AtomisticRerunPlan(StrictModule):
                     self.potential.system.plan.system_id,
                 ):
                     raise ValueError("Rerun frame belongs to another atomistic system.")
+                if (
+                    frame.topology_id != self.potential.system.topology.topology_id
+                    or frame.units.unit_system_id
+                    != self.potential.system.plan.units.unit_system_id
+                ):
+                    raise ValueError(
+                        "Rerun frame topology or complete unit system is incompatible."
+                    )
                 if frame.coordinate_domain is AtomisticSiteDomain.INTERACTION_SITES:
                     raise ValueError(
                         "Rerun input must contain physical degree-of-freedom atoms."

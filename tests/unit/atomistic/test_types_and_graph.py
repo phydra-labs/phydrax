@@ -10,9 +10,10 @@ from phydrax.atomistic import (
     AtomisticScaleContract,
     realize_atomistic_graph,
 )
+from phydrax.units import ANGSTROM, ELECTRONVOLT, JOULE, METER
 
 
-SCALE = AtomisticScaleContract("angstrom", "electronvolt")
+SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
 def test_structure_preserves_particles_masks_ids_masses_and_scale():
@@ -126,7 +127,7 @@ def test_dense_graph_guards_before_candidate_allocation(monkeypatch):
 
 
 def test_scale_mismatch_prevents_batch_construction():
-    second_scale = AtomisticScaleContract("bohr", "hartree")
+    second_scale = AtomisticScaleContract(METER, JOULE)
     first = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], SCALE)
     second = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], second_scale)
     with pytest.raises(ValueError, match="scale"):

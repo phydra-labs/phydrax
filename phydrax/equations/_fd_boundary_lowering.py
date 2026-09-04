@@ -42,7 +42,7 @@ def _evaluate_target_expression(
 ) -> Array:
     op = expression.op
     if op == "constant":
-        return jnp.asarray(expression.value)
+        return jnp.asarray(float(expression.value))
     if op == "parameter":
         if not isinstance(context.args, Mapping) or expression.symbol not in context.args:
             raise ValueError(

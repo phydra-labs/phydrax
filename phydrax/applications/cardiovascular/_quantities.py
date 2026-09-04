@@ -9,75 +9,166 @@ from fractions import Fraction
 from types import MappingProxyType
 from typing import Any
 
-from .._quantity_contract import (
-    canonical_quantity_text,
-    resolve_application_quantity,
+from ...units import (
+    AMPERE,
+    conversion_factor as _conversion_factor,
+    CUBIC_METER,
+    derived_unit,
+    FARAD,
+    JOULE,
+    KILOGRAM,
+    KILOPASCAL,
+    METER,
+    MICROAMPERE,
+    MICROFARAD,
+    MILLIGRAM,
+    MILLIMETER,
+    MILLIMOLAR,
+    MILLISECOND,
+    MILLISIEMENS,
+    MILLIVOLT,
+    MOLE,
+    MOLE_PER_CUBIC_METER,
+    ONE,
+    PASCAL,
+    SECOND,
+    SI_REFERENCE_SYSTEM_ID,
+    SIEMENS,
+    UnitDefinition,
+    VOLT,
+)
+from .._quantity_contract import canonical_quantity_text, resolve_application_quantity
+
+
+_MILLIMOLE = UnitDefinition("mmol", MOLE.dimension, SI_REFERENCE_SYSTEM_ID, "1e-3")
+_SQUARE_METER = derived_unit("m2", ((METER, 2),))
+_SQUARE_MILLIMETER = derived_unit("mm2", ((MILLIMETER, 2),))
+_CUBIC_MILLIMETER = derived_unit("mm3", ((MILLIMETER, 3),))
+_VOLT_PER_METER = derived_unit("V/m", ((VOLT, 1), (METER, -1)))
+_MILLIVOLT_PER_MILLIMETER = derived_unit("mV/mm", ((MILLIVOLT, 1), (MILLIMETER, -1)))
+_AMPERE_PER_SQUARE_METER = derived_unit("A/m2", ((AMPERE, 1), (METER, -2)))
+_MICROAMPERE_PER_SQUARE_MILLIMETER = derived_unit(
+    "uA/mm2", ((MICROAMPERE, 1), (MILLIMETER, -2))
+)
+_FARAD_PER_SQUARE_METER = derived_unit("F/m2", ((FARAD, 1), (METER, -2)))
+_MICROFARAD_PER_SQUARE_MILLIMETER = derived_unit(
+    "uF/mm2", ((MICROFARAD, 1), (MILLIMETER, -2))
+)
+_SIEMENS_PER_METER = derived_unit("S/m", ((SIEMENS, 1), (METER, -1)))
+_MILLISIEMENS_PER_MILLIMETER = derived_unit(
+    "mS/mm", ((MILLISIEMENS, 1), (MILLIMETER, -1))
+)
+_SQUARE_METER_PER_SECOND = derived_unit("m2/s", ((METER, 2), (SECOND, -1)))
+_SQUARE_MILLIMETER_PER_MILLISECOND = derived_unit(
+    "mm2/ms", ((MILLIMETER, 2), (MILLISECOND, -1))
+)
+_CONCENTRATION_PER_SECOND = derived_unit(
+    "mol/(m3*s)", ((MOLE_PER_CUBIC_METER, 1), (SECOND, -1))
+)
+_MILLIMOLAR_PER_MILLISECOND = derived_unit("mM/ms", ((MILLIMOLAR, 1), (MILLISECOND, -1)))
+_MOLE_PER_SQUARE_METER_SECOND = derived_unit(
+    "mol/(m2*s)", ((MOLE, 1), (METER, -2), (SECOND, -1))
+)
+_MILLIMOLE_PER_SQUARE_MILLIMETER_MILLISECOND = derived_unit(
+    "mmol/(mm2*ms)",
+    ((_MILLIMOLE, 1), (MILLIMETER, -2), (MILLISECOND, -1)),
+)
+_METER_PER_SECOND = derived_unit("m/s", ((METER, 1), (SECOND, -1)))
+_MILLIMETER_PER_MILLISECOND = derived_unit("mm/ms", ((MILLIMETER, 1), (MILLISECOND, -1)))
+_METER_PER_SECOND_SQUARED = derived_unit("m/s2", ((METER, 1), (SECOND, -2)))
+_MILLIMETER_PER_MILLISECOND_SQUARED = derived_unit(
+    "mm/ms2", ((MILLIMETER, 1), (MILLISECOND, -2))
+)
+_KILOGRAM_PER_CUBIC_METER = derived_unit("kg/m3", ((KILOGRAM, 1), (METER, -3)))
+_MILLIGRAM_PER_CUBIC_MILLIMETER = derived_unit(
+    "mg/mm3", ((MILLIGRAM, 1), (MILLIMETER, -3))
+)
+_NEWTON = derived_unit("N", ((KILOGRAM, 1), (METER, 1), (SECOND, -2)))
+_MILLIGRAM_MILLIMETER_PER_MILLISECOND_SQUARED = derived_unit(
+    "mg*mm/ms2", ((MILLIGRAM, 1), (MILLIMETER, 1), (MILLISECOND, -2))
+)
+_PER_SECOND = derived_unit("1/s", ((ONE, 1), (SECOND, -1)))
+_PER_MILLISECOND = derived_unit("1/ms", ((ONE, 1), (MILLISECOND, -1)))
+_MILLIGRAM_MILLIMETER_SQUARED_PER_MILLISECOND_SQUARED = derived_unit(
+    "mg*mm2/ms2", ((MILLIGRAM, 1), (MILLIMETER, 2), (MILLISECOND, -2))
+)
+_WATT = derived_unit("W", ((JOULE, 1), (SECOND, -1)))
+_MILLIGRAM_MILLIMETER_SQUARED_PER_MILLISECOND_CUBED = derived_unit(
+    "mg*mm2/ms3", ((MILLIGRAM, 1), (MILLIMETER, 2), (MILLISECOND, -3))
+)
+_PASCAL_SECOND = derived_unit("Pa*s", ((PASCAL, 1), (SECOND, 1)))
+_KILOPASCAL_MILLISECOND = derived_unit("kPa*ms", ((KILOPASCAL, 1), (MILLISECOND, 1)))
+_CUBIC_METER_PER_SECOND = derived_unit("m3/s", ((CUBIC_METER, 1), (SECOND, -1)))
+_CUBIC_MILLIMETER_PER_MILLISECOND = derived_unit(
+    "mm3/ms", ((MILLIMETER, 3), (MILLISECOND, -1))
+)
+_PASCAL_SECOND_PER_CUBIC_METER = derived_unit(
+    "Pa*s/m3", ((PASCAL, 1), (SECOND, 1), (METER, -3))
+)
+_KILOPASCAL_MILLISECOND_PER_CUBIC_MILLIMETER = derived_unit(
+    "kPa*ms/mm3", ((KILOPASCAL, 1), (MILLISECOND, 1), (MILLIMETER, -3))
+)
+_PASCAL_SECOND_SQUARED_PER_CUBIC_METER = derived_unit(
+    "Pa*s2/m3", ((PASCAL, 1), (SECOND, 2), (METER, -3))
+)
+_KILOPASCAL_MILLISECOND_SQUARED_PER_CUBIC_MILLIMETER = derived_unit(
+    "kPa*ms2/mm3",
+    ((KILOPASCAL, 1), (MILLISECOND, 2), (MILLIMETER, -3)),
+)
+_CUBIC_METER_PER_PASCAL = derived_unit("m3/Pa", ((METER, 3), (PASCAL, -1)))
+_CUBIC_MILLIMETER_PER_KILOPASCAL = derived_unit(
+    "mm3/kPa", ((MILLIMETER, 3), (KILOPASCAL, -1))
+)
+_PASCAL_PER_CUBIC_METER = derived_unit("Pa/m3", ((PASCAL, 1), (METER, -3)))
+_KILOPASCAL_PER_CUBIC_MILLIMETER = derived_unit(
+    "kPa/mm3", ((KILOPASCAL, 1), (MILLIMETER, -3))
 )
 
-
-# These are the application kernel's supported conversions, not a general-purpose
-# unit registry. Fractions retain the exact decimal scale used in content identity.
-_SUPPORTED_UNIT_CONVERSIONS = MappingProxyType(
+_REFERENCE_UNIT_BY_KIND = MappingProxyType(
     {
-        ("time", "ms", "s"): Fraction(1, 1_000),
-        ("length", "mm", "m"): Fraction(1, 1_000),
-        ("area", "mm2", "m2"): Fraction(1, 1_000_000),
-        ("volume", "mm3", "m3"): Fraction(1, 1_000_000_000),
-        ("mass", "mg", "kg"): Fraction(1, 1_000_000),
-        ("electric_potential", "mV", "V"): Fraction(1, 1_000),
-        ("electric_field", "mV/mm", "V/m"): Fraction(1, 1),
-        ("electric_current", "uA", "A"): Fraction(1, 1_000_000),
-        ("surface_current_density", "uA/mm2", "A/m2"): Fraction(1, 1),
-        ("capacitance", "uF", "F"): Fraction(1, 1_000_000),
-        ("surface_capacitance_density", "uF/mm2", "F/m2"): Fraction(1, 1),
-        ("electrical_conductivity", "mS/mm", "S/m"): Fraction(1, 1),
-        ("amount_of_substance", "mmol", "mol"): Fraction(1, 1_000),
-        ("amount_concentration", "mM", "mol/m3"): Fraction(1, 1),
-        ("chemical_diffusivity", "mm2/ms", "m2/s"): Fraction(1, 1_000),
-        ("concentration_rate", "mM/ms", "mol/(m3*s)"): Fraction(1_000, 1),
-        (
-            "molar_surface_flux",
-            "mmol/(mm2*ms)",
-            "mol/(m2*s)",
-        ): Fraction(1_000_000, 1),
-        ("pressure", "kPa", "Pa"): Fraction(1_000, 1),
-        ("velocity", "mm/ms", "m/s"): Fraction(1, 1),
-        ("acceleration", "mm/ms2", "m/s2"): Fraction(1_000, 1),
-        ("mass_density", "mg/mm3", "kg/m3"): Fraction(1_000, 1),
-        ("force", "mg*mm/ms2", "N"): Fraction(1, 1_000),
-        ("strain", "1", "1"): Fraction(1, 1),
-        ("strain_rate", "1/ms", "1/s"): Fraction(1_000, 1),
-        ("energy", "mg*mm2/ms2", "J"): Fraction(1, 1_000_000),
-        ("power", "mg*mm2/ms3", "W"): Fraction(1, 1_000),
-        ("dynamic_viscosity", "kPa*ms", "Pa*s"): Fraction(1, 1),
-        ("volumetric_flow_rate", "mm3/ms", "m3/s"): Fraction(1, 1_000_000),
-        (
-            "hydraulic_resistance",
-            "kPa*ms/mm3",
-            "Pa*s/m3",
-        ): Fraction(1_000_000_000, 1),
-        (
-            "hydraulic_inertance",
-            "kPa*ms2/mm3",
-            "Pa*s2/m3",
-        ): Fraction(1_000_000, 1),
-        ("hydraulic_compliance", "mm3/kPa", "m3/Pa"): Fraction(1, 1_000_000_000_000),
-        ("hydraulic_elastance", "kPa/mm3", "Pa/m3"): Fraction(1_000_000_000_000, 1),
+        "time": SECOND,
+        "length": METER,
+        "area": _SQUARE_METER,
+        "volume": CUBIC_METER,
+        "mass": KILOGRAM,
+        "electric_potential": VOLT,
+        "electric_field": _VOLT_PER_METER,
+        "electric_current": AMPERE,
+        "surface_current_density": _AMPERE_PER_SQUARE_METER,
+        "capacitance": FARAD,
+        "surface_capacitance_density": _FARAD_PER_SQUARE_METER,
+        "electrical_conductivity": _SIEMENS_PER_METER,
+        "amount_of_substance": MOLE,
+        "amount_concentration": MOLE_PER_CUBIC_METER,
+        "chemical_diffusivity": _SQUARE_METER_PER_SECOND,
+        "concentration_rate": _CONCENTRATION_PER_SECOND,
+        "molar_surface_flux": _MOLE_PER_SQUARE_METER_SECOND,
+        "pressure": PASCAL,
+        "velocity": _METER_PER_SECOND,
+        "acceleration": _METER_PER_SECOND_SQUARED,
+        "mass_density": _KILOGRAM_PER_CUBIC_METER,
+        "force": _NEWTON,
+        "strain": ONE,
+        "strain_rate": _PER_SECOND,
+        "energy": JOULE,
+        "power": _WATT,
+        "dynamic_viscosity": _PASCAL_SECOND,
+        "volumetric_flow_rate": _CUBIC_METER_PER_SECOND,
+        "hydraulic_resistance": _PASCAL_SECOND_PER_CUBIC_METER,
+        "hydraulic_inertance": _PASCAL_SECOND_SQUARED_PER_CUBIC_METER,
+        "hydraulic_compliance": _CUBIC_METER_PER_PASCAL,
+        "hydraulic_elastance": _PASCAL_PER_CUBIC_METER,
     }
 )
 
 
-
-
 @dataclass(frozen=True, slots=True, init=False)
 class CardiovascularQuantitySpec:
-    """Immutable physical meaning and exact SI scale for one kernel quantity."""
+    """Immutable physical meaning and exact unit for one kernel quantity."""
 
     name: str
-    physical_dimension: str
-    kernel_unit: str
-    si_unit: str
-    si_factor: Fraction
+    quantity_kind: str
+    unit: UnitDefinition
     axes: tuple[str, ...]
     sign_convention: str
     support_association: str
@@ -87,10 +178,8 @@ class CardiovascularQuantitySpec:
     def __init__(
         self,
         name: str,
-        physical_dimension: str,
-        kernel_unit: str,
-        si_unit: str,
-        si_factor: Any,
+        quantity_kind: str,
+        unit: UnitDefinition,
         axes: tuple[str, ...] = (),
         sign_convention: str = "",
         support_association: str = "",
@@ -98,22 +187,18 @@ class CardiovascularQuantitySpec:
     ):
         resolved = resolve_application_quantity(
             domain="cardiovascular",
-            supported_conversions=_SUPPORTED_UNIT_CONVERSIONS,
+            reference_units=_REFERENCE_UNIT_BY_KIND,
             name=name,
-            physical_dimension=physical_dimension,
-            kernel_unit=kernel_unit,
-            si_unit=si_unit,
-            si_factor=si_factor,
+            quantity_kind=quantity_kind,
+            unit=unit,
             axes=axes,
             sign_convention=sign_convention,
             support_association=support_association,
             reference_configuration=reference_configuration,
         )
         object.__setattr__(self, "name", resolved.name)
-        object.__setattr__(self, "physical_dimension", resolved.physical_dimension)
-        object.__setattr__(self, "kernel_unit", resolved.kernel_unit)
-        object.__setattr__(self, "si_unit", resolved.si_unit)
-        object.__setattr__(self, "si_factor", resolved.si_factor)
+        object.__setattr__(self, "quantity_kind", resolved.quantity_kind)
+        object.__setattr__(self, "unit", resolved.unit)
         object.__setattr__(self, "axes", resolved.axes)
         object.__setattr__(self, "sign_convention", resolved.sign_convention)
         object.__setattr__(self, "support_association", resolved.support_association)
@@ -127,20 +212,41 @@ class CardiovascularQuantitySpec:
         """Alias used by runtime manifests that bind quantity specification IDs."""
         return self.quantity_id
 
+    @property
+    def kernel_unit(self) -> str:
+        """Display symbol for the stored kernel unit definition."""
+        return self.unit.symbol
+
+    @property
+    def reference_unit(self) -> UnitDefinition:
+        """Canonical SI reference unit for this quantity kind."""
+        return _REFERENCE_UNIT_BY_KIND[self.quantity_kind]
+
+    @property
+    def si_unit(self) -> str:
+        """Display symbol for the canonical SI reference unit."""
+        return self.reference_unit.symbol
+
+    @property
+    def si_factor(self) -> Fraction:
+        """Exact multiplier from the kernel unit to the SI reference unit."""
+        return _conversion_factor(self.unit, self.reference_unit)
+
     def to_si(self, value: Any, /) -> Any:
         """Convert a scalar or array from the declared kernel unit to SI."""
-        return value * self.si_factor.numerator / self.si_factor.denominator
+        factor = self.si_factor
+        return value * factor.numerator / factor.denominator
 
     def from_si(self, value: Any, /) -> Any:
         """Convert a scalar or array from SI to the declared kernel unit."""
-        return value * self.si_factor.denominator / self.si_factor.numerator
+        factor = self.si_factor
+        return value * factor.denominator / factor.numerator
 
 
 def _quantity(
     name: str,
-    dimension: str,
-    kernel_unit: str,
-    si_unit: str,
+    quantity_kind: str,
+    unit: UnitDefinition,
     *,
     axes: tuple[str, ...] = (),
     sign: str,
@@ -149,10 +255,8 @@ def _quantity(
 ) -> CardiovascularQuantitySpec:
     return CardiovascularQuantitySpec(
         name,
-        dimension,
-        kernel_unit,
-        si_unit,
-        _SUPPORTED_UNIT_CONVERSIONS[(dimension, kernel_unit, si_unit)],
+        quantity_kind,
+        unit,
         axes=axes,
         sign_convention=sign,
         support_association=support,
@@ -175,8 +279,7 @@ _SPECS = (
     _quantity(
         "time",
         "time",
-        "ms",
-        "s",
+        MILLISECOND,
         sign="increases forward",
         support="global",
         reference="protocol time origin",
@@ -184,8 +287,7 @@ _SPECS = (
     _quantity(
         "length",
         "length",
-        "mm",
-        "m",
+        MILLIMETER,
         axes=("x", "y", "z"),
         sign=_SCALAR_SIGN,
         support="geometry coordinates",
@@ -194,8 +296,7 @@ _SPECS = (
     _quantity(
         "area",
         "area",
-        "mm2",
-        "m2",
+        _SQUARE_MILLIMETER,
         sign=_SCALAR_SIGN,
         support="surface or cross-section",
         reference=_SPATIAL_REFERENCE,
@@ -203,8 +304,7 @@ _SPECS = (
     _quantity(
         "volume",
         "volume",
-        "mm3",
-        "m3",
+        _CUBIC_MILLIMETER,
         sign=_SCALAR_SIGN,
         support="cell, chamber, or control volume",
         reference=_SPATIAL_REFERENCE,
@@ -212,8 +312,7 @@ _SPECS = (
     _quantity(
         "mass",
         "mass",
-        "mg",
-        "kg",
+        MILLIGRAM,
         sign=_SCALAR_SIGN,
         support="material or control volume",
         reference=_SPATIAL_REFERENCE,
@@ -221,8 +320,7 @@ _SPECS = (
     _quantity(
         "transmembrane_potential",
         "electric_potential",
-        "mV",
-        "V",
+        MILLIVOLT,
         sign="intracellular minus extracellular potential",
         support="cardiac cell or nodal scalar",
         reference="extracellular electric potential",
@@ -230,8 +328,7 @@ _SPECS = (
     _quantity(
         "electric_field",
         "electric_field",
-        "mV/mm",
-        "V/m",
+        _MILLIVOLT_PER_MILLIMETER,
         axes=("x", "y", "z"),
         sign="negative spatial gradient of electric potential",
         support="cell or quadrature vector",
@@ -240,8 +337,7 @@ _SPECS = (
     _quantity(
         "membrane_current",
         "electric_current",
-        "uA",
-        "A",
+        MICROAMPERE,
         sign=_CURRENT_SIGN,
         support="cardiac cell",
         reference="cell membrane orientation",
@@ -249,8 +345,7 @@ _SPECS = (
     _quantity(
         "membrane_current_density",
         "surface_current_density",
-        "uA/mm2",
-        "A/m2",
+        _MICROAMPERE_PER_SQUARE_MILLIMETER,
         sign=_CURRENT_SIGN,
         support="membrane surface or homogenized tissue",
         reference="cell membrane orientation",
@@ -258,8 +353,7 @@ _SPECS = (
     _quantity(
         "membrane_capacitance",
         "capacitance",
-        "uF",
-        "F",
+        MICROFARAD,
         sign=_SCALAR_SIGN,
         support="cardiac cell",
         reference="cell membrane",
@@ -267,8 +361,7 @@ _SPECS = (
     _quantity(
         "membrane_capacitance_density",
         "surface_capacitance_density",
-        "uF/mm2",
-        "F/m2",
+        _MICROFARAD_PER_SQUARE_MILLIMETER,
         sign=_SCALAR_SIGN,
         support="membrane surface or homogenized tissue",
         reference="cell membrane",
@@ -276,8 +369,7 @@ _SPECS = (
     _quantity(
         "electrical_conductivity",
         "electrical_conductivity",
-        "mS/mm",
-        "S/m",
+        _MILLISIEMENS_PER_MILLIMETER,
         axes=("component_i", "component_j"),
         sign="positive-semidefinite constitutive tensor",
         support="cell or quadrature tensor",
@@ -286,8 +378,7 @@ _SPECS = (
     _quantity(
         "chemical_amount",
         "amount_of_substance",
-        "mmol",
-        "mol",
+        _MILLIMOLE,
         sign=_SCALAR_SIGN,
         support="cardiac cell or control volume",
         reference="named chemical species",
@@ -295,8 +386,7 @@ _SPECS = (
     _quantity(
         "species_concentration",
         "amount_concentration",
-        "mM",
-        "mol/m3",
+        MILLIMOLAR,
         sign=_SCALAR_SIGN,
         support="cardiac cell, node, or control volume",
         reference="named compartment and chemical species",
@@ -304,8 +394,7 @@ _SPECS = (
     _quantity(
         "chemical_diffusivity",
         "chemical_diffusivity",
-        "mm2/ms",
-        "m2/s",
+        _SQUARE_MILLIMETER_PER_MILLISECOND,
         axes=("component_i", "component_j"),
         sign="positive-semidefinite constitutive tensor",
         support="cell or quadrature tensor",
@@ -314,8 +403,7 @@ _SPECS = (
     _quantity(
         "concentration_rate",
         "concentration_rate",
-        "mM/ms",
-        "mol/(m3*s)",
+        _MILLIMOLAR_PER_MILLISECOND,
         sign="positive produces the named species",
         support="cardiac cell or control volume",
         reference="named compartment and chemical species",
@@ -323,8 +411,7 @@ _SPECS = (
     _quantity(
         "molar_surface_flux",
         "molar_surface_flux",
-        "mmol/(mm2*ms)",
-        "mol/(m2*s)",
+        _MILLIMOLE_PER_SQUARE_MILLIMETER_MILLISECOND,
         sign="positive along the owning surface normal",
         support="oriented surface",
         reference=_SPATIAL_REFERENCE,
@@ -332,8 +419,7 @@ _SPECS = (
     _quantity(
         "pressure",
         "pressure",
-        "kPa",
-        "Pa",
+        KILOPASCAL,
         sign="positive in compression",
         support="chamber, vessel node, cell, or quadrature scalar",
         reference="absolute or gauge reference named by the owning model",
@@ -341,8 +427,7 @@ _SPECS = (
     _quantity(
         "velocity",
         "velocity",
-        "mm/ms",
-        "m/s",
+        _MILLIMETER_PER_MILLISECOND,
         axes=("x", "y", "z"),
         sign="positive along the corresponding spatial axis",
         support="node, cell, or quadrature vector",
@@ -351,8 +436,7 @@ _SPECS = (
     _quantity(
         "acceleration",
         "acceleration",
-        "mm/ms2",
-        "m/s2",
+        _MILLIMETER_PER_MILLISECOND_SQUARED,
         axes=("x", "y", "z"),
         sign="positive along the corresponding spatial axis",
         support="node, cell, or quadrature vector",
@@ -361,8 +445,7 @@ _SPECS = (
     _quantity(
         "mass_density",
         "mass_density",
-        "mg/mm3",
-        "kg/m3",
+        _MILLIGRAM_PER_CUBIC_MILLIMETER,
         sign=_SCALAR_SIGN,
         support="cell or quadrature scalar",
         reference="current or reference volume named by the owning model",
@@ -370,8 +453,7 @@ _SPECS = (
     _quantity(
         "force",
         "force",
-        "mg*mm/ms2",
-        "N",
+        _MILLIGRAM_MILLIMETER_PER_MILLISECOND_SQUARED,
         axes=("x", "y", "z"),
         sign="positive along the corresponding spatial axis",
         support="node, surface, or body resultant",
@@ -380,8 +462,7 @@ _SPECS = (
     _quantity(
         "stress",
         "pressure",
-        "kPa",
-        "Pa",
+        KILOPASCAL,
         axes=("component_i", "component_j"),
         sign="tension-positive tensor components; pressure remains compression-positive",
         support="cell or quadrature tensor",
@@ -390,8 +471,7 @@ _SPECS = (
     _quantity(
         "strain",
         "strain",
-        "1",
-        "1",
+        ONE,
         axes=("component_i", "component_j"),
         sign="extension-positive tensor components",
         support="cell or quadrature tensor",
@@ -400,8 +480,7 @@ _SPECS = (
     _quantity(
         "strain_rate",
         "strain_rate",
-        "1/ms",
-        "1/s",
+        _PER_MILLISECOND,
         axes=("component_i", "component_j"),
         sign="extension-rate-positive tensor components",
         support="cell or quadrature tensor",
@@ -410,8 +489,7 @@ _SPECS = (
     _quantity(
         "energy",
         "energy",
-        "mg*mm2/ms2",
-        "J",
+        _MILLIGRAM_MILLIMETER_SQUARED_PER_MILLISECOND_SQUARED,
         sign=_SCALAR_SIGN,
         support="global, chamber, cell, or quadrature scalar",
         reference=_MATERIAL_REFERENCE,
@@ -419,8 +497,7 @@ _SPECS = (
     _quantity(
         "power",
         "power",
-        "mg*mm2/ms3",
-        "W",
+        _MILLIGRAM_MILLIMETER_SQUARED_PER_MILLISECOND_CUBED,
         sign="positive power is supplied to the modeled system",
         support="global, chamber, or cell scalar",
         reference=_MATERIAL_REFERENCE,
@@ -428,8 +505,7 @@ _SPECS = (
     _quantity(
         "dynamic_viscosity",
         "dynamic_viscosity",
-        "kPa*ms",
-        "Pa*s",
+        _KILOPASCAL_MILLISECOND,
         sign=_SCALAR_SIGN,
         support="fluid cell or quadrature scalar",
         reference="current fluid configuration",
@@ -437,8 +513,7 @@ _SPECS = (
     _quantity(
         "volumetric_flow_rate",
         "volumetric_flow_rate",
-        "mm3/ms",
-        "m3/s",
+        _CUBIC_MILLIMETER_PER_MILLISECOND,
         sign="positive along the owning terminal-port orientation",
         support="oriented terminal port or vessel segment",
         reference=_LUMPED_REFERENCE,
@@ -446,8 +521,7 @@ _SPECS = (
     _quantity(
         "hydraulic_resistance",
         "hydraulic_resistance",
-        "kPa*ms/mm3",
-        "Pa*s/m3",
+        _KILOPASCAL_MILLISECOND_PER_CUBIC_MILLIMETER,
         sign=_SCALAR_SIGN,
         support="lumped vessel or terminal relation",
         reference=_LUMPED_REFERENCE,
@@ -455,8 +529,7 @@ _SPECS = (
     _quantity(
         "hydraulic_inertance",
         "hydraulic_inertance",
-        "kPa*ms2/mm3",
-        "Pa*s2/m3",
+        _KILOPASCAL_MILLISECOND_SQUARED_PER_CUBIC_MILLIMETER,
         sign=_SCALAR_SIGN,
         support="lumped vessel or terminal relation",
         reference=_LUMPED_REFERENCE,
@@ -464,8 +537,7 @@ _SPECS = (
     _quantity(
         "hydraulic_compliance",
         "hydraulic_compliance",
-        "mm3/kPa",
-        "m3/Pa",
+        _CUBIC_MILLIMETER_PER_KILOPASCAL,
         sign=_SCALAR_SIGN,
         support="lumped chamber or vessel compartment",
         reference=_LUMPED_REFERENCE,
@@ -473,8 +545,7 @@ _SPECS = (
     _quantity(
         "hydraulic_elastance",
         "hydraulic_elastance",
-        "kPa/mm3",
-        "Pa/m3",
+        _KILOPASCAL_PER_CUBIC_MILLIMETER,
         sign=_SCALAR_SIGN,
         support="lumped chamber or vessel compartment",
         reference=_LUMPED_REFERENCE,

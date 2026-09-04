@@ -5,6 +5,7 @@ import jax.random as jr
 import numpy as np
 
 import phydrax as phx
+from phydrax.units import COULOMB, KELVIN, KILOGRAM, SECOND
 
 
 def _cell():
@@ -118,7 +119,17 @@ def test_cell_stress_is_finite_symmetric_energy_derivative():
 
 
 def test_periodic_learned_graph_execution_is_explicit_and_finite():
-    units = phx.atomistic.AtomisticUnitSystem.reduced()
+    model_units = (
+        phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    )
+    units = phx.atomistic.AtomisticUnitSystem(
+        model_units.scale,
+        mass_unit=KILOGRAM,
+        time_unit=SECOND,
+        charge_unit=COULOMB,
+        temperature_unit=KELVIN,
+        constant_set_id="codata-2018",
+    )
     cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = phx.atomistic.AtomisticSystemPlan(
         [0, 1],
@@ -132,7 +143,7 @@ def test_periodic_learned_graph_execution_is_explicit_and_finite():
         system.particles
     )
     model = phx.nn.atomistic.PaiNNPotential(
-        units.scale,
+        model_units.scale,
         cutoff=2.0,
         feature_count=4,
         interaction_count=1,

@@ -132,6 +132,7 @@ nav:
         - Variational Monte Carlo: "cookbook/quantum_vmc.md"
     - Guides:
         - Domains and sampling: "guides_domain.md"
+        - Physical dimensions and units: "guides_units.md"
         - Differentiable signal processing: "guides_signal_processing.md"
         - Discretization: "guides_discretization.md"
         - Sparse spatial hierarchies: "guides_sparse_spatial_hierarchies.md"
@@ -349,6 +350,7 @@ nav:
     - API:
         - Overview: "api/phydrax.md"
         - Execution worksets: "api/execution.md"
+        - Physical units: "api/units.md"
         - Einstein operations: "api/ein.md"
         - Variational substrate: "api/variational.md"
         - Tensor trains and quantics: "api/tensor_train.md"

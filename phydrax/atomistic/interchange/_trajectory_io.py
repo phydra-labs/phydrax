@@ -22,6 +22,7 @@ from .._frame import (
     AtomisticTrajectoryWriter,
 )
 from .._sites import AtomisticSiteDomain
+from .._units import AtomisticUnitSystem
 
 
 def _h5py():
@@ -53,6 +54,33 @@ def _h5md_field_path(name: str, /) -> str:
 
 def _decoded_text(value) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def _xyz_metadata(header_line: str, /) -> dict:
+    fields_by_name = {
+        key: value
+        for token in header_line.split()
+        if "=" in token
+        for key, value in (token.split("=", maxsplit=1),)
+    }
+    if (
+        fields_by_name.get("Properties") != "species:S:1:pos:R:3"
+        or "phydrax_json" not in fields_by_name
+    ):
+        raise ValueError("Extended XYZ header is missing PhydraX metadata.")
+    return json.loads(
+        base64.urlsafe_b64decode(fields_by_name["phydrax_json"].encode("ascii"))
+    )
+
+
+def _unit_descriptor(payload: dict, /) -> AtomisticUnitSystem:
+    descriptor = payload.get("unit_system")
+    if not isinstance(descriptor, dict):
+        raise ValueError("Atomistic artifact lacks its complete unit-system descriptor.")
+    units = AtomisticUnitSystem.from_dict(descriptor)
+    if payload.get("unit_system_id") != units.unit_system_id:
+        raise ValueError("Atomistic artifact unit-system identity is corrupt.")
+    return units
 
 
 class H5MDTrajectoryPlan(
@@ -95,6 +123,7 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
                 "system_id",
                 "topology_id",
                 "unit_system_id",
+                "unit_system_descriptor",
                 "coordinate_domain",
                 "frame_fields",
             ):
@@ -106,6 +135,19 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
             if "frame_fields" not in self.group.attrs:
                 raise ValueError("H5MD stream lacks its canonical frame-field manifest.")
             self.expected_fields = tuple(json.loads(self.group.attrs["frame_fields"]))
+            if (
+                "unit_system_descriptor" not in self.group.attrs
+                or "unit_system_id" not in self.group.attrs
+            ):
+                raise ValueError("H5MD stream lacks its complete unit-system descriptor.")
+            self.units = _unit_descriptor(
+                {
+                    "unit_system": json.loads(
+                        _decoded_text(self.group.attrs["unit_system_descriptor"])
+                    ),
+                    "unit_system_id": _decoded_text(self.group.attrs["unit_system_id"]),
+                }
+            )
             for name, dataset in datasets:
                 if dataset.shape[0] < self.count:
                     raise ValueError(
@@ -113,6 +155,8 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
                     )
                 if dataset.shape[0] > self.count:
                     dataset.resize((self.count,) + dataset.shape[1:])
+        if self.count == 0:
+            self.units = None
 
     def _frame_datasets(self):
         result = []
@@ -143,7 +187,7 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
             identities = (
                 ("system_id", frame.system_id),
                 ("topology_id", frame.topology_id),
-                ("unit_system_id", frame.unit_system_id),
+                ("unit_system_id", frame.units.unit_system_id),
                 ("coordinate_domain", frame.coordinate_domain.value),
             )
             if any(self.group.attrs[name] != value for name, value in identities):
@@ -152,10 +196,18 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
                 np.asarray(self.group["id"]), np.asarray(frame.stable_ids)
             ):
                 raise ValueError("Cannot append a frame with different stable IDs.")
+            if frame.units.unit_system_id != self.units.unit_system_id:
+                raise ValueError(
+                    "Cannot append a frame with incompatible complete units."
+                )
         else:
             self.group.attrs["system_id"] = frame.system_id
             self.group.attrs["topology_id"] = frame.topology_id
-            self.group.attrs["unit_system_id"] = frame.unit_system_id
+            self.group.attrs["unit_system_id"] = frame.units.unit_system_id
+            self.group.attrs["unit_system_descriptor"] = json.dumps(
+                frame.units.to_dict(), sort_keys=True, separators=(",", ":")
+            )
+            self.units = frame.units
             self.group.attrs["coordinate_domain"] = frame.coordinate_domain.value
             self.group.create_dataset("id", data=np.asarray(frame.stable_ids))
             position_group = self.group.require_group("position")
@@ -220,6 +272,20 @@ class H5MDTrajectoryReader(AtomisticTrajectoryReader):
         self.group = self.handle["particles/phydrax"]
         self.count = int(self.group.attrs["committed_frames"])
         self.source_id = source_id
+        if (
+            "unit_system_descriptor" not in self.group.attrs
+            or "unit_system_id" not in self.group.attrs
+        ):
+            self.handle.close()
+            raise ValueError("H5MD trajectory lacks its complete unit-system descriptor.")
+        self.units = _unit_descriptor(
+            {
+                "unit_system": json.loads(
+                    _decoded_text(self.group.attrs["unit_system_descriptor"])
+                ),
+                "unit_system_id": _decoded_text(self.group.attrs["unit_system_id"]),
+            }
+        )
 
     def __iter__(self):
         group = self.group
@@ -251,7 +317,7 @@ class H5MDTrajectoryReader(AtomisticTrajectoryReader):
                 coordinate_domain=AtomisticSiteDomain(group.attrs["coordinate_domain"]),
                 system_id=group.attrs["system_id"],
                 topology_id=group.attrs["topology_id"],
-                unit_system_id=group.attrs["unit_system_id"],
+                units=self.units,
                 source_id=_decoded_text(group[_h5md_field_path("source_id")][index]),
             )
 
@@ -285,6 +351,12 @@ class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
     def __init__(self, path: str, sink_id: str, /, *, append: bool):
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
+        self.units = None
+        if append and target.is_file() and target.stat().st_size:
+            with open(target, encoding="utf-8") as existing:
+                existing.readline()
+                metadata = _xyz_metadata(existing.readline())
+            self.units = _unit_descriptor(metadata)
         self.handle = open(target, "a" if append else "w", encoding="utf-8")
         self.sink_id = sink_id
 
@@ -297,7 +369,7 @@ class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
             "step": int(frame.step),
             "system_id": frame.system_id,
             "topology_id": frame.topology_id,
-            "unit_system_id": frame.unit_system_id,
+            "unit_system_id": frame.units.unit_system_id,
             "coordinate_domain": frame.coordinate_domain.value,
             "source_id": frame.source_id,
             "stable_ids": np.asarray(frame.stable_ids).tolist(),
@@ -321,6 +393,11 @@ class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
             },
             "valid": bool(frame.valid),
         }
+        if self.units is None:
+            metadata["unit_system"] = frame.units.to_dict()
+            self.units = frame.units
+        elif frame.units.unit_system_id != self.units.unit_system_id:
+            raise ValueError("Cannot append a frame with incompatible complete units.")
         encoded = base64.urlsafe_b64encode(
             json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).decode("ascii")
@@ -340,6 +417,7 @@ class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
     def __init__(self, path: str, source_id: str, /):
         self.handle = open(path, encoding="utf-8")
         self.source_id = source_id
+        self.units = None
 
     def __iter__(self):
         while True:
@@ -347,21 +425,16 @@ class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
             if not count_line:
                 break
             count = int(count_line)
-            header = self.handle.readline().split()
-            fields_by_name = {
-                key: value
-                for token in header
-                if "=" in token
-                for key, value in (token.split("=", maxsplit=1),)
-            }
-            if (
-                fields_by_name.get("Properties") != "species:S:1:pos:R:3"
-                or "phydrax_json" not in fields_by_name
-            ):
-                raise ValueError("Extended XYZ header is missing PhydraX metadata.")
-            metadata = json.loads(
-                base64.urlsafe_b64decode(fields_by_name["phydrax_json"].encode("ascii"))
-            )
+            metadata = _xyz_metadata(self.handle.readline())
+            descriptor = metadata.get("unit_system")
+            if self.units is None:
+                self.units = _unit_descriptor(metadata)
+            elif descriptor is not None:
+                raise ValueError(
+                    "Extended XYZ repeats its artifact-level unit-system descriptor."
+                )
+            elif metadata.get("unit_system_id") != self.units.unit_system_id:
+                raise ValueError("Extended XYZ frame units changed within the stream.")
             position = np.zeros((count, 3), dtype=float)
             for index in range(count):
                 fields = self.handle.readline().split()
@@ -384,7 +457,7 @@ class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
                 coordinate_domain=AtomisticSiteDomain(metadata["coordinate_domain"]),
                 system_id=metadata["system_id"],
                 topology_id=metadata["topology_id"],
-                unit_system_id=metadata["unit_system_id"],
+                units=self.units,
                 source_id=metadata["source_id"],
             )
 

@@ -6,9 +6,10 @@ import pytest
 
 import phydrax as phx
 from phydrax.interchange import AdapterError, AdapterStatus, require_lossless
+from phydrax.units import ANGSTROM, ELECTRONVOLT, JOULE, METER
 
 
-SCALE = phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt")
+SCALE = phx.atomistic.AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
 @pytest.fixture
@@ -120,9 +121,7 @@ def test_default_ids_are_deterministic_and_declared_as_synthesized(ase):
     roundtripped, _ = phx.atomistic.interchange.from_ase_atoms(restored, SCALE)
     assert roundtripped.cell is None
     assert roundtripped.periodic_axes is None
-    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond(
-        SCALE
-    )
+    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     system = phx.atomistic.AtomisticSystemPlan.from_structure(roundtripped, units)
     assert system.cell is None
     assert first.structure_id == second.structure_id
@@ -236,7 +235,7 @@ def test_incompatible_units_and_malformed_periodic_cells_are_rejected(ase):
     assert malformed.value.status == AdapterStatus.MALFORMED_SOURCE
 
     valid = _identified_atoms(ase)
-    incompatible = phx.atomistic.AtomisticScaleContract("bohr", "hartree")
+    incompatible = phx.atomistic.AtomisticScaleContract(METER, JOULE)
     with pytest.raises(AdapterError) as units:
         phx.atomistic.interchange.from_ase_atoms(valid, incompatible)
     assert units.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC

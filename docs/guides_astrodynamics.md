@@ -65,7 +65,8 @@ regularization.
 solar/lunar secular and long-period terms plus fixed-capacity synchronous and
 twelve-hour resonance scans. Results retain the UTC epoch, TEME frame, WGS-72 constant
 set, regime, resonance kind, range/decay checks, residual, and executed resonance
-steps. Requests outside `maximum_minutes` fail rather than truncate. TLE parsing,
+steps. Position and velocity metadata are `UnitDefinition` values; use `.symbol` for
+display. Requests outside `maximum_minutes` fail rather than truncate. TLE parsing,
 regime, resonance, and revolution metadata are discrete; elapsed time remains a
 continuous input inside the prepared route.
 
@@ -73,8 +74,11 @@ continuous input inside the prepared route.
 
 Ephemeris and time products require producer, version, checksum, license, frame,
 epoch, scale, and differentiability provenance. SPICE, SGP4, and coordinate-system
-adapters execute on the host and return native arrays. No provider lookup, network
-access, or file parsing occurs inside transformed computation.
+adapters execute on the host, accept or declare `UnitDefinition` source units, and
+convert only the raw numeric arrays into the destination scale. Conversion never
+changes the destination frame, reference epoch, coordinate kind, or astronomical time
+scale; adapters reject a context that disagrees with fixed provider semantics. No
+provider lookup, network access, or file parsing occurs inside transformed computation.
 
 `bundled_astronomy_data_store()` resolves the small packaged, content-addressed
 astronomy set without networking: UTC/TAI leap seconds with an explicit coverage end,
@@ -94,9 +98,12 @@ Inspect `valid`, `status`, residuals, and iteration evidence before consuming re
 
 ## Shared core substrates
 
-`AstrodynamicsScaleContract` is the shared `DimensionalScaleContract` with physical
-length coordinates; epoch and frame remain astrodynamics-owned. Direct and
-hierarchical gravity delegate to the core `NewtonianPairKernel`, sparse runtime
+`AstrodynamicsScaleContract` is exactly the shared `DimensionalScaleContract`.
+Its length, mass, and time fields and its derived velocity, acceleration, gravitational,
+and momentum units are exact `UnitDefinition` objects; human-readable displays use
+their `.symbol`. Coordinate kind remains part of the scale identity, while epoch and
+frame remain astrodynamics-owned. Direct and hierarchical gravity delegate to the core
+`NewtonianPairKernel`, sparse runtime
 Morton hierarchy, and `BarnesHutGravityPlan`. Point membership and tree routes
 are discrete; positions, masses, node moments, and the realized force remain
 differentiable while topology is fixed. Capacity, root-domain, and traversal

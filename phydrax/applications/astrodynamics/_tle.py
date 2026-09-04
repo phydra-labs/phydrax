@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...units import KILOGRAM, KILOMETER, SECOND, UnitDefinition
 from ._context import (
     AstrodynamicsContext,
     AstrodynamicsScaleContract,
@@ -194,8 +195,8 @@ class TLEPropagationResult(StrictModule):
     regime: TLEPropagationRegime = eqx.field(static=True)
     resonance_kind: TLEDeepSpaceResonance = eqx.field(static=True)
     frame: str = eqx.field(static=True)
-    position_unit: str = eqx.field(static=True)
-    velocity_unit: str = eqx.field(static=True)
+    position_unit: UnitDefinition = eqx.field(static=True)
+    velocity_unit: UnitDefinition = eqx.field(static=True)
     constant_set: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -229,11 +230,10 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
             raise ValueError("A TLE record epoch must use the UTC scale.")
         return AstrodynamicsContext(
             AstrodynamicsScaleContract(
-                "km",
-                "kg",
-                "s",
+                KILOMETER,
+                KILOGRAM,
+                SECOND,
                 length_coordinate_kind="physical",
-                length_to_reference=1000.0,
             ),
             ReferenceEpoch(record.epoch, continuous=False),
             FrameDefinition("earth", "TEME", pseudo_inertial=True),
@@ -359,8 +359,8 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
                 "output_contract": {
                     "origin": native_context.frame.origin_id,
                     "orientation": native_context.frame.orientation_id,
-                    "position_unit": native_context.scale.length_unit,
-                    "velocity_unit": native_context.scale.velocity_unit,
+                    "position_unit": native_context.scale.length_unit.unit_id,
+                    "velocity_unit": native_context.scale.velocity_unit.unit_id,
                     "reference_epoch": native_context.epoch.epoch_id,
                     "propagation_epoch_model": "uniform-sgp4-seconds",
                 },

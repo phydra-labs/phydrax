@@ -332,9 +332,10 @@ def test_checkpoint_identity_covers_all_continuation_state():
         epoch_id="epoch-c",
     )
     state = runtime.initialize(_positions(), **keyword)
-    first = checkpoint_distributed_atomistic(state)
-    second = checkpoint_distributed_atomistic(state)
+    first = checkpoint_distributed_atomistic(runtime, state)
+    second = checkpoint_distributed_atomistic(runtime, state)
     assert first.identity.checkpoint_id == second.identity.checkpoint_id
+    assert first.units.unit_system_id == runtime.plan.system.plan.units.unit_system_id
     restored = restore_distributed_atomistic_checkpoint(runtime, first)
     np.testing.assert_array_equal(restored.rng_key, [7, 8])
     np.testing.assert_array_equal(restored.thermostat_state, [1.0, 2.0])
@@ -344,7 +345,7 @@ def test_checkpoint_identity_covers_all_continuation_state():
         jnp.asarray([7, 9], dtype=jnp.uint32),
     )
     assert (
-        checkpoint_distributed_atomistic(changed).identity.checkpoint_id
+        checkpoint_distributed_atomistic(runtime, changed).identity.checkpoint_id
         != first.identity.checkpoint_id
     )
     changed_halo = eqx.tree_at(
@@ -358,11 +359,11 @@ def test_checkpoint_identity_covers_all_continuation_state():
         jnp.asarray(False),
     )
     assert (
-        checkpoint_distributed_atomistic(changed_halo).identity.checkpoint_id
+        checkpoint_distributed_atomistic(runtime, changed_halo).identity.checkpoint_id
         != first.identity.checkpoint_id
     )
     assert (
-        checkpoint_distributed_atomistic(changed_status).identity.checkpoint_id
+        checkpoint_distributed_atomistic(runtime, changed_status).identity.checkpoint_id
         != first.identity.checkpoint_id
     )
     prepared_polarization = runtime.polarization_runtime()
@@ -420,7 +421,7 @@ def test_checkpoint_identity_covers_all_continuation_state():
             jnp.asarray(1.0e-6),
             jnp.asarray(2.5),
         )
-    forged = DistributedAtomisticCheckpoint(changed_halo, first.identity)
+    forged = DistributedAtomisticCheckpoint(changed_halo, first.units, first.identity)
     with pytest.raises(ValueError, match="content identity"):
         restore_distributed_atomistic_checkpoint(runtime, forged)
 

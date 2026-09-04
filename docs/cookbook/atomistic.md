@@ -10,14 +10,15 @@ from pathlib import Path
 
 import jax.random as jr
 import phydrax as phx
+from phydrax.units import ANGSTROM, ELECTRONVOLT
 
-scale = phx.atomistic.AtomisticScaleContract(
-    "angstrom", "kilocalorie_per_mole"
-)
+scale = phx.atomistic.AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 dataset = phx.atomistic.load_rmd17_npz(
     Path("/absolute/path/to/rmd17_aspirin.npz"),
     scale=scale,
 )
+assert dataset.source_energy_unit.symbol == "kcal/mol"
+assert dataset.scale.energy_semantics == "single-simulated-system"
 split = phx.atomistic.split_rmd17(
     dataset,
     train_size=950,
@@ -31,6 +32,12 @@ validation_batch, validation_energy, validation_forces = dataset.take(
 )
 test_batch, test_energy, test_forces = dataset.take(split.test_indices)
 ```
+
+The loader treats rMD17 energies and forces as kcal/mol source data and performs
+the explicit Avogadro conversion to the requested ordinary energy unit. The
+dataset records the source length, energy, and dalton mass unit definitions plus
+the `codata-2018` constant-set identity; the compiled model still receives raw
+homogeneous arrays.
 
 Inspect the molecule size before declaring dense resources. The guard is an
 acceptance boundary, not a hint: a batch whose padded atom capacity exceeds it

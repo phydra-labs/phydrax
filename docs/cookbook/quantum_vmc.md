@@ -136,7 +136,7 @@ Hartree as the declared reference units, a full-determinant FermiNet, replayable
 walkers, and the state-dependent proposal's exact Metropolis--Hastings correction.
 
 ```python
-scale = phx.atomistic.AtomisticScaleContract("bohr", "hartree")
+scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
 nuclei = phx.atomistic.AtomicStructure(
     jnp.asarray([1, 1], dtype=jnp.int32),
     jnp.asarray([[-0.7, 0.0, 0.0], [0.7, 0.0, 0.0]], dtype=jnp.float64),

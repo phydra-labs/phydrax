@@ -11,7 +11,10 @@ def main() -> None:
     cosmology = phx.applications.cosmology
     astrodynamics = phx.applications.astrodynamics
     scale = phx.DimensionalScaleContract(
-        "m", "kg", "s", length_coordinate_kind="physical"
+        phx.units.METER,
+        phx.units.KILOGRAM,
+        phx.units.SECOND,
+        length_coordinate_kind="physical",
     )
     positions = jnp.asarray([[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     masses = jnp.ones((2,))

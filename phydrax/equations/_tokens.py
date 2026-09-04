@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -11,9 +12,11 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax.units import DIMENSIONLESS, DimensionSignature
+
 from .._strict import StrictModule
 from ._ir import PDEProblemIR
-from ._serialize import _canonical_expression, pde_ir_hash
+from ._serialize import _canonical_expression, _literal_from_dict, pde_ir_hash
 from ._validate import validate_pde_ir
 
 
@@ -97,18 +100,19 @@ _ATTRIBUTE_INDEX = {name: index for index, name in enumerate(PDE_TOKEN_ATTRIBUTE
 
 
 class PDETokenBatch(StrictModule):
-    """Dense, mask-padded tensor encoding of one or more canonical PDE IRs."""
+    """Dense neural projection with explicit dimension-basis identity."""
 
     kind: Array
     operator: Array
     attribute: Array
     symbol: Array
     scalar: Array
-    physical_dimension: Array
+    dimension: Array
     slot: Array
     parent: Array
     depth: Array
     mask: Array
+    dimension_basis: tuple[str, ...] = eqx.field(static=True)
     symbol_vocabulary: tuple[str, ...] = eqx.field(static=True)
     canonical_hashes: tuple[str, ...] = eqx.field(static=True)
 
@@ -121,8 +125,15 @@ class PDETokenBatch(StrictModule):
         return int(self.mask.shape[-1])
 
 
-def _dimension(values: tuple[float, ...], rank: int, /) -> tuple[float, ...]:
-    return (0.0,) * rank if not values else tuple(values)
+def _dimension(
+    signature: DimensionSignature,
+    basis: tuple[str, ...],
+    /,
+) -> tuple[float, ...]:
+    unknown = {axis for axis, _, _ in signature.terms} - set(basis)
+    if unknown:
+        raise ValueError(f"PDE token dimension basis is missing axes {sorted(unknown)}.")
+    return tuple(float(signature.exponent(axis)) for axis in basis)
 
 
 def _symbol_vocabulary(problem: PDEProblemIR, /) -> tuple[str, ...]:
@@ -147,21 +158,19 @@ def tokenize_pde_ir(
     problem: PDEProblemIR,
     /,
     *,
+    dimension_basis: Sequence[str],
     max_tokens: int | None = None,
 ) -> PDETokenBatch:
-    """Encode a validated PDE into deterministic canonical tokens and parent links."""
+    """Encode a PDE using an explicit deterministic dense dimension basis."""
     validate_pde_ir(problem)
-    rank = max(
-        (
-            len(item.physical_dimension)
-            for item in (
-                *problem.coordinates,
-                *problem.fields,
-                *problem.parameters,
-            )
-        ),
-        default=0,
-    )
+    basis = tuple(dimension_basis)
+    if any(not isinstance(axis, str) for axis in basis):
+        raise TypeError("PDE token dimension basis entries must be strings.")
+    if len(set(basis)) != len(basis) or any(not axis for axis in basis):
+        raise ValueError(
+            "PDE token dimension basis entries must be non-empty and unique."
+        )
+    rank = len(basis)
     vocabulary = _symbol_vocabulary(problem)
     symbols = {name: index for index, name in enumerate(vocabulary)}
     rows: list[
@@ -185,7 +194,7 @@ def tokenize_pde_ir(
         attribute: str = "none",
         symbol: str = "",
         scalar: float = 0.0,
-        dimension: tuple[float, ...] = (),
+        dimension: DimensionSignature = DIMENSIONLESS,
         slot: int = -1,
         parent: int = -1,
         depth: int = 0,
@@ -198,7 +207,7 @@ def tokenize_pde_ir(
                 _ATTRIBUTE_INDEX[attribute],
                 symbols[symbol],
                 float(scalar),
-                _dimension(dimension, rank),
+                _dimension(dimension, basis),
                 int(slot),
                 int(parent),
                 int(depth),
@@ -238,12 +247,17 @@ def tokenize_pde_ir(
             or expression.get("region")
             or ""
         )
+        raw_value = expression.get("value", 0.0)
         index = append(
             "expression",
             operator=expression["op"],
             symbol=symbol,
-            scalar=float(expression.get("value", 0.0)),
-            dimension=tuple(expression.get("physical_dimension", ())),
+            scalar=float(_literal_from_dict(raw_value)),
+            dimension=(
+                DIMENSIONLESS
+                if "dimension" not in expression
+                else DimensionSignature.from_dict(expression["dimension"])
+            ),
             slot=slot,
             parent=parent,
             depth=depth,
@@ -276,7 +290,7 @@ def tokenize_pde_ir(
             "coordinate",
             symbol=coordinate.name,
             scalar=coordinate.size,
-            dimension=coordinate.physical_dimension,
+            dimension=coordinate.dimension,
         )
         append_attribute(
             f"coordinate_{coordinate.kind}",
@@ -309,7 +323,7 @@ def tokenize_pde_ir(
             "field",
             symbol=field.name,
             scalar=field.components,
-            dimension=field.physical_dimension,
+            dimension=field.dimension,
         )
         append_attribute(
             f"representation_{field.representation}",
@@ -345,7 +359,7 @@ def tokenize_pde_ir(
             "parameter",
             symbol=parameter.name,
             scalar=parameter.components,
-            dimension=parameter.physical_dimension,
+            dimension=parameter.dimension,
         )
         if parameter.value is None:
             append_attribute("parameter_value_absent", parent=root, depth=1)
@@ -483,11 +497,12 @@ def tokenize_pde_ir(
         attribute=column(2, jnp.int32),
         symbol=column(3, jnp.int32),
         scalar=column(4, float),
-        physical_dimension=dimensions,
+        dimension=dimensions,
         slot=column(6, jnp.int32, -1),
         parent=column(7, jnp.int32, -1),
         depth=column(8, jnp.int32),
         mask=jnp.arange(capacity) < count,
+        dimension_basis=basis,
         symbol_vocabulary=vocabulary,
         canonical_hashes=(pde_ir_hash(problem),),
     )
@@ -507,7 +522,7 @@ def pad_pde_tokens(tokens: PDETokenBatch, max_tokens: int, /) -> PDETokenBatch:
         widths[-1] = (0, amount)
         return jnp.pad(array, tuple(widths), constant_values=value)
 
-    dimension_widths = [(0, 0)] * tokens.physical_dimension.ndim
+    dimension_widths = [(0, 0)] * tokens.dimension.ndim
     dimension_widths[-2] = (0, amount)
     return replace(
         tokens,
@@ -516,8 +531,8 @@ def pad_pde_tokens(tokens: PDETokenBatch, max_tokens: int, /) -> PDETokenBatch:
         attribute=pad(tokens.attribute),
         symbol=pad(tokens.symbol),
         scalar=pad(tokens.scalar),
-        physical_dimension=jnp.pad(
-            tokens.physical_dimension,
+        dimension=jnp.pad(
+            tokens.dimension,
             tuple(dimension_widths),
             constant_values=0.0,
         ),
@@ -529,7 +544,7 @@ def pad_pde_tokens(tokens: PDETokenBatch, max_tokens: int, /) -> PDETokenBatch:
 
 
 def stack_pde_tokens(tokens: tuple[PDETokenBatch, ...], /) -> PDETokenBatch:
-    """Stack tokenized problems after merging their deterministic vocabularies."""
+    """Stack token batches only when their explicit dimension bases match."""
     if not tokens:
         raise ValueError("stack_pde_tokens requires at least one token batch.")
     capacity = max(item.max_tokens for item in tokens)
@@ -538,9 +553,11 @@ def stack_pde_tokens(tokens: tuple[PDETokenBatch, ...], /) -> PDETokenBatch:
         sorted({symbol for item in padded for symbol in item.symbol_vocabulary})
     )
     merged_symbols = {name: index for index, name in enumerate(vocabulary)}
-    dimension_size = padded[0].physical_dimension.shape[-1]
-    if any(item.physical_dimension.shape[-1] != dimension_size for item in padded[1:]):
-        raise ValueError("Stacked PDE token batches must share a dimension rank.")
+    basis = padded[0].dimension_basis
+    if any(item.dimension_basis != basis for item in padded[1:]):
+        raise ValueError(
+            "Stacked PDE token batches must share an identical dimension basis."
+        )
 
     def remap_symbols(item: PDETokenBatch) -> Array:
         remapping = jnp.asarray(
@@ -555,11 +572,12 @@ def stack_pde_tokens(tokens: tuple[PDETokenBatch, ...], /) -> PDETokenBatch:
         attribute=jnp.stack(tuple(item.attribute for item in padded)),
         symbol=jnp.stack(tuple(remap_symbols(item) for item in padded)),
         scalar=jnp.stack(tuple(item.scalar for item in padded)),
-        physical_dimension=jnp.stack(tuple(item.physical_dimension for item in padded)),
+        dimension=jnp.stack(tuple(item.dimension for item in padded)),
         slot=jnp.stack(tuple(item.slot for item in padded)),
         parent=jnp.stack(tuple(item.parent for item in padded)),
         depth=jnp.stack(tuple(item.depth for item in padded)),
         mask=jnp.stack(tuple(item.mask for item in padded)),
+        dimension_basis=basis,
         symbol_vocabulary=vocabulary,
         canonical_hashes=tuple(
             hash_value for item in padded for hash_value in item.canonical_hashes

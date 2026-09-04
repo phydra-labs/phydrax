@@ -1,3 +1,5 @@
+from fractions import Fraction
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -209,3 +211,76 @@ def test_periodic_coordinate_values_do_not_claim_finite_exactness():
         require_exact=False,
     )
     assert not compiled.report.exact
+
+
+def test_spectral_dynamics_accepts_exact_integer_power_literals():
+    space = _fourier_space(8)
+    x = phx.equations.PDECoordinate(
+        "x",
+        "space",
+        bounds=(0.0, 1.0),
+        periodic=True,
+    )
+    time = phx.equations.PDECoordinate("t", "time")
+    field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    u = phx.equations.PDEExpression.field("u")
+    problem = phx.equations.PDEProblemIR(
+        (x, time),
+        (field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "quadratic-evolution",
+                u.derivative("t"),
+                u**2,
+            ),
+        ),
+    )
+
+    compiled = phx.equations.compile_spectral_pde(
+        problem,
+        space,
+        phx.discretization.PseudospectralMethodPlan(
+            dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2)
+        ),
+    )
+    assert compiled.resolved_method.startswith("spectral-semilinear")
+
+    near_integer = Fraction(2**54 + 1, 2**54)
+    near_integer_problem = phx.equations.PDEProblemIR(
+        (x, time),
+        (field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "near-integer-evolution",
+                u.derivative("t"),
+                u**near_integer,
+            ),
+        ),
+    )
+    closure = phx.discretization.PseudospectralMethodPlan(
+        dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2)
+    )
+    with pytest.raises(ValueError, match="nonpolynomial"):
+        phx.equations.compile_spectral_pde(
+            near_integer_problem,
+            space,
+            closure,
+        )
+
+    residual_field = phx.equations.PDEField("u", coordinates=("x",))
+    near_integer_residual = phx.equations.PDEProblemIR(
+        (x,),
+        (residual_field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "near-integer-residual",
+                u**near_integer,
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="nonpolynomial"):
+        phx.equations.compile_spectral_residual(
+            near_integer_residual,
+            space,
+            closure,
+        )

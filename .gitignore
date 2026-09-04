@@ -41,6 +41,7 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/electrophysiology.py
 !benchmarks/constraint_system.py
 !benchmarks/constraint_system.json
 !benchmarks/skeletal_muscle_motor_units.py

@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ._units import AtomisticUnitSystem
 
 
 _CHECKPOINT_FORMAT = "phydrax-atomistic-dynamics-checkpoint"
@@ -44,6 +45,7 @@ class AtomisticCheckpointPlan(StrictModule, NonTrainableState):
 
 class AtomisticCheckpoint(StrictModule):
     state: AtomisticDynamicsState
+    units: AtomisticUnitSystem
     payload_id: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
@@ -70,12 +72,14 @@ def write_atomistic_checkpoint(
         "system_id": plan.dynamics.system.prepared_id,
         "potential_id": plan.dynamics.potential.prepared_id,
         "integrator_id": plan.dynamics.integrator.plan_id,
+        "unit_system": plan.dynamics.system.plan.units.to_dict(),
         "state": specification,
     }
     payload_id = canonical_fingerprint(
         {
             "kind": "atomistic-checkpoint-payload",
             "checkpoint": plan.checkpoint_id,
+            "unit_system": plan.dynamics.system.plan.units.unit_system_id,
             "time": float(state.time),
             "step": int(state.step_index),
             "state": specification,
@@ -87,7 +91,12 @@ def write_atomistic_checkpoint(
         manifest={**manifest, "payload_id": payload_id},
         arrays=arrays,
     )
-    return AtomisticCheckpoint(state, payload_id, plan.checkpoint_id)
+    return AtomisticCheckpoint(
+        state,
+        plan.dynamics.system.plan.units,
+        payload_id,
+        plan.checkpoint_id,
+    )
 
 
 def read_atomistic_checkpoint(
@@ -111,6 +120,7 @@ def read_atomistic_checkpoint(
         "system_id",
         "potential_id",
         "integrator_id",
+        "unit_system",
         "state",
         "payload_id",
         "arrays",
@@ -131,6 +141,9 @@ def read_atomistic_checkpoint(
         "potential_id": plan.dynamics.potential.prepared_id,
         "integrator_id": plan.dynamics.integrator.plan_id,
     }
+    units = AtomisticUnitSystem.from_dict(manifest["unit_system"])
+    if units.unit_system_id != plan.dynamics.system.plan.units.unit_system_id:
+        raise ValueError("Atomistic checkpoint complete unit descriptor is incompatible.")
     for name, expected_value in identities.items():
         if manifest[name] != expected_value:
             raise ValueError(f"Atomistic checkpoint {name} does not match the runtime.")
@@ -144,6 +157,7 @@ def read_atomistic_checkpoint(
         {
             "kind": "atomistic-checkpoint-payload",
             "checkpoint": plan.checkpoint_id,
+            "unit_system": units.unit_system_id,
             "time": float(state.time),
             "step": int(state.step_index),
             "state": manifest["state"],
@@ -152,7 +166,7 @@ def read_atomistic_checkpoint(
     )
     if payload_id != expected_payload_id:
         raise ValueError("Atomistic checkpoint payload identity is corrupt.")
-    return AtomisticCheckpoint(state, payload_id, plan.checkpoint_id)
+    return AtomisticCheckpoint(state, units, payload_id, plan.checkpoint_id)
 
 
 __all__ = [

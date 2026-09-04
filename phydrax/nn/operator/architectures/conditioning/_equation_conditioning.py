@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import sqrt
 
 import jax
@@ -43,7 +44,7 @@ class PDEConditionEncoder(StrictModule):
     feed_forward_in: tuple[Linear, ...]
     feed_forward_out: tuple[Linear, ...]
     width: int
-    dimension_rank: int
+    dimension_basis: tuple[str, ...]
     max_tree_depth: int
 
     def __init__(
@@ -51,14 +52,21 @@ class PDEConditionEncoder(StrictModule):
         *,
         width: int = 128,
         depth: int = 3,
-        dimension_rank: int = 7,
+        dimension_basis: Sequence[str],
         max_tree_depth: int = 32,
         key: Key[Array, ""],
     ):
-        if min(width, depth, max_tree_depth) <= 0 or dimension_rank < 0:
+        if min(width, depth, max_tree_depth) <= 0:
             raise ValueError("PDE encoder dimensions must be positive.")
+        basis = tuple(dimension_basis)
+        if any(not isinstance(axis, str) for axis in basis):
+            raise TypeError("PDE encoder dimension basis entries must be strings.")
+        if len(set(basis)) != len(basis) or any(not axis for axis in basis):
+            raise ValueError(
+                "PDE encoder dimension basis entries must be non-empty and unique."
+            )
         self.width = int(width)
-        self.dimension_rank = int(dimension_rank)
+        self.dimension_basis = basis
         self.max_tree_depth = int(max_tree_depth)
         keys = iter(jr.split(key, 7 * int(depth) + 8))
         scale = 1.0 / sqrt(float(width))
@@ -87,7 +95,7 @@ class PDEConditionEncoder(StrictModule):
             key=next(keys),
         )
         self.dimension_projection = Linear(
-            in_size=max(1, self.dimension_rank),
+            in_size=max(1, len(self.dimension_basis)),
             out_size=self.width,
             activation=None,
             key=next(keys),
@@ -223,10 +231,8 @@ class PDEConditionEncoder(StrictModule):
         )
 
     def __call__(self, tokens: PDETokenBatch, /) -> Array:
-        if tokens.physical_dimension.shape[-1] != self.dimension_rank:
-            raise ValueError(
-                "PDE token physical dimension rank does not match the encoder."
-            )
+        if tokens.dimension_basis != self.dimension_basis:
+            raise ValueError("PDE token dimension basis does not match the encoder.")
         case_shape = tokens.batch_shape
         token_count = tokens.max_tokens
         scalar = jnp.sign(tokens.scalar) * jnp.log1p(jnp.abs(tokens.scalar))
@@ -235,8 +241,8 @@ class PDEConditionEncoder(StrictModule):
             jnp.log1p(tokens.slot.astype(scalar.dtype)) + 1.0,
             0.0,
         )
-        dimension = tokens.physical_dimension
-        if self.dimension_rank == 0:
+        dimension = tokens.dimension
+        if not self.dimension_basis:
             dimension = jnp.zeros(case_shape + (token_count, 1), dtype=scalar.dtype)
         hidden = (
             self.kind_embeddings[tokens.kind]

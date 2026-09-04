@@ -16,7 +16,16 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import real_precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..units import (
+    ANGSTROM,
+    conversion_factor,
+    DALTON,
+    ELECTRONVOLT,
+    KILOCALORIE_PER_MOLE,
+    UnitDefinition,
+)
 from ._types import AtomisticBatch, AtomisticScaleContract
+from ._units import molar_energy_to_single_system_factor
 
 
 class RMD17Dataset(StrictModule, NonTrainableState):
@@ -29,6 +38,10 @@ class RMD17Dataset(StrictModule, NonTrainableState):
     masses: Array
     sample_ids: Array
     scale: AtomisticScaleContract
+    source_length_unit: UnitDefinition
+    source_energy_unit: UnitDefinition
+    source_mass_unit: UnitDefinition
+    avogadro_constant_set_id: str = eqx.field(static=True)
     source_path: str = eqx.field(static=True)
     dataset_id: str = eqx.field(static=True)
 
@@ -111,7 +124,7 @@ def load_rmd17_npz(
     masses: ArrayLike | None = None,
     dtype: Any = "float64",
 ) -> RMD17Dataset:
-    """Load a local rMD17-style NPZ without network access or implicit units."""
+    """Load rMD17 and explicitly convert kcal/mol source energies to one-system energy."""
 
     source = Path(path).expanduser().resolve()
     if not source.is_file():
@@ -148,9 +161,19 @@ def load_rmd17_npz(
         raise TypeError("rMD17 old_indices must be one integer per sample.")
     if np.unique(sample_ids).size != sample_ids.size:
         raise ValueError("rMD17 sample identities must be unique.")
-    position_values = positions.astype(precision, copy=False)
-    energy_values = energies.astype(precision, copy=False)
-    force_values = forces.astype(precision, copy=False)
+    scale_ = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT) if scale is None else scale
+    if not isinstance(scale_, AtomisticScaleContract):
+        raise TypeError("scale must be an AtomisticScaleContract or None.")
+    constant_set_id = "codata-2018"
+    length_factor = float(conversion_factor(ANGSTROM, scale_.length_unit))
+    energy_factor = molar_energy_to_single_system_factor(
+        KILOCALORIE_PER_MOLE,
+        scale_.energy_unit,
+        constant_set_id=constant_set_id,
+    )
+    position_values = (positions * length_factor).astype(precision, copy=False)
+    energy_values = (energies * energy_factor).astype(precision, copy=False)
+    force_values = (forces * energy_factor / length_factor).astype(precision, copy=False)
     if (
         np.any(~np.isfinite(position_values))
         or np.any(~np.isfinite(energy_values))
@@ -165,17 +188,14 @@ def load_rmd17_npz(
             raise ValueError("Explicit masses must have the nuclear-charge shape.")
         if np.any(~np.isfinite(mass_values)) or np.any(mass_values <= 0.0):
             raise ValueError("Explicit masses must be finite and positive.")
-    scale_ = (
-        AtomisticScaleContract("angstrom", "kilocalorie_per_mole")
-        if scale is None
-        else scale
-    )
-    if not isinstance(scale_, AtomisticScaleContract):
-        raise TypeError("scale must be an AtomisticScaleContract or None.")
     dataset_id = canonical_fingerprint(
         {
             "kind": "local-rmd17-dataset",
             "scale": scale_.scale_id,
+            "source_length_unit": ANGSTROM.unit_id,
+            "source_energy_unit": KILOCALORIE_PER_MOLE.unit_id,
+            "source_mass_unit": DALTON.unit_id,
+            "avogadro_constant_set": constant_set_id,
             "arrays": array_tree_fingerprint(
                 {
                     "atomic_numbers": numbers,
@@ -196,6 +216,10 @@ def load_rmd17_npz(
         masses=jnp.asarray(mass_values, dtype=precision),
         sample_ids=jnp.asarray(sample_ids, dtype=jnp.int64),
         scale=scale_,
+        source_length_unit=ANGSTROM,
+        source_energy_unit=KILOCALORIE_PER_MOLE,
+        source_mass_unit=DALTON,
+        avogadro_constant_set_id=constant_set_id,
         source_path=str(source),
         dataset_id=dataset_id,
     )

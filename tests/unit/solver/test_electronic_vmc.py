@@ -52,7 +52,7 @@ class _FailedLocalOperator(phx.operators.AbstractLocalQuantumOperator):
 
 
 def _atom(charges, positions, *, name):
-    scale = phx.atomistic.AtomisticScaleContract("bohr", "hartree")
+    scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.asarray(charges, dtype=jnp.int32),
         jnp.asarray(positions, dtype=jnp.float64),

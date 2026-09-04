@@ -8,7 +8,11 @@ import phydrax as phx
 
 def _cosmology_context():
     cosmology = phx.applications.cosmology
-    scale = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     background = cosmology.FLRWBackground(1.0, 0.3, scale=scale)
     provenance = cosmology.CosmologyProductProvenance(
         producer="test",
@@ -22,6 +26,47 @@ def _cosmology_context():
         differentiation="native-parameter",
     )
     return scale, background, provenance
+
+
+def test_cosmology_scale_units_round_trip_and_reject_cross_reference_conversion():
+    cosmology = phx.applications.cosmology
+    scale = cosmology.CODE_COSMOLOGY_SCALE
+    assert cosmology.CosmologyScaleContract is phx.DimensionalScaleContract
+    assert scale.length_coordinate_kind == "comoving"
+    assert isinstance(scale.velocity_unit, phx.units.UnitDefinition)
+    assert scale.velocity_unit.dimension == phx.units.VELOCITY
+
+    payload = scale.to_dict()
+    restored = cosmology.CosmologyScaleContract.from_dict(payload)
+    assert restored.scale_id == scale.scale_id
+    assert restored.length_unit == scale.length_unit
+    assert restored.mass_unit == scale.mass_unit
+    assert restored.time_unit == scale.time_unit
+
+    tampered = dict(payload)
+    tampered["scale_id"] = "not-the-content-id"
+    with pytest.raises(ValueError, match="fingerprint"):
+        cosmology.CosmologyScaleContract.from_dict(tampered)
+    ambiguous = dict(payload)
+    ambiguous["length_to_reference"] = 1.0
+    with pytest.raises(ValueError, match="canonical fields"):
+        cosmology.CosmologyScaleContract.from_dict(ambiguous)
+    with pytest.raises(ValueError, match="shared reference system"):
+        phx.units.conversion_factor(phx.units.METER, scale.length_unit)
+    with pytest.raises(TypeError, match="UnitDefinition"):
+        cosmology.CosmologyScaleContract("L", "M", "T")
+    with pytest.raises(ValueError, match="length, mass, and time dimensions"):
+        cosmology.CosmologyScaleContract(
+            phx.units.KILOGRAM,
+            phx.units.KILOGRAM,
+            phx.units.SECOND,
+        )
+    with pytest.raises(ValueError, match="explicit reference system"):
+        cosmology.CosmologyScaleContract(
+            phx.units.METER,
+            scale.mass_unit,
+            phx.units.SECOND,
+        )
 
 
 def test_early_universe_and_boltzmann_closure():

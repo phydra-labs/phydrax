@@ -9,7 +9,11 @@ cosmology = phx.applications.cosmology
 
 def test_concrete_precision_backends_cache_and_cross_compare(tmp_path):
     worker = Path(__file__).parents[2] / "_linear_theory_worker.py"
-    scale = cosmology.CosmologyScaleContract("Mpc", "mass", "time")
+    scale = cosmology.CosmologyScaleContract(
+        phx.units.MEGAPARSEC,
+        phx.units.SOLAR_MASS,
+        phx.units.GIGAYEAR,
+    )
     request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,

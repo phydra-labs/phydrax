@@ -4,17 +4,17 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from ...equations._ir import PDEProblemIR
 from ...equations._serialize import pde_ir_from_dict, pde_ir_to_dict
 from ...graph._operator_topology import OperatorTopologySite
+from ...units import DimensionSignature
 from .capabilities import (
     OperatorGeometryKind,
     OperatorProblemSpec,
@@ -100,7 +100,7 @@ class OperatorQuerySpec(StrictModule):
     name: str
     geometry_kind: OperatorGeometryKind
     coordinate_components: tuple[str, ...]
-    coordinate_dimensions: tuple[tuple[float, ...], ...]
+    coordinate_dimensions: tuple[DimensionSignature, ...]
     topology_site: OperatorTopologySite | None
     quadrature: OperatorQuadraturePolicy
     fixed_geometry: bool | None
@@ -112,7 +112,7 @@ class OperatorQuerySpec(StrictModule):
         *,
         geometry_kind: OperatorGeometryKind,
         coordinate_components: Sequence[str],
-        coordinate_dimensions: Sequence[Sequence[float]] = (),
+        coordinate_dimensions: Sequence[DimensionSignature] = (),
         topology_site: OperatorTopologySite | None = None,
         quadrature: OperatorQuadraturePolicy = "optional",
         fixed_geometry: bool | None = None,
@@ -123,20 +123,15 @@ class OperatorQuerySpec(StrictModule):
         components = tuple(str(value) for value in coordinate_components)
         if not components or len(set(components)) != len(components):
             raise ValueError("Query coordinate components must be non-empty and unique.")
-        dimensions = tuple(
-            tuple(float(exponent) for exponent in dimension)
-            for dimension in coordinate_dimensions
-        )
+        dimensions = tuple(coordinate_dimensions)
+        if any(not isinstance(dimension, DimensionSignature) for dimension in dimensions):
+            raise TypeError(
+                "Query coordinate dimensions must be DimensionSignature values."
+            )
         if dimensions and len(dimensions) != len(components):
             raise ValueError(
-                "coordinate_dimensions must be empty or provide one vector per component."
+                "coordinate_dimensions must be empty or provide one signature per component."
             )
-        if any(
-            not math.isfinite(exponent)
-            for dimension in dimensions
-            for exponent in dimension
-        ):
-            raise ValueError("Query coordinate dimensions must be finite.")
         if topology_site not in (
             None,
             "node",
@@ -178,7 +173,7 @@ class OperatorQuerySpec(StrictModule):
             "geometry_kind": self.geometry_kind,
             "coordinate_components": list(self.coordinate_components),
             "coordinate_dimensions": [
-                list(value) for value in self.coordinate_dimensions
+                value.to_dict() for value in self.coordinate_dimensions
             ],
             "topology_site": self.topology_site,
             "quadrature": self.quadrature,
@@ -203,11 +198,18 @@ class OperatorQuerySpec(StrictModule):
                 "Operator query dictionary must use the current canonical fields; "
                 f"missing={sorted(missing)}, unknown={sorted(unknown)}."
             )
+        raw_dimensions = value["coordinate_dimensions"]
+        if any(not isinstance(item, Mapping) for item in raw_dimensions):
+            raise TypeError(
+                "Serialized query coordinate dimensions must be canonical mappings."
+            )
         return cls(
             str(value["name"]),
             geometry_kind=value["geometry_kind"],
             coordinate_components=value["coordinate_components"],
-            coordinate_dimensions=value["coordinate_dimensions"],
+            coordinate_dimensions=tuple(
+                DimensionSignature.from_dict(item) for item in raw_dimensions
+            ),
             topology_site=value["topology_site"],
             quadrature=value["quadrature"],
             fixed_geometry=value["fixed_geometry"],
@@ -259,16 +261,22 @@ class OperatorTask(StrictModule):
             raise ValueError("Operator task field names must be unique.")
         if len(set(query_names)) != len(query_names):
             raise ValueError("Operator task query names must be unique.")
-        basis = tuple(str(value) for value in dimension_basis)
+        basis = tuple(dimension_basis)
+        if any(not isinstance(value, str) for value in basis):
+            raise TypeError("dimension_basis entries must be strings.")
         if len(set(basis)) != len(basis) or any(not value for value in basis):
             raise ValueError("dimension_basis entries must be non-empty and unique.")
         query_lookup = {query.name: query for query in queries_}
         source_bindings: list[str] = []
         output_bindings: list[str] = []
         for field in fields_:
-            if field.physical_dimension and len(field.physical_dimension) != len(basis):
+            missing_axes = {
+                axis for axis, _, _ in field.dimension.terms if axis not in basis
+            }
+            if missing_axes:
                 raise ValueError(
-                    f"Field {field.name!r} physical_dimension rank differs from dimension_basis."
+                    f"Field {field.name!r} dimension uses axes absent from "
+                    f"dimension_basis: {sorted(missing_axes)}."
                 )
             if field.is_source:
                 assert field.source_name is not None
@@ -289,10 +297,13 @@ class OperatorTask(StrictModule):
             raise ValueError("Operator tasks require at least one target field.")
         for query in queries_:
             for dimension in query.coordinate_dimensions:
-                if dimension and len(dimension) != len(basis):
+                missing_axes = {
+                    axis for axis, _, _ in dimension.terms if axis not in basis
+                }
+                if missing_axes:
                     raise ValueError(
-                        f"Query {query.name!r} coordinate dimension rank differs "
-                        "from dimension_basis."
+                        f"Query {query.name!r} coordinate dimension uses axes absent "
+                        f"from dimension_basis: {sorted(missing_axes)}."
                     )
         problem_ = OperatorProblemSpec() if problem is None else problem
         if not isinstance(problem_, OperatorProblemSpec):
@@ -307,6 +318,34 @@ class OperatorTask(StrictModule):
             if not isinstance(pde, PDEProblemIR):
                 raise TypeError("pde must be a PDEProblemIR.")
             self._validate_pde(fields_, queries_, pde)
+            pde_dimensions = [
+                *(item.dimension for item in pde.coordinates),
+                *(item.dimension for item in pde.fields),
+                *(item.dimension for item in pde.parameters),
+            ]
+
+            def append_expression_dimensions(expression) -> None:
+                pde_dimensions.append(expression.dimension)
+                for argument in expression.args:
+                    append_expression_dimensions(argument)
+
+            for equation in pde.equations:
+                append_expression_dimensions(equation.lhs)
+                append_expression_dimensions(equation.rhs)
+            for condition in pde.conditions:
+                append_expression_dimensions(condition.expression)
+                append_expression_dimensions(condition.target)
+            missing_axes = {
+                axis
+                for dimension in pde_dimensions
+                for axis, _, _ in dimension.terms
+                if axis not in basis
+            }
+            if missing_axes:
+                raise ValueError(
+                    "Embedded PDE dimensions use axes absent from dimension_basis: "
+                    f"{sorted(missing_axes)}."
+                )
         frozen_metadata = _freeze_json({} if metadata is None else metadata)
         self.task_id = resolved_id
         self.revision = resolved_revision
@@ -350,9 +389,9 @@ class OperatorTask(StrictModule):
                 raise ValueError(
                     f"PDE field {pde_field.name!r} representation disagrees with the task."
                 )
-            if tuple(field.physical_dimension) != tuple(pde_field.physical_dimension):
+            if field.dimension != pde_field.dimension:
                 raise ValueError(
-                    f"PDE field {pde_field.name!r} physical dimension disagrees with the task."
+                    f"PDE field {pde_field.name!r} dimension disagrees with the task."
                 )
             if field.is_target and pde_field.coordinates:
                 assert field.query_name is not None
@@ -382,14 +421,7 @@ class OperatorTask(StrictModule):
 
     @property
     def fingerprint(self) -> str:
-        payload = json.dumps(
-            self.to_dict(),
-            allow_nan=False,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return canonical_fingerprint(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._units import AtomisticUnitSystem
 
 
 @jax.custom_jvp
@@ -49,7 +50,7 @@ class AlchemicalEndpointPlan(StrictModule, NonTrainableState):
     bond_stiffness: Array
     bond_equilibrium_lengths: Array
     bond_mask: Array
-    unit_system_id: str = eqx.field(static=True)
+    units: AtomisticUnitSystem
     endpoint_id: str = eqx.field(static=True)
 
     def __init__(
@@ -66,7 +67,7 @@ class AlchemicalEndpointPlan(StrictModule, NonTrainableState):
         bond_stiffness: ArrayLike | None = None,
         bond_equilibrium_lengths: ArrayLike | None = None,
         bond_mask: ArrayLike | None = None,
-        unit_system_id: str,
+        units: AtomisticUnitSystem,
         endpoint_id: str | None = None,
     ):
         ids = np.asarray(particle_ids)
@@ -180,9 +181,8 @@ class AlchemicalEndpointPlan(StrictModule, NonTrainableState):
             lengths[order],
             active_bonds[order],
         )
-        unit = str(unit_system_id).strip()
-        if not unit:
-            raise ValueError("unit_system_id must be non-empty.")
+        if not isinstance(units, AtomisticUnitSystem):
+            raise TypeError("units must be an AtomisticUnitSystem.")
         arrays = {
             "particle_ids": ids,
             "atom_type_ids": types,
@@ -198,7 +198,7 @@ class AlchemicalEndpointPlan(StrictModule, NonTrainableState):
         generated = canonical_fingerprint(
             {
                 "kind": "alchemical-endpoint",
-                "unit_system": unit,
+                "unit_system": units.unit_system_id,
                 "arrays": array_tree_fingerprint(arrays),
             }
         )
@@ -207,7 +207,7 @@ class AlchemicalEndpointPlan(StrictModule, NonTrainableState):
             raise ValueError("endpoint_id must be non-empty.")
         for name, value in arrays.items():
             setattr(self, name, jnp.asarray(value))
-        self.unit_system_id = unit
+        self.units = units
         self.endpoint_id = identifier
 
 
@@ -425,7 +425,6 @@ class AlchemicalTransformationPlan(StrictModule, NonTrainableState):
         soft_core: SoftCorePolicy | None = None,
         schedule: LambdaSchedulePlan | None = None,
         beta: float = 1.0,
-        coulomb_constant: float = 1.0,
     ):
         if not isinstance(endpoint_a, AlchemicalEndpointPlan) or not isinstance(
             endpoint_b, AlchemicalEndpointPlan
@@ -433,7 +432,7 @@ class AlchemicalTransformationPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Alchemical endpoints must be AlchemicalEndpointPlan instances."
             )
-        if endpoint_a.unit_system_id != endpoint_b.unit_system_id:
+        if endpoint_a.units.unit_system_id != endpoint_b.units.unit_system_id:
             raise ValueError(
                 "Alchemical endpoints must use the same exact unit system identity."
             )
@@ -494,11 +493,10 @@ class AlchemicalTransformationPlan(StrictModule, NonTrainableState):
             schedule_, LambdaSchedulePlan
         ):
             raise TypeError("soft_core and schedule must use their dedicated plan types.")
-        beta_, coulomb = float(beta), float(coulomb_constant)
-        if not np.isfinite(beta_) or beta_ <= 0.0 or not np.isfinite(coulomb):
-            raise ValueError(
-                "beta must be finite and positive and coulomb_constant finite."
-            )
+        beta_ = float(beta)
+        coulomb = endpoint_a.units.coulomb_constant
+        if not np.isfinite(beta_) or beta_ <= 0.0:
+            raise ValueError("beta must be finite and positive.")
         self.endpoint_a, self.endpoint_b = endpoint_a, endpoint_b
         self.atom_mapping = jnp.asarray(mapping)
         self.atom_capacity, self.bond_capacity = capacity, bond_capacity_

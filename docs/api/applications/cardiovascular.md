@@ -33,6 +33,11 @@ Shared substrates retain their generic public owners: use
 
 ## Cross-domain contracts
 
+`CardiovascularQuantitySpec` stores one canonical `UnitDefinition` beside its
+semantic quantity kind, axes, sign, support, and reference configuration. Display
+symbols and exact SI conversion factors are computed from that unit, and the
+quantity ID binds the unit ID.
+
 ::: phydrax.applications.cardiovascular.CardiovascularQuantitySpec
 
 ---

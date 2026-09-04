@@ -214,7 +214,7 @@ def _task():
                 "domain",
                 geometry_kind="point_cloud",
                 coordinate_components=("x",),
-                coordinate_dimensions=((1.0,),),
+                coordinate_dimensions=(phx.units.LENGTH,),
             ),
         ),
         problem=phx.nn.operator.OperatorProblemSpec(

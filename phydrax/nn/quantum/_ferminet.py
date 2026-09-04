@@ -24,6 +24,7 @@ from ..._trainable import NonTrainableState
 from ...atomistic._types import AtomicStructure
 from ...operators.quantum._amplitude import LogAmplitude
 from ...operators.quantum._electronic_advanced import ElectronicVMCResourcePlan
+from ...units import BOHR, conversion_factor
 from ..parameters import PositiveTransform
 
 
@@ -644,7 +645,10 @@ class FermiNet(StrictModule):
         coordinate = jnp.asarray(electrons, dtype=dtype)
         active = self.nuclei.active_mask
         nuclei = jnp.where(active[:, None], self.nuclei.positions.astype(dtype), 0.0)
-        length_factor = jnp.asarray(self.nuclei.scale.length_to_reference, dtype=dtype)
+        length_factor = jnp.asarray(
+            float(conversion_factor(self.nuclei.scale.length_unit, BOHR)),
+            dtype=dtype,
+        )
         electron_nuclear_squared = jnp.sum(
             (coordinate[:, None, :] - nuclei[None, :, :]) ** 2, axis=-1
         )

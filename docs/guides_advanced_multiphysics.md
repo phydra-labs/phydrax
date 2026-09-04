@@ -111,10 +111,13 @@ for survey and CMB products.
 
 Precision transfer products use concrete `ClassLinearTheoryBackend` and
 `CambLinearTheoryBackend` wrappers around user-installed, manifest-pinned isolated
-executables. Their atomic cache keys include the physical request, binary digest, and
-resource policy; cached and fresh products share content identity. The bounded native
-fixed-hierarchy Einstein--Boltzmann/CMB solver returns canonical reference products,
-but precision CLASS/CAMB parity remains intentionally unclaimed.
+executables. Cross-process requests serialize the complete dimensional scale and its
+content ID; result artifacts return the same self-describing scale payload, which is
+reconstructed and verified before any product is built. Their atomic cache keys include
+the physical request, binary digest, and resource policy; cached and fresh products
+share content identity. The bounded native fixed-hierarchy Einstein--Boltzmann/CMB
+solver returns canonical reference products, but precision CLASS/CAMB parity remains
+intentionally unclaimed.
 
 Bounded native closures include fixed-quadrature one-loop EdS SPT, a locked
 Tinker08/Tinker10/Duffy08 200m halo triplet, a matter halo model, immutable halo
@@ -186,19 +189,22 @@ parity, or approximation evidence; distributed particle layout is an ownership c
 not an undeclared communication implementation.
 
 Cross-domain reconciliation moves reusable mechanics out of applications:
-`DimensionalScaleContract` owns length/mass/time and physical/comoving/code
-coordinate identity; `phydrax.artifacts` owns checksummed artifacts and
-derivative capabilities; `phydrax.observation` owns labelled products, linear
-responses, covariance actions, and Gaussian likelihoods; core solver gravity
-owns direct kernels, sparse runtime Morton octrees, Barnes--Hut, Cartesian FMM,
-periodic Ewald, and TreePM; core AMR owns ratio-two prolong/restrict/reflux;
-core KDK owns coefficient-driven proposal/completion; and core events own
-fixed-capacity replay statuses. Core discretization owns canonical Morton
-addressing, sparse point hierarchies, sparse voxel fields, and balanced dyadic
-cell topology; core finite volume lowers accepted dyadic leaves to conservative
-explicit coarse/fine face routes. Cosmology retains scale-factor, canonical,
-periodic, and manifold semantics, while astrodynamics retains physical
-velocity, epoch, frame, encounter, and mission semantics.
+`DimensionalScaleContract` owns exact `UnitDefinition` length, mass, and time fields,
+their derived units, and physical/comoving/code coordinate identity. SI scales share
+the explicit SI reference system. `CODE_COSMOLOGY_SCALE` instead uses a distinct
+cosmology-code reference system, so it cannot be converted to SI without an explicit
+calibration rather than a label or floating conversion factor. `phydrax.artifacts` owns
+checksummed artifacts and derivative capabilities; `phydrax.observation` owns labelled
+products, linear responses, covariance actions, and Gaussian likelihoods; core solver
+gravity owns direct kernels, sparse runtime Morton octrees, Barnes--Hut, Cartesian FMM,
+periodic Ewald, and TreePM; core AMR owns ratio-two prolong/restrict/reflux; core KDK
+owns coefficient-driven proposal/completion; and core events own fixed-capacity replay
+statuses. Core discretization owns canonical Morton addressing, sparse point
+hierarchies, sparse voxel fields, and balanced dyadic cell topology; core finite volume
+lowers accepted dyadic leaves to conservative explicit coarse/fine face routes.
+Cosmology retains scale-factor, canonical, periodic, and manifold semantics, while
+astrodynamics retains physical velocity, epoch, frame, encounter, and mission
+semantics.
 
 `WhitenedFieldInferencePlan`, `ParticleMarginalLikelihoodPlan`, and
 `SimulationSensitivityReport` compose existing inference substrates with field-valued

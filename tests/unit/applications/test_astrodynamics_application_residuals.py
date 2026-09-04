@@ -104,12 +104,12 @@ def test_tle_static_regimes_resonances_and_range_failure():
     near_result = jax.jit(near.propagate)(60.0)
     assert bool(near_result.valid)
     assert near_result.frame == "TEME"
-    assert near_result.position_unit == "km"
-    assert near_result.velocity_unit == "km/s"
+    assert near_result.position_unit.symbol == "km"
+    assert near_result.velocity_unit.symbol == "km/s"
     assert near_result.state.context.context_id == native_context.context_id
     assert near_result.state.context.frame.origin_id == "earth"
     assert near_result.state.context.frame.orientation_id == "TEME"
-    assert near_result.state.context.scale.length_to_reference == 1000.0
+    assert near_result.state.context.scale.length_unit.scale_to_reference == 1000
     assert near_result.state.context.epoch.instant.instant_id == record.epoch.instant_id
     assert not near_result.state.context.epoch.continuous
     assert near_result.epoch.scale == "UTC"
@@ -214,8 +214,8 @@ def test_tle_matches_vallado_near_earth_and_resonant_deep_space_vectors():
             assert int(result.status) == int(astro.AstrodynamicsStatus.SUCCESS)
             assert result.residual_indicator <= 1.0e-10
             assert result.frame == "TEME"
-            assert result.position_unit == "km"
-            assert result.velocity_unit == "km/s"
+            assert result.position_unit.symbol == "km"
+            assert result.velocity_unit.symbol == "km/s"
             assert result.state.context.frame.orientation_id == result.frame
             assert result.state.context.scale.length_unit == result.position_unit
             assert result.state.context.scale.velocity_unit == result.velocity_unit
@@ -260,6 +260,21 @@ def test_astrodynamics_event_ids_include_guard_and_reset_parameters():
 
 def test_bundled_astronomy_assets_are_typed_bounded_and_offline():
     context = _context()
+    gravity_context = astro.AstrodynamicsContext(
+        context.scale,
+        context.epoch,
+        astro.FrameDefinition("earth", "ITRS", pseudo_inertial=False),
+    )
+    ephemeris_context = astro.AstrodynamicsContext(
+        context.scale,
+        astro.ReferenceEpoch(astro.TimeInstant(astro.JulianDate(2451545.0), "TDB")),
+        astro.FrameDefinition("solar-system-barycenter", "ICRF", pseudo_inertial=True),
+    )
+    wrong_ephemeris_epoch = astro.AstrodynamicsContext(
+        context.scale,
+        context.epoch,
+        ephemeris_context.frame,
+    )
     store = astro.bundled_astronomy_data_store()
     assert set(astro.ASTRONOMY_ASSET_MANIFESTS) == {
         "leap_seconds.json",
@@ -273,11 +288,21 @@ def test_bundled_astronomy_assets_are_typed_bounded_and_offline():
     eop = astro.load_bundled_earth_orientation(store)
     assert bool(eop.evaluate(0.0).valid)
     assert not bool(eop.evaluate(6.0 * 86400.0).valid)
-    gravity = astro.load_bundled_earth_gravity(context, store)
+    with pytest.raises(ValueError, match="source frame"):
+        astro.load_bundled_earth_gravity(context, store)
+    gravity = astro.load_bundled_earth_gravity(gravity_context, store)
     assert gravity.maximum_degree == 4
-    ephemeris = astro.load_bundled_sun_earth_moon_ephemeris(context, store)
+    assert gravity.context.context_id == gravity_context.context_id
+    with pytest.raises(ValueError, match="source frame"):
+        astro.load_bundled_sun_earth_moon_ephemeris(context, store)
+    with pytest.raises(ValueError, match="source epoch"):
+        astro.load_bundled_sun_earth_moon_ephemeris(wrong_ephemeris_epoch, store)
+    ephemeris = astro.load_bundled_sun_earth_moon_ephemeris(ephemeris_context, store)
     assert bool(ephemeris.evaluate(0.0, 1).valid)
+    assert ephemeris.catalog.context.context_id == ephemeris_context.context_id
     assert not bool(ephemeris.evaluate(2.0 * 86400.0, 1).valid)
     iau = astro.load_bundled_iau_coefficients(store)
     assert iau.coefficient("epsilon_0").shape == ()
     assert iau.coefficient("psib").shape == (5,)
+    assert iau.angle_unit.symbol == "arcsecond"
+    assert iau.angle_unit.dimension == phx.units.ANGLE

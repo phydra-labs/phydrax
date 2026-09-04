@@ -16,6 +16,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ._morphology import BranchSpec, CellMorphologyPlan, CompartmentSpec
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 class SWCAdapterEvidence(StrictModule, NonTrainableState):
@@ -70,6 +71,7 @@ class SWCAdapterEvidence(StrictModule, NonTrainableState):
                 "warnings": list(warnings),
                 "source_id": source_id,
                 "morphology_id": morphology_id,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -219,6 +221,7 @@ def parse_swc_text(
         {
             "kind": "swc-source-v1",
             "records": [[node_id, *records[node_id]] for node_id in ordered_ids],
+            "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
         }
     )
     report = AdapterReport(

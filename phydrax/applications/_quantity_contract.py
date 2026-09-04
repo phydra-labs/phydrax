@@ -4,16 +4,12 @@
 
 from __future__ import annotations
 
-import math
-import numbers
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from decimal import Decimal
-from fractions import Fraction
-from typing import Any
 
 from .._fingerprint import canonical_fingerprint
+from ..units import conversion_factor, UnitDefinition
 
 
 _TOKEN = re.compile(r"[a-z][a-z0-9_.-]*\Z")
@@ -24,41 +20,13 @@ class ResolvedApplicationQuantity:
     """Canonical fields shared by domain-owned physical quantity specs."""
 
     name: str
-    physical_dimension: str
-    kernel_unit: str
-    si_unit: str
-    si_factor: Fraction
+    quantity_kind: str
+    unit: UnitDefinition
     axes: tuple[str, ...]
     sign_convention: str
     support_association: str
     reference_configuration: str
     quantity_id: str
-
-
-def exact_positive_factor(value: Any, /) -> Fraction:
-    """Return one positive finite factor without losing exact decimal scale."""
-    if isinstance(value, bool):
-        raise TypeError("si_factor must be a positive finite real number.")
-    if isinstance(value, Fraction):
-        factor = value
-    elif isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("si_factor must be finite.")
-        factor = Fraction(value)
-    elif isinstance(value, numbers.Integral):
-        factor = Fraction(int(value), 1)
-    elif isinstance(value, numbers.Real):
-        scalar = float(value)
-        if not math.isfinite(scalar):
-            raise ValueError("si_factor must be finite.")
-        factor = Fraction(str(scalar))
-    elif isinstance(value, str):
-        factor = Fraction(value)
-    else:
-        raise TypeError("si_factor must be a positive finite real number.")
-    if factor <= 0:
-        raise ValueError("si_factor must be positive.")
-    return factor
 
 
 def canonical_quantity_text(
@@ -90,37 +58,28 @@ def _canonical_axes(axes: tuple[str, ...], /) -> tuple[str, ...]:
 def resolve_application_quantity(
     *,
     domain: str,
-    supported_conversions: Mapping[tuple[str, str, str], Fraction],
+    reference_units: Mapping[str, UnitDefinition],
     name: str,
-    physical_dimension: str,
-    kernel_unit: str,
-    si_unit: str,
-    si_factor: Any,
+    quantity_kind: str,
+    unit: UnitDefinition,
     axes: tuple[str, ...] = (),
     sign_convention: str = "",
     support_association: str = "",
     reference_configuration: str = "",
 ) -> ResolvedApplicationQuantity:
-    """Resolve one domain quantity against its explicit supported unit routes."""
+    """Resolve one domain quantity against its canonical reference unit."""
     domain_ = canonical_quantity_text(domain, "domain")
     name_ = canonical_quantity_text(name, "name")
-    dimension = canonical_quantity_text(physical_dimension, "physical_dimension")
-    if _TOKEN.fullmatch(name_) is None or _TOKEN.fullmatch(dimension) is None:
-        raise ValueError("Quantity names and physical dimensions must be stable tokens.")
-    kernel = canonical_quantity_text(kernel_unit, "kernel_unit")
-    si = canonical_quantity_text(si_unit, "si_unit")
-    factor = exact_positive_factor(si_factor)
-    route = (dimension, kernel, si)
-    if route not in supported_conversions:
-        raise ValueError(
-            f"Unsupported or ambiguous {domain_} kernel-to-SI unit route."
-        )
-    if factor != supported_conversions[route]:
-        raise ValueError("si_factor does not match the declared exact unit route.")
+    kind = canonical_quantity_text(quantity_kind, "quantity_kind")
+    if _TOKEN.fullmatch(name_) is None or _TOKEN.fullmatch(kind) is None:
+        raise ValueError("Quantity names and kinds must be stable tokens.")
+    if not isinstance(unit, UnitDefinition):
+        raise TypeError("unit must be a UnitDefinition.")
+    if kind not in reference_units:
+        raise ValueError(f"Unsupported {domain_} quantity kind {kind!r}.")
+    conversion_factor(unit, reference_units[kind])
     axes_ = _canonical_axes(axes)
-    sign = canonical_quantity_text(
-        sign_convention, "sign_convention", allow_empty=True
-    )
+    sign = canonical_quantity_text(sign_convention, "sign_convention", allow_empty=True)
     support = canonical_quantity_text(
         support_association, "support_association", allow_empty=True
     )
@@ -131,10 +90,8 @@ def resolve_application_quantity(
         {
             "kind": f"{domain_}-quantity-spec",
             "name": name_,
-            "physical_dimension": dimension,
-            "kernel_unit": kernel,
-            "si_unit": si,
-            "si_factor": [factor.numerator, factor.denominator],
+            "quantity_kind": kind,
+            "unit_id": unit.unit_id,
             "axes": list(axes_),
             "sign_convention": sign,
             "support_association": support,
@@ -143,10 +100,8 @@ def resolve_application_quantity(
     )
     return ResolvedApplicationQuantity(
         name_,
-        dimension,
-        kernel,
-        si,
-        factor,
+        kind,
+        unit,
         axes_,
         sign,
         support,
@@ -158,6 +113,5 @@ def resolve_application_quantity(
 __all__ = [
     "ResolvedApplicationQuantity",
     "canonical_quantity_text",
-    "exact_positive_factor",
     "resolve_application_quantity",
 ]

@@ -18,6 +18,18 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...units import (
+    conversion_factor as _unit_conversion_factor,
+    COULOMB,
+    derived_unit,
+    MILLIMOLAR,
+    MILLISECOND,
+    MOLE,
+    NANOAMPERE,
+    PICOLITER,
+    VOLT,
+)
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 FARADAY_C_PER_MOL = 96_485.33212
@@ -139,6 +151,7 @@ class IonDynamicsPlan(StrictModule, NonTrainableState):
                 "minimum_concentration_mM": minimum,
                 "conservation_tolerance_mol": conservation,
                 "charge_tolerance_C": charge,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
@@ -153,6 +166,9 @@ class PreparedIonDynamics(StrictModule, NonTrainableState):
     valence: Array
     intracellular_volume_pL: Array
     extracellular_volume_pL: Array
+    thermal_voltage_to_mV: float = eqx.field(static=True)
+    charge_per_nA_ms_C: float = eqx.field(static=True)
+    amount_per_mM_pL_mol: float = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
     def __init__(
@@ -162,11 +178,18 @@ class PreparedIonDynamics(StrictModule, NonTrainableState):
         intracellular_volume_pL: Array,
         extracellular_volume_pL: Array,
         /,
+        *,
+        thermal_voltage_to_mV: float,
+        charge_per_nA_ms_C: float,
+        amount_per_mM_pL_mol: float,
     ):
         self.plan = plan
         self.valence = valence
         self.intracellular_volume_pL = intracellular_volume_pL
         self.extracellular_volume_pL = extracellular_volume_pL
+        self.thermal_voltage_to_mV = thermal_voltage_to_mV
+        self.charge_per_nA_ms_C = charge_per_nA_ms_C
+        self.amount_per_mM_pL_mol = amount_per_mM_pL_mol
         self.runtime_id = canonical_fingerprint(
             {"kind": "prepared-electrophysiology-ion-dynamics-v1", "plan": plan.plan_id}
         )
@@ -203,12 +226,22 @@ class IonConcentrationCandidate(StrictModule):
 def prepare_ion_dynamics(plan: IonDynamicsPlan, /) -> PreparedIonDynamics:
     if not isinstance(plan, IonDynamicsPlan):
         raise TypeError("plan must be an IonDynamicsPlan.")
+    nA_ms = derived_unit("nA*ms", ((NANOAMPERE, 1), (MILLISECOND, 1)))
+    mM_pL = derived_unit("mM*pL", ((MILLIMOLAR, 1), (PICOLITER, 1)))
+    thermal_voltage_to_mV = float(
+        _unit_conversion_factor(VOLT, ELECTROPHYSIOLOGY_UNITS.voltage)
+    )
+    charge_per_nA_ms_C = float(_unit_conversion_factor(nA_ms, COULOMB))
+    amount_per_mM_pL_mol = float(_unit_conversion_factor(mM_pL, MOLE))
     dtype = jnp.asarray(0.0).dtype
     return PreparedIonDynamics(
         plan,
         jnp.asarray([value.valence for value in plan.species], dtype=dtype),
         jnp.asarray(plan.intracellular_volume_pL, dtype=dtype),
         jnp.asarray(plan.extracellular_volume_pL, dtype=dtype),
+        thermal_voltage_to_mV=thermal_voltage_to_mV,
+        charge_per_nA_ms_C=charge_per_nA_ms_C,
+        amount_per_mM_pL_mol=amount_per_mM_pL_mol,
     )
 
 
@@ -246,7 +279,10 @@ def nernst_potential_mV(
 ) -> Array:
     """Return each species/compartment Nernst potential in mV."""
     thermal_mV = (
-        1.0e3 * GAS_CONSTANT_J_PER_MOL_K * runtime.plan.temperature_K / FARADAY_C_PER_MOL
+        runtime.thermal_voltage_to_mV
+        * GAS_CONSTANT_J_PER_MOL_K
+        * runtime.plan.temperature_K
+        / FARADAY_C_PER_MOL
     )
     return (
         thermal_mV
@@ -271,33 +307,46 @@ def evaluate_ion_concentration_transition(
     if dt.shape != ():
         raise ValueError("dt_ms must be a scalar.")
     transfer_moles = (
-        current * dt * 1.0e-12 / (runtime.valence[:, None] * FARADAY_C_PER_MOL)
+        current
+        * dt
+        * runtime.charge_per_nA_ms_C
+        / (runtime.valence[:, None] * FARADAY_C_PER_MOL)
     )
     intracellular_delta_mM = -transfer_moles / (
-        runtime.intracellular_volume_pL[None, :] * 1.0e-15
+        runtime.intracellular_volume_pL[None, :] * runtime.amount_per_mM_pL_mol
     )
     extracellular_delta_mM = transfer_moles / (
-        runtime.extracellular_volume_pL[None, :] * 1.0e-15
+        runtime.extracellular_volume_pL[None, :] * runtime.amount_per_mM_pL_mol
     )
     intracellular = state.intracellular_mM + intracellular_delta_mM
     extracellular = state.extracellular_mM + extracellular_delta_mM
     before = (
-        state.intracellular_mM * runtime.intracellular_volume_pL[None, :] * 1.0e-15
-        + state.extracellular_mM * runtime.extracellular_volume_pL[None, :] * 1.0e-15
+        state.intracellular_mM
+        * runtime.intracellular_volume_pL[None, :]
+        * runtime.amount_per_mM_pL_mol
+        + state.extracellular_mM
+        * runtime.extracellular_volume_pL[None, :]
+        * runtime.amount_per_mM_pL_mol
     )
     after = (
-        intracellular * runtime.intracellular_volume_pL[None, :] * 1.0e-15
-        + extracellular * runtime.extracellular_volume_pL[None, :] * 1.0e-15
+        intracellular
+        * runtime.intracellular_volume_pL[None, :]
+        * runtime.amount_per_mM_pL_mol
+        + extracellular
+        * runtime.extracellular_volume_pL[None, :]
+        * runtime.amount_per_mM_pL_mol
     )
     conservation_residual = after - before
     intracellular_charge_change = (
         intracellular_delta_mM
         * runtime.intracellular_volume_pL[None, :]
-        * 1.0e-15
+        * runtime.amount_per_mM_pL_mol
         * runtime.valence[:, None]
         * FARADAY_C_PER_MOL
     )
-    charge_residual = intracellular_charge_change + current * dt * 1.0e-12
+    charge_residual = (
+        intracellular_charge_change + current * dt * runtime.charge_per_nA_ms_C
+    )
     minimum = jnp.minimum(jnp.min(intracellular), jnp.min(extracellular))
     timestep_valid = jnp.isfinite(dt) & (dt > 0.0)
     finite = (

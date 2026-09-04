@@ -4,11 +4,17 @@ PhydraX represents an alchemical calculation as an immutable plan followed by a 
 
 ## Endpoint alchemy
 
-An `AlchemicalEndpointPlan` carries stable particle IDs and aligned atom type, charge, Lennard-Jones σ/ε, and harmonic-bond tensors. A dummy atom is explicit: its dummy mask is true, its charge and ε are zero, and no active bond may reference it. Both endpoints must name the same exact unit-system identity.
+An `AlchemicalEndpointPlan` carries stable particle IDs, aligned atom type,
+charge, Lennard-Jones sigma/epsilon and harmonic-bond tensors, and the complete
+`AtomisticUnitSystem`. A dummy atom is explicit: its dummy mask is true, its
+charge and epsilon are zero, and no active bond may reference it. Both endpoints
+must have the same exact unit-system identity; the Coulomb coefficient is derived
+from that descriptor rather than supplied independently.
 
 ```python
 import jax.numpy as jnp
 import phydrax as phx
+units = phx.atomistic.AtomisticUnitSystem.reduced()
 
 initial = phx.atomistic.AlchemicalEndpointPlan(
     [10, 20],
@@ -19,7 +25,7 @@ initial = phx.atomistic.AlchemicalEndpointPlan(
     bond_particle_ids=[[10, 20]],
     bond_stiffness=jnp.asarray([800.0]),
     bond_equilibrium_lengths=jnp.asarray([0.11]),
-    unit_system_id="project-reduced-v1",
+    units=units,
 )
 final = phx.atomistic.AlchemicalEndpointPlan(
     [110, 120],
@@ -30,7 +36,7 @@ final = phx.atomistic.AlchemicalEndpointPlan(
     bond_particle_ids=[[110, 120]],
     bond_stiffness=jnp.asarray([700.0]),
     bond_equilibrium_lengths=jnp.asarray([0.12]),
-    unit_system_id="project-reduced-v1",
+    units=units,
 )
 ```
 

@@ -23,6 +23,7 @@ from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
+from ...units import BOHR, conversion_factor, HARTREE
 from ._amplitude import LogAmplitude
 from ._electronic_advanced import ElectronicVMCResourcePlan
 from ._local import (
@@ -34,52 +35,16 @@ from ._local import (
 
 ElectronicTraceMethod: TypeAlias = Literal["exact", "chunked-exact"]
 
-_BOHR_PER_ANGSTROM = 1.8897261254578281
-_HARTREE_PER_ELECTRONVOLT = 0.03674932217565499
-_ATOMIC_LENGTH_FACTORS = {
-    "bohr": 1.0,
-    "a0": 1.0,
-    "atomicunitoflength": 1.0,
-    "angstrom": _BOHR_PER_ANGSTROM,
-    "ångström": _BOHR_PER_ANGSTROM,
-    "å": _BOHR_PER_ANGSTROM,
-}
-_ATOMIC_ENERGY_FACTORS = {
-    "hartree": 1.0,
-    "eh": 1.0,
-    "atomicunitofenergy": 1.0,
-    "electronvolt": _HARTREE_PER_ELECTRONVOLT,
-    "ev": _HARTREE_PER_ELECTRONVOLT,
-}
 
-
-def _unit_key(value: str, /) -> str:
-    return str(value).strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+def _atomic_reference_factors(scale: AtomisticScaleContract, /) -> tuple[float, float]:
+    return (
+        float(conversion_factor(scale.length_unit, BOHR)),
+        float(conversion_factor(scale.energy_unit, HARTREE)),
+    )
 
 
 def _require_atomic_reference(scale: AtomisticScaleContract, /) -> None:
-    length_key = _unit_key(scale.length_unit)
-    energy_key = _unit_key(scale.energy_unit)
-    if (
-        length_key not in _ATOMIC_LENGTH_FACTORS
-        or energy_key not in _ATOMIC_ENERGY_FACTORS
-    ):
-        raise ValueError(
-            "Electronic Coulomb calculations require units with an explicit "
-            "Bohr/Hartree conversion; supported units are Bohr or angstrom and "
-            "Hartree or electronvolt."
-        )
-    expected_length = _ATOMIC_LENGTH_FACTORS[length_key]
-    expected_energy = _ATOMIC_ENERGY_FACTORS[energy_key]
-    if not math.isclose(
-        scale.length_to_reference, expected_length, rel_tol=5e-12, abs_tol=0.0
-    ) or not math.isclose(
-        scale.energy_to_reference, expected_energy, rel_tol=5e-12, abs_tol=0.0
-    ):
-        raise ValueError(
-            "Electronic scales must map the declared length to Bohr and energy "
-            "to Hartree with the exact physical conversion factors."
-        )
+    _atomic_reference_factors(scale)
 
 
 class ElectronicKineticPolicy(StrictModule, NonTrainableState):
@@ -338,8 +303,9 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
             )
         )
 
-        length_factor = jnp.asarray(self.nuclei.scale.length_to_reference, dtype=dtype)
-        energy_factor = jnp.asarray(self.nuclei.scale.energy_to_reference, dtype=dtype)
+        length_scale, energy_scale = _atomic_reference_factors(self.nuclei.scale)
+        length_factor = jnp.asarray(length_scale, dtype=dtype)
+        energy_factor = jnp.asarray(energy_scale, dtype=dtype)
         potential = (electron_electron + electron_nuclear + nuclear_nuclear) / (
             length_factor * energy_factor
         )
@@ -355,12 +321,9 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         coordinate = jnp.asarray(configuration, dtype=self.kinetic.compute_dtype)
         potential, singular = self._coulomb(coordinate)
         kinetic, amplitude_valid = self.kinetic.local_kinetic(model, coordinate)
-        length_factor = jnp.asarray(
-            self.nuclei.scale.length_to_reference, dtype=coordinate.dtype
-        )
-        energy_factor = jnp.asarray(
-            self.nuclei.scale.energy_to_reference, dtype=coordinate.dtype
-        )
+        length_scale, energy_scale = _atomic_reference_factors(self.nuclei.scale)
+        length_factor = jnp.asarray(length_scale, dtype=coordinate.dtype)
+        energy_factor = jnp.asarray(energy_scale, dtype=coordinate.dtype)
         kinetic = kinetic / (length_factor**2 * energy_factor)
         raw_value = kinetic + potential
         finite = jnp.isfinite(raw_value)
@@ -569,9 +532,10 @@ def electronic_initial_walkers(
     centers = nuclei.positions[jnp.asarray(assignments, dtype=jnp.int32)]
     assigned_charges = nuclei.atomic_numbers[jnp.asarray(assignments, dtype=jnp.int32)]
     dtype = nuclei.positions.dtype
+    length_scale, _ = _atomic_reference_factors(nuclei.scale)
     physical_spread = (
         jnp.asarray(spread_value, dtype=dtype)
-        / jnp.asarray(nuclei.scale.length_to_reference, dtype=dtype)
+        / jnp.asarray(length_scale, dtype=dtype)
         / jnp.sqrt(assigned_charges.astype(dtype))
     )
     noise = jr.normal(key, (walkers, electrons, 3), dtype=dtype)

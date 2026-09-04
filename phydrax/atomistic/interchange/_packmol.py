@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._frame import AtomisticFrame
+from .._units import AtomisticUnitSystem
 
 
 class PackmolRegionConstraint(StrictModule, NonTrainableState):
@@ -79,6 +80,7 @@ class PackmolComponentPlan(StrictModule, NonTrainableState):
             {
                 "kind": "packmol-component",
                 "template": template.source_id,
+                "unit_system": template.units.unit_system_id,
                 "count": count_,
                 "constraints": [value.constraint_id for value in values],
             }
@@ -108,6 +110,11 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
             not isinstance(value, PackmolComponentPlan) for value in values
         ):
             raise TypeError("components must contain PackmolComponentPlan values.")
+        if any(
+            value.template.units.unit_system_id != values[0].template.units.unit_system_id
+            for value in values[1:]
+        ):
+            raise ValueError("PACKMOL components must share one complete unit system.")
         tolerance_ = float(tolerance)
         timeout_ = float(timeout)
         seed_ = int(seed)
@@ -125,6 +132,7 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
             {
                 "kind": "packmol-assembly",
                 "components": [value.component_id for value in values],
+                "unit_system": values[0].template.units.unit_system_id,
                 "tolerance": tolerance_,
                 "seed": self.seed,
                 "executable": self.executable,
@@ -213,6 +221,7 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
             positions,
             np.asarray(stable_ids),
             np.asarray(molecule_ids),
+            self.components[0].template.units,
             minimum,
             completed.stdout,
             completed.stderr,
@@ -228,6 +237,7 @@ class PackmolAssemblyResult(StrictModule, NonTrainableState):
     positions: np.ndarray
     stable_ids: np.ndarray
     molecule_ids: np.ndarray
+    units: AtomisticUnitSystem
     minimum_distance: float = eqx.field(static=True)
     stdout: str = eqx.field(static=True)
     stderr: str = eqx.field(static=True)

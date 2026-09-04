@@ -384,26 +384,32 @@ For in-context use, build each `OperatorSupervisedExample` from an
 `PromptedOperatorBatch`. The prompt mask distinguishes padding from a real
 demonstration. No task-distribution pretraining is bundled.
 
-For PDE-IR conditioning, construct `PDEConditionEncoder`, tokenize a canonical
-equation as a `PDETokenBatch`, then call `attach_pde_condition`. The result is a
-named one-anchor source branch, so the selected multi-input architecture must
-declare and consume that branch; attaching it does not enforce the equation.
+For PDE-IR conditioning, choose one explicit ordered dimension basis, pass it
+unchanged to `tokenize_pde_ir` and `PDEConditionEncoder`, then call
+`attach_pde_condition`. Each PDE keeps a sparse, exact `DimensionSignature`;
+the ordered basis is used only to cast rational exponents into dense floating
+neural token features. That projection never defines PDE identity. Stacking
+rejects token batches whose basis identities differ.
+The encoded result is a named one-anchor source branch, so the selected
+multi-input architecture must declare and consume that branch; attaching it
+does not enforce the equation.
 
 `tokenize_pde_ir` includes the execution-relevant PDE schema rather than only
-the expression operators: coordinate bounds and periodicity, representations,
-component and derivative axes, parameter vectors and scales, conditions,
-regions, and nondimensionalization all affect the conditioning. Canonically
-equivalent associative expressions produce identical tokens. Consistent
-renaming of declared coordinates, fields, parameters, equations, conditions,
-and regions does not change the encoder result because symbol identity is
-represented relationally, not through lexical embeddings. Free-form problem
-metadata remains outside the neural input.
+the expression operators: exact dimensions, coordinate bounds and periodicity,
+representations, component and derivative axes, parameter vectors and scales,
+conditions, regions, and nondimensionalization all affect the conditioning.
+Canonically equivalent associative expressions produce identical tokens.
+Consistent renaming of declared coordinates, fields, parameters, equations,
+conditions, and regions does not change the encoder result because symbol
+identity is represented relationally, not through lexical embeddings.
+Free-form problem metadata remains outside the neural input.
 
 
 ```python
 pde_encoder = phx.nn.operator.architectures.PDEConditionEncoder(
     width=8,
     depth=1,
+    dimension_basis=(),
     key=jr.key(35),
 )
 ```
@@ -1765,7 +1771,7 @@ physics_task = phx.nn.operator.OperatorTask(
             "query",
             geometry_kind="point_cloud",
             coordinate_components=("x",),
-            coordinate_dimensions=((),),
+            coordinate_dimensions=(phx.units.DIMENSIONLESS,),
         ),
     ),
     problem=phx.nn.operator.OperatorProblemSpec(

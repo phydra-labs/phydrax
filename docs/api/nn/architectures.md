@@ -1916,11 +1916,16 @@ adapter driven by one explicit `WienerRealization` carries common-path and
 cocycle provenance. See
 [Neural-operator uncertainty](../uq/operator.md#process-consistent-operator-transitions).
 
-`PDEConditionEncoder` embeds canonical `PDETokenBatch` trees.
-`attach_pde_condition` adds the encoded result as a named, one-anchor
-`FunctionSamples` branch. The downstream model must be configured to consume
-that branch. This preserves PDE-IR structure as conditioning metadata; it does
-not enforce the PDE or provide equation-to-solution pretraining.
+`PDEConditionEncoder` embeds canonical `PDETokenBatch` trees. The encoder and
+token batch declare the same ordered `dimension_basis`; this identity is checked,
+not inferred from dense width. PDE IR retains sparse exact
+`DimensionSignature` values independently of the dense floating token
+projection; only the exact signature defines PDE identity. Token stacking
+rejects different basis orders. `attach_pde_condition` adds the encoded
+result as a named, one-anchor `FunctionSamples` branch. The downstream model
+must be configured to consume that branch. This preserves PDE-IR structure as
+conditioning metadata; it does not enforce the PDE or provide
+equation-to-solution pretraining.
 
 The token tree is generated from the canonical expression traversal: addition
 and multiplication are recursively flattened and sorted, while argument slots
@@ -2680,13 +2685,16 @@ checkpoint before framework-specific tokenization or execution.
 `OperatorBatch` is the only execution batch. It stores named source functions and
 named query geometries; `OperatorTargetBatch` stores named supervised fields.
 `OperatorTask` is the immutable scientific contract used by validation,
-training, artifacts, and deployed inference. It records source/query structure
-separately from fixed-query discretization. Fitting requires both semantics to be
-explicit. Fixed queries must share geometry across cases and batches, and their
-physical geometry fingerprints are enforced by `TrainedOperator`. A trained
-operator combines the task with an execution model, normalization, dtype policy,
-training evidence, provenance, physical output pipeline, and explicit
-output-field mapping.
+training, artifacts, and deployed inference. Operator field and query-coordinate
+dimensions are exact `DimensionSignature` values. The task's
+`dimension_basis` is only their deterministic dense token encoding order; it
+does not participate in PDE canonical identity. The task records source/query
+structure separately from fixed-query discretization. Fitting requires both
+semantics to be explicit. Fixed queries must share geometry across cases and
+batches, and their physical geometry fingerprints are enforced by
+`TrainedOperator`. A trained operator combines the task with an execution model,
+normalization, dtype policy, training evidence, provenance, physical output
+pipeline, and explicit output-field mapping.
 
 ---
 

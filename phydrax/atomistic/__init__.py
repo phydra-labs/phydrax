@@ -394,7 +394,7 @@ from ._types import (
     AtomisticScaleContract,
     AtomisticStatus,
 )
-from ._units import AtomisticUnitSystem
+from ._units import AtomisticUnitSystem, molar_energy_to_single_system_factor
 
 
 __all__ = [
@@ -529,6 +529,7 @@ __all__ = [
     "fit_atomistic_potential",
     "load_rmd17_npz",
     "local_species_energy_delta",
+    "molar_energy_to_single_system_factor",
     "radial_distribution",
     "read_atomistic_checkpoint",
     "realize_atomistic_graph",

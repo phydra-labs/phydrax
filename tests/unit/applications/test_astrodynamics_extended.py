@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -49,6 +50,71 @@ def test_lambert_quarter_circle_and_multirevolution_capacity():
     )
 
 
+def test_typed_array_adapter_converts_values_without_changing_context_semantics():
+    astro = phx.applications.astrodynamics
+    assert astro.AstrodynamicsScaleContract is phx.DimensionalScaleContract
+    context = _context("earth", "icrf")
+    centimetres_per_second = phx.units.derived_unit(
+        "cm/s",
+        ((phx.units.CENTIMETER, 1), (phx.units.SECOND, -1)),
+    )
+    state = astro.cartesian_state_from_scaled_arrays(
+        jnp.asarray([100.0, 200.0, 300.0]),
+        jnp.asarray([200.0, 0.0, -100.0]),
+        context,
+        position_unit=phx.units.CENTIMETER,
+        velocity_unit=centimetres_per_second,
+    )
+    np.testing.assert_allclose(state.position, [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(state.velocity, [2.0, 0.0, -1.0])
+    assert state.context.context_id == context.context_id
+    assert state.context.frame.frame_id == context.frame.frame_id
+    assert state.context.epoch.epoch_id == context.epoch.epoch_id
+    assert state.context.epoch.time_scale == "TT"
+
+
+def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units():
+    astro = phx.applications.astrodynamics
+
+    class Satrec:
+        @staticmethod
+        def sgp4(day, fraction):
+            del day, fraction
+            return 0, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)
+
+    context = astro.AstrodynamicsContext(
+        astro.AstrodynamicsScaleContract.si(),
+        astro.ReferenceEpoch(
+            astro.TimeInstant(astro.JulianDate(2451545.0), "UTC"),
+            continuous=False,
+        ),
+        astro.FrameDefinition("earth", "TEME", pseudo_inertial=True),
+    )
+    trajectory = astro.trajectory_from_sgp4(
+        Satrec(),
+        jnp.asarray([2451545.0, 2451545.0]),
+        jnp.asarray([0.0, 1.0 / 86400.0]),
+        context,
+    )
+    np.testing.assert_allclose(trajectory.times, [0.0, 1.0])
+    np.testing.assert_allclose(trajectory.states[0, :3], [1000.0, 2000.0, 3000.0])
+    np.testing.assert_allclose(trajectory.states[0, 3:], [4000.0, 5000.0, 6000.0])
+    assert trajectory.context.context_id == context.context_id
+    assert trajectory.context.epoch.time_scale == "UTC"
+    noninertial = astro.AstrodynamicsContext(
+        context.scale,
+        context.epoch,
+        astro.FrameDefinition("earth", "TEME", pseudo_inertial=False),
+    )
+    with pytest.raises(ValueError, match="Earth-TEME UTC"):
+        astro.trajectory_from_sgp4(
+            Satrec(),
+            jnp.asarray([2451545.0]),
+            jnp.asarray([0.0]),
+            noninertial,
+        )
+
+
 def test_time_frame_ephemeris_and_third_body_contracts():
     astro = phx.applications.astrodynamics
     source_context = _context("earth", "icrf")
@@ -78,6 +144,26 @@ def test_time_frame_ephemeris_and_third_body_contracts():
     restored, _ = transform.apply_inverse(rotated, 0.0, source_context)
     assert bool(evidence.valid)
     np.testing.assert_allclose(restored.position, state.position, atol=1.0e-12)
+
+    kilometre_scale = astro.AstrodynamicsScaleContract(
+        phx.units.KILOMETER,
+        phx.units.KILOGRAM,
+        phx.units.SECOND,
+    )
+    mismatched_target = astro.AstrodynamicsContext(
+        kilometre_scale,
+        source_context.epoch,
+        target_context.frame,
+    )
+    with pytest.raises(ValueError, match="matching scale contracts"):
+        transform.apply(state, 0.0, mismatched_target)
+    mismatched_source = astro.AstrodynamicsContext(
+        kilometre_scale,
+        source_context.epoch,
+        source_context.frame,
+    )
+    with pytest.raises(ValueError, match="matching scale contracts"):
+        transform.apply_inverse(rotated, 0.0, mismatched_source)
 
     catalog = astro.CelestialBodyCatalog(
         ("sun",), jnp.asarray([1.0]), jnp.asarray([1.0]), source_context

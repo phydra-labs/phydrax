@@ -21,7 +21,7 @@ from ..discretization import (
     PseudospectralMethodPlan,
     TensorSpectralDiscretization,
 )
-from ._ir import PDEExpression, PDEProblemIR
+from ._ir import _exact_integer_literal, PDEExpression, PDEProblemIR
 from ._spectral_compile import (
     _SpectralEvaluator,
     SpectralStateLayout,
@@ -160,6 +160,7 @@ class CompiledSpectralResidual(StrictModule):
     equation_components: tuple[int, ...] = eqx.field(static=True)
     scope: SpectralResidualScope = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
+    source_hash: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -344,13 +345,11 @@ def _residual_degree(
         return finite[0] if finite[1] == 0 else None
     if expression.op == "power":
         exponent = expression.args[1]
-        if (
-            exponent.op != "constant"
-            or exponent.value is None
-            or not float(exponent.value).is_integer()
-        ):
+        power = (
+            _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
+        )
+        if power is None:
             return None
-        power = int(exponent.value)
         return finite[0] * power if power >= 0 else None
     if expression.op in ("sin", "cos", "exp", "log", "sqrt"):
         return 0 if finite[0] == 0 else None

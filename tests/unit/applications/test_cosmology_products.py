@@ -11,7 +11,11 @@ cosmology = phx.applications.cosmology
 
 
 def _context(differentiability="native-parameter", matter=0.3):
-    scale = cosmology.CosmologyScaleContract("L", "M", "T")
+    scale = cosmology.CosmologyScaleContract(
+        cosmology.CODE_COSMOLOGY_SCALE.length_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.mass_unit,
+        cosmology.CODE_COSMOLOGY_SCALE.time_unit,
+    )
     background = cosmology.FLRWBackground(1.0, matter, scale=scale)
     provenance = cosmology.CosmologyProductProvenance(
         producer="test",
@@ -66,7 +70,8 @@ def test_expansion_growth_and_matter_power_products_preserve_realization():
     values = jnp.asarray([[0.5, 1.0, 2.0], [1.0, 2.0, 4.0]])
     table = _power(background, provenance, values)
     np.testing.assert_allclose(table.evaluate([1.0, 3.0], 0.75), [0.75, 2.25])
-    assert table.power_unit == "L^3"
+    assert isinstance(table.power_unit, phx.units.UnitDefinition)
+    assert table.power_unit.symbol == "code_length^3"
     assert table.descriptor.is_linear_cold_baryon_auto
 
     other = cosmology.FLRWBackground(1.0, 0.31, scale=scale)

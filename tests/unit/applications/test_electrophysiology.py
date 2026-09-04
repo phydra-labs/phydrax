@@ -11,6 +11,7 @@ import pytest
 
 from phydrax.applications import electrophysiology as ep
 from phydrax.interchange import AdapterError, AdapterStatus, require_lossless
+from phydrax.units import MILLIVOLT, TIME, UnitDefinition
 
 
 jax.config.update("jax_enable_x64", True)
@@ -50,11 +51,15 @@ def test_explicit_unit_conversion_and_dimension_validation():
     np.testing.assert_allclose(ep.convert_quantity(250.0, "pA", "nA"), 0.25)
     np.testing.assert_allclose(ep.convert_quantity(2.5, "mS", "uS"), 2500.0)
     np.testing.assert_allclose(ep.convert_quantity(1.0, "mM", "mol_per_m3"), 1.0)
-    assert ep.ELECTROPHYSIOLOGY_UNITS.voltage == "mV"
-    with pytest.raises(ValueError, match="Cannot convert"):
+    assert ep.ELECTROPHYSIOLOGY_UNITS.voltage is MILLIVOLT
+    assert ep.ELECTROPHYSIOLOGY_UNITS.voltage.symbol == "mV"
+    with pytest.raises(ValueError, match="matching dimensions"):
         ep.convert_quantity(1.0, "mV", "ms")
     with pytest.raises(ValueError, match="Unknown"):
-        ep.conversion_factor("banana", "mV")
+        ep.conversion_factor("degC", "mV")
+    shifted_time = UnitDefinition("shifted-ms", TIME, "shifted-time-reference", "1e-3")
+    with pytest.raises(ValueError, match="shared reference system"):
+        ep.conversion_factor(shifted_time, ep.ELECTROPHYSIOLOGY_UNITS.time)
 
 
 def test_morphology_has_stable_tree_schedule_and_axial_kirchhoff_operator():

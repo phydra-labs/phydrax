@@ -42,6 +42,7 @@ from ._training import (
     fit_atomistic_potential,
 )
 from ._types import AtomisticBatch
+from ._units import AtomisticUnitSystem
 
 
 class AtomisticLabelRecord(StrictModule, NonTrainableState):
@@ -62,7 +63,7 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
     revision: NumericRevision
     system_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
-    unit_system_id: str = eqx.field(static=True)
+    units: AtomisticUnitSystem
     label_set_id: str = eqx.field(static=True)
 
     def __init__(
@@ -83,7 +84,7 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
         if any(
             value.frame.system_id != first.system_id
             or value.frame.topology_id != first.topology_id
-            or value.frame.unit_system_id != first.unit_system_id
+            or value.frame.units.unit_system_id != first.units.unit_system_id
             for value in values[1:]
         ):
             raise ValueError("Label records must share system, topology, and units.")
@@ -108,14 +109,14 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
         )
         self.system_id = first.system_id
         self.topology_id = first.topology_id
-        self.unit_system_id = first.unit_system_id
+        self.units = first.units
         self.label_set_id = canonical_fingerprint(
             {
                 "kind": "atomistic-label-set",
                 "revision": self.revision.revision_id,
                 "system": first.system_id,
                 "topology": first.topology_id,
-                "units": first.unit_system_id,
+                "units": first.units.unit_system_id,
             }
         )
 
@@ -334,7 +335,7 @@ def label_atomistic_acquisitions(
                 "kind": "atomistic-label-configuration",
                 "system": frame.system_id,
                 "topology": frame.topology_id,
-                "units": frame.unit_system_id,
+                "units": frame.units.unit_system_id,
                 "arrays": array_tree_fingerprint(
                     {
                         "stable_ids": frame.stable_ids,

@@ -23,7 +23,7 @@ class _Constant(eqx.Module):
 
 
 def _structure(charges, positions, *, name="molecule", cell=None, periodic_axes=None):
-    scale = phx.atomistic.AtomisticScaleContract("bohr", "hartree")
+    scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.asarray(charges, dtype=jnp.int32),
         jnp.asarray(positions, dtype=jnp.float64),
@@ -161,7 +161,7 @@ def test_coincident_singularities_are_invalid_and_never_clipped():
 
 
 def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion():
-    bad_scale = phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt")
+    bad_scale = phx.atomistic.AtomisticUnitSystem.reduced().scale
     bad_structure = phx.atomistic.AtomicStructure(
         jnp.asarray([1], dtype=jnp.int32),
         jnp.zeros((1, 3), dtype=jnp.float64),
@@ -169,14 +169,12 @@ def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion():
         bad_scale,
         name="mis-scaled-H",
     )
-    with pytest.raises(ValueError, match="Bohr.*Hartree|physical conversion"):
+    with pytest.raises(ValueError, match="shared reference system"):
         phx.operators.ElectronicCoulombHamiltonian(bad_structure, 1)
 
     physical_scale = phx.atomistic.AtomisticScaleContract(
-        "angstrom",
-        "electronvolt",
-        length_to_reference=1.8897261254578281,
-        energy_to_reference=0.03674932217565499,
+        phx.units.ANGSTROM,
+        phx.units.ELECTRONVOLT,
     )
     physical_structure = phx.atomistic.AtomicStructure(
         jnp.asarray([1], dtype=jnp.int32),

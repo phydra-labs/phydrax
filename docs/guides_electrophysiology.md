@@ -17,7 +17,9 @@ Compiled kernels use an explicit unit contract:
 | concentration | mM |
 | temperature | K |
 
-`convert_quantity(value, from_unit, to_unit)` rejects dimensionally incompatible conversions. Membrane and synaptic current is **outward positive**. Injected current and current-clamp amplitude are **inward positive**. Thus an affine membrane current is
+`ELECTROPHYSIOLOGY_UNITS` stores these eight canonical `UnitDefinition` objects, not unit strings. `convert_quantity(value, from_unit, to_unit)` accepts either those objects or a token from the application's closed alias table and rejects different dimensions, different reference systems, and unknown offset or logarithmic units rather than inferring a conversion. Conversion multipliers used by morphology, mechanisms, and ion dynamics are derived once while constructing or preparing immutable plans; compiled kernels still receive only raw homogeneous arrays. Unit IDs are bound into physical plan IDs.
+
+Membrane and synaptic current is **outward positive**. Injected current and current-clamp amplitude are **inward positive**. Thus an affine membrane current is
 
 ```text
 I_out(V) = conductance_uS * V_mV + current_offset_nA
@@ -117,7 +119,7 @@ A slot value of `-1` deterministically allocates the lowest inactive slot. Full 
 `IonDynamicsPlan` fixes ionic species, integer valences, intracellular/extracellular compartment volumes, temperature, minimum concentration, and conservation tolerances. `nernst_potential_mV` evaluates
 
 ```text
-E = 1000 R T / (z F) * log(c_out / c_in)
+E = conversion_factor(V, mV) R T / (z F) * log(c_out / c_in)
 ```
 
 An outward ionic current removes intracellular moles and adds exactly the same moles to the extracellular volume. The transition requires a scalar positive `dt_ms` and promotes integer current/concentration inputs to an inexact concentration dtype before applying a fractional step. Candidate evidence reports total moles before/after, per-species/compartment mole residual, intracellular electrical-charge residual, minimum concentration, and status. Nonpositive or nonfinite candidates fail closed. `sodium_potassium_pump_ion_currents` routes one net pump current into 3 Na⁺ outward and 2 K⁺ inward components.
@@ -132,10 +134,12 @@ An outward ionic current removes intracellular moles and adds exactly the same m
 
 ## Benchmark
 
-The benchmark prepares a branched morphology, ordered leak/HH/pump program, a fixed-capacity ring synapse network, and multiple cell states. It separately reports lowering, compilation, synchronized execution, compiler cost/memory evidence, logical bytes, solve residual, and success:
+The benchmark prepares a branched morphology and ordered leak/HH membrane
+program, then reports lowering, compilation, synchronized cable execution,
+unit/plan identities, finite voltage bounds, and successful solver evidence:
 
 ```console
-python benchmarks/electrophysiology.py --cell-counts 4 16 --warmup 2 --repeats 10
+python benchmarks/electrophysiology.py --steps 128 --warmup 2 --repeats 10
 ```
 
 Use `--output path.json` to write a report. The repository does not store generated benchmark results.

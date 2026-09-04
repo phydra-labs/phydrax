@@ -110,7 +110,7 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
             coordinate_domain=self.coordinate_domain,
             system_id=dynamics.system.prepared_id,
             topology_id=dynamics.system.topology.topology_id,
-            unit_system_id=dynamics.system.plan.units.unit_system_id,
+            units=dynamics.system.plan.units,
             source_id=canonical_fingerprint(
                 {
                     "kind": "atomistic-frame",

@@ -18,9 +18,15 @@ from phydrax.atomistic import (
     split_rmd17,
 )
 from phydrax.nn.atomistic import NequIPPotential, PaiNNPotential
+from phydrax.units import (
+    ANGSTROM,
+    DALTON,
+    ELECTRONVOLT,
+    KILOCALORIE_PER_MOLE,
+)
 
 
-SCALE = AtomisticScaleContract("angstrom", "electronvolt")
+SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
 def _execution(maximum_neighbors=3):
@@ -338,8 +344,13 @@ def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(tmp
         old_indices=np.arange(100, 100 + sample_count),
     )
     dataset = load_rmd17_npz(path)
-    assert dataset.scale.length_unit == "angstrom"
-    assert dataset.scale.energy_unit == "kilocalorie_per_mole"
+    assert dataset.scale.length_unit == ANGSTROM
+    assert dataset.scale.energy_unit == ELECTRONVOLT
+    assert dataset.source_length_unit == ANGSTROM
+    assert dataset.source_energy_unit == KILOCALORIE_PER_MOLE
+    assert dataset.source_mass_unit == DALTON
+    assert dataset.avogadro_constant_set_id == "codata-2018"
+    np.testing.assert_allclose(dataset.energies[1], 0.04336410424180094)
     assert dataset.sample_count == sample_count
     split = split_rmd17(dataset, train_size=5, validation_size=3, test_size=4, seed=17)
     repeated = split_rmd17(dataset, train_size=5, validation_size=3, test_size=4, seed=17)
@@ -385,9 +396,7 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
         energies=np.zeros((sample_count,)),
         forces=np.zeros_like(coordinates),
     )
-    dataset = load_rmd17_npz(
-        path, scale=AtomisticScaleContract("angstrom", "electronvolt")
-    )
+    dataset = load_rmd17_npz(path, scale=AtomisticScaleContract(ANGSTROM, ELECTRONVOLT))
     batch, _, _ = dataset.take(np.arange(sample_count))
 
     def potential(key):

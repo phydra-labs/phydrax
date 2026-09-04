@@ -51,6 +51,10 @@
   hardened simultaneously with outward reference distances, directional periodic
   bases, physical unit-flux normalization, independent terminal-power auditing,
   and segment-aware continuous-layer dense fields.
+- Added `phydrax.units`, an exact rational dimension algebra and immutable
+  multiplicative unit catalog for explicit host-boundary conversion, coherent
+  domain constants, content-addressed provenance, and raw-array prepared
+  execution.
 - Added `phydrax.series`, a coordinate-neutral ordered-series substrate with
   shared or per-series masked supports, node- and edge-aligned numerical
   PyTrees, lazy reset-safe pair views, and explicit reconstruction policies;
@@ -1816,6 +1820,11 @@
   resource accounting.
 
 ### Changed
+- Physical scale, atomistic, electrophysiology, cardiovascular,
+  skeletal-muscle, PDE, and neural-operator contracts now share canonical
+  dimension and unit definitions.
+  Unit-bearing content IDs and serialized payloads are intentionally replaced;
+  ambiguous legacy float-dimension and ID-only unit artifacts are rejected.
 - Periodic Fourier resampling is now owned by `phydrax.signal` with trailing-axis
   defaults and explicit spatial axes for channel-last neural operators. Removed
   the `_interpolation.fourier_resample` and

@@ -6,13 +6,16 @@ native arrays and converts only immutable plans, metadata, or accepted frames.
 ## Frames and reporting
 
 `AtomisticFrame` carries positions plus optional velocities, momenta, forces, cell, image
-flags, energy, and auxiliary fields. It also records system, topology, unit-system, and
-source identities. `AtomisticReporterPlan` chooses the cadence and whether output uses the
-physical degree-of-freedom domain or the derived interaction-site domain.
+flags, energy, and auxiliary fields. It carries the complete `AtomisticUnitSystem`
+descriptor in addition to system, topology, and source identities.
+`AtomisticReporterPlan` chooses the cadence and whether output uses the physical
+degree-of-freedom domain or the derived interaction-site domain.
 
-H5MD is the resumable binary path. A frame becomes visible only after its datasets are
-written and the committed-frame counter advances. Extended XYZ is the portable text path.
-Both are exposed as trajectory source/sink plans and can feed `AtomisticRerunPlan`.
+H5MD persists the complete unit descriptor once in the stream metadata. Extended
+XYZ persists it once in the first PhydraX frame header; later frames carry its
+verified content identity. Readers reject legacy ID-only streams. Appends and
+reruns require the same complete unit system. Both formats are exposed as
+trajectory source/sink plans.
 
 ## Rerun
 
@@ -25,9 +28,10 @@ consumers.
 
 `from_ase_atoms(atoms, scale, source_id=...)` copies an optional `ase.Atoms` value
 into `AtomicStructure`; `to_ase_atoms(structure)` creates a new detached ASE value.
-The scale is mandatory and must be the exact
-`AtomisticScaleContract("angstrom", "electronvolt")` used by ASE. Atomic numbers,
-ordered positions, dalton masses, triclinic cells, per-axis PBC, stable particle IDs,
+The scale is mandatory and must be
+`AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)`, matching ASE's native units.
+Atomic numbers, ordered positions, dalton masses, triclinic cells, per-axis PBC,
+stable particle IDs,
 and source identity are audited by the returned
 `phydrax.interchange.AdapterReport`.
 
@@ -51,11 +55,23 @@ native padding,
 and malformed periodic cells are rejected rather than guessed. Calculator objects and
 their cached results are neither inspected nor retained.
 
+## OpenMM molar energy boundary
+
+OpenMM energy parameters are `KILOJOULE_PER_MOLE`. Import and export use an
+explicit host-only `ENERGY / AMOUNT` to ordinary `ENERGY` conversion with the
+unit system's recorded Avogadro constant-set identity. This exceptional semantic
+boundary is fingerprinted in the report's complete unit descriptor; it does not
+make molar and single-system energies ordinarily convertible.
+
 ## MDAnalysis
 
-The optional MDAnalysis bridge converts topology metadata, frames, selections, and
-universes. Selection results are frozen into `AtomisticSelectionPlan`, which makes an
-analysis selection auditable and replayable.
+The optional MDAnalysis bridge treats its documented base values as angstrom,
+picosecond, angstrom/picosecond, and kJ/(mol·angstrom). Frame import converts
+each populated value into the declared physical `AtomisticUnitSystem`, including
+the explicit Avogadro force conversion; an uncalibrated reduced system is
+rejected. Position export converts back to angstrom. Selection results are
+frozen into `AtomisticSelectionPlan`, making an analysis selection auditable and
+replayable.
 
 ## i-PI
 

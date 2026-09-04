@@ -2,135 +2,188 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Explicit units and conversions for electrophysiology quantities.
+"""Explicit unit definitions and conversions for electrophysiology quantities.
 
 Compiled kernels use millivolts, milliseconds, nanoamperes, microsiemens,
-nanofarads, micrometres, and millimolar concentrations. Conversion is kept at
-host-facing boundaries so every numerical field has an unambiguous unit.
+nanofarads, micrometres, millimolar concentrations, and kelvin. Conversion is
+kept at host-facing boundaries so every numerical field has an unambiguous unit.
 """
 
 from __future__ import annotations
 
-from math import isfinite
-from typing import Any
+from types import MappingProxyType
+from typing import Any, TypeAlias
 
 import equinox as eqx
-import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-
-
-_UNIT_TABLE: dict[str, tuple[str, float]] = {
-    "s": ("time", 1.0),
-    "ms": ("time", 1.0e-3),
-    "us": ("time", 1.0e-6),
-    "V": ("voltage", 1.0),
-    "mV": ("voltage", 1.0e-3),
-    "uV": ("voltage", 1.0e-6),
-    "A": ("current", 1.0),
-    "mA": ("current", 1.0e-3),
-    "uA": ("current", 1.0e-6),
-    "nA": ("current", 1.0e-9),
-    "pA": ("current", 1.0e-12),
-    "S": ("conductance", 1.0),
-    "mS": ("conductance", 1.0e-3),
-    "uS": ("conductance", 1.0e-6),
-    "nS": ("conductance", 1.0e-9),
-    "F": ("capacitance", 1.0),
-    "uF": ("capacitance", 1.0e-6),
-    "nF": ("capacitance", 1.0e-9),
-    "pF": ("capacitance", 1.0e-12),
-    "m": ("length", 1.0),
-    "cm": ("length", 1.0e-2),
-    "mm": ("length", 1.0e-3),
-    "um": ("length", 1.0e-6),
-    "mol_per_m3": ("concentration", 1.0),
-    "mM": ("concentration", 1.0),
-    "uM": ("concentration", 1.0e-3),
-    "K": ("temperature", 1.0),
-    "ohm": ("resistance", 1.0),
-    "kohm": ("resistance", 1.0e3),
-    "Mohm": ("resistance", 1.0e6),
-    "cm2": ("area", 1.0e-4),
-    "um2": ("area", 1.0e-12),
-    "A_per_m2": ("current_density", 1.0),
-    "mA_per_cm2": ("current_density", 10.0),
-    "uA_per_cm2": ("current_density", 1.0e-2),
-    "S_per_m2": ("conductance_density", 1.0),
-    "S_per_cm2": ("conductance_density", 1.0e4),
-    "mS_per_cm2": ("conductance_density", 10.0),
-    "uS_per_cm2": ("conductance_density", 1.0e-2),
-}
-
-_CANONICAL_UNITS = (
-    ("time", "ms"),
-    ("voltage", "mV"),
-    ("current", "nA"),
-    ("conductance", "uS"),
-    ("capacitance", "nF"),
-    ("length", "um"),
-    ("concentration", "mM"),
-    ("temperature", "K"),
+from ...units import (
+    AMPERE,
+    CAPACITANCE,
+    CENTIMETER,
+    CONCENTRATION,
+    conversion_factor as _conversion_factor,
+    convert_value as _convert_value,
+    CURRENT,
+    derived_unit,
+    FARAD,
+    KELVIN,
+    MEGOHM,
+    METER,
+    MICROAMPERE,
+    MICROAMPERE_PER_SQUARE_CENTIMETER,
+    MICROFARAD,
+    MICROMETER,
+    MICROSIEMENS,
+    MILLIMETER,
+    MILLIMOLAR,
+    MILLISECOND,
+    MILLISIEMENS,
+    MILLISIEMENS_PER_SQUARE_CENTIMETER,
+    MILLIVOLT,
+    MOLE_PER_CUBIC_METER,
+    NANOAMPERE,
+    NANOFARAD,
+    OHM,
+    OHM_CENTIMETER,
+    SECOND,
+    SI_REFERENCE_SYSTEM_ID,
+    SIEMENS,
+    TIME,
+    UnitDefinition,
+    VOLT,
+    VOLTAGE,
 )
 
 
-def _unit_record(name: str, /) -> tuple[str, float]:
-    if not isinstance(name, str) or name not in _UNIT_TABLE:
-        raise ValueError(f"Unknown electrophysiology unit {name!r}.")
-    return _UNIT_TABLE[name]
+UnitLike: TypeAlias = str | UnitDefinition
+
+_MICROSECOND = UnitDefinition("us", TIME, SI_REFERENCE_SYSTEM_ID, "1e-6")
+_MICROVOLT = UnitDefinition("uV", VOLTAGE, SI_REFERENCE_SYSTEM_ID, "1e-6")
+_MILLIAMPERE = UnitDefinition("mA", CURRENT, SI_REFERENCE_SYSTEM_ID, "1e-3")
+_PICOAMPERE = UnitDefinition("pA", CURRENT, SI_REFERENCE_SYSTEM_ID, "1e-12")
+_NANOSIEMENS = UnitDefinition("nS", SIEMENS.dimension, SI_REFERENCE_SYSTEM_ID, "1e-9")
+_PICOFARAD = UnitDefinition("pF", CAPACITANCE, SI_REFERENCE_SYSTEM_ID, "1e-12")
+_MICROMOLAR = UnitDefinition("uM", CONCENTRATION, SI_REFERENCE_SYSTEM_ID, "1e-3")
+_KILOHM = UnitDefinition("kohm", OHM.dimension, SI_REFERENCE_SYSTEM_ID, "1e3")
+_SQUARE_CENTIMETER = derived_unit("cm2", ((CENTIMETER, 2),))
+_SQUARE_MICROMETER = derived_unit("um2", ((MICROMETER, 2),))
+_AMPERE_PER_SQUARE_METER = derived_unit("A_per_m2", ((AMPERE, 1), (METER, -2)))
+_MILLIAMPERE_PER_SQUARE_CENTIMETER = derived_unit(
+    "mA_per_cm2", ((_MILLIAMPERE, 1), (CENTIMETER, -2))
+)
+_SIEMENS_PER_SQUARE_METER = derived_unit("S_per_m2", ((SIEMENS, 1), (METER, -2)))
+_SIEMENS_PER_SQUARE_CENTIMETER = derived_unit(
+    "S_per_cm2", ((SIEMENS, 1), (CENTIMETER, -2))
+)
+_MICROSIEMENS_PER_SQUARE_CENTIMETER = derived_unit(
+    "uS_per_cm2", ((MICROSIEMENS, 1), (CENTIMETER, -2))
+)
+
+_UNIT_ALIASES = MappingProxyType(
+    {
+        "s": SECOND,
+        "ms": MILLISECOND,
+        "us": _MICROSECOND,
+        "V": VOLT,
+        "mV": MILLIVOLT,
+        "uV": _MICROVOLT,
+        "A": AMPERE,
+        "mA": _MILLIAMPERE,
+        "uA": MICROAMPERE,
+        "nA": NANOAMPERE,
+        "pA": _PICOAMPERE,
+        "S": SIEMENS,
+        "mS": MILLISIEMENS,
+        "uS": MICROSIEMENS,
+        "nS": _NANOSIEMENS,
+        "F": FARAD,
+        "uF": MICROFARAD,
+        "nF": NANOFARAD,
+        "pF": _PICOFARAD,
+        "m": METER,
+        "cm": CENTIMETER,
+        "mm": MILLIMETER,
+        "um": MICROMETER,
+        "mol_per_m3": MOLE_PER_CUBIC_METER,
+        "mM": MILLIMOLAR,
+        "uM": _MICROMOLAR,
+        "K": KELVIN,
+        "ohm": OHM,
+        "kohm": _KILOHM,
+        "Mohm": MEGOHM,
+        "ohm_cm": OHM_CENTIMETER,
+        "cm2": _SQUARE_CENTIMETER,
+        "um2": _SQUARE_MICROMETER,
+        "A_per_m2": _AMPERE_PER_SQUARE_METER,
+        "mA_per_cm2": _MILLIAMPERE_PER_SQUARE_CENTIMETER,
+        "uA_per_cm2": MICROAMPERE_PER_SQUARE_CENTIMETER,
+        "S_per_m2": _SIEMENS_PER_SQUARE_METER,
+        "S_per_cm2": _SIEMENS_PER_SQUARE_CENTIMETER,
+        "mS_per_cm2": MILLISIEMENS_PER_SQUARE_CENTIMETER,
+        "uS_per_cm2": _MICROSIEMENS_PER_SQUARE_CENTIMETER,
+    }
+)
 
 
-def conversion_factor(from_unit: str, to_unit: str, /) -> float:
-    """Return the finite multiplier converting between compatible units."""
-    from_dimension, from_scale = _unit_record(from_unit)
-    to_dimension, to_scale = _unit_record(to_unit)
-    if from_dimension != to_dimension:
-        raise ValueError(
-            f"Cannot convert {from_dimension} unit {from_unit!r} to "
-            f"{to_dimension} unit {to_unit!r}."
-        )
-    factor = from_scale / to_scale
-    if not isfinite(factor) or factor <= 0.0:
-        raise ValueError("Unit conversion factor must be finite and positive.")
-    return factor
+def _unit(value: UnitLike, /) -> UnitDefinition:
+    if isinstance(value, UnitDefinition):
+        return value
+    if not isinstance(value, str) or value not in _UNIT_ALIASES:
+        raise ValueError(f"Unknown electrophysiology unit {value!r}.")
+    return _UNIT_ALIASES[value]
 
 
-def convert_quantity(value: Any, from_unit: str, to_unit: str, /) -> Array:
+def conversion_factor(from_unit: UnitLike, to_unit: UnitLike, /) -> float:
+    """Return the finite multiplier between two explicit compatible units."""
+    return float(_conversion_factor(_unit(from_unit), _unit(to_unit)))
+
+
+def convert_quantity(value: Any, from_unit: UnitLike, to_unit: UnitLike, /) -> Array:
     """Convert a scalar or array without hiding the source or target unit."""
-    return jnp.asarray(value) * conversion_factor(from_unit, to_unit)
+    return _convert_value(value, source=_unit(from_unit), target=_unit(to_unit))
 
 
 class ElectrophysiologyUnits(StrictModule, NonTrainableState):
     """Canonical compiled-kernel unit contract."""
 
-    time: str = eqx.field(static=True)
-    voltage: str = eqx.field(static=True)
-    current: str = eqx.field(static=True)
-    conductance: str = eqx.field(static=True)
-    capacitance: str = eqx.field(static=True)
-    length: str = eqx.field(static=True)
-    concentration: str = eqx.field(static=True)
-    temperature: str = eqx.field(static=True)
+    time: UnitDefinition
+    voltage: UnitDefinition
+    current: UnitDefinition
+    conductance: UnitDefinition
+    capacitance: UnitDefinition
+    length: UnitDefinition
+    concentration: UnitDefinition
+    temperature: UnitDefinition
     units_id: str = eqx.field(static=True)
 
     def __init__(self) -> None:
-        values = dict(_CANONICAL_UNITS)
-        self.time = values["time"]
-        self.voltage = values["voltage"]
-        self.current = values["current"]
-        self.conductance = values["conductance"]
-        self.capacitance = values["capacitance"]
-        self.length = values["length"]
-        self.concentration = values["concentration"]
-        self.temperature = values["temperature"]
+        self.time = MILLISECOND
+        self.voltage = MILLIVOLT
+        self.current = NANOAMPERE
+        self.conductance = MICROSIEMENS
+        self.capacitance = NANOFARAD
+        self.length = MICROMETER
+        self.concentration = MILLIMOLAR
+        self.temperature = KELVIN
+        canonical = {
+            "time": self.time.unit_id,
+            "voltage": self.voltage.unit_id,
+            "current": self.current.unit_id,
+            "conductance": self.conductance.unit_id,
+            "capacitance": self.capacitance.unit_id,
+            "length": self.length.unit_id,
+            "concentration": self.concentration.unit_id,
+            "temperature": self.temperature.unit_id,
+        }
         self.units_id = canonical_fingerprint(
-            {"kind": "electrophysiology-units-v1", "canonical": values}
+            {"kind": "electrophysiology-units", "canonical": canonical}
         )
 
-    def convert(self, value: Any, from_unit: str, to_unit: str, /) -> Array:
+    def convert(self, value: Any, from_unit: UnitLike, to_unit: UnitLike, /) -> Array:
         """Convert a quantity under this explicit contract."""
         return convert_quantity(value, from_unit, to_unit)
 

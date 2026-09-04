@@ -61,12 +61,14 @@ def test_multimodal_plan_assembles_core_likelihood_terms_and_posterior():
     assert all(isinstance(term.likelihood, GaussianLikelihood) for term in terms)
     assert tuple(term.label for term in terms) == plan.channel_ids
     assert tuple(term.target.shape for term in terms) == ((3,), (2,))
-    assert plan.channels[0].quantity_id == skeletal_muscle_quantity(
-        "observed_force"
-    ).quantity_id
-    assert plan.channels[1].quantity_id == skeletal_muscle_quantity(
-        "surface_electric_potential"
-    ).quantity_id
+    assert (
+        plan.channels[0].quantity_id
+        == skeletal_muscle_quantity("observed_force").quantity_id
+    )
+    assert (
+        plan.channels[1].quantity_id
+        == skeletal_muscle_quantity("surface_electric_potential").quantity_id
+    )
 
     space = ParameterSpace(
         {"force_scale": jnp.asarray(1.0)},
@@ -90,9 +92,7 @@ def test_multimodal_plan_assembles_core_likelihood_terms_and_posterior():
 
     compiled = eqx.filter_jit(posterior.log_density)(posterior.initial_position)
     assert jnp.isclose(compiled, value)
-    hessian = jax.hessian(posterior.negative_log_density)(
-        posterior.initial_position
-    )
+    hessian = jax.hessian(posterior.negative_log_density)(posterior.initial_position)
     assert hessian["force_scale"]["force_scale"] > 0.0
 
 
@@ -144,11 +144,7 @@ def test_masked_nonfinite_data_scale_and_prediction_are_inactive():
     )
     posterior = plan.posterior(
         space,
-        {
-            "masked": lambda value: jnp.stack(
-                (value["location"], jnp.asarray(jnp.nan))
-            )
-        },
+        {"masked": lambda value: jnp.stack((value["location"], jnp.asarray(jnp.nan)))},
     )
     value, gradient = posterior.validate()
 
@@ -172,9 +168,7 @@ def test_channels_reject_unknown_quantities_complex_data_and_incomplete_maps():
     unregistered_spec = SkeletalMuscleQuantitySpec(
         "unregistered_force",
         "force",
-        "N",
-        "N",
-        1,
+        skeletal_muscle_quantity("observed_force").unit,
         sign_convention="positive measurement-axis direction",
         support_association="force transducer samples",
         reference_configuration="unregistered test asset",

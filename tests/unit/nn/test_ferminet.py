@@ -16,7 +16,7 @@ from phydrax.nn.quantum._ferminet import (
 
 
 def _structure(positions, *, name="molecule"):
-    scale = phx.atomistic.AtomisticScaleContract("bohr", "hartree")
+    scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.ones((len(positions),), dtype=jnp.int32),
         jnp.asarray(positions, dtype=jnp.float64),

@@ -51,6 +51,7 @@ def _pde_conditioned_contract(model):
         + (
             ("wrapped_architecture", wrapped.architecture),
             ("condition_input", input_name),
+            ("dimension_basis", model.encoder.dimension_basis),
         ),
         capabilities=replace(
             capability,

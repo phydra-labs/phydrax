@@ -29,6 +29,7 @@ from ._mechanisms import (
     update_membrane_program,
 )
 from ._morphology import PreparedCellMorphology
+from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
 CableScheme = Literal["backward-euler", "crank-nicolson"]
@@ -79,6 +80,7 @@ class CableSolverPlan(StrictModule, NonTrainableState):
                 "dt_ms": step,
                 "scheme": scheme,
                 "residual_tolerance": tolerance,
+                "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 

@@ -20,6 +20,9 @@ from phydrax.atomistic._units import AtomisticUnitSystem
 from phydrax.uq import ReducedPotentialSamples
 
 
+UNITS = AtomisticUnitSystem.reduced()
+
+
 def _endpoint_pair(*, omit_final_bond=False):
     endpoint_a = AlchemicalEndpointPlan(
         [10, 20],
@@ -30,7 +33,7 @@ def _endpoint_pair(*, omit_final_bond=False):
         bond_particle_ids=[[10, 20]],
         bond_stiffness=jnp.asarray([2.0]),
         bond_equilibrium_lengths=jnp.asarray([1.0]),
-        unit_system_id="reduced-test",
+        units=UNITS,
     )
     endpoint_b = AlchemicalEndpointPlan(
         [200, 100],
@@ -41,7 +44,7 @@ def _endpoint_pair(*, omit_final_bond=False):
         bond_particle_ids=None if omit_final_bond else [[100, 200]],
         bond_stiffness=None if omit_final_bond else jnp.asarray([4.0]),
         bond_equilibrium_lengths=None if omit_final_bond else jnp.asarray([1.5]),
-        unit_system_id="reduced-test",
+        units=UNITS,
     )
     return endpoint_a, endpoint_b
 
@@ -142,7 +145,7 @@ def test_dummy_soft_core_is_finite_at_coincident_coordinates():
         jnp.asarray([1.0, -1.0]),
         jnp.asarray([1.0, 1.0]),
         jnp.asarray([0.2, 0.2]),
-        unit_system_id="u",
+        units=UNITS,
     )
     endpoint_b = AlchemicalEndpointPlan(
         [1, 2],
@@ -151,7 +154,7 @@ def test_dummy_soft_core_is_finite_at_coincident_coordinates():
         jnp.asarray([1.0, 1.0]),
         jnp.asarray([0.2, 0.0]),
         dummy_mask=[False, True],
-        unit_system_id="u",
+        units=UNITS,
     )
     prepared = AlchemicalTransformationPlan(
         endpoint_a, endpoint_b, atom_capacity=2, bond_capacity=0
@@ -292,7 +295,7 @@ def test_soft_core_tracks_lj_and_charge_activity_not_only_dummy_status():
         jnp.asarray([1.0, -1.0]),
         jnp.asarray([1.0, 1.0]),
         jnp.asarray([0.2, 0.2]),
-        unit_system_id="u",
+        units=UNITS,
     )
     noninteracting = AlchemicalEndpointPlan(
         [1, 2],
@@ -300,7 +303,7 @@ def test_soft_core_tracks_lj_and_charge_activity_not_only_dummy_status():
         jnp.asarray([0.0, 0.0]),
         jnp.asarray([1.0, 1.0]),
         jnp.asarray([0.0, 0.0]),
-        unit_system_id="u",
+        units=UNITS,
     )
     prepared = AlchemicalTransformationPlan(
         interacting,
@@ -325,7 +328,7 @@ def test_zero_weight_disappearing_bond_has_defined_gradient():
         bond_particle_ids=[[1, 2]],
         bond_stiffness=jnp.asarray([3.0]),
         bond_equilibrium_lengths=jnp.asarray([1.0]),
-        unit_system_id="u",
+        units=UNITS,
     )
     dummy = AlchemicalEndpointPlan(
         [1, 2],
@@ -334,7 +337,7 @@ def test_zero_weight_disappearing_bond_has_defined_gradient():
         jnp.ones(2),
         jnp.zeros(2),
         dummy_mask=[False, True],
-        unit_system_id="u",
+        units=UNITS,
     )
     prepared = AlchemicalTransformationPlan(
         bonded, dummy, atom_capacity=2, bond_capacity=1

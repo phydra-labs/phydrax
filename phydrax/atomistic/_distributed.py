@@ -32,6 +32,7 @@ from ._potential_program import (
     PreparedAtomisticPotentialProgram,
 )
 from ._system import PreparedAtomisticSystem
+from ._units import AtomisticUnitSystem
 
 
 DistributedExecutionMode: TypeAlias = Literal["local-reference", "collective"]
@@ -801,6 +802,7 @@ class DistributedAtomisticCheckpointIdentity(StrictModule, NonTrainableState):
 
     plan_id: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
+    unit_system_id: str = eqx.field(static=True)
     run_id: str = eqx.field(static=True)
     replica_id: str = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
@@ -808,9 +810,13 @@ class DistributedAtomisticCheckpointIdentity(StrictModule, NonTrainableState):
     payload_digest: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, state: DistributedAtomisticState, /):
-        if not isinstance(state, DistributedAtomisticState):
-            raise TypeError("state must be DistributedAtomisticState.")
+    def __init__(self, state: DistributedAtomisticState, units: AtomisticUnitSystem, /):
+        if not isinstance(state, DistributedAtomisticState) or not isinstance(
+            units, AtomisticUnitSystem
+        ):
+            raise TypeError(
+                "Distributed checkpoint identity requires state and complete units."
+            )
         owner_record = array_tree_fingerprint(
             {
                 "owner": state.decomposition.owner,
@@ -823,6 +829,7 @@ class DistributedAtomisticCheckpointIdentity(StrictModule, NonTrainableState):
         payload_digest = str(payload_record["sha256"])
         self.plan_id = state.plan_id
         self.runtime_id = state.runtime_id
+        self.unit_system_id = units.unit_system_id
         self.run_id = state.run_id
         self.replica_id = state.replica_id
         self.epoch_id = state.epoch_id
@@ -832,6 +839,7 @@ class DistributedAtomisticCheckpointIdentity(StrictModule, NonTrainableState):
             {
                 "kind": "distributed-atomistic-checkpoint",
                 "plan": state.plan_id,
+                "unit_system": units.unit_system_id,
                 "runtime": state.runtime_id,
                 "run": state.run_id,
                 "replica": state.replica_id,
@@ -846,6 +854,7 @@ class DistributedAtomisticCheckpoint(StrictModule, NonTrainableState):
     """In-memory exact continuation checkpoint and its content identity."""
 
     state: DistributedAtomisticState
+    units: AtomisticUnitSystem
     identity: DistributedAtomisticCheckpointIdentity
 
 
@@ -1955,12 +1964,19 @@ def distributed_particle_mesh_electrostatics(
 
 
 def checkpoint_distributed_atomistic(
-    state: DistributedAtomisticState, /
+    runtime: PreparedDistributedAtomisticRuntime,
+    state: DistributedAtomisticState,
+    /,
 ) -> DistributedAtomisticCheckpoint:
-    if not isinstance(state, DistributedAtomisticState):
-        raise TypeError("state must be DistributedAtomisticState.")
-    identity = DistributedAtomisticCheckpointIdentity(state)
-    return DistributedAtomisticCheckpoint(state, identity)
+    if not isinstance(runtime, PreparedDistributedAtomisticRuntime) or not isinstance(
+        state, DistributedAtomisticState
+    ):
+        raise TypeError("Checkpointing requires prepared runtime and state.")
+    if state.runtime_id != runtime.runtime_id:
+        raise ValueError("Distributed checkpoint state belongs to another runtime.")
+    units = runtime.plan.system.plan.units
+    identity = DistributedAtomisticCheckpointIdentity(state, units)
+    return DistributedAtomisticCheckpoint(state, units, identity)
 
 
 def restore_distributed_atomistic_checkpoint(
@@ -1974,7 +1990,11 @@ def restore_distributed_atomistic_checkpoint(
         raise TypeError("Checkpoint restore requires prepared runtime and checkpoint.")
     if checkpoint.state.runtime_id != runtime.runtime_id:
         raise ValueError("Distributed checkpoint belongs to another prepared runtime.")
-    observed = DistributedAtomisticCheckpointIdentity(checkpoint.state)
+    if checkpoint.units.unit_system_id != runtime.plan.system.plan.units.unit_system_id:
+        raise ValueError(
+            "Distributed checkpoint complete unit descriptor is incompatible."
+        )
+    observed = DistributedAtomisticCheckpointIdentity(checkpoint.state, checkpoint.units)
     if observed.checkpoint_id != checkpoint.identity.checkpoint_id:
         raise ValueError("Distributed checkpoint content identity is corrupt.")
     return checkpoint.state

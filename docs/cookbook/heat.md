@@ -172,10 +172,29 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
     import jax.numpy as jnp
     import phydrax as phx
 
-    x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=False)
-    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
-    field = phx.equations.PDEField("u", coordinates=("x", "t"))
-    diffusivity = phx.equations.PDEParameter("alpha", value=0.1)
+    x = phx.equations.PDECoordinate(
+        "x",
+        "space",
+        dimension=phx.units.LENGTH,
+        bounds=(0.0, 1.0),
+        periodic=False,
+    )
+    t = phx.equations.PDECoordinate(
+        "t",
+        "time",
+        dimension=phx.units.TIME,
+        bounds=(0.0, 1.0),
+    )
+    field = phx.equations.PDEField(
+        "u",
+        coordinates=("x", "t"),
+        dimension=phx.units.TEMPERATURE,
+    )
+    diffusivity = phx.equations.PDEParameter(
+        "alpha",
+        value=0.1,
+        dimension=phx.units.AREA / phx.units.TIME,
+    )
     u = phx.equations.PDEExpression.field("u")
 
     boundary_region = phx.equations.PDERegion("x-boundary", "boundary", ("x",))
@@ -195,6 +214,10 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
                 "homogeneous-dirichlet",
                 "boundary",
                 u,
+                phx.equations.PDEExpression.constant(
+                    0,
+                    dimension=phx.units.TEMPERATURE,
+                ),
                 region="x-boundary",
                 coordinate="x",
             ),

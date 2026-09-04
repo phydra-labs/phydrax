@@ -116,7 +116,11 @@ def compile_pde_expression(
     def compile_node(node: PDEExpression) -> Any:
         if node.op == "constant":
             assert node.value is not None
-            return node.value
+            return (
+                node.value
+                if isinstance(node.value, float)
+                else jnp.asarray(float(node.value))
+            )
         if node.op == "field":
             assert node.symbol is not None
             if node.symbol not in fields:
@@ -153,7 +157,7 @@ def compile_pde_expression(
         if node.op == "negate":
             return -args[0]
         if node.op == "power":
-            return args[0] ** args[1]
+            return args[0] ** jnp.asarray(args[1])
         if node.op == "sin":
             return _map_value(args[0], jnp.sin)
         if node.op == "cos":

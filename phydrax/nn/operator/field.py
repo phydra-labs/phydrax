@@ -12,6 +12,7 @@ from jaxtyping import Array
 
 from ..._strict import StrictModule
 from ...discretization import CochainFieldSpec
+from ...units import DIMENSIONLESS, DimensionSignature
 from .._utils import _get_size
 from .capabilities import OperatorFieldRepresentation
 from .data import OperatorOutputSpec
@@ -35,7 +36,7 @@ class OperatorFieldSpec(StrictModule):
     query_name: str | None
     output_spec: OperatorOutputSpec | None
     component_names: tuple[str, ...]
-    physical_dimension: tuple[float, ...]
+    dimension: DimensionSignature
     scale: tuple[float, ...]
     offset: tuple[float, ...]
     cochain: CochainFieldSpec | None
@@ -55,7 +56,7 @@ class OperatorFieldSpec(StrictModule):
         query_name: str | None = None,
         output_spec: OperatorOutputSpec | None = None,
         component_names: Sequence[str] = (),
-        physical_dimension: Sequence[float] = (),
+        dimension: DimensionSignature = DIMENSIONLESS,
         scale: float | Sequence[float] = 1.0,
         offset: float | Sequence[float] = 0.0,
         cochain: CochainFieldSpec | None = None,
@@ -95,9 +96,8 @@ class OperatorFieldSpec(StrictModule):
         names = tuple(str(value) for value in component_names)
         if names and (len(names) != channel_count or len(set(names)) != len(names)):
             raise ValueError("component_names must uniquely name every field channel.")
-        dimension = tuple(float(value) for value in physical_dimension)
-        if any(not jnp.isfinite(value) for value in dimension):
-            raise ValueError("physical_dimension exponents must be finite.")
+        if not isinstance(dimension, DimensionSignature):
+            raise TypeError("Operator field dimension must be a DimensionSignature.")
 
         def channel_values(
             value: float | Sequence[float],
@@ -187,7 +187,7 @@ class OperatorFieldSpec(StrictModule):
                 channels != "scalar"
                 or resolved_representation != "scalar"
                 or names
-                or dimension
+                or not dimension.is_dimensionless
                 or scales != (1.0,)
                 or offsets != (0.0,)
                 or cochain is not None
@@ -207,7 +207,7 @@ class OperatorFieldSpec(StrictModule):
         self.query_name = None if resolved_query is None else str(resolved_query)
         self.output_spec = output_spec
         self.component_names = names
-        self.physical_dimension = dimension
+        self.dimension = dimension
         self.scale = scales
         self.offset = offsets
         self.cochain = cochain
@@ -275,7 +275,7 @@ class OperatorFieldSpec(StrictModule):
             "query_name": self.query_name,
             "output_spec": (None if output_spec is None else output_spec.to_dict()),
             "component_names": list(self.component_names),
-            "physical_dimension": list(self.physical_dimension),
+            "dimension": self.dimension.to_dict(),
             "scale": list(self.scale),
             "offset": list(self.offset),
             "cochain": None if self.cochain is None else self.cochain.to_dict(),
@@ -291,6 +291,35 @@ class OperatorFieldSpec(StrictModule):
     @classmethod
     def from_dict(cls, value: Mapping[str, Any], /) -> "OperatorFieldSpec":
         """Restore a field specification from its canonical dictionary."""
+        expected = {
+            "name",
+            "channels",
+            "role",
+            "representation",
+            "source_name",
+            "query_name",
+            "output_spec",
+            "component_names",
+            "dimension",
+            "scale",
+            "offset",
+            "cochain",
+            "tensor_layout",
+            "clifford_layout",
+            "required",
+        }
+        missing = expected - set(value)
+        unknown = set(value) - expected
+        if missing or unknown:
+            raise ValueError(
+                "Operator field dictionary must use the current canonical fields; "
+                f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+            )
+        raw_dimension = value["dimension"]
+        if not isinstance(raw_dimension, Mapping):
+            raise TypeError(
+                "Serialized operator field dimension must be a canonical mapping."
+            )
         output_value = value.get("output_spec")
         output_spec = (
             None if output_value is None else OperatorOutputSpec.from_dict(output_value)
@@ -304,7 +333,7 @@ class OperatorFieldSpec(StrictModule):
             query_name=value.get("query_name"),
             output_spec=output_spec,
             component_names=value.get("component_names", ()),
-            physical_dimension=value.get("physical_dimension", ()),
+            dimension=DimensionSignature.from_dict(raw_dimension),
             scale=value.get("scale", 1.0),
             offset=value.get("offset", 0.0),
             cochain=(

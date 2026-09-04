@@ -30,6 +30,7 @@ from .._dynamics import (
     AtomisticForceState,
     PreparedAtomisticDynamics,
 )
+from .._units import AtomisticUnitSystem
 from ._collective_variable import AbstractCollectiveVariableProgram
 
 
@@ -614,6 +615,7 @@ class BiasedDynamicsCheckpointPlan(StrictModule, NonTrainableState):
 
 class BiasedDynamicsCheckpoint(StrictModule):
     state: BiasedDynamicsState
+    units: AtomisticUnitSystem
     payload_id: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
@@ -636,6 +638,7 @@ def write_biased_dynamics_checkpoint(
         {
             "kind": "biased-dynamics-checkpoint-payload",
             "checkpoint": plan.checkpoint_id,
+            "unit_system": plan.dynamics.base.system.plan.units.unit_system_id,
             "time": float(state.base.time),
             "step": int(state.base.step_index),
             "state": specification,
@@ -651,12 +654,18 @@ def write_biased_dynamics_checkpoint(
             "prepared_id": plan.dynamics.prepared_id,
             "base_id": plan.dynamics.base.prepared_id,
             "bias_id": plan.dynamics.bias.prepared_id,
+            "unit_system": plan.dynamics.base.system.plan.units.to_dict(),
             "state": specification,
             "payload_id": payload_id,
         },
         arrays=arrays,
     )
-    return BiasedDynamicsCheckpoint(state, payload_id, plan.checkpoint_id)
+    return BiasedDynamicsCheckpoint(
+        state,
+        plan.dynamics.base.system.plan.units,
+        payload_id,
+        plan.checkpoint_id,
+    )
 
 
 def read_biased_dynamics_checkpoint(
@@ -681,6 +690,7 @@ def read_biased_dynamics_checkpoint(
         "prepared_id",
         "base_id",
         "bias_id",
+        "unit_system",
         "state",
         "payload_id",
         "arrays",
@@ -697,6 +707,9 @@ def read_biased_dynamics_checkpoint(
         "base_id": plan.dynamics.base.prepared_id,
         "bias_id": plan.dynamics.bias.prepared_id,
     }
+    units = AtomisticUnitSystem.from_dict(manifest["unit_system"])
+    if units.unit_system_id != plan.dynamics.base.system.plan.units.unit_system_id:
+        raise ValueError("Biased checkpoint complete unit descriptor is incompatible.")
     if any(manifest[name] != value for name, value in identities.items()):
         raise ValueError("Biased checkpoint identity does not match the runtime.")
     state = unpack_array_tree(manifest["state"], arrays, template)
@@ -706,6 +719,7 @@ def read_biased_dynamics_checkpoint(
         {
             "kind": "biased-dynamics-checkpoint-payload",
             "checkpoint": plan.checkpoint_id,
+            "unit_system": units.unit_system_id,
             "time": float(state.base.time),
             "step": int(state.base.step_index),
             "state": manifest["state"],
@@ -714,7 +728,7 @@ def read_biased_dynamics_checkpoint(
     )
     if manifest["payload_id"] != payload_id:
         raise ValueError("Biased checkpoint payload identity is corrupt.")
-    return BiasedDynamicsCheckpoint(state, payload_id, plan.checkpoint_id)
+    return BiasedDynamicsCheckpoint(state, units, payload_id, plan.checkpoint_id)
 
 
 __all__ = [

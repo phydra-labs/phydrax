@@ -13,6 +13,17 @@ from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...discretization import PeriodicCell
+from ...units import (
+    ANGSTROM,
+    conversion_factor,
+    DALTON,
+    ELEMENTARY_CHARGE,
+    KILOCALORIE_PER_MOLE,
+    KILOJOULE_PER_MOLE,
+    LENGTH,
+    SI_REFERENCE_SYSTEM_ID,
+    UnitDefinition,
+)
 from .._classical import (
     HarmonicAnglePotential,
     HarmonicBondPotential,
@@ -37,7 +48,7 @@ from .._force_field import (
 from .._potential_program import AtomisticPotentialProgram
 from .._system import AtomisticSystemPlan
 from .._topology import MolecularTopologyPlan
-from .._units import AtomisticUnitSystem
+from .._units import AtomisticUnitSystem, molar_energy_to_single_system_factor
 from ._core import (
     AtomisticInterchangeBundle,
     AtomisticInterchangeReport,
@@ -46,48 +57,41 @@ from ._core import (
 )
 
 
-_KILOJOULE_PER_MOLE_PER_ELECTRONVOLT = 96.48533212331002
+_NANOMETER = UnitDefinition("nm", LENGTH, SI_REFERENCE_SYSTEM_ID, "1e-9")
 
 
-def _openmm_unit_factors(units: AtomisticUnitSystem, /) -> dict[str, float]:
-    length = units.scale.length_unit.strip().lower().replace("å", "angstrom")
-    energy = units.scale.energy_unit.strip().lower().replace(" ", "_")
-    mass = units.mass_unit.strip().lower()
-    charge = units.charge_unit.strip().lower()
-    length_from_angstrom = {
-        "angstrom": 1.0,
-        "nanometer": 0.1,
-        "nanometre": 0.1,
-    }.get(length)
-    energy_from_kilojoule = {
-        "kilojoule_per_mole": 1.0,
-        "kilojoules_per_mole": 1.0,
-        "kj/mol": 1.0,
-        "electronvolt": 1.0 / _KILOJOULE_PER_MOLE_PER_ELECTRONVOLT,
-    }.get(energy)
-    if (
-        length_from_angstrom is None
-        or energy_from_kilojoule is None
-        or mass not in ("dalton", "atomic_mass_unit")
-        or charge not in ("elementary_charge", "electron_charge")
-        or units.scale.length_to_reference != 1.0
-        or units.scale.energy_to_reference != 1.0
-        or units.mass_to_reference != 1.0
-        or units.charge_to_reference != 1.0
-    ):
-        raise ValueError(
-            "OpenMM interchange requires unscaled angstrom or nanometer length, "
-            "kJ/mol or eV energy, dalton mass, and elementary-charge units."
+def _openmm_unit_factors(units: AtomisticUnitSystem, /) -> dict[str, float | str]:
+    if not isinstance(units, AtomisticUnitSystem):
+        raise TypeError("OpenMM interchange requires an AtomisticUnitSystem.")
+    try:
+        length_from_angstrom = float(conversion_factor(ANGSTROM, units.scale.length_unit))
+        mass_from_dalton = float(conversion_factor(DALTON, units.mass_unit))
+        charge_from_elementary = float(
+            conversion_factor(ELEMENTARY_CHARGE, units.charge_unit)
         )
+        energy_from_kilojoule = molar_energy_to_single_system_factor(
+            KILOJOULE_PER_MOLE,
+            units.scale.energy_unit,
+            constant_set_id=units.constant_set_id,
+        )
+        length_to_nanometer = float(
+            conversion_factor(units.scale.length_unit, _NANOMETER)
+        )
+    except ValueError as error:
+        raise ValueError(
+            "OpenMM interchange requires SI-referenced length, ordinary energy, "
+            "mass, and charge units with Avogadro provenance."
+        ) from error
     return {
         "length_from_angstrom": length_from_angstrom,
         "energy_from_kilojoule": energy_from_kilojoule,
-        "mass_from_dalton": 1.0,
-        "charge_from_elementary": 1.0,
-        "length_to_nanometer": 0.1 / length_from_angstrom,
+        "mass_from_dalton": mass_from_dalton,
+        "charge_from_elementary": charge_from_elementary,
+        "length_to_nanometer": length_to_nanometer,
         "energy_to_kilojoule": 1.0 / energy_from_kilojoule,
-        "mass_to_dalton": 1.0,
-        "charge_to_elementary": 1.0,
+        "mass_to_dalton": 1.0 / mass_from_dalton,
+        "charge_to_elementary": 1.0 / charge_from_elementary,
+        "avogadro_constant_set_id": units.constant_set_id,
     }
 
 
@@ -228,12 +232,11 @@ def _potential_term_from_mapping(value: dict[str, Any], /):
     raise ValueError(f"Unknown atomistic potential mapping kind {kind!r}.")
 
 
-def force_field_from_mapping(
-    value: dict[str, Any], units: AtomisticUnitSystem, /
-) -> AtomisticInterchangeBundle:
+def force_field_from_mapping(value: dict[str, Any], /) -> AtomisticInterchangeBundle:
     require_mapping_fields(
         value,
         (
+            "unit_system",
             "particle_ids",
             "atomic_numbers",
             "masses",
@@ -242,6 +245,7 @@ def force_field_from_mapping(
             "nonbonded",
         ),
     )
+    units = AtomisticUnitSystem.from_dict(value["unit_system"])
     topology_data = value.get("topology", {})
     topology = MolecularTopologyPlan(
         bonds=topology_data.get("bonds"),
@@ -379,7 +383,9 @@ def force_field_from_mapping(
         ),
     )
     report = AtomisticInterchangeReport(
-        value.get("source_format", "mapping"), tuple(term.name for term in terms)
+        value.get("source_format", "mapping"),
+        units,
+        tuple(term.name for term in terms),
     )
     return AtomisticInterchangeBundle(force_field, report)
 
@@ -391,6 +397,7 @@ def force_field_to_mapping(bundle: AtomisticInterchangeBundle, /) -> dict[str, A
     system = plan.system
     topology = system.topology
     return {
+        "unit_system": system.units.to_dict(),
         "source_format": "phydrax",
         "family": plan.provenance.family,
         "parameter_set": plan.provenance.parameter_set,
@@ -577,9 +584,12 @@ def to_openmm_system(bundle: AtomisticInterchangeBundle, /):
         unsupported.append("separate Lennard-Jones and electrostatic force groups")
     report = AtomisticInterchangeReport(
         "phydrax-openmm-export",
+        system_plan.units,
         tuple(term.name for term in terms if id(term) in recognized),
         tuple(unsupported),
         tuple(warnings),
+        source_energy_unit=KILOJOULE_PER_MOLE,
+        avogadro_constant_set_id=system_plan.units.constant_set_id,
     )
     report.require_complete()
 
@@ -997,7 +1007,15 @@ def from_openmm_system(
             supported.append(name)
         else:
             unsupported.append(name)
-    report = AtomisticInterchangeReport("openmm", supported, unsupported, tuple(warnings))
+    report = AtomisticInterchangeReport(
+        "openmm",
+        units,
+        supported,
+        unsupported,
+        tuple(warnings),
+        source_energy_unit=KILOJOULE_PER_MOLE,
+        avogadro_constant_set_id=units.constant_set_id,
+    )
     report.require_complete()
     constraints = []
     constraint_distances = []
@@ -1042,6 +1060,7 @@ def from_openmm_system(
     if reciprocal_extent is not None:
         nonbonded["reciprocal_extent"] = reciprocal_extent
     mapping = {
+        "unit_system": units.to_dict(),
         "source_format": "openmm",
         "family": "openmm",
         "parameter_set": source_id,
@@ -1082,7 +1101,7 @@ def from_openmm_system(
     mapping["parameters"] = {
         key: value for key, value in mapping["parameters"].items() if value is not None
     }
-    bundle = force_field_from_mapping(mapping, units)
+    bundle = force_field_from_mapping(mapping)
     return AtomisticInterchangeBundle(bundle.force_field, report)
 
 
@@ -1312,7 +1331,12 @@ def from_parmed_structure(
         adapter_id="parmed",
     )
     report = AtomisticInterchangeReport(
-        "parmed", tuple(supported), tuple(dict.fromkeys(unsupported))
+        "parmed",
+        units,
+        tuple(supported),
+        tuple(dict.fromkeys(unsupported)),
+        source_energy_unit=KILOCALORIE_PER_MOLE,
+        avogadro_constant_set_id=units.constant_set_id,
     )
     report.require_complete()
     return AtomisticInterchangeBundle(
