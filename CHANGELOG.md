@@ -94,6 +94,40 @@
   dense-LU solves, diagnostic-only rank SVDs, and independent curvature,
   stationarity, Bellman, conditioning, linear-status, and causal-failure
   evidence without regularization, pseudoinverses, clipping, or fallback.
+- Added deterministic nonlinear game evaluation, physical/dimensionless nominal
+  Nash residuals, exact-cost local quadratic policy suggestions, and
+  residual-globalized finite-horizon iLQ with fixed-capacity plan/prepare/refresh
+  execution and local nominal-stationarity evidence.
+- Added explicit player-local, player-owned-coupled, and shared game-constraint
+  ownership; sampled feasibility and multiplier layouts; convex open-loop
+  variational equilibria with common shared multipliers; generic open-loop GNEs
+  with player-specific shared-multiplier copies and optional bounded unilateral
+  best-response audits; private nonlinear open-loop KKT; and fixed-active-set
+  feedback quasi-Nash local models.
+- Added prepared-noise stochastic feedback rollout, empirical-risk and paired-policy
+  evidence, exact additive- and multiplicative-noise LQ control and feedback-Nash
+  games, centralized observation-before-action Gaussian-belief LQG, and frozen-policy
+  fitted Bellman evaluation with a BSDE bridge that keeps physical actions separate
+  from martingale integrands.
+- Added single-agent and player-owned open-loop stochastic-maximum-principle
+  residual evidence, bounded one-dimensional HJB and zero-sum HJBI references,
+  branch-explicit coupled-HJB policy iteration, and frozen-training/disjoint-holdout
+  policy-game SAA with local empirical stationarity and cluster provenance.
+- Added supplied frozen-law response evaluation, independently induced-law MFG
+  fixed-point candidates, finite-scenario conditional common-noise MFG candidates,
+  constrained individual/aggregate-generic/aggregate-variational MFG KKT evidence,
+  finite-population continuation with complete numerical and simultaneous
+  statistical deviation bounds, and MFC planner stationarity with explicit
+  analytic or finite-particle measure-externality evidence.
+- Added finite-state common-information pure-prescription Bayesian backward
+  induction and an exact finite-state, finite-population empirical-law-lattice
+  master-equation reference with Bellman, action-minimum, simplex, and discrete
+  neighbor-transfer evidence.
+- Added runnable nonlinear feedback, constrained open-loop, open-loop VE,
+  stochastic feedback, additive LQG game, HJBI reference, mean-field fixed-point,
+  and finite-state common-information examples. Each new game/control family
+  retains its exact solution concept and does not silently repair inputs or fall
+  back to a universal combined solver.
 - Added qualified circuit-QED mode reduction and device assembly, one-to-one
   dressed-state tracking, sampled I/Q controls, leakage-aware gate metrics,
   exact-state local product formulas with reversible gradients, and exact

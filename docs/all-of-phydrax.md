@@ -850,11 +850,36 @@ linearization and frequency response, Lyapunov/Riccati equations, Gramians,
 finite- and infinite-horizon LQR, iLQR, dense multiple shooting, implicit
 direct collocation, dense or structural-sparse prepared linear-control QPs,
 explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
-`phydrax.control.games` adds finite-horizon affine linear-quadratic
-full-state feedback Nash policies with explicit player control ownership,
-per-player values, nonsymmetric dense-LU solves, diagnostic-only rank SVDs,
-and independent curvature, stationarity, Bellman, conditioning, and causal
-failure evidence.
+`phydrax.control.games` starts with finite-horizon affine linear-quadratic
+full-state feedback Nash policies, then keeps later solution concepts separate:
+deterministic policy evaluation and nominal first-order residuals; one-step local
+quadratic suggestions and residual-globalized nonlinear iLQ; explicitly owned
+constraints; convex open-loop VE and generic GNE; nonlinear private open-loop KKT;
+and fixed-active-set feedback quasi-Nash local models. VE common multipliers,
+generic-GNE player copies, local nominal stationarity, exact LQ feedback Nash, and
+global unilateral best-response gap evidence are never treated as synonyms.
+
+`phydrax.control.stochastic` provides prepared-noise feedback rollout, empirical-risk
+and paired-policy evaluation, exact additive and multiplicative LQ recursions,
+centralized observation-before-action Gaussian-belief LQG, frozen-policy fitted
+Bellman evaluation, open-loop stochastic-maximum-principle evidence, and bounded
+one-dimensional HJB references. Game counterparts add additive/multiplicative LQG
+feedback Nash, player-owned SMP residuals, finite-sample policy-game SAA, zero-sum
+HJBI with both action orders, and all-minimizer coupled-HJB policy iteration.
+Physical actions, BSDE martingale integrands, SMP adjoints, and SMP martingale
+integrands remain distinct.
+
+Mean-field capability is layered rather than hidden behind one solver: supplied
+frozen-law response evaluation; independently induced-law MFG fixed points;
+finite-scenario conditional common-noise candidates; constrained individual,
+aggregate-generic, and aggregate-variational MFG KKT candidates; finite-population
+continuation with complete numerical and simultaneous statistical deviation bounds;
+and MFC planner stationarity with an explicit analytic or finite-particle measure
+externality. Finite-state common-information pure-prescription games and the exact
+finite-population empirical-lattice master-equation reference are separate again.
+None of these layers silently implies another layer's equilibrium or optimality
+claim.
+
 Direct collocation accepts explicit systems or controlled state-shaped DAEs,
 shared parameter coordinates, fixed or variable duration, exact sparse
 derivatives, and explicitly selected dense-native, sparse-native, or sparse
@@ -1812,6 +1837,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.continuation` for generic parameterized residual curves, stability,
   event localization, branch switching, and fold/Hopf/pitchfork workflows.
 - `phydrax.control` for finite-horizon control, linear systems, LQR/iLQR,
-  multiple shooting, compiled QPs, and MPC.
+  multiple shooting, compiled QPs, MPC, stochastic control, deterministic and
+  stochastic games, constrained equilibria, and mean-field/finite-state references.
 - `phydrax.solver` for training, differential, delay/memory, rough, stochastic,
   controlled, probabilistic, and geometry-preserving equation solvers.

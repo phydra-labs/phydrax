@@ -1,0 +1,3759 @@
+{
+  "all_valid": true,
+  "benchmark": "stochastic-feedback-evaluation",
+  "cases": [
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.041520826518535614,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 64,
+        "holdout_interval": [
+          0.04107460774346099,
+          0.041967045293610235
+        ],
+        "holdout_standard_error": 0.0002276668237755075,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 64,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "bae5e01f7e66f271702a1a6c6754ef3eb6339db3c7af7bf18a3f184396acf5ea",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                64,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                64,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 4,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 16,
+        "independent_clusters_per_bundle": 64,
+        "paths_per_bundle": 64
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "2bcc894206b90c3cd9a867adb4a2bd9fbeee0399114055050e7f497be916fb3c",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              17
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              64,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              64,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              64
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 33508,
+        "logical_output_bytes": 110988,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "baseline",
+      "run": {
+        "count": 3,
+        "max_ms": 152.62954100000002,
+        "mean_ms": 149.11566633333334,
+        "median_ms": 147.49683299999998,
+        "min_ms": 147.22062499999998,
+        "samples_ms": [
+          152.62954100000002,
+          147.22062499999998,
+          147.49683299999998
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 2.487241992595742
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 128,
+        "policy_decisions": 2048,
+        "prepared_noise_values": 8192,
+        "state_coordinate_updates": 8192
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.041002292186021805,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 16,
+        "holdout_interval": [
+          0.04077144702812025,
+          0.04123313734392336
+        ],
+        "holdout_standard_error": 0.00011778030602727085,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 16,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "130769b02d09a368bfd6221dc07dafd4e685fe80ba87c5783dc2fe5f0dd58165",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                16,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                16,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                16,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                16,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                16,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                16,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                16,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 4,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 16,
+        "independent_clusters_per_bundle": 16,
+        "paths_per_bundle": 16
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "3765731f8d517bed86eb1ce234f95dec7ba0ba146283fb9f9bf1d8c4d16b8776",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              17
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              16
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              16
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              16
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              16
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 8452,
+        "logical_output_bytes": 27852,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "paths-16",
+      "run": {
+        "count": 3,
+        "max_ms": 113.441125,
+        "mean_ms": 107.50105566666667,
+        "median_ms": 105.65316700000001,
+        "min_ms": 103.408875,
+        "samples_ms": [
+          103.408875,
+          105.65316700000001,
+          113.441125
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 4.299033178822213
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 32,
+        "policy_decisions": 512,
+        "prepared_noise_values": 2048,
+        "state_coordinate_updates": 2048
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.04167637601494789,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 256,
+        "holdout_interval": [
+          0.04138333141694475,
+          0.04196942061295103
+        ],
+        "holdout_standard_error": 0.00014951529738027602,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 256,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "f22112dca889107c14f3cf78b65fe06ea75a2699aac46d823a0336000452263d",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                256,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                256,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                256,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                256,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                256,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                256,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                256,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                256,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                256
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 4,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 16,
+        "independent_clusters_per_bundle": 256,
+        "paths_per_bundle": 256
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "cff9ee90e6cb5523f2d3aefe57fa070aac253a3e801442eb8103d5100a72af34",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              17
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              256,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              256
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              256
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              256,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              256
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              256
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 133732,
+        "logical_output_bytes": 443532,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "paths-256",
+      "run": {
+        "count": 3,
+        "max_ms": 327.294833,
+        "mean_ms": 319.4518473333333,
+        "median_ms": 320.76137500000004,
+        "min_ms": 310.299334,
+        "samples_ms": [
+          320.76137500000004,
+          310.299334,
+          327.294833
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 6.9998996943801215
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 512,
+        "policy_decisions": 8192,
+        "prepared_noise_values": 32768,
+        "state_coordinate_updates": 32768
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.0428769588470459,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 64,
+        "holdout_interval": [
+          0.04250227553733551,
+          0.04325164215675629
+        ],
+        "holdout_standard_error": 0.00019116846669930965,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 64,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "4554b7655217feec78b2c3423e33aac2fc05df970ab7537fdef60357b8f544b8",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                64,
+                5,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                64,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                64,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                64,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                5
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                64,
+                5,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                64,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                64,
+                4,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                64,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 4,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 4,
+        "independent_clusters_per_bundle": 64,
+        "paths_per_bundle": 64
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "dd4fc7de4440fcae8ed42aa03220b2616e27cb4c1db69c4a60ce91181ddd00f2",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              5
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              64,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              64,
+              4,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              64
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 8884,
+        "logical_output_bytes": 31068,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "horizon-4",
+      "run": {
+        "count": 3,
+        "max_ms": 82.87391600000001,
+        "mean_ms": 80.13040266666667,
+        "median_ms": 80.119667,
+        "min_ms": 77.39762499999999,
+        "samples_ms": [
+          77.39762499999999,
+          80.119667,
+          82.87391600000001
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 2.235699326843748
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 128,
+        "policy_decisions": 512,
+        "prepared_noise_values": 2048,
+        "state_coordinate_updates": 2048
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.04134290665388107,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 64,
+        "holdout_interval": [
+          0.04080680462077799,
+          0.04187900868698416
+        ],
+        "holdout_standard_error": 0.00027352647157385945,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 64,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "5ce3f8699f44b261dc9f402eb2a418f2c062ed3edc0db533bee52e2d8513bbe1",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                64,
+                65,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                64,
+                64,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                64,
+                64,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                65
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                64,
+                65,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                64,
+                64,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                64,
+                64,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                64,
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 4,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 64,
+        "independent_clusters_per_bundle": 64,
+        "paths_per_bundle": 64
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "ae0ceefaae0aecfe6fff6a8d5386cc1cb48d7ad02ca59aa20b15c6b2ca8dc2ff",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              65
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              64,
+              64,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              64,
+              64,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              64
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 132004,
+        "logical_output_bytes": 430668,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "horizon-64",
+      "run": {
+        "count": 3,
+        "max_ms": 460.43412500000005,
+        "mean_ms": 455.8320556666667,
+        "median_ms": 454.462292,
+        "min_ms": 452.59975000000003,
+        "samples_ms": [
+          452.59975000000003,
+          460.43412500000005,
+          454.462292
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 3.3418106157238063
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 128,
+        "policy_decisions": 8192,
+        "prepared_noise_values": 32768,
+        "state_coordinate_updates": 32768
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.008733422495424747,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 64,
+        "holdout_interval": [
+          0.00868190747519973,
+          0.008784937515649766
+        ],
+        "holdout_standard_error": 2.6283656552550383e-05,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 64,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "050b75c4cfa0a3d2b3565dd37fead4a329d23e5a2a4ccab773397d9f174de3ba",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                64,
+                17,
+                1
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                64,
+                16,
+                1
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                1
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                64,
+                17,
+                1
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                64,
+                16,
+                1
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                1
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 1,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 16,
+        "independent_clusters_per_bundle": 64,
+        "paths_per_bundle": 64
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "717eb8f81cc25e6305f29fada81bd62072b9377ee79130c904fe4bba8225968f",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              17
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              1
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              64,
+              16,
+              1
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              64,
+              16,
+              1
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              64
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 8920,
+        "logical_output_bytes": 35724,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "cases-1",
+      "run": {
+        "count": 3,
+        "max_ms": 174.061166,
+        "mean_ms": 162.89691666666667,
+        "median_ms": 158.2195,
+        "min_ms": 156.410084,
+        "samples_ms": [
+          174.061166,
+          156.410084,
+          158.2195
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 7.928801672715705
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 128,
+        "policy_decisions": 2048,
+        "prepared_noise_values": 2048,
+        "state_coordinate_updates": 2048
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.04016740620136261,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 64,
+        "holdout_interval": [
+          0.03990867572304596,
+          0.04042613667967926
+        ],
+        "holdout_standard_error": 0.00013200777175370604,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 64,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "c24bf8eb4f18af99930e612a8f1564666caace19bfa3ab7f77b96de519eab11e",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                64,
+                17,
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                64,
+                16,
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                64,
+                17,
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                64,
+                16,
+                32
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                32
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 32,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 16,
+        "independent_clusters_per_bundle": 64,
+        "paths_per_bundle": 64
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "20691a50e06b5541db759592ff519d72a20a9c5bfde67572f8d772ca3d3f6064",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              17
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              32
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              64,
+              16,
+              32
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              64,
+              16,
+              32
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              64
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 262996,
+        "logical_output_bytes": 813452,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "cases-32",
+      "run": {
+        "count": 3,
+        "max_ms": 174.624,
+        "mean_ms": 169.63784733333333,
+        "median_ms": 170.607709,
+        "min_ms": 163.681833,
+        "samples_ms": [
+          163.681833,
+          170.607709,
+          174.624
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 4.519456339231098
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 128,
+        "policy_decisions": 2048,
+        "prepared_noise_values": 65536,
+        "state_coordinate_updates": 65536
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.04152083024382591,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 4,
+        "holdout_interval": [
+          0.04150042593858575,
+          0.041541234549066074
+        ],
+        "holdout_standard_error": 1.0410551112727262e-05,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 64,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "299cda4cc9a30fc5fcfc76d01076117effe2624e20316954302e48a1f92700ef",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                64,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                64,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 4,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 16,
+        "independent_clusters_per_bundle": 4,
+        "paths_per_bundle": 64
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "31d28a6dfa4901fb65ffc5a7214431be15b4c73dbf2670dbde9af7c64bef384b",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              17
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              64,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              64,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              64
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 33508,
+        "logical_output_bytes": 110988,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "clusters-4",
+      "run": {
+        "count": 3,
+        "max_ms": 130.577125,
+        "mean_ms": 116.61655533333332,
+        "median_ms": 112.030125,
+        "min_ms": 107.24241599999999,
+        "samples_ms": [
+          130.577125,
+          107.24241599999999,
+          112.030125
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 10.06325555111467
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 8,
+        "policy_decisions": 2048,
+        "prepared_noise_values": 8192,
+        "state_coordinate_updates": 8192
+      }
+    },
+    {
+      "certificate": {
+        "all_holdout_paths_valid": true,
+        "all_training_paths_valid": true,
+        "claim": "fixed-policy-prepared-noise-holdout-expectation-evidence",
+        "coverage_assumptions": [
+          "independent clusters",
+          "finite second moment",
+          "asymptotic normal approximation",
+          "policy fixed before holdout evaluation"
+        ],
+        "holdout_confidence": 0.95,
+        "holdout_coverage": "asymptotic-normal",
+        "holdout_estimate": 0.041520826518535614,
+        "holdout_has_coverage_claim": true,
+        "holdout_independent_cluster_count": 16,
+        "holdout_interval": [
+          0.04112389048903173,
+          0.0419177625480395
+        ],
+        "holdout_standard_error": 0.00020252210379112512,
+        "holdout_status": 0,
+        "holdout_valid_path_count": 64,
+        "not_claimed": [
+          "finite-sample distribution-free coverage",
+          "policy optimality",
+          "population optimality"
+        ],
+        "output_fingerprint": {
+          "sha256": "b905673470e120fd433fcc52d372de5ce143d34dc078ecff084a7faa612edc31",
+          "signature": [
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.states",
+              "shape": [
+                64,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.actions",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[0].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[0].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[0].status",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.time_grid.times",
+              "shape": [
+                17
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.states",
+              "shape": [
+                64,
+                17,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.actions",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.noise_paths",
+              "shape": [
+                64,
+                16,
+                4
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.noise_valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "|b1",
+              "path": "[1].paths.valid",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.status",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.stage_costs",
+              "shape": [
+                64,
+                16
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.terminal_costs",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].paths.returns",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].paths.independence_labels",
+              "shape": [
+                64
+              ]
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].empirical_risk",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.valid_path_count",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].evidence.independent_cluster_count",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.estimate",
+              "shape": []
+            },
+            {
+              "dtype": "<f4",
+              "path": "[1].evidence.standard_error",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.lower",
+              "shape": []
+            },
+            {
+              "dtype": "<f8",
+              "path": "[1].evidence.upper",
+              "shape": []
+            },
+            {
+              "dtype": "<i4",
+              "path": "[1].status",
+              "shape": []
+            }
+          ]
+        },
+        "policy_information": "current full state and step context only; no noise and no random key",
+        "training_coverage": "none",
+        "training_has_coverage_claim": false,
+        "training_holdout_coupling_ids_distinct": true,
+        "training_holdout_realization_ids_disjoint": true,
+        "training_status": 0
+      },
+      "compile": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "dimensions": {
+        "case_count": 4,
+        "case_scope": "independent scalar state coordinates aggregated into each path return",
+        "horizon": 16,
+        "independent_clusters_per_bundle": 16,
+        "paths_per_bundle": 64
+      },
+      "dtype": "float32",
+      "input_fingerprint": {
+        "sha256": "489782aca9a194259b15efd9332e50d8cafd2d4c052037934fded30dc6d714d4",
+        "signature": [
+          {
+            "dtype": "<f4",
+            "path": "[0]",
+            "shape": [
+              17
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[1]",
+            "shape": [
+              4
+            ]
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['decay']",
+            "shape": []
+          },
+          {
+            "dtype": "<f8",
+            "path": "[2]['gain']",
+            "shape": []
+          },
+          {
+            "dtype": "<f4",
+            "path": "[3]",
+            "shape": [
+              64,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[4]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[5]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<f4",
+            "path": "[6]",
+            "shape": [
+              64,
+              16,
+              4
+            ]
+          },
+          {
+            "dtype": "|b1",
+            "path": "[7]",
+            "shape": [
+              64
+            ]
+          },
+          {
+            "dtype": "<i4",
+            "path": "[8]",
+            "shape": [
+              64
+            ]
+          }
+        ]
+      },
+      "lower": {
+        "scope": "not applicable to host-orchestrated coverage evaluation",
+        "seconds": null
+      },
+      "memory": {
+        "compiler_argument_bytes": null,
+        "compiler_generated_code_bytes": null,
+        "compiler_output_bytes": null,
+        "compiler_temporary_bytes": null,
+        "logical_input_bytes": 33508,
+        "logical_output_bytes": 110988,
+        "source": "host-orchestrated-feedback-evaluation",
+        "unavailable_reason": "coverage and sample-role decisions are host logic; this benchmark does not represent them as one lowered executable"
+      },
+      "name": "clusters-16",
+      "run": {
+        "count": 3,
+        "max_ms": 139.168958,
+        "mean_ms": 133.3153606666667,
+        "median_ms": 130.59079100000002,
+        "min_ms": 130.186333,
+        "samples_ms": [
+          130.59079100000002,
+          139.168958,
+          130.186333
+        ],
+        "scope": "synchronized training-role and holdout-role evaluations",
+        "std_ms": 4.142410560213004
+      },
+      "work": {
+        "compiler_bytes_accessed": null,
+        "compiler_flops": null,
+        "independent_cluster_summaries": 32,
+        "policy_decisions": 2048,
+        "prepared_noise_values": 8192,
+        "state_coordinate_updates": 8192
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "2a52e8f8e125c0d9c193af56e5456f94754ebc2a7f2a42bb2fef73e0fc11c069",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "c26dd929f11e2e66bcb486deba57838a31c1f6d5534b27b079d66ef7244a0eaa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  }
+}
