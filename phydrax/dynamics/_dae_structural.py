@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._assignment_core import hungarian_assignment_one
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -549,6 +550,71 @@ def _maximum_matching(
     )
 
 
+_structural_assignment = jax.jit(hungarian_assignment_one)
+
+
+def _minimum_differentiation_matching(
+    equations: tuple[_AssembledEquation, ...],
+    variables: tuple[DAEVariableBlock, ...],
+    /,
+) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...]]:
+    """Match highest declared derivatives before differentiating constraints.
+
+    Cardinality alone can match an energy equation to its algebraic flow and a
+    temperature equality to its differential state. Differentiating that
+    equality then removes a physical constraint even for an index-one system.
+    First seek a zero-differentiation perfect matching using the sparse graph.
+    Only genuinely differentiated, square systems need weighted assignment.
+    """
+    names = tuple(variable.name for variable in variables)
+    orders = {variable.name: variable.maximum_derivative_order for variable in variables}
+    if not any(orders.values()):
+        return _maximum_matching(equations, names)
+    highest = tuple(
+        _AssembledEquation(
+            equation.name,
+            equation.residual,
+            tuple(
+                edge
+                for edge in equation.incidence
+                if edge.derivative_order == orders[edge.variable_name]
+            ),
+        )
+        for equation in equations
+    )
+    matching = _maximum_matching(highest, names)
+    if not matching[1] and not matching[2]:
+        return matching
+    cardinality = _maximum_matching(equations, names)
+    if cardinality[1] or cardinality[2]:
+        return cardinality
+    indices = {name: index for index, name in enumerate(names)}
+    costs = np.zeros((len(equations), len(names)), dtype=float)
+    valid = np.zeros(costs.shape, dtype=bool)
+    for row, equation in enumerate(equations):
+        for edge in equation.incidence:
+            column = indices[edge.variable_name]
+            cost = max(orders[edge.variable_name] - edge.derivative_order, 0)
+            if not valid[row, column] or cost < costs[row, column]:
+                costs[row, column] = cost
+            valid[row, column] = True
+    columns, _, _, feasible, _ = _structural_assignment(
+        jnp.asarray(costs), jnp.asarray(valid)
+    )
+    if not bool(feasible):
+        raise RuntimeError(
+            "Native weighted assignment rejected a fully matched DAE graph."
+        )
+    return (
+        {
+            equation.name: names[column]
+            for equation, column in zip(equations, np.asarray(columns), strict=True)
+        },
+        (),
+        (),
+    )
+
+
 def _strong_components(
     graph: Mapping[str, tuple[str, ...]], /
 ) -> tuple[tuple[str, ...], ...]:
@@ -599,8 +665,8 @@ def analyze_dae_structure(
     assembly = _assemble(source)
     variable_names = tuple(value.name for value in assembly.variables)
     variable_by_name = {value.name: value for value in assembly.variables}
-    matching, unmatched_equations, unmatched_variables = _maximum_matching(
-        assembly.equations, variable_names
+    matching, unmatched_equations, unmatched_variables = (
+        _minimum_differentiation_matching(assembly.equations, assembly.variables)
     )
     equation_by_name = {value.name: value for value in assembly.equations}
     differentiations = []

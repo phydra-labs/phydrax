@@ -255,3 +255,55 @@ def test_structured_state_design_lowers_declared_vector_constraints():
     )
     assert program.equality_indices.tolist() == [0, 1]
     assert program.upper_indices.tolist() == [2]
+
+
+@pytest.mark.parametrize(
+    "lower,upper,point,multiplier,valid",
+    [
+        (0.5, 1.5, 0.5, -1.0, True),
+        (0.5, 1.5, 1.5, 1.0, True),
+        (0.5, float("inf"), 0.5, 1.0, False),
+        (-float("inf"), 1.5, 1.5, -1.0, False),
+    ],
+)
+def test_bound_form_certificate_splits_two_sided_net_duals_but_rejects_one_sided_wrong_signs(
+    lower, upper, point, multiplier, valid
+):
+    coordinates = jnp.asarray([point])
+    constraints = lambda value, _: value
+    space = phx.linalg.ArraySpace((1,), dtype=coordinates.dtype)
+    pattern = phx.sparse.SparsePattern.from_coo([0], [0], (1, 1))
+    jacobian = phx.sparse.compile_sparse_jacobian(
+        constraints,
+        coordinates,
+        source=space,
+        target=space,
+        structure=pattern,
+        compiler="native",
+    )
+    program = opt.StructuredNonlinearProgram(
+        lambda value, _: -multiplier * value[0],
+        constraints,
+        jacobian,
+        variable_lower=[-jnp.inf],
+        variable_upper=[jnp.inf],
+        constraint_lower=[lower],
+        constraint_upper=[upper],
+        constraint_sources=("physical-range",),
+        program_id="bound-form-dual-certificate",
+        structure_id="scalar-range",
+    )
+    certificate = program.certificate(
+        coordinates,
+        jnp.asarray([multiplier]),
+        jnp.zeros(1),
+        jnp.zeros(1),
+        active_tolerance=1e-8,
+    )
+    assert jnp.allclose(certificate.stationarity_residual, 0.0)
+    assert certificate.primal_feasibility == 0.0
+    if valid:
+        assert certificate.dual_feasibility == 0.0
+        assert certificate.complementarity == 0.0
+    else:
+        assert certificate.dual_feasibility > 0.0

@@ -84,6 +84,15 @@ commercial = [
 cudss = [
   "spineax>=0.0.5,<0.1; python_version >= '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+fmi = [
+  "fmpy>=0.3.31,<0.4",
+]
+helics = [
+  "helics>=3.6.1,<4",
+]
+opendss = [
+  "opendssdirect.py>=0.9.4,<0.10",
+]
 hdf5 = [
   "h5py>=3.11",
 ]

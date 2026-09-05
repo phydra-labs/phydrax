@@ -67,3 +67,29 @@ def test_affine_exponential_step_rejects_invalid_duration():
 
     with pytest.raises(Exception, match="duration must be non-negative"):
         phx.dynamics.affine_exponential_step(operator, state, state, -1.0)
+
+
+def test_reverse_parameter_gradient_survives_exact_krylov_breakdown():
+    # A one-dimensional affine flow closes its Krylov subspace exactly. The
+    # discarded zero residual must not inject sqrt(0) NaNs into reverse AD.
+    conductance, duration = 10.0, 500.0
+    initial, ambient, heat = 300.0, 280.0, 50.0
+
+    def temperature(log_capacity):
+        capacity = 10000.0 * jnp.exp(log_capacity)
+        operator = phx.linalg.DenseLinearOperator(
+            jnp.reshape(-conductance / capacity, (1, 1))
+        )
+        forcing = jnp.reshape((conductance * ambient + heat) / capacity, (1,))
+        return phx.dynamics.affine_exponential_step(
+            operator, jnp.array([initial]), forcing, duration
+        ).value[0]
+
+    log_capacity = jnp.asarray(0.2, dtype=jnp.float64)
+    exponent = conductance * duration / (10000.0 * np.exp(0.2))
+    equilibrium = ambient + heat / conductance
+    expected = (initial - equilibrium) * np.exp(-exponent) * exponent
+    reverse = jax.grad(temperature)(log_capacity)
+    forward = jax.jacfwd(temperature)(log_capacity)
+    np.testing.assert_allclose(reverse, expected, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(forward, expected, rtol=1e-10, atol=1e-10)

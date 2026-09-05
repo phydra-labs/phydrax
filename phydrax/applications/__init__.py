@@ -7,6 +7,7 @@
 from . import (
     astrodynamics,
     astrophysics,
+    building_energy,
     cardiovascular,
     cellular_mechanics,
     compact_objects,
@@ -15,12 +16,14 @@ from . import (
     cosmology,
     crystal_plasticity,
     electrophysiology,
+    energy_planning,
     fracture,
     free_boundary,
     hydrodynamics,
     incompressible_flow,
     ocean,
     phase_field,
+    power,
     reacting_flow,
     robotics,
     skeletal_muscle,
@@ -29,6 +32,12 @@ from . import (
     thermofluids,
     two_phase_flow,
     vortex_flow,
+)
+from ._energy_series import (
+    counter_to_intervals,
+    EnergySeries,
+    integrate_energy_series,
+    rebin_energy_series,
 )
 from .contact import (
     PreparedReynoldsFilm,
@@ -41,6 +50,13 @@ from .contact import (
 
 
 __all__ = [
+    "EnergySeries",
+    "building_energy",
+    "counter_to_intervals",
+    "energy_planning",
+    "integrate_energy_series",
+    "power",
+    "rebin_energy_series",
     "astrodynamics",
     "astrophysics",
     "cardiovascular",

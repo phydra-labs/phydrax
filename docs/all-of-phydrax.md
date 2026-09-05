@@ -1806,6 +1806,21 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   without changing device equations. See
   [Guides → Circuit networks](guides_circuit_networks.md) and
   [Guides → Circuit periodic analysis](guides_circuit_periodic.md).
+- **Energy systems**: compose balanced AC/DC power studies, dispatch and storage,
+  reduced building thermal models, and explicitly oriented heat/material ports.
+  Physical power topology is separate from bus-control studies; carrier amounts,
+  rates, inventory chronology, and interval quantities retain their unit and
+  reference semantics. Native nonlinear, optimization, dynamics, control, and
+  linear-algebra substrates own numerical execution. EPW, power-case formats,
+  geometry-bound radiative artifacts, and host-only external runtimes are explicit
+  interchange boundaries, not replacement physics or differentiable callbacks.
+  See [Guides → Power systems](guides_power_systems.md),
+  [Building energy](guides_building_energy.md),
+  [Energy planning](guides_energy_planning.md),
+  [Thermofluid processes](guides_thermofluid_processes.md),
+  [Energy quantities and series](guides_energy_series.md),
+  [Energy interchange](guides_energy_interchange.md), and
+  [Energy workflows and qualification](guides_energy_workflows.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

@@ -15,12 +15,14 @@ from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from .._bounds import Bounds
 from .._branch_and_bound import (
     AbstractBranchAndBoundProblem,
     branch_and_bound,
     BranchAndBoundPolicy,
     BranchAndBoundResult,
 )
+from ._audit import audit_dual_infeasibility_ray, DualRayAudit
 from ._lifecycle import (
     bind_convex_numeric,
     ConvexProgramExecution,
@@ -187,17 +189,22 @@ class _Node:
     upper: np.ndarray
     path: str
     execution: ConvexProgramExecution | None = None
+    infeasibility_certificate: DualRayAudit | None = None
 
 
 class _MixedIntegerBranchProblem(AbstractBranchAndBoundProblem):
     mixed: MixedIntegerProgram
     policy: MixedIntegerSolvePolicy
-    template: ConvexProgramTemplate
+    templates: dict[str, ConvexProgramTemplate]
     failed_relaxation: list[bool] = eqx.field(static=True)
 
     def __init__(self, mixed, policy):
         self.mixed, self.policy = mixed, policy
-        self.template = prepare_convex_template(mixed.relaxation, policy.relaxation)
+        self.templates = {
+            mixed.relaxation.structure_id: prepare_convex_template(
+                mixed.relaxation, policy.relaxation
+            )
+        }
         self.failed_relaxation = [False]
         self.problem_id = mixed.structure_id
 
@@ -212,10 +219,22 @@ class _MixedIntegerBranchProblem(AbstractBranchAndBoundProblem):
         return node.path
 
     def _solve(self, node):
+        if node.infeasibility_certificate is not None:
+            return None
         if node.execution is None:
             numeric = _replace_bounds(self.mixed.relaxation, node.lower, node.upper)
+            if isinstance(numeric, QuadraticProgram):
+                node.infeasibility_certificate = _linear_bound_certificate(
+                    numeric, self.policy.relaxation.termination.primal_infeasible
+                )
+                if node.infeasibility_certificate is not None:
+                    return None
+            if numeric.structure_id not in self.templates:
+                self.templates[numeric.structure_id] = prepare_convex_template(
+                    numeric, self.policy.relaxation
+                )
             node.execution = solve_prepared_convex_program(
-                bind_convex_numeric(self.template, numeric)
+                bind_convex_numeric(self.templates[numeric.structure_id], numeric)
             )
             result = node.execution.result
             self.failed_relaxation[0] |= not bool(np.asarray(result.successful)) and int(
@@ -227,17 +246,23 @@ class _MixedIntegerBranchProblem(AbstractBranchAndBoundProblem):
         result = self._solve(node)
         return (
             float(np.asarray(result.objective))
-            if bool(np.asarray(result.successful))
+            if result is not None and bool(np.asarray(result.successful))
             else np.inf
         )
 
     def feasible(self, node, /):
-        return not np.any(node.lower > node.upper) and bool(
-            np.asarray(self._solve(node).successful)
+        result = self._solve(node)
+        return (
+            not np.any(node.lower > node.upper)
+            and result is not None
+            and bool(np.asarray(result.successful))
         )
 
     def complete(self, node, /):
-        primal = np.asarray(self._solve(node).primal)
+        result = self._solve(node)
+        if result is None:
+            return False
+        primal = np.asarray(result.primal)
         values = primal[np.asarray(self.mixed.discrete_indices, dtype=np.int64)]
         return bool(
             np.all(np.isfinite(values))
@@ -250,12 +275,17 @@ class _MixedIntegerBranchProblem(AbstractBranchAndBoundProblem):
         result = self._solve(node)
         return (
             float(np.asarray(result.objective))
-            if bool(np.asarray(result.successful)) and self.complete(node)
+            if result is not None
+            and bool(np.asarray(result.successful))
+            and self.complete(node)
             else np.inf
         )
 
     def branch(self, node, /):
-        primal = np.asarray(self._solve(node).primal)
+        result = self._solve(node)
+        if result is None:
+            raise ValueError("A certified infeasible node cannot be branched.")
+        primal = np.asarray(result.primal)
         indices = np.asarray(self.mixed.discrete_indices, dtype=np.int64)
         values = primal[indices]
         position = int(np.argmax(np.abs(values - np.rint(values))))
@@ -340,52 +370,165 @@ def _indices(values, variables, name):
     return tuple(sorted(resolved))
 
 
-def _replace_conic_bounds(program, lower, upper):
-    return eqx.tree_at(
-        lambda value: (value.lower_bounds, value.upper_bounds),
-        program,
+def _linear_bound_certificate(problem: QuadraticProgram, tolerance: float):
+    """Derive affine implications; prune only with an independently audited ray.
+
+    Each inferred bound retains its nonnegative combination of the canonical
+    rows. No bound is installed in the numerical problem. Exhausting this finite
+    propagation pass is not a feasibility claim: the original solver still runs.
+    """
+    equality = np.asarray(problem.equality_matrix)
+    inequality = np.asarray(problem.inequality_matrix)
+    matrix = np.concatenate((equality, -equality, inequality))
+    rhs = np.concatenate(
         (
-            jnp.asarray(lower, dtype=program.linear.dtype),
-            jnp.asarray(upper, dtype=program.linear.dtype),
-        ),
+            np.asarray(problem.equality_rhs),
+            -np.asarray(problem.equality_rhs),
+            np.asarray(problem.inequality_rhs),
+        )
     )
+    if not np.all(np.isfinite(matrix)) or not np.all(np.isfinite(rhs)):
+        return None
+    n, m = problem.num_variables, problem.num_equalities
+    lower, upper = np.full(n, -np.inf), np.full(n, np.inf)
+    lower_proof, upper_proof = [None] * n, [None] * n
+    supports = tuple(np.flatnonzero(row) for row in matrix)
+
+    def add(target, proof, scale):
+        for index, value in proof.items():
+            target[index] = target.get(index, 0.0) + scale * value
+
+    def audit(proof):
+        multipliers = np.zeros(len(rhs))
+        for index, value in proof.items():
+            multipliers[index] = value
+        eq = multipliers[:m] - multipliers[m : 2 * m]
+        iq = multipliers[2 * m :]
+        lo, hi = np.zeros(n), np.zeros(n)
+        fixed = np.asarray(problem.fixed_bound_indices, dtype=int)
+        signed = eq[problem.num_user_equalities :]
+        lo[fixed], hi[fixed] = np.maximum(-signed, 0), np.maximum(signed, 0)
+        start = problem.num_user_inequalities
+        middle = start + len(problem.lower_bound_indices)
+        lo[np.asarray(problem.lower_bound_indices, dtype=int)] = iq[start:middle]
+        hi[np.asarray(problem.upper_bound_indices, dtype=int)] = iq[middle:]
+        result = audit_dual_infeasibility_ray(
+            problem,
+            jnp.asarray(eq[: problem.num_user_equalities]),
+            jnp.asarray(iq[: problem.num_user_inequalities]),
+            jnp.asarray(lo),
+            jnp.asarray(hi),
+            tolerance=tolerance,
+        )
+        return result if bool(np.asarray(result.valid)) else None
+
+    # Affine implication cycles can converge only asymptotically. A dimension-
+    # derived cap keeps presolve finite without asserting that a fixed point or
+    # a numerically tiny improvement proves feasibility.
+    for _ in range(n + len(rhs) + 1):
+        changed = False
+        for row, indices in enumerate(supports):
+            coefficients = matrix[row, indices]
+            selected = np.where(coefficients > 0, lower[indices], upper[indices])
+            contributions = coefficients * selected
+            if np.any(np.isnan(contributions)) or np.any(np.isposinf(contributions)):
+                continue
+            known = np.isfinite(contributions)
+            unknown = int(np.count_nonzero(~known))
+            minimum = float(np.sum(contributions[known]))
+            proofs = tuple(
+                lower_proof[index] if coefficient > 0 else upper_proof[index]
+                for index, coefficient in zip(indices, coefficients, strict=True)
+            )
+            if unknown == 0 and minimum > rhs[row] + tolerance:
+                proof = {row: 1.0}
+                for coefficient, bound_proof in zip(coefficients, proofs, strict=True):
+                    add(proof, bound_proof, abs(coefficient))
+                certificate = audit(proof)
+                if certificate is not None:
+                    return certificate
+            for position, index in enumerate(indices):
+                if unknown > int(not known[position]):
+                    continue
+                other = minimum - (contributions[position] if known[position] else 0.0)
+                coefficient = coefficients[position]
+                candidate = (rhs[row] - other) / coefficient
+                if not np.isfinite(candidate):
+                    continue
+                improves = (
+                    candidate < upper[index] - tolerance
+                    if coefficient > 0
+                    else candidate > lower[index] + tolerance
+                )
+                if not improves:
+                    continue
+                proof = {row: 1.0 / abs(coefficient)}
+                for other_position, bound_proof in enumerate(proofs):
+                    if other_position != position:
+                        add(
+                            proof,
+                            bound_proof,
+                            abs(coefficients[other_position] / coefficient),
+                        )
+                if coefficient > 0:
+                    upper[index], upper_proof[index] = candidate, proof
+                else:
+                    lower[index], lower_proof[index] = candidate, proof
+                changed = True
+                if lower[index] > upper[index] + tolerance:
+                    contradiction = dict(lower_proof[index])
+                    add(contradiction, upper_proof[index], 1.0)
+                    certificate = audit(contradiction)
+                    if certificate is not None:
+                        return certificate
+        if not changed:
+            break
+    return None
 
 
 def _replace_bounds(program, lower, upper):
+    if np.array_equal(lower, np.asarray(program.lower_bounds)) and np.array_equal(
+        upper, np.asarray(program.upper_bounds)
+    ):
+        return program
     dtype = program.linear.dtype
-    lower_, upper_ = jnp.asarray(lower, dtype=dtype), jnp.asarray(upper, dtype=dtype)
+    bounds = Bounds(jnp.asarray(lower, dtype=dtype), jnp.asarray(upper, dtype=dtype))
+    # Branching changes a finite interval into a fixed coordinate. Rebuild its
+    # canonical bound role: opposing inequalities have no strict interior and
+    # must not masquerade as the root's unchanged numeric topology.
     if isinstance(program, ConicProgram):
-        return _replace_conic_bounds(program, lower, upper)
-    if isinstance(program, LinearProgram):
-        canonical = _replace_conic_bounds(program.canonical, lower, upper)
-        return eqx.tree_at(
-            lambda value: (value.lower_bounds, value.upper_bounds, value.canonical),
-            program,
-            (lower_, upper_, canonical),
+        return ConicProgram(
+            program.quadratic,
+            program.linear,
+            program.constraint_matrix,
+            program.constraint_rhs,
+            program.cone,
+            bounds=bounds,
+            problem_id=program.problem_id,
+            convexity_evidence=program.convexity_evidence,
         )
-    fixed = jnp.asarray(program.fixed_bound_indices, dtype=jnp.int32)
-    lo_idx = jnp.asarray(program.lower_bound_indices, dtype=jnp.int32)
-    hi_idx = jnp.asarray(program.upper_bound_indices, dtype=jnp.int32)
-    eq_rhs = jnp.concatenate(
-        (program.equality_rhs[..., : program.num_user_equalities], lower_[fixed]), axis=-1
-    )
-    ineq_rhs = jnp.concatenate(
-        (
-            program.inequality_rhs[..., : program.num_user_inequalities],
-            -lower_[lo_idx],
-            upper_[hi_idx],
-        ),
-        axis=-1,
-    )
-    return eqx.tree_at(
-        lambda value: (
-            value.lower_bounds,
-            value.upper_bounds,
-            value.equality_rhs,
-            value.inequality_rhs,
-        ),
-        program,
-        (lower_, upper_, eq_rhs, ineq_rhs),
+    if isinstance(program, LinearProgram):
+        return LinearProgram(
+            program.linear,
+            equality_matrix=program.equality_matrix,
+            equality_rhs=program.equality_rhs,
+            inequality_matrix=program.inequality_matrix,
+            inequality_rhs=program.inequality_rhs,
+            bounds=bounds,
+            problem_id=program.problem_id,
+        )
+    return QuadraticProgram(
+        program.quadratic,
+        program.linear,
+        equality_matrix=program.equality_matrix[..., : program.num_user_equalities, :],
+        equality_rhs=program.equality_rhs[..., : program.num_user_equalities],
+        inequality_matrix=program.inequality_matrix[
+            ..., : program.num_user_inequalities, :
+        ],
+        inequality_rhs=program.inequality_rhs[..., : program.num_user_inequalities],
+        bounds=bounds,
+        problem_id=program.problem_id,
+        convexity_evidence=program.convexity_evidence,
     )
 
 

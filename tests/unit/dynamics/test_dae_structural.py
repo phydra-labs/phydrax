@@ -37,18 +37,46 @@ def _pendulum_like_source():
     return AcausalDAESource((DAEComponent("body", variables, equations),))
 
 
-def test_declared_pantelides_reduction_reports_conditional_index_three():
+def test_index_three_original_constraint_audit_detects_inconsistent_state():
     source = _pendulum_like_source()
     policy = DAEStructuralPolicy(2, 1)
-    analysis = analyze_dae_structure(source, policy)
-    assert analysis.successful
-    assert analysis.structural_index == 3
     compilation = compile_acausal_dae(source, policy)
     state = jnp.asarray([0.0, 1.0, 0.0])
-    rate = jnp.asarray([0.0, 0.0, -1.0])
+    rate = jnp.zeros(3)
     residual = jax.jit(compilation.system.residual)(0.0, state, rate, None)
-    assert residual.shape == state.shape
-    assert compilation.residual_audit(0.0, state, rate).shape == (2,)
+    assert jnp.allclose(residual, 0)
+    assert jnp.allclose(compilation.residual_audit(0.0, state, rate), 0)
+    # Differentiating a holonomic constraint does not establish its initial
+    # invariant: a stationary off-manifold state must fail the original audit.
+    inconsistent = state.at[1].set(1.1)
+    assert jnp.allclose(compilation.system.residual(0.0, inconsistent, rate, None), 0)
+    assert jnp.max(jnp.abs(compilation.residual_audit(0.0, inconsistent, rate))) > 0.2
+
+
+def test_index_one_lowering_preserves_physical_flow_and_state_derivative():
+    component = DAEComponent(
+        "decay",
+        (DAEVariableBlock("a_flow", (), 0), DAEVariableBlock("z_state", (), 1)),
+        (
+            DAEEquationBlock(
+                "balance",
+                lambda time, jet, args: jet.value("z_state", 1) - jet.value("a_flow"),
+                (DAEDerivativeIncidence("z_state", 1), DAEDerivativeIncidence("a_flow")),
+            ),
+            DAEEquationBlock(
+                "constitutive",
+                lambda time, jet, args: jet.value("a_flow") + jet.value("z_state"),
+                (DAEDerivativeIncidence("a_flow"), DAEDerivativeIncidence("z_state")),
+            ),
+        ),
+    )
+    compilation = compile_acausal_dae(
+        AcausalDAESource((component,)), DAEStructuralPolicy(1, 0, tearing="none")
+    )
+    # x=1, flow=-1, dx/dt=-1 is a physical jet of dx/dt=-x.
+    state, rate = jnp.asarray([-1.0, 1.0]), jnp.asarray([0.0, -1.0])
+    assert jnp.allclose(jax.jit(compilation.system.residual)(0.0, state, rate, None), 0)
+    assert jnp.allclose(compilation.residual_audit(0.0, state, rate), 0)
 
 
 def test_structural_failure_names_unmatched_variables_and_capacity():

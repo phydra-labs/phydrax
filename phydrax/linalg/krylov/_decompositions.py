@@ -28,8 +28,23 @@ def _euclidean_inner(left: Array, right: Array, /) -> Array:
     return jnp.vdot(left, right)
 
 
+def _norm_from_squared(squared: Array, /) -> Array:
+    """Exact norm with the zero subgradient on an inactive zero residual.
+
+    Happy breakdown closes the active Krylov subspace. Its discarded residual
+    has zero cotangent, but differentiating sqrt(0) directly still forms 0/0 in
+    reverse mode. Select a finite square-root argument before taking the root;
+    the zero branch then has zero tangent without perturbing any positive norm.
+    Nonfinite squared lengths remain nonfinite instead of becoming zero.
+    """
+    squared = jnp.real(squared)
+    inactive = jnp.isfinite(squared) & (squared <= 0.0)
+    root = jnp.sqrt(jnp.where(inactive, 1.0, squared))
+    return jnp.where(inactive, 0.0, root)
+
+
 def _norm(vector: Array, inner: InnerProduct, /) -> Array:
-    return jnp.sqrt(jnp.maximum(jnp.real(inner(vector, vector)), 0.0))
+    return _norm_from_squared(inner(vector, vector))
 
 
 def _breakdown_tolerance(
@@ -698,7 +713,7 @@ def _block_inner(left: Array, right: Array, inner: InnerProduct, /) -> Array:
 
 def _block_norm(block: Array, inner: InnerProduct, /) -> Array:
     gram = _block_inner(block, block, inner)
-    return jnp.sqrt(jnp.maximum(jnp.real(jnp.trace(gram)), 0.0))
+    return _norm_from_squared(jnp.trace(gram))
 
 
 def _orthonormalize_block(

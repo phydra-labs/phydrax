@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import Any
 
 import equinox as eqx
@@ -37,6 +37,13 @@ class MaterialFlowDirection(StrEnum):
     BIDIRECTIONAL = "bidirectional"
 
 
+class HeatFlowOrientation(IntEnum):
+    """Sign converting a heat-port flow into heat entering its component."""
+
+    INTO_COMPONENT = 1
+    OUT_OF_COMPONENT = -1
+
+
 class ThermofluidPortSpec(StrictModule):
     name: str = eqx.field(static=True)
     kind: ThermofluidPortKind = eqx.field(static=True)
@@ -44,6 +51,8 @@ class ThermofluidPortSpec(StrictModule):
     catalog_id: str = eqx.field(static=True)
     thermodynamics_id: str = eqx.field(static=True)
     state_pair: str = eqx.field(static=True)
+    heat_flow_orientation: HeatFlowOrientation = eqx.field(static=True)
+    mass_flow_orientation: int = eqx.field(static=True)
     port_id: str = eqx.field(static=True)
 
     def __init__(
@@ -56,6 +65,8 @@ class ThermofluidPortSpec(StrictModule):
         catalog_id: str = "none",
         thermodynamics_id: str = "none",
         state_pair: str = "none",
+        heat_flow_orientation: HeatFlowOrientation = HeatFlowOrientation.INTO_COMPONENT,
+        mass_flow_orientation: int = 1,
     ) -> None:
         name_value = str(name)
         if not name_value:
@@ -64,6 +75,13 @@ class ThermofluidPortSpec(StrictModule):
             raise TypeError("kind must be ThermofluidPortKind.")
         if not isinstance(direction, MaterialFlowDirection):
             raise TypeError("direction must be MaterialFlowDirection.")
+        if not isinstance(heat_flow_orientation, HeatFlowOrientation):
+            raise TypeError("heat_flow_orientation must be HeatFlowOrientation.")
+        if isinstance(mass_flow_orientation, bool) or mass_flow_orientation not in (
+            -1,
+            1,
+        ):
+            raise ValueError("mass_flow_orientation must be -1 or +1.")
         catalog = str(catalog_id)
         thermodynamics = str(thermodynamics_id)
         pair = str(state_pair)
@@ -80,6 +98,8 @@ class ThermofluidPortSpec(StrictModule):
         self.catalog_id = catalog
         self.thermodynamics_id = thermodynamics
         self.state_pair = pair
+        self.heat_flow_orientation = heat_flow_orientation
+        self.mass_flow_orientation = int(mass_flow_orientation)
         self.port_id = canonical_fingerprint(
             {
                 "kind": kind.value,
@@ -88,6 +108,8 @@ class ThermofluidPortSpec(StrictModule):
                 "catalog": catalog,
                 "thermodynamics": thermodynamics,
                 "state_pair": pair,
+                "heat_flow_orientation": int(heat_flow_orientation),
+                "mass_flow_orientation": int(mass_flow_orientation),
             }
         )
 
@@ -103,7 +125,7 @@ class ThermofluidComponent(StrictModule):
         ports: tuple[ThermofluidPortSpec, ...],
         /,
         *,
-        model_parameters: tuple[tuple[str, float], ...] = (),
+        model_parameters: tuple[tuple[str, float | str], ...] = (),
     ) -> None:
         if not isinstance(dae_component, DAEComponent):
             raise TypeError("dae_component must be DAEComponent.")
@@ -194,6 +216,7 @@ class ThermofluidProcessPlan(StrictModule):
         if len(by_name) != len(component_values):
             raise ValueError("Thermofluid component names must be unique.")
         dae_connections = []
+        connected_ports: set[tuple[str, str]] = set()
         for connection in connection_values:
             if (
                 connection.left_component not in by_name
@@ -205,13 +228,32 @@ class ThermofluidProcessPlan(StrictModule):
             left = by_name[connection.left_component].port(connection.left_port)
             right = by_name[connection.right_component].port(connection.right_port)
             _validate_connection(left, right)
+            endpoints = (
+                (connection.left_component, connection.left_port),
+                (connection.right_component, connection.right_port),
+            )
+            if any(endpoint in connected_ports for endpoint in endpoints):
+                raise ValueError(
+                    "A process port may belong to only one pairwise connection; "
+                    "use an explicit control volume or multiport heat body."
+                )
+            connected_ports.update(endpoints)
+            if left.kind is ThermofluidPortKind.HEAT:
+                orientations = (
+                    int(left.heat_flow_orientation),
+                    int(right.heat_flow_orientation),
+                )
+            elif left.kind is ThermofluidPortKind.MATERIAL:
+                orientations = (left.mass_flow_orientation, right.mass_flow_orientation)
+            else:
+                orientations = (1, -1)
             dae_connections.append(
                 DAEConnection(
                     (
                         f"{connection.left_component}.{connection.left_port}",
                         f"{connection.right_component}.{connection.right_port}",
                     ),
-                    (1, -1),
+                    orientations,
                 )
             )
         source = AcausalDAESource(
@@ -286,6 +328,7 @@ def fixed_material_boundary_component(
         catalog_id=catalog_id,
         thermodynamics_id=thermodynamics_id,
         state_pair="pressure-enthalpy",
+        mass_flow_orientation=-1,
     )
     return ThermofluidComponent(
         DAEComponent(str(name), variables, equations, (dae_port,)),
@@ -415,6 +458,7 @@ def _validate_connection(
 
 
 __all__ = [
+    "HeatFlowOrientation",
     "MaterialFlowDirection",
     "ThermofluidComponent",
     "ThermofluidConnection",

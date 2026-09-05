@@ -49,3 +49,23 @@ before mutating the vendor system.
 ---
 
 ::: phydrax.interchange.opticstudio.run_opticstudio_analysis
+
+## Optional energy execution
+
+These host-only boundaries require explicit runtime/version/license provenance.
+They do not execute inside JAX transformations or provide surrogate derivatives.
+FMI support is synchronous FMI 2.0 Co-Simulation; HELICS support is value
+federation. See [the energy interchange guide](../guides_energy_interchange.md)
+for lifecycle, capabilities, unsupported features, and ownership.
+
+::: phydrax.interchange.energy_runtime
+    options:
+      members: true
+
+::: phydrax.interchange.fmi
+    options:
+      members: true
+
+::: phydrax.interchange.helics
+    options:
+      members: true

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fmiModelDescription fmiVersion="2.0" modelName="PhydraxEnergyAccumulator"
+ guid="{phydrax-energy-accumulator}" generationTool="PHYDRA original qualification specimen"
+ variableNamingConvention="flat" numberOfEventIndicators="0">
+ <CoSimulation modelIdentifier="energy_accumulator"
+  canHandleVariableCommunicationStepSize="true" canGetAndSetFMUstate="true"
+  canSerializeFMUstate="true" canInterpolateInputs="true"
+  maxOutputDerivativeOrder="1" providesDirectionalDerivative="true"/>
+ <UnitDefinitions><Unit name="s"><BaseUnit s="1"/></Unit></UnitDefinitions>
+ <DefaultExperiment startTime="0" stopTime="2" stepSize="0.1"/>
+ <ModelVariables>
+  <ScalarVariable name="u" valueReference="0" causality="input" variability="continuous"><Real start="0"/></ScalarVariable>
+  <ScalarVariable name="x" valueReference="1" causality="output" variability="continuous" initial="exact"><Real start="0"/></ScalarVariable>
+  <ScalarVariable name="gain" valueReference="2" causality="parameter" variability="fixed" initial="exact"><Real start="1"/></ScalarVariable>
+  <ScalarVariable name="event_time" valueReference="3" causality="parameter" variability="fixed" initial="exact"><Real start="0.5" unit="s"/></ScalarVariable>
+  <ScalarVariable name="slope" valueReference="4" causality="output" variability="continuous" initial="calculated"><Real/></ScalarVariable>
+  <ScalarVariable name="steps" valueReference="10" causality="output" variability="discrete" initial="exact"><Integer start="0"/></ScalarVariable>
+  <ScalarVariable name="stop_at_event" valueReference="20" causality="parameter" variability="fixed" initial="exact"><Boolean start="false"/></ScalarVariable>
+  <ScalarVariable name="event_done" valueReference="21" causality="output" variability="discrete" initial="exact"><Boolean start="false"/></ScalarVariable>
+  <ScalarVariable name="label" valueReference="30" causality="parameter" variability="fixed" initial="exact"><String start="energy-accumulator"/></ScalarVariable>
+ </ModelVariables>
+ <ModelStructure>
+  <Outputs><Unknown index="2"/><Unknown index="5" dependencies="1 3"/><Unknown index="6"/><Unknown index="8"/></Outputs>
+  <InitialUnknowns><Unknown index="5" dependencies="1 3"/></InitialUnknowns>
+ </ModelStructure>
+</fmiModelDescription>
