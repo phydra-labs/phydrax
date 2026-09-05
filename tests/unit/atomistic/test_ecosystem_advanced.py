@@ -209,6 +209,124 @@ def test_interaction_site_pair_terms_honor_topology_scales():
     np.testing.assert_allclose(result.forces, 0.0, atol=1.0e-12)
 
 
+def test_torsion_series_mapping_preserves_particle_and_parameter_identity():
+    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    mapping = {
+        "unit_system": units.to_dict(),
+        "particle_ids": [10, 30, 70, 90],
+        "atomic_numbers": [6, 6, 6, 6],
+        "masses": [12.0, 12.0, 12.0, 12.0],
+        "atom_type_ids": [0, 0, 0, 0],
+        "charges": [0.0, 0.0, 0.0, 0.0],
+        "topology": {
+            "torsions": [[10, 30, 70, 90], [10, 70, 30, 90]],
+            "torsion_type_ids": [0, 1],
+        },
+        "parameters": {
+            "torsion_amplitude": [[0.8, 0.3], [0.2, 0.0]],
+            "torsion_periodicity": [[1, 3], [2, 1]],
+            "torsion_phase": [[0.37, -0.28], [-0.4, 0.0]],
+            "torsion_mask": [[1.0, 1.0], [1.0, 0.0]],
+        },
+        "nonbonded": {"cutoff": 10.0},
+    }
+    reordered = {
+        **mapping,
+        "topology": {**mapping["topology"], "torsion_type_ids": [1, 0]},
+        "parameters": {
+            name: values[::-1] for name, values in mapping["parameters"].items()
+        },
+    }
+    positions = jnp.asarray(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.7, 1.2, 0.9]]
+    )
+    evaluations = []
+    for record in (mapping, reordered):
+        prepared = phx.atomistic.interchange.force_field_from_mapping(
+            record
+        ).force_field.prepare()
+        neighbors = (
+            phx.discretization.DenseParticleNeighborhoodPlan(6)
+            .prepare(prepared.system.particles)
+            .build(positions)
+        )
+        result = prepared.potential.evaluate(positions, neighbors)
+        assert bool(result.successful)
+        evaluations.append(result)
+    np.testing.assert_allclose(evaluations[0].energy, evaluations[1].energy, atol=1e-12)
+    np.testing.assert_allclose(evaluations[0].forces, evaluations[1].forces, atol=1e-12)
+
+
+def test_openmm_fourier_components_preserve_energy_and_force_through_roundtrip():
+    openmm = pytest.importorskip("openmm")
+    source = openmm.System()
+    for _ in range(4):
+        source.addParticle(12.0 * openmm.unit.dalton)
+    torsions = openmm.PeriodicTorsionForce()
+    for route, periodicity, phase, amplitude in (
+        ((0, 1, 2, 3), 1, 0.37, 0.8),
+        ((0, 1, 2, 3), 3, -0.28, 0.3),
+        ((0, 2, 1, 3), 2, -0.4, 0.2),
+    ):
+        torsions.addTorsion(
+            *route,
+            periodicity,
+            phase * openmm.unit.radian,
+            amplitude * openmm.unit.kilojoule_per_mole,
+        )
+    source.addForce(torsions)
+    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    bundle = phx.atomistic.interchange.from_openmm_system(
+        source, units, atomic_numbers=[6, 6, 6, 6], cutoff=10.0
+    )
+    bundle = phx.atomistic.interchange.force_field_from_mapping(
+        phx.atomistic.interchange.force_field_to_mapping(bundle)
+    )
+    prepared = bundle.force_field.prepare()
+    positions = jnp.asarray(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.7, 1.2, 0.9]]
+    )
+    neighbors = (
+        phx.discretization.DenseParticleNeighborhoodPlan(6)
+        .prepare(prepared.system.particles)
+        .build(positions)
+    )
+    native = jax.jit(lambda value: prepared.potential.evaluate(value, neighbors))(
+        positions
+    )
+    assert bool(native.successful)
+    energy_factor = phx.atomistic.molar_energy_to_single_system_factor(
+        KILOJOULE_PER_MOLE,
+        units.scale.energy_unit,
+        constant_set_id=units.constant_set_id,
+    )
+    exported, _, _ = phx.atomistic.interchange.to_openmm_system(bundle)
+    for system in (source, exported):
+        integrator = openmm.VerletIntegrator(0.001)
+        context = openmm.Context(
+            system, integrator, openmm.Platform.getPlatformByName("Reference")
+        )
+        context.setPositions(np.asarray(positions) * openmm.unit.angstrom)
+        state = context.getState(getEnergy=True, getForces=True)
+        reference_energy = (
+            state.getPotentialEnergy().value_in_unit(openmm.unit.kilojoule_per_mole)
+            * energy_factor
+        )
+        reference_forces = (
+            state.getForces(asNumpy=True).value_in_unit(
+                openmm.unit.kilojoule_per_mole / openmm.unit.angstrom
+            )
+            * energy_factor
+        )
+        np.testing.assert_allclose(
+            native.energy, reference_energy, rtol=1e-10, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            native.forces, reference_forces, rtol=1e-10, atol=1e-12
+        )
+        del context, integrator
+
+
 def test_openmm_import_export_energy_force_parity():
     openmm = pytest.importorskip("openmm")
     source = openmm.System()

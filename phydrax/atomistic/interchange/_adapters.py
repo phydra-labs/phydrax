@@ -297,13 +297,36 @@ def force_field_from_mapping(value: dict[str, Any], /) -> AtomisticInterchangeBu
             )
         )
     if legacy_mapping and "torsion_amplitude" in parameters:
-        terms.append(
-            PeriodicTorsionPotential(
-                parameters["torsion_amplitude"],
-                parameters["torsion_periodicity"],
-                parameters["torsion_phase"],
+        if "torsion_mask" in parameters:
+            slots = {
+                int(particle_id): slot
+                for slot, particle_id in enumerate(np.asarray(system.particle_ids))
+            }
+            routes = np.asarray(
+                [
+                    [slots[int(particle_id)] for particle_id in route]
+                    for route in np.asarray(topology.torsions)
+                ],
+                dtype=np.int32,
             )
-        )
+            type_ids = np.asarray(topology.torsion_type_ids)
+            terms.append(
+                PeriodicTorsionSeriesPotential(
+                    np.asarray(parameters["torsion_amplitude"])[type_ids],
+                    np.asarray(parameters["torsion_periodicity"])[type_ids],
+                    np.asarray(parameters["torsion_phase"])[type_ids],
+                    np.asarray(parameters["torsion_mask"])[type_ids],
+                    routes,
+                )
+            )
+        else:
+            terms.append(
+                PeriodicTorsionPotential(
+                    parameters["torsion_amplitude"],
+                    parameters["torsion_periodicity"],
+                    parameters["torsion_phase"],
+                )
+            )
     nonbonded = value["nonbonded"]
     policy = AtomisticNonbondedPolicy(
         nonbonded["cutoff"],
@@ -536,6 +559,10 @@ def to_openmm_system(bundle: AtomisticInterchangeBundle, /):
         (term, coefficient)
         for term, coefficient in zip(terms, coefficients, strict=True)
         if isinstance(term, PeriodicTorsionPotential)
+        or (
+            isinstance(term, GeneralForceFieldTerm)
+            and term.kind is ForceFieldTermKind.TORSION_SERIES
+        )
     ]
     lennard_jones = [
         (term, coefficient)
@@ -681,22 +708,39 @@ def to_openmm_system(bundle: AtomisticInterchangeBundle, /):
         exported.addForce(force)
     for term, coefficient in torsions:
         force = openmm.PeriodicTorsionForce()
-        routes = topology_plan.impropers if term.improper else topology_plan.torsions
-        type_ids = (
-            topology_plan.improper_type_ids
-            if term.improper
-            else topology_plan.torsion_type_ids
-        )
-        for route, type_id in zip(np.asarray(routes), np.asarray(type_ids), strict=True):
-            force.addTorsion(
-                *(slot_by_id[int(value)] for value in route),
-                int(term.periodicity[type_id]),
-                float(term.phase[type_id]) * openmm.unit.radian,
-                float(term.amplitude[type_id])
-                * coefficient
-                * energy_to_kj
-                * openmm.unit.kilojoule_per_mole,
+        if isinstance(term, GeneralForceFieldTerm):
+            amplitude, periodicity, phase, mask = map(np.asarray, term.arrays)
+            for route_index, route in enumerate(np.asarray(term.route_indices)):
+                row = 0 if amplitude.shape[0] == 1 else route_index
+                for column in np.flatnonzero(mask[row]):
+                    force.addTorsion(
+                        *(int(slot) for slot in route),
+                        int(periodicity[row, column]),
+                        float(phase[row, column]) * openmm.unit.radian,
+                        float(amplitude[row, column] * mask[row, column])
+                        * coefficient
+                        * energy_to_kj
+                        * openmm.unit.kilojoule_per_mole,
+                    )
+        else:
+            routes = topology_plan.impropers if term.improper else topology_plan.torsions
+            type_ids = (
+                topology_plan.improper_type_ids
+                if term.improper
+                else topology_plan.torsion_type_ids
             )
+            for route, type_id in zip(
+                np.asarray(routes), np.asarray(type_ids), strict=True
+            ):
+                force.addTorsion(
+                    *(slot_by_id[int(value)] for value in route),
+                    int(term.periodicity[type_id]),
+                    float(term.phase[type_id]) * openmm.unit.radian,
+                    float(term.amplitude[type_id])
+                    * coefficient
+                    * energy_to_kj
+                    * openmm.unit.kilojoule_per_mole,
+                )
         force.setForceGroup(term.force_group)
         exported.addForce(force)
     for route, distance in zip(
@@ -854,7 +898,7 @@ def from_openmm_system(
     epsilon = np.zeros((count,))
     bonds, bond_k, bond_r0 = [], [], []
     angles, angle_k, angle_theta = [], [], []
-    torsions, torsion_k, torsion_n, torsion_phase = [], [], [], []
+    torsions = {}
     exceptions, lj_scales, electrostatic_scales = [], [], []
     supported, unsupported, warnings = (
         [],
@@ -996,12 +1040,13 @@ def from_openmm_system(
                 a, b, c, d, periodicity, phase, amplitude = force.getTorsionParameters(
                     index
                 )
-                torsions.append((a, b, c, d))
-                torsion_n.append(periodicity)
-                torsion_phase.append(phase.value_in_unit(openmm.unit.radian))
-                torsion_k.append(
-                    amplitude.value_in_unit(openmm.unit.kilojoule_per_mole)
-                    * energy_factor
+                torsions.setdefault((a, b, c, d), []).append(
+                    (
+                        amplitude.value_in_unit(openmm.unit.kilojoule_per_mole)
+                        * energy_factor,
+                        int(periodicity),
+                        phase.value_in_unit(openmm.unit.radian),
+                    )
                 )
         elif name in ("CMMotionRemover", "MonteCarloBarostat"):
             supported.append(name)
@@ -1017,6 +1062,18 @@ def from_openmm_system(
         avogadro_constant_set_id=units.constant_set_id,
     )
     report.require_complete()
+    # Fourier components share one topological quartet, not duplicate interactions.
+    torsion_shape = (len(torsions), max(map(len, torsions.values()), default=0))
+    torsion_k = np.zeros(torsion_shape)
+    torsion_n = np.ones(torsion_shape, dtype=np.int32)
+    torsion_phase = np.zeros(torsion_shape)
+    torsion_mask = np.zeros(torsion_shape)
+    for route_index, series in enumerate(torsions.values()):
+        for term_index, (amplitude, periodicity, phase) in enumerate(series):
+            torsion_k[route_index, term_index] = amplitude
+            torsion_n[route_index, term_index] = periodicity
+            torsion_phase[route_index, term_index] = phase
+            torsion_mask[route_index, term_index] = 1.0
     constraints = []
     constraint_distances = []
     for index in range(system.getNumConstraints()):
@@ -1077,7 +1134,7 @@ def from_openmm_system(
         "topology": {
             "bonds": np.asarray(bonds, dtype=np.int64).reshape((-1, 2)),
             "angles": np.asarray(angles, dtype=np.int64).reshape((-1, 3)),
-            "torsions": np.asarray(torsions, dtype=np.int64).reshape((-1, 4)),
+            "torsions": np.asarray(tuple(torsions), dtype=np.int64).reshape((-1, 4)),
             "constraints": np.asarray(constraints, dtype=np.int64).reshape((-1, 2)),
             "constraint_distances": np.asarray(constraint_distances),
             "pair_exceptions": np.asarray(exceptions, dtype=np.int64).reshape((-1, 2)),
@@ -1092,9 +1149,10 @@ def from_openmm_system(
             "bond_length": np.asarray(bond_r0) if bond_r0 else None,
             "angle_stiffness": np.asarray(angle_k) if angle_k else None,
             "angle_value": np.asarray(angle_theta) if angle_theta else None,
-            "torsion_amplitude": np.asarray(torsion_k) if torsion_k else None,
-            "torsion_periodicity": np.asarray(torsion_n) if torsion_n else None,
-            "torsion_phase": np.asarray(torsion_phase) if torsion_phase else None,
+            "torsion_amplitude": torsion_k if torsions else None,
+            "torsion_periodicity": torsion_n if torsions else None,
+            "torsion_phase": torsion_phase if torsions else None,
+            "torsion_mask": torsion_mask if torsions else None,
         },
         "nonbonded": nonbonded,
     }

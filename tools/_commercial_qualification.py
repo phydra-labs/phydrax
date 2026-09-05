@@ -249,6 +249,7 @@ def _reference_envelope(
         else ReferenceArtifactManifest.from_record(manifest_value)
     )
     manifest.require_rights(commercial_use=True)
+    manifest.require_uncertainty()
     if not isinstance(payload, bytes):
         raise TypeError("External reference payload must be bytes.")
     if len(payload) != manifest.size_bytes:
@@ -873,6 +874,7 @@ def verify_candidate_artifact(record: Mapping[str, object], /) -> None:
             _mapping(envelope.get("manifest"), "reference manifest")
         )
         manifest.require_rights(commercial_use=True)
+        manifest.require_uncertainty()
 
 
 def assemble_candidate_profile(

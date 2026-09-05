@@ -335,6 +335,36 @@ def test_reference_manifest_refuses_unlicensed_requested_rights():
         manifest.require_rights(commercial_use=True, redistribution=True)
 
 
+def test_unquantified_reference_can_be_admitted_but_not_claimed_exact():
+    manifest = ReferenceArtifactManifest(
+        "raw-coordinate-source",
+        checksum_algorithm="sha256",
+        checksum="cd" * 32,
+        size_bytes=1024,
+        license_id="CC0-1.0",
+        commercial_use_permitted=True,
+        redistribution_permitted=True,
+        training_use_permitted=True,
+        export_permitted=True,
+        export_classification="unclassified",
+        nondimensionalization={"length": 1.0},
+        uncertainty=None,
+        lineage_ids=("source-deposition",),
+    )
+    restored = ReferenceArtifactManifest.from_record(manifest.to_record())
+    assert restored.require_rights(training_use=True) == manifest.manifest_id
+    with pytest.raises(ValueError, match="unquantified uncertainty"):
+        restored.require_uncertainty()
+
+    exact_record = {**manifest.to_record(), "uncertainty": {"position": 0.0}}
+    with pytest.raises(ValueError, match="invalid content address"):
+        ReferenceArtifactManifest.from_record(exact_record)
+    del exact_record["manifest_id"]
+    exact = ReferenceArtifactManifest.from_record(exact_record)
+    assert exact.require_uncertainty() == (("position", 0.0),)
+    assert exact.manifest_id != manifest.manifest_id
+
+
 def test_matrix_preserves_failed_and_inconclusive_gaps_deterministically():
     matrix = QualificationMatrix(
         {

@@ -290,6 +290,8 @@ def build_statistical_dynamics_candidate(
         raise TypeError(
             "reference_manifests must contain ReferenceArtifactManifest values."
         )
+    for reference in references:
+        reference.require_uncertainty()
     evidence_ = tuple(evidence)
     if any(not isinstance(value, QualificationEvidence) for value in evidence_):
         raise TypeError("evidence must contain QualificationEvidence values.")

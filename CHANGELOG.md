@@ -17,6 +17,23 @@
 - Added pinned host-only energy execution, FMI co-simulation and HELICS sessions,
   real external-reference routes, and cross-domain workflows with lifecycle
   archives and scenario-scoped qualification evidence.
+- Added focused protein-folding, nucleic-acid-biophysics, and radiation-biophysics
+  applications, plus exact single-cell transcript scenarios under systems biology;
+  no broad bioinformatics namespace or duplicate simulation engines.
+- Added explicit protein chemistry/force-field binding, joint thermodynamic and
+  kinetic observation inference, paired-state enthalpy estimation, conditional
+  rotamer free energies, rights-bound coordinate proposals, mixed Cartesian/rigid
+  mechanics, and transactional co-translational activation.
+- Added directed nucleotide identity, base-frame/eRMSD/torsion observations,
+  chemical-mapping inference and reconstruction, rigid nucleotide model families,
+  reversible secondary-structure CTMCs, and native electronic-site execution.
+- Added source-pinned external radiation ledgers, mapped direct/indirect lesions,
+  topology-aware clusters, explicit yield normalization, and staged calibration
+  with held-out uncertainty and separate likelihood-rank evidence.
+- Added a neutral loss-aware PDB record reader, identity-validated rigid site-load
+  bindings, conditional rigid velocity heat baths, material insertion epochs, and
+  event-exact CTMC hitting/absorption analysis. Scientific parameter, data, rights,
+  and calibration gates remain explicit.
 - Added solver-neutral meshing specifications, revision-bound scopes, physical
   coordinate contracts, audits, quality metrics, staged provider results,
   interchange, topology lineage, and constrained fixed-topology optimization.
@@ -1846,6 +1863,11 @@
   resource accounting.
 
 ### Changed
+- Reference manifests can retain unknown uncertainty as `None`; quantitative
+  qualification consumers explicitly require known uncertainty instead of treating
+  missing metadata as a zero-error reference.
+- Fixed-support PGM preparation now supports runtime numeric factor tables for
+  exact and implicit-BP inference without host value checks inside JIT.
 - Physical scale, atomistic, electrophysiology, cardiovascular,
   skeletal-muscle, PDE, and neural-operator contracts now share canonical
   dimension and unit definitions.
@@ -1956,6 +1978,15 @@
   differentiating algebraic connections selected by lexical matching.
 - Native Krylov norm evaluation now preserves finite reverse derivatives through
   zero happy-breakdown residuals without perturbing positive norms.
+- OpenMM import preserves multiple Fourier components on each unique topological
+  torsion using native series potentials, including native serialization and
+  OpenMM energy/force round-trip export.
+- Atomistic wrapped/unwrapped coordinate contexts retain bonded force and curvature
+  derivatives instead of freezing supplied coordinate representations.
+- Pairing-aware SVD uses operator-norm backward-error certification, avoiding false
+  failures on numerically accurate null singular modes without relaxing tolerances.
+- Implicit BP removes the fixed inner linear absolute-tolerance floor so tighter
+  requested nonlinear convergence can be attained with native failure evidence.
 - Neo-Hookean finite-element forms now derive their residual from cell energy
   and support explicit two-dimensional plane strain as well as three-dimensional
   kinematics.

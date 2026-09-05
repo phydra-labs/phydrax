@@ -107,9 +107,11 @@ def test_topology_resolves_stable_ids_and_sparse_pair_exceptions():
     np.testing.assert_array_equal(system.topology.bond_indices, [[0, 1]])
 
 
-def test_lennard_jones_force_is_negative_energy_gradient():
-    _, _, dynamics = _runtime()
-    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
+@pytest.mark.parametrize("periodic", [False, True])
+def test_lennard_jones_force_is_negative_energy_gradient(periodic):
+    cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
+    _, _, dynamics = _runtime(cell=cell)
+    positions = jnp.asarray([[5.6, 0.0, 0.0], [6.8, 0.0, 0.0]])
     state = dynamics.initialize_state(
         positions, velocity=jnp.zeros_like(positions), key=jax.random.key(0)
     )
@@ -123,6 +125,72 @@ def test_lennard_jones_force_is_negative_energy_gradient():
         finite_difference, state.force.forces[1, 0], rtol=2e-5, atol=2e-6
     )
     np.testing.assert_allclose(jnp.sum(state.force.forces, axis=0), 0.0, atol=1e-12)
+
+
+@pytest.mark.parametrize("periodic", [False, True])
+def test_coordinate_representations_preserve_bond_force_and_curvature(periodic):
+    cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3)) if periodic else None
+    topology = phx.atomistic.MolecularTopologyPlan(bonds=[[10, 20]])
+    _, system, _ = _runtime(cell=cell, topology=topology)
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
+        system.particles
+    )
+    potential = phx.atomistic.AtomisticPotentialProgram(
+        [phx.atomistic.HarmonicBondPotential([4.0], [1.0])]
+    ).prepare(system)
+    dynamics = phx.atomistic.AtomisticDynamicsPlan(
+        system, potential, neighborhood, phx.atomistic.VelocityVerletPlan(1.0e-3)
+    ).prepare()
+    unwrapped = jnp.asarray([[5.6, 0.0, 0.0], [6.8, 0.0, 0.0]])
+    state = dynamics.initialize_state(
+        unwrapped, velocity=jnp.zeros_like(unwrapped), key=jax.random.key(19)
+    )
+    np.testing.assert_allclose(
+        state.force.forces, [[0.8, 0, 0], [-0.8, 0, 0]], atol=1e-12
+    )
+    position = state.kinematics.positions
+    kwargs = {"unwrapped_positions": unwrapped}
+    if cell is not None:
+        kwargs["fractional_positions"] = cell.fractional(position)
+        kwargs["cell_vectors"] = cell.vectors
+
+    def energy(coordinates):
+        return potential.evaluate(coordinates, state.neighborhood, **kwargs).energy
+
+    def force(coordinates):
+        return potential.evaluate(coordinates, state.neighborhood, **kwargs).forces[1, 0]
+
+    np.testing.assert_allclose(
+        -eqx.filter_jit(jax.grad(energy))(position), state.force.forces, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        eqx.filter_jit(jax.grad(force))(position),
+        [[4.0, 0, 0], [-4.0, 0, 0]],
+        atol=1e-12,
+    )
+    stepped = eqx.filter_jit(dynamics.step_detailed)(state)
+    assert bool(stepped.successful)
+    assert float(stepped.accepted_state.kinematics.momenta[1, 0]) < 0.0
+
+    if cell is not None:
+        fractional = cell.fractional(position)
+        images = state.kinematics.image_counts
+
+        def cell_energy(vectors):
+            coordinates = cell.cartesian_with_vectors(fractional, vectors)
+            whole = cell.cartesian_with_vectors(fractional + images, vectors)
+            return potential.evaluate(
+                coordinates,
+                state.neighborhood,
+                unwrapped_positions=whole,
+                fractional_positions=fractional,
+                cell_vectors=vectors,
+            ).energy
+
+        expected = jnp.zeros((3, 3)).at[0, 0].set(0.16)
+        np.testing.assert_allclose(
+            jax.grad(cell_energy)(cell.vectors), expected, atol=1e-12
+        )
 
 
 def test_velocity_verlet_is_reversible_to_second_order_and_jittable():

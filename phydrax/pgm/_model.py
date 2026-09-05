@@ -819,11 +819,13 @@ def factor_group_dense_tables(
         counts = jnp.sum(configurations, axis=-1).astype(jnp.int32)
         values = group.log_count_potentials[:, counts]
     elif isinstance(group, KernelFactorGroup):
-        states = jnp.broadcast_to(
-            configurations[None, :, :],
-            (count, int(configurations.shape[0]), len(signature)),
-        )
-        values = group.kernel.log_scores(group.parameters, states)
+
+        def score_configuration(configuration):
+            # Preserve the public (..., factor_count, arity) kernel ABI.
+            states = jnp.broadcast_to(configuration, (count, len(signature)))
+            return group.kernel.log_scores(group.parameters, states)
+
+        values = jax.vmap(score_configuration, out_axes=1)(configurations)
     else:
         raise TypeError("Unsupported factor group.")
     return values.reshape((count,) + signature)

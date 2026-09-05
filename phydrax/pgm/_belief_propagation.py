@@ -25,6 +25,7 @@ from ._kernel import (
 )
 from ._model import (
     BinaryCardinalityFactorGroup,
+    DenseTableFactorGroup,
     DiscreteFactorGraph,
     EnumeratedFactorGroup,
     factor_count,
@@ -36,6 +37,7 @@ from ._model import (
     IsingFactorGroup,
     LogicalFactorGroup,
     pack_evidence,
+    PottsFactorGroup,
     VariableStateValues,
 )
 from ._sparse_factor import enumerated_factor_messages, enumerated_joint_scores
@@ -539,6 +541,40 @@ def refresh_belief_propagation(
     )
     updated = eqx.tree_at(lambda value: value.graph, prepared, graph)
     return eqx.tree_at(lambda value: value.factor_tables, updated, tables)
+
+
+def replace_belief_propagation_tables(
+    prepared: PreparedBeliefPropagation,
+    factor_tables: tuple[Array, ...],
+    /,
+) -> PreparedBeliefPropagation:
+    """JIT-safe numeric replacement on prepared dense/Potts support.
+
+    Shape and dtype checks are static; numeric feasibility is reported by the
+    executor. Structured kernels must instead refresh their native parameters.
+    No support, identity, routing, or initial message state is rebuilt.
+    """
+    if len(factor_tables) != len(prepared.factor_tables):
+        raise ValueError("Numeric factor table count differs from prepared support.")
+    tables = []
+    groups = []
+    for group, original, value in zip(
+        prepared.graph.factor_groups, prepared.factor_tables, factor_tables
+    ):
+        if not isinstance(group, (DenseTableFactorGroup, PottsFactorGroup)):
+            raise TypeError("Numeric table replacement requires dense/Potts factors.")
+        array = jnp.asarray(value)
+        if array.shape != original.shape or jnp.iscomplexobj(array):
+            raise ValueError("Numeric factor tables must retain real prepared shapes.")
+        array = prepared.precision.evaluation(array)
+        tables.append(array)
+        groups.append(eqx.tree_at(lambda item: item.log_potentials, group, array))
+    graph = eqx.tree_at(lambda item: item.factor_groups, prepared.graph, tuple(groups))
+    return eqx.tree_at(
+        lambda item: (item.graph, item.factor_tables),
+        prepared,
+        (graph, tuple(tables)),
+    )
 
 
 def initialize_belief_propagation(
@@ -1121,10 +1157,8 @@ def _bethe_log_normalizer(
     )
     graph = prepared.graph
     variable_probabilities = jnp.exp(variable_log_probabilities)
-    variable_entropy_terms = jnp.where(
-        variable_probabilities > 0,
-        -variable_probabilities * variable_log_probabilities,
-        0.0,
+    variable_entropy_terms = -variable_probabilities * jnp.where(
+        variable_probabilities > 0, variable_log_probabilities, 0.0
     )
     variable_entropies = segment_sum(
         variable_entropy_terms,
@@ -1141,7 +1175,7 @@ def _bethe_log_normalizer(
         safe_table = jnp.where(jnp.isfinite(table), table, 0.0)
         factor_energy = factor_energy + jnp.sum(probabilities * safe_table)
         factor_entropy = factor_entropy - jnp.sum(
-            jnp.where(probabilities > 0, probabilities * jnp.log(probabilities), 0.0)
+            probabilities * jnp.log(jnp.where(probabilities > 0, probabilities, 1.0))
         )
     variable_correction = jnp.sum((1 - prepared.variable_degrees) * variable_entropies)
     return factor_energy + expected_evidence + factor_entropy + variable_correction
@@ -1341,5 +1375,6 @@ __all__ = [
     "initialize_belief_propagation",
     "prepare_belief_propagation",
     "refresh_belief_propagation",
+    "replace_belief_propagation_tables",
     "run_belief_propagation",
 ]

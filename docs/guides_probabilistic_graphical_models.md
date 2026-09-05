@@ -111,6 +111,21 @@ uses the native nonlinear fixed-point substrate. `run_implicit_belief_propagatio
 is restricted to finite, fixed-support sum-product systems and returns the nonlinear
 root evidence used by its implicit derivative policy.
 
+For coordinate-dependent factors, `prepare_exact_factor_graph` fixes bounded
+enumeration support and `run_exact_factor_graph` consumes runtime log tables.
+`replace_belief_propagation_tables` refreshes only numeric tables on a prepared
+fixed-support BP graph. NaN/+∞ factor tables produce failed execution evidence;
+exact inference permits −∞ for impossible configurations. The implicit root profile
+additionally requires finite factor tables, messages and unary evidence.
+Changing support requires preparation. Implicit BP uses relative native inner solves
+without an absolute floor that would defeat a tighter requested outer tolerance.
+Convergence is not a certificate of loopy marginal accuracy or a unique physical
+branch.
+
+Use a pure closure with `jax.jit` for array-valued observables, or `eqx.filter_jit`
+for an Equinox callable/full result containing static evidence. A frozen prepared
+object containing arrays is not a hashable JAX static function argument.
+
 Unary evidence uses the same flat variable-state layout:
 
 ```python

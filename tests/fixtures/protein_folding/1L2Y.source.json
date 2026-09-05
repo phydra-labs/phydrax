@@ -1,0 +1,10 @@
+{
+  "source_url": "https://files.rcsb.org/download/1L2Y.pdb",
+  "archive_id": "1L2Y",
+  "license_id": "CC0-1.0",
+  "license_url": "https://www.rcsb.org/pages/usage-policy",
+  "sha256": "5d1bbb545a312dfff1ae1e64b6d8addecb2f561ddc4011aeb5bee9d1dfcd4438",
+  "size_bytes": 959202,
+  "citation": "Neidigh, Fesinmeyer, Andersen, doi:10.1038/nsb798",
+  "selection": "All raw models retained; consumers must explicitly select model 1 or another model. NMR model counts are not thermodynamic populations."
+}

@@ -26,11 +26,19 @@ _CHECKPOINT_FORMAT = "phydrax-atomistic-dynamics-checkpoint"
 
 class AtomisticCheckpointPlan(StrictModule, NonTrainableState):
     dynamics: PreparedAtomisticDynamics
+    scope_id: str | None = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: PreparedAtomisticDynamics, /):
+    def __init__(
+        self, dynamics: PreparedAtomisticDynamics, /, *, scope_id: str | None = None
+    ):
         if not isinstance(dynamics, PreparedAtomisticDynamics):
             raise TypeError("dynamics must be PreparedAtomisticDynamics.")
+        if scope_id is not None and (
+            not isinstance(scope_id, str) or not scope_id or scope_id != scope_id.strip()
+        ):
+            raise ValueError("Checkpoint scope_id must be a canonical nonempty string.")
+        self.scope_id = scope_id
         self.dynamics = dynamics
         self.checkpoint_id = canonical_fingerprint(
             {
@@ -39,6 +47,7 @@ class AtomisticCheckpointPlan(StrictModule, NonTrainableState):
                 "system": dynamics.system.prepared_id,
                 "potential": dynamics.potential.prepared_id,
                 "integrator": dynamics.integrator.plan_id,
+                **({} if scope_id is None else {"scope_id": scope_id}),
             }
         )
 
@@ -74,6 +83,7 @@ def write_atomistic_checkpoint(
         "integrator_id": plan.dynamics.integrator.plan_id,
         "unit_system": plan.dynamics.system.plan.units.to_dict(),
         "state": specification,
+        **({} if plan.scope_id is None else {"scope_id": plan.scope_id}),
     }
     payload_id = canonical_fingerprint(
         {
@@ -125,6 +135,8 @@ def read_atomistic_checkpoint(
         "payload_id",
         "arrays",
     }
+    if plan.scope_id is not None:
+        expected.add("scope_id")
     if set(manifest) != expected:
         raise ValueError(
             "Atomistic checkpoint manifest is not the canonical current format."
@@ -141,6 +153,8 @@ def read_atomistic_checkpoint(
         "potential_id": plan.dynamics.potential.prepared_id,
         "integrator_id": plan.dynamics.integrator.plan_id,
     }
+    if plan.scope_id is not None:
+        identities["scope_id"] = plan.scope_id
     units = AtomisticUnitSystem.from_dict(manifest["unit_system"])
     if units.unit_system_id != plan.dynamics.system.plan.units.unit_system_id:
         raise ValueError("Atomistic checkpoint complete unit descriptor is incompatible.")

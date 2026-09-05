@@ -89,6 +89,8 @@ class DenseSVD(StrictModule):
 
 
 class SVDTolerancePolicy(StrictModule):
+    """Normwise singular-triplet backward error and metric orthogonality limits."""
+
     residual: float = eqx.field(static=True)
     orthogonality: float = eqx.field(static=True)
 
@@ -744,14 +746,13 @@ def _solve_dense_svd(prepared: PreparedSVDSolve, /) -> _SVDNumerics:
         prepared.problem.operator.source,
         right_residual,
     )
-    left_scale = _column_norms(
-        prepared.problem.operator.target,
-        operator_right,
-    ) + values * _column_norms(prepared.problem.operator.target, left)
-    right_scale = _column_norms(
-        prepared.problem.operator.source,
-        adjoint_left,
-    ) + values * _column_norms(prepared.problem.operator.source, right)
+    left_norms = _column_norms(prepared.problem.operator.target, left)
+    right_norms = _column_norms(prepared.problem.operator.source, right)
+    # Null modes still incur operator-scale roundoff; scaling by ||Av|| or
+    # ||A*u|| would instead turn that roundoff into an order-one residual.
+    operator_norm = all_values[0]
+    left_scale = operator_norm * right_norms + values * left_norms
+    right_scale = operator_norm * left_norms + values * right_norms
     tiny = jnp.finfo(values.dtype).tiny
     relative = jnp.maximum(
         left_residuals / jnp.maximum(left_scale, tiny),

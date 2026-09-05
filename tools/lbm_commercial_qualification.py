@@ -196,6 +196,8 @@ def build_lbm_candidate(
         )
     if len({value.manifest_id for value in references}) != len(references):
         raise ValueError("Reference manifest IDs must be unique.")
+    for reference in references:
+        reference.require_uncertainty()
 
     estimate = profile.envelope.preflight(
         **{str(name): int(value) for name, value in resource_counts.items()}

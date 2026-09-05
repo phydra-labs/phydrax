@@ -1,0 +1,12 @@
+{
+  "source_url": "https://github.com/DasLab/rmdb.github.io/releases/download/data-general/TODEX_DMS_0000.rdat",
+  "source_id": "RMDB:TODEX_DMS_0000",
+  "source_page": "https://rmdb.stanford.edu/detail/TODEX_DMS_0000/",
+  "license_id": "CC0-1.0",
+  "license_url": "https://rmdb.stanford.edu/about/",
+  "sha256": "2a597de8277f0965543340210381b0ff6debe4f406c67a445571460c355cc2b5",
+  "size_bytes": 51651,
+  "citation": "Cordero, Lucks, Das (2012), doi:10.1093/bioinformatics/bts554",
+  "uncertainty_source": "Aligned REACTIVITY_ERROR fields; supplied marginal errors, not a covariance model.",
+  "structural_annotation": "Depositor-provided design hypothesis, not independent experimental structure."
+}

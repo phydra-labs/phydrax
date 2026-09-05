@@ -380,6 +380,13 @@ from ._thermal import (
     ThermostatEvaluation,
 )
 from ._topology import MolecularTopologyPlan, PreparedMolecularTopology
+from ._topology_epoch import (
+    activate_topology_epoch,
+    InsertionLedger,
+    prepare_dormant_system,
+    TopologyEpochResult,
+    TopologyEpochTransition,
+)
 from ._training import (
     AtomisticTrainingNormalization,
     AtomisticTrainingPolicy,
@@ -413,6 +420,11 @@ __all__ = [
     "AtomisticCellEvaluation",
     "AtomisticCheckpoint",
     "AtomisticCheckpointPlan",
+    "InsertionLedger",
+    "TopologyEpochResult",
+    "TopologyEpochTransition",
+    "activate_topology_epoch",
+    "prepare_dormant_system",
     "AtomisticCoordinateDiffusion",
     "AtomisticDynamicsClaimEvidence",
     "AtomisticDynamicsDiagnostics",

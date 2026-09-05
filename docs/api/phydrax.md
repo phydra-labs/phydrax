@@ -329,6 +329,12 @@ boundary.
 
 ::: phydrax.qualification.ReferenceArtifactManifest
 
+Reference uncertainty may be `None` when it is genuinely unknown. This preserves
+source provenance and rights without fabricating a zero-error observation.
+`require_uncertainty()` refuses quantitative admission until uncertainty is supplied;
+rights admission remains independent. A numerically successful workflow is not an
+experimentally qualified reference.
+
 `ResolvedRunSpec` binds support dependencies and execution identities before launch.
 Migration follows only explicit acyclic forward edges and retains complete lineage.
 Repositories expose transactional immutable chunks; direct restart validates canonical
