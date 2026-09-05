@@ -63,6 +63,17 @@ unit system's recorded Avogadro constant-set identity. This exceptional semantic
 boundary is fingerprinted in the report's complete unit descriptor; it does not
 make molar and single-system energies ordinarily convertible.
 
+Multiple OpenMM Fourier components for the same ordered atom quartet share one
+topological torsion and are represented by `PeriodicTorsionSeriesPotential`.
+Component amplitudes, periodicities, phases, and masks survive native serialization
+and OpenMM export; dropping duplicate quartet rows would lose physical energy and
+forces.
+
+The neutral `read_pdb_atom_records`/`select_pdb_model` boundary preserves source
+record identity for the protein and nucleic-acid applications. Biological chemistry,
+alternate-conformer selection, missing-atom completion, and force-field admission
+remain explicit application/caller responsibilities rather than parser guesses.
+
 ## MDAnalysis
 
 The optional MDAnalysis bridge treats its documented base values as angstrom,

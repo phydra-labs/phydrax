@@ -645,11 +645,60 @@ class PreparedAtomisticPotentialProgram(StrictModule):
         /,
         **context_kwargs: Any,
     ) -> AtomisticPotentialEvaluation:
+        """Differentiate Cartesian DOFs, retaining fixed coordinate-image choices."""
+        position = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
+        selected_cell = context_kwargs.get("cell")
+        if selected_cell is None:
+            selected_cell = self.system.cell
+        vectors = context_kwargs.get("cell_vectors")
+        unwrapped = context_kwargs.get("unwrapped_positions")
+        fractional = context_kwargs.get("fractional_positions")
+        unwrapped_offset = None
+        if unwrapped is not None:
+            offset = jnp.asarray(unwrapped, dtype=position.dtype) - position
+            if selected_cell is None:
+                unwrapped_offset = jax.lax.stop_gradient(offset)
+            else:
+                image_vectors = (
+                    selected_cell.vectors if vectors is None else jnp.asarray(vectors)
+                ).astype(position.dtype)
+                images = jax.lax.stop_gradient(
+                    jnp.where(
+                        selected_cell.periodic_mask,
+                        jnp.round(
+                            contract(
+                                "ni,ij->nj",
+                                offset,
+                                selected_cell.inverse_for_vectors(image_vectors),
+                            )
+                        ),
+                        0.0,
+                    )
+                )
+                translation = contract("ni,ij->nj", images, image_vectors)
+                unwrapped_offset = translation + jax.lax.stop_gradient(
+                    offset - translation
+                )
+        fractional_offset = None
+        if fractional is not None and vectors is not None and selected_cell is not None:
+            fractional_offset = jax.lax.stop_gradient(
+                jnp.asarray(fractional, dtype=position.dtype)
+                - selected_cell.fractional_with_vectors(position, vectors)
+            )
+
         def closure(value: Array):
-            return self.energy(value, neighborhood, **context_kwargs)
+            kwargs = dict(context_kwargs)
+            if unwrapped_offset is not None:
+                kwargs["unwrapped_positions"] = value + unwrapped_offset
+            if fractional_offset is not None:
+                kwargs["fractional_positions"] = (
+                    selected_cell.fractional_with_vectors(value, vectors)
+                    + fractional_offset
+                )
+            return self.energy(value, neighborhood, **kwargs)
 
         (energy, auxiliary), gradient = jax.value_and_grad(closure, has_aux=True)(
-            jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
+            position
         )
         term_energies, atom_energy, successful, graph_overflow = auxiliary
         forces = -gradient

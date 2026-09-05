@@ -47,6 +47,11 @@ from ._packmol import (
     PackmolComponentPlan,
     PackmolRegionConstraint,
 )
+from ._structure_records import (
+    PDBAtomRecord,
+    read_pdb_atom_records,
+    select_pdb_model,
+)
 from ._trajectory_io import ExtendedXYZTrajectoryPlan, H5MDTrajectoryPlan
 
 
@@ -69,6 +74,7 @@ __all__ = [
     "PackmolAssemblyResult",
     "PackmolComponentPlan",
     "PackmolRegionConstraint",
+    "PDBAtomRecord",
     "TransportedExternalAtomisticProvider",
     "mdanalysis_selection",
     "mdanalysis_universe_from_frames",
@@ -81,6 +87,8 @@ __all__ = [
     "from_parmed_structure",
     "is_ase_available",
     "require_ase",
+    "read_pdb_atom_records",
+    "select_pdb_model",
     "serve_ipi_once",
     "to_openff_interchange",
     "to_openmm_system",

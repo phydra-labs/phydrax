@@ -83,7 +83,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
     export_permitted: bool = eqx.field(static=True)
     export_classification: str = eqx.field(static=True)
     nondimensionalization: tuple[tuple[str, float], ...] = eqx.field(static=True)
-    uncertainty: tuple[tuple[str, float], ...] = eqx.field(static=True)
+    uncertainty: tuple[tuple[str, float], ...] | None = eqx.field(static=True)
     lineage_ids: tuple[str, ...] = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
@@ -102,7 +102,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         export_permitted: bool,
         export_classification: str,
         nondimensionalization: Mapping[str, int | float],
-        uncertainty: Mapping[str, int | float],
+        uncertainty: Mapping[str, int | float] | None,
         lineage_ids: Sequence[str],
     ):
         algorithm = _identifier(checksum_algorithm, "checksum algorithm").lower()
@@ -143,10 +143,14 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
             "nondimensionalization scales",
             positive=True,
         )
-        self.uncertainty = _finite_mapping(
-            uncertainty,
-            "reference uncertainty",
-            positive=False,
+        self.uncertainty = (
+            None
+            if uncertainty is None
+            else _finite_mapping(
+                uncertainty,
+                "reference uncertainty",
+                positive=False,
+            )
         )
         self.lineage_ids = _identifiers(lineage_ids, "reference lineage IDs")
         self.manifest_id = canonical_fingerprint(self._content_record())
@@ -165,7 +169,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
             "export_permitted": self.export_permitted,
             "export_classification": self.export_classification,
             "nondimensionalization": dict(self.nondimensionalization),
-            "uncertainty": dict(self.uncertainty),
+            "uncertainty": (None if self.uncertainty is None else dict(self.uncertainty)),
             "lineage_ids": list(self.lineage_ids),
         }
 
@@ -181,11 +185,11 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         nondimensionalization = record["nondimensionalization"]
         uncertainty = record["uncertainty"]
         lineage_ids = record["lineage_ids"]
-        if not isinstance(nondimensionalization, Mapping) or not isinstance(
-            uncertainty, Mapping
+        if not isinstance(nondimensionalization, Mapping) or (
+            uncertainty is not None and not isinstance(uncertainty, Mapping)
         ):
             raise TypeError(
-                "Serialized nondimensionalization and uncertainty must be mappings."
+                "Serialized scales must be a mapping and uncertainty a mapping or null."
             )
         if not isinstance(lineage_ids, Sequence) or isinstance(lineage_ids, str):
             raise TypeError("Serialized reference lineage IDs must be a sequence.")
@@ -210,6 +214,18 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
                 "Serialized reference-artifact manifest has an invalid content address."
             )
         return value
+
+    def require_uncertainty(self, /) -> tuple[tuple[str, float], ...]:
+        """Require quantified uncertainty independently of requested-use rights.
+
+        ``None`` identifies an unquantified source, not an exact reference.
+        Admission for import or training does not establish scientific accuracy.
+        """
+        if self.uncertainty is None:
+            raise ValueError(
+                f"Reference artifact {self.manifest_id} has unquantified uncertainty."
+            )
+        return self.uncertainty
 
     def rights_refusal_reasons(
         self,

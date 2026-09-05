@@ -4,6 +4,7 @@
 
 """Prepared systems-biology networks, gene expression, evidence, and cell assembly."""
 
+from . import single_cell
 from ._evidence import (
     bind_biological_evidence,
     BiologicalCondition,
@@ -63,6 +64,7 @@ from ._whole_cell import (
 
 
 __all__ = [
+    "single_cell",
     "ApproximationEvidence",
     "ApproximationKind",
     "bind_biological_evidence",

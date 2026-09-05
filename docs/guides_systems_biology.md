@@ -132,3 +132,215 @@ Every process advances from the same macro-step snapshot. Its internal substeps 
 Reservoir values stay fixed. Every process mapping a field must agree with its global reservoir declaration, preventing one process from treating a shared dynamic field as a chemostat. Consumption from a reservoir increments the source ledger; production into a reservoir increments the sink ledger. Boundary contributions are split per reaction before summation, so simultaneous opposing flows remain visible rather than cancelling. Conservation is checked on `dynamic_delta + sink_delta - source_delta`, which reconstructs the full closed-system change. `checkpoint(state)` computes a host identity over the assembly, lineage, epoch, values, and both cumulative ledgers, so even ledger-only differences cannot collide.
 
 Run `python benchmarks/systems_biology.py` to measure lowering, compilation, steady execution, logical memory, compiler cost/memory evidence, and conservation for a compiled gene-expression/translation whole-cell step.
+
+## Single-cell transcript scenarios (S1)
+
+`phydrax.applications.systems_biology.single_cell` composes the existing telegraph,
+exact jump-process, sampled-series, measurement, optimization, and UQ owners into
+bounded generate → observe → fit → held-out prediction workflows. It does not
+replace the compartmental process or whole-cell contracts above.
+
+The admitted native model is a telegraph promoter with activation, deactivation,
+transcription, splicing, and mature-RNA degradation. Each cell/gene path has latent
+state `(promoter_on, U, S)`, where the promoter is binary, U is nascent/unspliced
+RNA count, and S is mature/spliced RNA count. The mature-count conditional drift
+is βU − γS. It is a generator expectation conditional on state, **not the derivative
+of a sampled jump trajectory**.
+
+### Exact schedules, finite supports, and resets
+
+`PiecewiseConstantRates(boundaries, rates, rate_unit=..., time_unit=...)` accepts
+only finite positive rates of shape `(interval, gene, 5)`, ordered activation,
+deactivation, transcription, splicing β, and degradation γ. Boundaries are finite
+and strictly increasing; there is one more boundary than interval. Rate units are
+converted to the inverse of the exact declared runtime time unit. Values at an
+interior boundary use the interval on its right.
+
+```python
+import numpy as np
+from phydrax.applications.systems_biology import single_cell as sc
+from phydrax.units import derived_unit, SECOND
+
+rates = np.broadcast_to(
+    np.asarray([2.0, 3.0, 12.0, 4.0, 1.5]), (2, 2, 5)
+).copy()
+rates[0, :, 2] = 4.0
+schedule = sc.PiecewiseConstantRates(
+    (0.0, 1.0, 12.0),
+    rates,
+    rate_unit=derived_unit("per-second", ((SECOND, -1),)),
+)
+segment = sc.ScenarioSegment(11, schedule, (0.0, 1.0, 4.0, 12.0))
+scenario = sc.TranscriptScenario(
+    tuple(sc.CellIdentity(10_000 + i, f"cell-{i}") for i in range(4)),
+    (sc.GeneIdentity(1_000, "gene-0"), sc.GeneIdentity(1_001, "gene-1")),
+    (segment,),
+    np.zeros((4, 2, 3)),
+    max_paths=8,
+    max_events_per_interval=1024,
+)
+```
+
+These numbers are illustrative synthetic coefficients, not measured biological
+rates. `generate_transcripts(scenario, key)` runs native direct SSA on each
+constant-rate interval. Exponential clocks are restarted at exogenous rate
+boundaries; memorylessness makes that execution exact for the specified
+piecewise-constant law. This does **not** admit smooth callable hazards or promise
+the same path after schedule refinement. `transient_transcript_mean` gives the exact
+affine first-moment law for one constant interval; `scheduled_transcript_mean`
+composes it at every declared boundary. These moment maps are distinct from a
+pathwise derivative of SSA events.
+
+Cell, gene, and segment IDs are explicit stable nonnegative signed-int64 identities,
+not array positions. `TranscriptScenario` requires unique cell/gene/segment support,
+binary initial promoter and nonnegative integer U/S counts, and identical exact
+runtime time units across segments. The number of cells × genes × segments cannot
+exceed `max_paths`. `max_events_per_interval` bounds native event storage/execution;
+an incomplete interval raises `ScenarioExecutionError` with its `solution`, and no
+descendant is executed from that failed state. Exhaustion is not a valid truncated
+experiment.
+
+A root segment starts from the declared initial states. A child names an already
+declared parent, begins exactly at that parent's terminal physical time, and
+inherits its terminal state with newly addressed randomness. Multiple children
+are counterfactual continuations: molecules are **not partitioned**, and this is
+not biological cell division. `PiecewiseConstantRates.repeat(cycles)` finitely
+unrolls an external protocol; it is not a cell-cycle or lineage model. Cycles in
+the parent graph are not admitted.
+
+Every interval boundary is retained in `TranscriptPath.latent`, even when omitted
+from the requested saved nodes. `conditional_drift` is a separate series in
+transcript counts per runtime time unit. `TranscriptExperiment.joined_series`
+disconnects the edge at **every segment reset**, including parent/child joins, so
+branch/reset concatenation cannot create spurious lag pairs. Selecting a physical
+continuation remains a caller decision.
+
+### Stable stochastic identity and separate measurement
+
+Latent randomness is addressed by stable cell, gene, segment, interval, and native
+event identity. `generate_transcripts(..., cell_ids=..., gene_ids=...)` selects
+declared worksets without renumbering random paths. Replaying the same explicit
+schedule, identities, and root key preserves stochastic addressing; changing
+segment identities or interval partitioning changes that experiment.
+
+`TranscriptCountAssay` holds two prepared `CountMeasurementPlan` channels and an
+independent calibration `ReferenceArtifactManifest`. Each channel performs binomial
+molecular capture followed by independent Poisson background. It does not estimate
+capture from the same expression counts it will fit. The reference must admit the
+intended use and declare actual uncertainty; unknown uncertainty is `None` and
+cannot be silently replaced with zero to pass calibration admission.
+
+`observe_transcripts(experiment, assay, key, gene_id=..., segment_id=...,
+sample_time=...)` measures one actually saved physical snapshot per cell. The
+default is the segment endpoint. An unsaved time is refused, not interpolated into
+a molecular count. Assay draws are addressed by cell/gene/segment, exact physical
+sample time, channel, and capture/background. They use a namespace disjoint from
+SSA even if the caller supplies the same root key. Observation-capacity overflow
+is refused without clipping.
+
+`TranscriptCounts` stores one gene's measured U/S snapshots of shape `(cell, 2)`,
+separate boolean validity masks, stable cell IDs, assay/source/preprocessing
+identities, and explicit coordinate semantics. Active counts must be finite
+nonnegative integers. Masked entries are represented separately from active
+measured zeros. Snapshots are not inferred descendants or sampled latent paths:
+`to_series()` has no connecting trajectory edges.
+
+### Identifiable combinations and calibrated inference
+
+`StationaryCountTarget.from_counts(observations, standard_errors,
+equilibrium_evidence_id=...)` uses at least three complete independent U/S snapshot
+pairs. Its observable order is mean(U), mean(S), var(U), var(S), cov(U,S), with
+unbiased sample variances/covariance. Equilibrium must have its own justification;
+neither a saved endpoint nor a pseudotime ordering proves it.
+
+`predicted_count_moments` passes the exact latent stationary moments through the
+same calibrated capture/background law, including cross-channel covariance
+scaling by the product of capture probabilities. `fit_stationary_counts` fits
+positive log rates with native least squares. Its objective assumes the caller's
+declared independent moment-error scales. It is **not an exact count likelihood**,
+and the five empirical moments can be statistically correlated; choose an
+appropriate explicitly correlated formulation when that assumption is unsuitable.
+
+Stationary observations are invariant to multiplying all five rates by the same
+positive factor. They constrain combinations such as activation/γ,
+deactivation/γ, transcription/γ, and β/γ, not an absolute clock. Local sensitivity
+rank can be smaller still for uninformative data or assay support. The returned
+`TranscriptIdentifiability` reports sensitivity, singular values, rank, free
+parameter indices, and whether an independent rate clock was supplied.
+
+`fixed_rates` maps indices 0–4 to independently calibrated positive physical rates
+in inverse `rate_time_unit`; fixing any rates requires `rate_calibration` with
+admitted rights and known uncertainty. A calibration manifest with no fixed rates
+does not identify a clock and is refused. At least one rate must remain free.
+Fixing an arbitrary gauge is not biological timing calibration.
+
+Inspect `TranscriptFit.result.successful` as well as identifiability. Only a
+successful locally identifiable fit receives `free_log_rate_covariance` and
+linearized `count_prediction_uq`; otherwise they remain `None`. The covariance is
+first-order **conditional fit covariance**, not a posterior. Fixed-rate and assay
+coefficients are conditioned upon; their uncertainty and model discrepancy are
+not automatically propagated merely because manifests retain them.
+
+`fit.held_out_residuals(target)` requires disjoint cell identities with the same
+gene and assay, and divides moment prediction errors by held-out moment standard
+errors. These residuals are not posterior predictive probabilities or automatic
+experimental acceptance. Retain experimental split design, calibration uncertainty,
+equilibrium evidence, and an independently declared scientific criterion.
+
+### Count-derived velocity and explicit external arrays
+
+`predict_transcript_velocity(fit, observations)` requires a successful locally
+identifiable fit, an independent physical rate clock, matching gene/assay, and
+positive capture in both channels. It subtracts background and divides by capture,
+then estimates βU − γS solely from those corrected measured counts. Invalid pairs
+remain masked/NaN. Negative corrected estimates are retained because clipping would
+introduce bias.
+
+`TranscriptVelocityEvidence` records observation/fit identities, inverse-time
+unit, estimator and preprocessing, and the conditional/non-posterior uncertainty
+boundary. It is neither a latent-velocity posterior nor a sampled-path derivative,
+lineage, energy landscape, or proof of a biological clock. Importantly, stored
+`TranscriptPath.conditional_drift` is generator truth, whereas this estimator uses
+independent measured counts.
+
+`import_transcript_arrays` accepts caller-extracted raw U/S columns, explicit
+gene/cell mapping, validity masks, source manifest, assay/preprocessing identities,
+and coordinate meaning. It preserves the raw arrays alongside native counts and
+an `AdapterReport`; it does not import an AnnData/scVelo provider or infer which
+layers were raw. Active noninteger/log-normalized expression is refused by count
+admission; callers must not relabel transformed data that happen to be integral.
+Requested commercial, training, redistribution, and export rights are checked on
+the source artifact.
+
+Coordinates must be `physical_time`, `pseudotime`, or `none`. Only physical time may
+carry an exact time unit. Pseudotime is not promoted into physical seconds, and
+snapshot order never supplies a lineage. `import_velocity_field` separately admits
+a `(cell, representation_dimension)` external field with estimator, preprocessing,
+representation, and uncertainty identities, aligned validity, source rights, and
+optional standard errors. `standard_errors=None` means unreported uncertainty.
+Retaining an embedded field losslessly does not establish physical-time, energy,
+or velocity accuracy.
+
+### Evidence and scientific completion gates
+
+Run the [single-cell cookbook](cookbook/single_cell_transcripts.md) from the
+repository root:
+
+```bash
+python benchmarks/single_cell_transcripts.py --cells 64 --genes 2
+```
+
+The recorded synthetic smoke executed 64 cells × 2 genes, 128 paths, and 33,613
+events. Maximum absolute held-out standardized moment residual was
+`2.4761358858990175`; sensitivity rank was one for the one fitted free rate, with
+four independently specified synthetic rates fixed. The workflow also distinguishes
+finite-time moment bias, latent sampling error, assay noise, and count-derived
+drift error. These are synthetic mechanics observations, not experimental accuracy.
+
+Rights-cleared experimental counts, independent assay and physical-rate calibration
+with uncertainty, justified stationary or time-resolved evidence, and held-out
+biological qualification remain scientific prerequisites. This implementation
+does not claim smooth-hazard SSA, biological division, physical pseudotime, or
+experimentally validated timescales. See the
+[single-cell API](api/advanced_biophysics.md#single-cell-transcripts) and
+[biophysical source dispositions](biophysical_sources.md).

@@ -26,12 +26,34 @@ uncalibrated reference system and cannot be converted to SI. Learned models,
 potentials, and batches compare only the length/energy scale; systems, dynamics,
 and trajectories compare the complete unit-system identity.
 
+## Material activation boundaries
+
+`prepare_dormant_system` restricts a fully parameterized material system to the
+chemically present support, rebuilding bonded routes, exceptions, constraints and
+interaction-site identities. Future atoms are not merely mobile-mask exclusions.
+`TopologyEpochTransition` and `activate_topology_epoch` replace the complete prepared
+runtime between fixed-topology segments, refresh force/neighborhood identities, and
+retain an `InsertionLedger` of mass, momentum and energy sources.
+
+The insertion profile is nonperiodic and Cartesian with an identity coordinate map.
+Existing material identity, capacity, units, masses and chemistry cannot change.
+Virtual-site activation and periodic insertion are refused rather than inferred.
+Failed evaluation retains the old runtime and state. Segments separated by activation
+are not continuous lag-pair data, and derivatives do not pass through this host
+topology transaction. See the [protein guide](guides_protein_folding.md) for the
+reference-conditioned nascent-chain consumer.
+
 ## Potential programs
 
 `AtomisticPotentialProgram` is an ordered additive scalar-energy program. Each term
 declares its spatial requirements and execution capabilities. Preparation constructs pair
 geometry, directed `GraphIR`, bonded routes, or a reciprocal grid only when a term needs it.
 Forces are the negative position gradient of the total scalar energy.
+
+Supplied unwrapped/fractional coordinate representations follow Cartesian
+perturbations on their declared fixed image branch. They are not detached,
+Cartesian-independent bonded inputs; force and curvature derivatives remain tied
+to the conservative energy.
 
 Native terms include harmonic bonds and angles, periodic proper or improper torsions,
 Lennard-Jones, direct Coulomb, direct Ewald, and particle-mesh Ewald. Pair exclusions and

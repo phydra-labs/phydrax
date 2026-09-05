@@ -854,6 +854,12 @@ from ._jump_delay import (
     JumpDelayProblem,
     solve_jump_delay,
 )
+from ._jump_hitting import (
+    event_first_hit,
+    finite_generator_hitting,
+    FiniteHittingResult,
+    JumpFirstHit,
+)
 from ._kdk import KDKCoefficients, KDKCompletion, KDKProposal, KDKTransactionPlan
 from ._laplace_capacitance import (
     advance_laplace_capacitance_3d,
@@ -2514,6 +2520,10 @@ __all__ = [
     "JumpDifferentialProblem",
     "JumpDifferentialSolution",
     "JumpSolution",
+    "FiniteHittingResult",
+    "JumpFirstHit",
+    "event_first_hit",
+    "finite_generator_hitting",
     "InteractingParticleProblem",
     "InteractingParticleSolution",
     "LevySDEProblem",

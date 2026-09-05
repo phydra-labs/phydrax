@@ -589,7 +589,9 @@ from ._rigid_joints import (
 )
 from ._rigid_marker import (
     PreparedRigidMarkerMap,
+    PreparedRigidSiteForceBinding,
     RigidGeneralizedVelocity,
+    RigidMarkerLoadResult,
     RigidMarkerMapPlan,
 )
 from ._rigid_parameters import (
@@ -609,6 +611,11 @@ from ._rigid_sphere import (
     sphere_pair_contact_geometry,
     sphere_spin_velocity,
     SpherePairContactGeometry,
+)
+from ._rigid_thermal import (
+    PreparedRigidHeatBath,
+    rigid_periodic_presentation,
+    RigidPeriodicPresentation,
 )
 from ._rigid_topology import (
     apply_rigid_topology_transactions,
@@ -1160,6 +1167,11 @@ __all__ = [
     "RigidJointRowLayout",
     "PreparedRigidBodySet",
     "PreparedRigidMarkerMap",
+    "PreparedRigidSiteForceBinding",
+    "PreparedRigidHeatBath",
+    "RigidMarkerLoadResult",
+    "RigidPeriodicPresentation",
+    "rigid_periodic_presentation",
     "PreparedRigidSphereClumpSet",
     "PreparedTriangleWall",
     "PrescribedDEMBarrierMotionPlan",

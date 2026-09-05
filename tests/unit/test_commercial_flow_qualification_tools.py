@@ -284,7 +284,16 @@ def test_compressible_candidate_never_inherits_or_claims_dns_support():
         compressible.produce_candidate("smooth-dgsem", claimed)
 
 
-def test_external_reference_refuses_missing_commercial_rights():
+@pytest.mark.parametrize(
+    ("commercial", "uncertainty", "error", "reason"),
+    (
+        (False, {"state": 0.01}, PermissionError, "commercial-use-not-permitted"),
+        (True, None, ValueError, "unquantified uncertainty"),
+    ),
+)
+def test_external_reference_requires_rights_and_quantification(
+    commercial, uncertainty, error, reason
+):
     payload = b"governed-reference"
     manifest = ReferenceArtifactManifest(
         "restricted-reference.bin",
@@ -292,19 +301,19 @@ def test_external_reference_refuses_missing_commercial_rights():
         checksum=hashlib.sha256(payload).hexdigest(),
         size_bytes=len(payload),
         license_id="restricted-test-license",
-        commercial_use_permitted=False,
+        commercial_use_permitted=commercial,
         redistribution_permitted=False,
         training_use_permitted=False,
         export_permitted=False,
         export_classification="restricted",
         nondimensionalization={"length": 1.0},
-        uncertainty={"state": 0.01},
+        uncertainty=uncertainty,
         lineage_ids=("reference-lineage-test",),
     )
     definition = compressible.ROUTES["material"]
     request = _request(compressible.CAPABILITY, definition)
 
-    with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
+    with pytest.raises(error, match=reason):
         compressible.produce_candidate(
             "material",
             request,

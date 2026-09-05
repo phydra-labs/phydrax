@@ -461,6 +461,7 @@ def admit_reference(
         training_use=rights["training_use"],
         export=rights["export"],
     )
+    manifest.require_uncertainty()
     return manifest
 
 

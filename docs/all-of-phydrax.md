@@ -495,6 +495,34 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Protein, nucleic-acid, radiation, and single-cell applications
+
+The focused applications preserve biological identity and scientific meaning while
+using existing atomistic, rigid-body, PGM, jump, quantum, observation, learning, and
+uncertainty engines:
+
+- [Protein folding](guides_protein_folding.md): explicit construct/chemistry binding,
+  caller-parameterized conservative dynamics, joint experimental inference,
+  paired-state thermodynamic estimation, conditional rotamer free energies, native
+  coordinate proposals, reference-conditioned mixed-resolution mechanics, and
+  transactional nascent-chain activation.
+- [Nucleic-acid biophysics](guides_nucleic_acid_biophysics.md): directed identity,
+  base-frame/eRMSD/torsion observations, chemical-mapping inference and restraints,
+  rigid nucleotide model families, reversible secondary-structure CTMCs with
+  event-exact hitting evidence, and electronic-site quantum execution.
+- [Radiation biophysics](guides_radiation_biophysics.md): source-pinned external
+  physical/chemical ledgers, mapped direct/indirect lesions, contour-aware clustering,
+  explicit yield normalization, and staged calibration/held-out qualification.
+- [Single-cell systems biology](guides_systems_biology.md): exact piecewise-constant
+  transcript scenarios, independent count assays, identifiable rate inference,
+  and evidence-bound count-derived drift.
+
+Static hypotheses, physical trajectories, jump paths, electronic populations,
+inferred drift, and initial lesions remain distinct outputs. Numerical success does
+not establish experimental folding accuracy, a calibrated biological clock, native
+radiolysis, or pretrained generative performance. See
+[source disposition and qualification gates](biophysical_sources.md).
+
 ### Advanced biophysics
 
 Advanced biophysics is a composition of canonical numerical owners rather than a
