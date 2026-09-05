@@ -36,6 +36,7 @@ from .krylov import (
     lanczos,
     PreparedKrylovProjection,
 )
+from .krylov._decompositions import _norm_from_squared
 
 
 MatrixFunctionKind: TypeAlias = Literal[
@@ -757,7 +758,7 @@ def matrix_function_action(
         self_adjoint=(method == "lanczos"),
         active_dimension=decomposition.effective_dimension,
     )
-    norm = jnp.sqrt(jnp.real(operator.source.inner(validated_vector, validated_vector)))
+    norm = _norm_from_squared(operator.source.inner(validated_vector, validated_vector))
     dimension = decomposition.effective_dimension
     active = jnp.arange(projected.shape[0]) < dimension
     coefficients = jnp.where(active, function[:, 0], 0)

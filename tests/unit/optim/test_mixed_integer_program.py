@@ -71,3 +71,44 @@ def test_failed_node_relaxation_invalidates_optimal_tree_with_incumbent(monkeypa
     assert jnp.array_equal(result.primal, incumbent_result.primal)
     assert result.relaxation_result is incumbent_result
     assert not result.successful
+
+
+def _binary_implications(power_limit):
+    return phx.optim.MixedIntegerProgram(
+        phx.optim.LinearProgram(
+            jnp.asarray([0.0, 0.0, 1.0]),
+            inequality_matrix=jnp.asarray(
+                [
+                    [1.0, -1.0, 0.0],
+                    [0.0, 0.5, -1.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            inequality_rhs=jnp.asarray([0.0, 0.0, power_limit]),
+            bounds=phx.optim.Bounds(
+                jnp.asarray([1.0, 0.0, 0.0]),
+                jnp.asarray([1.0, 1.0, jnp.inf]),
+            ),
+        ),
+        binary_indices=(0, 1),
+    )
+
+
+def test_binary_implication_contradiction_has_original_coordinate_farkas_proof():
+    program = _binary_implications(0.0)
+    certificate = mip._linear_bound_certificate(program.relaxation, 1e-8)
+    assert certificate is not None
+    assert certificate.valid
+    assert certificate.objective < -1e-8
+    assert certificate.residual_norm <= 1e-8
+    result = phx.optim.solve_mixed_integer_program(program)
+    assert result.status == phx.optim.MixedIntegerStatus.INFEASIBLE
+    assert not result.successful
+
+
+def test_near_feasible_binary_implications_are_not_pruned_without_a_proof():
+    program = _binary_implications(0.5 + 1e-6)
+    assert mip._linear_bound_certificate(program.relaxation, 1e-8) is None
+    result = phx.optim.solve_mixed_integer_program(program)
+    assert result.successful
+    assert jnp.allclose(result.primal, jnp.asarray([1.0, 1.0, 0.5]), atol=2e-6)

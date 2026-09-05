@@ -480,8 +480,21 @@ class StructuredNonlinearProgram(StrictModule):
             "upper_bound_multipliers",
         )
         equality = multipliers[self.equality_indices]
-        lower_constraint_dual = -multipliers[self.lower_indices]
-        upper_constraint_dual = multipliers[self.upper_indices]
+        # A distinct two-sided row stores the net upper-minus-lower multiplier.
+        # Recover its nonnegative parts; a one-sided row must retain a wrong sign
+        # so the independent certificate can still reject an invalid multiplier.
+        lower_net = -multipliers[self.lower_indices]
+        upper_net = multipliers[self.upper_indices]
+        lower_constraint_dual = jnp.where(
+            jnp.isfinite(constraint_upper[self.lower_indices]),
+            jnp.maximum(lower_net, 0.0),
+            lower_net,
+        )
+        upper_constraint_dual = jnp.where(
+            jnp.isfinite(constraint_lower[self.upper_indices]),
+            jnp.maximum(upper_net, 0.0),
+            upper_net,
+        )
         inequality = jnp.concatenate((lower_constraint_dual, upper_constraint_dual))
         values = evaluation.constraints
         equality_values = values[self.equality_indices]

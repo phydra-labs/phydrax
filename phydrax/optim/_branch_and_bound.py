@@ -154,6 +154,12 @@ def branch_and_bound(
                     frontier,
                     (child_bound, problem.node_id(child), counter, child),
                 )
+        if incumbent is not None and frontier and frontier[0][0] >= incumbent_value:
+            # The minimum certified bound dominates the incumbent, hence every
+            # remaining node is prunable. Exhaust the frontier before deciding
+            # whether termination is exact or merely within a requested gap.
+            pruned += len(frontier)
+            frontier.clear()
         lower = frontier[0][0] if frontier else incumbent_value
         absolute_gap = incumbent_value - lower
         relative_gap = absolute_gap / max(abs(incumbent_value), 1.0)

@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### Added
+- Added native balanced power studies with separate physical/control contracts,
+  sparse AC power flow, AC/DC optimization, explicit dynamic-machine and fault
+  models, and bounded power-case interchange.
+- Added reduced building energy models, explicit environmental boundaries,
+  geometry/radiation enrichment, EPW forcing, native HVAC control, identifiable
+  calibration, and held-out prediction.
+- Added unit-aware carrier dispatch, independent storage capacities and physical
+  chronology, investments/scenarios, and original-model conservation replay.
+  Shared quantity-aware intervals compose the existing units and series substrates.
+- Added oriented thermal capacitances, conductors, heat-conversion laws, material
+  mixing, and provider-backed fluid heat exchange through native acausal DAEs.
+- Added pinned host-only energy execution, FMI co-simulation and HELICS sessions,
+  real external-reference routes, and cross-domain workflows with lifecycle
+  archives and scenario-scoped qualification evidence.
 - Added focused protein-folding, nucleic-acid-biophysics, and radiation-biophysics
   applications, plus exact single-cell transcript scenarios under systems biology;
   no broad bioinformatics namespace or duplicate simulation engines.
@@ -1959,6 +1973,11 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Acausal structural matching now prefers assignments that avoid unnecessary
+  differentiation, preserving index-one physical flow/state equations instead of
+  differentiating algebraic connections selected by lexical matching.
+- Native Krylov norm evaluation now preserves finite reverse derivatives through
+  zero happy-breakdown residuals without perturbing positive norms.
 - OpenMM import preserves multiple Fourier components on each unique topological
   torsion using native series potentials, including native serialization and
   OpenMM energy/force round-trip export.
