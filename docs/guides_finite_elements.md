@@ -36,7 +36,7 @@ first-kind Nedelec order zero.
 fields. One `CompiledFiniteElementProblem` owns the ordered product space and
 scatters every coupled term directly to its output residual block.
 
-`FiniteElementCoordinateSpec` assigns an independent coordinate element and
+`phydrax.discretization.CellGeometrySpec` assigns an independent coordinate element and
 geometry DOF map to every block. This permits curved P2 geometry with a lower-
 or higher-order field element.
 
@@ -206,13 +206,13 @@ Rejected attempts do not increment state or material versions.
 
 ## CAD meshing and prepared cell maps
 
-`CADFEMMeshingPolicy` and `mesh_brep_for_fem` provide the bounded affine
-triangle/tetrahedron Gmsh route from a reopenable, revision-checked
-`BRepSource`. The result retains CAD entity associations, canonical
-`CellMesh`/`SurfaceModel` topology, Jacobian and boundary-residual evidence,
-and conversion count/byte caps. There is no query-tessellation fallback,
-automatic healing, high-order positivity claim, or differentiable remeshing.
-Gmsh's internal workspace is reported as not hard-bounded by its Python API.
+`phydrax.meshing.GmshProvider` owns Gmsh construction from a reopenable,
+revision-checked `BRepModel` or solid `BRepSource`. Native specifications are separate from
+`GmshOptions`. Audited results retain `CellMesh`, independent `CellGeometrySpec`,
+source associations, compliance, and an execution trace; FEM consumes these
+artifacts rather than a solver-specific meshing API. There is no query-
+tessellation fallback or differentiable host remeshing. Provider preflight
+rejects unsupported controls. See [Meshing](guides_meshing.md).
 
 `prepare_finite_element_cell_map(discretization, block_index)` freezes the
 coordinate element and gathers while keeping coordinates, cell indices, and

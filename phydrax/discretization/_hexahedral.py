@@ -269,6 +269,8 @@ def hexahedral_cell_complex(
     /,
     *,
     vertex_global_ids=None,
+    edge_global_ids=None,
+    face_global_ids=None,
     cell_global_ids=None,
 ) -> CellComplexTopology:
     c = hexahedral_connectivity(hexahedra, vertex_count)
@@ -287,16 +289,26 @@ def hexahedral_cell_complex(
     v = EntitySet(
         "vertices", 0, vids, subsets=(EntitySubset("boundary", c.boundary_vertices),)
     )
+    eids = (
+        np.arange(len(edges), dtype=np.int64)
+        if edge_global_ids is None
+        else np.asarray(edge_global_ids, dtype=np.int64)
+    )
+    fids = (
+        np.arange(len(faces), dtype=np.int64)
+        if face_global_ids is None
+        else np.asarray(face_global_ids, dtype=np.int64)
+    )
     e = EntitySet(
         "edges",
         1,
-        np.arange(len(edges)),
+        eids,
         subsets=(EntitySubset("boundary", c.boundary_edges),),
     )
     f = EntitySet(
         "faces",
         2,
-        np.arange(len(faces)),
+        fids,
         subsets=(EntitySubset("boundary", c.boundary_faces),),
     )
     cells = EntitySet(

@@ -568,8 +568,7 @@ def refine_boundary_h(
             source_revision=(
                 f"{source_metadata.source_revision}:boundary-h-{generation}"
             ),
-            length_unit=source_metadata.length_unit,
-            coordinate_system=source_metadata.coordinate_system,
+            coordinate_contract=source_metadata.coordinate_contract,
             provenance=(
                 *source_metadata.provenance,
                 f"deterministic local h-refinement from epoch {epoch.epoch_id}",

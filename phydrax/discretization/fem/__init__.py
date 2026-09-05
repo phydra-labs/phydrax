@@ -50,13 +50,11 @@ from ._distributed import (
     FiniteElementFacetOwnershipPlan,
     FiniteElementHaloPlan,
     FiniteElementHPPartitionPlan,
-    FiniteElementPartition,
     FiniteElementPartitionCostEvidence,
     FiniteElementPartitionWorksetPlan,
     inherit_finite_element_hp_ownership,
     JaxCollectiveBackend,
     lower_distributed_finite_element_phases,
-    partition_cells_contiguous,
     partition_cells_cost_aware,
     PartitionedFiniteElementDofMap,
 )
@@ -71,7 +69,6 @@ from ._fast_diagonalization import (
     TensorFastDiagonalizationPreconditioner,
 )
 from ._generic import (
-    FiniteElementCoordinateSpec,
     FiniteElementDiscretization,
     FiniteElementDofMap,
     FiniteElementFieldSpec,
@@ -178,14 +175,6 @@ from ._low_order_auxiliary import (
     LowOrderAuxiliaryOperatorPlan,
     LowOrderAuxiliaryPreconditioner,
 )
-from ._meshing import (
-    CADFEMCellFamily,
-    CADFEMMeshEvidence,
-    CADFEMMeshingPolicy,
-    CADFEMMeshResult,
-    CADMeshAssociation,
-    mesh_brep_for_fem,
-)
 from ._mixed_constraint import (
     mixed_inf_sup_diagnostic,
     MixedConstraintFormulation,
@@ -239,11 +228,6 @@ from ._reference_operator import (
     FiniteElementReferenceReport,
     PreparedFiniteElementReference,
     ReferenceAction,
-)
-from ._reference_topology import (
-    reference_cell_topology,
-    REFERENCE_TOPOLOGIES,
-    ReferenceCellTopology,
 )
 from ._rigid_coupling import (
     AttachmentActionReactionCertificate,
@@ -323,9 +307,6 @@ __all__ = [
     "TensorProductTabulation",
     "TensorOrder",
     "lagrange_1d_tabulation",
-    "REFERENCE_TOPOLOGIES",
-    "ReferenceCellTopology",
-    "reference_cell_topology",
     "ReferenceAction",
     "FiniteElementFacetReference",
     "FiniteElementReferenceReport",
@@ -379,10 +360,8 @@ __all__ = [
     "FiniteElementPartitionCostEvidence",
     "lower_distributed_finite_element_phases",
     "FiniteElementHaloPlan",
-    "FiniteElementPartition",
     "JaxCollectiveBackend",
     "PartitionedFiniteElementDofMap",
-    "partition_cells_contiguous",
     "partition_cells_cost_aware",
     "finite_element_hp_workset_plan",
     "FiniteElementHPCellKind",
@@ -452,13 +431,6 @@ __all__ = [
     "write_finite_element_field",
     "discontinuous_element",
     "dirichlet_constraint",
-    "FiniteElementCoordinateSpec",
-    "CADFEMCellFamily",
-    "CADFEMMeshingPolicy",
-    "CADFEMMeshEvidence",
-    "CADFEMMeshResult",
-    "CADMeshAssociation",
-    "mesh_brep_for_fem",
     "FiniteElementCellMapEvaluation",
     "prepare_finite_element_cell_map",
     "PreparedFiniteElementCellMap",

@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...units import derived_unit, LENGTH, UnitDefinition
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from ..brep._patches import BSplineSurfacePatch
 from ._model import SurfaceModel
@@ -101,9 +102,9 @@ class HighOrderSurfaceReport(StrictModule, NonTrainableState):
     cell_count: int = eqx.field(static=True)
     nodes_per_cell: int = eqx.field(static=True)
     maximum_parametric_derivative_order: int = eqx.field(static=True)
-    length_unit: str = eqx.field(static=True)
-    metric_unit: str = eqx.field(static=True)
-    jacobian_unit: str = eqx.field(static=True)
+    length_unit: UnitDefinition = eqx.field(static=True)
+    metric_unit: UnitDefinition = eqx.field(static=True)
+    jacobian_unit: UnitDefinition = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -117,7 +118,7 @@ class HighOrderSurfaceReport(StrictModule, NonTrainableState):
         order: int,
         cell_count: int,
         nodes_per_cell: int,
-        length_unit: str,
+        length_unit: UnitDefinition,
         topology_id: str,
         model_id: str,
         policy_id: str,
@@ -125,17 +126,18 @@ class HighOrderSurfaceReport(StrictModule, NonTrainableState):
     ):
         if not isinstance(source, HighOrderSurfaceSource):
             raise TypeError("source must be HighOrderSurfaceSource.")
-        unit = str(length_unit)
-        if not unit:
+        if not isinstance(length_unit, UnitDefinition):
+            raise TypeError("High-order realization requires a UnitDefinition.")
+        if length_unit.dimension != LENGTH:
             raise ValueError("High-order realization requires a length unit.")
         self.source = source
         self.order = int(order)
         self.cell_count = int(cell_count)
         self.nodes_per_cell = int(nodes_per_cell)
         self.maximum_parametric_derivative_order = 1
-        self.length_unit = unit
-        self.metric_unit = f"{unit}^2"
-        self.jacobian_unit = f"{unit}^2"
+        self.length_unit = length_unit
+        self.metric_unit = derived_unit(f"{length_unit.symbol}^2", ((length_unit, 2),))
+        self.jacobian_unit = self.metric_unit
         self.topology_id = str(topology_id)
         self.model_id = str(model_id)
         self.policy_id = str(policy_id)
@@ -148,7 +150,7 @@ class HighOrderSurfaceReport(StrictModule, NonTrainableState):
                 "cell_count": int(cell_count),
                 "nodes_per_cell": int(nodes_per_cell),
                 "maximum_parametric_derivative_order": 1,
-                "length_unit": unit,
+                "length_unit": length_unit.unit_id,
                 "topology_id": topology_id,
                 "model_id": model_id,
                 "policy_id": policy_id,
@@ -530,7 +532,7 @@ def _report(model, policy, source, order, nodes, error, /):
         order=order,
         cell_count=int(model.mesh.connectivity.cell_count),
         nodes_per_cell=nodes,
-        length_unit=model.metadata.length_unit,
+        length_unit=model.metadata.coordinate_contract.length_unit,
         topology_id=model.mesh.topology_id,
         model_id=model.model_id,
         policy_id=policy.policy_id,

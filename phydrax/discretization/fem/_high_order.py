@@ -551,8 +551,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         )
         multinomial = np.asarray(
             tuple(
-                factorial(p)
-                / np.prod(tuple(factorial(int(value)) for value in exponent))
+                factorial(p) / np.prod(tuple(factorial(int(value)) for value in exponent))
                 for exponent in exponents
             ),
             dtype=float,
@@ -615,8 +614,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                 multinomial[None, :]
                 * exponents[None, :, 0]
                 * jnp.prod(
-                    barycentric[:, None, :]
-                    ** jnp.maximum(zero_exponents, 0)[None, :, :],
+                    barycentric[:, None, :] ** jnp.maximum(zero_exponents, 0)[None, :, :],
                     axis=-1,
                 )
             )
@@ -624,8 +622,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                 multinomial[None, :]
                 * exponents[None, :, axis + 1]
                 * jnp.prod(
-                    barycentric[:, None, :]
-                    ** jnp.maximum(axis_exponents, 0)[None, :, :],
+                    barycentric[:, None, :] ** jnp.maximum(axis_exponents, 0)[None, :, :],
                     axis=-1,
                 )
             )
@@ -639,7 +636,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         return values, gradients
 
     def finite_element(self) -> FiniteElementSpec:
-        from ._reference_topology import reference_cell_topology
+        from .._reference_cell import reference_cell_topology
 
         topology = reference_cell_topology(self.cell_kind)
         entity_dofs = [[[] for _ in entities] for entities in topology.entities]

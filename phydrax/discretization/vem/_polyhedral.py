@@ -57,14 +57,15 @@ def _cell_matrix(
     cell_index: int,
     /,
 ) -> tuple[np.ndarray, float, float, float]:
-    cell_faces = np.asarray(connectivity.cell_faces)
-    cell_face_valid = np.asarray(connectivity.cell_face_valid)
-    cell_face_signs = np.asarray(connectivity.cell_face_signs)
-    face_vertices = np.asarray(connectivity.face_vertices)
-    face_vertex_valid = np.asarray(connectivity.face_vertex_valid)
-    cell_vertices = np.asarray(connectivity.cell_vertices)
-    cell_vertex_valid = np.asarray(connectivity.cell_vertex_valid)
-    vertices = cell_vertices[cell_index, cell_vertex_valid[cell_index]]
+    cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int32)
+    cell_face_values = np.asarray(connectivity.cell_face_values, dtype=np.int32)
+    cell_face_signs = np.asarray(connectivity.cell_face_sign_values)
+    face_vertex_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
+    face_vertex_values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
+    cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
+    cell_vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
+    cell_start, cell_stop = cell_vertex_offsets[cell_index : cell_index + 2]
+    vertices = cell_vertex_values[int(cell_start) : int(cell_stop)]
     local = {int(vertex): index for index, vertex in enumerate(vertices)}
     points = coordinates[vertices]
     centroid = np.mean(points, axis=0)
@@ -76,12 +77,14 @@ def _cell_matrix(
 
     gradients = np.zeros((3, vertices.size), dtype=float)
     volume = 0.0
+    face_start, face_stop = cell_face_offsets[cell_index : cell_index + 2]
     for face_index, sign in zip(
-        cell_faces[cell_index, cell_face_valid[cell_index]],
-        cell_face_signs[cell_index, cell_face_valid[cell_index]],
+        cell_face_values[int(face_start) : int(face_stop)],
+        cell_face_signs[int(face_start) : int(face_stop)],
         strict=True,
     ):
-        face = face_vertices[face_index, face_vertex_valid[face_index]]
+        start, stop = face_vertex_offsets[int(face_index) : int(face_index) + 2]
+        face = face_vertex_values[int(start) : int(stop)]
         oriented = face if sign > 0.0 else face[::-1]
         face_points = coordinates[oriented]
         for offset in range(1, oriented.size - 1):
@@ -165,8 +168,9 @@ def prepare_polyhedral_h1_virtual_element_3d(
         raise ValueError("Polyhedral VEM cell capacity exceeded.")
 
     coordinates = np.asarray(mesh.coordinates, dtype=float)
-    cell_vertices = np.asarray(connectivity.cell_vertices)
-    cell_vertex_valid = np.asarray(connectivity.cell_vertex_valid)
+    cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
+    cell_vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
+    cell_arities = np.diff(cell_vertex_offsets)
     buckets: dict[int, list[int]] = {}
     matrices: dict[int, list[np.ndarray]] = {}
     volumes = np.empty((connectivity.cell_count,), dtype=float)
@@ -174,7 +178,7 @@ def prepare_polyhedral_h1_virtual_element_3d(
     defects = np.empty_like(volumes)
     estimated_bytes = 0
     for cell_index in range(connectivity.cell_count):
-        arity = int(np.sum(cell_vertex_valid[cell_index]))
+        arity = int(cell_arities[cell_index])
         if arity > budget.maximum_local_dofs:
             raise ValueError("Polyhedral VEM local-DOF capacity exceeded.")
         matrix, volume, margin, defect = _cell_matrix(
@@ -201,7 +205,16 @@ def prepare_polyhedral_h1_virtual_element_3d(
         )
         polynomial_matrices.append(local)
         stabilization_matrices.append(np.zeros_like(local))
-        gathers.append(cell_vertices[indices, :arity])
+        gathers.append(
+            np.stack(
+                [
+                    cell_vertex_values[
+                        cell_vertex_offsets[cell] : cell_vertex_offsets[cell + 1]
+                    ]
+                    for cell in indices
+                ]
+            )
+        )
     properties = OperatorProperties(
         self_adjoint=True,
         positive_semidefinite=True,

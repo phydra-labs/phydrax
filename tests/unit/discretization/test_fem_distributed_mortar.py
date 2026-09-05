@@ -6,12 +6,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._partition import CellPartition
 from phydrax.discretization.fem._distributed import (
     DistributedFiniteElementMortarPlan,
     finite_element_partition_workset_plan,
     FiniteElementFacetOwnershipPlan,
     FiniteElementHaloPlan,
-    FiniteElementPartition,
     PartitionedFiniteElementDofMap,
 )
 from phydrax.discretization.fem._generic import FiniteElementDofMap
@@ -69,7 +69,7 @@ def _child_mortar(child_index: int):
 
 
 def test_owned_halo_worksets_dependencies_and_deterministic_halo_actions():
-    partition = FiniteElementPartition(np.asarray([0, 0, 1, 1]), 2)
+    partition = CellPartition(np.asarray([0, 0, 1, 1]), 2)
     facets = np.asarray([[0, 1], [1, 2], [2, 3]], dtype=np.int32)
     worksets = finite_element_partition_workset_plan(
         partition,
@@ -143,13 +143,13 @@ def test_one_rank_and_partitioned_facet_reductions_are_identical_and_once_owned(
     cell_ids = np.asarray([40, 10, 30, 20], dtype=np.int64)
     facet_ids = np.asarray([300, 100, 200], dtype=np.int64)
     one_rank = FiniteElementFacetOwnershipPlan(
-        FiniteElementPartition(np.zeros((4,), dtype=np.int32), 1),
+        CellPartition(np.zeros((4,), dtype=np.int32), 1),
         facets,
         cell_global_ids=cell_ids,
         facet_global_ids=facet_ids,
     )
     partitioned = FiniteElementFacetOwnershipPlan(
-        FiniteElementPartition(np.asarray([0, 0, 1, 1]), 2),
+        CellPartition(np.asarray([0, 0, 1, 1]), 2),
         facets,
         cell_global_ids=cell_ids,
         facet_global_ids=facet_ids,
@@ -213,7 +213,7 @@ def test_two_to_one_children_and_distributed_mortar_equal_serial_once_evaluation
     )
 
     ownership = FiniteElementFacetOwnershipPlan(
-        FiniteElementPartition(np.asarray([0, 1, 1]), 2),
+        CellPartition(np.asarray([0, 1, 1]), 2),
         np.asarray([[0, 1], [0, 2]], dtype=np.int32),
         cell_global_ids=np.asarray([10, 20, 30]),
         facet_global_ids=np.asarray([100, 101]),

@@ -55,11 +55,19 @@ from ._cell_complex import (
     polyhedral_cell_complex,
     polyhedral_connectivity,
     PolyhedralConnectivity,
+    PolyhedralWorksetLimitError,
+    PolyhedralWorksets,
+    prepare_polyhedral_worksets,
     tetrahedral_cell_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
-from ._cell_mesh import CellBlock, CellMesh
+from ._cell_geometry import (
+    CellGeometryElement,
+    CellGeometrySpec,
+    CellVertexGeometryElement,
+)
+from ._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
 from ._cochain import (
     CochainBoundaryKind,
     CochainBoundaryPolicy,
@@ -118,6 +126,7 @@ from ._particle_coarse_graining import (
     ParticleContinuumFields,
     PreparedParticleCoarseGraining,
 )
+from ._partition import CellPartition, partition_cells_contiguous
 from ._periodic_cell import PeriodicCell
 from ._point_cloud import (
     PointCloudPlan,
@@ -144,6 +153,14 @@ from ._polygon_geometry import (
     PolygonGeometryEvidence,
     PolygonTriangulation,
     prepare_polygon_triangulation,
+)
+from ._reference_cell import (
+    facet_orientation_actions,
+    facet_orientation_between,
+    FacetOrientationAction,
+    reference_cell_topology,
+    REFERENCE_TOPOLOGIES,
+    ReferenceCellTopology,
 )
 from ._simplicial_locator import (
     CellLocationResult,
@@ -377,11 +394,6 @@ from .fem import (
     affine_dof_constraint,
     AttachmentActionReactionCertificate,
     AttachmentRankEvidence,
-    CADFEMCellFamily,
-    CADFEMMeshEvidence,
-    CADFEMMeshingPolicy,
-    CADFEMMeshResult,
-    CADMeshAssociation,
     coarsen_triangles_local,
     CostAwareFiniteElementPartition,
     dirichlet_constraint,
@@ -397,7 +409,6 @@ from .fem import (
     FiniteElementBoundaryRealization,
     FiniteElementBoundarySet,
     FiniteElementCellMapEvaluation,
-    FiniteElementCoordinateSpec,
     FiniteElementDirichletConstraint,
     FiniteElementDiscretization,
     FiniteElementDistributedPhasePlan,
@@ -431,7 +442,6 @@ from .fem import (
     local_dual_weighted_residual,
     lower_distributed_finite_element_phases,
     maximum_mark,
-    mesh_brep_for_fem,
     mixed_inf_sup_diagnostic,
     MixedConstraintFormulation,
     MixedFiniteElementConstraintEvaluation,
@@ -1985,6 +1995,8 @@ from .vortex import __all__ as _vortex_all
 
 
 __all__ = [
+    "CellPartition",
+    "partition_cells_contiguous",
     "contact",
     "AbstractContactParticipant",
     "AbstractContactTrajectory",
@@ -2222,6 +2234,10 @@ __all__ = [
     "CellComplexTopology",
     "PolygonalConnectivity",
     "PolyhedralConnectivity",
+    "PolyhedralBlock",
+    "PolyhedralWorksetLimitError",
+    "PolyhedralWorksets",
+    "prepare_polyhedral_worksets",
     "TetrahedralConnectivity",
     "polygonal_cell_complex",
     "polygonal_connectivity",
@@ -2658,7 +2674,15 @@ __all__ = [
     "FiniteElementBoundarySet",
     "FiniteElementPeriodicFacetPair",
     "FiniteElementPeriodicTransform",
-    "FiniteElementCoordinateSpec",
+    "CellGeometryElement",
+    "CellGeometrySpec",
+    "FacetOrientationAction",
+    "REFERENCE_TOPOLOGIES",
+    "ReferenceCellTopology",
+    "CellVertexGeometryElement",
+    "facet_orientation_actions",
+    "facet_orientation_between",
+    "reference_cell_topology",
     "FiniteElementDistributedPhasePlan",
     "FiniteElementMeshImport",
     "FiniteElementMeshImportReport",
@@ -3763,12 +3787,6 @@ __all__ = [
     "LBVHContactSearchEvidence",
     "LBVHContactSearchPlan",
     "LBVHContactSearchResult",
-    "CADFEMCellFamily",
-    "CADFEMMeshingPolicy",
-    "CADFEMMeshEvidence",
-    "CADFEMMeshResult",
-    "CADMeshAssociation",
-    "mesh_brep_for_fem",
     "FiniteElementCellMapEvaluation",
     "prepare_finite_element_cell_map",
     "PreparedFiniteElementCellMap",

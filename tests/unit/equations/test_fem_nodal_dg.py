@@ -9,6 +9,9 @@ import opt_einsum as oe
 import phydrax as phx
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
+from phydrax.discretization._reference_cell import (
+    facet_orientation_actions,
+)
 from phydrax.discretization.fem._boundary import (
     FiniteElementBoundarySet,
     FiniteElementPeriodicFacetPair,
@@ -19,9 +22,6 @@ from phydrax.discretization.fem._generic import (
     FiniteElementPlan,
 )
 from phydrax.discretization.fem._reference import discontinuous_element
-from phydrax.discretization.fem._reference_topology import (
-    facet_orientation_actions,
-)
 from phydrax.discretization.finite_volume._physical_boundaries import (
     NoSlipAdiabaticWallBoundary,
 )

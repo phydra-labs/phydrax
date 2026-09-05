@@ -31,6 +31,7 @@ from ...discretization._conservation_policy import (
     DifferentiabilityPolicy,
     validate_differentiability_policy,
 )
+from ...discretization._reference_cell import reference_cell_topology
 from ...discretization.fem._boundary import FiniteElementBoundarySet
 from ...discretization.fem._generic import (
     FiniteElementDiscretization,
@@ -44,7 +45,6 @@ from ...discretization.fem._mortar import (
     serial_finite_element_mortar_plan,
 )
 from ...discretization.fem._reference_operator import _map_edge_rule, _map_face_rule
-from ...discretization.fem._reference_topology import reference_cell_topology
 from ...discretization.finite_volume._riemann import (
     AbstractArbitraryNormalNumericalFluxPlan,
 )

@@ -238,7 +238,7 @@ when array shapes happen to remain equal.
 
 `HighOrderCardiacGeometryPlan` qualifies curved volume coordinates without
 introducing another mesh representation. It consumes the existing
-`CellMesh` topology and `FiniteElementCoordinateSpec` geometry routes. The
+`CellMesh` topology and `CellGeometrySpec` geometry routes. The
 admitted envelope is deliberately narrow:
 
 - an H1, point-value, identity-mapped degree-two `SimplexLagrange` coordinate

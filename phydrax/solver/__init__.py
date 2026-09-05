@@ -612,6 +612,7 @@ from ._finite_volume_runtime import (
     PreparedFiniteVolumeRuntime,
 )
 from ._finite_volume_topology_events import (
+    FiniteVolumeRemeshArtifact,
     FiniteVolumeTopologyArtifactEvidence,
     FiniteVolumeTopologyEpoch,
     FiniteVolumeTopologyEvent,
@@ -2884,6 +2885,7 @@ __all__ = [
     "FiniteVolumeScheduledAdvanceResult",
     "FiniteVolumeRunStatus",
     "FiniteVolumeTopologyArtifactEvidence",
+    "FiniteVolumeRemeshArtifact",
     "FiniteVolumeTopologyEventTransaction",
     "FiniteVolumeTopologyEventTransactionResult",
     "FiniteVolumeTopologyEventScheduler",

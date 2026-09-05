@@ -8,12 +8,11 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._generic import (
@@ -69,50 +68,48 @@ def finite_element_geometry_quality(
         jacobian = ein.contract(
             "qid,cia->cqad", gradients, local_coordinates, backend="jax"
         )
-        singular_values = np.linalg.svd(np.asarray(jacobian), compute_uv=False)
+        singular_values = jnp.linalg.svd(jacobian, compute_uv=False)
         minimum_singular = singular_values[..., -1]
         maximum_singular = singular_values[..., 0]
         if jacobian.shape[-2] == jacobian.shape[-1]:
-            determinant = np.abs(np.linalg.det(np.asarray(jacobian)))
+            determinant = jnp.abs(jnp.linalg.det(jacobian))
         else:
-            gram = np.swapaxes(np.asarray(jacobian), -1, -2) @ np.asarray(jacobian)
-            determinant = np.sqrt(np.maximum(np.linalg.det(gram), 0.0))
-        column_norms = np.linalg.norm(np.asarray(jacobian), axis=-2)
-        scaled = determinant / np.maximum(np.prod(column_norms, axis=-1), floor)
-        condition = maximum_singular / np.maximum(minimum_singular, floor)
-        block_minimum = np.min(determinant, axis=1)
-        block_scaled = np.min(scaled, axis=1)
-        block_condition = np.max(condition, axis=1)
+            gram = jnp.swapaxes(jacobian, -1, -2) @ jacobian
+            determinant = jnp.sqrt(jnp.maximum(jnp.linalg.det(gram), 0.0))
+        column_norms = jnp.linalg.norm(jacobian, axis=-2)
+        scaled = determinant / jnp.maximum(jnp.prod(column_norms, axis=-1), floor)
+        condition = maximum_singular / jnp.maximum(minimum_singular, floor)
+        block_minimum = jnp.min(determinant, axis=1)
+        block_scaled = jnp.min(scaled, axis=1)
+        block_condition = jnp.max(condition, axis=1)
         block_valid = (
-            np.all(np.isfinite(np.asarray(jacobian)), axis=(1, 2, 3))
+            jnp.all(jnp.isfinite(jacobian), axis=(1, 2, 3))
             & (block_minimum > floor)
-            & (minimum_singular.min(axis=1) > floor)
+            & (jnp.min(minimum_singular, axis=1) > floor)
         )
         minimum_jacobians.append(block_minimum)
         minimum_scaled.append(block_scaled)
         maximum_conditions.append(block_condition)
         valid.append(block_valid)
-    minimum_jacobian = np.concatenate(minimum_jacobians)
-    minimum_scaled_jacobian = np.concatenate(minimum_scaled)
-    maximum_condition_number = np.concatenate(maximum_conditions)
-    valid_cells = np.concatenate(valid)
+    minimum_jacobian = jnp.concatenate(minimum_jacobians)
+    minimum_scaled_jacobian = jnp.concatenate(minimum_scaled)
+    maximum_condition_number = jnp.concatenate(maximum_conditions)
+    valid_cells = jnp.concatenate(valid)
     evidence_id = canonical_fingerprint(
         {
             "kind": "finite-element-geometry-quality",
             "topology": discretization.mesh.topology_id,
             "geometry": discretization.mesh.geometry_id,
             "runtime": runtime_.runtime_id,
-            "minimum_jacobian": array_tree_fingerprint(minimum_jacobian),
-            "minimum_scaled_jacobian": array_tree_fingerprint(minimum_scaled_jacobian),
-            "maximum_condition_number": array_tree_fingerprint(maximum_condition_number),
+            "probe_degree_increment": increment,
             "determinant_floor": floor,
         }
     )
     return FiniteElementGeometryQualityEvidence(
-        jnp.asarray(minimum_jacobian),
-        jnp.asarray(minimum_scaled_jacobian),
-        jnp.asarray(maximum_condition_number),
-        jnp.asarray(valid_cells),
+        minimum_jacobian,
+        minimum_scaled_jacobian,
+        maximum_condition_number,
+        valid_cells,
         floor,
         jnp.asarray(0.0),
         runtime_.runtime_id,

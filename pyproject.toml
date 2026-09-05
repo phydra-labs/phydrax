@@ -3,7 +3,11 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [tool.hatch.build]
-artifacts = ["phydrax/nn/operator/pretrained/*.npz"]
+artifacts = [
+  "phydrax/nn/operator/pretrained/*.npz",
+  "phydrax/meshing/providers/native/**/*.cpp",
+  "phydrax/meshing/providers/native/**/CMakeLists.txt",
+]
 exclude = [
   ".venv/**",
   ".uv/**",
@@ -41,7 +45,7 @@ dependencies = [
     "laplax==0.0.2",
     "lineax>=0.1.0,<0.2",
     "matfree>=0.6.1,<0.7",
-    "manifold3d>=3.3.2",
+    "manifold3d>=3.5.2",
     "meshio>=5.3.5",
     "nufftax>=0.6.1,<0.7",
     "numpy>=2.0",
@@ -90,6 +94,18 @@ iree = [
   "iree-base-compiler==3.11.0",
   "iree-base-runtime==3.11.0",
 ]
+meshing-gmsh = [
+  "gmsh>=4.15,<4.16",
+]
+meshing-mmg = [
+  "pymmg>=1.0,<1.1",
+]
+meshing-ftetwild = [
+  "wildmeshing>=0.4.1,<0.5",
+]
+meshing-poisson = [
+  "open3d>=0.19,<0.20; python_version < '3.13'",
+]
 docs = [
   "hippogriffe==0.2.2",
   "griffe==1.7.3",
@@ -134,6 +150,9 @@ qa = [
     "ruff==0.16.3",
     "scikit-learn>=1.4,<1.11",
     "ty==0.0.71",
+    "scipy-stubs>=1.18.1,<1.19; python_version >= '3.12'",
+    "scipy-stubs>=1.16,<1.17; python_version < '3.12'",
+    "cadquery-ocp-stubs>=7.9.3.1,<7.10; python_version < '3.15'",
 ]
 
 
@@ -158,6 +177,10 @@ max-line-length = 120
 addopts = "--import-mode=importlib"
 markers = [
     "opticstudio_live: requires a licensed local OpticStudio installation",
+    "meshing_gmsh: requires the optional real Gmsh provider",
+    "meshing_mmg: requires the optional real Mmg provider",
+    "meshing_ftetwild: requires the optional real fTetWild provider",
+    "meshing_vorocrust: requires the real VoroCrust executable and extraction bridge",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",

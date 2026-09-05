@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -65,8 +66,7 @@ class SurfaceMetadata(StrictModule, NonTrainableState):
 
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
-    length_unit: str = eqx.field(static=True)
-    coordinate_system: str = eqx.field(static=True)
+    coordinate_contract: SpatialCoordinateContract
     provenance: tuple[str, ...] = eqx.field(static=True)
     cell_tags: tuple[str, ...] = eqx.field(static=True)
     metadata_id: str = eqx.field(static=True)
@@ -76,40 +76,35 @@ class SurfaceMetadata(StrictModule, NonTrainableState):
         *,
         source_id: str,
         source_revision: str,
-        length_unit: str,
+        coordinate_contract: SpatialCoordinateContract,
         provenance: Sequence[str],
-        coordinate_system: str = "cartesian",
         cell_tags: Sequence[str] = (),
     ):
         source = str(source_id)
         revision = str(source_revision)
-        unit = str(length_unit)
-        coordinates = str(coordinate_system)
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError(
+                "Surface coordinate_contract must be a SpatialCoordinateContract."
+            )
         history = tuple(str(entry) for entry in provenance)
         tags = tuple(str(tag) for tag in cell_tags)
         if not source or not revision:
             raise ValueError("Surface source_id and source_revision must be non-empty.")
-        if not unit or not coordinates:
-            raise ValueError(
-                "Surface length_unit and coordinate_system must be non-empty."
-            )
         if not history or any(not entry for entry in history):
             raise ValueError("Surface provenance must contain non-empty entries.")
         if any(not tag for tag in tags):
             raise ValueError("Surface cell tags must be non-empty.")
         self.source_id = source
         self.source_revision = revision
-        self.length_unit = unit
-        self.coordinate_system = coordinates
+        self.coordinate_contract = coordinate_contract
         self.provenance = history
         self.cell_tags = tags
         self.metadata_id = canonical_fingerprint(
             {
-                "kind": "surface-metadata-v1",
+                "kind": "surface-metadata",
                 "source_id": source,
                 "source_revision": revision,
-                "length_unit": unit,
-                "coordinate_system": coordinates,
+                "coordinate_contract": coordinate_contract.spatial_id,
                 "provenance": history,
                 "cell_tags": tags,
             }

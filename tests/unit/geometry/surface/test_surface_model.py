@@ -5,6 +5,7 @@
 import numpy as np
 import pytest
 
+from phydrax import SpatialCoordinateContract
 from phydrax.geometry.surface._contracts import (
     InterfaceSide,
     SurfaceAuditPolicy,
@@ -20,7 +21,7 @@ def _metadata(*, tags=()):
     return SurfaceMetadata(
         source_id="unit-tetrahedron",
         source_revision="r1",
-        length_unit="m",
+        coordinate_contract=SpatialCoordinateContract.si(),
         provenance=("unit-test", "native-triangles"),
         cell_tags=tags,
     )

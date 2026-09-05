@@ -32,6 +32,7 @@ from . import (
     geometry,
     graph,
     interchange,
+    meshing,
     integration,
     lifecycle,
     kernels,
@@ -74,7 +75,11 @@ from ._identity import (
     SemanticProvenance,
     strict_module_payload,
 )
-from ._physical import DimensionalScaleContract, LengthCoordinateKind
+from ._physical import (
+    DimensionalScaleContract,
+    LengthCoordinateKind,
+    SpatialCoordinateContract,
+)
 
 from . import atomistic
 
@@ -119,6 +124,7 @@ __all__ = [
     "kernels",
     "linalg",
     "metrix",
+    "meshing",
     "ml",
     "signal",
     "nn",
@@ -156,4 +162,5 @@ __all__ = [
     "ArrayArchiveLimits",
     "DimensionalScaleContract",
     "LengthCoordinateKind",
+    "SpatialCoordinateContract",
 ]

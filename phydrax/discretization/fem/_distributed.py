@@ -14,7 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator, ConstraintMap
-from .._cell_mesh import CellMesh
+from .._partition import CellPartition
 from ._generic import FiniteElementDiscretization, FiniteElementDofMap
 from ._hp import FiniteElementHPLineage
 from ._hp_runtime import FiniteElementHPEpoch
@@ -307,49 +307,6 @@ class DistributedFiniteElementConstraint(StrictModule, NonTrainableState):
         self.partition_id = partition.partition_id
 
 
-class FiniteElementPartition(StrictModule, NonTrainableState):
-    """Contiguous host partition of top-dimensional cells."""
-
-    cell_owner: Array
-    part_count: int = eqx.field(static=True)
-    partition_id: str = eqx.field(static=True)
-
-    def __init__(self, cell_owner: ArrayLike, part_count: int, /):
-        owner = np.asarray(cell_owner, dtype=np.int32)
-        count = int(part_count)
-        if owner.ndim != 1 or count <= 0 or np.any(owner < 0) or np.any(owner >= count):
-            raise ValueError("Cell ownership or part_count is invalid.")
-        if set(owner.tolist()) != set(range(count)):
-            raise ValueError("Every partition must own at least one cell.")
-        self.cell_owner = jnp.asarray(owner)
-        self.part_count = count
-        self.partition_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-partition",
-                "cell_owner": array_tree_fingerprint(owner),
-                "part_count": count,
-            }
-        )
-
-
-def partition_cells_contiguous(
-    mesh: CellMesh,
-    part_count: int,
-    /,
-) -> FiniteElementPartition:
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
-    count = sum(block.cell_count for block in mesh.blocks)
-    parts = int(part_count)
-    if parts <= 0 or parts > count:
-        raise ValueError("part_count must lie between one and the cell count.")
-    owner = np.minimum(
-        np.arange(count, dtype=np.int64) * parts // count,
-        parts - 1,
-    ).astype(np.int32)
-    return FiniteElementPartition(owner, parts)
-
-
 class FiniteElementPartitionCostEvidence(StrictModule, NonTrainableState):
     cell_costs: Array
     part_costs: Array
@@ -359,17 +316,17 @@ class FiniteElementPartitionCostEvidence(StrictModule, NonTrainableState):
 
 
 class CostAwareFiniteElementPartition(StrictModule, NonTrainableState):
-    partition: FiniteElementPartition
+    partition: CellPartition
     evidence: FiniteElementPartitionCostEvidence
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        partition: FiniteElementPartition,
+        partition: CellPartition,
         evidence: FiniteElementPartitionCostEvidence,
         /,
     ):
-        if not isinstance(partition, FiniteElementPartition) or not isinstance(
+        if not isinstance(partition, CellPartition) or not isinstance(
             evidence, FiniteElementPartitionCostEvidence
         ):
             raise TypeError("Cost-aware partition requires partition and evidence.")
@@ -458,7 +415,7 @@ def partition_cells_cost_aware(
         selected = int(np.argmin(scores))
         owner[cell] = selected
         part_costs[selected] += costs_array[cell]
-    partition = FiniteElementPartition(owner, parts)
+    partition = CellPartition(owner, parts)
     edge_cut = sum(
         owner[int(left)] != owner[int(right)]
         for left, right in zip(
@@ -506,7 +463,7 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        partition: FiniteElementPartition,
+        partition: CellPartition,
         owned_cells: ArrayLike,
         owned_valid: ArrayLike,
         halo_cells: ArrayLike,
@@ -515,8 +472,8 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
         completions: ArrayLike,
         /,
     ):
-        if not isinstance(partition, FiniteElementPartition):
-            raise TypeError("partition must be FiniteElementPartition.")
+        if not isinstance(partition, CellPartition):
+            raise TypeError("partition must be CellPartition.")
         owned = np.asarray(owned_cells, dtype=np.int32)
         owned_valid_ = np.asarray(owned_valid, dtype=bool)
         halo = np.asarray(halo_cells, dtype=np.int32)
@@ -630,14 +587,14 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
 
 
 def finite_element_partition_workset_plan(
-    partition: FiniteElementPartition,
+    partition: CellPartition,
     facet_cells: ArrayLike,
     /,
     *,
     cell_global_ids: ArrayLike | None = None,
 ) -> FiniteElementPartitionWorksetPlan:
-    if not isinstance(partition, FiniteElementPartition):
-        raise TypeError("partition must be FiniteElementPartition.")
+    if not isinstance(partition, CellPartition):
+        raise TypeError("partition must be CellPartition.")
     owner = np.asarray(partition.cell_owner)
     facets = np.asarray(facet_cells, dtype=np.int32)
     cell_count = owner.size
@@ -707,15 +664,15 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        partition: FiniteElementPartition,
+        partition: CellPartition,
         facet_cells: ArrayLike,
         /,
         *,
         cell_global_ids: ArrayLike | None = None,
         facet_global_ids: ArrayLike | None = None,
     ):
-        if not isinstance(partition, FiniteElementPartition):
-            raise TypeError("partition must be FiniteElementPartition.")
+        if not isinstance(partition, CellPartition):
+            raise TypeError("partition must be CellPartition.")
         owner = np.asarray(partition.cell_owner)
         facets = np.asarray(facet_cells, dtype=np.int32)
         cell_ids = (
@@ -730,7 +687,6 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
         )
         if (
             facets.ndim != 2
-            or facets.shape[0] == 0
             or facets.shape[1] != 2
             or np.any(facets < 0)
             or np.any(facets >= owner.size)
@@ -802,23 +758,30 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
 class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
     """Owned-local, halo, and exactly-once interface execution phases."""
 
-    partition: FiniteElementPartition
+    partition: CellPartition
     worksets: FiniteElementPartitionWorksetPlan
     facet_ownership: FiniteElementFacetOwnershipPlan
     phase_names: tuple[str, ...] = eqx.field(static=True)
     phase_ids: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    mesh_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         discretization: FiniteElementDiscretization,
-        partition: FiniteElementPartition,
+        partition: CellPartition,
         /,
+        *,
+        worksets: FiniteElementPartitionWorksetPlan | None = None,
     ):
         if not isinstance(discretization, FiniteElementDiscretization) or not isinstance(
-            partition, FiniteElementPartition
+            partition, CellPartition
         ):
             raise TypeError("Distributed phases require FE discretization and partition.")
+        if partition.cell_owner.size != sum(
+            block.cell_count for block in discretization.mesh.blocks
+        ):
+            raise ValueError("Partition ownership must cover the exact FE cell count.")
         domain = discretization.interior_facet_domain
         facets = np.stack(
             (
@@ -827,7 +790,7 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
             ),
             axis=-1,
         )
-        worksets = finite_element_partition_workset_plan(
+        required_worksets = finite_element_partition_workset_plan(
             partition,
             facets,
             cell_global_ids=np.concatenate(
@@ -836,6 +799,23 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
                 )
             ),
         )
+        if worksets is None:
+            worksets = required_worksets
+        else:
+            if (
+                not isinstance(worksets, FiniteElementPartitionWorksetPlan)
+                or worksets.partition_id != partition.partition_id
+            ):
+                raise ValueError("Supplied FE worksets must match the partition.")
+            for part in range(partition.part_count):
+                required = np.asarray(required_worksets.halo_cells[part])[
+                    np.asarray(required_worksets.halo_valid[part])
+                ]
+                provided = np.asarray(worksets.halo_cells[part])[
+                    np.asarray(worksets.halo_valid[part])
+                ]
+                if not np.all(np.isin(required, provided)):
+                    raise ValueError("Supplied FE halos omit an adjacent remote cell.")
         ownership = FiniteElementFacetOwnershipPlan(
             partition,
             facets,
@@ -864,6 +844,7 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
             for name in names
         )
         self.partition = partition
+        self.mesh_id = discretization.mesh.mesh_id
         self.worksets = worksets
         self.facet_ownership = ownership
         self.phase_names = names
@@ -871,6 +852,10 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-element-distributed-phase-plan",
+                "mesh": discretization.mesh.mesh_id,
+                "geometry": array_tree_fingerprint(
+                    discretization.default_runtime.coordinates
+                ),
                 "partition": partition.partition_id,
                 "worksets": worksets.plan_id,
                 "facet_ownership": ownership.plan_id,
@@ -889,7 +874,7 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
 
 def lower_distributed_finite_element_phases(
     discretization: FiniteElementDiscretization,
-    partition: FiniteElementPartition | CostAwareFiniteElementPartition,
+    partition: CellPartition | CostAwareFiniteElementPartition,
     /,
 ) -> FiniteElementDistributedPhasePlan:
     selected = (
@@ -1046,7 +1031,7 @@ class FiniteElementHPPartitionPlan(StrictModule, NonTrainableState):
     """Inherited hp cell ownership, adaptive halos, and mortar dependencies."""
 
     cell_owner_by_slot: Array
-    partition: FiniteElementPartition
+    partition: CellPartition
     worksets: FiniteElementPartitionWorksetPlan
     interface_owner_part: Array
     mortar_dependencies: Array
@@ -1074,7 +1059,7 @@ class FiniteElementHPPartitionPlan(StrictModule, NonTrainableState):
             raise ValueError("Adaptive hp ownership or inactive sentinels are invalid.")
         active_slots = np.asarray(epoch.active_cell_slots, dtype=np.int32)
         active_owners = owners[active_slots]
-        partition = FiniteElementPartition(active_owners, parts)
+        partition = CellPartition(active_owners, parts)
         slot_to_cell = np.full((epoch.topology.capacity,), -1, dtype=np.int32)
         slot_to_cell[active_slots] = np.arange(active_slots.size, dtype=np.int32)
         valid = np.asarray(epoch.interfaces.valid)
@@ -1176,7 +1161,6 @@ __all__ = [
     "FiniteElementHaloPlan",
     "FiniteElementHPPartitionPlan",
     "FiniteElementPartitionCostEvidence",
-    "FiniteElementPartition",
     "FiniteElementPartitionWorksetPlan",
     "JaxCollectiveBackend",
     "PartitionedFiniteElementDofMap",
@@ -1184,6 +1168,5 @@ __all__ = [
     "inherit_finite_element_hp_ownership",
     "lower_distributed_finite_element_phases",
     "finite_element_partition_workset_plan",
-    "partition_cells_contiguous",
     "partition_cells_cost_aware",
 ]

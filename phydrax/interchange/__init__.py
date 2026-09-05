@@ -10,6 +10,13 @@ from ._inspection import (
     HostInspectionField,
     HostInspectionFrame,
 )
+from ._mesh_arrays import (
+    MeshArrayArtifact,
+    MeshArrayAssociation,
+    MeshArrayBlock,
+    MeshArrayField,
+    MeshArraySelection,
+)
 from ._report import (
     AdapterCapability,
     AdapterError,
@@ -40,6 +47,11 @@ __all__ = [
     "HostInspectionConversion",
     "HostInspectionField",
     "HostInspectionFrame",
+    "MeshArrayArtifact",
+    "MeshArrayAssociation",
+    "MeshArrayBlock",
+    "MeshArrayField",
+    "MeshArraySelection",
     "AdapterCapability",
     "AdapterError",
     "AdapterFormatProfile",

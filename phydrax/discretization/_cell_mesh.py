@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -168,11 +168,85 @@ class CellBlock(StrictModule, NonTrainableState):
         return _CELL_DIMENSIONS[self.cell_kind]
 
 
+class PolyhedralBlock(StrictModule, NonTrainableState):
+    """One exact-width block of arbitrary polyhedra grouped by vertex count."""
+
+    name: str = eqx.field(static=True)
+    cell_kind: str = eqx.field(static=True)
+    vertices: Array
+    vertex_valid: Array
+    global_ids: Array
+    block_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        name: str,
+        vertices: ArrayLike,
+        /,
+        *,
+        global_ids: ArrayLike | None = None,
+    ):
+        block_name = str(name)
+        cells = np.asarray(vertices, dtype=np.int32)
+        if not block_name:
+            raise ValueError("Polyhedral block name must be non-empty.")
+        if cells.ndim != 2 or cells.shape[0] == 0 or cells.shape[1] < 4:
+            raise ValueError(
+                "Polyhedral block vertices must have shape (cells > 0, arity >= 4)."
+            )
+        if np.any(cells < 0):
+            raise ValueError("Polyhedral cell vertex indices must be non-negative.")
+        canonical = []
+        for row in cells:
+            if np.unique(row).size != row.size:
+                raise ValueError("Each polyhedral cell must reference distinct vertices.")
+            canonical.append(tuple(sorted(int(value) for value in row)))
+        if len(set(canonical)) != len(canonical):
+            raise ValueError("Polyhedral blocks cannot contain duplicate cells.")
+        ids = (
+            np.arange(cells.shape[0], dtype=np.int64)
+            if global_ids is None
+            else np.asarray(global_ids, dtype=np.int64)
+        )
+        if ids.shape != (cells.shape[0],):
+            raise ValueError("Polyhedral global_ids must match the cell count.")
+        if np.any(ids < 0) or np.unique(ids).size != ids.size:
+            raise ValueError(
+                "Polyhedral global_ids must be unique non-negative integers."
+            )
+        valid = np.ones_like(cells, dtype=bool)
+        self.name = block_name
+        self.cell_kind = "polyhedron"
+        self.vertices = jnp.asarray(cells)
+        self.vertex_valid = jnp.asarray(valid)
+        self.global_ids = jnp.asarray(ids)
+        self.block_id = canonical_fingerprint(
+            {
+                "kind": "polyhedral-block",
+                "name": block_name,
+                "vertices": array_tree_fingerprint(cells),
+                "global_ids": array_tree_fingerprint(ids),
+            }
+        )
+
+    @property
+    def cell_count(self) -> int:
+        return int(self.vertices.shape[0])
+
+    @property
+    def arity(self) -> int:
+        return int(self.vertices.shape[1])
+
+    @property
+    def topological_dimension(self) -> int:
+        return 3
+
+
 class CellMesh(StrictModule, NonTrainableState):
     """Canonical computational mesh shared by unstructured discretizations."""
 
     coordinates: Array
-    blocks: tuple[CellBlock, ...]
+    blocks: tuple[CellBlock | PolyhedralBlock, ...]
     vertex_global_ids: Array
     connectivity: (
         IntervalConnectivity
@@ -194,10 +268,11 @@ class CellMesh(StrictModule, NonTrainableState):
     def __init__(
         self,
         coordinates: ArrayLike,
-        blocks: Sequence[CellBlock],
+        blocks: Sequence[CellBlock | PolyhedralBlock],
         /,
         *,
         vertex_global_ids: ArrayLike | None = None,
+        entity_global_ids: Mapping[int, ArrayLike] | None = None,
         polyhedral_connectivity: PolyhedralConnectivity | None = None,
         numeric_version: str = "0",
     ):
@@ -209,8 +284,12 @@ class CellMesh(StrictModule, NonTrainableState):
         normalized_blocks = tuple(blocks)
         if not normalized_blocks:
             raise ValueError("Cell mesh requires at least one cell block.")
-        if not all(isinstance(block, CellBlock) for block in normalized_blocks):
-            raise TypeError("blocks must contain only CellBlock instances.")
+        if not all(
+            isinstance(block, (CellBlock, PolyhedralBlock)) for block in normalized_blocks
+        ):
+            raise TypeError(
+                "blocks must contain only CellBlock or PolyhedralBlock instances."
+            )
         names = tuple(block.name for block in normalized_blocks)
         if len(set(names)) != len(names):
             raise ValueError("Cell block names must be unique.")
@@ -230,10 +309,34 @@ class CellMesh(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"Cell block {block.name!r} indexes undeclared vertices."
                 )
+        entity_ids = (
+            {}
+            if entity_global_ids is None
+            else {
+                int(dimension): np.asarray(values, dtype=np.int64)
+                for dimension, values in entity_global_ids.items()
+            }
+        )
+        if any(
+            dimension < 0 or dimension > topological_dimension for dimension in entity_ids
+        ):
+            raise ValueError("entity_global_ids contains an undeclared dimension.")
+        supplied_vertices = entity_ids.get(0)
+        if supplied_vertices is not None and vertex_global_ids is not None:
+            if not np.array_equal(
+                supplied_vertices, np.asarray(vertex_global_ids, dtype=np.int64)
+            ):
+                raise ValueError(
+                    "vertex_global_ids contradicts entity_global_ids dimension zero."
+                )
         global_ids = (
-            np.arange(points.shape[0], dtype=np.int64)
-            if vertex_global_ids is None
-            else np.asarray(vertex_global_ids, dtype=np.int64)
+            supplied_vertices
+            if supplied_vertices is not None
+            else (
+                np.arange(points.shape[0], dtype=np.int64)
+                if vertex_global_ids is None
+                else np.asarray(vertex_global_ids, dtype=np.int64)
+            )
         )
         if global_ids.shape != (points.shape[0],):
             raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
@@ -254,11 +357,16 @@ class CellMesh(StrictModule, NonTrainableState):
                 for block in normalized_blocks
             )
         )
-        if polyhedral_connectivity is not None and (
-            len(normalized_blocks) != 1 or normalized_blocks[0].cell_kind != "polyhedron"
+        supplied_cells = entity_ids.get(topological_dimension)
+        if supplied_cells is not None and not np.array_equal(
+            supplied_cells, cell_global_ids
         ):
             raise ValueError(
-                "polyhedral_connectivity is valid only for one polyhedron block."
+                "Top-dimensional entity_global_ids contradict cell block global IDs."
+            )
+        if polyhedral_connectivity is not None and topological_dimension != 3:
+            raise ValueError(
+                "polyhedral_connectivity is valid only for three-dimensional meshes."
             )
         if topological_dimension == 1:
             if any(block.cell_kind != "interval" for block in normalized_blocks):
@@ -319,10 +427,64 @@ class CellMesh(StrictModule, NonTrainableState):
                 points.shape[0],
                 polygons=polygons,
                 vertex_global_ids=global_ids,
+                edge_global_ids=entity_ids.get(1),
                 cell_global_ids=cell_global_ids,
             )
         else:
-            if (
+            if polyhedral_connectivity is not None:
+                connectivity = polyhedral_connectivity
+                if (
+                    connectivity.vertex_count != points.shape[0]
+                    or connectivity.cell_count
+                    != sum(block.cell_count for block in normalized_blocks)
+                    or not np.array_equal(
+                        np.asarray(connectivity.vertex_global_ids), global_ids
+                    )
+                    or (
+                        entity_ids.get(1) is not None
+                        and not np.array_equal(
+                            entity_ids[1],
+                            np.asarray(connectivity.edge_global_ids),
+                        )
+                    )
+                    or (
+                        entity_ids.get(2) is not None
+                        and not np.array_equal(
+                            entity_ids[2],
+                            np.asarray(connectivity.face_global_ids),
+                        )
+                    )
+                    or not np.array_equal(
+                        np.asarray(connectivity.cell_global_ids), cell_global_ids
+                    )
+                ):
+                    raise ValueError(
+                        "PolyhedralConnectivity does not match the CellMesh IDs."
+                    )
+                offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
+                values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
+                cell_offset = 0
+                for block in normalized_blocks:
+                    widths = np.diff(
+                        offsets[cell_offset : cell_offset + block.cell_count + 1]
+                    )
+                    if np.any(widths != block.arity):
+                        raise ValueError(
+                            "PolyhedralConnectivity cell widths do not match blocks."
+                        )
+                    start = int(offsets[cell_offset])
+                    stop = int(offsets[cell_offset + block.cell_count])
+                    expected = np.asarray(block.vertices, dtype=np.int32)
+                    if not np.array_equal(
+                        values[start:stop].reshape(expected.shape),
+                        np.sort(expected, axis=1),
+                    ):
+                        raise ValueError(
+                            "PolyhedralConnectivity cell vertices do not match blocks."
+                        )
+                    cell_offset += block.cell_count
+                topology = polyhedral_cell_complex(connectivity)
+            elif (
                 len(normalized_blocks) == 1
                 and normalized_blocks[0].cell_kind == "tetrahedron"
             ):
@@ -333,6 +495,8 @@ class CellMesh(StrictModule, NonTrainableState):
                     tetrahedra,
                     points.shape[0],
                     vertex_global_ids=global_ids,
+                    edge_global_ids=entity_ids.get(1),
+                    face_global_ids=entity_ids.get(2),
                     cell_global_ids=cell_global_ids,
                 )
             elif (
@@ -346,44 +510,13 @@ class CellMesh(StrictModule, NonTrainableState):
                     hexahedra,
                     points.shape[0],
                     vertex_global_ids=global_ids,
+                    edge_global_ids=entity_ids.get(1),
+                    face_global_ids=entity_ids.get(2),
                     cell_global_ids=cell_global_ids,
                 )
-            elif (
-                len(normalized_blocks) == 1
-                and normalized_blocks[0].cell_kind == "polyhedron"
-            ):
-                block = normalized_blocks[0]
-                if not isinstance(polyhedral_connectivity, PolyhedralConnectivity):
-                    raise ValueError(
-                        "A polyhedron CellBlock requires PolyhedralConnectivity."
-                    )
-                connectivity = polyhedral_connectivity
-                if (
-                    connectivity.vertex_count != points.shape[0]
-                    or connectivity.cell_count != block.cell_count
-                    or not np.array_equal(
-                        np.asarray(connectivity.cell_vertices),
-                        np.asarray(block.vertices),
-                    )
-                    or not np.array_equal(
-                        np.asarray(connectivity.cell_vertex_valid),
-                        np.asarray(block.vertex_valid),
-                    )
-                    or not np.array_equal(
-                        np.asarray(connectivity.vertex_global_ids), global_ids
-                    )
-                    or not np.array_equal(
-                        np.asarray(connectivity.cell_global_ids), cell_global_ids
-                    )
-                ):
-                    raise ValueError(
-                        "PolyhedralConnectivity does not match the CellMesh block or IDs."
-                    )
-                topology = polyhedral_cell_complex(connectivity)
             elif any(block.cell_kind == "polyhedron" for block in normalized_blocks):
                 raise ValueError(
-                    "A face-defined polyhedron block must be homogeneous and requires "
-                    "matching PolyhedralConnectivity."
+                    "Polyhedron blocks require matching PolyhedralConnectivity."
                 )
             else:
                 polyhedral_blocks = tuple(
@@ -394,6 +527,8 @@ class CellMesh(StrictModule, NonTrainableState):
                     polyhedral_blocks,
                     points.shape[0],
                     vertex_global_ids=global_ids,
+                    edge_global_ids=entity_ids.get(1),
+                    face_global_ids=entity_ids.get(2),
                     cell_global_ids=cell_global_ids,
                 )
                 topology = polyhedral_cell_complex(connectivity)
@@ -599,28 +734,208 @@ class CellMesh(StrictModule, NonTrainableState):
             raise ValueError(
                 "Polyhedral coordinates must have shape (vertex_count, d >= 3)."
             )
+        normalized_cells = tuple(tuple(cell) for cell in cells)
+        if not normalized_cells:
+            raise ValueError("At least one polyhedral cell is required.")
+        source_ids = (
+            np.arange(len(normalized_cells), dtype=np.int64)
+            if cell_global_ids is None
+            else np.asarray(cell_global_ids, dtype=np.int64)
+        )
+        if source_ids.shape != (len(normalized_cells),):
+            raise ValueError("cell_global_ids must match the polyhedral cell count.")
+        vertex_counts = np.asarray(
+            [
+                len(
+                    {
+                        int(vertex)
+                        for face in cell
+                        for vertex in np.asarray(face, dtype=np.int32)
+                    }
+                )
+                for cell in normalized_cells
+            ],
+            dtype=np.int32,
+        )
+        order = np.argsort(vertex_counts, kind="stable")
+        ordered_cells = tuple(normalized_cells[int(index)] for index in order)
+        ordered_ids = source_ids[order]
+        ordered_counts = vertex_counts[order]
         connectivity = _build_polyhedral_connectivity(
-            cells,
+            ordered_cells,
             points.shape[0],
             vertex_global_ids=vertex_global_ids,
-            cell_global_ids=cell_global_ids,
+            cell_global_ids=ordered_ids,
         )
-        block = CellBlock(
-            block_name,
-            "polyhedron",
-            connectivity.cell_vertices,
-            vertex_valid=connectivity.cell_vertex_valid,
-            global_ids=connectivity.cell_global_ids,
-        )
+        offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
+        values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
+        blocks = []
+        start_cell = 0
+        unique_counts = tuple(int(value) for value in np.unique(ordered_counts))
+        for vertex_count in unique_counts:
+            stop_cell = start_cell + int(np.sum(ordered_counts == vertex_count))
+            start = int(offsets[start_cell])
+            stop = int(offsets[stop_cell])
+            name = (
+                str(block_name)
+                if len(unique_counts) == 1
+                else f"{block_name}-{vertex_count}"
+            )
+            blocks.append(
+                PolyhedralBlock(
+                    name,
+                    values[start:stop].reshape((-1, vertex_count)),
+                    global_ids=ordered_ids[start_cell:stop_cell],
+                )
+            )
+            start_cell = stop_cell
         return cls(
             points,
-            (block,),
+            tuple(blocks),
             vertex_global_ids=connectivity.vertex_global_ids,
             polyhedral_connectivity=connectivity,
             numeric_version=numeric_version,
         )
 
-    def block(self, name: str, /) -> CellBlock:
+    @classmethod
+    def from_mixed_3d(
+        cls,
+        coordinates: ArrayLike,
+        blocks: Sequence[CellBlock],
+        /,
+        *,
+        polyhedra: Mapping[str, Sequence[Sequence[ArrayLike]]],
+        vertex_global_ids: ArrayLike | None = None,
+        polyhedral_cell_global_ids: Mapping[str, ArrayLike] | None = None,
+        numeric_version: str = "0",
+    ) -> CellMesh:
+        """Build one mixed standard/polyhedral three-dimensional mesh."""
+
+        points = np.asarray(coordinates, dtype=float)
+        standard_blocks = tuple(blocks)
+        if any(
+            block.cell_kind not in ("tetrahedron", "hexahedron", "prism", "pyramid")
+            for block in standard_blocks
+        ):
+            raise ValueError("Mixed 3-D dense blocks use standard volume cell kinds.")
+        named_cells = tuple(
+            (str(name), tuple(tuple(cell) for cell in cells))
+            for name, cells in sorted(polyhedra.items())
+        )
+        if any(not name or not cells for name, cells in named_cells):
+            raise ValueError(
+                "Polyhedral block names and cell collections must be non-empty."
+            )
+        id_mapping = (
+            {}
+            if polyhedral_cell_global_ids is None
+            else {
+                str(name): np.asarray(values, dtype=np.int64)
+                for name, values in polyhedral_cell_global_ids.items()
+            }
+        )
+        if set(id_mapping) not in (set(), {name for name, _ in named_cells}):
+            raise ValueError(
+                "polyhedral_cell_global_ids must cover every polyhedral block."
+            )
+        used_ids = [
+            int(value)
+            for block in standard_blocks
+            for value in np.asarray(block.global_ids, dtype=np.int64)
+        ]
+        next_id = max(used_ids, default=-1) + 1
+        poly_blocks: list[PolyhedralBlock] = []
+        explicit_cells: list[tuple[ArrayLike, ...]] = []
+        explicit_ids: list[int] = []
+        for name, cells in named_cells:
+            ids = id_mapping.get(name)
+            if ids is None:
+                ids = np.arange(next_id, next_id + len(cells), dtype=np.int64)
+            if ids.shape != (len(cells),):
+                raise ValueError(
+                    f"Polyhedral global IDs for {name!r} must match its cell count."
+                )
+            counts = np.asarray(
+                [
+                    len(
+                        {
+                            int(vertex)
+                            for face in cell
+                            for vertex in np.asarray(face, dtype=np.int32)
+                        }
+                    )
+                    for cell in cells
+                ],
+                dtype=np.int32,
+            )
+            order = np.argsort(counts, kind="stable")
+            ordered_cells = tuple(cells[int(index)] for index in order)
+            ordered_ids = ids[order]
+            ordered_counts = counts[order]
+            for vertex_count in tuple(int(value) for value in np.unique(ordered_counts)):
+                selected = np.flatnonzero(ordered_counts == vertex_count)
+                selected_cells = tuple(ordered_cells[int(index)] for index in selected)
+                selected_ids = ordered_ids[selected]
+                vertices = np.asarray(
+                    [
+                        sorted(
+                            {
+                                int(vertex)
+                                for face in cell
+                                for vertex in np.asarray(face, dtype=np.int32)
+                            }
+                        )
+                        for cell in selected_cells
+                    ],
+                    dtype=np.int32,
+                )
+                block_name = (
+                    name
+                    if len(np.unique(ordered_counts)) == 1
+                    else f"{name}-{vertex_count}"
+                )
+                poly_blocks.append(
+                    PolyhedralBlock(
+                        block_name,
+                        vertices,
+                        global_ids=selected_ids,
+                    )
+                )
+                explicit_cells.extend(selected_cells)
+                explicit_ids.extend(int(value) for value in selected_ids)
+            next_id = max(next_id, int(np.max(ids, initial=next_id - 1)) + 1)
+        combined_blocks = (*standard_blocks, *poly_blocks)
+        if not combined_blocks:
+            raise ValueError("Mixed 3-D mesh requires at least one cell block.")
+        entries: list[Sequence[ArrayLike] | tuple[str, ArrayLike]] = [
+            (block.cell_kind, np.asarray(block.vertices, dtype=np.int32))
+            for block in standard_blocks
+        ]
+        entries.extend(explicit_cells)
+        all_ids = np.concatenate(
+            (
+                *(
+                    np.asarray(block.global_ids, dtype=np.int64)
+                    for block in standard_blocks
+                ),
+                np.asarray(explicit_ids, dtype=np.int64),
+            )
+        )
+        connectivity = _build_polyhedral_connectivity(
+            entries,
+            points.shape[0],
+            vertex_global_ids=vertex_global_ids,
+            cell_global_ids=all_ids,
+        )
+        return cls(
+            points,
+            combined_blocks,
+            vertex_global_ids=connectivity.vertex_global_ids,
+            polyhedral_connectivity=connectivity,
+            numeric_version=numeric_version,
+        )
+
+    def block(self, name: str, /) -> CellBlock | PolyhedralBlock:
         requested = str(name)
         for block in self.blocks:
             if block.name == requested:
@@ -649,14 +964,17 @@ class CellMesh(StrictModule, NonTrainableState):
         return CellMesh(
             points,
             self.blocks,
-            vertex_global_ids=self.vertex_global_ids,
+            entity_global_ids={
+                entities.intrinsic_dimension: entities.entity_ids
+                for entities in self.topology.entity_sets
+            },
             polyhedral_connectivity=(
                 self.connectivity
-                if len(self.blocks) == 1 and self.blocks[0].cell_kind == "polyhedron"
+                if any(isinstance(block, PolyhedralBlock) for block in self.blocks)
                 else None
             ),
             numeric_version=numeric_version,
         )
 
 
-__all__ = ["CellBlock", "CellMesh"]
+__all__ = ["CellBlock", "CellMesh", "PolyhedralBlock"]

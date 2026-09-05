@@ -275,6 +275,7 @@ nav:
         - SPH stabilization: "guides_sph_stabilization.md"
         - Transport and adaptive SPH: "guides_transport_adaptive_sph.md"
         - Multiphase and incompressible SPH: "guides_multiphase_incompressible_sph.md"
+        - Meshing: "guides_meshing.md"
         - Finite elements: "guides_finite_elements.md"
         - Explicit polygon H1: "guides_explicit_polygon_h1.md"
         - Isogeometric analysis: "guides_isogeometric_analysis.md"
@@ -509,6 +510,7 @@ nav:
             - Stochastic geometry: "api/metrix/stochastic.md"
             - Array state geometry: "api/metrix/state_geometry.md"
             - Vector bundles and gauge geometry: "api/metrix/bundles.md"
+        - Meshing: "api/meshing.md"
         - Data utilities:
             - Overview: "api/data_utils/index.md"
             - CSV reader: "api/data_utils/csv.md"

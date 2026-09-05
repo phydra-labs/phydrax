@@ -17,8 +17,8 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._conservation_boundary import AbstractConservationBoundary
 from .._integration_domain import IntegrationDomain
+from .._reference_cell import FacetOrientationAction
 from ._generic import FiniteElementDiscretization
-from ._reference_topology import FacetOrientationAction
 
 
 def _canonical_patch_name(value: object, /) -> str:

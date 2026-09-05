@@ -15,7 +15,7 @@ import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dynamics import PreparedFiniteVolumeDynamics
@@ -48,6 +48,8 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
     axis_names: tuple[str, ...] = eqx.field(static=True)
     halo_width: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    periodic: tuple[bool, ...] = eqx.field(static=True)
+    grid_revision: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -57,11 +59,22 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
         /,
         *,
         halo_width: int,
+        periodic: Sequence[bool] | None = None,
+        grid_revision: str | None = None,
     ):
         shape = tuple(int(value) for value in global_shape)
         splits = tuple(int(value) for value in split_factors)
         names = tuple(str(value) for value in axis_names)
         width = int(halo_width)
+        periodic_ = (True,) * len(shape) if periodic is None else tuple(periodic)
+        if len(periodic_) != len(shape) or any(
+            not isinstance(value, (bool, np.bool_)) for value in periodic_
+        ):
+            raise ValueError("One Boolean periodic flag is required per FV axis.")
+        if grid_revision is not None and (
+            not isinstance(grid_revision, str) or not grid_revision
+        ):
+            raise ValueError("FV grid_revision must be a non-empty identity or None.")
         if (
             not shape
             or len(shape) != len(splits)
@@ -81,6 +94,8 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
         self.split_factors = splits
         self.axis_names = names
         self.halo_width = width
+        self.periodic = tuple(bool(value) for value in periodic_)
+        self.grid_revision = grid_revision
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-decomposition",
@@ -88,6 +103,8 @@ class FiniteVolumeDecompositionPlan(StrictModule, NonTrainableState):
                 "split_factors": list(splits),
                 "axis_names": list(names),
                 "halo_width": width,
+                "periodic": list(self.periodic),
+                "grid_revision": grid_revision,
             }
         )
 
@@ -141,7 +158,7 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
                 mesh_axis=mesh_axis_names[axis],
                 neighbor_offset=-1 if side == "lower" else 1,
                 halo_width=plan.halo_width,
-                periodic=True,
+                periodic=plan.periodic[axis],
                 route_id=canonical_fingerprint(
                     {
                         "kind": "finite-volume-halo-route",
@@ -201,6 +218,8 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         width = self.plan.halo_width
         if not 0 <= axis_ < len(self.plan.global_shape):
             raise ValueError("Distributed FV halo axis is out of range.")
+        if not self.plan.periodic[axis_]:
+            raise ValueError("Periodic halo exchange requires a periodic FV axis.")
         if width == 0:
             return state
         lower = jnp.take(
@@ -227,6 +246,23 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
             raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         if dynamics.discretization.cell_shape != self.plan.global_shape:
             raise ValueError("Distributed FV dynamics and decomposition shapes differ.")
+        if (
+            self.plan.grid_revision is not None
+            and canonical_fingerprint(
+                array_tree_fingerprint(dynamics.discretization.grid)
+            )
+            != self.plan.grid_revision
+        ):
+            raise ValueError(
+                "Distributed FV dynamics use a stale or different grid revision."
+            )
+        if (
+            tuple(axis.periodic for axis in dynamics.discretization.grid.structured_axes)
+            != self.plan.periodic
+        ):
+            raise ValueError(
+                "Distributed FV dynamics and decomposition periodicity differ."
+            )
         return jax.jit(
             lambda value: dynamics(jnp.asarray(time), value, args),
             in_shardings=self.cell_sharding,

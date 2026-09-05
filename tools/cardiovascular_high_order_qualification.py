@@ -64,7 +64,7 @@ def _curved_coordinates(element, amplitude: float):
 def _prepare_geometry(cell_kind: str, amplitude: float, epoch):
     mesh = _cardiac_mesh(cell_kind)
     element = phx.discretization.lagrange_element(cell_kind, 2)
-    coordinate_spec = phx.discretization.FiniteElementCoordinateSpec(
+    coordinate_spec = phx.discretization.CellGeometrySpec(
         {"myocardium": element},
         {"myocardium": jnp.arange(element.local_dof_count)[None, :]},
         _curved_coordinates(element, amplitude),
@@ -391,7 +391,7 @@ def _mechanics_qualification(target_geometry, target_candidate):
     )
     coordinate_identity_match = (
         prepared.discretization.default_runtime.geometry_layout_id
-        == target_geometry.plan.coordinate_spec.coordinate_spec_id
+        == target_geometry.plan.coordinate_spec.geometry_layout_id
     )
     qualification = qualified.qualification
     passed = bool(

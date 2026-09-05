@@ -65,7 +65,7 @@ def test_curved_p2_tetrahedral_coordinates_drive_tensor_diffusion():
     element = phx.discretization.lagrange_element("tetrahedron", 2)
     reference = jnp.asarray(element.reference_nodes)
     curved = reference.at[:, 2].add(0.05 * reference[:, 0] * (1.0 - reference[:, 0]))
-    coordinate_spec = phx.discretization.FiniteElementCoordinateSpec(
+    coordinate_spec = phx.discretization.CellGeometrySpec(
         {"tetrahedra": element},
         {"tetrahedra": jnp.arange(10, dtype=jnp.int32)[None, :]},
         curved,

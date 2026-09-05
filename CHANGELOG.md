@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Added solver-neutral meshing specifications, revision-bound scopes, physical
+  coordinate contracts, audits, quality metrics, staged provider results,
+  interchange, topology lineage, and constrained fixed-topology optimization.
+  Promoted reference-cell and coordinate geometry ownership to discretization;
+  Gmsh construction now lives in `phydrax.meshing` rather than FEM.
+- Added real optional Gmsh, Mmg, fTetWild, Manifold, Poisson, OpenVDB,
+  VoroCrust, Omega_h, and TIOGA provider paths, including periodic/high-order
+  CAD meshing, qualified straight layer sweeps, polyhedral output, and MPI
+  adaptation/overset ownership evidence.
+- Added compact mesh assemblies, shared `CellPartition` distribution lowering,
+  conformal/periodic/contact/overset overlays, and safety-projected learned
+  proposals with audited transactional acceptance.
 - Added a source-pinned Potvin--Fuglevand 2017 sustained-isometric skeletal
   motor-unit population with exact quantity semantics, trainable numeric parameters,
   explicit central/peripheral fatigue mechanisms, hard-branch differentiation

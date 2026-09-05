@@ -31,6 +31,7 @@ from .._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
+from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellBlock, CellMesh
 from .._core import (
     DiscretizationCapability,
@@ -56,12 +57,12 @@ from .._local_variational import (
     PreparedLocalRegion,
 )
 from .._measure import DiscreteMeasure
+from .._reference_cell import reference_cell_topology
 from .._spaces import BlockDofLayout, DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
 from .._topology import EntitySelection
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec, lagrange_element
-from ._reference_topology import reference_cell_topology
 
 
 class FiniteElementFieldSpec(StrictModule, NonTrainableState):
@@ -152,102 +153,6 @@ class FiniteElementFieldSpec(StrictModule, NonTrainableState):
         if len({element.value_shape for element in resolved}) != 1:
             raise ValueError("One field must use one value shape across mesh blocks.")
         return resolved
-
-
-class FiniteElementCoordinateSpec(StrictModule, NonTrainableState):
-    """Per-block coordinate elements, geometry DOF routes, and default coordinates."""
-
-    block_names: tuple[str, ...] = eqx.field(static=True)
-    elements: tuple[FiniteElementSpec, ...]
-    geometry_dofs: tuple[Array, ...]
-    coordinates: Array
-    coordinate_spec_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        elements: Mapping[str, FiniteElementSpec],
-        geometry_dofs: Mapping[str, ArrayLike],
-        coordinates: ArrayLike,
-        /,
-    ):
-        items = tuple(sorted((str(name), element) for name, element in elements.items()))
-        routes = {
-            str(name): np.asarray(value, dtype=np.int32)
-            for name, value in geometry_dofs.items()
-        }
-        points = np.asarray(coordinates, dtype=float)
-        if not items or any(not name for name, _ in items):
-            raise ValueError("Coordinate element mapping must be non-empty.")
-        if not all(isinstance(element, FiniteElementSpec) for _, element in items):
-            raise TypeError("Coordinate elements must be FiniteElementSpec values.")
-        if any(element.conformity != "H1" for _, element in items):
-            raise ValueError("Coordinate elements must be H1-conforming.")
-        if set(routes) != {name for name, _ in items}:
-            raise ValueError(
-                "Coordinate DOF routes must match coordinate element blocks."
-            )
-        if points.ndim != 2 or not np.all(np.isfinite(points)):
-            raise ValueError("Coordinate values must be one finite rank-2 array.")
-        normalized_routes = []
-        for name, element in items:
-            route = routes[name]
-            if route.ndim != 2 or route.shape[1] != element.local_dof_count:
-                raise ValueError(
-                    "Coordinate DOF route width must match its coordinate element."
-                )
-            if np.any(route < 0) or np.any(route >= points.shape[0]):
-                raise ValueError("Coordinate DOF routes index undeclared coordinates.")
-            normalized_routes.append(jnp.asarray(route))
-        self.block_names = tuple(name for name, _ in items)
-        self.elements = tuple(element for _, element in items)
-        self.geometry_dofs = tuple(normalized_routes)
-        self.coordinates = jnp.asarray(points)
-        self.coordinate_spec_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-coordinate-spec",
-                "blocks": [[name, element.element_id] for name, element in items],
-                "geometry_dofs": [
-                    array_tree_fingerprint(np.asarray(value))
-                    for value in normalized_routes
-                ],
-                "coordinate_shape": list(points.shape),
-            }
-        )
-
-    @classmethod
-    def affine(cls, mesh: CellMesh, /) -> FiniteElementCoordinateSpec:
-        return cls(
-            {block.name: lagrange_element(block.cell_kind, 1) for block in mesh.blocks},
-            {block.name: block.vertices for block in mesh.blocks},
-            mesh.coordinates,
-        )
-
-    def resolve(
-        self,
-        mesh: CellMesh,
-        /,
-    ) -> tuple[
-        tuple[FiniteElementSpec, ...],
-        tuple[Array, ...],
-        Array,
-    ]:
-        mapping = dict(zip(self.block_names, self.elements, strict=True))
-        routes = dict(zip(self.block_names, self.geometry_dofs, strict=True))
-        if set(mapping) != {block.name for block in mesh.blocks}:
-            raise ValueError("Coordinate element assignments must match mesh blocks.")
-        resolved = tuple(mapping[block.name] for block in mesh.blocks)
-        resolved_routes = tuple(routes[block.name] for block in mesh.blocks)
-        for block, element, route in zip(
-            mesh.blocks,
-            resolved,
-            resolved_routes,
-            strict=True,
-        ):
-            if block.cell_kind != element.cell_kind:
-                raise ValueError("Coordinate element cell kind does not match its block.")
-            if route.shape[0] != block.cell_count:
-                raise ValueError("Coordinate DOF routes require one row per cell.")
-        return resolved, resolved_routes, self.coordinates
 
 
 _HEXAHEDRAL_EDGE_BY_VERTICES = {
@@ -1144,9 +1049,12 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
         valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
         facet_count = int(connectivity.edges.shape[0])
     elif isinstance(connectivity, PolyhedralConnectivity):
-        cell_facets = np.asarray(connectivity.cell_faces, dtype=np.int32)
-        valid = np.asarray(connectivity.cell_face_valid, dtype=bool)
-        facet_count = int(connectivity.faces.shape[0])
+        return (
+            np.asarray(connectivity.face_owner, dtype=np.int32),
+            np.asarray(connectivity.face_neighbour, dtype=np.int32),
+            np.asarray(connectivity.face_owner_local, dtype=np.int32),
+            np.asarray(connectivity.face_neighbour_local, dtype=np.int32),
+        )
     else:
         cell_facets = np.asarray(connectivity.cell_faces, dtype=np.int32)
         valid = np.ones_like(cell_facets, dtype=bool)
@@ -1245,7 +1153,7 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
 class FiniteElementPlan(AbstractDiscretizationPlan):
     mesh: CellMesh
     fields: tuple[FiniteElementFieldSpec, ...]
-    coordinate_spec: FiniteElementCoordinateSpec
+    coordinate_spec: CellGeometrySpec
     precision_policy: FiniteElementPrecisionPolicy
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
@@ -1258,7 +1166,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         /,
         *,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
-        coordinate_spec: FiniteElementCoordinateSpec | None = None,
+        coordinate_spec: CellGeometrySpec | None = None,
     ):
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
@@ -1286,14 +1194,10 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         for field in field_specs:
             field.resolve(mesh)
         coordinates = (
-            FiniteElementCoordinateSpec.affine(mesh)
-            if coordinate_spec is None
-            else coordinate_spec
+            CellGeometrySpec.affine(mesh) if coordinate_spec is None else coordinate_spec
         )
-        if not isinstance(coordinates, FiniteElementCoordinateSpec):
-            raise TypeError(
-                "coordinate_spec must be FiniteElementCoordinateSpec or None."
-            )
+        if not isinstance(coordinates, CellGeometrySpec):
+            raise TypeError("coordinate_spec must be CellGeometrySpec or None.")
         coordinates.resolve(mesh)
         precision = (
             FiniteElementPrecisionPolicy()
@@ -1324,7 +1228,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
                 "kind": "finite-element-plan",
                 "mesh": mesh.mesh_id,
                 "fields": [field.field_spec_id for field in field_specs],
-                "coordinate_spec": coordinates.coordinate_spec_id,
+                "coordinate_spec": coordinates.geometry_layout_id,
                 "precision_policy": precision.policy_id,
             }
         )
@@ -1528,7 +1432,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             mesh,
             coordinate_values,
             numeric_version=version,
-            geometry_layout_id=plan.coordinate_spec.coordinate_spec_id,
+            geometry_layout_id=plan.coordinate_spec.geometry_layout_id,
         )
         self.dof_maps = tuple(dof_maps)
         self.elements = tuple(all_elements)
@@ -2303,7 +2207,6 @@ def _assemble_local_operator(
 
 
 __all__ = [
-    "FiniteElementCoordinateSpec",
     "FiniteElementDiscretization",
     "FiniteElementDofMap",
     "FiniteElementFieldSpec",
