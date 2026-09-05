@@ -143,6 +143,20 @@ restart equivalence. Neither candidate evidence set broadens the other. See the
 `RigidMarkerMapPlan` rotates body-frame markers with SO(2) or SO(3), constructs marker
 velocity, and exposes the paired generalized force/torque pullback.
 
+`PreparedRigidMarkerMap.site_force_load` applies the same virtual-work adjoint to
+site forces and returns full, mobile, and fixed-body reaction loads through
+`RigidMarkerLoadResult`. `bind_site_forces` prepares an identity-validated source
+site ordering once; `PreparedRigidSiteForceBinding.evaluate` performs the numeric
+pullback without reconstructing host identities. Fixed-body reactions remain
+available for force, torque, and work audits.
+
+The particle owner also exposes `rigid_periodic_presentation` for wrapping body COM
+presentation while retaining unwrapped state, and `PreparedRigidHeatBath` for exact
+conditional Ornstein–Uhlenbeck velocity updates. Its scalar frictions are
+inverse-time rates, and thermal energy uses mechanical mass·length²/time² units.
+Anisotropic COM inertia determines world-frame rotational covariance; the update
+does not remove COM velocity or certify configurational equilibrium by itself.
+
 - `MACRigidImmersedEulerMethod` is the baseline synchronized contact-free step.
 - `MACRigidImmersedBackwardEulerMethod` iterates the body pose and fluid constraint at
   accepted time.

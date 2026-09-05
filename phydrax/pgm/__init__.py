@@ -25,6 +25,7 @@ from ._belief_propagation import (
     prepare_belief_propagation,
     PreparedBeliefPropagation,
     refresh_belief_propagation,
+    replace_belief_propagation_tables,
     run_belief_propagation,
     SumProductBeliefPropagation,
     SumProductBeliefPropagationResult,
@@ -51,7 +52,13 @@ from ._elimination import (
     VariableEliminationPlan,
     VariableEliminationResult,
 )
-from ._exact import enumerate_assignments, enumerate_factor_graph
+from ._exact import (
+    enumerate_assignments,
+    enumerate_factor_graph,
+    prepare_exact_factor_graph,
+    PreparedExactFactorGraph,
+    run_exact_factor_graph,
+)
 from ._gibbs import (
     ChromaticGibbs,
     gibbs_sweep,
@@ -206,6 +213,10 @@ __all__ = [
     "read_factor_graph_checkpoint",
     "run_accelerated_belief_propagation",
     "run_implicit_belief_propagation",
+    "PreparedExactFactorGraph",
+    "prepare_exact_factor_graph",
+    "run_exact_factor_graph",
+    "replace_belief_propagation_tables",
     "sample_gibbs_per_chain_clamps",
     "solve_smooth_dual_lp",
     "stochastic_maximum_likelihood_step",

@@ -49,6 +49,47 @@ def test_dense_svd_is_jittable_refreshable_and_reports_rank():
     )
 
 
+@pytest.mark.parametrize("entry, expected_rank", [(1.0, 1), (0.0, 0)])
+@pytest.mark.parametrize("which", ["largest", "smallest"])
+def test_svd_certifies_rank_deficient_and_zero_operators(entry, expected_rank, which):
+    matrix = jnp.full((2, 2), entry)
+    result = svd.svd(
+        svd.SVDProblem(la.DenseLinearOperator(matrix)),
+        policy=svd.SVDSolvePolicy(count=2, which=which),
+    )
+    expected_values = jnp.asarray([2 * entry, 0.0])
+    if which == "smallest":
+        expected_values = expected_values[::-1]
+
+    assert bool(result.successful)
+    assert int(result.numerical_rank) == expected_rank
+    assert jnp.allclose(result.singular_values, expected_values, atol=1e-12)
+    assert jnp.allclose(
+        (result.left_vectors * result.singular_values) @ result.right_vectors.T,
+        matrix,
+        atol=1e-12,
+    )
+
+
+def test_svd_refuses_stale_decomposition_state():
+    matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0]])
+    operator = la.DenseLinearOperator(matrix, operator_id="stale-svd")
+    problem = svd.SVDProblem(operator, problem_id="stale-svd-problem")
+    prepared = svd.prepare_svd(problem, svd.SVDSolvePolicy(count=2))
+    changed = svd.refresh_svd(
+        prepared,
+        svd.SVDProblem(
+            la.DenseLinearOperator(2 * matrix, operator_id=operator.operator_id),
+            problem_id=problem.problem_id,
+        ),
+    )
+    stale = svd.PreparedSVDSolve(problem, prepared.plan, changed.state)
+    result = svd.svd(stale)
+
+    assert not bool(result.successful)
+    assert result.status == int(svd.SVDSolveStatus.RESIDUAL_TOLERANCE_NOT_MET)
+
+
 def test_svd_honors_source_and_target_pairings_and_smallest_target():
     source_weights = jnp.asarray([2.0, 5.0])
     target_weights = jnp.asarray([3.0, 4.0, 6.0])

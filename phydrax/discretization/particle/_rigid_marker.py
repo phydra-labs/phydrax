@@ -24,12 +24,26 @@ from ._rigid_body import (
     quaternion_rotation_matrix,
     rigid_body_world_inertia,
     RigidBodyKinematics,
+    RigidBodyLoad,
 )
 
 
 class RigidGeneralizedVelocity(StrictModule):
     translation: Array
     rotation: Array
+
+
+class RigidMarkerLoadResult(StrictModule):
+    """Physical point-force pullback; reactions are loads on fixed bodies.
+
+    ``load`` retains every active body's load. ``mobile_load`` and
+    ``reaction_load`` partition it, in full body-capacity ordering. Support
+    forces exerted by the fixture have the opposite sign to reaction_load.
+    """
+
+    load: RigidBodyLoad
+    mobile_load: RigidBodyLoad
+    reaction_load: RigidBodyLoad
 
 
 class RigidMarkerMapPlan(StrictModule, NonTrainableState):
@@ -159,6 +173,8 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
 
         def action(value: RigidGeneralizedVelocity):
             value = self.generalized_velocity_space.validate(value)
+            if self.mobile_indices.shape[0] == 0:
+                return jnp.zeros_like(offset)
             translation = value.translation[safe_slots]
             angular = value.rotation[safe_slots]
             if self.bodies.ambient_dimension == 2:
@@ -253,9 +269,119 @@ class PreparedRigidMarkerMap(StrictModule, NonTrainableState):
             angular,
         )
 
+    def site_force_load(
+        self, kinematics: RigidBodyKinematics, site_forces: ArrayLike, /
+    ) -> RigidMarkerLoadResult:
+        """Pull back integrated point forces, NOT quadrature force densities.
+
+        Inputs use full marker-capacity ordering. The algebraic transpose
+        (rather than the measure-weighted pairing adjoint) preserves ordinary
+        force dot displacement work independently of marker quadrature weights.
+        """
+        forces = jnp.asarray(site_forces, dtype=kinematics.position.dtype)
+        if forces.shape != self.markers.reference_position.shape:
+            raise ValueError("site_forces must have full marker-capacity vector shape.")
+        active_forces = forces[self.markers.active_indices]
+        generalized = self.velocity_operator(kinematics).transpose_mv(active_forces)
+        mobile_force = (
+            jnp.zeros_like(kinematics.position)
+            .at[self.mobile_indices]
+            .set(generalized.translation)
+        )
+        mobile_torque = (
+            jnp.zeros_like(kinematics.angular_velocity)
+            .at[self.mobile_indices]
+            .set(generalized.rotation)
+        )
+        offset = self._world_offset(kinematics)[self.markers.active_indices]
+        fixed = self.bodies.fixed_mask[self.active_owner, None]
+        fixed_force = jnp.where(fixed, active_forces, 0.0)
+        if self.bodies.ambient_dimension == 2:
+            site_torque = (
+                offset[:, 0] * fixed_force[:, 1] - offset[:, 1] * fixed_force[:, 0]
+            )[:, None]
+        else:
+            site_torque = jnp.cross(offset, fixed_force)
+        reaction_force = (
+            jnp.zeros_like(mobile_force).at[self.active_owner].add(fixed_force)
+        )
+        reaction_torque = (
+            jnp.zeros_like(mobile_torque).at[self.active_owner].add(site_torque)
+        )
+        return RigidMarkerLoadResult(
+            RigidBodyLoad(mobile_force + reaction_force, mobile_torque + reaction_torque),
+            RigidBodyLoad(mobile_force, mobile_torque),
+            RigidBodyLoad(reaction_force, reaction_torque),
+        )
+
+    def bind_site_forces(
+        self, site_ids: ArrayLike, body_ids: ArrayLike, /
+    ) -> PreparedRigidSiteForceBinding:
+        """Host-validate complete active-site identities and their owning body IDs."""
+        return PreparedRigidSiteForceBinding(self, site_ids, body_ids)
+
+
+class PreparedRigidSiteForceBinding(StrictModule, NonTrainableState):
+    """Identity-checked source ordering for the compiled physical force pullback."""
+
+    marker_map: PreparedRigidMarkerMap
+    source_to_marker: Array
+    binding_id: str = eqx.field(static=True)
+
+    def __init__(self, marker_map, site_ids, body_ids, /):
+        sites, bodies = np.asarray(site_ids), np.asarray(body_ids)
+        if sites.ndim != 1 or bodies.shape != sites.shape:
+            raise ValueError("site_ids and body_ids must be equally sized vectors.")
+        if not np.issubdtype(sites.dtype, np.integer) or not np.issubdtype(
+            bodies.dtype, np.integer
+        ):
+            raise TypeError("Site and body IDs must be integers.")
+        active = np.asarray(marker_map.markers.active_indices)
+        marker_ids = np.asarray(marker_map.markers.plan.marker_ids)[active]
+        if np.unique(sites).size != sites.size or set(sites.tolist()) != set(
+            marker_ids.tolist()
+        ):
+            raise ValueError(
+                "Force sites must cover each active stable marker ID exactly once."
+            )
+        lookup = {
+            int(value): int(index)
+            for value, index in zip(marker_ids, active, strict=True)
+        }
+        indices = np.asarray([lookup[int(value)] for value in sites], dtype=np.int32)
+        owners = np.asarray(marker_map.marker_owner)[indices]
+        expected = np.asarray(marker_map.bodies.particles.particle_ids)[owners]
+        if not np.array_equal(bodies, expected):
+            raise ValueError("Stable body IDs do not match the prepared site owners.")
+        self.marker_map = marker_map
+        self.source_to_marker = jnp.asarray(indices)
+        self.binding_id = canonical_fingerprint(
+            {
+                "kind": "rigid-site-force-binding",
+                "map": marker_map.prepared_id,
+                "source": array_tree_fingerprint({"sites": sites, "bodies": bodies}),
+            }
+        )
+
+    def evaluate(self, kinematics, forces, /) -> RigidMarkerLoadResult:
+        forces = jnp.asarray(forces, dtype=kinematics.position.dtype)
+        if forces.shape != (
+            self.source_to_marker.shape[0],
+            self.marker_map.bodies.ambient_dimension,
+        ):
+            raise ValueError("Forces must have the bound source-site vector shape.")
+        full = (
+            jnp.zeros_like(self.marker_map.markers.reference_position)
+            .at[self.source_to_marker]
+            .set(forces)
+        )
+        return self.marker_map.site_force_load(kinematics, full)
+
 
 __all__ = [
     "PreparedRigidMarkerMap",
     "RigidGeneralizedVelocity",
     "RigidMarkerMapPlan",
+    "RigidMarkerLoadResult",
+    "PreparedRigidSiteForceBinding",
 ]

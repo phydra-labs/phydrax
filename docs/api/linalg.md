@@ -968,6 +968,13 @@ the vectors back to their spaces, and reports both residual directions and both
 pairing-orthogonality errors. Singular-value-only differentiation requires
 isolated retained values; vector derivatives are not exposed.
 
+Triplet certification uses normwise backward error in the declared Hilbert spaces:
+the forward residual is scaled by ‖A‖‖v‖ + σ‖u‖, and the adjoint residual by
+‖A‖‖u‖ + σ‖v‖. The full reduced spectrum supplies ‖A‖ even when the smallest
+triplets are selected. Accurate null modes can therefore succeed without changing
+the residual tolerance; rank requirements and derivative isolation remain separate
+gates.
+
 ### General dense Schur problems and spectral projectors
 
 `SchurEigenproblem` handles a general real or complex dense endomorphism. Its

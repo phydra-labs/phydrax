@@ -10,6 +10,7 @@ from jaxtyping import Array
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..linalg import GMRES, LinearSolvePolicy, TolerancePolicy
 from ..nonlinear import (
     AndersonAcceleration,
     FixedPointIteration,
@@ -213,14 +214,15 @@ def run_implicit_belief_propagation(
     termination: NonlinearTermination | None = None,
     derivative_policy: ImplicitRootDerivativePolicy | None = None,
 ) -> AdvancedBeliefPropagationResult:
-    """Return a converged finite-support sum-product root with implicit JVP/VJP rules."""
+    """Return a fixed-support root; nonfinite runtime inputs yield failed evidence.
+
+    Preparation owns topology and support validation. Numeric factors and evidence
+    may vary under JIT/autodiff; implicit derivative failures remain certified by
+    the native root solver and never fall back to stale messages.
+    """
     if not isinstance(prepared.method, SumProductBeliefPropagation):
         raise TypeError("Implicit belief propagation requires sum-product.")
     _validate_state(prepared, state)
-    if bool(jnp.any(~jnp.isfinite(state.evidence.values))):
-        raise ValueError("Implicit BP requires finite fixed support evidence.")
-    if any(bool(jnp.any(~jnp.isfinite(table))) for table in prepared.factor_tables):
-        raise ValueError("Implicit BP requires finite fixed support factor tables.")
     if any(evidence.capabilities.sparse_support for evidence in prepared.factor_evidence):
         raise ValueError("Implicit BP does not support sparse structural support.")
     policy = prepared.precision
@@ -230,10 +232,19 @@ def run_implicit_belief_propagation(
         lambda messages, args: messages - _mapping(prepared, args, messages),
         problem_id=f"implicit-bp:{prepared.plan_id}",
     )
+    # Inexact Newton already scales each correction by its residual via forcing.
+    # A fixed absolute linear floor can accept a zero correction before the
+    # requested nonlinear residual tolerance is met.
+    method = NewtonKrylov(
+        linear_policy=LinearSolvePolicy(
+            GMRES(restart=16),
+            tolerance=TolerancePolicy(relative=1e-6, absolute=0.0, max_steps=64),
+        )
+    )
     nonlinear = implicit_root_result(
         problem,
         initial,
-        method=NewtonKrylov(),
+        method=method,
         termination=_termination(prepared, termination),
         derivative_policy=derivative_policy,
         args=evidence,
@@ -248,6 +259,29 @@ def run_implicit_belief_propagation(
         final_state,
         nonlinear,
         method_id="sum-product-implicit-root",
+    )
+    finite_input = jnp.all(jnp.isfinite(state.evidence.values)) & jnp.all(
+        jnp.isfinite(state.messages)
+    )
+    for table in prepared.factor_tables:
+        finite_input = finite_input & jnp.all(jnp.isfinite(table))
+    finite_output = jnp.isfinite(inference.log_normalizer) & jnp.all(
+        jnp.isfinite(final_state.messages)
+    )
+    accepted = inference.successful & finite_input & finite_output
+    status = jnp.where(
+        ~finite_input,
+        int(BeliefPropagationStatus.NONFINITE_INPUT),
+        jnp.where(
+            ~finite_output,
+            int(BeliefPropagationStatus.NONFINITE_MESSAGE),
+            inference.status,
+        ),
+    ).astype(jnp.int32)
+    inference = eqx.tree_at(
+        lambda value: (value.valid, value.converged, value.status),
+        inference,
+        (accepted, accepted, status),
     )
     return AdvancedBeliefPropagationResult(
         inference=inference,

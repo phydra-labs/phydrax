@@ -372,6 +372,19 @@ hazards and globally coupled jump diffusions.
 finite state set. Use it as a small-system reference, not as the simulation
 backend for an unbounded state space.
 
+`phx.solver.event_first_hit` scans actual pre/post events from a pure-jump
+`JumpSolution`, including initial target membership, censored survival, and event
+capacity failure. It does not infer crossings from saved-node interpolation, a raw
+event batch without a complete solve, or a jump-differential trajectory whose target
+could change continuously between events. An already observed hit survives a later
+capacity failure, but an unobserved target is not declared censored at an unexecuted
+endpoint.
+
+`phx.solver.finite_generator_hitting` uses a closed finite generator and native linear
+solves to report absorption probability, reachability, avoiding classes, and mean
+first-passage time. A non-hitting probability leaves the unconditional mean infinite;
+no regularization manufactures a finite passage time.
+
 ### Martingale problems and stopping-time diagnostics
 
 `MartingaleProblem` evaluates a declared observable against its continuous and
