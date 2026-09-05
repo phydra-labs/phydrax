@@ -21,6 +21,7 @@ from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, DenseLinearOperator, LinearSystem, solve
+from .._reference_cell import reference_cell_topology
 from ._high_order import (
     lagrange_1d_tabulation,
     SimplexNodalFamily,
@@ -33,7 +34,6 @@ from ._hp_runtime import (
     tensor_trace_interpolation,
 )
 from ._reference import FiniteElementSpec
-from ._reference_topology import reference_cell_topology
 
 
 class AnisotropicHPattern(StrictModule, NonTrainableState):

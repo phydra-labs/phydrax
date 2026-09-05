@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..meshing import CellMeshTransition
 
 
 _EnumT = TypeVar("_EnumT", bound=IntEnum)
@@ -1573,6 +1574,31 @@ def _call_transfer(callback: Callable[..., Any], source: Any, remap: Any, /) -> 
     return callback(source)
 
 
+@dataclass(frozen=True, slots=True)
+class FiniteVolumeRemeshArtifact:
+    """Typed remesh candidate consumed without dynamic field inspection."""
+
+    transition: CellMeshTransition
+    candidate_epoch: FiniteVolumeTopologyEpoch
+    remap: Any
+    metrics: Any
+    evidence: Any
+    status: TopologyEventStatus
+    result_id: str
+    payload_ids: tuple[str | None, ...] = ()
+    target_geometry: Any = None
+
+    def __post_init__(self):
+        if not isinstance(self.transition, CellMeshTransition):
+            raise TypeError("transition must be CellMeshTransition.")
+        if not isinstance(self.candidate_epoch, FiniteVolumeTopologyEpoch):
+            raise TypeError("candidate_epoch must be FiniteVolumeTopologyEpoch.")
+        if not isinstance(self.status, TopologyEventStatus):
+            raise TypeError("status must be TopologyEventStatus.")
+        if not str(self.result_id):
+            raise ValueError("Finite-volume remesh result_id must be non-empty.")
+
+
 class FiniteVolumeTopologyEventTransaction:
     """Host-only atomic preparation and commit of coalesced topology requests."""
 
@@ -1750,7 +1776,19 @@ class FiniteVolumeTopologyEventTransaction:
             prepared = _call_transfer(
                 self.prepare, self.requests, self.journal.current_epoch_id
             )
-        if prepared is not None:
+        if isinstance(prepared, FiniteVolumeRemeshArtifact):
+            candidate_epoch = (
+                prepared.candidate_epoch if candidate_epoch is None else candidate_epoch
+            )
+            remap = prepared.remap if remap is None else remap
+            metrics = prepared.metrics if metrics is None else metrics
+            evidence = prepared.evidence if evidence is None else evidence
+            status = prepared.status if status is None else status
+            result_id = prepared.result_id if result_id is None else result_id
+            payload_ids = prepared.payload_ids if payload_ids is None else payload_ids
+            if self.target_geometry is None and prepared.target_geometry is not None:
+                self.target_geometry = prepared.target_geometry
+        elif prepared is not None:
             if candidate_epoch is None:
                 candidate_epoch = _host_field(prepared, "epoch")
                 if candidate_epoch is _MISSING:
@@ -1768,18 +1806,12 @@ class FiniteVolumeTopologyEventTransaction:
                 payload_ids = _host_field(prepared, "payload_ids")
                 if payload_ids is _MISSING:
                     payload_ids = None
-            status = status if status is not None else _host_field(prepared, "status")
-            if active_cell_mask is _MISSING:
-                active_cell_mask = _host_field(prepared, "active_cell_mask")
-            if admissibility is None:
-                admissibility = _host_field(prepared, "admissibility")
-            if transfer is None:
-                candidate_transfer = _host_field(prepared, "transfer")
-                transfer = None if candidate_transfer is _MISSING else candidate_transfer
-            if positivity_ok is None:
-                positivity_ok = _host_field(prepared, "positivity_ok")
-            if coverage_ok is None:
-                coverage_ok = _host_field(prepared, "coverage_ok")
+            if metrics is None:
+                metrics = _host_field(prepared, "metrics")
+            if evidence is None:
+                evidence = _host_field(prepared, "evidence")
+            if status is None:
+                status = _host_field(prepared, "status")
             if source_content is None:
                 source_content = _host_field(prepared, "source_content")
         if (
@@ -2127,6 +2159,7 @@ class FiniteVolumeTopologyEventScheduler:
 
 
 __all__ = [
+    "FiniteVolumeRemeshArtifact",
     "FiniteVolumeTopologyEpoch",
     "FiniteVolumeTopologyEvent",
     "FiniteVolumeTopologyEventJournal",

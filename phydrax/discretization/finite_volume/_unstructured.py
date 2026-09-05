@@ -344,11 +344,25 @@ def _owner_neighbour(connectivity: Connectivity, cell_count: int, /):
         cell_signs = np.asarray(connectivity.cell_face_signs)
         valid = np.ones(cell_faces.shape, dtype=bool)
         face_count = int(connectivity.faces.shape[0])
+    elif isinstance(connectivity, PolyhedralConnectivity):
+        cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int32)
+        cell_signs = np.asarray(connectivity.cell_face_sign_values)
+        cell_ids = np.repeat(
+            np.arange(cell_count, dtype=np.int32),
+            np.diff(np.asarray(connectivity.cell_face_offsets, dtype=np.int32)),
+        )
+        owner = np.asarray(connectivity.face_owner, dtype=np.int32)
+        neighbour = np.asarray(connectivity.face_neighbour, dtype=np.int32)
+        owner_sign = np.zeros((connectivity.face_count,), dtype=float)
+        for cell, face, sign in zip(cell_ids, cell_faces, cell_signs, strict=True):
+            if owner[int(face)] == int(cell):
+                owner_sign[int(face)] = float(sign)
+        return owner, neighbour, owner_sign
     else:
         cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
         cell_signs = np.asarray(connectivity.cell_face_signs)
-        valid = np.asarray(connectivity.cell_face_valid, dtype=bool)
-        face_count = int(connectivity.face_owner.size)
+        valid = np.ones(cell_faces.shape, dtype=bool)
+        face_count = int(connectivity.faces.shape[0])
     owner = np.full((face_count,), -1, dtype=np.int32)
     neighbour = np.full((face_count,), -1, dtype=np.int32)
     owner_sign = np.zeros((face_count,), dtype=float)
@@ -1277,15 +1291,15 @@ def _quality_report(
         minimum_altitude = 3.0 * cell_volumes / maximum_face
         aspect = jnp.max(edge_lengths, axis=1) / minimum_altitude
     else:
-        cell_faces = jnp.asarray(connectivity.cell_faces, dtype=jnp.int32)
-        valid_faces = jnp.asarray(connectivity.cell_face_valid)
-        maximum_face_scale = jnp.max(
-            jnp.where(
-                valid_faces,
-                jnp.sqrt(face_measures[cell_faces]),
-                0.0,
-            ),
-            axis=1,
+        cell_faces = jnp.asarray(connectivity.cell_face_values, dtype=jnp.int32)
+        counts = np.diff(np.asarray(connectivity.cell_face_offsets, dtype=np.int32))
+        cell_ids = jnp.asarray(
+            np.repeat(np.arange(connectivity.cell_count, dtype=np.int32), counts)
+        )
+        maximum_face_scale = jax.ops.segment_max(
+            jnp.sqrt(face_measures[cell_faces]),
+            cell_ids,
+            num_segments=connectivity.cell_count,
         )
         aspect = maximum_face_scale / jnp.cbrt(cell_volumes)
     return UnstructuredFiniteVolumeQualityReport(

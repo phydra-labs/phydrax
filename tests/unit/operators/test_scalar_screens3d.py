@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import SpatialCoordinateContract
 from phydrax.discretization import CellMesh
 from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 from phydrax.operators.integral.layer_potential._scalar_screens3d import (
@@ -26,7 +27,7 @@ def _metadata(source_id="unit-screen"):
     return SurfaceMetadata(
         source_id=source_id,
         source_revision="r1",
-        length_unit="m",
+        coordinate_contract=SpatialCoordinateContract.si(),
         provenance=("unit-test",),
     )
 

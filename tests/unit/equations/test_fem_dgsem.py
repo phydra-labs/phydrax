@@ -5,13 +5,13 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.discretization.fem._boundary import (
     FiniteElementBoundarySet,
     FiniteElementPeriodicFacetPair,
 )
 from phydrax.discretization.fem._generic import (
-    FiniteElementCoordinateSpec,
     FiniteElementFieldSpec,
     FiniteElementPlan,
 )
@@ -82,7 +82,7 @@ def _quad_discretization(order=2, *, curved=False):
         coordinates = np.stack((xi + 0.2 * bubble, eta - 0.15 * bubble), axis=-1).reshape(
             (-1, 2)
         )
-        coordinate_spec = FiniteElementCoordinateSpec(
+        coordinate_spec = CellGeometrySpec(
             {"cells": coordinate_element},
             {"cells": np.arange(coordinates.shape[0]).reshape((1, -1))},
             coordinates,
@@ -137,7 +137,7 @@ def _hex_discretization(order=1, *, curved=False):
             (xi + 0.1 * bubble, eta - 0.08 * bubble, zeta + 0.06 * bubble),
             axis=-1,
         ).reshape((-1, 3))
-        coordinate_spec = FiniteElementCoordinateSpec(
+        coordinate_spec = CellGeometrySpec(
             {"cells": coordinate_element},
             {"cells": np.arange(coordinates.shape[0]).reshape((1, -1))},
             coordinates,

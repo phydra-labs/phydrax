@@ -16,10 +16,10 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._reference_cell import reference_cell_topology
 from ._high_order import ReferenceNodalFamily, TensorProductTabulation
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec
-from ._reference_topology import reference_cell_topology
 
 
 ReferenceRule: TypeAlias = Any

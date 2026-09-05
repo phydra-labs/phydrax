@@ -16,12 +16,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    CellMesh,
-    FiniteElementAdaptationMap,
-    FiniteElementTransferBundle,
-    refine_triangles_local,
-)
+from ..discretization import CellMesh, FiniteElementTransferBundle
 from ..discretization.fem import (
     FiniteElementHPEpoch,
     FiniteElementHPGeometry,
@@ -30,13 +25,14 @@ from ..discretization.fem import (
     prepare_finite_element_hp_epoch,
 )
 from ..equations import MaterialTransaction
+from ..meshing import CellMeshTransition
 from ._finite_element_schedule import FiniteElementAcceptedState
 
 
 class FiniteElementTopologyResult(StrictModule, NonTrainableState):
     state: FiniteElementAcceptedState
     mesh: CellMesh
-    adaptation: FiniteElementAdaptationMap | None
+    transition: CellMeshTransition | None
     transfer: FiniteElementTransferBundle | None
     committed: Array
     diagnostics: object
@@ -100,19 +96,26 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         self,
         accepted: FiniteElementAcceptedState,
         mesh: CellMesh,
-        marked_cell_ids: ArrayLike,
+        transition: CellMeshTransition,
+        transfer: FiniteElementTransferBundle,
         args: object = None,
         /,
     ) -> FiniteElementTopologyResult:
         if not isinstance(accepted, FiniteElementAcceptedState):
             raise TypeError("accepted must be FiniteElementAcceptedState.")
-        if mesh.topology_id != accepted.topology_id:
-            raise ValueError("Accepted state and topology transaction mesh disagree.")
-        candidate_mesh, adaptation, transfer = refine_triangles_local(
-            mesh,
-            marked_cell_ids,
-            numeric_version=f"adapted-{accepted.state_version + 1}",
-        )
+        if not isinstance(mesh, CellMesh):
+            raise TypeError("mesh must be CellMesh.")
+        if not isinstance(transition, CellMeshTransition):
+            raise TypeError("transition must be CellMeshTransition.")
+        if not isinstance(transfer, FiniteElementTransferBundle):
+            raise TypeError("transfer must be FiniteElementTransferBundle.")
+        if (
+            mesh.topology_id != accepted.topology_id
+            or transition.source_mesh_id != mesh.mesh_id
+            or transition.source_topology_id != mesh.topology_id
+        ):
+            raise ValueError("Accepted state and topology transition disagree.")
+        candidate_mesh = transition.target.mesh
         candidate_fields = []
         for field in accepted.fields:
             if field.shape[0] != transfer.primal.shape[1]:
@@ -129,7 +132,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             return FiniteElementTopologyResult(
                 state=accepted,
                 mesh=mesh,
-                adaptation=None,
+                transition=None,
                 transfer=None,
                 committed=jnp.asarray(False),
                 diagnostics="material-transfer-policy-required",
@@ -137,14 +140,14 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         else:
             transferred = self.material_transfer(
                 accepted.materials,
-                adaptation,
+                transition.lineage,
                 args,
             )
             if not isinstance(transferred, MaterialTransaction):
                 return FiniteElementTopologyResult(
                     state=accepted,
                     mesh=mesh,
-                    adaptation=None,
+                    transition=None,
                     transfer=None,
                     committed=jnp.asarray(False),
                     diagnostics="material-transfer-rejected",
@@ -154,14 +157,14 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             candidate_mesh,
             tuple(candidate_fields),
             candidate_materials,
-            adaptation,
+            transition.lineage,
             args,
         )
         if not bool(jnp.asarray(certified)):
             return FiniteElementTopologyResult(
                 state=accepted,
                 mesh=mesh,
-                adaptation=None,
+                transition=None,
                 transfer=None,
                 committed=jnp.asarray(False),
                 diagnostics="candidate-certification-rejected",
@@ -171,8 +174,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             accepted.time,
             accepted.step,
             candidate_mesh.topology_id,
-            f"{accepted.prepared_id}:adapted:{adaptation.adaptation_id}",
-            f"{accepted.compilation_id}:adapted:{adaptation.adaptation_id}",
+            f"{accepted.prepared_id}:transition:{transition.transition_id}",
+            f"{accepted.compilation_id}:transition:{transition.transition_id}",
             materials=candidate_materials,
             schedule_cursor=accepted.schedule_cursor,
             state_version=accepted.state_version + 1,
@@ -180,7 +183,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         return FiniteElementTopologyResult(
             state=promoted,
             mesh=candidate_mesh,
-            adaptation=adaptation,
+            transition=transition,
             transfer=transfer,
             committed=jnp.asarray(True),
             diagnostics="committed",

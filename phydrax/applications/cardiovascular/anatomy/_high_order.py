@@ -13,8 +13,8 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....discretization import CellMesh
-from ....discretization.fem import FiniteElementCoordinateSpec, FiniteElementSpec
+from ....discretization import CellGeometrySpec, CellMesh
+from ....discretization.fem import FiniteElementSpec
 from ._roles import CardiacBoundaryProfile
 
 
@@ -70,7 +70,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
     """Qualification plan for existing quadratic tetrahedral or hexahedral geometry."""
 
     mesh: CellMesh
-    coordinate_spec: FiniteElementCoordinateSpec
+    coordinate_spec: CellGeometrySpec
     boundary_profile: CardiacBoundaryProfile
     prepared_epoch: HighOrderGeometryEpoch
     boundary_role_id: str = eqx.field(static=True)
@@ -81,7 +81,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         mesh: CellMesh,
-        coordinate_spec: FiniteElementCoordinateSpec,
+        coordinate_spec: CellGeometrySpec,
         /,
         *,
         boundary_role_id: str,
@@ -93,8 +93,8 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be a CellMesh.")
-        if not isinstance(coordinate_spec, FiniteElementCoordinateSpec):
-            raise TypeError("coordinate_spec must be a FiniteElementCoordinateSpec.")
+        if not isinstance(coordinate_spec, CellGeometrySpec):
+            raise TypeError("coordinate_spec must be a CellGeometrySpec.")
         if not isinstance(boundary_profile, CardiacBoundaryProfile):
             raise TypeError("boundary_profile must be a CardiacBoundaryProfile.")
         if not isinstance(prepared_epoch, HighOrderGeometryEpoch):
@@ -134,7 +134,7 @@ class HighOrderCardiacGeometryPlan(StrictModule, NonTrainableState):
         payload = {
             "kind": "high-order-cardiac-geometry-plan",
             "mesh": mesh.mesh_id,
-            "coordinates": coordinate_spec.coordinate_spec_id,
+            "coordinates": coordinate_spec.geometry_layout_id,
             "coordinate_values": array_tree_fingerprint(coordinate_spec.coordinates),
             "boundary_role": role_id,
             "boundary_profile": boundary_profile.profile_id,
@@ -521,7 +521,7 @@ class PreparedHighOrderCardiacGeometry(StrictModule, NonTrainableState):
             raise ValueError(
                 "Changed high-order coordinates must advance the geometry epoch."
             )
-        coordinate_spec = FiniteElementCoordinateSpec(
+        coordinate_spec = CellGeometrySpec(
             dict(
                 zip(
                     self.plan.coordinate_spec.block_names,

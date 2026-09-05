@@ -258,6 +258,10 @@ geometry evaluation is JAX-differentiable through
 See [Finite elements](guides_finite_elements.md) for reference tabulation,
 DOF maps, constraints, functionals, sparse lowering, and DAE integration.
 
+Mesh construction, certification, provider execution, and general topology
+transitions belong to [Meshing](guides_meshing.md). `CellGeometrySpec` is the
+shared geometry-node contract; it is independent of finite-element fields.
+
 ## Explicit polygon H1 elements
 
 `ExplicitPolygonH1Plan` constructs a conforming degree-one point-value space on

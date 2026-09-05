@@ -7,14 +7,12 @@ import meshio
 import numpy as np
 import pytest
 
+from phydrax.discretization._cell_ordering import meshio_reference_nodes
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
 from phydrax.discretization.fem._boundary import FiniteElementBoundarySet
 from phydrax.discretization.fem._generic import FiniteElementFieldSpec, FiniteElementPlan
 from phydrax.discretization.fem._reference import discontinuous_element
-from phydrax.discretization.fem._spectral_hp_io import (
-    _meshio_reference_nodes,
-    read_finite_element_mesh,
-)
+from phydrax.discretization.fem._spectral_hp_io import read_finite_element_mesh
 from phydrax.discretization.finite_volume._riemann import RusanovFluxPlan
 from phydrax.equations._conservation import (
     compile_conservation_problem,
@@ -148,7 +146,7 @@ def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(tmp_path):
 
 @pytest.mark.parametrize("cell_type", ("hexahedron27", "wedge18", "pyramid14"))
 def test_meshio_quadratic_hybrid_cells_preserve_all_geometry_nodes(tmp_path, cell_type):
-    points = _meshio_reference_nodes(cell_type)
+    points = meshio_reference_nodes(cell_type)
     path = tmp_path / f"{cell_type}.msh"
     meshio.write(
         path,

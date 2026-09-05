@@ -12,7 +12,10 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._cell_complex import PolyhedralConnectivity
+from .._cell_complex import (
+    PolyhedralConnectivity,
+    prepare_polyhedral_worksets,
+)
 from .._cell_mesh import CellMesh
 
 
@@ -43,6 +46,7 @@ def prepare_polyhedral_finite_volume_geometry(
     *,
     planarity_tolerance: float = 1.0e-10,
     closure_tolerance: float = 1.0e-10,
+    maximum_workset_entries: int = 100_000_000,
 ) -> PreparedPolyhedralFiniteVolumeGeometry:
     """Prepare Newell/divergence geometry from canonical polyhedral connectivity."""
     if not isinstance(mesh, CellMesh) or not isinstance(
@@ -62,8 +66,12 @@ def prepare_polyhedral_finite_volume_geometry(
         raise ValueError("Polyhedral geometry tolerances must be positive and finite.")
     points = np.asarray(mesh.coordinates, dtype=float)
     connectivity = mesh.connectivity
-    face_vertices = np.asarray(connectivity.face_vertices, dtype=np.int32)
-    face_valid = np.asarray(connectivity.face_vertex_valid, dtype=bool)
+    worksets = prepare_polyhedral_worksets(
+        connectivity,
+        maximum_entries=maximum_workset_entries,
+    )
+    face_vertices = np.asarray(worksets.face_vertices, dtype=np.int32)
+    face_valid = np.asarray(worksets.face_vertex_valid, dtype=bool)
     face_count, max_vertices = face_vertices.shape
     face_centers = np.zeros((face_count, points.shape[1]), dtype=float)
     area_vectors = np.zeros_like(face_centers)
@@ -103,11 +111,11 @@ def prepare_polyhedral_finite_volume_geometry(
             np.asarray(triangle_centers), axis=0, weights=np.asarray(triangle_areas)
         )
         area_vectors[face], face_measures[face] = newell, measure
-    cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
-    cell_face_signs = np.asarray(connectivity.cell_face_signs, dtype=np.int8)
-    cell_face_valid = np.asarray(connectivity.cell_face_valid, dtype=bool)
-    cell_vertices = np.asarray(connectivity.cell_vertices, dtype=np.int32)
-    cell_vertex_valid = np.asarray(connectivity.cell_vertex_valid, dtype=bool)
+    cell_faces = np.asarray(worksets.cell_faces, dtype=np.int32)
+    cell_face_signs = np.asarray(worksets.cell_face_signs, dtype=np.int8)
+    cell_face_valid = np.asarray(worksets.cell_face_valid, dtype=bool)
+    cell_vertices = np.asarray(worksets.cell_vertices, dtype=np.int32)
+    cell_vertex_valid = np.asarray(worksets.cell_vertex_valid, dtype=bool)
     cell_count, max_faces = cell_faces.shape
     cell_capacity = max_faces * (max_vertices - 2)
     cell_centers = np.zeros((cell_count, points.shape[1]), dtype=float)
@@ -177,6 +185,7 @@ def prepare_polyhedral_finite_volume_geometry(
             "mesh": mesh.mesh_id,
             "planarity_tolerance": planarity,
             "closure_tolerance": closure,
+            "maximum_workset_entries": int(maximum_workset_entries),
         }
     )
     return PreparedPolyhedralFiniteVolumeGeometry(

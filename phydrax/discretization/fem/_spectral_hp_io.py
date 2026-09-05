@@ -19,8 +19,9 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_complex import PolyhedralConnectivity
+from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellBlock, CellMesh
-from ._generic import FiniteElementCoordinateSpec
+from .._cell_ordering import MESHIO_CELL_TYPES, reference_node_permutation
 from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarMetricData, FiniteElementMortarPlan
 from ._reference import lagrange_element
@@ -425,7 +426,7 @@ class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
 
 class FiniteElementMeshImport(StrictModule, NonTrainableState):
     mesh: CellMesh
-    coordinate_spec: FiniteElementCoordinateSpec
+    coordinate_spec: CellGeometrySpec
     volume_groups: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
     boundary_groups: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
     report: FiniteElementMeshImportReport
@@ -434,7 +435,7 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
     def __init__(
         self,
         mesh: CellMesh,
-        coordinate_spec: FiniteElementCoordinateSpec,
+        coordinate_spec: CellGeometrySpec,
         boundary_groups: Mapping[str, Sequence[int]],
         report: FiniteElementMeshImportReport,
         /,
@@ -443,8 +444,8 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
     ):
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
-        if not isinstance(coordinate_spec, FiniteElementCoordinateSpec):
-            raise TypeError("coordinate_spec must be FiniteElementCoordinateSpec.")
+        if not isinstance(coordinate_spec, CellGeometrySpec):
+            raise TypeError("coordinate_spec must be CellGeometrySpec.")
         volumes = _group_values({} if volume_groups is None else volume_groups)
         boundaries = _group_values(boundary_groups)
         if not isinstance(report, FiniteElementMeshImportReport):
@@ -484,7 +485,7 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
             {
                 "kind": "finite-element-mesh-import",
                 "mesh": mesh.mesh_id,
-                "coordinate_spec": coordinate_spec.coordinate_spec_id,
+                "coordinate_spec": coordinate_spec.geometry_layout_id,
                 "volumes": volumes,
                 "boundaries": boundaries,
                 "report": report.report_id,
@@ -498,171 +499,9 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
         return _named_group(self.boundary_groups, name, "boundary")
 
 
-_MESHIO_VOLUME_TYPES = {
-    "triangle": ("triangle", 1, 3),
-    "triangle6": ("triangle", 2, 3),
-    "quad": ("quadrilateral", 1, 4),
-    "quad9": ("quadrilateral", 2, 4),
-    "tetra": ("tetrahedron", 1, 4),
-    "tetra10": ("tetrahedron", 2, 4),
-    "hexahedron": ("hexahedron", 1, 8),
-    "hexahedron27": ("hexahedron", 2, 8),
-    "wedge": ("prism", 1, 6),
-    "wedge18": ("prism", 2, 6),
-    "pyramid": ("pyramid", 1, 5),
-    "pyramid14": ("pyramid", 2, 5),
-}
-
-
-def _meshio_reference_nodes(cell_type: str, /) -> np.ndarray:
-    values = {
-        "triangle": ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
-        "triangle6": (
-            (0.0, 0.0),
-            (1.0, 0.0),
-            (0.0, 1.0),
-            (0.5, 0.0),
-            (0.5, 0.5),
-            (0.0, 0.5),
-        ),
-        "quad": ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
-        "quad9": (
-            (0.0, 0.0),
-            (1.0, 0.0),
-            (1.0, 1.0),
-            (0.0, 1.0),
-            (0.5, 0.0),
-            (1.0, 0.5),
-            (0.5, 1.0),
-            (0.0, 0.5),
-            (0.5, 0.5),
-        ),
-        "tetra": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-        ),
-        "tetra10": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (0.5, 0.0, 0.0),
-            (0.5, 0.5, 0.0),
-            (0.0, 0.5, 0.0),
-            (0.0, 0.0, 0.5),
-            (0.5, 0.0, 0.5),
-            (0.0, 0.5, 0.5),
-        ),
-        "hexahedron": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (1.0, 1.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 0.0, 1.0),
-            (1.0, 1.0, 1.0),
-            (0.0, 1.0, 1.0),
-        ),
-        "hexahedron27": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (1.0, 1.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 0.0, 1.0),
-            (1.0, 1.0, 1.0),
-            (0.0, 1.0, 1.0),
-            (0.5, 0.0, 0.0),
-            (1.0, 0.5, 0.0),
-            (0.5, 1.0, 0.0),
-            (0.0, 0.5, 0.0),
-            (0.5, 0.0, 1.0),
-            (1.0, 0.5, 1.0),
-            (0.5, 1.0, 1.0),
-            (0.0, 0.5, 1.0),
-            (0.0, 0.0, 0.5),
-            (1.0, 0.0, 0.5),
-            (1.0, 1.0, 0.5),
-            (0.0, 1.0, 0.5),
-            (0.5, 0.5, 0.0),
-            (0.5, 0.5, 1.0),
-            (0.5, 0.0, 0.5),
-            (1.0, 0.5, 0.5),
-            (0.5, 1.0, 0.5),
-            (0.0, 0.5, 0.5),
-            (0.5, 0.5, 0.5),
-        ),
-        "wedge": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 0.0, 1.0),
-            (0.0, 1.0, 1.0),
-        ),
-        "wedge18": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 0.0, 1.0),
-            (0.0, 1.0, 1.0),
-            (0.5, 0.0, 0.0),
-            (0.5, 0.5, 0.0),
-            (0.0, 0.5, 0.0),
-            (0.5, 0.0, 1.0),
-            (0.5, 0.5, 1.0),
-            (0.0, 0.5, 1.0),
-            (0.0, 0.0, 0.5),
-            (1.0, 0.0, 0.5),
-            (0.0, 1.0, 0.5),
-            (0.5, 0.0, 0.5),
-            (0.5, 0.5, 0.5),
-            (0.0, 0.5, 0.5),
-        ),
-        "pyramid": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (1.0, 1.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.5, 0.5, 1.0),
-        ),
-        "pyramid14": (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (1.0, 1.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.5, 0.5, 1.0),
-            (0.5, 0.0, 0.0),
-            (1.0, 0.5, 0.0),
-            (0.5, 1.0, 0.0),
-            (0.0, 0.5, 0.0),
-            (0.25, 0.25, 0.5),
-            (0.75, 0.25, 0.5),
-            (0.75, 0.75, 0.5),
-            (0.25, 0.75, 0.5),
-            (0.5, 0.5, 0.0),
-        ),
-    }
-    if cell_type not in values:
-        raise ValueError(f"Unsupported high-order mesh cell type {cell_type!r}.")
-    return np.asarray(values[cell_type], dtype=float)
-
-
 def _geometry_permutation(cell_type: str, cell_kind: str, order: int, /) -> np.ndarray:
-    source = _meshio_reference_nodes(cell_type)
     target = np.asarray(lagrange_element(cell_kind, order).reference_nodes)
-    if source.shape != target.shape:
-        raise ValueError("Imported and Phydrax geometry node counts differ.")
-    permutation = []
-    for point in target:
-        matches = np.flatnonzero(np.max(np.abs(source - point), axis=1) <= 2.0e-12)
-        if matches.size != 1:
-            raise ValueError("High-order geometry node ordering is ambiguous.")
-        permutation.append(int(matches[0]))
-    return np.asarray(permutation, dtype=np.int32)
+    return reference_node_permutation(cell_type, target)
 
 
 def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
@@ -672,12 +511,12 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
     source = meshio.read(source_path)
     volume_blocks = []
     for source_index, cell_block in enumerate(source.cells):
-        if cell_block.type in _MESHIO_VOLUME_TYPES:
+        if cell_block.type in MESHIO_CELL_TYPES:
             volume_blocks.append((source_index, cell_block))
     if not volume_blocks:
         raise ValueError("Mesh contains no supported finite-element volume cells.")
     topological_dimensions = {
-        2 if _MESHIO_VOLUME_TYPES[block.type][0] in ("triangle", "quadrilateral") else 3
+        2 if MESHIO_CELL_TYPES[block.type][0] in ("triangle", "quadrilateral") else 3
         for _index, block in volume_blocks
     }
     if len(topological_dimensions) != 1:
@@ -696,7 +535,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
             int(value)
             for _source_index, cell_block in volume_blocks
             for value in np.asarray(cell_block.data)[
-                :, : _MESHIO_VOLUME_TYPES[cell_block.type][2]
+                :, : MESHIO_CELL_TYPES[cell_block.type][2]
             ].reshape((-1,))
         }
     )
@@ -708,7 +547,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
     volume_routes: dict[int, np.ndarray] = {}
     next_cell_id = 0
     for block_index, (source_index, cell_block) in enumerate(volume_blocks):
-        cell_kind, order, corner_count = _MESHIO_VOLUME_TYPES[cell_block.type]
+        cell_kind, order, corner_count = MESHIO_CELL_TYPES[cell_block.type]
         name = f"{cell_kind}_{block_index}"
         data = np.asarray(cell_block.data, dtype=np.int32)
         corners = np.asarray(
@@ -731,24 +570,29 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
         coordinate_elements[name] = element
         coordinate_routes[name] = data[:, permutation]
     mesh = CellMesh(mesh_coordinates, tuple(blocks))
-    coordinate_spec = FiniteElementCoordinateSpec(
+    coordinate_spec = CellGeometrySpec(
         coordinate_elements,
         coordinate_routes,
         points,
     )
 
-    facet_vertices = (
-        np.asarray(mesh.connectivity.edges)
-        if topological_dimension == 2
-        else np.asarray(mesh.connectivity.faces)
-    )
-    if isinstance(mesh.connectivity, PolyhedralConnectivity):
-        arities = np.asarray(mesh.connectivity.face_arities, dtype=np.int32)
+    if topological_dimension == 2:
+        facet_vertices = np.asarray(mesh.connectivity.edges)
         facets_by_key = {
-            tuple(sorted(int(value) for value in vertices[: int(arities[index])])): index
+            tuple(sorted(int(value) for value in vertices)): index
             for index, vertices in enumerate(facet_vertices)
         }
+    elif isinstance(mesh.connectivity, PolyhedralConnectivity):
+        offsets = np.asarray(mesh.connectivity.face_vertex_offsets, dtype=np.int32)
+        values = np.asarray(mesh.connectivity.face_vertex_values, dtype=np.int32)
+        facets_by_key = {
+            tuple(sorted(int(value) for value in values[int(start) : int(stop)])): index
+            for index, (start, stop) in enumerate(
+                zip(offsets[:-1], offsets[1:], strict=True)
+            )
+        }
     else:
+        facet_vertices = np.asarray(mesh.connectivity.faces)
         facets_by_key = {
             tuple(sorted(int(value) for value in vertices)): index
             for index, vertices in enumerate(facet_vertices)
@@ -867,7 +711,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
     report = FiniteElementMeshImportReport(
         tuple(block.name for block in blocks),
         tuple(block.cell_kind for block in blocks),
-        tuple(_MESHIO_VOLUME_TYPES[block.type][1] for _index, block in volume_blocks),
+        tuple(MESHIO_CELL_TYPES[block.type][1] for _index, block in volume_blocks),
         tuple(normalized_boundaries),
         points.shape[0],
         volume_names=tuple(normalized_volumes),

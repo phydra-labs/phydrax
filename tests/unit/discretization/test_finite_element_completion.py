@@ -239,7 +239,7 @@ def test_curved_compatible_local_and_hdg_spaces_are_executable():
     coordinate_values = jnp.asarray(
         [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.5, -0.1], [0.5, 0.5], [0.0, 0.5]]
     )
-    coordinate_spec = phx.discretization.FiniteElementCoordinateSpec(
+    coordinate_spec = phx.discretization.CellGeometrySpec(
         {"triangles": phx.discretization.lagrange_element("triangle", 2)},
         {"triangles": jnp.asarray([[0, 1, 2, 3, 4, 5]], dtype=jnp.int32)},
         coordinate_values,

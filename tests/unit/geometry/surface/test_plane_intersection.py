@@ -4,6 +4,7 @@
 
 import numpy as np
 
+from phydrax import SpatialCoordinateContract
 from phydrax.geometry.surface._contracts import SurfaceMetadata
 from phydrax.geometry.surface._intersection import PlaneSectionStatus
 from phydrax.geometry.surface._model import SurfaceModel
@@ -22,7 +23,7 @@ def _realization():
     metadata = SurfaceMetadata(
         source_id="section-tetrahedron",
         source_revision="r1",
-        length_unit="m",
+        coordinate_contract=SpatialCoordinateContract.si(),
         provenance=("unit-test",),
     )
     return SurfaceModel.from_triangles(
@@ -70,7 +71,7 @@ def test_plane_section_reports_typed_unresolved_vertex_and_open_chain():
     metadata = SurfaceMetadata(
         source_id="open-triangle",
         source_revision="r1",
-        length_unit="m",
+        coordinate_contract=SpatialCoordinateContract.si(),
         provenance=("unit-test",),
     )
     open_surface = SurfaceModel.from_triangles(

@@ -363,7 +363,7 @@ def test_curved_quadratic_simplices_round_trip_through_fe_cell_map():
                 ),
                 axis=-1,
             )
-        coordinate_spec = phx.discretization.FiniteElementCoordinateSpec(
+        coordinate_spec = phx.discretization.CellGeometrySpec(
             {block_name: coordinate_element},
             {
                 block_name: jnp.arange(

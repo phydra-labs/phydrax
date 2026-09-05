@@ -69,10 +69,15 @@ def test_rejected_topology_candidate_preserves_accepted_state_bitwise():
         "prepared",
         "compiled",
     )
-    transaction = phx.solver.FiniteElementTopologyTransaction(
-        lambda candidate_mesh, fields, materials, adaptation, args: False
+    transition, transfer = phx.meshing.refine_triangle_mesh(
+        mesh,
+        jnp.asarray([10]),
+        phx.SpatialCoordinateContract.si(),
     )
-    result = transaction.execute(accepted, mesh, jnp.asarray([10]))
+    transaction = phx.solver.FiniteElementTopologyTransaction(
+        lambda candidate_mesh, fields, materials, lineage, args: False
+    )
+    result = transaction.execute(accepted, mesh, transition, transfer)
 
     assert not bool(result.committed)
     assert result.state.accepted_id == accepted.accepted_id

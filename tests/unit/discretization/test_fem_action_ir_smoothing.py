@@ -239,7 +239,7 @@ def test_application_model_primitives_are_executable():
 
 def test_partition_and_local_adaptation_have_stable_routes():
     mesh = _tri_mesh()
-    partition = phx.discretization.fem.partition_cells_contiguous(mesh, 2)
+    partition = phx.discretization.partition_cells_contiguous(mesh, 2)
     marked = phx.discretization.fem.maximum_mark(
         jnp.asarray([4.0, 1.0, 1.0, 1.0]),
         0.25,

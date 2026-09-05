@@ -24,9 +24,9 @@ from ...linalg import (
     saddle_point_operator,
     ScaledLinearOperator,
 )
+from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellMesh
 from ._generic import (
-    FiniteElementCoordinateSpec,
     FiniteElementDiscretization,
     FiniteElementFieldSpec,
     FiniteElementPlan,
@@ -313,7 +313,7 @@ class MixedFiniteElementConstraintPlan(StrictModule, NonTrainableState):
     """Taylor-Hood/Q2-Q1 preparation with no unverified stabilization path."""
 
     mesh: CellMesh
-    coordinate_spec: FiniteElementCoordinateSpec | None
+    coordinate_spec: CellGeometrySpec | None
     gauge: PressureGaugePolicy
     stabilization: MixedPressureStabilization
     displacement_field: str = eqx.field(static=True)
@@ -329,7 +329,7 @@ class MixedFiniteElementConstraintPlan(StrictModule, NonTrainableState):
         gauge: PressureGaugePolicy,
         /,
         *,
-        coordinate_spec: FiniteElementCoordinateSpec | None = None,
+        coordinate_spec: CellGeometrySpec | None = None,
         displacement_field: str = "u",
         pressure_field: str = "p",
         bulk_modulus: float | None = None,
@@ -347,10 +347,8 @@ class MixedFiniteElementConstraintPlan(StrictModule, NonTrainableState):
         if not isinstance(stabilization_, MixedPressureStabilization):
             raise TypeError("stabilization must be MixedPressureStabilization or None.")
         if coordinate_spec is not None:
-            if not isinstance(coordinate_spec, FiniteElementCoordinateSpec):
-                raise TypeError(
-                    "coordinate_spec must be FiniteElementCoordinateSpec or None."
-                )
+            if not isinstance(coordinate_spec, CellGeometrySpec):
+                raise TypeError("coordinate_spec must be CellGeometrySpec or None.")
             coordinate_spec.resolve(mesh)
         if stabilization_.kind != "none":
             raise ValueError(
@@ -390,7 +388,7 @@ class MixedFiniteElementConstraintPlan(StrictModule, NonTrainableState):
         }
         if coordinate_spec is not None:
             payload["coordinate_spec"] = {
-                "id": coordinate_spec.coordinate_spec_id,
+                "id": coordinate_spec.geometry_layout_id,
                 "coordinates": array_tree_fingerprint(coordinate_spec.coordinates),
             }
         generated = canonical_fingerprint(payload)

@@ -27,6 +27,102 @@ from .units import (
 LengthCoordinateKind = Literal["physical", "comoving", "code"]
 
 
+class SpatialCoordinateContract(StrictModule, NonTrainableState):
+    """Exact length-unit, coordinate-kind, coordinate-system, and frame identity."""
+
+    length_unit: UnitDefinition = eqx.field(static=True)
+    length_coordinate_kind: LengthCoordinateKind = eqx.field(static=True)
+    coordinate_system: str = eqx.field(static=True)
+    reference_frame: str = eqx.field(static=True)
+    spatial_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        length_unit: UnitDefinition,
+        /,
+        *,
+        length_coordinate_kind: LengthCoordinateKind = "physical",
+        coordinate_system: str = "cartesian",
+        reference_frame: str = "world",
+    ):
+        if not isinstance(length_unit, UnitDefinition):
+            raise TypeError("length_unit must be a UnitDefinition.")
+        if length_unit.dimension != LENGTH:
+            raise ValueError("Spatial coordinate length_unit must have length dimension.")
+        kind = str(length_coordinate_kind).strip()
+        if kind not in ("physical", "comoving", "code"):
+            raise ValueError("Spatial coordinate kind is invalid.")
+        system = str(coordinate_system).strip()
+        frame = str(reference_frame).strip()
+        if not system or not frame:
+            raise ValueError("Coordinate system and reference frame must be non-empty.")
+        self.length_unit = length_unit
+        self.length_coordinate_kind = kind
+        self.coordinate_system = system
+        self.reference_frame = frame
+        self.spatial_id = canonical_fingerprint(
+            {
+                "kind": "spatial-coordinate-contract",
+                "length_unit": length_unit.unit_id,
+                "length_coordinate_kind": kind,
+                "coordinate_system": system,
+                "reference_frame": frame,
+            }
+        )
+
+    @classmethod
+    def si(cls) -> SpatialCoordinateContract:
+        return cls(METER)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "length_unit": self.length_unit.to_dict(),
+            "length_coordinate_kind": self.length_coordinate_kind,
+            "coordinate_system": self.coordinate_system,
+            "reference_frame": self.reference_frame,
+            "spatial_id": self.spatial_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> SpatialCoordinateContract:
+        if not isinstance(payload, Mapping):
+            raise TypeError("Spatial coordinate payload must be a mapping.")
+        expected = {
+            "length_unit",
+            "length_coordinate_kind",
+            "coordinate_system",
+            "reference_frame",
+            "spatial_id",
+        }
+        if set(payload) != expected:
+            raise ValueError("Spatial coordinate payload must use the canonical fields.")
+        unit_payload = payload["length_unit"]
+        if not isinstance(unit_payload, Mapping):
+            raise TypeError("Spatial coordinate length unit must be a mapping.")
+        coordinate_kind = payload["length_coordinate_kind"]
+        coordinate_system = payload["coordinate_system"]
+        reference_frame = payload["reference_frame"]
+        if not all(
+            isinstance(value, str)
+            for value in (coordinate_kind, coordinate_system, reference_frame)
+        ):
+            raise TypeError("Spatial coordinate labels must be strings.")
+        contract = cls(
+            UnitDefinition.from_dict(unit_payload),
+            length_coordinate_kind=coordinate_kind,
+            coordinate_system=coordinate_system,
+            reference_frame=reference_frame,
+        )
+        claimed_id = payload["spatial_id"]
+        if not isinstance(claimed_id, str):
+            raise TypeError("Spatial coordinate spatial_id must be a string.")
+        if claimed_id != contract.spatial_id:
+            raise ValueError(
+                "Spatial coordinate payload fingerprint does not match its content."
+            )
+        return contract
+
+
 class DimensionalScaleContract(StrictModule, NonTrainableState):
     """Shared exact length, mass, time, and coordinate-kind identity."""
 
@@ -182,4 +278,8 @@ class DimensionalScaleContract(StrictModule, NonTrainableState):
         return scale
 
 
-__all__ = ["DimensionalScaleContract", "LengthCoordinateKind"]
+__all__ = [
+    "DimensionalScaleContract",
+    "LengthCoordinateKind",
+    "SpatialCoordinateContract",
+]

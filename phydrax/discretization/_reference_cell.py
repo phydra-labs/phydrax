@@ -5,7 +5,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from ..._fingerprint import canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
 
 
 FacetShape = Literal["point", "edge", "triangle", "quadrilateral"]

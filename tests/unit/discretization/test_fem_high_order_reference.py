@@ -460,7 +460,7 @@ def test_modepy_simplex_family_and_prepared_reference_reproduce_polynomials(cell
 
 
 def test_facet_orientation_groups_have_exact_inverses_and_composition():
-    from phydrax.discretization.fem._reference_topology import (
+    from phydrax.discretization._reference_cell import (
         facet_orientation_actions,
         facet_orientation_between,
     )

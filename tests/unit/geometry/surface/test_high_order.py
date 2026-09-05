@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import SpatialCoordinateContract
 from phydrax.geometry import (
     HighOrderDifferentiationError,
     realize_isoparametric_triangles,
@@ -14,7 +15,7 @@ def test_linear_isoparametric_triangle_preserves_authoritative_geometry_and_fram
     metadata = SurfaceMetadata(
         source_id="unit-triangle",
         source_revision="1",
-        length_unit="m",
+        coordinate_contract=SpatialCoordinateContract.si(),
         provenance=("native-test",),
         cell_tags=("face",),
     )
@@ -33,8 +34,8 @@ def test_linear_isoparametric_triangle_preserves_authoritative_geometry_and_fram
     assert jnp.allclose(frame.jacobian, jnp.ones((1,)))
     assert jnp.allclose(frame.normal, jnp.asarray([[0.0, 0.0, 1.0]]))
     assert bool(frame.valid[0])
-    assert frame.metric_unit == "m^2"
-    assert frame.jacobian_unit == "m^2"
+    assert frame.metric_unit.symbol == "m^2"
+    assert frame.jacobian_unit.symbol == "m^2"
 
     with pytest.raises(HighOrderDifferentiationError):
         realized.evaluate(

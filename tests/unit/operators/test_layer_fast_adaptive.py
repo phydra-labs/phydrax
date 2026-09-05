@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import SpatialCoordinateContract
 from phydrax.export._array_archive import (
     fused_bem_result_archive_record,
     laplace_dp0_plan_archive_record,
@@ -57,7 +58,7 @@ def _epoch():
     metadata = SurfaceMetadata(
         source_id="unit-tetrahedron",
         source_revision="1",
-        length_unit="m",
+        coordinate_contract=SpatialCoordinateContract.si(),
         provenance=("analytic-test-fixture",),
     )
     surface = SurfaceModel.from_triangles(
@@ -202,7 +203,10 @@ def test_deterministic_refinement_transfer_conserves_charge_and_invalidates_epoc
     source_metadata = epoch.surface_model.metadata
     target_metadata = refined.target_epoch.surface_model.metadata
     assert target_metadata.source_id == source_metadata.source_id
-    assert target_metadata.length_unit == source_metadata.length_unit
+    assert (
+        target_metadata.coordinate_contract.spatial_id
+        == source_metadata.coordinate_contract.spatial_id
+    )
     assert target_metadata.source_revision != source_metadata.source_revision
     assert target_metadata.provenance[:-1] == source_metadata.provenance
     with pytest.raises(BoundaryEpochError, match="stale source epoch"):

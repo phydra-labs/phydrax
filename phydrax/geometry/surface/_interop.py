@@ -17,6 +17,19 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from ..._physical import SpatialCoordinateContract
+from ...units import (
+    CENTIMETER,
+    conversion_factor,
+    FOOT,
+    INCH,
+    KILOMETER,
+    LENGTH,
+    METER,
+    MICROMETER,
+    MILLIMETER,
+    UnitDefinition,
+)
 from ._contracts import SurfaceMetadata
 from ._model import SurfaceModel
 
@@ -70,14 +83,17 @@ class SurfaceUnsupportedFormatError(SurfaceInteropError):
     """Raised when no existing real provider implements an operation."""
 
 
-_UNIT_TO_METERS = {
-    "m": 1.0,
-    "mm": 1.0e-3,
-    "cm": 1.0e-2,
-    "um": 1.0e-6,
-    "km": 1.0e3,
-    "in": 0.0254,
-    "ft": 0.3048,
+_LENGTH_UNITS = {
+    unit.symbol: unit
+    for unit in (
+        METER,
+        MILLIMETER,
+        CENTIMETER,
+        MICROMETER,
+        KILOMETER,
+        INCH,
+        FOOT,
+    )
 }
 _EXTENSION_FORMAT = {
     ".msh": SurfaceFileFormat.GMSH,
@@ -109,39 +125,22 @@ _RESERVED_PREFIXES = (
 )
 
 
-def _canonical_unit(value: str, /) -> str:
-    unit = str(value).strip().lower()
-    aliases = {
-        "meter": "m",
-        "meters": "m",
-        "metre": "m",
-        "metres": "m",
-        "millimeter": "mm",
-        "millimeters": "mm",
-        "millimetre": "mm",
-        "millimetres": "mm",
-        "centimeter": "cm",
-        "centimeters": "cm",
-        "centimetre": "cm",
-        "centimetres": "cm",
-        "micrometer": "um",
-        "micrometers": "um",
-        "micrometre": "um",
-        "micrometres": "um",
-        "kilometer": "km",
-        "kilometers": "km",
-        "kilometre": "km",
-        "kilometres": "km",
-        "inch": "in",
-        "inches": "in",
-        "foot": "ft",
-        "feet": "ft",
-    }
-    unit = aliases.get(unit, unit)
-    if unit not in _UNIT_TO_METERS:
-        supported = ", ".join(_UNIT_TO_METERS)
-        raise ValueError(f"Unsupported length unit {value!r}; choose one of {supported}.")
-    return unit
+def _length_unit(value: UnitDefinition, /) -> UnitDefinition:
+    if not isinstance(value, UnitDefinition):
+        raise TypeError("Length units must be UnitDefinition values.")
+    if value.dimension != LENGTH:
+        raise ValueError("Surface units must have length dimension.")
+    return value
+
+
+def _unit_from_symbol(value: str, /) -> UnitDefinition:
+    symbol = str(value).strip()
+    if symbol not in _LENGTH_UNITS:
+        supported = ", ".join(_LENGTH_UNITS)
+        raise SurfaceDataCorruptionError(
+            f"Unsupported embedded length unit {value!r}; expected one of {supported}."
+        )
+    return _LENGTH_UNITS[symbol]
 
 
 def _positive_capacity(name: str, value: int, /) -> int:
@@ -155,7 +154,7 @@ def _positive_capacity(name: str, value: int, /) -> int:
 class SurfaceImportPolicy:
     """Immutable, explicitly unitful and resource-bounded import policy."""
 
-    source_length_unit: str
+    source_length_unit: UnitDefinition
     orientation: SurfaceOrientationPolicy = SurfaceOrientationPolicy.REJECT
     allow_lossy: bool = False
     maximum_file_bytes: int = 256 * 1024 * 1024
@@ -169,19 +168,42 @@ class SurfaceImportPolicy:
 
     def __post_init__(self):
         object.__setattr__(
-            self, "source_length_unit", _canonical_unit(self.source_length_unit)
+            self, "source_length_unit", _length_unit(self.source_length_unit)
         )
         if not isinstance(self.orientation, SurfaceOrientationPolicy):
             raise TypeError("orientation must be SurfaceOrientationPolicy.")
-        for name in (
+        object.__setattr__(
+            self,
             "maximum_file_bytes",
+            _positive_capacity("maximum_file_bytes", self.maximum_file_bytes),
+        )
+        object.__setattr__(
+            self,
             "maximum_data_bytes",
+            _positive_capacity("maximum_data_bytes", self.maximum_data_bytes),
+        )
+        object.__setattr__(
+            self,
             "maximum_vertices",
+            _positive_capacity("maximum_vertices", self.maximum_vertices),
+        )
+        object.__setattr__(
+            self,
             "maximum_cells",
+            _positive_capacity("maximum_cells", self.maximum_cells),
+        )
+        object.__setattr__(
+            self,
             "maximum_fields",
+            _positive_capacity("maximum_fields", self.maximum_fields),
+        )
+        object.__setattr__(
+            self,
             "cad_trim_samples_per_edge",
-        ):
-            object.__setattr__(self, name, _positive_capacity(name, getattr(self, name)))
+            _positive_capacity(
+                "cad_trim_samples_per_edge", self.cad_trim_samples_per_edge
+            ),
+        )
         linear = float(self.cad_linear_deflection_in_source_units)
         angular = float(self.cad_angular_deflection)
         if not np.isfinite(linear) or linear <= 0.0:
@@ -196,7 +218,7 @@ class SurfaceImportPolicy:
 class SurfaceExportPolicy:
     """Immutable export units, loss permission, and host capacities."""
 
-    target_length_unit: str
+    target_length_unit: UnitDefinition
     allow_lossy: bool = False
     binary: bool = False
     maximum_data_bytes: int = 512 * 1024 * 1024
@@ -206,15 +228,28 @@ class SurfaceExportPolicy:
 
     def __post_init__(self):
         object.__setattr__(
-            self, "target_length_unit", _canonical_unit(self.target_length_unit)
+            self, "target_length_unit", _length_unit(self.target_length_unit)
         )
-        for name in (
+        object.__setattr__(
+            self,
             "maximum_data_bytes",
+            _positive_capacity("maximum_data_bytes", self.maximum_data_bytes),
+        )
+        object.__setattr__(
+            self,
             "maximum_vertices",
+            _positive_capacity("maximum_vertices", self.maximum_vertices),
+        )
+        object.__setattr__(
+            self,
             "maximum_cells",
+            _positive_capacity("maximum_cells", self.maximum_cells),
+        )
+        object.__setattr__(
+            self,
             "maximum_fields",
-        ):
-            object.__setattr__(self, name, _positive_capacity(name, getattr(self, name)))
+            _positive_capacity("maximum_fields", self.maximum_fields),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,8 +305,8 @@ class SurfaceInteropReport:
     operation: str
     file_format: SurfaceFileFormat
     provider: str
-    source_length_unit: str
-    target_length_unit: str
+    source_length_unit: UnitDefinition
+    target_length_unit: UnitDefinition
     coordinate_scale: float
     source_id: str
     source_revision: str
@@ -590,7 +625,7 @@ def _import_meshio_surface(
     embedded_unit = _decode_single_marker(mesh.point_data, _UNIT_PREFIX, point_count)
     if (
         embedded_unit is not None
-        and _canonical_unit(embedded_unit) != policy.source_length_unit
+        and _unit_from_symbol(embedded_unit).unit_id != policy.source_length_unit.unit_id
     ):
         raise SurfaceDataCorruptionError(
             "Explicit source_length_unit contradicts the artifact unit marker."
@@ -640,7 +675,7 @@ def _import_meshio_surface(
     source_id = str(source.resolve()) if source_marker is None else source_marker
     source_revision = artifact_digest if revision_marker is None else revision_marker
     coordinate_system = "cartesian" if coordinates_marker is None else coordinates_marker
-    scale = _UNIT_TO_METERS[policy.source_length_unit]
+    scale = float(conversion_factor(policy.source_length_unit, METER))
     provenance = (
         provenance_marker
         if provenance_marker
@@ -649,8 +684,10 @@ def _import_meshio_surface(
     metadata = SurfaceMetadata(
         source_id=source_id,
         source_revision=source_revision,
-        length_unit="m",
-        coordinate_system=coordinate_system,
+        coordinate_contract=SpatialCoordinateContract(
+            METER,
+            coordinate_system=coordinate_system,
+        ),
         provenance=(
             *provenance,
             f"surface-import:{file_format.value}",
@@ -677,7 +714,7 @@ def _import_meshio_surface(
         file_format=file_format,
         provider="meshio",
         source_length_unit=policy.source_length_unit,
-        target_length_unit="m",
+        target_length_unit=METER,
         coordinate_scale=scale,
         source_id=source_id,
         source_revision=source_revision,
@@ -729,11 +766,11 @@ def _import_cad_surface(
     )
     face_ids = np.asarray(cad_model.triangle_face_ids, dtype=np.int32)
     tags = tuple(cad_model.physical_tags[int(index)] for index in face_ids)
-    scale = _UNIT_TO_METERS[policy.source_length_unit]
+    scale = float(conversion_factor(policy.source_length_unit, METER))
     metadata = SurfaceMetadata(
         source_id=cad_model.source_id,
         source_revision=cad_model.source_revision,
-        length_unit="m",
+        coordinate_contract=SpatialCoordinateContract(METER),
         provenance=(
             f"direct-brep-import:{file_format.value}",
             f"source-artifact-sha256:{artifact_digest}",
@@ -759,7 +796,7 @@ def _import_cad_surface(
         file_format=file_format,
         provider="OCP",
         source_length_unit=policy.source_length_unit,
-        target_length_unit="m",
+        target_length_unit=METER,
         coordinate_scale=scale,
         source_id=cad_model.source_id,
         source_revision=cad_model.source_revision,
@@ -828,13 +865,19 @@ def _validate_export_fields(
     return values
 
 
-def _metadata_point_data(model: SurfaceModel, point_count: int, unit: str, /):
+def _metadata_point_data(
+    model: SurfaceModel,
+    point_count: int,
+    unit: UnitDefinition,
+    /,
+):
     marker = np.zeros((point_count,), dtype=np.uint8)
     data = {
         _META_SOURCE + _encode_text(model.metadata.source_id): marker,
         _META_REVISION + _encode_text(model.metadata.source_revision): marker,
-        _META_COORDINATES + _encode_text(model.metadata.coordinate_system): marker,
-        _UNIT_PREFIX + _encode_text(unit): marker,
+        _META_COORDINATES
+        + _encode_text(model.metadata.coordinate_contract.coordinate_system): marker,
+        _UNIT_PREFIX + _encode_text(unit.symbol): marker,
     }
     for index, entry in enumerate(model.metadata.provenance):
         data[f"{_META_PROVENANCE}{index:08d}__{_encode_text(entry)}"] = marker
@@ -845,13 +888,13 @@ def _meshio_export_mesh(
     meshio: Any,
     model: SurfaceModel,
     fields: Sequence[PortableSurfaceField],
-    target_unit: str,
+    target_unit: UnitDefinition,
     include_metadata: bool,
     /,
 ):
-    points = (
-        np.asarray(model.mesh.coordinates, dtype=float) / _UNIT_TO_METERS[target_unit]
-    )
+    source_unit = model.metadata.coordinate_contract.length_unit
+    scale = float(conversion_factor(source_unit, target_unit))
+    points = np.asarray(model.mesh.coordinates, dtype=float) * scale
     faces = np.asarray(model.mesh.connectivity.cell_vertices, dtype=np.int32)[:, :3]
     point_data = {}
     cell_data = {}
@@ -902,7 +945,7 @@ def export_surface(
     file_format: SurfaceFileFormat | None = None,
     fields: Sequence[PortableSurfaceField] = (),
 ) -> SurfaceExportResult:
-    """Export an authoritative SI SurfaceModel without implicit geometry changes."""
+    """Export an authoritative SurfaceModel without implicit geometry changes."""
 
     if not isinstance(model, SurfaceModel):
         raise TypeError("model must be SurfaceModel.")
@@ -917,9 +960,12 @@ def export_surface(
             "real SurfaceModel STEP/IGES writer; no fallback mesh export is permitted."
         )
     meshio = _require_module("meshio", f"{format_.value} surface export")
-    if _canonical_unit(model.metadata.length_unit) != "m":
+    if (
+        model.metadata.coordinate_contract.length_unit.reference_system_id
+        != policy.target_length_unit.reference_system_id
+    ):
         raise SurfaceInteropError(
-            "Surface export requires authoritative coordinates declared in SI meters."
+            "Surface export requires source and target units in one reference system."
         )
     point_count = int(model.mesh.coordinates.shape[0])
     cell_count = int(model.mesh.connectivity.cell_count)
@@ -976,9 +1022,14 @@ def export_surface(
         operation="export",
         file_format=format_,
         provider="meshio",
-        source_length_unit="m",
+        source_length_unit=model.metadata.coordinate_contract.length_unit,
         target_length_unit=policy.target_length_unit,
-        coordinate_scale=1.0 / _UNIT_TO_METERS[policy.target_length_unit],
+        coordinate_scale=float(
+            conversion_factor(
+                model.metadata.coordinate_contract.length_unit,
+                policy.target_length_unit,
+            )
+        ),
         source_id=model.metadata.source_id,
         source_revision=model.metadata.source_revision,
         artifact_digest=digest,

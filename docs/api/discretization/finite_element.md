@@ -34,7 +34,7 @@
 
 ## Fields, geometry, and preparation
 
-::: phydrax.discretization.FiniteElementCoordinateSpec
+::: phydrax.discretization.CellGeometrySpec
 
 ---
 

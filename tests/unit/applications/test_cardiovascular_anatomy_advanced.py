@@ -426,7 +426,7 @@ def _high_order_geometry(cell_kind, *, degree=2):
     block = phx.discretization.CellBlock("myocardium", cell_kind, vertices)
     mesh = phx.discretization.CellMesh(mesh_coordinates, (block,))
     element = phx.discretization.fem.lagrange_element(cell_kind, degree)
-    coordinate_spec = phx.discretization.fem.FiniteElementCoordinateSpec(
+    coordinate_spec = phx.discretization.CellGeometrySpec(
         {"myocardium": element},
         {"myocardium": jnp.arange(element.local_dof_count)[None, :]},
         element.reference_nodes,
@@ -563,7 +563,7 @@ def test_high_order_geometry_refuses_linear_and_unsupported_volume_routes():
     )
     prism_mesh = phx.discretization.CellMesh(prism_coordinates, (prism_block,))
     prism_element = phx.discretization.fem.lagrange_element("prism", 2)
-    prism_spec = phx.discretization.fem.FiniteElementCoordinateSpec(
+    prism_spec = phx.discretization.CellGeometrySpec(
         {"myocardium": prism_element},
         {"myocardium": jnp.arange(prism_element.local_dof_count)[None, :]},
         prism_element.reference_nodes,
