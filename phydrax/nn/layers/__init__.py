@@ -60,7 +60,13 @@ from ._recurrent import (
     run_associative_recurrence,
     run_recurrent,
 )
-from ._recurrent_cells import GRUCell, LSTMCell, RNNCell, StackedRecurrentCell
+from ._recurrent_cells import (
+    ArtificialLIFCell,
+    GRUCell,
+    LSTMCell,
+    RNNCell,
+    StackedRecurrentCell,
+)
 from ._selective_sequence import (
     ResetAwareCausalConv1D,
     SelectiveStateSpaceBlock,
@@ -93,6 +99,7 @@ __all__ = [
     "AdaptiveResidual",
     "AbstractRecurrentCell",
     "AffineRecurrence",
+    "ArtificialLIFCell",
     "AttentionExecution",
     "CausalRecurrentConfig",
     "CausalRecurrentDiagnostics",

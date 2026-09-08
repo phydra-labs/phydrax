@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntFlag
 from math import isfinite
-from typing import Protocol, runtime_checkable, Sequence
+from typing import Protocol, runtime_checkable
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -28,9 +29,6 @@ from ...units import (
 )
 from ._morphology import PreparedCellMorphology
 from ._units import ELECTROPHYSIOLOGY_UNITS
-
-
-_MAX_GATES = 3
 
 
 def _conductance_density_area_to_microsiemens() -> float:
@@ -151,7 +149,7 @@ class PassiveLeak(StrictModule, NonTrainableState):
         self.nonlinear = False
 
     def initial_gates(self, voltage_mV: Array, /) -> Array:
-        return jnp.zeros(voltage_mV.shape + (_MAX_GATES,), dtype=voltage_mV.dtype)
+        return jnp.zeros(voltage_mV.shape + (self.gate_count,), dtype=voltage_mV.dtype)
 
     def affine_current(
         self,
@@ -383,7 +381,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
         self.nonlinear = True
 
     def initial_gates(self, voltage_mV: Array, /) -> Array:
-        return jnp.zeros(voltage_mV.shape + (_MAX_GATES,), dtype=voltage_mV.dtype)
+        return jnp.zeros(voltage_mV.shape + (self.gate_count,), dtype=voltage_mV.dtype)
 
     def affine_current(
         self,
@@ -436,7 +434,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
 
 
 class MembraneProgram(StrictModule, NonTrainableState):
-    """Ordered immutable mechanism program with a fixed three-gate lane per entry."""
+    """Ordered immutable mechanism program with each mechanism's actual gate count."""
 
     mechanisms: tuple[MembraneMechanism, ...]
     program_id: str = eqx.field(static=True)
@@ -451,24 +449,29 @@ class MembraneProgram(StrictModule, NonTrainableState):
         identifiers = tuple(value.mechanism_id for value in values)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Mechanism identities must be unique within a program.")
-        if any(value.gate_count < 0 or value.gate_count > _MAX_GATES for value in values):
-            raise ValueError("A mechanism may use at most three fixed gate lanes.")
+        if any(
+            isinstance(value.gate_count, bool)
+            or not isinstance(value.gate_count, int)
+            or value.gate_count < 0
+            for value in values
+        ):
+            raise ValueError("Mechanism gate_count must be a nonnegative integer.")
         self.mechanisms = values
         self.has_nonlinear_mechanisms = any(value.nonlinear for value in values)
         self.program_id = canonical_fingerprint(
             {
                 "kind": "electrophysiology-membrane-program-v1",
                 "mechanisms": list(identifiers),
-                "maximum_gates_per_mechanism": _MAX_GATES,
+                "gate_counts": [value.gate_count for value in values],
                 "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
             }
         )
 
 
 class MembraneProgramState(StrictModule):
-    """Fixed-shape gate state ``[mechanism, compartment, gate_lane]``."""
+    """Tuple of gate arrays, each shaped ``[compartment, mechanism.gate_count]``."""
 
-    gates: Array
+    gates: tuple[Array, ...]
 
 
 class MembraneEvaluation(StrictModule):
@@ -492,10 +495,10 @@ def initialize_membrane_program(
     states = []
     for mechanism in program.mechanisms:
         gates = mechanism.initial_gates(voltage)
-        if gates.shape != voltage.shape + (_MAX_GATES,):
+        if gates.shape != voltage.shape + (mechanism.gate_count,):
             raise ValueError("Mechanism initial_gates returned an invalid fixed shape.")
         states.append(gates)
-    return MembraneProgramState(jnp.stack(states, axis=0))
+    return MembraneProgramState(tuple(states))
 
 
 def evaluate_membrane_program(
@@ -509,9 +512,7 @@ def evaluate_membrane_program(
 ) -> MembraneEvaluation:
     """Evaluate ordered mechanisms into one exact affine voltage current."""
     voltage = jnp.asarray(voltage_mV)
-    expected = (len(program.mechanisms), voltage.shape[0], _MAX_GATES)
-    if state.gates.shape != expected:
-        raise ValueError(f"Program gates must have shape {expected}.")
+    _validate_program_gates(program, state, voltage)
     conductance = jnp.zeros_like(voltage)
     offset = jnp.zeros_like(voltage)
     nonlinear_current = jnp.zeros_like(voltage)
@@ -554,13 +555,28 @@ def update_membrane_program(
     /,
 ) -> MembraneProgramState:
     """Apply exact affine gate updates in immutable program order."""
+    _validate_program_gates(program, state, jnp.asarray(voltage_mV))
     updated = []
     for index, mechanism in enumerate(program.mechanisms):
         gates = mechanism.update_gates(voltage_mV, state.gates[index], dt_ms)
         if gates.shape != state.gates[index].shape:
             raise ValueError("Mechanism update_gates changed the fixed gate shape.")
         updated.append(gates)
-    return MembraneProgramState(jnp.stack(updated, axis=0))
+    return MembraneProgramState(tuple(updated))
+
+
+def _validate_program_gates(
+    program: MembraneProgram,
+    state: MembraneProgramState,
+    voltage: Array,
+    /,
+) -> None:
+    if not isinstance(state.gates, tuple) or len(state.gates) != len(program.mechanisms):
+        raise ValueError("Program gates must contain one array per mechanism.")
+    for mechanism, gates in zip(program.mechanisms, state.gates, strict=True):
+        expected = voltage.shape + (mechanism.gate_count,)
+        if gates.shape != expected:
+            raise ValueError(f"Mechanism gates must have shape {expected}.")
 
 
 __all__ = [

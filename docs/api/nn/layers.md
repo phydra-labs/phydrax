@@ -187,6 +187,98 @@ convolution with input-dependent affine state transitions.
 `WeightSpaceRecurrence` applies a diagonal stable recurrence to one explicit
 parameter vector; it never materializes a dense parameter-by-parameter matrix.
 
+### Artificial recurrent spiking
+
+`ArtificialLIFCell` is a finite-dimensional artificial spiking cell for the
+existing serial `run_recurrent` executor. Its state is the tuple
+`(membrane, previous_spike)`, both shaped `case_shape + (hidden_size,)`, and its
+output is a floating binary spike array. Its recurrent affine map uses the
+**previous** spike, never an instantaneous self-consistent spike solve.
+`StackedRecurrentCell` forwards the same physical-time context to time-aware
+members while evaluating ordinary recurrent members with their usual step API.
+
+For elapsed time `h`, membrane time constant `tau`, and affine drive
+`d = weight_ih @ x + weight_hh @ previous_spike + bias`, the subthreshold update is
+
+```text
+fraction = -expm1(-h / tau)
+charged = membrane + fraction * (resting - membrane + d)
+spike = 1 if charged >= threshold else 0
+```
+
+The input at the **arriving** node and previous spike define a held drive over
+that interval, not impulse currents. Membrane, threshold, reset, and drive use
+normalized membrane units; `time_constant_ms`, `dt_ms`, and supplied batch times
+are in milliseconds. `reset_mode="subtract"` subtracts
+`spike * (threshold - reset)` and preserves excess charge; `"hard"` sets a
+spiking membrane to `reset`. There is at most one spike per positive-duration
+step even if the charged membrane crosses several threshold increments.
+
+- With no `RecurrentBatch.time`, every valid step advances `dt_ms`, including
+  the first sample and a reset sample.
+- With times, the native runner supplies the nonnegative directed difference
+  from the previous valid node. A segment's first node has **zero** duration:
+  it establishes the time origin, leaves the canonical state unchanged, and
+  emits no spike. Repeated-time nodes also preserve both state leaves and emit
+  zero; a remembered previous spike is not erased by a duplicate coordinate.
+- Padding preserves both state leaves and emits zero. Packed resets restart
+  from `(resting, 0)`, not a chunk's incoming state.
+- Carry both `result.final_state` and `result.final_context` into the next
+  physical-time chunk. Carrying only membrane/spikes loses the boundary interval.
+  Reverse-time sequence traversal uses positive elapsed durations in traversal
+  order; it does not invert the physical leak/reset dynamics.
+
+#### Declared surrogate estimator
+
+The primal threshold remains exactly binary, including a spike at equality.
+A custom JVP supplies an explicitly chosen tangent for margin `m = charged -
+threshold` and positive width `w = surrogate_width`:
+
+| Family | Surrogate slope with respect to `m` |
+| --- | --- |
+| `"fast_sigmoid"` | `1 / (2*w*(1 + abs(m/w))**2)` |
+| `"triangular"` | `max(1 - abs(m/w), 0) / w` |
+
+Reverse-mode differentiation transposes this same local tangent. This is a
+**training estimator**, not a derivative of a continuous-time spike time, a
+saltation matrix, or the almost-everywhere-zero derivative of a hard binary
+map. Finite-differencing the binary forward spike is therefore not a valid
+reference for the surrogate. Forward-over-reverse derivatives differentiate
+the declared estimator, not an underlying smooth physical model.
+
+By default (`detach_reset=False`), the spike surrogate also propagates through
+the reset equation. `detach_reset=True` stops **only** the spike tangent used
+by reset; observable spikes and the next-step recurrent spike connection keep
+their surrogate gradients. Thus detached subtractive reset keeps the direct
+membrane path, while detached hard reset cuts that path at a spiking step.
+These policies have identical forward trajectories.
+
+Only `weight_ih`, `weight_hh`, and optional `bias` are trainable array leaves.
+The time constant, step size, resting/threshold/reset levels, surrogate width and
+family, and reset policy are fixed configuration, not accidentally optimized
+physical parameters. This artificial model intentionally has no refractory
+period, event localization, conductance units, or biological parameter-fitting
+claim; use the electrophysiology application for those physical contracts.
+Use serial execution for this discontinuous cell; smooth causal-solver
+convergence and physical event sensitivities are not implied.
+
+::: phydrax.nn.layers.ArtificialLIFCell
+    options:
+        members:
+            - __init__
+            - initial_state
+            - step
+            - step_with_context
+            - output_from_state
+
+The runnable `examples/artificial_lif_temporal_learning.py` fits artificial
+recurrent weights with the native stochastic-optimization workflow.
+`python -m tools.artificial_lif_benchmarks --quick` measures synchronized
+forward and surrogate-backward scaling at two sequence lengths; omit `--quick`
+for independent length/width sweeps. Reports separate lowering, compilation,
+first execution, warm timing distributions, and compiler memory estimates.
+Compiler memory is not measured peak device memory.
+
 ::: phydrax.nn.layers.CausalRecurrentConfig
 
 ---
