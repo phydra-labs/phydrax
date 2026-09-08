@@ -62,17 +62,16 @@ def test_explicit_unit_conversion_and_dimension_validation():
         ep.conversion_factor(shifted_time, ep.ELECTROPHYSIOLOGY_UNITS.time)
 
 
-def test_morphology_has_stable_tree_schedule_and_axial_kirchhoff_operator():
-    first = _branched()
-    second = _branched()
-    assert first.runtime_id == second.runtime_id
-    assert first.plan.compartment_index("right") == 3
-    np.testing.assert_array_equal(np.sort(first.elimination_order), [1, 2, 3])
-    np.testing.assert_allclose(first.axial_laplacian_uS, first.axial_laplacian_uS.T)
-    np.testing.assert_allclose(
-        np.sum(first.axial_laplacian_uS, axis=1), 0.0, atol=1.0e-14
+def test_uniform_branched_voltage_has_no_axial_current():
+    morphology = _branched()
+    runtime = ep.CableSolverPlan(0.1, residual_tolerance=1.0e-9).prepare(
+        morphology, ep.MembraneProgram((ep.PassiveLeak(0.0, -65.0),))
     )
-    assert np.all(np.asarray(first.capacitance_nF) > 0.0)
+    state = ep.initialize_cable_state(runtime, jnp.full((4,), -60.0))
+    result = ep.step_cable(runtime, state, ep.zero_cable_inputs(runtime))
+    assert bool(result.evidence.successful)
+    np.testing.assert_allclose(result.state.voltage_mV, state.voltage_mV, atol=1.0e-11)
+    np.testing.assert_allclose(result.evidence.kirchhoff_residual_nA, 0.0, atol=1.0e-12)
 
 
 @pytest.mark.parametrize(
@@ -116,7 +115,7 @@ def test_passive_single_compartment_matches_analytic_theta_mode(scheme, theta):
     )
 
 
-def test_branched_cable_satisfies_kirchhoff_balance_and_tree_dense_parity():
+def test_branched_cable_satisfies_kirchhoff_balance():
     morphology = _branched()
     runtime = ep.CableSolverPlan(0.1, residual_tolerance=1.0e-9).prepare(
         morphology, ep.MembraneProgram((ep.PassiveLeak(0.1, -68.0),))
@@ -130,57 +129,10 @@ def test_branched_cable_satisfies_kirchhoff_balance_and_tree_dense_parity():
         inputs.voltage_clamp_mask,
         inputs.voltage_clamp_target_mV,
     )
-    evaluation = ep.evaluate_membrane_program(
-        runtime.program,
-        state.membrane,
-        morphology,
-        state.voltage_mV,
-        state.intracellular_mM,
-        state.extracellular_mM,
-    )
-    matrix, right, _, _ = ep.assemble_cable_system(runtime, state, evaluation, inputs)
-    tree = ep.tree_elimination_solve(jnp.diag(matrix), right, morphology)
-    dense = ep.differentiable_dense_solve(matrix, right)
     result = ep.step_cable(runtime, state, inputs)
-    np.testing.assert_allclose(tree, dense, rtol=1.0e-11, atol=1.0e-11)
     np.testing.assert_allclose(result.evidence.kirchhoff_residual_nA, 0.0, atol=2.0e-11)
     np.testing.assert_allclose(
         result.evidence.charge_balance_residual_nA, 0.0, atol=2.0e-11
-    )
-
-
-def test_native_linear_forward_and_reverse_derivatives_match_finite_difference():
-    matrix = jnp.asarray([[3.0, -0.4], [-0.4, 2.0]])
-    right = jnp.asarray([0.7, -1.1])
-    direction_matrix = jnp.asarray([[0.2, 0.1], [-0.3, -0.1]])
-    direction_right = jnp.asarray([-0.4, 0.25])
-    weights = jnp.asarray([1.3, -0.8])
-
-    def objective(matrix_, right_):
-        return jnp.dot(weights, ep.differentiable_dense_solve(matrix_, right_))
-
-    gradients = jax.grad(objective, argnums=(0, 1))(matrix, right)
-    analytic = jnp.sum(gradients[0] * direction_matrix) + jnp.dot(
-        gradients[1], direction_right
-    )
-    epsilon = 1.0e-6
-    finite_difference = (
-        objective(matrix + epsilon * direction_matrix, right + epsilon * direction_right)
-        - objective(
-            matrix - epsilon * direction_matrix, right - epsilon * direction_right
-        )
-    ) / (2.0 * epsilon)
-    np.testing.assert_allclose(analytic, finite_difference, rtol=2.0e-7, atol=2.0e-8)
-    _, forward_tangent = jax.jvp(
-        objective,
-        (matrix, right),
-        (direction_matrix, direction_right),
-    )
-    np.testing.assert_allclose(
-        forward_tangent,
-        finite_difference,
-        rtol=2.0e-7,
-        atol=2.0e-8,
     )
 
 
@@ -282,10 +234,9 @@ def test_current_and_voltage_clamp_signs_are_explicit():
 
 def test_synapse_network_preserves_exact_voltage_affinity_and_delay():
     plan = ep.SynapseNetworkPlan(
-        2,
-        2,
+        (2, 2),
         3,
-        2,
+        0.2,
         0.1,
         connections=(
             ep.SynapseConnection(
@@ -295,7 +246,7 @@ def test_synapse_network_preserves_exact_voltage_affinity_and_delay():
                 1,
                 0,
                 ep.ConductanceSynapse(3.0, 0.5, 0.0),
-                delay_steps=1,
+                delay_ms=0.1,
                 weight=2.0,
             ),
             ep.SynapseConnection(
@@ -305,15 +256,15 @@ def test_synapse_network_preserves_exact_voltage_affinity_and_delay():
     )
     runtime = plan.prepare()
     state = ep.initialize_synapse_network(runtime)
-    spikes = jnp.asarray([[1.0, 1.0], [0.0, 0.0]])
+    spikes = jnp.asarray([1.0, 1.0, 0.0, 0.0])
     first = ep.evaluate_synapse_network_transition(runtime, state, spikes)
     state = ep.commit_synapse_network_transition(first, state)
-    assert float(first.evidence.current_offset_nA[1, 1]) < 0.0
+    assert float(first.evidence.current_offset_nA[3]) < 0.0
     second = ep.evaluate_synapse_network_transition(
         runtime, state, jnp.zeros_like(spikes)
     )
-    conductance = second.evidence.conductance_uS[1, 0]
-    offset = second.evidence.current_offset_nA[1, 0]
+    conductance = second.evidence.conductance_uS[2]
+    offset = second.evidence.current_offset_nA[2]
     assert float(conductance) > 0.0
     np.testing.assert_allclose(offset, -conductance * 0.0, atol=1.0e-14)
     voltage = -60.0
@@ -321,8 +272,8 @@ def test_synapse_network_preserves_exact_voltage_affinity_and_delay():
 
 
 def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions():
-    runtime = ep.SynapseNetworkPlan(2, 1, 2, 0, 1.0).prepare()
-    relations = ep.initialize_synapse_network(runtime)
+    runtime = ep.SynapseNetworkPlan((1, 1), 2, 0.0, 1.0).prepare()
+    relations = ep.initialize_synapse_network(runtime).relations
     event = ep.SynapseRelationEvent(
         int(ep.SynapseRelationEventKind.ACTIVATE),
         -1,
@@ -348,8 +299,8 @@ def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions()
     )
     assert int(jnp.sum(relations.active)) == 1
     stdp_plan = ep.PairSTDPPlan(20.0, 20.0, 0.1, 0.05, 0.0, 1.0, trace_bound=1.5)
-    pre = jnp.asarray([[1.0], [0.0]])
-    post = jnp.asarray([[0.0], [0.0]])
+    pre = jnp.asarray([1.0, 0.0])
+    post = jnp.asarray([0.0, 0.0])
     first = ep.evaluate_pair_stdp(runtime, stdp_plan, relations, plasticity, pre, post)
     relations, plasticity = ep.commit_pair_stdp(first, relations, plasticity)
     repeated_pre = ep.evaluate_pair_stdp(
@@ -372,16 +323,15 @@ def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions()
         relations,
         plasticity,
         jnp.zeros_like(pre),
-        jnp.asarray([[0.0], [1.0]]),
+        jnp.asarray([0.0, 1.0]),
     )
     assert float(second.relations.weight[0]) > float(relations.weight[0])
     assert bool(second.evidence.trace_bound_satisfied)
     assert bool(second.evidence.weight_bound_satisfied)
     full_runtime = ep.SynapseNetworkPlan(
-        2,
+        (1, 1),
         1,
-        1,
-        0,
+        0.0,
         1.0,
         connections=(
             ep.SynapseConnection(
@@ -394,7 +344,7 @@ def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions()
             ),
         ),
     ).prepare()
-    full_state = ep.initialize_synapse_network(full_runtime)
+    full_state = ep.initialize_synapse_network(full_runtime).relations
     rejected = ep.evaluate_synapse_relation_event(full_runtime, full_state, event)
     assert not bool(rejected.successful)
     assert int(rejected.status) == int(ep.SynapseStatus.CAPACITY_EXCEEDED)

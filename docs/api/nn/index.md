@@ -23,3 +23,5 @@ engines, architectures, layers, adapters, and training workflows.
       or a custom `__loss__` method; `FunctionalSolver` adds these to the train objective.
     - Neural operators use explicit source/query samples, coordinates, quadrature,
       masks, and case axes; see [Architectures](architectures.md).
+    - Fixed physical LIF [population codes](population.md) use native weighted SVD,
+      held-out approximation diagnostics, and explicit filtered-spike decoding.

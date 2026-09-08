@@ -39,6 +39,7 @@ from .._structured_operators import (
     TridiagonalLinearOperator,
 )
 from .._transform_operators import TransformDiagonalLinearOperator
+from .._tree import _prepare_tree, _solve_tree, TreeLinearOperator
 
 
 class _LUState(StrictModule):
@@ -433,6 +434,8 @@ def _solve_kronecker_sum(
 
 
 def _prepare_operator(operator: Any, /) -> Any:
+    if isinstance(operator, TreeLinearOperator):
+        return _prepare_tree(operator)
     if isinstance(operator, DenseLinearOperator):
         return _prepare_lu(operator.matrix)
     if isinstance(operator, BandedLinearOperator):
@@ -484,6 +487,8 @@ def _solve_operator(
     rhs: Array,
     /,
 ) -> tuple[Array, Array]:
+    if isinstance(operator, TreeLinearOperator):
+        return _solve_tree(operator, prepared, rhs)
     if isinstance(operator, IdentityLinearOperator):
         return rhs, jnp.asarray(False)
     if isinstance(operator, DenseLinearOperator):
