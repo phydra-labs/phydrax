@@ -22,6 +22,12 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..fidelity import (
+    FidelityHierarchy,
+    FidelityLevelSpec,
+    FidelityPath,
+    FidelityRelation,
+)
 
 
 RefinementAxis: TypeAlias = Literal["time", "space", "noise_rank", "surrogate", "other"]
@@ -102,6 +108,7 @@ class StochasticLevelSpec(StrictModule):
     """Static identity and compatibility contract for one approximation level."""
 
     discretization_bundle: DiscretizationBundle
+    fidelity_level: FidelityLevelSpec
     metadata: frozendict[str, str] = eqx.field(static=True)
     level_id: str = eqx.field(static=True)
     refinement_index: int = eqx.field(static=True)
@@ -132,6 +139,7 @@ class StochasticLevelSpec(StrictModule):
         problem_id: str,
         observable_id: str,
         solver_id: str,
+        observable_contract_id: str | None = None,
         approximation_id: str,
         parent_level_id: str | None = None,
         discretization_id: str | None = None,
@@ -177,6 +185,16 @@ class StochasticLevelSpec(StrictModule):
         observable = _identifier(observable_id, "observable_id", required=True)
         solver = _identifier(solver_id, "solver_id", required=True)
         approximation = _identifier(approximation_id, "approximation_id", required=True)
+        observable_contract = (
+            observable
+            if observable_contract_id is None
+            else _identifier(
+                observable_contract_id,
+                "observable_contract_id",
+                required=True,
+            )
+        )
+        assert observable_contract is not None
         parent = _identifier(parent_level_id, "parent_level_id", required=False)
         discretization = _identifier(
             discretization_id, "discretization_id", required=False
@@ -254,6 +272,16 @@ class StochasticLevelSpec(StrictModule):
         self.noise_witness = noise_witness
         self.metadata = identities
         self.discretization_bundle = bundle
+        self.fidelity_level = FidelityLevelSpec(
+            identifier,
+            problem_id=problem,
+            observable_id=observable,
+            model_id=solver,
+            approximation_id=approximation,
+            observable_contract_id=observable_contract,
+            discretization_bundle=bundle,
+            metadata=identities,
+        )
         self.fingerprint = _fingerprint(
             (
                 identifier,
@@ -272,6 +300,7 @@ class StochasticLevelSpec(StrictModule):
                 noise_coupling,
                 None if noise_witness is None else noise_witness.witness_id,
                 tuple(identities.items()),
+                self.fidelity_level.level_fingerprint,
                 bundle.bundle_id,
             )
         )
@@ -292,6 +321,8 @@ class StochasticCouplingPlan(StrictModule):
     allow_multi_axis: bool = eqx.field(static=True)
     fingerprint: str = eqx.field(static=True)
     discretization_hierarchy: DiscretizationHierarchy
+    fidelity_hierarchy: FidelityHierarchy
+    fidelity_path: FidelityPath
 
     def __init__(
         self,
@@ -388,6 +419,31 @@ class StochasticCouplingPlan(StrictModule):
             generic_levels,
             hierarchy_id=identifier,
         )
+        fidelity_relations = tuple(
+            FidelityRelation(
+                coarse.level_id,
+                fine.level_id,
+                state_transfer_id=fine.state_transfer_id,
+                coupling_id=(
+                    None
+                    if fine.noise_coupling == "independent"
+                    else (
+                        f"{identifier}:{coarse.level_id}:{fine.level_id}:"
+                        f"{fine.noise_coupling}"
+                    )
+                ),
+                coupling=fine.noise_coupling,
+                metadata={"refinement_axes": ",".join(fine.refinement_axes)},
+            )
+            for coarse, fine in pairwise(values)
+        )
+        self.fidelity_hierarchy = FidelityHierarchy(
+            tuple(level.fidelity_level for level in values),
+            fidelity_relations,
+            target_level_id=values[-1].level_id,
+            hierarchy_id=identifier,
+        )
+        self.fidelity_path = self.fidelity_hierarchy.linear_path()
         self.fingerprint = _fingerprint(
             (identifier, tuple(level.fingerprint for level in values), multi_axis)
         )

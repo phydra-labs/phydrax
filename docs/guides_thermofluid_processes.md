@@ -1,8 +1,17 @@
 # Thermofluid processes
 
-`phydrax.applications.thermofluids` provides typed thermofluid declarations that lower to the native acausal DAE substrate. It does not introduce another graph, structural analyzer, nonlinear solver, or DAE runtime.
+`phydrax.applications.thermofluids` provides two native families: typed
+thermofluid declarations that lower to the acausal DAE substrate, and a
+fixed-grid spatial thermofluid topology workflow that reuses the MAC
+projection/scalar runtime. Neither introduces a second structural analyzer,
+nonlinear solver, DAE runtime, or optimization framework.
 
-`ThermofluidPortSpec` records physical port kind, flow direction, catalog identity, homogeneous thermodynamic model, and state-pair convention. `ThermofluidProcessPlan` validates each connection before producing `AcausalDAESource` and a separate `process_model_id` that includes static component parameters and semantic device-law identities. Differentiable device coefficients remain numerical PyTree leaves, not host-fingerprinted constants.
+For process models, `ThermofluidPortSpec` records physical port kind, flow
+direction, catalog identity, homogeneous thermodynamic model, and state-pair
+convention. `ThermofluidProcessPlan` validates each connection before producing
+`AcausalDAESource` and a separate `process_model_id` that includes static
+component parameters and semantic device-law identities. Differentiable device
+coefficients remain numerical PyTree leaves, not host-fingerprinted constants.
 
 Material links are fixed-direction and pairwise. A material connection requires one inlet and one outlet with identical catalog, thermodynamic model, and state-pair identity. A port may participate in at most one pairwise connection. Multiway material junctions require an explicit control volume: generic potential equality cannot define advected enthalpy or composition mixing.
 
@@ -111,3 +120,89 @@ The law's `successful` flag must be checked at the solved temperatures in additi
 `CompressorMapPlan` stores corrected-speed and operating-line axes plus corrected-flow, pressure-ratio, and isentropic-efficiency tables. It uses native rectilinear interpolation and returns explicit support. Off-map points are unsupported; constant-boundary interpolation is never treated as physical extrapolation.
 
 `CompressorPlan.design` creates an immutable calibration artifact tied to its exact map. Compressor evaluation solves the isentropic and actual outlet states through the selected homogeneous thermodynamic model, conserves mass flow, and reports shaft power. Total gas stations remain distinct from generic process ports.
+
+## Fixed-grid thermofluid topology design
+
+The public spatial-design surface is `ThermofluidMaterial`,
+`ThermofluidTopologyDesign`, `ThermofluidTopologyEvidence`, and
+`ThermofluidTopologyReanalysis`. A workflow consumes an existing
+`CompiledMACScalarBuoyancyDynamics`, a `PreparedDensityTransform`, a
+`ThermofluidMaterial`, and a mass-compatible initial state, followed by the
+declared `heat_source`, `final_time`, `step_size`, and
+`maximum_solid_fraction`. There is no application-specific optimizer:
+`state_design_problem()` returns the native `StateDesignProblem` for
+`phydrax.optim.solve_state_design`.
+
+Density one denotes fictitious solid and zero denotes fluid. `density(design)`
+applies the prepared filter and tanh projection while preserving declared
+binary fixed cells. `ThermofluidMaterial` adds a convex penalized Brinkman
+resistance interpolation, a linear cell conductivity mixture lowered through
+native harmonic face fluxes, and one constant volumetric heat capacity. The
+fixed nonnegative volumetric heat source remains active in both phases.
+`objective` is the heat-source-weighted terminal temperature relative to
+`reference_temperature`, plus optional Brinkman resistance power; the solid
+volume fraction is a separate inequality constraint.
+
+The supported physics is laminar 2D incompressible Newtonian flow on one
+stationary uniform MAC grid, pressure projection, one advected/diffused
+`temperature` scalar, and an optional native Boussinesq buoyancy law. Every
+nonperiodic momentum wall must be static, impermeable, zero-velocity no-slip or
+free-slip, and temperature boundaries must be static. External momentum
+forcing from the compiled flow is retained and Brinkman drag is added. The
+velocity is the continuous fictitious-domain velocity, not a porosity-divided
+interstitial velocity.
+
+`integrate(design)` always replays the same initial condition and the same
+finite-horizon SSPRK33 schedule. Accordingly, the state-design residual is
+`state - terminal_rollout(design)`, and differentiation is through that finite
+numerical rollout, the density transform, material coefficients, projection,
+transport, and buoyancy. It is **not** an implicit derivative of a steady root,
+and optimizer warm starts cannot change the physical horizon. Diffusion,
+viscosity, and maximum resistance receive a construction-time sufficient step
+bound; advection is checked at every actual RK stage. The schedule neither
+clips nor retries an unstable step, preserving one declared derivative path.
+
+`evidence(state, density)` returns endpoint semidiscrete evidence: objective,
+solid fraction and maximum temperature; heat content, source power, boundary
+heat outflow, and thermal balance defect; divergence and boundary mass flux;
+kinetic energy/rate, external and buoyancy power, viscous dissipation,
+resistance power, resistance-work and kinetic-balance defects; and the
+dual-volume-weighted solid velocity-energy fraction. `endpoint_rate_norm` is
+reported explicitly but is not a steady-state certificate. `successful`
+records the native endpoint stage and diagnostic status; optimization state
+acceptance and the volume constraint remain separate decisions.
+
+`integrate_density(density)` reruns a supplied physical density without
+filtering it. `binary_reanalysis(design, eta=0.5)` thresholds once, restores
+fixed cells exactly, and reruns the same physics and horizon. Its
+`ThermofluidTopologyReanalysis` separately exposes integration success and
+`material_bound_satisfied`; thresholding never repairs a volume violation.
+Finite Brinkman resistance also never certifies an impermeable solid, so both
+relaxed and binary evidence report `solid_velocity_energy_fraction`. This
+reanalysis uses the same grid and therefore is not evidence of mesh
+independence.
+
+Run the qualification benchmark with:
+
+```console
+python tools/thermofluid_topology_design_benchmarks.py
+```
+
+For the reduced workload, use:
+
+```console
+python tools/thermofluid_topology_design_benchmarks.py --smoke
+```
+
+The tool exercises multiple grids and resistance levels, checks the
+finite-horizon directional derivative against finite differences, requires
+accepted state/sensitivity evidence, relaxed volume feasibility and objective
+nonincrease, and bounds the reported conservation defects. It reruns the
+thresholded binary field and then the identical binary field at doubled
+resistance, recording binary volume feasibility and the resulting leakage
+change independently of geometry or optimizer changes.
+
+The workflow does not claim sharp-interface conjugate heat transfer,
+impermeable solids at finite drag, moving meshes, variable heat capacity,
+turbulence, phase change, viscous/Brinkman dissipation heating, or a converged
+steady state.

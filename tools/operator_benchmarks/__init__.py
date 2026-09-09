@@ -19,6 +19,11 @@ from .external import (
     select_benchmark_superior_external,
     verify_external_candidate_artifact,
 )
+from .fidelity import (
+    AnalyticScalingOperator,
+    FidelityCorrectionBenchmarkResult,
+    run_fidelity_correction_benchmark,
+)
 from .matrix import (
     aggregate_benchmark_results,
     assert_benchmark_thresholds,
@@ -146,6 +151,9 @@ from .v2 import (
 
 
 __all__ = [
+    "AnalyticScalingOperator",
+    "FidelityCorrectionBenchmarkResult",
+    "run_fidelity_correction_benchmark",
     "ArchitecturePromotionReport",
     "ArchitecturePortfolioPromotion",
     "BenchmarkComparisonRecord",

@@ -258,6 +258,11 @@ from ._exponential_family_projection import (
     project_exponential_family,
 )
 from ._factor_law import GaussianFactorLaw
+from ._fidelity_acquisition import (
+    FidelityAcquisitionResult,
+    select_fidelity_acquisition,
+    TargetVarianceAcquisitionPolicy,
+)
 from ._filter_checkpoint import (
     FilterCheckpointAlgorithm,
     FilterState,
@@ -269,6 +274,20 @@ from ._filter_checkpoint import (
     write_ensemble_filter_checkpoint,
     write_filter_checkpoint,
     write_kalman_filter_checkpoint,
+)
+from ._finite_experimental_design import (
+    bind_finite_design_experiment,
+    evaluate_finite_experimental_design,
+    ExpectedInformationGain,
+    FiniteDesignBelief,
+    FiniteDesignEvaluation,
+    FiniteDesignSelection,
+    FiniteDesignStatus,
+    FiniteDesignUpdate,
+    FiniteEIGResources,
+    FiniteExperimentalDesignProblem,
+    select_finite_experimental_design,
+    update_finite_design_belief,
 )
 from ._fixed_lag import (
     fixed_lag_kalman_smoother,
@@ -371,6 +390,12 @@ from ._gp_computation_variational import (
     ComputationAwareSparseVariationalGaussianProcessELBO,
 )
 from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
+from ._gp_fidelity import (
+    AutoregressiveFidelityKernel,
+    fidelity_design,
+    FidelityGaussianProcess,
+    FidelityGaussianProcessResult,
+)
 from ._gp_functional import (
     directional_derivative_functional,
     functional_kernel_diagonal,
@@ -390,8 +415,11 @@ from ._gp_functional import (
 )
 from ._gp_kernel_fit import (
     fit_gaussian_process_kernel,
+    fit_multioutput_gaussian_process_kernel,
     GaussianProcessKernelFitPolicy,
     GaussianProcessKernelFitResult,
+    MultiOutputGaussianProcessKernelFitPolicy,
+    MultiOutputGaussianProcessKernelFitResult,
 )
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._gp_multioutput import (
@@ -536,6 +564,13 @@ from ._minibatch_posterior import (
     MinibatchSource,
     ObservationFactorSemantics,
     prepare_importance_minibatch_source,
+)
+from ._multiobjective_bayesian_optimization import (
+    GaussianProcessMultiObjectiveBayesianOptimization,
+    multiobjective_bayesian_optimize,
+    MultiObjectiveBayesianOptimizationObservation,
+    MultiObjectiveBayesianOptimizationProblem,
+    MultiObjectiveBayesianOptimizationResult,
 )
 from ._multiple_testing import (
     adjust_p_values,
@@ -1092,6 +1127,23 @@ __all__ = [
     "fit_vecm",
     "holm_adjust",
     "test_cointegration",
+    "bind_finite_design_experiment",
+    "evaluate_finite_experimental_design",
+    "ExpectedInformationGain",
+    "FiniteDesignBelief",
+    "FiniteDesignEvaluation",
+    "FiniteDesignSelection",
+    "FiniteDesignStatus",
+    "FiniteDesignUpdate",
+    "FiniteEIGResources",
+    "FiniteExperimentalDesignProblem",
+    "select_finite_experimental_design",
+    "update_finite_design_belief",
+    "GaussianProcessMultiObjectiveBayesianOptimization",
+    "MultiObjectiveBayesianOptimizationObservation",
+    "MultiObjectiveBayesianOptimizationProblem",
+    "MultiObjectiveBayesianOptimizationResult",
+    "multiobjective_bayesian_optimize",
     "Experiment",
     "PosteriorRecord",
     "UQPlan",
@@ -1757,6 +1809,13 @@ __all__ = [
     "GaussianProcessActionKind",
     "GaussianProcessComputationPolicy",
     "PseudoInputGaussianProcessActionPolicy",
+    "AutoregressiveFidelityKernel",
+    "fidelity_design",
+    "FidelityGaussianProcess",
+    "FidelityGaussianProcessResult",
+    "FidelityAcquisitionResult",
+    "select_fidelity_acquisition",
+    "TargetVarianceAcquisitionPolicy",
     "AbstractMultiOutputKernel",
     "Coregionalization",
     "ExactGaussianProcessDiscrepancy",
@@ -1787,6 +1846,9 @@ __all__ = [
     "MultiOutputGaussianProcessCondition",
     "MultiOutputGaussianProcessDiscrepancy",
     "MultiOutputGaussianProcessLikelihoodState",
+    "fit_multioutput_gaussian_process_kernel",
+    "MultiOutputGaussianProcessKernelFitPolicy",
+    "MultiOutputGaussianProcessKernelFitResult",
     "partial_derivative_functional",
     "SparseGaussianProcessDiscrepancy",
     "SparseGaussianProcessFactor",

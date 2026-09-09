@@ -363,11 +363,7 @@ def evaluate(
         if dual_norm is not None
         else CertificateKind.NONE
     )
-    qoi = (
-        sample.qoi
-        if sample.qoi is not None
-        else (float(sample.qoi_vector @ state) if sample.qoi_vector is not None else None)
-    )
+    qoi = float(sample.qoi_vector @ state) if sample.qoi_vector is not None else None
     revision = NumericRevision(
         _fingerprint(
             {
