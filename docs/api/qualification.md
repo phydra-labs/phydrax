@@ -87,3 +87,32 @@ prospective qualification campaign.
 ::: phydrax.qualification.validate_qualification_causality
 
 ::: phydrax.qualification.QualificationEvidence
+
+## Governed geophysical references
+
+`GeophysicalReferenceRecipe` binds one external-oracle or field comparison to an
+exact `ReferenceArtifactManifest`, source locator, coordinate/time identities,
+observable, tolerances, minimum valid sample count, maximum decoded sample count, and
+optional standardized-RMS criterion. `source_locator` is provenance only; the runner
+never downloads it.
+
+`ReferenceArtifactManifest.verify_bytes` checks size and digest before an array
+container is opened. `GeophysicalReferenceComparison` records absolute, relative,
+normalized, and uncertainty-standardized errors with a content identity. Field
+evidence requires nonempty campaign-start and campaign-observation IDs; callers must
+still run `validate_qualification_causality` before admitting it to a release claim.
+
+```text
+PYTHONPATH=. python tools/geophysics_reference_qualification.py \
+  --recipe case.json --artifact case.npz --output comparison.json
+```
+
+The NPZ profile contains `prediction` and `reference`, plus optional Boolean `valid`
+and positive `standard_deviation` arrays. Duplicate or unknown members and members
+whose declared uncompressed size exceeds the recipe allocation bound fail closed.
+
+::: phydrax.qualification.ReferenceArtifactManifest
+
+::: phydrax.qualification.GeophysicalReferenceRecipe
+
+::: phydrax.qualification.GeophysicalReferenceComparison

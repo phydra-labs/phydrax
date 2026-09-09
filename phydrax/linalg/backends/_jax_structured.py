@@ -501,7 +501,9 @@ def _solve_operator(
         return rhs[operator.inverse_permutation], jnp.asarray(False)
     if isinstance(operator, TriangularLinearOperator):
         diagonal = jnp.diag(operator.matrix)
-        singular = jnp.any(diagonal == 0) & ~operator.unit_diagonal
+        singular = (
+            jnp.any(diagonal == 0) if not operator.unit_diagonal else jnp.asarray(False)
+        )
         value = jsp.linalg.solve_triangular(
             operator.matrix,
             rhs,

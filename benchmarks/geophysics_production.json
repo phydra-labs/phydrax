@@ -1,0 +1,112 @@
+{
+  "all_available_cases_successful": true,
+  "distributed_cases": [
+    {
+      "available": true,
+      "communication_bytes": 0,
+      "compile_and_first_ms": 131.48320803884417,
+      "entity_count": 64,
+      "execution_ms": 73.04957499727607,
+      "forward_max_error": 0.0,
+      "local_capacity": 64,
+      "message_capacity": 1,
+      "pairing_residual": 4.440892098500626e-16,
+      "partitions": 1,
+      "serial_forward_max_error": 0.0,
+      "serial_transpose_max_error": 1.1102230246251565e-16,
+      "successful": true,
+      "transpose_max_error": 1.1102230246251565e-16
+    },
+    {
+      "available": true,
+      "communication_bytes": 16,
+      "compile_and_first_ms": 280.81529203336686,
+      "entity_count": 128,
+      "execution_ms": 130.12837499845773,
+      "forward_max_error": 0.0,
+      "local_capacity": 65,
+      "message_capacity": 1,
+      "pairing_residual": 7.771561172376096e-16,
+      "partitions": 2,
+      "serial_forward_max_error": 0.0,
+      "serial_transpose_max_error": 1.1102230246251565e-16,
+      "successful": true,
+      "transpose_max_error": 1.1102230246251565e-16
+    },
+    {
+      "available": true,
+      "communication_bytes": 64,
+      "compile_and_first_ms": 340.89079208206385,
+      "entity_count": 256,
+      "execution_ms": 164.2797915963456,
+      "forward_max_error": 0.0,
+      "local_capacity": 66,
+      "message_capacity": 1,
+      "pairing_residual": 4.996003610813204e-16,
+      "partitions": 4,
+      "serial_forward_max_error": 0.0,
+      "serial_transpose_max_error": 1.1102230246251565e-16,
+      "successful": true,
+      "transpose_max_error": 1.1102230246251565e-16
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "6cffb0f9d0e54a57745ee0308c3b6a6666bb002205d2359bacfe23eb9ae477cb",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "645112acec49ca2218b98740fbdc9410d58617d440201605cd7824bd54299dba",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "kind": "geophysics-production-benchmark",
+  "local_device_count": 4,
+  "restart_and_failures": {
+    "checkpoint_bytes": 7986,
+    "checkpoint_identity_refused": true,
+    "insufficient_devices_refused": true,
+    "resource_budget_refused": true,
+    "restart_bitwise_equal": true,
+    "successful": true
+  },
+  "successful": true
+}

@@ -24,6 +24,15 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._observation_covariance import (
+    CirculantCovarianceAction,
+    DiagonalCovarianceAction,
+    KroneckerCholeskyCovarianceAction,
+    LowRankDiagonalCovarianceAction,
+    ObservationCovarianceAction,
+    PrecisionOperatorCovarianceAction,
+    prepare_observation_covariance,
+)
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
@@ -203,7 +212,9 @@ class CholeskyCovarianceAction(StrictModule, NonTrainableState):
         return jnp.sum(whitened * whitened)
 
 
-CovarianceAction = PrecisionCovarianceAction | CholeskyCovarianceAction
+CovarianceAction = (
+    PrecisionCovarianceAction | CholeskyCovarianceAction | ObservationCovarianceAction
+)
 
 
 class CorrelatedGaussianResult(StrictModule):
@@ -1962,16 +1973,26 @@ class ObservationRecord:
             object.__setattr__(self, "asset_id", value)
 
 
+from ._variable_projection import LinearNuisancePlan, NuisanceProjectionResult
+
+
 __all__ = [
     "AutocorrelationPlan",
     "AutocorrelationResult",
     "BrightnessConditionedTransportPlan",
     "BrightnessConditionedTransportResult",
     "CholeskyCovarianceAction",
+    "CirculantCovarianceAction",
     "CoordinateLayout",
     "CorrelatedGaussianPlan",
     "CorrelatedGaussianResult",
     "CovarianceAction",
+    "DiagonalCovarianceAction",
+    "KroneckerCholeskyCovarianceAction",
+    "LowRankDiagonalCovarianceAction",
+    "ObservationCovarianceAction",
+    "PrecisionOperatorCovarianceAction",
+    "prepare_observation_covariance",
     "DiffusionEvaluationResult",
     "DiffusionForwardResult",
     "DiffusionModelPlan",
@@ -1990,6 +2011,8 @@ __all__ = [
     "MeanSquareDisplacementResult",
     "ObservationProduct",
     "ObservationRecord",
+    "LinearNuisancePlan",
+    "NuisanceProjectionResult",
     "PairCorrelationPlan",
     "PairCorrelationResult",
     "PrecisionCovarianceAction",

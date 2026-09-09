@@ -76,6 +76,7 @@ from ._diffusion import (
     PreparedConservativeAdvection,
     PreparedConservativeDiffusion,
 )
+from ._diffusion_boundary import HybridDiffusionBoundary
 from ._distributed import (
     FiniteVolumeDecompositionPlan,
     FiniteVolumeHaloRoute,
@@ -136,6 +137,7 @@ from ._high_resolution_extended import (
     FilterADPolicy,
     TENOQualification,
 )
+from ._hybrid_diffusion import HybridMimeticDiffusion
 from ._hydrostatic_grid import (
     HydrostaticMetricEpoch,
     LatitudeLongitudeHydrostaticGridPlan,
@@ -834,4 +836,6 @@ __all__ = [
     "VariableSurfaceTensionPolicy",
     "evaluate_content_form_entropy_diagnostics",
     "prepare_polyhedral_finite_volume_geometry",
+    "HybridDiffusionBoundary",
+    "HybridMimeticDiffusion",
 ]

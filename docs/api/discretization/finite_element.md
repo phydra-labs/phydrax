@@ -519,3 +519,11 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 ---
 
 ::: phydrax.discretization.write_finite_element_field
+
+## Tetrahedral H(curl)
+
+`TetrahedralNedelecSpace` is the oriented lowest-order tetrahedral Nédélec space used
+by conductive electromagnetic plans. It exposes edge orientation, covariant Piola
+mapping, mass and curl–curl actions, and discrete gradient/curl/divergence incidence.
+
+::: phydrax.discretization.TetrahedralNedelecSpace

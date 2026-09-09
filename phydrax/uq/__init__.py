@@ -41,10 +41,13 @@ from .._exponential_family import (
 from .._likelihoods import (
     AbstractLikelihood,
     CategoricalExponentialFamilyLikelihood,
+    CensoredGaussianLikelihood,
     CircularComplexGaussianLikelihood,
     ComplexGaussianLikelihood,
+    ContaminatedGaussianLikelihood,
     GaussianLikelihood,
     GaussianLocationScaleLikelihood,
+    HuberObjective,
     IndependentBernoulliLikelihood,
     OrdinalCumulativeLinkLikelihood,
     ScalarNaturalExponentialFamilyLikelihood,
@@ -969,6 +972,13 @@ from ._sparse_variational_gp import (
     SparseVariationalGaussianProcessResult,
     SparseVariationalGaussianState,
 )
+from ._spatial_prior import (
+    CrossGradientPrior,
+    GraphMetricPrior,
+    SPDEPrecisionPrior,
+    TemporalDifferencePrior,
+    TotalVariationPrior,
+)
 from ._state_space_amortized import (
     AmortizedGaussianMarkovEncoder,
     AmortizedGaussianMarkovFamily,
@@ -1048,6 +1058,11 @@ from ._state_space_variational import (
     GaussianMarkovVariationalFamily,
     StateSpaceVariationalConfig,
     StateSpaceVariationalResult,
+)
+from ._stochastic_design import (
+    StochasticDesignCriterion,
+    StochasticDesignResult,
+    StochasticExperimentDesignPlan,
 )
 from ._stochastic_gradient import (
     AbstractStochasticGradientEstimator,
@@ -1558,9 +1573,12 @@ __all__ = [
     "AbstractLikelihood",
     "CategoricalExponentialFamilyLikelihood",
     "CircularComplexGaussianLikelihood",
+    "CensoredGaussianLikelihood",
     "ComplexGaussianLikelihood",
+    "ContaminatedGaussianLikelihood",
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
+    "HuberObjective",
     "IndependentBernoulliLikelihood",
     "OrdinalCumulativeLinkLikelihood",
     "StudentTLikelihood",
@@ -2045,4 +2063,12 @@ __all__ = [
     "ConstraintLikelihoodTerm",
     "LinearGaussianConstraintConditioner",
     "build_constraint_posterior",
+    "CrossGradientPrior",
+    "GraphMetricPrior",
+    "SPDEPrecisionPrior",
+    "TemporalDifferencePrior",
+    "TotalVariationPrior",
+    "StochasticDesignCriterion",
+    "StochasticDesignResult",
+    "StochasticExperimentDesignPlan",
 ]
