@@ -1856,6 +1856,17 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Energy quantities and series](guides_energy_series.md),
   [Energy interchange](guides_energy_interchange.md), and
   [Energy workflows and qualification](guides_energy_workflows.md).
+- **Financial mathematics**: resolve caller-supplied calendars, point-in-time
+  observations, contracts, cashflows, trades, and positions into fixed-shape
+  market states; keep physical, pricing, and stress laws non-substitutable;
+  compose native curve calibration, analytic/Fourier/PDE/Monte Carlo valuation,
+  econometric inference, portfolio optimization, exposure/XVA, execution control,
+  and martingale transport; and retain separate data, model, numerical, and
+  intended-use evidence with independent financial replay. Finance supplies no
+  live feed, exchange gateway, universal pricer, legal interpretation, or
+  regulatory claim. See [Guide → Financial mathematics](guides_finance.md),
+  [Cookbook → Financial mathematics](cookbook/finance.md), and
+  [API → Financial mathematics](api/finance/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

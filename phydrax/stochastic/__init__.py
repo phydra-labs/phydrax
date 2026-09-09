@@ -109,6 +109,16 @@ from ._gaussian_diffusion import (
     VarianceExplodingDiffusion,
     VariancePreservingDiffusion,
 )
+from ._gaussian_path import (
+    brownian_increments_from_normals,
+    gaussian_path_from_unit_design,
+    GaussianPathConstructionEvidence,
+    GaussianPathConstructionMethod,
+    GaussianPathConstructionPlan,
+    GaussianPathResult,
+    prepare_gaussian_path_construction,
+    PreparedGaussianPathConstruction,
+)
 from ._general_diffusion import (
     AbstractItoScoreDiffusion,
     MatrixGaussianDiffusion,
@@ -219,6 +229,21 @@ from ._path_ensemble import (
     solve_stochastic_path_ensemble,
     StochasticPathEnsemblePlan,
     StochasticPathEnsembleResult,
+)
+from ._point_process import (
+    evaluate_hawkes_likelihood,
+    ExponentialHawkesProcess,
+    HAWKES_NONFINITE,
+    HAWKES_NONPOSITIVE_INTENSITY,
+    HAWKES_SUCCESS,
+    HAWKES_UNSTABLE,
+    HawkesLikelihoodPlan,
+    HawkesLikelihoodResult,
+    HawkesProcessResult,
+    HawkesTiePolicy,
+    PointProcessObservation,
+    prepare_hawkes_likelihood,
+    simulate_hawkes,
 )
 from ._process import (
     AbstractMarginalTransitionLaw,
@@ -377,6 +402,19 @@ from ._wiener import LevyAreaKind, WienerAlgorithm, WienerRealization
 
 
 __all__ = [
+    "ExponentialHawkesProcess",
+    "HAWKES_NONFINITE",
+    "HAWKES_NONPOSITIVE_INTENSITY",
+    "HAWKES_SUCCESS",
+    "HAWKES_UNSTABLE",
+    "HawkesLikelihoodPlan",
+    "HawkesLikelihoodResult",
+    "HawkesProcessResult",
+    "HawkesTiePolicy",
+    "PointProcessObservation",
+    "evaluate_hawkes_likelihood",
+    "prepare_hawkes_likelihood",
+    "simulate_hawkes",
     "AbstractEventLayout",
     "AbstractItoScoreDiffusion",
     "AffineSubspaceLayout",
@@ -572,6 +610,14 @@ __all__ = [
     "tensor_exponential",
     "tensor_logarithm",
     "gaussian_field_diagnostics",
+    "brownian_increments_from_normals",
+    "gaussian_path_from_unit_design",
+    "GaussianPathConstructionEvidence",
+    "GaussianPathConstructionMethod",
+    "GaussianPathConstructionPlan",
+    "GaussianPathResult",
+    "prepare_gaussian_path_construction",
+    "PreparedGaussianPathConstruction",
     "RandomFieldModel",
     "RandomFieldRole",
     "RandomFieldSample",

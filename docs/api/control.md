@@ -984,3 +984,29 @@ pseudoinverse, reuses selected paths as holdout data, mixes conditional laws, or
 falls back to a different solution concept. There is no universal combined solver:
 compose only APIs whose decision class, information pattern, time model, stochastic
 law, constraint ownership, and evidence claim match the problem being posed.
+
+## Controlled jumps and impulse QVI references
+
+`ControlledJumpProblem` combines a predictable action policy with one explicit
+fixed-capacity marked-jump realization. `rollout_controlled_jumps_reference`
+retains event masks, overflow, action timing, and path validity; it does not infer
+an optimal policy.
+
+`BoundedImpulseQVIProblem` is a bounded one-dimensional finite-action reference.
+Its solver reports continuation/intervention complementarity, boundary,
+monotonicity, and nested-refinement evidence. Success is finite-grid QVI evidence,
+not a continuum viscosity-solution claim.
+
+::: phydrax.control.stochastic.ControlledJumpProblem
+
+---
+
+::: phydrax.control.stochastic.rollout_controlled_jumps_reference
+
+---
+
+::: phydrax.control.stochastic.BoundedImpulseQVIProblem
+
+---
+
+::: phydrax.control.stochastic.solve_impulse_qvi_reference

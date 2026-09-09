@@ -31,6 +31,15 @@ from ._kernel import (
     sample_bridge_paths,
     sample_bridge_state_indices,
 )
+from ._martingale import (
+    martingale_bridge_refinement_evidence,
+    MartingaleBridgeDiagnostics,
+    MartingaleBridgeRefinementEvidence,
+    MartingaleBridgeStatus,
+    MartingaleSchrodingerBridgeProblem,
+    MartingaleSchrodingerBridgeResult,
+    MartingaleSchrodingerBridgeSolver,
+)
 from ._problem import (
     BridgeProblemProvenance,
     FiniteBridgeTarget,
@@ -47,6 +56,13 @@ from ._solver import (
 
 
 __all__ = [
+    "MartingaleBridgeDiagnostics",
+    "MartingaleBridgeRefinementEvidence",
+    "MartingaleBridgeStatus",
+    "MartingaleSchrodingerBridgeProblem",
+    "MartingaleSchrodingerBridgeResult",
+    "MartingaleSchrodingerBridgeSolver",
+    "martingale_bridge_refinement_evidence",
     "BridgeInferenceAdapter",
     "BridgePathLawDiagnostics",
     "BridgePathSample",
