@@ -192,12 +192,76 @@ centroids and is not a continuous Hausdorff certificate. Poisson reconstruction
 does not invent CAD associations. OpenVDB must know how inactive and
 out-of-domain voxels are extended.
 
-Native bridge sources and CMake definitions are packaged under
-`phydrax/meshing/providers/native`. They link separately installed upstream
-libraries; importing `phydrax` does not compile or launch them.
-For VoroCrust, build the upstream checkout, then configure the bridge with
-`VOROCRUST_SOURCE_DIR` and `VOROCRUST_BUILD_DIR` pointing to that checkout/build.
-Pass the `vc_mesh` and `phydrax-vorocrust` executable paths to
+Native bridge sources and standalone CMake projects are packaged under
+`phydrax/meshing/providers/native`. They build small executables against
+separately installed upstream libraries; importing `phydrax` neither compiles
+nor launches them. Build and link each bridge with the same C++ compiler and,
+where applicable, the same MPI implementation as its upstream library. Install
+the executables into one prefix and either put its `bin` directory on `PATH` or
+pass each executable explicitly.
+
+For an installed Omega_h CMake package:
+
+```console
+cmake -S <phydrax>/phydrax/meshing/providers/native/omega_h \
+  -B build/phydrax-omega-h \
+  -DOmega_h_DIR=/path/to/omega-h/lib/cmake/Omega_h
+cmake --build build/phydrax-omega-h
+cmake --install build/phydrax-omega-h --prefix /path/to/phydrax-native
+```
+
+Use the MPI compiler wrapper as `CMAKE_CXX_COMPILER` when the installed Omega_h
+was built with MPI.
+
+TIOGA must first be installed with its CMake package metadata and global node-ID
+support. Its package does not publish a release version, so the bridge requires
+the exact upstream release or Git commit explicitly:
+
+```console
+cmake -S /path/to/tioga -B /path/to/tioga-build \
+  -DCMAKE_CXX_COMPILER=/path/to/mpicxx \
+  -DCMAKE_INSTALL_PREFIX=/path/to/tioga-install \
+  -DTIOGA_HAS_NODEGID=ON -DBUILD_SHARED_LIBS=ON
+cmake --build /path/to/tioga-build
+cmake --install /path/to/tioga-build
+cmake -S <phydrax>/phydrax/meshing/providers/native/tioga \
+  -B build/phydrax-tioga \
+  -DCMAKE_CXX_COMPILER=/path/to/mpicxx \
+  -DTIOGA_DIR=/path/to/tioga-install/lib/cmake/TIOGA \
+  -DPHYDRAX_TIOGA_REVISION=<exact-release-or-git-commit>
+cmake --build build/phydrax-tioga
+cmake --install build/phydrax-tioga --prefix /path/to/phydrax-native
+```
+
+TIOGA is LGPL-2.1-or-later. The bridge links the caller-installed library and
+reports its caller-supplied exact revision; Phydrax does not redistribute TIOGA.
+
+VoroCrust does not install CMake package metadata. Build a serial CPU checkout,
+then point the bridge at that exact source and build tree:
+
+```console
+cmake -S /path/to/vorocrust -B /path/to/vorocrust-build \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+  -DVOROCRUST_ENABLE_OPENMP=OFF \
+  -DVOROCRUST_ENABLE_MPI=OFF -DVOROCRUST_ENABLE_EXODUS=OFF \
+  -DVOROCRUST_TPL_ENABLE_KOKKOS=OFF \
+  -DVOROCRUST_TPL_ENABLE_KOKKOSKERNELS=OFF \
+  -DVOROCRUST_TPL_USE_LAPACK=OFF \
+  -DVOROCRUST_TPL_BUILD_OPENBLAS=OFF
+cmake --build /path/to/vorocrust-build --target vc_mesh libVCMesh
+cmake -S <phydrax>/phydrax/meshing/providers/native/vorocrust \
+  -B build/phydrax-vorocrust \
+  -DVOROCRUST_SOURCE_DIR=/path/to/vorocrust \
+  -DVOROCRUST_BUILD_DIR=/path/to/vorocrust-build \
+  -DPHYDRAX_VOROCRUST_REVISION=<exact-release-or-git-commit>
+cmake --build build/phydrax-vorocrust
+cmake --install build/phydrax-vorocrust --prefix /path/to/phydrax-native
+```
+
+The bridge refuses VoroCrust builds with optional MPI, Kokkos, LAPACK, or
+Exodus linkage whose transitive build-tree dependencies cannot be reconstructed
+safely. It detects and links OpenMP when the upstream build enabled it. Pass the
+resulting `vc_mesh` and `phydrax-vorocrust` executable paths to
 `VoroCrustProvider`. Its radius control is the backend sphere-sizing bound, not
 a guaranteed edge length. No material identities are inferred from seed colors.
 Backend vertices that differ only within `relative_merge_tolerance` times the
@@ -232,9 +296,10 @@ type ignores or unchecked casts and are exercised against the real libraries.
 
 VoroCrust source is available at
 [sandialabs/vorocrust-meshing](https://github.com/sandialabs/vorocrust-meshing).
-Build with CMake and an OpenMP-capable C++ compiler. On Apple Silicon, Homebrew
-GCC can supply OpenMP. The Sandia website's “Coming Soon” source notice is stale;
-the GitHub source avoids its binary-download CAPTCHA.
+Its upstream build defaults to OpenMP, while the one-thread command above
+disables it. Leave OpenMP enabled only when the upstream library and bridge use
+the same OpenMP-capable compiler. On Apple Silicon, the shown route avoids
+assuming that Apple Clang supplies an OpenMP runtime.
 
 Prime is an extraction feasibility decision, not an implemented provider.
 The documented [Part API](https://prime.docs.pyansys.com/version/stable/api/_autosummary/ansys.meshing.prime.Part.html)

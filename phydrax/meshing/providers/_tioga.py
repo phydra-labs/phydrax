@@ -324,7 +324,7 @@ def _info(executable: str, timeout: float) -> MeshingProviderInfo:
     return MeshingProviderInfo(
         "tioga",
         version[len(prefix) :],
-        "BSD-3-Clause",
+        "LGPL-2.1-or-later",
         operations=(MeshingOperation.ASSEMBLE_OVERSET,),
         source_kinds=(MeshingSourceKind.MESH_ASSEMBLY,),
         capabilities=(

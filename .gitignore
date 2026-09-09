@@ -1,6 +1,7 @@
 *.html
 *.csv
 *.txt
+!phydrax/meshing/providers/native/**/CMakeLists.txt
 !LICENSES/BEMPP-CL-MIT.txt
 !LICENSES/FMMAX-MIT.txt
 !LICENSES/IREE-APACHE-2.0.txt

@@ -2134,6 +2134,9 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Restored packaged standalone CMake build/install contracts for the Omega_h,
+  TIOGA, and VoroCrust bridges, including exact external revision reporting and
+  usable installed runtime linkage; corrected TIOGA's provider license metadata.
 - Reduced ROM evaluations now compute QoIs from the reduced state and declared
   QoI vector instead of copying a supplied truth QoI into the ROM result.
 - Acausal structural matching now prefers assignments that avoid unnecessary

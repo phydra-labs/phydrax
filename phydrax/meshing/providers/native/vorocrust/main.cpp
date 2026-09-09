@@ -1,7 +1,9 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // Uses the public VoroCrust API; no meshing algorithms are duplicated here.
 #include "MeshingVoronoiMesher.h"
-#include "Version.h"
+#ifndef PHYDRAX_VOROCRUST_REVISION
+#error "Build with the packaged CMake project and an exact VoroCrust revision"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -13,7 +15,7 @@
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--version") {
-        std::cout << GIT_COMMIT_SHA1 << '\n';
+        std::cout << PHYDRAX_VOROCRUST_REVISION << '\n';
         return 0;
     }
     if (argc != 3) {
