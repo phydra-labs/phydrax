@@ -68,6 +68,15 @@ def test_measurement_comparison_requires_semantic_and_support_compatibility():
     np.testing.assert_allclose(result.standardized_residual, (1.0, -2.0))
     np.testing.assert_allclose(result.quadratic, 5.0)
     assert bool(result.successful)
+    covariance = phx.observation.DiagonalCovarianceAction(
+        np.asarray((0.25, 0.25)),
+        phx.observation.CoordinateLayout(("first", "second")),
+    )
+    correlated = phx.observation.MeasurementComparisonPlan(
+        observed, covariance=covariance
+    ).evaluate(predicted)
+    np.testing.assert_allclose(correlated.quadratic, 5.0)
+    assert bool(correlated.successful)
     incompatible = phx.measurement.QuantityField(
         "other",
         _quantity("other", "test.other"),

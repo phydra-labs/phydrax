@@ -1900,6 +1900,17 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   without changing device equations. See
   [Guides → Circuit networks](guides_circuit_networks.md) and
   [Guides → Circuit periodic analysis](guides_circuit_periodic.md).
+- **Porous media and solid-Earth geophysics**: compose conservative Richards,
+  multiphase, thermal, surface, well, reactive, and mixed-dimensional fracture
+  physics with finite/contact/point/2.5D electrical models, IP, gravity, magnetics,
+  acoustic and elastic waves, waveform imaging, conductive EM, MT, GPR,
+  poromechanics, faults, geodynamics, monitoring, and planetary radial models.
+  Coordinate/time/reference-body contracts, bounded domain formats, native
+  covariance/prior/design actions, distributed halos, topology epochs, resource
+  admission, exact restart, and governed external/field reference recipes remain
+  explicit. See [Guides → Porous-media physics](guides_porous_media.md),
+  [Native geophysics](guides_geophysics.md), and
+  [Qualified geospatial interchange](guides_geospatial_interchange.md).
 - **Energy systems**: compose balanced AC/DC power studies, dispatch and storage,
   reduced building thermal models, and explicitly oriented heat/material ports.
   Physical power topology is separate from bus-control studies; carrier amounts,

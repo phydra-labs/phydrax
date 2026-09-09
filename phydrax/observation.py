@@ -24,6 +24,15 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._observation_covariance import (
+    CirculantCovarianceAction,
+    DiagonalCovarianceAction,
+    KroneckerCholeskyCovarianceAction,
+    LowRankDiagonalCovarianceAction,
+    ObservationCovarianceAction,
+    PrecisionOperatorCovarianceAction,
+    prepare_observation_covariance,
+)
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from .measurement import (
@@ -210,7 +219,9 @@ class CholeskyCovarianceAction(StrictModule, NonTrainableState):
         return jnp.sum(whitened * whitened)
 
 
-CovarianceAction = PrecisionCovarianceAction | CholeskyCovarianceAction
+CovarianceAction = (
+    PrecisionCovarianceAction | CholeskyCovarianceAction | ObservationCovarianceAction
+)
 
 
 class CorrelatedGaussianResult(StrictModule):
@@ -2002,14 +2013,21 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(observed, PreparedQuantityField):
             raise TypeError("observed must be PreparedQuantityField.")
-        if covariance is not None and not isinstance(
-            covariance, (PrecisionCovarianceAction, CholeskyCovarianceAction)
-        ):
+        covariance_types = (
+            PrecisionCovarianceAction,
+            CholeskyCovarianceAction,
+            DiagonalCovarianceAction,
+            LowRankDiagonalCovarianceAction,
+            PrecisionOperatorCovarianceAction,
+            KroneckerCholeskyCovarianceAction,
+            CirculantCovarianceAction,
+        )
+        if covariance is not None and not isinstance(covariance, covariance_types):
             raise TypeError("covariance must be a supported CovarianceAction or None.")
         if covariance is not None:
             if jnp.issubdtype(observed.values.dtype, jnp.complexfloating):
                 raise ValueError(
-                    "Correlated complex measurements require an explicit Hermitian covariance action."
+                    "Correlated complex measurements are not supported by this comparison plan."
                 )
             if observed.values.size != covariance.layout.size:
                 raise ValueError("Covariance layout size must match observed values.")
@@ -2090,16 +2108,26 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
         )
 
 
+from ._variable_projection import LinearNuisancePlan, NuisanceProjectionResult
+
+
 __all__ = [
     "AutocorrelationPlan",
     "AutocorrelationResult",
     "BrightnessConditionedTransportPlan",
     "BrightnessConditionedTransportResult",
     "CholeskyCovarianceAction",
+    "CirculantCovarianceAction",
     "CoordinateLayout",
     "CorrelatedGaussianPlan",
     "CorrelatedGaussianResult",
     "CovarianceAction",
+    "DiagonalCovarianceAction",
+    "KroneckerCholeskyCovarianceAction",
+    "LowRankDiagonalCovarianceAction",
+    "ObservationCovarianceAction",
+    "PrecisionOperatorCovarianceAction",
+    "prepare_observation_covariance",
     "DiffusionEvaluationResult",
     "DiffusionForwardResult",
     "DiffusionModelPlan",
@@ -2120,6 +2148,8 @@ __all__ = [
     "MeasurementComparisonResult",
     "ObservationProduct",
     "ObservationRecord",
+    "LinearNuisancePlan",
+    "NuisanceProjectionResult",
     "PairCorrelationPlan",
     "PairCorrelationResult",
     "PrecisionCovarianceAction",

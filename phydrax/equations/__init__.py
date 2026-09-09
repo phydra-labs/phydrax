@@ -826,6 +826,50 @@ from .vem import (
 )
 
 
+from ._ablating_material import (
+    AblatingMaterialAdvance,
+    AblatingMaterialEvaluation,
+    AblatingMaterialState,
+    PorousAblatingMaterialPlan,
+)
+from ._hybrid_turbulence import (
+    DelayedDetachedEddyPlan,
+    HybridRANSLESGridScalePlan,
+    HybridTurbulenceEvaluation,
+)
+from ._ionized_gas import (
+    IonizedMixtureThermodynamicsPlan,
+    IonizedMultitemperatureEulerSystem,
+    IonizedMultitemperatureNavierStokesSystem,
+    IonizedThermodynamicEvaluation,
+    PlasmaQuasiNeutralityEvidence,
+)
+from ._nonlte_radiation import (
+    AVOGADRO_CONSTANT,
+    NonLTELevelPopulationPlan,
+    NonLTEPopulationEvaluation,
+    NonLTERadiationCoefficientEvaluation,
+    NonLTERadiationCoefficientPlan,
+    PLANCK_CONSTANT,
+)
+from ._plasma_chemistry import (
+    PlasmaChemicalRateEvaluation,
+    PreparedPlasmaMechanism,
+    ReactionTemperatureSpec,
+)
+from ._plasma_transport import (
+    AmbipolarPlasmaTransportPlan,
+    PlasmaTransportEvaluation,
+)
+from ._sst import SSTEvaluation, SSTTurbulencePlan
+from ._surface_chemistry import (
+    GasSurfaceChemicalEvaluation,
+    GasSurfaceReactionSpec,
+    PreparedGasSurfaceMechanism,
+    SurfaceChemicalState,
+    SurfaceSpeciesSchema,
+)
+
 __all__ = [
     "BulkDGTransportEvidence",
     "BulkDGTransportPlan",
@@ -1496,3 +1540,36 @@ __all__ += [
 ]
 
 __all__ += ["IncidentWavePlan", "WaveComponent", "WaveSample"]
+
+__all__ += [
+    "AVOGADRO_CONSTANT",
+    "AblatingMaterialAdvance",
+    "AblatingMaterialEvaluation",
+    "AblatingMaterialState",
+    "AmbipolarPlasmaTransportPlan",
+    "DelayedDetachedEddyPlan",
+    "GasSurfaceChemicalEvaluation",
+    "GasSurfaceReactionSpec",
+    "HybridRANSLESGridScalePlan",
+    "HybridTurbulenceEvaluation",
+    "IonizedMixtureThermodynamicsPlan",
+    "IonizedMultitemperatureEulerSystem",
+    "IonizedMultitemperatureNavierStokesSystem",
+    "IonizedThermodynamicEvaluation",
+    "NonLTELevelPopulationPlan",
+    "NonLTEPopulationEvaluation",
+    "NonLTERadiationCoefficientEvaluation",
+    "NonLTERadiationCoefficientPlan",
+    "PLANCK_CONSTANT",
+    "PlasmaChemicalRateEvaluation",
+    "PlasmaQuasiNeutralityEvidence",
+    "PlasmaTransportEvaluation",
+    "PorousAblatingMaterialPlan",
+    "PreparedGasSurfaceMechanism",
+    "PreparedPlasmaMechanism",
+    "ReactionTemperatureSpec",
+    "SSTEvaluation",
+    "SSTTurbulencePlan",
+    "SurfaceChemicalState",
+    "SurfaceSpeciesSchema",
+]

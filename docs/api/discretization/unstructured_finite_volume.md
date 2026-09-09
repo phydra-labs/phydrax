@@ -40,6 +40,16 @@
 
 ::: phydrax.discretization.evaluate_unstructured_fv_geometry
 
+## Hybrid diffusion and surface traces
+
+::: phydrax.discretization.HybridMimeticDiffusion
+
+::: phydrax.discretization.HybridDiffusionBoundary
+
+::: phydrax.discretization.BoundarySurfaceTrace
+
+::: phydrax.discretization.nested_cell_transfer
+
 ## Dynamics and boundaries
 
 ::: phydrax.discretization.UnstructuredFiniteVolumeMethodPlan

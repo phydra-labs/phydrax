@@ -193,17 +193,14 @@ def read_bounded_resource(
                 f"Resource exceeds the configured {limits.max_bytes}-byte size limit.",
             )
         after = os.fstat(file_descriptor)
-        if (
-            len(payload) != after.st_size
-            or _stat_identity(before) != _stat_identity(after)
+        if len(payload) != after.st_size or _stat_identity(before) != _stat_identity(
+            after
         ):
             raise ResourceReadError(
                 "inconsistent", "The resource changed while it was being read."
             )
         for descriptor, initial in directory_states:
-            if _directory_identity(initial) != _directory_identity(
-                os.fstat(descriptor)
-            ):
+            if _directory_identity(initial) != _directory_identity(os.fstat(descriptor)):
                 raise ResourceReadError(
                     "inconsistent", "A resource path component changed during the read."
                 )
@@ -228,9 +225,7 @@ def read_bounded_resource(
         raise
     except OSError as error:
         reason: _ResourceFailure = (
-            "policy"
-            if error.errno in (errno.ELOOP, errno.ENOTDIR)
-            else "malformed"
+            "policy" if error.errno in (errno.ELOOP, errno.ENOTDIR) else "malformed"
         )
         raise ResourceReadError(
             reason, "The requested resource could not be opened or read."
@@ -319,9 +314,7 @@ def _resource_components(
     if any(part == ".." for part in components):
         raise ResourceReadError("policy", "The resource path escapes its trusted root.")
     if len(components) > maximum_depth:
-        raise ResourceReadError(
-            "limit", "Resource path nesting exceeds its depth limit."
-        )
+        raise ResourceReadError("limit", "Resource path nesting exceeds its depth limit.")
     return root_text, components
 
 

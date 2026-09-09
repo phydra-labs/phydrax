@@ -553,6 +553,14 @@ staggered payloads, vector payloads, and adaptive routes are rejected.
 method. Carrier velocity is sampled from the pre-step base state. The base and tracer
 candidate are committed or rolled back together.
 
+## Unstructured hybrid diffusion
+
+`HybridMimeticDiffusion` is a separate three-dimensional unstructured cell/face
+operator for full SPD tensors. It retains shared face potentials and verifies its
+star-shaped geometric reconstruction. It is not an extension of the structured
+`ConservativeDiffusionPlan` and is not a TPFA shortcut. See
+[Porous-media flow, heat, and chemistry](guides_porous_media.md).
+
 ## Differentiability contract
 
 The substrate differentiates the fixed discrete program. Method metadata distinguishes:

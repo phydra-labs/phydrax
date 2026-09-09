@@ -5,6 +5,7 @@
 """Executable scientific application workflows built on Phydrax substrates."""
 
 from . import (
+    aerothermodynamics,
     astrodynamics,
     astrophysics,
     atmosphere,
@@ -26,11 +27,12 @@ from . import (
     geophysics,
     hydrodynamics,
     incompressible_flow,
+    neurofluid,
     neuroscience,
     nucleic_acid_biophysics,
-    neurofluid,
     ocean,
     phase_field,
+    porous_media,
     power,
     protein_folding,
     radiation_biophysics,
@@ -75,6 +77,7 @@ __all__ = [
     "power",
     "rebin_energy_series",
     "astrodynamics",
+    "aerothermodynamics",
     "astrophysics",
     "battery",
     "atmosphere",
@@ -98,6 +101,7 @@ __all__ = [
     "neurofluid",
     "ocean",
     "phase_field",
+    "porous_media",
     "protein_folding",
     "radiation_biophysics",
     "reacting_flow",
