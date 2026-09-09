@@ -50,6 +50,13 @@ from ._conversions import (
     scattering_to_mna,
     ScatteringMNAComponent,
 )
+from ._coupled_inductance import (
+    CoupledInductanceEnergy,
+    CoupledInductanceLedger,
+    CoupledInductancePlan,
+    CoupledInductanceStepResult,
+    PreparedCoupledInductance,
+)
 from ._coupling import (
     ElectrothermalDiagnostics,
     FieldPortModel,
@@ -387,6 +394,10 @@ __all__ = [
     "assess_mna_power_ledger",
     "AbstractCircuitNoiseLaw",
     "AbstractImplicitCircuitLaw",
+    "CoupledInductanceEnergy",
+    "CoupledInductanceLedger",
+    "CoupledInductancePlan",
+    "CoupledInductanceStepResult",
     "CircuitDAEDiagnostics",
     "CircuitDAEPlan",
     "CircuitDAERunResult",
@@ -413,6 +424,7 @@ __all__ = [
     "IndependentVoltageSourceLaw",
     "IdealTransformerLaw",
     "PreparedCircuitDAE",
+    "PreparedCoupledInductance",
     "PreparedCircuitOperatingPoint",
     "SmoothSwitchLaw",
     "TwoTerminalCapacitanceLaw",

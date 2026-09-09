@@ -502,6 +502,29 @@ fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Nuclear data, tokamak, and reactor physics
+
+`phydrax.nuclear` provides dataset-independent nuclide identities, governed
+evaluated/processed-data lineage, canonical energy groups, explicit composition
+bases, typed multigroup sources and fluxes, two-body thermal fusion reactions,
+and fixed-topology activation/decay. External OpenMC statepoints and DAGMC
+geometry remain rights-bound artifacts.
+
+`phydrax.applications.tokamak` adds complete magnetic-convention accounting,
+bounded EQDSK and scoped IMAS equilibrium interchange, nested star-shaped
+flux-surface metrics, conservative implicit core/current transport,
+prescribed-current fixed/free-boundary equilibrium, reciprocal active/passive
+circuits, transactional plants, and shot-level measurement governance.
+`phydrax.applications.reactor_physics` is deliberately narrower: one-dimensional
+multigroup diffusion/criticality and fixed-family point kinetics.
+
+All public qualification profiles are unreleased candidates. The native models
+do not imply evaluated-data completeness, continuous-energy transport,
+whole-device plasma prediction, reactor safety, operational control, or
+regulatory qualification. See [Nuclear data and reactions](guides_nuclear_data.md),
+[Axisymmetric tokamak modeling](guides_tokamak.md), and
+[Fusion source, neutronics, and activation](guides_fusion_neutronics.md).
+
 ### Protein, nucleic-acid, radiation, and single-cell applications
 
 The focused applications preserve biological identity while composing the

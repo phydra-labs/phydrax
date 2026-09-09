@@ -8,6 +8,14 @@ Bundled astronomy demonstration assets (`leap_seconds.json`,
 bounded numerical examples distributed under CC0-1.0. Their manifests record
 source, checksum, coverage, and non-operational intended scope.
 
+The nuclear and axisymmetric tokamak substrates are independent native
+implementations informed by published equations, public format documentation,
+and interoperability vocabulary from TORAX, FreeGSNKE, DINA-IMAS, ALARA,
+OpenMOC, KOMODO, and the fusion-energy project collection. Those projects
+remain external references or executables; their source code, nuclear data,
+machine files, model weights, and benchmark decks are not redistributed here.
+See `docs/nuclear_sources.md` for exact scientific and licensing boundaries.
+
 This distribution includes adapted numerical methods and implementation ideas
 from the following open-source projects:
 

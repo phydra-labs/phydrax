@@ -273,6 +273,11 @@ from ._mapped_mac_marker_transfer import (
     MappedMACMarkerTransferPlan,
     PreparedMappedMACMarkerTransfer,
 )
+from ._metric_line import (
+    MetricLineConservationEvidence,
+    MetricLinePlan,
+    PreparedMetricLine,
+)
 from ._mhd_ct import MHDCTRateResult, UpwindConstrainedTransportPlan
 from ._multiblock import (
     ConservativeMultiblockFluxResult,
@@ -494,6 +499,9 @@ __all__ = [
     "FiniteVolumeStageGeometryEvidence",
     "FiniteVolumeStageMetrics",
     "ExplicitFaceBlockGeometry",
+    "MetricLineConservationEvidence",
+    "MetricLinePlan",
+    "PreparedMetricLine",
     "PreparedFiniteVolumeGeometry",
     "lower_static_unstructured_stage_metrics",
     "UnstructuredConservativeRemapBuildResult",
