@@ -21,76 +21,128 @@ from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, FactorizationPolicy, factorize
 
 
-class HybridEventPlan(StrictModule, NonTrainableState):
-    """One time-aware guard/reset and its fixed-epoch saltation dynamics."""
+class HybridGuardPlan(StrictModule, NonTrainableState):
+    """Reusable scalar guard and its schedule metadata."""
 
     guard: Callable[[Array, Array, Any], Array]
+    direction: int = eqx.field(static=True)
+    priority: int = eqx.field(static=True)
+    terminal: bool = eqx.field(static=True)
+    guard_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        guard: Callable[[Array, Array, Any], Array],
+        /,
+        *,
+        direction: int = 0,
+        priority: int = 0,
+        terminal: bool = False,
+        guard_id: str,
+    ):
+        if not callable(guard):
+            raise TypeError("Hybrid guard must be callable.")
+        if direction not in (-1, 0, 1):
+            raise ValueError("Hybrid guard direction must be -1, zero, or +1.")
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            raise TypeError("Hybrid guard priority must be an integer.")
+        if not isinstance(terminal, bool):
+            raise TypeError("Hybrid guard terminal must be a bool.")
+        identifier = str(guard_id).strip()
+        if not identifier:
+            raise ValueError("guard_id must be non-empty.")
+        self.guard = guard
+        self.direction = int(direction)
+        self.priority = priority
+        self.terminal = terminal
+        self.guard_id = canonical_fingerprint(
+            {
+                "kind": "hybrid-guard-plan",
+                "user_id": identifier,
+                "direction": int(direction),
+                "priority": priority,
+                "terminal": terminal,
+            }
+        )
+
+
+class HybridEventPlan(StrictModule, NonTrainableState):
+    """Explicit-ODE reset dynamics composed with reusable guard metadata."""
+
+    guard_plan: HybridGuardPlan
     reset: Callable[[Array, Array, Any], Array]
     vector_field_before: Callable[[Array, Array, Any], Array]
     vector_field_after: Callable[[Array, Array, Any], Array]
     competing_guards: tuple[Callable[[Array, Array, Any], Array], ...]
-    event_kind: str = eqx.field(static=True)
     grazing_tolerance: float = eqx.field(static=True)
     event_tolerance: float = eqx.field(static=True)
     bisection_iterations: int = eqx.field(static=True)
+    dense_diagnostics: bool = eqx.field(static=True)
+    max_dense_dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        guard,
+        guard_plan: HybridGuardPlan,
         reset,
         vector_field_before,
         vector_field_after,
         /,
         *,
-        event_kind: str,
         competing_guards: Sequence[Callable[[Array, Array, Any], Array]] = (),
         grazing_tolerance: float = 1.0e-8,
         event_tolerance: float = 1.0e-10,
         bisection_iterations: int = 48,
+        dense_diagnostics: bool = False,
+        max_dense_dimension: int = 32,
         plan_id: str,
     ):
-        callables = (guard, reset, vector_field_before, vector_field_after)
+        if not isinstance(guard_plan, HybridGuardPlan):
+            raise TypeError("guard_plan must be a HybridGuardPlan.")
+        callables = (reset, vector_field_before, vector_field_after)
         if any(not callable(value) for value in callables):
-            raise TypeError("Hybrid guard/reset/vector fields must be callable.")
+            raise TypeError("Hybrid reset/vector fields must be callable.")
         competing = tuple(competing_guards)
         if any(not callable(value) for value in competing):
             raise TypeError("competing_guards must contain callables.")
-        kind = str(event_kind)
         grazing = float(grazing_tolerance)
         tolerance = float(event_tolerance)
         iterations = int(bisection_iterations)
         identifier = str(plan_id)
         if (
-            not kind
-            or not np.isfinite(grazing)
+            not np.isfinite(grazing)
             or grazing <= 0.0
             or not np.isfinite(tolerance)
             or tolerance <= 0.0
             or iterations < 8
+            or not isinstance(dense_diagnostics, bool)
+            or not isinstance(max_dense_dimension, int)
+            or isinstance(max_dense_dimension, bool)
+            or max_dense_dimension <= 0
             or not identifier
         ):
-            raise ValueError(
-                "Hybrid event kind, tolerances, iterations, or ID are invalid."
-            )
-        self.guard = guard
+            raise ValueError("Hybrid event tolerances, dense cap, or ID are invalid.")
+        self.guard_plan = guard_plan
         self.reset = reset
         self.vector_field_before = vector_field_before
         self.vector_field_after = vector_field_after
         self.competing_guards = competing
-        self.event_kind = kind
         self.grazing_tolerance = grazing
         self.event_tolerance = tolerance
         self.bisection_iterations = iterations
+        self.dense_diagnostics = dense_diagnostics
+        self.max_dense_dimension = max_dense_dimension
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "hybrid-event-plan",
                 "user_id": identifier,
-                "event_kind": kind,
+                "guard": guard_plan.guard_id,
                 "grazing_tolerance": grazing,
                 "event_tolerance": tolerance,
                 "bisection_iterations": iterations,
                 "competing_count": len(competing),
+                "dense_diagnostics": dense_diagnostics,
+                "max_dense_dimension": max_dense_dimension,
             }
         )
 
@@ -500,6 +552,7 @@ def localize_numerical_event(
 def _event_directional_data(
     plan: HybridEventPlan, time: Array, state: Array, args: Any, /
 ) -> tuple[Array, Array, Array]:
+    guard = plan.guard_plan.guard
     before = jnp.asarray(plan.vector_field_before(time, state, args))
     state_after, reset_flow = jax.jvp(
         lambda t, y: plan.reset(t, y, args),
@@ -507,7 +560,7 @@ def _event_directional_data(
         (jnp.ones_like(time), before),
     )
     guard_value, denominator = jax.jvp(
-        lambda t, y: plan.guard(t, y, args),
+        lambda t, y: guard(t, y, args),
         (time, state),
         (jnp.ones_like(time), before),
     )
@@ -545,9 +598,10 @@ def localize_hybrid_event_root(
         raise TypeError("plan must be a HybridEventPlan.")
     if not callable(state_at_time):
         raise TypeError("state_at_time must be callable.")
+    guard = plan.guard_plan.guard
     root = localize_numerical_event(
         lambda time: state_at_time(time, args),
-        lambda time, state: plan.guard(time, state, args),
+        lambda time, state: guard(time, state, args),
         left_time,
         right_time,
         iterations=plan.bisection_iterations,
@@ -579,6 +633,34 @@ def localize_hybrid_event_root(
     )
 
 
+def _event_differentials(
+    plan: HybridEventPlan, time: Array, state_before: Array, args: Any, /
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    guard = plan.guard_plan.guard
+    state_after = jnp.asarray(plan.reset(time, state_before, args))
+    guard_time = jax.jvp(
+        lambda value: guard(value, state_before, args),
+        (time,),
+        (jnp.ones_like(time),),
+    )[1]
+    normal = jax.grad(lambda state: guard(time, state, args))(state_before)
+    reset_time = jax.jvp(
+        lambda value: plan.reset(value, state_before, args),
+        (time,),
+        (jnp.ones_like(time),),
+    )[1]
+    before = jnp.asarray(plan.vector_field_before(time, state_before, args))
+    after = jnp.asarray(plan.vector_field_after(time, state_after, args))
+    reset_before = jax.jvp(
+        lambda state: plan.reset(time, state, args),
+        (state_before,),
+        (before,),
+    )[1]
+    denominator = guard_time + jnp.vdot(normal, before)
+    jump = after - reset_time - reset_before
+    return state_after, normal, before, jump, denominator, guard_time
+
+
 def localize_hybrid_event(
     plan: HybridEventPlan,
     state_at_time: Callable[[Array, Any], Array],
@@ -599,16 +681,24 @@ def localize_hybrid_event(
         plan, state_at_time, left_time, right_time, args=args
     )
     time, state = root.event_time, root.state_before
-    _, jump, denominator = _event_directional_data(plan, time, state, args)
-    normal = jax.grad(lambda value: plan.guard(time, value, args))(state)
-    reset_jacobian = jax.jacfwd(lambda value: plan.reset(time, value, args))(state)
-    saltation = reset_jacobian + ein.contract(
-        "...i,...j->...ij", jump, normal
-    ) / jnp.where(root.successful, denominator, jnp.nan)
+    _, normal, _, jump, denominator, _ = _event_differentials(plan, time, state, args)
+    if plan.dense_diagnostics:
+        if state.size > plan.max_dense_dimension:
+            raise ValueError(
+                "Explicit-ODE dense event diagnostics exceed max_dense_dimension."
+            )
+        reset_jacobian = jax.jacfwd(lambda value: plan.reset(time, value, args))(state)
+        saltation = reset_jacobian + ein.contract(
+            "...i,...j->...ij", jump, normal
+        ) / jnp.where(root.successful, denominator, jnp.nan)
+    else:
+        saltation = jnp.zeros((0, 0), dtype=state.dtype)
     successful = root.successful & _tree_finite(saltation)
     saltation = jnp.where(successful, saltation, jnp.nan)
     square = (
-        reset_jacobian.ndim == 2 and reset_jacobian.shape[0] == reset_jacobian.shape[1]
+        plan.dense_diagnostics
+        and saltation.ndim == 2
+        and saltation.shape[0] == saltation.shape[1]
     )
     if square:
         factorization = factorize(
@@ -667,25 +757,26 @@ def hybrid_event_jvp(
     state = jnp.asarray(state_before)
     state_tangent_ = jnp.asarray(state_tangent, dtype=state.dtype)
     time_tangent_ = jnp.asarray(time_tangent, dtype=time.dtype)
+    guard = plan.guard_plan.guard
     if args is None:
         if args_tangent is not None:
             raise ValueError("args_tangent requires args.")
         primals = (time, state)
         tangents = (time_tangent_, state_tangent_)
-        function = lambda t, y: (plan.reset(t, y, None), plan.guard(t, y, None))
+        function = lambda t, y: (plan.reset(t, y, None), guard(t, y, None))
     else:
         tangent_args = (
             jax.tree.map(_zero_tangent, args) if args_tangent is None else args_tangent
         )
         primals = (time, state, args)
         tangents = (time_tangent_, state_tangent_, tangent_args)
-        function = lambda t, y, a: (plan.reset(t, y, a), plan.guard(t, y, a))
+        function = lambda t, y, a: (plan.reset(t, y, a), guard(t, y, a))
     _, (direct_reset, direct_guard) = jax.jvp(function, primals, tangents)
     state_after, jump, denominator = _event_directional_data(plan, time, state, args)
     grazing = jnp.abs(denominator) <= plan.grazing_tolerance
     primal_valid = (
         _tree_finite((time, state, state_after, jump, denominator))
-        & (jnp.abs(plan.guard(time, state, args)) <= plan.event_tolerance)
+        & (jnp.abs(guard(time, state, args)) <= plan.event_tolerance)
         & (~_simultaneous_event(plan, time, state, args))
         & (~grazing)
     )
@@ -725,25 +816,26 @@ def hybrid_event_vjp(
     time = jnp.asarray(event_time, dtype=jnp.result_type(event_time, 0.0))
     state = jnp.asarray(state_before)
     cotangent = jnp.asarray(cotangent)
+    guard = plan.guard_plan.guard
     state_after, jump, denominator = _event_directional_data(plan, time, state, args)
     grazing = jnp.abs(denominator) <= plan.grazing_tolerance
     finite = _tree_finite((time, state, state_after, jump, denominator, cotangent))
     valid = (
         finite
         & (~grazing)
-        & (jnp.abs(plan.guard(time, state, args)) <= plan.event_tolerance)
+        & (jnp.abs(guard(time, state, args)) <= plan.event_tolerance)
         & (~_simultaneous_event(plan, time, state, args))
     )
     guard_cotangent = jnp.vdot(jump, cotangent) / jnp.where(valid, denominator, jnp.nan)
     if args is None:
         _, pullback = jax.vjp(
-            lambda t, y: (plan.reset(t, y, None), plan.guard(t, y, None)), time, state
+            lambda t, y: (plan.reset(t, y, None), guard(t, y, None)), time, state
         )
         time_cotangent, state_cotangent = pullback((cotangent, guard_cotangent))
         args_cotangent = None
     else:
         _, pullback = jax.vjp(
-            lambda t, y, a: (plan.reset(t, y, a), plan.guard(t, y, a)),
+            lambda t, y, a: (plan.reset(t, y, a), guard(t, y, a)),
             time,
             state,
             args,
@@ -855,6 +947,7 @@ __all__ = [
     "HybridEventRootResult",
     "HybridEventSensitivityResult",
     "HybridEventTape",
+    "HybridGuardPlan",
     "HybridReplayPolicy",
     "HybridReplayResult",
     "NumericalEventResult",

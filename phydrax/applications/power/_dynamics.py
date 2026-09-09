@@ -64,10 +64,11 @@ from ...solver import (
     DifferentialAlgebraicProblem,
     DifferentialAlgebraicSolution,
     HybridEventPlan,
+    HybridGuardPlan,
     HybridSchedulePlan,
     HybridScheduleResult,
     initialize_dae,
-    ScheduledHybridEvent,
+    ScheduledHybridGuard,
     solve_dae,
 )
 from ._network import CompiledNetwork, PowerNetwork, PowerStudy
@@ -947,16 +948,21 @@ def _apply_power_event(
         time_tolerance = (
             8 * np.finfo(np.dtype(state.dtype)).eps * max(1.0, abs(event.time))
         )
-        plan = HybridEventPlan(
+        guard = HybridGuardPlan(
             _TimeGuard(event.time),
+            guard_id=f"power:{event.kind}:{event.target}:{event.time}:{candidate_topology.epoch}",
+        )
+        plan = HybridEventPlan(
+            guard,
             _identity_reset,
             _DifferentialFlow(before_residual, state[size:]),
             _DifferentialFlow(post_residual, after[size:]),
             event_tolerance=time_tolerance,
-            event_kind=event.kind,
             plan_id=f"power:{event.target}:{event.time}:{candidate_topology.epoch}",
         )
-        schedule = HybridSchedulePlan((ScheduledHybridEvent(plan),), maximum_events=1)
+        schedule = HybridSchedulePlan(
+            (ScheduledHybridGuard(guard, event=plan),), maximum_events=1
+        )
         event_time = jnp.asarray(event.time, dtype=state.dtype)
         bracket = jnp.stack((event_time - time_tolerance, event_time + time_tolerance))[
             None, :

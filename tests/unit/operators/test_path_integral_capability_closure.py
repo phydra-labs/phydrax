@@ -187,7 +187,7 @@ def test_path_boundary_convention_keeps_negative_interior_until_outward_exit():
         lambda time, args: jnp.array([time, 0.0, 0.0]),
         jnp.array([[0.5, 1.5]]),
     )
-    assert absorbing.events[0].direction == 1
+    assert absorbing.events[0].guard.direction == 1
     assert int(absorbing_result.event_count) == 1
     assert bool(absorbing_result.terminal[0])
     assert jnp.allclose(absorbing_result.event_times[0], 1.0, atol=1e-8)
@@ -211,7 +211,7 @@ def test_path_boundary_convention_keeps_negative_interior_until_outward_exit():
         specular_state,
         jnp.array([[0.5, 1.5]]),
     )
-    assert specular.events[0].direction == 1
+    assert specular.events[0].guard.direction == 1
     assert int(specular_result.event_count) == 1
     assert jnp.allclose(specular_result.event_times[0], 1.0, atol=1e-8)
     assert jnp.allclose(

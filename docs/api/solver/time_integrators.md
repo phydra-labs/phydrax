@@ -337,6 +337,14 @@ ordinary JAX leaves rather than being folded into static identities.
 
 ---
 
+::: phydrax.solver.HybridGuardPlan
+
+---
+
+::: phydrax.solver.ScheduledHybridGuard
+
+---
+
 ::: phydrax.solver.HybridEventPlan
 
 ---
@@ -357,16 +365,20 @@ ordinary JAX leaves rather than being folded into static identities.
 
 ## Canonical hybrid schedule and Radau tableau
 
-Hybrid callbacks are uniformly time aware:
-`guard(time, state, args)`, `reset(time, state, args)`, and pre/post vector
-fields with the same signature. `prepare_hybrid_schedule` fixes event order,
-capacity, state shape/dtype, and replay identity. Execution emits one
-`HybridEventTape` with active masks, localized roots, pre/post states,
-transversality, saltation validity, terminal/overflow status, and dense
-event-log-Jacobian evidence. `replay_hybrid_schedule` accepts only an identical
-schedule/tape identity. Grazing and unresolved competing guards invalidate local
-`hybrid_event_jvp` and `hybrid_event_vjp` evidence; callers must also enforce the
-tape's event-order, identity, and capacity qualification.
+`HybridGuardPlan` is reusable metadata only: a scalar
+`guard(time, state, args)`, direction, priority, terminal action, and stable
+identity. `ScheduledHybridGuard` places that metadata in a bounded schedule.
+`HybridEventPlan` is explicitly ODE-only and composes the guard with reset and
+pre/post vector fields for action-first saltation JVP/VJP.
+
+`prepare_hybrid_schedule` fixes event order, capacity, state shape/dtype, and
+replay identity. Execution emits one `HybridEventTape` with active masks,
+localized roots, pre/post states, transversality, terminal/overflow status, and
+matrix-free derivative validity. Dense saltation/log-determinant diagnostics are
+opt-in on `HybridEventPlan` and rejected above its declared small-state dimension
+cap; normal execution does not materialize them. `replay_hybrid_schedule` accepts
+only an identical schedule/tape identity. Grazing, unresolved ties, changed order,
+or overflow invalidates `hybrid_event_jvp` and `hybrid_event_vjp`.
 
 ### Numerical roots versus physical saltation
 
@@ -407,12 +419,12 @@ This physical action is distinct from the numerical root derivative above.
 Nonfinite tangents/cotangents, grazing, off-guard states, and simultaneous
 competing guards produce explicit invalid evidence and NaN inexact payloads.
 
-`localize_hybrid_event` deliberately retains dense saltation and native
-factorization for density consumers. `HybridSchedulePlan` and `HybridEventTape`
-continue to record these dense log-Jacobian results; a singular saltation can
-have a valid directional action but has no valid density change-of-variables
-log determinant. The root-only and directional APIs do not manufacture density
-evidence.
+`localize_hybrid_event` constructs dense saltation and native factorization only
+when `HybridEventPlan.dense_diagnostics` is enabled for a declared small-state
+density consumer. Otherwise it returns empty dense storage and no determinant
+claim. `HybridSchedulePlan` and `HybridEventTape` record log-Jacobian evidence
+only when available; a singular saltation can have a valid directional action
+but has no valid density change-of-variables log determinant.
 
 ::: phydrax.solver.localize_numerical_event
 

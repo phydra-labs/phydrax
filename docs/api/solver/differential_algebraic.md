@@ -48,6 +48,34 @@ boundary, so state-dependent policy derivatives enter native Jacobians. Continua
 retain and verify the policy ID. `HeldInputPolicy` provides state-independent,
 piecewise-constant interval values with an explicit internal-node convention.
 
+### Trial domains and structured root setup
+
+Optional `trial_validity(time, state, state_rate, args, inputs)` declares the
+residual's mathematical domain; autonomous systems receive `inputs=None`.
+Supply its stable `trial_validity_id`. The native nonlinear solve checks this
+predicate before evaluating a trial residual or Jacobian. Invalid candidates
+backtrack or fail with domain evidence; they are not clipped into the domain
+and are not evaluated merely to obtain a NaN. Initialization, implicit stages,
+event roots, consistency, and derivative replay use the same predicate.
+
+The system accepts `stage_linear_setup`, `initialization_linear_setup`,
+`event_linear_setup`, `tangent_linear_setup`, and `adjoint_linear_setup`.
+Each factory receives `(unknown, root_arguments, source_space, target_space)`
+and returns a native linear setup operator. Spaces remain scaled `ArraySpace`;
+an application may view flat field slices internally but must return an operator
+compatible with the supplied spaces. A stage factory receives the actual increment
+unknown `z`; `root_arguments.physical_state(z)` and `root_arguments.state_rate(z)`
+recover its physical state and rate. Initialization root arguments expose the
+free state/rate indices. Bordered event factories receive `[z.flatten(), time]`;
+their arguments expose the same physical-state/rate methods, plus the guard, guard
+scale, BDF history, and time bracket. Tangent and adjoint factories use these same
+root coordinates; adjoint factories receive the transposed source/target ordering.
+A stage operator cannot be reused blindly for a bordered event or initialization
+root with different coordinates.
+
+`DAEAttemptHistory.domain_failures`, `DAEEventResult.domain_failures`, and
+`DAEInitializationResult.domain_failures` retain rejected-domain evidence.
+
 Nontrivial state geometry is rejected by the native BDF backend. The current BDF
 formula combines ambient Euclidean states and therefore cannot honestly preserve a
 manifold-valued state.
@@ -135,6 +163,24 @@ BDF startup increases order only after sufficient accepted history exists. Rejec
 or unsafe adjacent-step ratios lower the realized order. Every accepted state is
 followed by an independent residual certification.
 
+BDF and endpoint-theta nonlinear solves use an increment `z` about the retained
+physical state `rate_reference`. Shared stage arguments define
+`physical_state(z) = rate_reference + z` and
+`state_rate(z) = shift * z + rate_offset`; BDF offsets are formed from retained
+history differences. Predictors are translated into increment coordinates before
+the nonlinear solve. Residuals, domain predicates, and input policies always receive
+the physical state and the rate evaluated directly from the solved increment.
+
+This permits Newton corrections smaller than one unit in the last place of a large
+physical offset, such as temperature in kelvin, without relaxing residual tolerances
+or declaring stagnation successful. The output state is rounded only when adding
+the solved increment to its reference. Its accurately solved rate is retained
+separately: do not recompute it by subtracting rounded output states, or pass a
+physical state to `state_rate(z)`. Public `bdf_rate` and `endpoint_theta_rate`
+utilities still accept physical state inputs, but cannot recover precision already
+lost in those inputs. Independent residual certification uses the returned physical
+state and retained rate.
+
 Planning, preparation, and execution are separate:
 
 1. `plan_dae` validates the grid, method, state contract, and static identities.
@@ -163,8 +209,10 @@ solution = phx.solver.solve_dae(prepared)
 ```
 
 The fixed-grid prepared path supports JIT, JVP, VJP, and `vmap`. Each successful
-stage state has implicit derivatives obtained from that stage's residual Jacobian;
-nonlinear iteration history and diagnostics are nondifferentiable evidence.
+stage increment has implicit derivatives obtained from that stage's residual
+Jacobian. The physical-state translation and affine rate map remain differentiable,
+including their retained-history dependencies; nonlinear iteration history and
+diagnostics are nondifferentiable evidence.
 Dependencies on previous accepted states are chained through the outer fixed-length
 scan. Grid times are stop-gradient values: derivatives are for the declared discrete
 fixed-grid map.
@@ -186,6 +234,15 @@ equations are checked independently against `constraint_tolerance`. Residual,
 nonlinear, linear, nonfinite, stale-Jacobian, regularity, and local-error failures have
 distinct attempt statuses. Accepted-step, attempt, and consecutive-rejection
 capacities are hard JAX-static bounds.
+
+Adaptive preparation caps the implicit-stage nonlinear stopping threshold at values
+that imply both `residual_tolerance` and `constraint_tolerance`; a nominally
+successful root therefore cannot be rejected merely because Newton stopped against
+a looser standalone threshold. Higher-order accepted-step proposals stay within the
+method's admissible step-ratio interval before any order downgrade. Save-boundary
+approaches are repartitioned when an otherwise admissible proposal would strand a
+ratio-invalid tail. Every attempted step remains subject to the same local-error
+certificate.
 
 ```python
 adaptive_policy = phx.solver.DAESolvePolicy(
@@ -280,7 +337,7 @@ a probed singular stage to an explicit rejected attempt and terminal status.
 This evidence is local and numerical. It never claims a global differentiation index
 or regularity between probes.
 
-`DifferentialAlgebraicSolution` stores requested states, reconstructed stage rates,
+`DifferentialAlgebraicSolution` stores requested physical states and retained stage rates,
 node validity, accepted-step and attempt histories, residual and constraint norms,
 initialization, continuation, local regularity, replay, termination, and
 plan/method/linear-plan provenance. If initialization or integration fails, unsaved
@@ -464,25 +521,56 @@ determine all algebraic rates.
 
 `AcausalDAESource` is a finite host declaration: components contribute shaped
 variable jets, residual blocks declare derivative incidence, and connections add
-independent potential equalities plus signed flow balances. `analyze_dae_structure`
-uses that declaration for deterministic matching, bounded Pantelides
-differentiation, block ordering, and bounded tearing. Its structural index is
-conditional on the declared graph and quasi-regularity; opaque residual callbacks
-never acquire an inferred analytic or global index.
+independent potential equalities plus signed flow balances. Every variable block
+declares independent positive `state_scale` and `rate_scale` values, while every
+equation block declares its positive `residual_scale`; compilation expands those
+block scales into the three vectors owned by `DifferentialAlgebraicSystem`.
+`analyze_dae_structure` uses the finite declaration for deterministic matching,
+bounded Pantelides differentiation, block ordering, and bounded tearing. Its
+structural index is conditional on the declared graph and quasi-regularity; opaque
+residual callbacks never acquire an inferred analytic or global index.
+
+An optional source `InputLayout` makes the compiled DAE input-aware. Its component
+residuals receive `(time, jet, inputs, args)`, with `inputs` passed independently
+from model arguments; autonomous sources retain `(time, jet, args)`. The compiler
+checks sample-input, residual, and residual-scale shapes before producing the
+runtime system, whose typed `CallableInputPolicy` or `HeldInputPolicy` is then
+selected by the DAE problem.
 
 `compile_acausal_dae` lowers successful analysis into the existing
 `DifferentialAlgebraicSystem`. The compilation retains reconstruction, original
 residual audit, and explicit initialization masks. Missing declared JVP incidence,
-non-square structure, unmatched names, or differentiation/tear capacity exhaustion
-fails before DAE preparation. Selecting `initialization="structural"` is explicit;
-the input pair is never repaired in place.
+non-square structure, unmatched names, incompatible declared shapes, or
+differentiation/tear capacity exhaustion fails before DAE preparation. Selecting
+`initialization="structural"` is explicit; the input pair is never repaired in
+place.
 
-DAE events compose the canonical time-aware `HybridEventPlan` and
-`HybridEventTape`. `DAEResetMap` produces post-reset state/rate guesses, after which
-`DAEConsistencyCandidate` checks bounded corrections and must be explicitly
-`apply`-ed. A successful restart returns to BDF order one. Grazing, simultaneous
-roots, failed consistency, changed event order, and tape overflow invalidate jump
-derivatives.
+DAE event topology is an optional `event_plan` on `DAESolvePlan` and
+`PreparedDAESolve`; it is never a numerical `DAESolvePolicy` field.
+`HybridGuardPlan` owns only the scalar guard plus direction, priority, terminal
+action, and identity. A DAE `HybridSchedulePlan` contains guard-only
+`ScheduledHybridGuard` values, and `DAEEventPlan` binds exactly one authoritative
+`DAEResetMap` to each guard.
+
+Every accepted fixed or adaptive BDF candidate is inspected. A crossing is
+localized by one augmented nonlinear root containing the shortened BDF stage and
+guard equation in `[z.flatten(), time]` coordinates, with `z` measured from the newest
+retained physical state. Guards see physical states; pre-event rates are evaluated
+directly from `z`, never reconstructed from rounded state differences. The accepted
+step is truncated to that root, the DAE reset emits
+post-event state/rate guesses, consistency is solved and bounded, BDF history and
+Jacobian reuse restart, and execution continues or terminates. Fixed-capacity
+`DAEEventResult` arrays record bracket/winner indices, pre/post audit states,
+residuals, consistency corrections, terminal state, capacity, and explicit status.
+Nonfinite guards, grazing, localization failure, inadmissible consistency, and
+capacity exhaustion fail closed.
+
+Adaptive differentiation freezes accepted-grid, bracket, winner, and order
+topology only. Replay recomputes the augmented event root, reset, and consistency
+root from current dynamic arguments; recorded times and states are audit values and
+are never substituted into the replayed solution. JVP/VJP therefore follow native
+implicit nonlinear and transpose-linear solves, including event-time variation,
+without inventing a DAE vector field or materializing a saltation matrix.
 
 `ManifoldBDFMethod` supplies only fixed-chart local-coordinate BDF1/BDF2 stages.
 `DAERegularityCertificatePlan` proves regularity only on its finite declared cells
@@ -506,6 +594,18 @@ cells remain explicit and local probes are not certificates.
 ---
 
 ::: phydrax.solver.DAEEventPlan
+
+---
+
+::: phydrax.solver.DAEEventResult
+
+---
+
+::: phydrax.solver.DAEEventStatus
+
+---
+
+::: phydrax.solver.DAEResetMap
 
 ---
 

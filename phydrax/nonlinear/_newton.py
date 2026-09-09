@@ -45,6 +45,7 @@ from ._linearization import (
 )
 from ._preconditioning import AbstractNonlinearSystemTransformation
 from ._types import (
+    _guarded_call,
     AbstractNonlinearMethod,
     NonlinearCapabilities,
     NonlinearDiagnostics,
@@ -500,6 +501,7 @@ def _root_line_search(
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
     )
 
     def body(_, carry):
@@ -513,6 +515,7 @@ def _root_line_search(
             evaluations,
             domain_failures,
             nonfinite_trials,
+            skipped_evaluations,
         ) = carry
 
         def attempt(__):
@@ -521,6 +524,7 @@ def _root_line_search(
                 state,
             )
             candidate_residual, candidate_auxiliary = problem.evaluate(candidate, args)
+            trial_valid = problem.trial_valid(candidate, args)
             finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
             valid = problem.valid(
                 candidate, candidate_residual, candidate_auxiliary, args
@@ -552,6 +556,7 @@ def _root_line_search(
                 evaluations + 1,
                 domain_failures + (finite & ~valid).astype(jnp.int32),
                 nonfinite_trials + (~finite).astype(jnp.int32),
+                skipped_evaluations + (~trial_valid).astype(jnp.int32),
             )
 
         can_attempt = (~accepted) & (evaluations < maximum_evaluations)
@@ -567,13 +572,14 @@ def _root_line_search(
         evaluations,
         domain_failures,
         nonfinite_trials,
+        skipped_evaluations,
     ) = jax.lax.fori_loop(0, policy.maximum_steps, body, initial_carry)
     return _SearchResult(
         state=accepted_state,
         residual=accepted_residual,
         auxiliary=accepted_auxiliary,
         rate=jnp.where(accepted, final_rate, jnp.asarray(0.0, dtype=scalar_dtype)),
-        evaluations=evaluations,
+        evaluations=evaluations - skipped_evaluations,
         rejections=evaluations - accepted.astype(jnp.int32),
         accepted=accepted,
         finite_seen=finite_seen,
@@ -666,6 +672,7 @@ def _root_trust_region(
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
     )
 
     def body(_, carry):
@@ -680,6 +687,7 @@ def _root_trust_region(
             evaluations,
             domain_failures,
             nonfinite_trials,
+            skipped_evaluations,
         ) = carry
 
         def attempt(__):
@@ -708,6 +716,7 @@ def _root_trust_region(
                 state,
             )
             candidate_residual, candidate_auxiliary = problem.evaluate(candidate, args)
+            trial_valid = problem.trial_valid(candidate, args)
             finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
             valid = problem.valid(
                 candidate, candidate_residual, candidate_auxiliary, args
@@ -751,6 +760,7 @@ def _root_trust_region(
                 evaluations + 1,
                 domain_failures + (finite & ~valid).astype(jnp.int32),
                 nonfinite_trials + (~finite).astype(jnp.int32),
+                skipped_evaluations + (~trial_valid).astype(jnp.int32),
             )
 
         can_attempt = (~accepted) & (evaluations < maximum_evaluations)
@@ -767,6 +777,7 @@ def _root_trust_region(
         evaluations,
         domain_failures,
         nonfinite_trials,
+        skipped_evaluations,
     ) = jax.lax.fori_loop(0, policy.maximum_attempts, body, initial_carry)
     return _TrustResult(
         state=accepted_state,
@@ -774,7 +785,7 @@ def _root_trust_region(
         auxiliary=accepted_auxiliary,
         step=accepted_step,
         radius=final_radius,
-        evaluations=evaluations,
+        evaluations=evaluations - skipped_evaluations,
         rejections=evaluations - accepted.astype(jnp.int32),
         accepted=accepted,
         finite_seen=finite_seen,
@@ -807,10 +818,18 @@ def _initial_root_state(
     precision.validate_accumulation_space(residual_space)
     residual_norm = _space_norm(residual_space, residual, precision)
     linear_operator = _jacobian_solve_operator(prepared_jacobian.operator)
-    prepared_linear, refresh_state = prepare_refresh_state(
-        LinearSystem(linear_operator),
-        _iteration_linear_policy(linear_policy),
-        setup_operator=problem.linear_setup(state, args),
+
+    def prepare_linear():
+        return prepare_refresh_state(
+            LinearSystem(linear_operator),
+            _iteration_linear_policy(linear_policy),
+            setup_operator=problem.linear_setup(state, args),
+        )
+
+    prepared_linear, refresh_state = (
+        prepare_linear()
+        if problem.trial_validity_function is None
+        else _guarded_call(problem.trial_valid(state, args), prepare_linear)
     )
     recycling = (
         None
@@ -848,11 +867,12 @@ def _initial_root_state(
         step_norm=jnp.asarray(0.0, dtype=residual_norm.dtype),
         iteration=jnp.asarray(0, dtype=jnp.int32),
         residual_evaluations=jnp.asarray(
-            prepared_jacobian.residual_evaluations, dtype=jnp.int32
+            prepared_jacobian.residual_evaluations * problem.trial_valid(state, args),
+            dtype=jnp.int32,
         ),
         jvp_evaluations=jnp.asarray(0, dtype=jnp.int32),
         vjp_evaluations=jnp.asarray(0, dtype=jnp.int32),
-        jacobian_preparations=jnp.asarray(1, dtype=jnp.int32),
+        jacobian_preparations=problem.trial_valid(state, args).astype(jnp.int32),
         linear_solves=jnp.asarray(0, dtype=jnp.int32),
         linear_iterations=jnp.asarray(0, dtype=jnp.int32),
         accepted_steps=jnp.asarray(0, dtype=jnp.int32),
@@ -861,7 +881,7 @@ def _initial_root_state(
         domain_failures=(finite & ~valid).astype(jnp.int32),
         nonfinite_trials=jnp.asarray(0, dtype=jnp.int32),
         setup_refreshes=jnp.asarray(1, dtype=jnp.int32),
-        numeric_refreshes=jnp.asarray(1, dtype=jnp.int32),
+        numeric_refreshes=problem.trial_valid(state, args).astype(jnp.int32),
         trust_radius=jnp.asarray(trust_radius, dtype=residual_norm.dtype),
         forcing=forcing,
         last_forcing=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
@@ -2186,6 +2206,7 @@ def root(
         inner_termination = NonlinearTermination(
             absolute_residual=termination_.absolute_residual,
             relative_residual=termination_.relative_residual,
+            maximum_residual=termination_.maximum_residual,
             absolute_step=termination_.absolute_step,
             relative_step=termination_.relative_step,
             maximum_steps=termination_.maximum_steps,

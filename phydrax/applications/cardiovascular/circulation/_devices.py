@@ -958,10 +958,10 @@ def _incidence(*entries: tuple[str, int]) -> tuple[DAEDerivativeIncidence, ...]:
 
 def _two_port_variables() -> tuple[DAEVariableBlock, ...]:
     return (
-        DAEVariableBlock("pressure_in", (), 0, 10.0),
-        DAEVariableBlock("pressure_out", (), 0, 10.0),
-        DAEVariableBlock("flow_in", (), 0, 1.0),
-        DAEVariableBlock("flow_out", (), 0, 1.0),
+        DAEVariableBlock("pressure_in", (), 0, state_scale=10.0, rate_scale=10.0),
+        DAEVariableBlock("pressure_out", (), 0, state_scale=10.0, rate_scale=10.0),
+        DAEVariableBlock("flow_in", (), 0, state_scale=1.0, rate_scale=1.0),
+        DAEVariableBlock("flow_out", (), 0, state_scale=1.0, rate_scale=1.0),
     )
 
 

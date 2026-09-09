@@ -14,4 +14,11 @@ the separate `CircuitEnergyLedger` and `CircuitPeriodicEnergyLedger` contracts. 
 and [Periodic circuit analysis](../guides_circuit_periodic.md) for sign, phasor, support,
 and availability semantics.
 
+Grounded transient circuits expose `CircuitDAEPlan.input_layout` and static
+`CircuitInputBinding` entries whenever an element declares named inputs. The global
+array uses deterministic sorted component names; DAE, operating-point, periodic, and
+energy APIs accept matching typed input policies rather than embedding inputs in
+model-argument dictionaries. `CircuitElementStateLayout` contributes independent
+state, rate, and residual scales to the compiled DAE.
+
 ::: phydrax.circuit

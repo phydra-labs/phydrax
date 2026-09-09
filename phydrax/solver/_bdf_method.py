@@ -51,8 +51,10 @@ def _derivative_coefficients(nodes: Array, /) -> Array:
     count = int(nodes.shape[0])
     scale = nodes[0] - nodes[1]
     offsets = (nodes - nodes[0]) / scale
-    powers = jnp.arange(count, dtype=offsets.dtype)[:, None]
-    vandermonde = offsets[None, :] ** powers
+    rows = [jnp.ones_like(offsets)]
+    for _ in range(1, count):
+        rows.append(rows[-1] * offsets)
+    vandermonde = jnp.stack(rows)
     right_hand_side = jnp.zeros((count,), dtype=offsets.dtype).at[1].set(1.0)
     return jnp.linalg.solve(vandermonde, right_hand_side) / scale
 
@@ -105,8 +107,11 @@ def bdf_rate(
     order: Array,
     /,
 ) -> Array:
-    shift, offset = bdf_shift_offset(state_history, history_times, target_time, order)
-    return shift * state + offset
+    reference = state_history[0]
+    shift, offset = bdf_shift_offset(
+        state_history - reference, history_times, target_time, order
+    )
+    return shift * (state - reference) + offset
 
 
 def _extrapolate(nodes: Array, values: Array, target: Array, /) -> Array:

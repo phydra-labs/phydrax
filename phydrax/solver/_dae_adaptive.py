@@ -23,8 +23,6 @@ from ..nonlinear._prepared import (
 )
 from ._bdf_method import (
     bdf_predict as _general_bdf_predict,
-    bdf_rate as _general_bdf_rate,
-    bdf_shift_offset as _general_bdf_shift_offset,
     BDFMethod,
 )
 from ._dae_initialization import (
@@ -94,6 +92,7 @@ class _AttemptArchive(StrictModule):
     globalization_rejections: Array
     setup_refreshes: Array
     numeric_refreshes: Array
+    domain_failures: Array
     stale_retries: Array
     linear_rejections: Array
     residual_certifications: Array
@@ -131,6 +130,7 @@ class _AdaptiveCarry(StrictModule):
     steps: _StepArchive
     attempts: _AttemptArchive
     regularity: _RegularityArchive
+    events: Any
 
 
 def _error_coefficient(
@@ -302,6 +302,7 @@ def _continuation_initialization(
 def _stage_regularity(
     prepared,
     state,
+    state_rate,
     arguments,
     nonlinear_result,
     accepted_count,
@@ -314,7 +315,9 @@ def _stage_regularity(
         requested = candidate_solved & ((accepted_count % policy.interval) == 0)
 
         def probe(_):
-            rank, condition, finite = _dense_stage_regularity(prepared, state, arguments)
+            rank, condition, finite = _dense_stage_regularity(
+                prepared, state, state_rate, arguments
+            )
             status = _regularity_status(
                 rank,
                 condition,
@@ -451,6 +454,7 @@ def _initialize_archives(prepared, initialization, /):
         globalization_rejections=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
         setup_refreshes=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
         numeric_refreshes=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
+        domain_failures=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
         stale_retries=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
         linear_rejections=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
         residual_certifications=jnp.zeros((attempt_capacity,), dtype=jnp.int32),
@@ -510,6 +514,9 @@ def _set_attempt(
         numeric_refreshes=archive.numeric_refreshes.at[index].set(
             diagnostics.numeric_refreshes
         ),
+        domain_failures=archive.domain_failures.at[index].set(
+            diagnostics.domain_failures
+        ),
         stale_retries=archive.stale_retries.at[index].set(stale_retry.astype(jnp.int32)),
         linear_rejections=archive.linear_rejections.at[index].set(
             _linear_failure(nonlinear_result.status).astype(jnp.int32)
@@ -539,6 +546,15 @@ def _adaptive_primal(
     if not isinstance(temporal_method, BDFMethod):
         raise ValueError("Adaptive DAE execution requires BDFMethod.")
     save_times = jax.lax.stop_gradient(prepared.time_grid.times)
+    if prepared.events is None:
+        initial_events = None
+    else:
+        from ._dae_events import empty_dae_event_result
+
+        initial_events = empty_dae_event_result(
+            prepared.events.plan,
+            problem.initial_state,
+        )
     differential_variables = system.structure.differential_variable_mask(
         system.state_shape
     )
@@ -681,6 +697,7 @@ def _adaptive_primal(
         steps=steps,
         attempts=attempts,
         regularity=regularity,
+        events=initial_events,
     )
 
     def condition(current):
@@ -714,6 +731,28 @@ def _adaptive_primal(
                 jnp.maximum(jnp.abs(target_time), jnp.abs(current.time)),
             )
         )
+        previous_step = current.step_sizes[0]
+        minimum_ratio_step = previous_step / policy.max_step_ratio
+        maximum_ratio_step = jnp.minimum(
+            maximum_step, policy.max_step_ratio * previous_step
+        )
+        boundary_parts = jnp.ceil(remaining / maximum_ratio_step)
+        partition_exists = boundary_parts <= jnp.floor(remaining / minimum_ratio_step)
+        remainder = remaining - candidate_step
+        candidate_ratio = candidate_step / previous_step
+        strands_small_step = (
+            (current.consecutive_rejections == 0)
+            & (candidate_ratio >= 1.0 / policy.max_step_ratio)
+            & (candidate_ratio <= policy.max_step_ratio)
+            & (remainder > boundary_tolerance)
+            & (remainder < candidate_step / policy.max_step_ratio)
+            & partition_exists
+        )
+        # Equal boundary partitions retain admissible adjacent BDF ratios
+        # instead of accepting one step that strands a tiny order-one tail.
+        candidate_step = jnp.where(
+            strands_small_step, remaining / boundary_parts, candidate_step
+        )
         step_size = jnp.where(
             remaining - candidate_step <= boundary_tolerance,
             remaining,
@@ -739,12 +778,15 @@ def _adaptive_primal(
             order,
             current.history_depth,
         )
-        alpha, _ = _general_bdf_shift_offset(
-            current.states[:5],
-            current.times[:5],
-            stage_time,
-            order,
+        arguments = _history_stage_arguments(
+            target_time=stage_time,
+            state_history=current.states[:5],
+            history_times=current.times[:5],
+            order=order,
+            model_args=args,
         )
+        alpha = arguments.shift
+        predictor_increment = predictor - arguments.rate_reference
         alpha_ratio = jnp.maximum(
             alpha / current.last_alpha,
             current.last_alpha / alpha,
@@ -765,26 +807,19 @@ def _adaptive_primal(
             & (alpha_ratio <= policy.temporal_reuse.maximum_alpha_ratio)
             & ~iteration_refresh
         )
-        arguments = _history_stage_arguments(
-            target_time=stage_time,
-            state_history=current.states[:5],
-            history_times=current.times[:5],
-            order=order,
-            model_args=args,
-        )
         retained_current = eqx.combine(current.retained_nonlinear, retained_static)
 
         reused = _seed_nonlinear_continuation(
             retained_current,
             prepared.stage_problem,
-            predictor,
+            predictor_increment,
             args=arguments,
             defer_refresh_steps=policy.nonlinear_termination.maximum_steps,
         )
         refreshed = refresh_nonlinear(
             retained_current,
             prepared.stage_problem,
-            predictor,
+            predictor_increment,
             args=arguments,
         )
         reused_dynamic, _ = eqx.partition(reused, eqx.is_array)
@@ -798,14 +833,9 @@ def _adaptive_primal(
         seeded = eqx.combine(seeded_dynamic, refreshed_static)
         nonlinear_result, retained = _solve_prepared_nonlinear_stateful(seeded)
         retained_dynamic_, _ = eqx.partition(retained, eqx.is_array)
-        state = jnp.asarray(nonlinear_result.state)
-        state_rate = _general_bdf_rate(
-            state,
-            current.states[:5],
-            current.times[:5],
-            stage_time,
-            order,
-        )
+        increment = jnp.asarray(nonlinear_result.state)
+        state = arguments.physical_state(increment)
+        state_rate = arguments.state_rate(increment)
         scaled = _scaled_problem_residual(
             prepared.problem,
             current.time + step_size,
@@ -816,7 +846,7 @@ def _adaptive_primal(
         residual_norm = _masked_rms(scaled, jnp.ones(system.state_shape, dtype=bool))
         differential_norm = _masked_rms(scaled, differential_equations)
         constraint_norm = _masked_rms(scaled, algebraic_equations)
-        correction = state - predictor
+        correction = increment - predictor_increment
         coefficient = _error_coefficient(
             step_size,
             current.step_sizes[0],
@@ -851,6 +881,7 @@ def _adaptive_primal(
         ) = _stage_regularity(
             prepared,
             state,
+            state_rate,
             arguments,
             nonlinear_result,
             current.accepted_count,
@@ -861,38 +892,147 @@ def _adaptive_primal(
             & (regularity_status == int(DAERegularityStatus.NUMERICALLY_SINGULAR))
             & regularity_valid
         )
-        accepted = (
+        candidate_accepted = (
             candidate_solved
             & constraint_certified
             & local_error_accepted
             & ~regularity_failed
         )
-        stale_retry = reuse & ~candidate_solved
-        attempt_status = jnp.where(
-            accepted,
-            int(DAEAttemptStatus.ACCEPTED),
-            jnp.where(
-                stale_retry,
-                int(DAEAttemptStatus.STALE_JACOBIAN_RETRY),
+        if prepared.events is None:
+            events_ = current.events
+            event_seen = jnp.asarray(False)
+            event_failure = jnp.asarray(False)
+            event_capacity_exceeded = jnp.asarray(False)
+            event_consistency_regularity_failed = jnp.asarray(False)
+            event_terminal = jnp.asarray(False)
+            accepted_state = state
+            accepted_rate = state_rate
+            accepted_time = jnp.where(
+                step_size >= remaining,
+                target_time,
+                current.time + step_size,
+            )
+            event_derivative_valid = jnp.asarray(True)
+        else:
+            from ._dae_events import record_dae_event, resolve_dae_event
+
+            transition = resolve_dae_event(
+                prepared.events,
+                current.time,
+                stage_time,
+                current.states[:5],
+                current.rates[:5],
+                current.times[:5],
+                current.history_depth,
+                order,
+                state,
+                state_rate,
+                args,
+                policy,
+            )
+            transition = eqx.tree_at(
+                lambda value: value.occurred,
+                transition,
+                transition.occurred & candidate_accepted,
+            )
+            events_ = record_dae_event(
+                current.events,
+                transition,
+                current.accepted_count,
+                current.time,
+                stage_time,
+            )
+            event_seen = transition.occurred
+            event_consistency_regularity_failed = (
+                (policy.regularity.failure == "status")
+                & transition.consistency_regularity_valid
+                & (
+                    transition.consistency_regularity_status
+                    == int(DAERegularityStatus.NUMERICALLY_SINGULAR)
+                )
+            )
+            event_failure = event_seen & (
+                (~transition.successful)
+                | events_.capacity_exceeded
+                | event_consistency_regularity_failed
+            )
+            event_terminal = event_seen & transition.successful & transition.terminal
+            event_capacity_exceeded = events_.capacity_exceeded
+            accepted_state = jnp.where(
+                event_seen,
+                transition.state_after,
+                state,
+            )
+            accepted_rate = jnp.where(
+                event_seen,
+                transition.state_rate_after,
+                state_rate,
+            )
+            accepted_time = jnp.where(
+                event_seen,
+                transition.event_time,
                 jnp.where(
-                    regularity_failed,
-                    int(DAEAttemptStatus.REGULARITY_REJECTED),
+                    step_size >= remaining,
+                    target_time,
+                    current.time + step_size,
+                ),
+            )
+            event_derivative_valid = jnp.where(
+                event_seen,
+                transition.derivative_valid,
+                True,
+            )
+        accepted = candidate_accepted & (~event_failure)
+        accepted_step_size = accepted_time - current.time
+        effective_scaled = _scaled_problem_residual(
+            prepared.problem,
+            accepted_time,
+            accepted_state,
+            accepted_rate,
+            args,
+        )
+        effective_residual = _masked_rms(
+            effective_scaled,
+            jnp.ones(system.state_shape, dtype=bool),
+        )
+        effective_differential = _masked_rms(
+            effective_scaled,
+            differential_equations,
+        )
+        effective_constraint = _masked_rms(
+            effective_scaled,
+            algebraic_equations,
+        )
+        stale_retry = reuse & ~candidate_solved & (~event_failure)
+        attempt_status = jnp.where(
+            event_failure,
+            int(DAEAttemptStatus.EVENT_REJECTED),
+            jnp.where(
+                accepted,
+                int(DAEAttemptStatus.ACCEPTED),
+                jnp.where(
+                    stale_retry,
+                    int(DAEAttemptStatus.STALE_JACOBIAN_RETRY),
                     jnp.where(
-                        ~finite,
-                        int(DAEAttemptStatus.NONFINITE_REJECTED),
+                        regularity_failed,
+                        int(DAEAttemptStatus.REGULARITY_REJECTED),
                         jnp.where(
-                            _linear_failure(nonlinear_result.status),
-                            int(DAEAttemptStatus.LINEAR_REJECTED),
+                            ~finite,
+                            int(DAEAttemptStatus.NONFINITE_REJECTED),
                             jnp.where(
-                                ~nonlinear_success,
-                                int(DAEAttemptStatus.NONLINEAR_REJECTED),
+                                _linear_failure(nonlinear_result.status),
+                                int(DAEAttemptStatus.LINEAR_REJECTED),
                                 jnp.where(
-                                    ~residual_certified,
-                                    int(DAEAttemptStatus.RESIDUAL_REJECTED),
+                                    ~nonlinear_success,
+                                    int(DAEAttemptStatus.NONLINEAR_REJECTED),
                                     jnp.where(
-                                        ~constraint_certified,
-                                        int(DAEAttemptStatus.CONSTRAINT_REJECTED),
-                                        int(DAEAttemptStatus.LOCAL_ERROR_REJECTED),
+                                        ~residual_certified,
+                                        int(DAEAttemptStatus.RESIDUAL_REJECTED),
+                                        jnp.where(
+                                            ~constraint_certified,
+                                            int(DAEAttemptStatus.CONSTRAINT_REJECTED),
+                                            int(DAEAttemptStatus.LOCAL_ERROR_REJECTED),
+                                        ),
                                     ),
                                 ),
                             ),
@@ -914,21 +1054,25 @@ def _adaptive_primal(
             residual_certified=residual_certified,
         )
         attempt_count = current.attempt_count + 1
-        accepted_time = jnp.where(
-            step_size >= remaining,
-            target_time,
-            current.time + step_size,
+        lands_on_save = accepted & (
+            jnp.abs(accepted_time - target_time)
+            <= (
+                8.0 * jnp.finfo(save_times.dtype).eps
+                if prepared.events is None
+                else prepared.events.plan.event_tolerance
+            )
         )
-        lands_on_save = accepted_time == target_time
 
         def accept(_):
             accepted_index = current.accepted_count
             steps_ = _StepArchive(
                 times=current.steps.times.at[accepted_index].set(accepted_time),
-                step_sizes=current.steps.step_sizes.at[accepted_index].set(step_size),
+                step_sizes=current.steps.step_sizes.at[accepted_index].set(
+                    accepted_step_size
+                ),
                 orders=current.steps.orders.at[accepted_index].set(order),
                 error_ratios=current.steps.error_ratios.at[accepted_index].set(
-                    error_ratio
+                    jnp.where(event_seen, 0.0, error_ratio)
                 ),
                 source_attempts=current.steps.source_attempts.at[accepted_index].set(
                     current.attempt_count
@@ -944,8 +1088,8 @@ def _adaptive_primal(
             nodes_ = jax.lax.cond(
                 lands_on_save,
                 lambda archive: _NodeArchive(
-                    states=archive.states.at[current.save_index].set(state),
-                    rates=archive.rates.at[current.save_index].set(state_rate),
+                    states=archive.states.at[current.save_index].set(accepted_state),
+                    rates=archive.rates.at[current.save_index].set(accepted_rate),
                     valid=archive.valid.at[current.save_index].set(True),
                     rate_valid=archive.rate_valid.at[current.save_index].set(
                         jnp.ones(system.state_shape, dtype=bool)
@@ -954,16 +1098,16 @@ def _adaptive_primal(
                         int(DAEStatus.SUCCESS)
                     ),
                     residual_norm=archive.residual_norm.at[current.save_index].set(
-                        residual_norm
+                        effective_residual
                     ),
                     residual_threshold=archive.residual_threshold.at[
                         current.save_index
                     ].set(adaptive.residual_tolerance),
                     differential_norm=archive.differential_norm.at[
                         current.save_index
-                    ].set(differential_norm),
+                    ].set(effective_differential),
                     constraint_norm=archive.constraint_norm.at[current.save_index].set(
-                        constraint_norm
+                        effective_constraint
                     ),
                 ),
                 lambda archive: archive,
@@ -992,48 +1136,99 @@ def _adaptive_primal(
                 order,
                 adaptive,
             )
-            next_step = step_size * factor
+            # Preserve higher-order history after an accepted step. Every next
+            # trial still has to satisfy the same local-error certificate.
+            factor = jnp.where(
+                order > 1,
+                jnp.maximum(factor, 1.0 / policy.max_step_ratio),
+                factor,
+            )
+            next_step = accepted_step_size * factor
             if adaptive.maximum_step is not None:
                 next_step = jnp.minimum(next_step, adaptive.maximum_step)
+            next_step = jnp.where(
+                event_seen, jnp.minimum(step_size, next_step), next_step
+            )
             return _AdaptiveCarry(
                 time=accepted_time,
-                states=jnp.concatenate((state[None, ...], current.states[:-1]), axis=0),
-                rates=jnp.concatenate(
-                    (state_rate[None, ...], current.rates[:-1]), axis=0
+                states=jax.lax.cond(
+                    event_seen,
+                    lambda _: jnp.broadcast_to(accepted_state, (6,) + system.state_shape),
+                    lambda _: jnp.concatenate(
+                        (accepted_state[None, ...], current.states[:-1]), axis=0
+                    ),
+                    operand=None,
                 ),
-                times=jnp.concatenate((accepted_time[None], current.times[:-1]), axis=0),
+                rates=jax.lax.cond(
+                    event_seen,
+                    lambda _: jnp.broadcast_to(accepted_rate, (6,) + system.state_shape),
+                    lambda _: jnp.concatenate(
+                        (accepted_rate[None, ...], current.rates[:-1]), axis=0
+                    ),
+                    operand=None,
+                ),
+                times=jax.lax.cond(
+                    event_seen,
+                    lambda _: jnp.full((6,), accepted_time, dtype=save_times.dtype),
+                    lambda _: jnp.concatenate(
+                        (accepted_time[None], current.times[:-1]), axis=0
+                    ),
+                    operand=None,
+                ),
                 step_sizes=jnp.concatenate(
-                    (step_size[None], current.step_sizes[:-1]), axis=0
+                    (accepted_step_size[None], current.step_sizes[:-1]), axis=0
                 ),
-                history_depth=jnp.minimum(current.history_depth + 1, 6),
-                accepted_order=order,
-                previous_error_ratio=jnp.maximum(error_ratio, 1e-12),
+                history_depth=jnp.where(
+                    event_seen,
+                    1,
+                    jnp.minimum(current.history_depth + 1, 6),
+                ).astype(jnp.int32),
+                accepted_order=jnp.where(event_seen, 1, order).astype(jnp.int32),
+                previous_error_ratio=jnp.where(
+                    event_seen,
+                    1.0,
+                    jnp.maximum(error_ratio, 1e-12),
+                ),
                 proposed_step_size=next_step,
                 save_index=current.save_index + lands_on_save.astype(jnp.int32),
                 accepted_count=accepted_index + 1,
                 attempt_count=attempt_count,
                 consecutive_rejections=jnp.asarray(0, dtype=jnp.int32),
-                jacobian_age=next_age,
-                last_alpha=alpha,
+                jacobian_age=jnp.where(event_seen, 0, next_age).astype(jnp.int32),
+                last_alpha=jnp.where(
+                    event_seen,
+                    1.0
+                    / jnp.maximum(accepted_step_size, jnp.finfo(save_times.dtype).tiny),
+                    alpha,
+                ),
                 last_nonlinear_iterations=diagnostics.iterations,
-                force_refresh=jnp.asarray(False),
-                terminal_status=jnp.asarray(_RUNNING, dtype=jnp.int32),
+                force_refresh=event_seen,
+                terminal_status=jnp.where(
+                    event_terminal,
+                    int(DAETerminationStatus.EVENT_TERMINATED),
+                    _RUNNING,
+                ).astype(jnp.int32),
                 retained_nonlinear=retained_dynamic_,
                 nodes=nodes_,
                 steps=steps_,
                 attempts=attempts_,
                 regularity=regularity_,
+                events=events_,
             )
 
         def reject(_):
-            nonlinear_failure = ~nonlinear_success | ~finite
+            nonlinear_failure = (~nonlinear_success | ~finite) & (~event_failure)
             factor = jnp.where(
-                stale_retry,
+                event_failure,
                 1.0,
                 jnp.where(
-                    nonlinear_failure,
-                    adaptive.nonlinear_failure_shrink,
-                    _rejected_factor(error_ratio, order, adaptive),
+                    stale_retry,
+                    1.0,
+                    jnp.where(
+                        nonlinear_failure,
+                        adaptive.nonlinear_failure_shrink,
+                        _rejected_factor(error_ratio, order, adaptive),
+                    ),
                 ),
             )
             next_step = step_size * factor
@@ -1043,15 +1238,27 @@ def _adaptive_primal(
             )
             next_rejections = current.consecutive_rejections + 1
             terminal = jnp.where(
-                regularity_failed,
-                int(DAETerminationStatus.REGULARITY_FAILED),
+                event_failure,
                 jnp.where(
-                    exhausted,
-                    int(DAETerminationStatus.MINIMUM_STEP_REACHED),
+                    event_consistency_regularity_failed,
+                    int(DAETerminationStatus.REGULARITY_FAILED),
                     jnp.where(
-                        next_rejections > adaptive.maximum_consecutive_rejections,
-                        int(DAETerminationStatus.REPEATED_REJECTIONS),
-                        _RUNNING,
+                        event_capacity_exceeded,
+                        int(DAETerminationStatus.EVENT_CAPACITY_EXCEEDED),
+                        int(DAETerminationStatus.EVENT_FAILED),
+                    ),
+                ),
+                jnp.where(
+                    regularity_failed,
+                    int(DAETerminationStatus.REGULARITY_FAILED),
+                    jnp.where(
+                        exhausted,
+                        int(DAETerminationStatus.MINIMUM_STEP_REACHED),
+                        jnp.where(
+                            next_rejections > adaptive.maximum_consecutive_rejections,
+                            int(DAETerminationStatus.REPEATED_REJECTIONS),
+                            _RUNNING,
+                        ),
                     ),
                 ),
             ).astype(jnp.int32)
@@ -1079,6 +1286,7 @@ def _adaptive_primal(
                 steps=current.steps,
                 attempts=attempts_,
                 regularity=current.regularity,
+                events=events_,
             )
 
         return jax.lax.cond(accepted, accept, reject, operand=None)
@@ -1138,7 +1346,8 @@ def _adaptive_primal(
     if policy.failure == "error":
         node_states = eqx.error_if(
             carry.nodes.states,
-            terminal_status != int(DAETerminationStatus.SUCCESS),
+            (terminal_status != int(DAETerminationStatus.SUCCESS))
+            & (terminal_status != int(DAETerminationStatus.EVENT_TERMINATED)),
             "Adaptive DAE solve failed.",
         )
     else:
@@ -1179,6 +1388,7 @@ def _adaptive_primal(
             globalization_rejections=carry.attempts.globalization_rejections,
             setup_refreshes=carry.attempts.setup_refreshes,
             numeric_refreshes=carry.attempts.numeric_refreshes,
+            domain_failures=carry.attempts.domain_failures,
             stale_jacobian_retries=carry.attempts.stale_retries,
             linear_rejections=carry.attempts.linear_rejections,
             residual_certifications=carry.attempts.residual_certifications,
@@ -1194,6 +1404,7 @@ def _adaptive_primal(
             estimated_memory_bytes=prepared.plan.replay_memory_bytes,
             checkpointing=policy.replay.checkpointing,
         ),
+        events=carry.events,
         termination_status=terminal_status,
         problem_id=problem.problem_id,
         system_id=system.system_id,
@@ -1333,15 +1544,37 @@ def _replay_solution(
         )
 
         def execute(carry):
+            if prepared.events is None:
+                event_step = jnp.asarray(False)
+                event_slot = jnp.asarray(0, dtype=jnp.int32)
+                event_index = jnp.asarray(0, dtype=jnp.int32)
+                candidate_time = safe_time
+            else:
+                event_matches = (
+                    jax.lax.stop_gradient(frozen.events.replay.bracket_step_indices)
+                    == index
+                ) & jax.lax.stop_gradient(frozen.events.replay.active)
+                event_step = jnp.any(event_matches)
+                event_slot = jnp.argmax(event_matches).astype(jnp.int32)
+                event_index = jax.lax.stop_gradient(
+                    frozen.events.event_indices[event_slot]
+                )
+                candidate_time = jnp.where(
+                    event_step,
+                    jax.lax.stop_gradient(
+                        frozen.events.replay.bracket_right_times[event_slot]
+                    ),
+                    safe_time,
+                )
             predictor = _general_bdf_predict(
                 carry.states[:5],
                 carry.rates[:5],
                 carry.times[:5],
-                safe_time,
+                candidate_time,
                 safe_order,
             )
             arguments = _history_stage_arguments(
-                target_time=safe_time,
+                target_time=candidate_time,
                 state_history=carry.states[:5],
                 history_times=carry.times[:5],
                 order=safe_order,
@@ -1351,18 +1584,71 @@ def _replay_solution(
             seeded = refresh_nonlinear(
                 prepared.stage_solve,
                 prepared.stage_problem,
-                predictor,
+                predictor - arguments.rate_reference,
                 args=arguments,
             )
             result = implicit_root_result(seeded)
-            state = jnp.asarray(result.state)
-            rate = _general_bdf_rate(
-                state,
-                carry.states[:5],
-                carry.times[:5],
-                safe_time,
-                safe_order,
-            )
+            increment = jnp.asarray(result.state)
+            candidate_state = arguments.physical_state(increment)
+            candidate_rate = arguments.state_rate(increment)
+            if prepared.events is None:
+                state = candidate_state
+                rate = candidate_rate
+                accepted_time = candidate_time
+                event_valid = jnp.asarray(True)
+            else:
+                from ._dae_events import localize_dae_event
+
+                branches = tuple(
+                    lambda _, event_index_=event_index_: localize_dae_event(
+                        prepared.events,
+                        event_index_,
+                        carry.times[0],
+                        candidate_time,
+                        carry.states[:5],
+                        carry.rates[:5],
+                        carry.times[:5],
+                        jnp.maximum(safe_order + 1, 1),
+                        safe_order,
+                        candidate_state,
+                        args,
+                        prepared.plan.policy,
+                    )
+                    for event_index_ in range(len(prepared.events.plan.schedule.events))
+                )
+                transition = jax.lax.switch(
+                    jnp.maximum(event_index, 0),
+                    branches,
+                    operand=None,
+                )
+                event_valid = transition.successful & transition.derivative_valid
+                state = jnp.where(
+                    event_step,
+                    jnp.where(
+                        event_valid,
+                        transition.state_after,
+                        jnp.nan,
+                    ),
+                    candidate_state,
+                )
+                rate = jnp.where(
+                    event_step,
+                    jnp.where(
+                        event_valid,
+                        transition.state_rate_after,
+                        jnp.nan,
+                    ),
+                    candidate_rate,
+                )
+                accepted_time = jnp.where(
+                    event_step,
+                    jnp.where(
+                        event_valid,
+                        transition.event_time,
+                        jnp.nan,
+                    ),
+                    candidate_time,
+                )
             matches = save_indices == index
             should_save = jnp.any(matches)
             save_index = jnp.argmax(matches).astype(jnp.int32)
@@ -1378,12 +1664,46 @@ def _replay_solution(
                 lambda output: output,
                 carry.saved_rates,
             )
+            states_ = jax.lax.cond(
+                event_step,
+                lambda _: jnp.broadcast_to(
+                    state,
+                    (6,) + prepared.problem.system.state_shape,
+                ),
+                lambda _: jnp.concatenate(
+                    (state[None, ...], carry.states[:-1]),
+                    axis=0,
+                ),
+                operand=None,
+            )
+            rates_ = jax.lax.cond(
+                event_step,
+                lambda _: jnp.broadcast_to(
+                    rate,
+                    (6,) + prepared.problem.system.state_shape,
+                ),
+                lambda _: jnp.concatenate(
+                    (rate[None, ...], carry.rates[:-1]),
+                    axis=0,
+                ),
+                operand=None,
+            )
+            times_ = jax.lax.cond(
+                event_step,
+                lambda _: jnp.full((6,), accepted_time, dtype=carry.times.dtype),
+                lambda _: jnp.concatenate(
+                    (accepted_time[None], carry.times[:-1]),
+                    axis=0,
+                ),
+                operand=None,
+            )
+            replay_step_size = accepted_time - carry.times[0]
             return _ReplayCarry(
-                states=jnp.concatenate((state[None, ...], carry.states[:-1]), axis=0),
-                rates=jnp.concatenate((rate[None, ...], carry.rates[:-1]), axis=0),
-                times=jnp.concatenate((safe_time[None], carry.times[:-1]), axis=0),
+                states=states_,
+                rates=rates_,
+                times=times_,
                 step_sizes=jnp.concatenate(
-                    (safe_step_size[None], carry.step_sizes[:-1]), axis=0
+                    (replay_step_size[None], carry.step_sizes[:-1]), axis=0
                 ),
                 saved_states=saved_states_,
                 saved_rates=saved_rates_,
@@ -1535,7 +1855,13 @@ def _solve_adaptive_dae_jvp(primals, tangents):
         )
 
     _, tangent = eqx.filter_jvp(replay, primals, tangents)
-    successful = primal.termination_status == int(DAETerminationStatus.SUCCESS)
+    successful = (primal.termination_status == int(DAETerminationStatus.SUCCESS)) | (
+        primal.termination_status == int(DAETerminationStatus.EVENT_TERMINATED)
+    )
+    if primal.events is not None:
+        successful = successful & jnp.all(
+            (~primal.events.replay.active) | primal.events.derivative_valid
+        )
     tangent = eqx.tree_at(
         lambda value: (value.states, value.state_rates),
         tangent,

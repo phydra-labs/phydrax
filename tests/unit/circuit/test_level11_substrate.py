@@ -1,4 +1,7 @@
+import equinox as eqx
+import jax
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -51,6 +54,115 @@ def _rc_circuit():
         ground="0",
         circuit_id="rc-circuit",
     )
+
+
+def _driven_behavioral_circuit():
+    reference = phx.circuit.ElectricalWaveReference(50.0)
+    source = phx.circuit.compile_behavioral_current(
+        "u_z + 10.0 * u_a",
+        input_names=("z", "a"),
+        element_id="ordered-source",
+    )
+    return phx.circuit.NodalCircuit(
+        (phx.circuit.CircuitInstance("source", source, ("0", "n")),),
+        (phx.circuit.NodalPort("port", "n", "0", reference),),
+        ground="0",
+        circuit_id="ordered-input-circuit",
+    )
+
+
+def test_circuit_input_layout_bindings_policies_and_jit_are_typed():
+    circuit = _driven_behavioral_circuit()
+    prepared = phx.circuit.prepare_circuit_dae(circuit)
+    layout = prepared.system.input_layout
+    assert layout is not None
+    assert layout.shape == (2,)
+    assert layout.component_names == ("a", "z")
+    assert prepared.plan.input_bindings[0].input_names == ("z", "a")
+    assert prepared.plan.input_bindings[0].indices == (1, 0)
+
+    state = jnp.zeros((1,))
+    rate = jnp.zeros((1,))
+    inputs = jnp.asarray([2.0, 3.0])
+    evaluated = jax.jit(
+        lambda values: prepared.system.evaluate(0.0, state, rate, None, inputs=values)
+    )(inputs)
+    assert jnp.allclose(evaluated, jnp.asarray([-23.0]))
+
+    callable_policy = phx.dynamics.CallableInputPolicy(
+        lambda time, value, args: jnp.asarray([args, 3.0]),
+        input_layout=layout,
+        policy_id="ordered-callable",
+    )
+    callable_problem = phx.circuit.circuit_dae_problem(
+        prepared, state, args=2.0, input_policy=callable_policy
+    )
+    assert jnp.allclose(callable_problem.input_policy.evaluate(0.0, state, 2.0), inputs)
+
+    held_policy = phx.dynamics.HeldInputPolicy(
+        jnp.asarray([0.0, 1.0, 2.0]),
+        jnp.asarray([[2.0, 3.0], [4.0, 5.0]]),
+        input_layout=layout,
+        policy_id="ordered-held",
+    )
+    held_problem = phx.circuit.circuit_dae_problem(
+        prepared, state, input_policy=held_policy
+    )
+    assert jnp.allclose(held_problem.input_policy.evaluate(0.5, state, None), inputs)
+
+    reversed_layout = phx.dynamics.InputLayout(
+        (2,),
+        axes=("circuit_input",),
+        component_names=("z", "a"),
+        roles="forcing",
+    )
+    plan = prepared.plan
+    conflicting_plan = phx.circuit.CircuitDAEPlan(
+        plan.circuit,
+        plan.layout,
+        plan.laws,
+        reversed_layout,
+        plan.input_bindings,
+        plan.state_scale,
+        plan.rate_scale,
+        plan.residual_scale,
+        plan.plan_id,
+    )
+    with pytest.raises(ValueError, match="input shape or names conflict"):
+        phx.circuit.prepare_circuit_dae(circuit, conflicting_plan)
+    mismatched = phx.dynamics.CallableInputPolicy(
+        lambda time, value, args: inputs,
+        input_layout=reversed_layout,
+        policy_id="reversed",
+    )
+    with pytest.raises(ValueError, match="exactly match"):
+        phx.circuit.circuit_dae_problem(prepared, state, input_policy=mismatched)
+
+
+def test_circuit_element_scales_propagate_to_native_dae():
+    law = phx.circuit.IndependentVoltageSourceLaw(1.0)
+    law = eqx.tree_at(
+        lambda value: value.state_layout,
+        law,
+        phx.circuit.CircuitElementStateLayout(
+            ("algebraic",),
+            state_scale=jnp.asarray([2.0]),
+            rate_scale=jnp.asarray([3.0]),
+            residual_scale=jnp.asarray([4.0]),
+        ),
+    )
+    source = phx.circuit.CircuitElement(law, element_id="scaled-source")
+    reference = phx.circuit.ElectricalWaveReference(50.0)
+    circuit = phx.circuit.NodalCircuit(
+        (phx.circuit.CircuitInstance("source", source, ("n", "0")),),
+        (phx.circuit.NodalPort("port", "n", "0", reference),),
+        ground="0",
+        circuit_id="scaled-circuit",
+    )
+    prepared = phx.circuit.prepare_circuit_dae(circuit)
+    assert jnp.array_equal(prepared.system.state_scale, jnp.asarray([1.0, 2.0]))
+    assert jnp.array_equal(prepared.system.state_rate_scale, jnp.asarray([1.0, 3.0]))
+    assert jnp.array_equal(prepared.system.residual_scale, jnp.asarray([1.0, 4.0]))
 
 
 def test_block_ports_action_runtime_case_batch_and_connection_map():
@@ -202,7 +314,7 @@ def test_spice_behavioral_learned_and_electrothermal_adapters():
         jnp.zeros((2,)),
         jnp.zeros((0,)),
         jnp.zeros((0,)),
-        {"bias": 0.5},
+        jnp.asarray([0.5]),
         None,
     )
     assert jnp.allclose(evaluated.terminal_currents, jnp.asarray([2.5, -2.5]))
@@ -214,7 +326,7 @@ def test_spice_behavioral_learned_and_electrothermal_adapters():
         jnp.zeros((2,)),
         jnp.zeros((0,)),
         jnp.zeros((0,)),
-        None,
+        jnp.zeros((0,)),
         None,
     )
     assert learned_evaluation.terminal_currents[0] > 0.0
