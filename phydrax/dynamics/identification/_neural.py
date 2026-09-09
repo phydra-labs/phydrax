@@ -47,13 +47,21 @@ from ..._training_objective import (
 )
 from ...metrix import EuclideanStateGeometry
 from .._layout import InputLayout, StateLayout
-from .._model_system import DiscreteModelTransition
 from .._system import DiscreteStepContext, DiscreteSystem
 from .._trajectory import TrajectoryData
+from ._linear_refinement import (
+    ProgressiveLinearRefinementPolicy,
+    ProgressiveLinearRefinementRecord,
+    ProgressiveLinearRefinementState,
+)
 from ._neural_checkpoint import (
     _load_neural_training_checkpoint,
     _read_neural_training_manifest,
     _save_neural_training_checkpoint,
+)
+from ._neural_transition import (
+    AbstractDiscreteModelRolloutTransition,
+    DirectDiscreteModelRolloutTransition,
 )
 from ._neural_windows import (
     _active_window_evidence,
@@ -324,9 +332,12 @@ class DiscreteModelFitResult:
     model: AbstractArrayModel
     last_model: AbstractArrayModel
     system: DiscreteSystem
+    fit_fingerprint: str
     history: DiscreteModelFitHistory
     progress: TrainingProgress
     resumed_from_step: int
+    linear_refinement_state: ProgressiveLinearRefinementState | None
+    linear_refinement_records: tuple[ProgressiveLinearRefinementRecord, ...]
     training_seconds: float
     checkpoint_path: Path | None
     stopped_by_signal: bool = False
@@ -406,26 +417,6 @@ def _mean_square(values: Array, event_rank: int, /) -> Array:
     return squared
 
 
-def _model_point(
-    model: AbstractArrayModel,
-    state: Array,
-    inputs: Array | None,
-    key: Array,
-    iteration: Array,
-    /,
-) -> Array:
-    binding = model.input_binding()
-    point = (
-        binding.pack_point((state,))
-        if inputs is None
-        else binding.pack_point((state, inputs))
-    )
-    return jnp.asarray(
-        binding.call(model, point, key=key, iter_=iteration, kwargs={}),
-        dtype=state.dtype,
-    )
-
-
 def _rollout_scan_step(
     carry: _RolloutCarry,
     depth: Array,
@@ -436,9 +427,11 @@ def _rollout_scan_step(
     eligible: Array,
     active_horizon: Array,
     state_layout: StateLayout,
+    transition: AbstractDiscreteModelRolloutTransition,
     truncate_every: int | None,
     root_key: Array,
     iteration: Array,
+    execution_control: Any,
 ) -> tuple[_RolloutCarry, tuple[Array, Array]]:
     active = depth < active_horizon
     run = eligible & active
@@ -451,34 +444,78 @@ def _rollout_scan_step(
     )
     controls = None if batch.inputs is None else batch.inputs[:, depth]
 
+    sources = batch.coordinates[:, depth]
     if controls is None:
 
-        def one(state, key, enabled):
+        def one(state, source, key, enabled):
+            def advance(_):
+                result = transition.evaluate(
+                    model,
+                    DiscreteStepContext(
+                        source,
+                        source + transition.step_size,
+                        depth,
+                    ),
+                    state,
+                    None,
+                    key=key,
+                    iteration=iteration,
+                    control=execution_control,
+                )
+                return result.accepted_state, result.training_usable
+
             return jax.lax.cond(
                 enabled,
-                lambda _: _model_point(model, state, None, key, iteration),
-                lambda _: state,
+                advance,
+                lambda _: (state, jnp.asarray(True)),
                 operand=None,
             )
 
-        candidate = jax.vmap(one)(carry.state, keys, run)
+        candidate, transition_valid = jax.vmap(one)(
+            carry.state,
+            sources,
+            keys,
+            run,
+        )
     else:
 
-        def one(state, inputs, key, enabled):
+        def one(state, inputs, source, key, enabled):
+            def advance(_):
+                result = transition.evaluate(
+                    model,
+                    DiscreteStepContext(
+                        source,
+                        source + transition.step_size,
+                        depth,
+                    ),
+                    state,
+                    inputs,
+                    key=key,
+                    iteration=iteration,
+                    control=execution_control,
+                )
+                return result.accepted_state, result.training_usable
+
             return jax.lax.cond(
                 enabled,
-                lambda _: _model_point(model, state, inputs, key, iteration),
-                lambda _: state,
+                advance,
+                lambda _: (state, jnp.asarray(True)),
                 operand=None,
             )
 
-        candidate = jax.vmap(one)(carry.state, controls, keys, run)
+        candidate, transition_valid = jax.vmap(one)(
+            carry.state,
+            controls,
+            sources,
+            keys,
+            run,
+        )
     finite = jnp.all(
         jnp.isfinite(candidate),
         axis=tuple(range(1, candidate.ndim)),
     )
     member = jax.vmap(state_layout.geometry.contains)(candidate)
-    step_valid = ~run | (finite & member)
+    step_valid = ~run | (transition_valid & finite & member)
     safe_candidate = jnp.where(
         _event_mask(step_valid, len(state_layout.shape)),
         candidate,
@@ -505,6 +542,8 @@ def _rollout_states(
     active_horizon: Array,
     policy: DiscreteModelRolloutPolicy,
     state_layout: StateLayout,
+    transition: AbstractDiscreteModelRolloutTransition,
+    execution_control: Any,
     root_key: Array,
     iteration: Array,
     /,
@@ -519,6 +558,8 @@ def _rollout_states(
             batch=batch,
             eligible=eligible,
             active_horizon=active_horizon,
+            execution_control=execution_control,
+            transition=transition,
             state_layout=state_layout,
             truncate_every=policy.truncate_every,
             root_key=root_key,
@@ -797,11 +838,13 @@ def _objective_contributions(
     policy: DiscreteModelRolloutPolicy,
     objectives: tuple[DiscreteModelObjective, ...],
     state_layout: StateLayout,
+    transition: AbstractDiscreteModelRolloutTransition,
     root_key: Array,
     iteration: Array | None = None,
     /,
     *,
     target_model: AbstractArrayModel | None = None,
+    execution_control: Any = None,
 ) -> tuple[_ObjectiveContribution, tuple[_ObjectiveContribution, ...], Array]:
     resolved_iteration = (
         jnp.asarray(0, dtype=jnp.int32) if iteration is None else jnp.asarray(iteration)
@@ -812,6 +855,8 @@ def _objective_contributions(
         active_horizon,
         policy,
         state_layout,
+        transition,
+        execution_control,
         root_key,
         resolved_iteration,
     )
@@ -826,6 +871,8 @@ def _objective_contributions(
             active_horizon,
             policy,
             state_layout,
+            transition,
+            execution_control,
             jr.fold_in(root_key, 707),
             resolved_iteration,
         )
@@ -993,7 +1040,9 @@ def fit_discrete_model(
     step_size: float,
     step_rtol: float = 1e-7,
     step_atol: float = 1e-12,
+    transition: AbstractDiscreteModelRolloutTransition | None = None,
     rollout_policy: DiscreteModelRolloutPolicy,
+    linear_refinement: ProgressiveLinearRefinementPolicy | None = None,
     objectives: Sequence[DiscreteModelObjective] | None = None,
     optimizer: optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
@@ -1043,14 +1092,54 @@ def fit_discrete_model(
         raise TypeError("input_layout must be an InputLayout or None.")
     if not isinstance(system_id, str) or not system_id:
         raise ValueError("system_id must be a nonempty string.")
-    DiscreteModelTransition(
-        model,
-        state_layout=state_layout,
-        input_layout=input_layout,
-        step_size=step_size,
-        step_rtol=step_rtol,
-        step_atol=step_atol,
+    resolved_transition = (
+        DirectDiscreteModelRolloutTransition(
+            state_layout,
+            input_layout=input_layout,
+            step_size=step_size,
+            step_rtol=step_rtol,
+            step_atol=step_atol,
+        )
+        if transition is None
+        else transition
     )
+    if not isinstance(
+        resolved_transition,
+        AbstractDiscreteModelRolloutTransition,
+    ):
+        raise TypeError(
+            "transition must be an AbstractDiscreteModelRolloutTransition or None."
+        )
+    if (
+        resolved_transition.state_layout.layout_id != state_layout.layout_id
+        or (
+            None
+            if resolved_transition.input_layout is None
+            else resolved_transition.input_layout.layout_id
+        )
+        != (None if input_layout is None else input_layout.layout_id)
+        or resolved_transition.step_size != float(step_size)
+        or resolved_transition.step_rtol != float(step_rtol)
+        or resolved_transition.step_atol != float(step_atol)
+    ):
+        raise ValueError(
+            "Discrete rollout transition and fit contracts must match exactly."
+        )
+    resolved_transition.validate_model(model)
+    if linear_refinement is not None:
+        if not isinstance(linear_refinement, ProgressiveLinearRefinementPolicy):
+            raise TypeError(
+                "linear_refinement must be ProgressiveLinearRefinementPolicy or None."
+            )
+        if not resolved_transition.supports_linear_refinement:
+            raise ValueError(
+                "The selected discrete rollout transition does not support linear "
+                "refinement."
+            )
+        if validation is None:
+            raise ValueError("Linear refinement requires fixed validation data.")
+        if int(gradient_accumulation) != 1:
+            raise ValueError("Linear refinement does not support gradient accumulation.")
     _validate_data_contract(train, state_layout, input_layout)
     if validation is not None:
         _validate_data_contract(validation, state_layout, input_layout)
@@ -1222,6 +1311,10 @@ def fit_discrete_model(
         )
     if validation_config is not None and validation_source is None:
         raise ValueError("validation_policy requires validation data.")
+    if linear_refinement is not None:
+        assert validation_config is not None
+        if validation_config.mode != "min":
+            raise ValueError("Linear refinement requires a minimized validation metric.")
 
     parameters, fixed = partition_trainable(model)
     accumulation_dtype = _tree_real_result_dtype(parameters)
@@ -1265,6 +1358,7 @@ def fit_discrete_model(
         "step_rtol": float(step_rtol),
         "step_atol": float(step_atol),
         "rollout": rollout_policy.fingerprint,
+        "transition": resolved_transition.transition_id,
         "objectives": [term.fingerprint for term in terms],
         "optimizer_id": resolved_optimizer_id,
         "evaluation_parameters_id": resolved_evaluation_id,
@@ -1276,6 +1370,9 @@ def fit_discrete_model(
         "gradient_accumulation": int(gradient_accumulation),
         "validation_policy": (
             None if validation_config is None else asdict(validation_config)
+        ),
+        "linear_refinement": (
+            None if linear_refinement is None else linear_refinement.policy_id
         ),
         "jit": bool(jit),
         "key_policy_id": _KEY_POLICY_ID,
@@ -1295,8 +1392,29 @@ def fit_discrete_model(
     validation_history: list[dict[str, float]] = []
     resumed_from_step = 0
     prior_training_seconds = 0.0
+    refinement_state = (
+        None if linear_refinement is None else linear_refinement.initialize()
+    )
+    refinement_records: list[ProgressiveLinearRefinementRecord] = []
 
-    def loss_components(current_model, target_model, batch, root_key, step):
+    def training_execution_control():
+        if linear_refinement is None:
+            return None
+        assert refinement_state is not None
+        return linear_refinement.training_control(refinement_state)
+
+    evaluation_execution_control = (
+        None if linear_refinement is None else linear_refinement.evaluation_control()
+    )
+
+    def loss_components(
+        current_model,
+        target_model,
+        batch,
+        root_key,
+        step,
+        execution_control,
+    ):
         active_horizon = rollout_policy.active_horizon(step)
         return _objective_contributions(
             current_model,
@@ -1305,12 +1423,21 @@ def fit_discrete_model(
             rollout_policy,
             terms,
             state_layout,
+            resolved_transition,
             root_key,
             step,
             target_model=target_model,
+            execution_control=execution_control,
         )
 
-    def gradient_fn(current_parameters, target_parameters, batch, root_key, step):
+    def gradient_fn(
+        current_parameters,
+        target_parameters,
+        batch,
+        root_key,
+        step,
+        execution_control,
+    ):
         def objective(candidate):
             current_model = combine_trainable(candidate, fixed)
             target_model = (
@@ -1324,6 +1451,7 @@ def fit_discrete_model(
                 batch,
                 root_key,
                 step,
+                execution_control,
             )
             return contribution.numerator, (
                 contribution.numerator,
@@ -1368,7 +1496,7 @@ def fit_discrete_model(
         for batch_index, start in enumerate(range(0, source.size, size)):
             yield batch_index, source.prepare(indices[start : start + size])
 
-    def evaluate(current_model, source, size, step):
+    def evaluate(current_model, source, size, step, execution_control):
         metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
         evaluation_key = control.key_for(int(step), site=1000)
         target_model = (
@@ -1383,6 +1511,7 @@ def fit_discrete_model(
                 batch,
                 evaluation_key,
                 jnp.asarray(step, dtype=jnp.int32),
+                execution_control,
             )
             if not bool(jax.device_get(valid_array)):
                 raise FloatingPointError(
@@ -1439,6 +1568,14 @@ def fit_discrete_model(
         train_history = [dict(value) for value in metadata["train_metrics"]]
         validation_steps = [int(value) for value in metadata["validation_steps"]]
         validation_history = [dict(value) for value in metadata["validation_metrics"]]
+        if linear_refinement is not None:
+            saved_refinement = dict(metadata["linear_refinement_state"])
+            saved_refinement["history"] = tuple(saved_refinement["history"])
+            refinement_state = ProgressiveLinearRefinementState(**saved_refinement)
+            refinement_records = [
+                ProgressiveLinearRefinementRecord(**dict(value))
+                for value in metadata["linear_refinement_records"]
+            ]
         parameters, fixed = partition_trainable(model)
     else:
         initial_metrics = evaluate(
@@ -1446,6 +1583,7 @@ def fit_discrete_model(
             train_source,
             resolved_batch_size,
             0,
+            evaluation_execution_control,
         )
         if validation_source is not None:
             assert resolved_validation_batch is not None
@@ -1455,6 +1593,7 @@ def fit_discrete_model(
                 validation_source,
                 int(resolved_validation_batch),
                 0,
+                evaluation_execution_control,
             )
             if validation_config.monitor not in validation_metrics:
                 raise KeyError(
@@ -1469,6 +1608,14 @@ def fit_discrete_model(
                 best_value=validation_metrics[validation_config.monitor],
                 best_step=0,
             )
+            if linear_refinement is not None:
+                assert refinement_state is not None
+                refinement_state, record = linear_refinement.observe(
+                    refinement_state,
+                    validation_metrics[validation_config.monitor],
+                    validation_step=0,
+                )
+                refinement_records.append(record)
 
     def save_progress(training_seconds):
         if checkpoint is None or not gradient_accumulator.is_empty:
@@ -1488,6 +1635,12 @@ def fit_discrete_model(
                 "train_metrics": train_history,
                 "validation_steps": validation_steps,
                 "validation_metrics": validation_history,
+                "linear_refinement_state": (
+                    None if refinement_state is None else asdict(refinement_state)
+                ),
+                "linear_refinement_records": [
+                    asdict(value) for value in refinement_records
+                ],
                 "training_seconds": float(training_seconds),
             },
         )
@@ -1577,6 +1730,7 @@ def fit_discrete_model(
                             control.progress.update_step,
                             dtype=jnp.int32,
                         ),
+                        training_execution_control(),
                     )
                     if not bool(jax.device_get(finite_array)):
                         raise FloatingPointError(
@@ -1690,6 +1844,7 @@ def fit_discrete_model(
                             validation_source,
                             int(resolved_validation_batch),
                             update_step,
+                            evaluation_execution_control,
                         )
                         if validation_config.monitor not in validation_metrics:
                             raise KeyError(
@@ -1698,6 +1853,14 @@ def fit_discrete_model(
                         validation_steps.append(update_step)
                         validation_history.append(validation_metrics)
                         consider_validation(validation_metrics, evaluation_model)
+                        if linear_refinement is not None:
+                            assert refinement_state is not None
+                            refinement_state, record = linear_refinement.observe(
+                                refinement_state,
+                                validation_metrics[validation_config.monitor],
+                                validation_step=update_step,
+                            )
+                            refinement_records.append(record)
                         control.emit("validation_end", metrics=validation_metrics)
                         if tensorboard is not None:
                             for name, value in validation_metrics.items():
@@ -1744,10 +1907,19 @@ def fit_discrete_model(
             validation_source,
             int(resolved_validation_batch),
             control.progress.update_step,
+            evaluation_execution_control,
         )
         validation_steps.append(control.progress.update_step)
         validation_history.append(validation_metrics)
         consider_validation(validation_metrics, evaluation_model)
+        if linear_refinement is not None:
+            assert refinement_state is not None
+            refinement_state, record = linear_refinement.observe(
+                refinement_state,
+                validation_metrics[validation_config.monitor],
+                validation_step=control.progress.update_step,
+            )
+            refinement_records.append(record)
     selected_model = (
         best_model
         if validation_config is not None and validation_config.select_best
@@ -1758,6 +1930,7 @@ def fit_discrete_model(
         train_source,
         resolved_batch_size,
         control.progress.update_step,
+        evaluation_execution_control,
     )
     if checkpoint is not None and (
         control.progress.update_step == 0
@@ -1774,14 +1947,7 @@ def fit_discrete_model(
         validation_metrics=tuple(frozendict(value) for value in validation_history),
         final_metrics=frozendict(final_metrics),
     )
-    transition = DiscreteModelTransition(
-        selected_model,
-        state_layout=state_layout,
-        input_layout=input_layout,
-        step_size=step_size,
-        step_rtol=step_rtol,
-        step_atol=step_atol,
-    )
+    system = resolved_transition.bind(selected_model, system_id=system_id)
     sample_state = train.states.reshape((-1,) + state_layout.shape)[0]
     sample_coordinate = jnp.asarray(0.0, dtype=train.coordinates.dtype)
     sample_context = DiscreteStepContext(
@@ -1791,38 +1957,32 @@ def fit_discrete_model(
     )
     if input_layout is None:
         jax.eval_shape(
-            lambda state: transition(sample_context, state, None),
+            lambda state: system.evaluate(sample_context, state, None),
             sample_state,
         )
     else:
         assert train.inputs is not None
         sample_input = train.inputs.reshape((-1,) + input_layout.shape)[0]
         jax.eval_shape(
-            lambda state, inputs: transition(
+            lambda state, inputs: system.evaluate(
                 sample_context,
                 state,
-                inputs,
                 None,
+                inputs=inputs,
             ),
             sample_state,
             sample_input,
         )
-    system = DiscreteSystem(
-        transition,
-        state_layout=state_layout,
-        input_layout=input_layout,
-        system_id=system_id,
-        step_size=step_size,
-        step_rtol=step_rtol,
-        step_atol=step_atol,
-    )
     return DiscreteModelFitResult(
         model=selected_model,
         last_model=evaluation_model,
         system=system,
+        fit_fingerprint=fit_fingerprint,
         history=history,
         progress=control.progress,
         resumed_from_step=resumed_from_step,
+        linear_refinement_state=refinement_state,
+        linear_refinement_records=tuple(refinement_records),
         training_seconds=training_seconds,
         checkpoint_path=checkpoint,
         stopped_by_signal=stopped_by_signal,

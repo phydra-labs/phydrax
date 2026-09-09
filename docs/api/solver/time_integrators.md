@@ -337,6 +337,14 @@ ordinary JAX leaves rather than being folded into static identities.
 
 ---
 
+::: phydrax.solver.HybridGuardPlan
+
+---
+
+::: phydrax.solver.ScheduledHybridGuard
+
+---
+
 ::: phydrax.solver.HybridEventPlan
 
 ---
@@ -357,15 +365,70 @@ ordinary JAX leaves rather than being folded into static identities.
 
 ## Canonical hybrid schedule and Radau tableau
 
-Hybrid callbacks are uniformly time aware:
-`guard(time, state, args)`, `reset(time, state, args)`, and pre/post vector
-fields with the same signature. `prepare_hybrid_schedule` fixes event order,
-capacity, state shape/dtype, and replay identity. Execution emits one
-`HybridEventTape` with active masks, localized roots, pre/post states,
-transversality, saltation validity, terminal/overflow status, and dense
-event-log-Jacobian evidence. `replay_hybrid_schedule` accepts only an identical
-schedule/tape identity. Grazing, unresolved ties, changed order, or overflow
-invalidates `hybrid_event_jvp` and `hybrid_event_vjp`.
+`HybridGuardPlan` is reusable metadata only: a scalar
+`guard(time, state, args)`, direction, priority, terminal action, and stable
+identity. `ScheduledHybridGuard` places that metadata in a bounded schedule.
+`HybridEventPlan` is explicitly ODE-only and composes the guard with reset and
+pre/post vector fields for action-first saltation JVP/VJP.
+
+`prepare_hybrid_schedule` fixes event order, capacity, state shape/dtype, and
+replay identity. Execution emits one `HybridEventTape` with active masks,
+localized roots, pre/post states, transversality, terminal/overflow status, and
+matrix-free derivative validity. Dense saltation/log-determinant diagnostics are
+opt-in on `HybridEventPlan` and rejected above its declared small-state dimension
+cap; normal execution does not materialize them. `replay_hybrid_schedule` accepts
+only an identical schedule/tape identity. Grazing, unresolved ties, changed order,
+or overflow invalidates `hybrid_event_jvp` and `hybrid_event_vjp`.
+
+### Numerical roots versus physical saltation
+
+`localize_numerical_event(state_at_time, guard, t0, t1, *,
+iterations=48, tolerance=1e-10, grazing_tolerance=1e-8)` locates a scalar
+guard on the actual numerical trajectory. `state_at_time(t)` receives absolute
+physical time and may return an array or a PyTree; `guard(t, state)` must return a
+scalar. An elapsed-time coordinate is also valid when both callbacks and bracket
+use that coordinate consistently. Parameters are captured in the callbacks.
+
+Writing `F(t, p) = guard(t, state_at_time(t))`, the root derivative on the selected
+branch is `dt/dp = -partial_p F / partial_t F`. JAX differentiates both partials
+through the supplied numerical segment map: a continuous vector field is never
+substituted for its time derivative. The state result includes its direct
+parameter derivative and the implicit event-time contribution. Bracket endpoints
+select the root branch and do not themselves carry derivatives, unless they also
+appear inside the callbacks.
+
+The result exposes `event_time`, `state`, `guard_residual`, `transversality`,
+`bracketed`, `crossing` (−1, 0, +1), `grazing`, `finite`, `successful`, and
+`derivative_valid`. Primal success means a finite, bracketed root within the
+absolute guard residual tolerance. Derivative validity additionally requires a
+finite slope exceeding `grazing_tolerance` in magnitude. A grazing root can
+therefore be a successful primal event with an invalid sensitivity. Invalid
+sensitivities are NaN in forward and reverse mode; there is no epsilon
+regularization. Nonfinite or reversed brackets fail qualification. Bisection
+does not certify root uniqueness, hidden interior crossings, or stability under
+a change of event order. Tolerances have guard and guard-per-time units,
+respectively, and must be chosen for the callback's precision and physical scale.
+
+`localize_hybrid_event_root` adds physical reset and transversality evidence
+without constructing a reset Jacobian or determinant. `hybrid_event_jvp` and
+`hybrid_event_vjp` apply physical fixed-epoch saltation using only directional
+derivatives and pullbacks, with linear state storage. Their action is
+`dR + (f_after - R_t - R_y f_before) * dg / (g_t + g_y f_before)`,
+where `dR` and `dg` include the supplied state, time and parameter directions.
+This physical action is distinct from the numerical root derivative above.
+Nonfinite tangents/cotangents, grazing, off-guard states, and simultaneous
+competing guards produce explicit invalid evidence and NaN inexact payloads.
+
+`localize_hybrid_event` constructs dense saltation and native factorization only
+when `HybridEventPlan.dense_diagnostics` is enabled for a declared small-state
+density consumer. Otherwise it returns empty dense storage and no determinant
+claim. `HybridSchedulePlan` and `HybridEventTape` record log-Jacobian evidence
+only when available; a singular saltation can have a valid directional action
+but has no valid density change-of-variables log determinant.
+
+::: phydrax.solver.localize_numerical_event
+
+::: phydrax.solver.localize_hybrid_event_root
 
 `RadauIIAMethod` is the reusable immutable right-Radau tableau used by advanced
 direct transcription. Stage count is static, stiff accuracy and polynomial order

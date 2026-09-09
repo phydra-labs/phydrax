@@ -22,7 +22,12 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...solver import HybridEventPlan, HybridEventSensitivityResult, localize_hybrid_event
+from ...solver import (
+    HybridEventPlan,
+    HybridEventSensitivityResult,
+    HybridGuardPlan,
+    localize_hybrid_event,
+)
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -201,24 +206,36 @@ class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
             competing,
             stable_id,
         )
-        hybrid = HybridEventPlan(
+        guard_plan = HybridGuardPlan(
             guard,
+            direction=direction_,
+            terminal=terminal,
+            guard_id=canonical_fingerprint(
+                {
+                    "kind": "astrodynamics-hybrid-guard",
+                    "context": context.context_id,
+                    "event_kind": kind,
+                    "callables": callable_identity,
+                }
+            ),
+        )
+        hybrid = HybridEventPlan(
+            guard_plan,
             reset,
             vector_field_before,
             vector_field_after,
-            event_kind=kind,
             competing_guards=competing,
             grazing_tolerance=grazing_tolerance,
             event_tolerance=event_tolerance,
             bisection_iterations=bisection_iterations,
+            dense_diagnostics=True,
+            max_dense_dimension=32,
             plan_id=canonical_fingerprint(
                 {
                     "kind": "astrodynamics-hybrid-event",
                     "context": context.context_id,
                     "event_kind": kind,
                     "callables": callable_identity,
-                    "direction": direction_,
-                    "terminal": terminal,
                 }
             ),
         )
@@ -327,8 +344,8 @@ def localize_astrodynamics_event(
         raise TypeError("plan must be an AstrodynamicsEventPlan.")
     left = jnp.asarray(left_time)
     right = jnp.asarray(right_time, dtype=left.dtype)
-    left_guard = plan.hybrid.guard(left, state_at_time(left, args), args)
-    right_guard = plan.hybrid.guard(right, state_at_time(right, args), args)
+    left_guard = plan.hybrid.guard_plan.guard(left, state_at_time(left, args), args)
+    right_guard = plan.hybrid.guard_plan.guard(right, state_at_time(right, args), args)
     sensitivity = localize_hybrid_event(
         plan.hybrid,
         state_at_time,

@@ -881,6 +881,8 @@ def produce_provider_qualification(
                 replay_id=context.replay_id,
                 criteria_ids=(case.case_id,),
                 raw_artifact_ids=(str(record["observation_id"]),),
+                campaign_start_record_ids=(),
+                campaign_observation_record_ids=(),
                 reviewer_id=context.reviewer_id,
                 issued_at=context.issued_at,
                 expires_at=context.expires_at,

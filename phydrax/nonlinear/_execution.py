@@ -150,6 +150,8 @@ class MixedPrecisionRootExecution(StrictModule):
             model_residual,
             has_aux=True,
             validity=(None if problem.validity_function is None else model_validity),
+            trial_validity=problem.trial_validity_function,
+            trial_validity_id=problem.trial_validity_id,
             problem_id=f"{problem.problem_id}/mixed-precision",
         )
         if isinstance(method, (NewtonKrylov, NewtonTrustRegion)):

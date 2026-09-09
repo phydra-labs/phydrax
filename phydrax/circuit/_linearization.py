@@ -18,9 +18,10 @@ from ..control._descriptor_frequency import (
     DescriptorFrequencyResponse,
 )
 from ..dynamics._linear_descriptor import LinearDescriptorSystem
+from ..dynamics._system import AbstractInputPolicy
 from ..linalg import DenseLinearOperator
 from ..linalg.eigen import general_eigensolve, GeneralEigenproblem
-from ._dae import PreparedCircuitDAE
+from ._dae import _validate_input_policy, PreparedCircuitDAE
 
 
 class CircuitLinearizationResult(StrictModule):
@@ -47,9 +48,11 @@ def linearize_circuit(
     *,
     time: ArrayLike = 0.0,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
 ) -> CircuitLinearizationResult:
     if not isinstance(prepared_dae, PreparedCircuitDAE):
         raise TypeError("prepared_dae must be PreparedCircuitDAE.")
+    _validate_input_policy(prepared_dae, input_policy)
     value = jnp.asarray(state, dtype=float)
     if value.shape != (prepared_dae.plan.layout.size,):
         raise ValueError("Linearization state has the wrong shape.")
@@ -59,7 +62,14 @@ def linearize_circuit(
     zero_rate = jnp.zeros_like(value)
 
     def residual(current_state, current_rate):
-        return prepared_dae.system.evaluate(time_, current_state, current_rate, args)
+        inputs = (
+            None
+            if input_policy is None
+            else input_policy.evaluate(time_, current_state, args)
+        )
+        return prepared_dae.system.evaluate(
+            time_, current_state, current_rate, args, inputs=inputs
+        )
 
     state_jacobian, rate_jacobian = jax.jacfwd(residual, argnums=(0, 1))(value, zero_rate)
     operating_residual = residual(value, zero_rate)

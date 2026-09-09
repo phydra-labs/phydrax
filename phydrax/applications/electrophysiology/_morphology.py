@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import isfinite, pi
-from typing import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import TreeTopology
 from ...units import (
     CENTIMETER,
     conversion_factor as _unit_conversion_factor,
@@ -163,16 +164,16 @@ class CellMorphologyPlan(StrictModule, NonTrainableState):
                     f"{spec.parent_id!r}."
                 )
         by_id = {spec.compartment_id: spec for spec in specs}
+        connected = {roots[0]}
         for identifier in identifiers:
             visited: set[str] = set()
             current: str | None = identifier
-            while current is not None:
+            while current is not None and current not in connected:
                 if current in visited:
                     raise ValueError("Compartment parent relations must be acyclic.")
                 visited.add(current)
                 current = by_id[current].parent_id
-            if roots[0] not in visited:
-                raise ValueError("Every compartment must be connected to the root.")
+            connected.update(visited)
         branch_values = tuple(branches)
         if any(not isinstance(branch, BranchSpec) for branch in branch_values):
             raise TypeError("branches must contain only BranchSpec values.")
@@ -229,57 +230,32 @@ class PreparedCellMorphology(StrictModule, NonTrainableState):
     """Fixed-shape device morphology and reusable tree solve structure."""
 
     plan: CellMorphologyPlan
-    parent_index: Array
+    topology: TreeTopology
     membrane_area_um2: Array
     capacitance_nF: Array
     edge_conductance_uS: Array
-    axial_laplacian_uS: Array
-    elimination_order: Array
-    back_substitution_order: Array
-    root_index: int = eqx.field(static=True)
+    axial_diagonal_uS: Array
     runtime_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         plan: CellMorphologyPlan,
-        parent_index: Array,
+        topology: TreeTopology,
         membrane_area_um2: Array,
         capacitance_nF: Array,
         edge_conductance_uS: Array,
-        axial_laplacian_uS: Array,
-        elimination_order: Array,
-        back_substitution_order: Array,
+        axial_diagonal_uS: Array,
         /,
         *,
-        root_index: int,
         runtime_id: str,
     ):
         self.plan = plan
-        self.parent_index = parent_index
+        self.topology = topology
         self.membrane_area_um2 = membrane_area_um2
         self.capacitance_nF = capacitance_nF
         self.edge_conductance_uS = edge_conductance_uS
-        self.axial_laplacian_uS = axial_laplacian_uS
-        self.elimination_order = elimination_order
-        self.back_substitution_order = back_substitution_order
-        self.root_index = root_index
+        self.axial_diagonal_uS = axial_diagonal_uS
         self.runtime_id = runtime_id
-
-
-def _postorder(parent: np.ndarray, root: int, /) -> tuple[int, ...]:
-    children = tuple(
-        tuple(np.flatnonzero(parent == index).tolist()) for index in range(parent.size)
-    )
-    result: list[int] = []
-    stack: list[tuple[int, bool]] = [(root, False)]
-    while stack:
-        index, expanded = stack.pop()
-        if expanded:
-            result.append(index)
-            continue
-        stack.append((index, True))
-        stack.extend((child, False) for child in reversed(children[index]))
-    return tuple(result)
 
 
 def prepare_cell_morphology(plan: CellMorphologyPlan, /) -> PreparedCellMorphology:
@@ -295,7 +271,7 @@ def prepare_cell_morphology(plan: CellMorphologyPlan, /) -> PreparedCellMorpholo
         ],
         dtype=np.int32,
     )
-    root = int(np.flatnonzero(parent < 0)[0])
+    topology = TreeTopology(parent.tolist())
     capacitance_density_area = derived_unit(
         "uF/cm2*um2",
         ((MICROFARAD_PER_SQUARE_CENTIMETER, 1), (MICROMETER, 2)),
@@ -322,37 +298,31 @@ def prepare_cell_morphology(plan: CellMorphologyPlan, /) -> PreparedCellMorpholo
         / (pi * (0.5 * diameter * micrometer_to_centimeter) ** 2)
     )
     edge_conductance = np.zeros((count,), dtype=float)
-    laplacian = np.zeros((count, count), dtype=float)
+    axial_diagonal = np.zeros((count,), dtype=float)
     for child, parent_index in enumerate(parent.tolist()):
         if parent_index < 0:
             continue
         resistance = half_resistance[child] + half_resistance[parent_index]
         conductance = reciprocal_ohm_to_uS / resistance
         edge_conductance[child] = conductance
-        laplacian[child, child] += conductance
-        laplacian[parent_index, parent_index] += conductance
-        laplacian[child, parent_index] -= conductance
-        laplacian[parent_index, child] -= conductance
-    order = tuple(index for index in _postorder(parent, root) if index != root)
+        axial_diagonal[child] += conductance
+        axial_diagonal[parent_index] += conductance
     runtime_id = canonical_fingerprint(
         {
             "kind": "prepared-electrophysiology-morphology-v1",
             "plan": plan.plan_id,
             "parent_index": parent.tolist(),
-            "elimination_order": list(order),
+            "topology": topology.topology_id,
         }
     )
     dtype = jnp.asarray(0.0).dtype
     return PreparedCellMorphology(
         plan,
-        jnp.asarray(parent),
+        topology,
         jnp.asarray(area, dtype=dtype),
         jnp.asarray(capacitance, dtype=dtype),
         jnp.asarray(edge_conductance, dtype=dtype),
-        jnp.asarray(laplacian, dtype=dtype),
-        jnp.asarray(order, dtype=jnp.int32),
-        jnp.asarray(order[::-1], dtype=jnp.int32),
-        root_index=root,
+        jnp.asarray(axial_diagonal, dtype=dtype),
         runtime_id=runtime_id,
     )
 

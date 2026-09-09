@@ -6,6 +6,7 @@ Ownership is explicit:
 - :mod:`phydrax.nn.models` contains pointwise and structured finite-dimensional models.
 - :mod:`phydrax.nn.layers` contains reusable tensor-to-tensor layers.
 - :mod:`phydrax.nn.parameters` contains physical transforms, subspaces, selections, and adaptations.
+- :mod:`phydrax.nn.population` constructs physical population codes and diagnosed decoders.
 - :mod:`phydrax.nn.quantum` contains antisymmetric continuum-electron amplitudes.
 - :mod:`phydrax.nn.operator` contains operator data, engines, adapters, and runtime policy.
 """
@@ -19,6 +20,7 @@ from . import (
     neural_tangent,
     operator,
     parameters,
+    population,
     quantum,
 )
 
@@ -32,5 +34,6 @@ __all__ = [
     "models",
     "operator",
     "parameters",
+    "population",
     "quantum",
 ]

@@ -14,6 +14,26 @@ A benchmark notebook for the coupled 3-DOF spring-mass system in matrix form, wi
 
 - Public notebook: [spring-mass-ode](https://static.marimo.app/static/spring-mass-ode-xuq3)
 
+## Battery equation models and admission
+
+```text
+python examples/battery_simulation_and_optimization.py --development
+python examples/battery_circuit_ecm.py --development
+python examples/battery_spme.py --development
+```
+
+These scripts explicitly select unreleased development candidates. They execute
+native current/rest trajectories and check model status and conservation. The
+thermal ECM example also composes generic bounded optimization and re-executes
+the accepted current; that local check is not authenticated independent release
+replay. The SPMe example uses self-authored equation data, not fitted measurements.
+
+Circuit ECM and SPMe production mode requires externally retained signed deployment proofs,
+separately provisioned trust roots, and an executor-signed runtime byte
+attestation. Historical ECM artifacts cannot authorize the changed distribution.
+See [thermal ECM equations](../guides_battery.md) and
+[battery production admission](../guides_battery_production.md).
+
 ## Linear-quadratic feedback game
 
 ```text

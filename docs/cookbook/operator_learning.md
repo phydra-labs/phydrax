@@ -2225,3 +2225,22 @@ python -m tools.operator_benchmarks --uq --quick \
 
 The benchmark keeps calibration-case checksums and resolution, rollout, and
 source/query geometry shifts visible in JSON and Parquet artifacts.
+
+## Closure data to deployed operators
+
+`ClosureOperatorCase` aligns named closure inputs and targets through one
+`ClosureSampleKey`. `prepare_closure_operator_datasets(...)` validates the
+dataset manifest and analysis DAG, preserves the authoritative
+`LeakageSafePartition`, and writes case, trajectory, realization, time-block,
+target, and reference identities into `OperatorCaseProvenance`.
+
+Closure `TrainOnlyNormalizer` values are applied by the bridge. Fit the resulting
+datasets with `normalization=None`; stacking an `OperatorNormalizationPolicy`
+would change the deployment map. Add the returned preparation, manifest,
+partition, DAG, flow-schema, and normalizer IDs to the `TrainedOperator`
+provenance. `bind_trained_stress_operator(...)` checks those identities before a
+loaded operator may enter `LearnedStressBindingPlan`.
+
+The initial deployment adapter has one fixed feature input and fixed query
+geometry. Runtime conditioning must be represented by declared operator inputs,
+not hidden predictor arguments.

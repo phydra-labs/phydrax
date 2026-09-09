@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -72,6 +73,55 @@ def test_adaptive_bdf_accepts_certified_steps_and_lands_on_every_save_time():
         step_index = int(solution.step_history.save_step_indices[save_index])
         assert step_index >= 0
         assert solution.step_history.accepted_times[step_index] == grid.times[save_index]
+
+
+@pytest.mark.parametrize(
+    ("absolute", "relative"),
+    ((1e-3, 0.0), (0.0, 1e-2), (1e-12, 0.0)),
+)
+def test_adaptive_newton_stopping_respects_constraint_and_requested_tolerances(
+    absolute, relative
+):
+    system = phx.dynamics.DifferentialAlgebraicSystem(
+        lambda time, state, rate, args: jnp.asarray(
+            (rate[0] + state[0], state[1] - state[0] ** 2)
+        ),
+        state_shape=(2,),
+        structure=phx.dynamics.DAEStructure(("differential", "algebraic")),
+        system_id="adaptive-constraint-stopping",
+    )
+    problem = phx.solver.DifferentialAlgebraicProblem(system, jnp.ones(2))
+    times = jnp.asarray((0.0, 0.005, 0.01))
+    solution = phx.solver.solve_dae(
+        problem,
+        phx.dynamics.TimeGrid(times, time_id="adaptive-constraint-stopping"),
+        policy=phx.solver.DAESolvePolicy(
+            method=phx.solver.BDFMethod(2),
+            nonlinear_termination=phx.nonlinear.NonlinearTermination(
+                absolute_residual=absolute,
+                relative_residual=relative,
+                absolute_step=0.0,
+                relative_step=0.0,
+            ),
+            adaptive=phx.solver.DAEAdaptivePolicy(
+                initial_step=0.001,
+                relative_tolerance=1e-5,
+                absolute_tolerance=1e-7,
+                residual_tolerance=1e-7,
+                constraint_tolerance=1e-9,
+                maximum_accepted_steps=64,
+                maximum_attempts=128,
+            ),
+        ),
+    )
+    assert bool(solution.successful)
+    assert jnp.all(solution.constraint_norm <= 1e-9)
+    assert jnp.allclose(solution.states[:, 0], jnp.exp(-times), rtol=1e-5, atol=1e-7)
+    assert jnp.allclose(
+        solution.states[:, 1], jnp.exp(-2.0 * times), rtol=2e-5, atol=1e-7
+    )
+    if relative == 0.0:
+        assert jnp.all(solution.residual_norm <= min(absolute, 1e-7))
 
 
 def test_adaptive_error_control_excludes_algebraic_variables_but_certifies_constraints():
@@ -172,3 +222,33 @@ def test_adaptive_step_within_roundoff_of_save_boundary_is_snapped():
     assert solution.termination_status == int(phx.solver.DAETerminationStatus.SUCCESS)
     assert jnp.all(jnp.isin(grid.times[1:], accepted_times))
     assert jnp.min(solution.step_history.step_sizes[:count]) > 1e-6
+
+
+def test_adaptive_save_boundary_repartitions_avoidable_tiny_tail():
+    problem = _decay_problem(system_id="adaptive-save-partition")
+    grid = phx.dynamics.TimeGrid(
+        jnp.asarray((0.0, 0.016, 0.026)),
+        time_id="adaptive-save-partition",
+    )
+    policy = _adaptive_policy(
+        relative_tolerance=1e-3,
+        absolute_tolerance=1e-6,
+        initial_step=0.008,
+        accepted_growth_minimum=1.0,
+        accepted_growth_maximum=1.0,
+        maximum_accepted_steps=4,
+        maximum_attempts=8,
+    )
+
+    solution = phx.solver.solve_dae(problem, grid, policy=policy)
+    count = int(solution.step_history.count)
+
+    assert solution.successful
+    assert count == 3
+    assert jnp.allclose(
+        solution.step_history.accepted_times[:count],
+        jnp.asarray((0.008, 0.016, 0.026)),
+        rtol=0.0,
+        atol=1e-15,
+    )
+    assert solution.step_history.orders[count - 1] == 2

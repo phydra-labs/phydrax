@@ -6,6 +6,51 @@ semantics, masks, measures, and coord-separable axis metadata. Integration,
 stochastic ancestry resampling, and conservative state transfer likewise retain
 their own contracts.
 
+## Piecewise-linear array interpolation
+
+`InterpolationResult` and `linear_interpolate` are public from
+`phydrax.operators.interpolation`. The implementation remains in Phydrax's
+shared private numerical substrate:
+
+```python
+import jax.numpy as jnp
+
+from phydrax.operators.interpolation import InterpolationResult, linear_interpolate
+
+nodes = jnp.asarray([0.0, 1.0, 3.0])
+values = jnp.asarray([[0.0, 2.0, 8.0], [10.0, 12.0, 18.0]])
+result = linear_interpolate(nodes, values, jnp.asarray([0.5, 2.0]), axis=1)
+```
+
+The selected `axis` of `values` is the source-node axis and must have the same
+length as `nodes`. Query dimensions lead the result, followed by every payload
+dimension after the source axis is removed. `InterpolationResult.values`
+contains the interpolated payload and `InterpolationResult.support` has exactly
+the query shape.
+
+Boundary policy is explicit:
+
+- `bounds="clip"` evaluates at the nearest endpoint and marks the query
+  supported;
+- `bounds="extrapolate"` extends the first or final linear segment and marks the
+  query supported;
+- `bounds="fill"` returns `fill_value` and `support=False` outside the node
+  interval;
+- `bounds="error"` reports an out-of-interval query as a runtime error when the
+  result is materialized; it never silently clips.
+
+An optional source-node mask composes with boundary support. `mask_mode="strict"`
+marks a query unsupported if any material source weight is masked, while
+`"renormalize"` rescales the remaining nonzero weights. Unsupported values are
+replaced by `fill_value`; callers should retain the support mask rather than
+interpreting a numerical fill value as evidence of support.
+
+For `derivative_order=1`, each open segment returns its constant slope. At an
+exact interior knot, segment selection is right-sided, so both the explicit
+first derivative and the query-coordinate JVP use the slope of the segment to
+the knot's right. The lower and upper endpoint derivatives are the one-sided
+slopes of the first and final segments, respectively.
+
 ## Native reconstruction substrate
 
 Phydrax uses one private, JAX-native numerical substrate for deterministic

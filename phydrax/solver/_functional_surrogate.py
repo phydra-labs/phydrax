@@ -183,6 +183,7 @@ class PseudoTransientResidualTransform(StrictModule):
             residual_override=self.residual_override(params, residual, term),
         )
 
+
 class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
     source: DomainFunction
     gates: tuple[cx.Field, ...]
@@ -221,8 +222,7 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
         axis = event_positions[self.blocks.event_axis]
         pieces = self.blocks.split(value)
         scaled = tuple(
-            block
-            * cx.Field(jnp.sqrt(jnp.asarray(gate.data)), dims=gate.dims)
+            block * cx.Field(jnp.sqrt(jnp.asarray(gate.data)), dims=gate.dims)
             for block, gate in zip(
                 pieces,
                 self.gates if len(self.gates) > 1 else self.gates * len(pieces),
@@ -347,10 +347,7 @@ def _causal_gate_fields(score, coefficient, time, schedule, /):
         losses.append(numerator / support)
     gates = schedule.causal_weights(jnp.stack(tuple(losses)))
     multiplier = sum(
-        (
-            mask * jnp.asarray(gates[index])
-            for index, mask in enumerate(masks)
-        ),
+        (mask * jnp.asarray(gates[index]) for index, mask in enumerate(masks)),
         start=cx.Field(jnp.zeros_like(masks[0].data), dims=masks[0].dims),
     )
     return multiplier
@@ -373,7 +370,9 @@ def _prepare_causal_gates(residual, params, policies, inner, /):
         term = matching[0]
         batch = term.realization.batch
         if not isinstance(batch, PointIntegrationBatch):
-            raise TypeError("Causal residual training initially requires point integration.")
+            raise TypeError(
+                "Causal residual training initially requires point integration."
+            )
         time = batch.points[policy.time_label]
         if not isinstance(time, cx.Field) or any(
             dimension is None for dimension in time.dims
@@ -420,6 +419,7 @@ def _prepare_causal_gates(residual, params, policies, inner, /):
         prepared_gates.append((term.index, gates))
     return tuple(prepared_gates)
 
+
 class BalancedResidualTransform(StrictModule):
     inner: Any
     references: tuple[Any, ...]
@@ -448,9 +448,7 @@ class BalancedResidualTransform(StrictModule):
         scaled = []
         for block in blocks:
             multiplier = jnp.asarray(1.0, dtype=block.values.dtype)
-            for reference, value in zip(
-                self.references, self.multipliers, strict=True
-            ):
+            for reference, value in zip(self.references, self.multipliers, strict=True):
                 matches = reference.term_index == block.term_index and (
                     reference.block_name is None
                     or reference.block_name == block.block_name
@@ -471,9 +469,7 @@ class BalancedResidualTransform(StrictModule):
 
 
 def _tree_norm(tree, /) -> Array:
-    leaves = tuple(
-        leaf for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf)
-    )
+    leaves = tuple(leaf for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf))
     if not leaves:
         return jnp.asarray(0.0)
     return jnp.sqrt(
@@ -482,6 +478,7 @@ def _tree_norm(tree, /) -> Array:
             start=jnp.asarray(0.0),
         )
     )
+
 
 def _tree_inner(left, right, /) -> Array:
     left_leaves = tuple(
@@ -495,9 +492,7 @@ def _tree_inner(left, right, /) -> Array:
     return sum(
         (
             jnp.real(jnp.vdot(left_leaf, right_leaf))
-            for left_leaf, right_leaf in zip(
-                left_leaves, right_leaves, strict=True
-            )
+            for left_leaf, right_leaf in zip(left_leaves, right_leaves, strict=True)
         ),
         start=jnp.asarray(0.0),
     )
@@ -534,9 +529,7 @@ def _interstep_alignment(previous, current, /) -> Array:
         & (left_norm > 0.0)
         & (right_norm > 0.0)
     )
-    value = _tree_inner(previous, current) / jnp.where(
-        valid, left_norm * right_norm, 1.0
-    )
+    value = _tree_inner(previous, current) / jnp.where(valid, left_norm * right_norm, 1.0)
     return jnp.where(valid, value, jnp.nan)
 
 
@@ -572,10 +565,7 @@ def _gradient_balance_statistics(residual, params, references, /):
 def _residual_reference_available(layout, reference, /) -> bool:
     return any(
         entry.term_index == reference.term_index
-        and (
-            reference.block_name is None
-            or entry.block_name == reference.block_name
-        )
+        and (reference.block_name is None or entry.block_name == reference.block_name)
         for entry in layout.entries
     )
 
@@ -641,6 +631,7 @@ def _updated_balance_multipliers(
     updated = updated / jnp.mean(updated)
     return jax.lax.stop_gradient(updated), gradients, statistics
 
+
 def _functional_ntk_diagnostics(residual, params, policy, key, /):
     roots = residual.roots(params)
     ntk = prepare_empirical_ntk(
@@ -675,6 +666,7 @@ def _functional_ntk_diagnostic_values(diagnostics, /) -> dict[str, Array]:
         "ntk/finite": diagnostics.finite,
         "ntk/converged": diagnostics.converged,
     }
+
 
 class PreparedFunctionalUpdate(StrictModule):
     """Physical objective and immutable same-update optimizer surrogate."""
@@ -712,13 +704,11 @@ class PreparedFunctionalUpdate(StrictModule):
         self.pseudo_inverse_steps = tuple(
             jnp.asarray(value) for value in pseudo_inverse_steps
         )
-        self.term_multipliers = jnp.asarray(
-            term_multipliers, dtype=float
-        ).reshape((-1,))
+        self.term_multipliers = jnp.asarray(term_multipliers, dtype=float).reshape((-1,))
         self.block_gradients = tuple(block_gradients)
-        self.balance_statistics = jnp.asarray(
-            balance_statistics, dtype=float
-        ).reshape((-1,))
+        self.balance_statistics = jnp.asarray(balance_statistics, dtype=float).reshape(
+            (-1,)
+        )
         self.intra_gradient_alignment = jnp.asarray(intra_gradient_alignment)
         self.inter_gradient_alignment = jnp.asarray(inter_gradient_alignment)
         self.diagnostic_gradient = diagnostic_gradient
@@ -763,8 +753,8 @@ class PreparedFunctionalUpdate(StrictModule):
             surrogate,
             physical.term_values,
             physical.model_loss_values,
+            physical.component_values,
         )
-
 
 
 def _validate_pseudo_source(policy, term, /) -> None:
@@ -785,7 +775,9 @@ def _validate_pseudo_source(policy, term, /) -> None:
                 "Pseudo-time freshness='every_update' requires refresh_every=1."
             )
         return
-    raise TypeError("Pseudo-transient residual terms require a resampled integration source.")
+    raise TypeError(
+        "Pseudo-transient residual terms require a resampled integration source."
+    )
 
 
 def _block_squared_norms(blocks, names, /) -> Array:
@@ -859,12 +851,10 @@ def _adapt_pseudo_inverse_steps(
                 "Pseudo-time relaxation and residual block layouts must match."
             )
         if old_.ndim == 1 and (
-            relaxation_blocks is None
-            or int(old_.size) != relaxation_blocks.block_count
+            relaxation_blocks is None or int(old_.size) != relaxation_blocks.block_count
         ):
             raise ValueError(
-                "Vector pseudo-time inverse steps require one value per "
-                "relaxation block."
+                "Vector pseudo-time inverse steps require one value per relaxation block."
             )
         adaptation = policy.adaptation
         if adaptation is None or not adaptation.due(step):
@@ -913,6 +903,7 @@ def _adapt_pseudo_inverse_steps(
         smoothed = adaptation.momentum * old_ + (1.0 - adaptation.momentum) * candidate
         updated.append(jax.lax.stop_gradient(jnp.where(valid, smoothed, old_)))
     return tuple(updated)
+
 
 def prepare_functional_update(
     physical: _PreparedObjective,
@@ -999,9 +990,7 @@ def prepare_functional_update(
         if residual is None:
             raise ValueError("Functional term balancing requires residual terms.")
         if multipliers.size == 0:
-            multipliers = jnp.ones(
-                (len(training.term_balance.blocks),), dtype=float
-            )
+            multipliers = jnp.ones((len(training.term_balance.blocks),), dtype=float)
         step = int(jax.device_get(jnp.asarray(physical.iteration)).reshape(()))
         if training.term_balance.due(step):
             all_available = all(
@@ -1044,9 +1033,7 @@ def prepare_functional_update(
         and training.diagnostics is not None
         and training.diagnostics.gradient_alignment
     ):
-        diagnostic_step = int(
-            jax.device_get(jnp.asarray(physical.iteration)).reshape(())
-        )
+        diagnostic_step = int(jax.device_get(jnp.asarray(physical.iteration)).reshape(()))
         if training.diagnostics.due(diagnostic_step):
             if residual is None:
                 raise ValueError("Gradient alignment requires residual terms.")
@@ -1064,14 +1051,10 @@ def prepare_functional_update(
             )
             gradients = block_gradients
             if not gradients:
-                gradients, _ = _gradient_balance_statistics(
-                    residual, params, references
-                )
+                gradients, _ = _gradient_balance_statistics(residual, params, references)
             intra_alignment = _gradient_alignment(gradients)
             diagnostic_gradient = eqx.filter_grad(residual.loss)(params)
-            inter_alignment = _interstep_alignment(
-                previous_gradient, diagnostic_gradient
-            )
+            inter_alignment = _interstep_alignment(previous_gradient, diagnostic_gradient)
     return PreparedFunctionalUpdate(
         physical,
         residual,

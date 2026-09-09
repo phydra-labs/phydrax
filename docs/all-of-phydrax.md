@@ -1963,3 +1963,20 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   stochastic games, constrained equilibria, and mean-field/finite-state references.
 - `phydrax.solver` for training, differential, delay/memory, rough, stochastic,
   controlled, probabilistic, and geometry-preserving equation solvers.
+
+## Physics-learning composition
+
+Phydrax composes learned and numerical owners without a parallel framework.
+Closure manifests and leakage-safe partitions become operator datasets through
+`prepare_closure_operator_datasets`, then loaded artifacts bind back to learned
+stress only after provenance checks. `fit_discrete_model` accepts explicit
+rollout transitions so model outputs can act inside periodic SSPRK or MAC
+pressure-projected dynamics.
+
+`ConflictFreeGradientPolicy` composes named objective gradients from one
+prepared stochastic realization. `ProgressiveLinearRefinementPolicy` controls a
+training-only native Krylov budget from fixed validation while preserving
+full-fidelity selection. `PhysicsFlowMatchingTerm` adds a differentiably
+unrolled terminal functional to flow matching. Learned particle exchanges use
+the existing pair relation and scatter substrate to guarantee only their
+constructed conservation laws.

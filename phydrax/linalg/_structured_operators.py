@@ -42,6 +42,7 @@ from ._spaces import (
     ArraySpace,
     BlockSpace,
 )
+from ._tree import TreeLinearOperator
 
 
 def _same(left: AbstractVectorSpace, right: AbstractVectorSpace, /) -> None:
@@ -1886,6 +1887,7 @@ def _is_structured_exact(operator: AbstractLinearOperator, /) -> bool:
             PermutationLinearOperator,
             TriangularLinearOperator,
             TridiagonalLinearOperator,
+            TreeLinearOperator,
             DiagonalPlusLowRankLinearOperator,
             TransformDiagonalLinearOperator,
         ),

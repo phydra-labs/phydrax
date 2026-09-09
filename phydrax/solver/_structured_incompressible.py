@@ -30,6 +30,7 @@ from ..linalg import (
     DifferentiationPolicy,
     FGMRES,
     FunctionLinearOperator,
+    LinearSolveControl,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
@@ -119,6 +120,9 @@ class MACPressureProjectionResult(StrictModule):
     velocity: FaceVelocity
     pressure: Array
     pressure_increment: Array
+    candidate_velocity: FaceVelocity
+    candidate_pressure: Array
+    candidate_pressure_increment: Array
     divergence_before: Array
     divergence_after: Array
     pressure_residual: Array
@@ -144,6 +148,8 @@ class MACRateProjectionResult(StrictModule):
 
     rate: FaceVelocity
     pressure: Array
+    candidate_rate: FaceVelocity
+    candidate_pressure: Array
     divergence_before: Array
     divergence_after: Array
     pressure_residual: Array
@@ -683,7 +689,10 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         pressure: ArrayLike | None = None,
         inverse_momentum_diagonal: ArrayLike | None = None,
         boundary_stage: MACBoundaryStageData | None = None,
+        control: LinearSolveControl | None = None,
     ) -> MACPressureProjectionResult:
+        if control is not None and not isinstance(control, LinearSolveControl):
+            raise TypeError("control must be a LinearSolveControl or None.")
         stage = self._stage(boundary_stage)
         values = self.operators.validate_velocity(velocity)
         dtype = self.operators.pressure_space.dtype
@@ -739,7 +748,14 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         active_hybrid_plan = self.hybrid_plan
         active_hybrid_defect = self.hybrid_action_defect
         direct_scale = step / self.density
-        if inverse_momentum_diagonal is not None:
+        if inverse_momentum_diagonal is not None and self.solve_method == "iterative":
+            route = "iterative"
+            route_reason = (
+                "FGMRES selected for stabilized nonsymmetric traction"
+                if self.nonsymmetric_traction
+                else "PCG selected for general positive beta"
+            )
+        elif inverse_momentum_diagonal is not None:
             coefficient_host = np.asarray(inverse)
             coefficient_scale = max(1.0, float(np.max(np.abs(coefficient_host))))
             coefficient_constant = bool(
@@ -799,6 +815,10 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
                     if self.nonsymmetric_traction
                     else "PCG selected for general positive beta"
                 )
+        if control is not None and route != "iterative":
+            raise ValueError(
+                "LinearSolveControl is only valid for iterative MAC pressure routes."
+            )
         if route == "transform":
             transform = self.transform_plan.solve(rhs / direct_scale)
             solution_candidate = (
@@ -836,7 +856,12 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             )
             problem = LinearSystem(pressure_operator, problem_id=self.pressure_problem_id)
             prepared = refresh(self.prepared_linear, problem)
-            linear = solve(prepared, rhs, initial_guess=incoming_pressure)
+            linear = solve(
+                prepared,
+                rhs,
+                initial_guess=incoming_pressure,
+                control=control,
+            )
             solution_candidate = linear.value
             if self.closure_kind == "neumann":
                 solution_candidate = self.operators.gauge_project(solution_candidate)
@@ -920,6 +945,9 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             velocity=corrected,
             pressure=pressure_value,
             pressure_increment=increment,
+            candidate_velocity=corrected_candidate,
+            candidate_pressure=pressure_candidate,
+            candidate_pressure_increment=increment_candidate,
             divergence_before=divergence_before,
             divergence_after=divergence_after,
             pressure_residual=residual,
@@ -946,12 +974,20 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         /,
         *,
         boundary_stage: MACBoundaryStageData | None = None,
+        control: LinearSolveControl | None = None,
     ) -> MACRateProjectionResult:
         """Project one face-velocity rate without changing essential normal faces."""
-        projected = self.project(rate, 1.0, boundary_stage=boundary_stage)
+        projected = self.project(
+            rate,
+            1.0,
+            boundary_stage=boundary_stage,
+            control=control,
+        )
         return MACRateProjectionResult(
             rate=projected.velocity,
             pressure=projected.pressure_increment,
+            candidate_rate=projected.candidate_velocity,
+            candidate_pressure=projected.candidate_pressure_increment,
             divergence_before=projected.divergence_before,
             divergence_after=projected.divergence_after,
             pressure_residual=projected.pressure_residual,

@@ -401,7 +401,7 @@ def _criterion_and_metric(
 
     metric = _identified("qualification-observation", metric_fields, "metric_id")
     criterion = _identified(
-        "qualification-criterion",
+        "commercial-route-criterion",
         {
             "name": definition.name,
             "category": definition.category,
@@ -604,6 +604,8 @@ def make_candidate_artifact(
             raw_artifact_ids=tuple(
                 str(metrics[name]["metric_id"]) for name in category_names
             ),
+            campaign_start_record_ids=(),
+            campaign_observation_record_ids=(),
             reviewer_id=str(context["reviewer_id"]),
             issued_at=int(context["issued_at"]),
             expires_at=int(context["expires_at"]),
@@ -758,7 +760,8 @@ def verify_candidate_artifact(record: Mapping[str, object], /) -> None:
         _verify_address(criterion, "criterion_id", "Qualification criterion")
         criterion_ids[str(name)] = str(criterion["criterion_id"])
         if (
-            criterion.get("name") != name
+            criterion.get("kind") != "commercial-route-criterion"
+            or criterion.get("name") != name
             or criterion.get("category") not in GATE_CATEGORIES
         ):
             raise ValueError(

@@ -2177,3 +2177,21 @@ optimization-gradient claim.
 ---
 
 ::: phydrax.optim.threshold_density
+
+## Multi-objective gradient composition
+
+::: phydrax.optim.ConflictFreeGradientPolicy
+
+---
+
+::: phydrax.optim.ConflictFreeGradientResult
+
+---
+
+::: phydrax.optim.conflict_free_gradient
+
+The implementation uses the real Hilbert pairing of congruent real or complex
+parameter PyTrees and a small rank-aware objective-space pseudoinverse. It
+records norms, cosine matrix, rank, condition estimate, conflicts, and final
+projections. Rank deficiency is not automatically failure: identical gradients
+remain feasible, while opposite gradients fail their projection check.

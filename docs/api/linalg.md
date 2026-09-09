@@ -293,7 +293,7 @@ before any numeric setup runs.
 
 | Method | Provider | Main contract |
 | --- | --- | --- |
-| `StructuredDirect` | `jax-structured` | Recognized exact diagonal, triangular, tridiagonal, banded, block-diagonal, Kronecker, or diagonal-plus-low-rank structure; any dense fallback is included in materialization and resource checks |
+| `StructuredDirect` | `jax-structured` | Recognized exact diagonal, triangular, tridiagonal, rooted-tree, banded, block-diagonal, Kronecker, or diagonal-plus-low-rank structure; any dense fallback is included in materialization and resource checks |
 | `DenseLU`, `DenseCholesky`, `DenseQR`, `DenseSVD` | `jax-dense` | Explicitly materializable operators within entry, byte, factor, and workspace budgets |
 | `SparseQR(provider="jax-cuda")` | `jax-sparse` | Canonical unbatched CSR square system on CUDA through native JAX sparse QR |
 | `SparseLDLT(provider="spineax-cudss")` | `spineax-cudss` | Optional Linux x86-64 CUDA 13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
@@ -308,6 +308,22 @@ their factor transformation to be Euclidean or coordinate-diagonal. The Lineax
 adapter has the same metric restriction. Auto planning routes general pairings
 to dense LU when materialization is feasible, or to native `FGMRES` and
 `GeneralizedLSMR` otherwise.
+
+`TreeTopology(parent_index)` prepares one rooted tree and its elimination order.
+`TreeLinearOperator(diagonal, lower, upper, topology)` stores linear-size
+coefficients; for each nonroot child, `lower[child]` is the child-parent entry
+and `upper[child]` the parent-child entry. Structured direct execution performs
+postorder elimination and back substitution for vectors or shared multiple
+right-hand sides. Transpose solving swaps edge directions without materializing
+a matrix, and mathematical implicit JVP/VJP actions reuse the same tree solves.
+Nonfinite or numerically unusable reduced pivots fail closed; there is no hidden
+perturbation or dense pivoting fallback.
+
+::: phydrax.linalg.TreeTopology
+
+---
+
+::: phydrax.linalg.TreeLinearOperator
 
 `DiagonalPlusLowRankLinearOperator(..., nonsingular_diagonal=True)` validates
 the declared diagonal as finite and nonzero and lets planning budget only the

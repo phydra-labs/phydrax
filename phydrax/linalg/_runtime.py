@@ -48,6 +48,7 @@ from ._results import (
 )
 from ._spaces import _coordinate_dtype, RHSLayout
 from ._subspaces import KernelCertificate, LinearSubspace, NullspacePolicy
+from ._tree import _implicit_tree_value, _prepare_tree, TreeLinearOperator
 from .backends._jax_dense import (
     DenseBackendOutput,
     DenseCholeskyState,
@@ -1683,6 +1684,15 @@ def _implicit_root_value(
 ) -> Array:
     if isinstance(problem, MinimumNormProblem):
         return _implicit_minimum_norm_value(prepared, problem, rhs, initial)
+    if isinstance(problem, LinearSystem) and isinstance(
+        problem.operator, TreeLinearOperator
+    ):
+        factor = (
+            prepared.state.prepared
+            if prepared.plan.backend == "jax-structured"
+            else _prepare_tree(problem.operator)
+        )
+        return _implicit_tree_value(problem.operator, rhs, initial, factor)
     initial = jax.lax.stop_gradient(initial)
     if isinstance(problem, LinearSystem):
 

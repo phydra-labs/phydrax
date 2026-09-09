@@ -43,6 +43,12 @@ class _LinearField(eqx.Module):
         return self.matrix @ state + self.shift
 
 
+class _EndpointVelocity(eqx.Module):
+    def __call__(self, state, time):
+        del time
+        return state
+
+
 def _timings(function, arguments, *, repetitions: int):
     jitted = eqx.filter_jit(function)
     compiled, compilation = measure_lower_and_compile(
@@ -185,6 +191,82 @@ def benchmark_translation_case(
     }
 
 
+def benchmark_endpoint_physics_case(*, repetitions: int) -> dict[str, Any]:
+    state_domain = phx.domain.HyperRectangle(
+        jnp.asarray((-10.0,)),
+        jnp.asarray((10.0,)),
+        label="x",
+    )
+    domain = state_domain @ phx.domain.TimeInterval(0.0, 1.0)
+    velocity = domain.Function("x", "t")(_EndpointVelocity())
+    endpoints = phx.transport.EndpointCouplingSample(
+        source=jnp.ones((1, 1)),
+        target=jnp.full((1, 1), jnp.e),
+        source_indices=jnp.zeros((1,), dtype=jnp.int32),
+        target_indices=jnp.zeros((1,), dtype=jnp.int32),
+        valid=jnp.ones((1,), dtype=bool),
+        log_weights=jnp.zeros((1,)),
+        context={"desired": jnp.full((1, 1), jnp.e)},
+        coupling_id="benchmark-exponential-endpoint",
+        provenance="analytic",
+    )
+    interpolant = phx.transport.LinearEndpointInterpolant((1,))
+    functional = phx.terms.CallableFlowEndpointFunctional(
+        lambda value, context: jnp.sum(jnp.square(value - context["desired"])),
+        event_shape=(1,),
+        functional_id="analytic-exponential-endpoint-error",
+    )
+    batch = phx.terms.FlowMatchingBatch(
+        state=jnp.ones((1, 1)),
+        time=jnp.zeros((1,)),
+        target_velocity=jnp.zeros((1, 1)),
+        valid=jnp.ones((1,), dtype=bool),
+        log_weights=jnp.zeros((1,)),
+        context={"desired": jnp.full((1, 1), jnp.e)},
+        evaluation_key=jr.key(91),
+        source_indices=jnp.zeros((1,), dtype=jnp.int32),
+        target_indices=jnp.zeros((1,), dtype=jnp.int32),
+        interpolant_id=interpolant.interpolant_id,
+        coupling_id=endpoints.coupling_id,
+        policy_id="analytic-time-zero",
+        batch_id="analytic-exponential-endpoint",
+    )
+
+    def term(steps):
+        return phx.terms.PhysicsFlowMatchingTerm(
+            "velocity",
+            endpoints,
+            interpolant,
+            functional,
+            phx.terms.FlowEndpointRolloutPolicy(steps, rematerialize=steps > 1),
+        )
+
+    def physics_objective(current, function, materialized):
+        return current.objective_components(
+            {"velocity": function},
+            batch=materialized,
+        )[1]
+
+    one_value, one_timing = _timings(
+        physics_objective,
+        (term(1), velocity, batch),
+        repetitions=repetitions,
+    )
+    four_value, four_timing = _timings(
+        physics_objective,
+        (term(4), velocity, batch),
+        repetitions=repetitions,
+    )
+    return {
+        "case": "terminal-physics-euler-refinement",
+        "one_step_endpoint_energy": float(one_value),
+        "four_step_endpoint_energy": float(four_value),
+        "one_step_timing": one_timing,
+        "four_step_timing": four_timing,
+        "refinement_reduced_error": bool(four_value < one_value),
+    }
+
+
 def run_continuous_transport_benchmarks(*, quick: bool = False) -> dict[str, Any]:
     dimensions = (2,) if quick else (2, 8, 16)
     sample_count = 8 if quick else 128
@@ -207,6 +289,7 @@ def run_continuous_transport_benchmarks(*, quick: bool = False) -> dict[str, Any
                 seed=20260852 + index,
             )
         )
+    cases.append(benchmark_endpoint_physics_case(repetitions=repetitions))
     return {
         "schema": "phydrax-continuous-transport-benchmark-v1",
         "backend": jax.default_backend(),
