@@ -43,3 +43,7 @@ The namespace exports canonical definitions for the SI/coherent base and the
 physical units used by current PhydraX domains. Text aliases are resolved only
 by explicit domain adapters; there is no global runtime registry or expression
 parser.
+
+Nuclear and magnetic applications additionally export exact `BARN`,
+`BECQUEREL`, `KILOELECTRONVOLT`, `MEGAELECTRONVOLT`, `WEBER`, `TESLA`, and
+`HENRY` definitions.

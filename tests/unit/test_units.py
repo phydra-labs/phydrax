@@ -66,6 +66,23 @@ def test_unit_conversion_is_exact_and_differentiable():
     assert float(jax.grad(convert)(jnp.asarray(2.0))) == 1000.0
 
 
+def test_nuclear_and_magnetic_units_have_exact_si_semantics():
+    square_meter = phx.units.derived_unit("m2-fixture", ((phx.units.METER, 2),))
+    assert phx.units.conversion_factor(phx.units.BARN, square_meter) == Fraction(
+        1, 10**28
+    )
+    assert phx.units.conversion_factor(
+        phx.units.KILOELECTRONVOLT, phx.units.ELECTRONVOLT
+    ) == Fraction(1000)
+    assert phx.units.conversion_factor(
+        phx.units.MEGAELECTRONVOLT, phx.units.ELECTRONVOLT
+    ) == Fraction(1_000_000)
+    assert phx.units.BECQUEREL.dimension == phx.units.FREQUENCY
+    assert phx.units.WEBER.dimension == phx.units.VOLTAGE * phx.units.TIME
+    assert phx.units.TESLA.dimension == phx.units.WEBER.dimension / phx.units.AREA
+    assert phx.units.HENRY.dimension == phx.units.WEBER.dimension / phx.units.CURRENT
+
+
 def test_unit_conversion_rejects_dimension_and_reference_mismatches():
     with pytest.raises(ValueError, match="matching dimensions"):
         phx.units.conversion_factor(phx.units.METER, phx.units.SECOND)
