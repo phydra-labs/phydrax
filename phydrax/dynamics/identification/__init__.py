@@ -46,6 +46,11 @@ from ._implicit import (
     ImplicitSINDyResult,
     PolynomialImplicitFeatureLibrary,
 )
+from ._linear_refinement import (
+    ProgressiveLinearRefinementPolicy,
+    ProgressiveLinearRefinementRecord,
+    ProgressiveLinearRefinementState,
+)
 from ._markov_state import (
     fit_markov_state_model,
     MarkovStateDiagnostics,
@@ -61,6 +66,11 @@ from ._neural import (
     ResidualDiscreteModelObjective,
     SupervisedDiscreteModelObjective,
     TargetDiscreteModelObjective,
+)
+from ._neural_transition import (
+    AbstractDiscreteModelRolloutTransition,
+    DirectDiscreteModelRolloutTransition,
+    DiscreteModelRolloutTransitionResult,
 )
 from ._pde import (
     AbstractPDEDerivative,
@@ -156,6 +166,7 @@ from ._variational_training import (
 
 
 __all__ = [
+    "AbstractDiscreteModelRolloutTransition",
     "AbstractImplicitFeatureLibrary",
     "AbstractPDEDerivative",
     "AbstractPDEFeatureLibrary",
@@ -173,6 +184,8 @@ __all__ = [
     "DiscreteSINDyFormulation",
     "DiscreteModelFitHistory",
     "DiscreteModelFitResult",
+    "DirectDiscreteModelRolloutTransition",
+    "DiscreteModelRolloutTransitionResult",
     "DiscreteModelRolloutPolicy",
     "DiscreteModelValidationPolicy",
     "DerivativeEstimate",
@@ -216,6 +229,9 @@ __all__ = [
     "PolynomialFeatureLibrary",
     "TensorProductFeatureLibrary",
     "SequentialThresholdedLeastSquares",
+    "ProgressiveLinearRefinementPolicy",
+    "ProgressiveLinearRefinementRecord",
+    "ProgressiveLinearRefinementState",
     "SINDyDesign",
     "SINDyDesignDiagnostics",
     "SINDyFormulationKind",

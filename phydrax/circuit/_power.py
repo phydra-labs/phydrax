@@ -14,8 +14,9 @@ from jaxtyping import Array, ArrayLike
 from opt_einsum import contract
 
 from .._strict import StrictModule
+from ..dynamics._system import AbstractInputPolicy
 from ._components import Capacitor, Inductor, Resistor
-from ._dae import PreparedCircuitDAE
+from ._dae import _validate_input_policy, PreparedCircuitDAE
 from ._elements import (
     AbstractCircuitEnergyLaw,
     CircuitElement,
@@ -449,12 +450,14 @@ def evaluate_circuit_energy_ledger(
     /,
     *,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
     port_currents: ArrayLike | None = None,
     closure_tolerance: float = 1e-7,
 ) -> CircuitEnergyLedger:
     """Evaluate passive storage/dissipation and separately signed source power."""
     if not isinstance(prepared, PreparedCircuitDAE):
         raise TypeError("prepared must be PreparedCircuitDAE.")
+    _validate_input_policy(prepared, input_policy)
     time_values = jnp.asarray(times, dtype=float)
     state_values = jnp.asarray(states)
     rate_values = jnp.asarray(state_rates)
@@ -504,8 +507,6 @@ def evaluate_circuit_energy_ledger(
             )
         if jnp.iscomplexobj(current_values):
             raise TypeError("Transient port currents must be real.")
-    inputs = args["inputs"] if isinstance(args, dict) and "inputs" in args else None
-    law_args = args["args"] if isinstance(args, dict) and "args" in args else args
     stored_samples: list[Array] = []
     stored_rate_samples: list[Array] = []
     dissipation_samples: list[Array] = []
@@ -514,12 +515,16 @@ def evaluate_circuit_energy_ledger(
     for time, state, state_rate, port_current in zip(
         time_values, state_values, rate_values, current_values, strict=True
     ):
+        inputs = (
+            None if input_policy is None else input_policy.evaluate(time, state, args)
+        )
         evaluations = []
         terminal_voltages = []
         terminal_voltage_rates = []
-        for instance, law, (start, stop) in zip(
+        for instance, law, binding, (start, stop) in zip(
             circuit.instances,
             prepared.plan.laws,
+            prepared.plan.input_bindings,
             layout.auxiliary_ranges,
             strict=True,
         ):
@@ -535,8 +540,8 @@ def evaluate_circuit_energy_ledger(
                 voltage_rate,
                 state[start:stop],
                 state_rate[start:stop],
-                inputs,
-                law_args,
+                binding.select(inputs, state.dtype),
+                args,
             )
             terminal_voltages.append(voltage)
             terminal_voltage_rates.append(voltage_rate)
@@ -551,19 +556,19 @@ def evaluate_circuit_energy_ledger(
             local_state = state[start:stop]
             local_state_rate = state_rate[start:stop]
             stored = jnp.asarray(
-                energy_law.stored_energy(voltage, local_state, args=law_args)
+                energy_law.stored_energy(voltage, local_state, args=args)
             )
             dissipated = jnp.asarray(
                 energy_law.dissipated_power(
                     voltage,
                     evaluations[index].terminal_currents,
                     local_state,
-                    args=law_args,
+                    args=args,
                 )
             )
             _, stored_rate = jax.jvp(
                 lambda terminal, local: energy_law.stored_energy(
-                    terminal, local, args=law_args
+                    terminal, local, args=args
                 ),
                 (voltage, local_state),
                 (voltage_rate, local_state_rate),
@@ -746,6 +751,7 @@ def evaluate_harmonic_balance_energy_ledger(
     /,
     *,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
     port_currents: ArrayLike | None = None,
     closure_tolerance: float = 1e-7,
 ) -> CircuitPeriodicEnergyLedger:
@@ -764,6 +770,7 @@ def evaluate_harmonic_balance_energy_ledger(
         result.waveform,
         rates,
         args=args,
+        input_policy=input_policy,
         port_currents=port_currents,
         closure_tolerance=closure_tolerance,
     )

@@ -504,3 +504,20 @@ size and provenance, dual residuals, integration and transport statuses, replay
 equality, support-gradient cost, and result memory. The Schrödinger bridge harness
 reports exact solve and keyed-sampling timings, endpoint residual, path KL, empirical
 marginal residual, convergence, and reference-process provenance.
+
+## Terminal physical objectives for learned flows
+
+`PhysicsFlowMatchingTerm` keeps generative interpolation time distinct from any
+physical time carried in endpoint context. One endpoint/time realization feeds
+both velocity regression and terminal physics. A fixed Euler rollout with
+optional rematerialization reconstructs the terminal estimate; inference
+transport remains owned by `ContinuousTransport` and `DiffraxEvolution`.
+
+The endpoint functional owns its physical quadrature and reduction. It must
+return one finite nonnegative energy per valid pair. Report the velocity loss,
+endpoint energy, distributional score, terminal step count, model evaluations,
+and runtime separately; no single scalar demonstrates both physical and
+distributional fidelity.
+
+Run `python tools/continuous_transport_benchmarks.py --quick` for the analytic
+terminal-refinement case alongside the existing transport benchmarks.

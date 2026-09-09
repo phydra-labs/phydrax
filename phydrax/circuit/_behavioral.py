@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Mapping, Sequence
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -130,7 +130,9 @@ class BehavioralCurrentLaw(AbstractImplicitCircuitLaw):
         self.state_layout = CircuitElementStateLayout()
         self.law_id = identifier
 
-    def _value(self, time: Array, voltage: Array, inputs: Any, /) -> Array:
+    def _value(self, time: Array, voltage: Array, inputs: Array, /) -> Array:
+        if inputs.shape != (len(self.input_names),):
+            raise ValueError("Behavioral law inputs must match its declared input_names.")
         stack: list[Array] = []
         parameter_map = dict(
             zip(self.parameter_names, self.parameter_values, strict=True)
@@ -147,10 +149,7 @@ class BehavioralCurrentLaw(AbstractImplicitCircuitLaw):
                 elif name.startswith("p_"):
                     stack.append(parameter_map[name[2:]])
                 else:
-                    input_name = name[2:]
-                    if not isinstance(inputs, dict) or input_name not in inputs:
-                        raise ValueError(f"Behavioral law requires input {input_name!r}.")
-                    stack.append(jnp.asarray(inputs[input_name]))
+                    stack.append(inputs[self.input_names.index(name[2:])])
             elif operation in ("positive", "negative"):
                 value = stack.pop()
                 stack.append(value if operation == "positive" else -value)

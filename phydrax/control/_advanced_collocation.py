@@ -21,7 +21,7 @@ from .._trainable import NonTrainableState
 from ..metrix import AbstractStateGeometry
 from ..solver._dae_events import DAEResetMap
 from ..solver._hybrid_event import HybridEventTape
-from ..solver._hybrid_schedule import ScheduledHybridEvent
+from ..solver._hybrid_schedule import ScheduledHybridGuard
 from ..solver._radau_iia import RadauIIAMethod
 from ._direct_collocation import (
     DirectCollocationBounds,
@@ -140,7 +140,7 @@ class DirectCollocationLink(StrictModule, NonTrainableState):
     residual: Callable[[Array, Array, Any], Array]
     lower: Array
     upper: Array
-    event: ScheduledHybridEvent | None
+    event: ScheduledHybridGuard | None
     dae_reset: DAEResetMap | None
     link_id: str = eqx.field(static=True)
 
@@ -152,7 +152,7 @@ class DirectCollocationLink(StrictModule, NonTrainableState):
         bounds: tuple[ArrayLike, ArrayLike],
         /,
         *,
-        event: ScheduledHybridEvent | None = None,
+        event: ScheduledHybridGuard | None = None,
         dae_reset: DAEResetMap | None = None,
         link_id: str,
     ):
@@ -164,8 +164,8 @@ class DirectCollocationLink(StrictModule, NonTrainableState):
         if (event is None) != (dae_reset is None):
             if dae_reset is not None:
                 raise ValueError("A DAE reset requires a scheduled event link.")
-        if event is not None and not isinstance(event, ScheduledHybridEvent):
-            raise TypeError("event must be a ScheduledHybridEvent or None.")
+        if event is not None and not isinstance(event, ScheduledHybridGuard):
+            raise TypeError("event must be a ScheduledHybridGuard or None.")
         self.left_phase = int(left_phase)
         self.right_phase = int(right_phase)
         self.residual = residual

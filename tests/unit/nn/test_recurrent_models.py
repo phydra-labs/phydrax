@@ -6,12 +6,13 @@ import pytest
 
 from phydrax.nn.layers import (
     AbstractTimeAwareRecurrentCell,
+    CfCCell,
     GRUCell,
     LSTMCell,
     RecurrentBatch,
     RNNCell,
-    StackedRecurrentCell,
     run_recurrent,
+    StackedRecurrentCell,
 )
 from phydrax.nn.models import (
     BidirectionalRecurrentSequenceModel,
@@ -161,3 +162,196 @@ def test_recurrent_models_are_vmappable_differentiable_and_support_final_readout
         lambda values: jnp.sum(sequence_model(RecurrentBatch(values, valid)) ** 2)
     )(inputs[0])
     assert jnp.all(jnp.isfinite(gradient))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "exception", "message"),
+    (
+        ({"backbone_depth": -1}, ValueError, "nonnegative integer"),
+        ({"backbone_depth": 1.5}, ValueError, "nonnegative integer"),
+        (
+            {"backbone_depth": 0, "backbone_width": 4},
+            ValueError,
+            "must be None",
+        ),
+        ({"backbone_width": 0}, ValueError, "positive integer"),
+        ({"activation": None}, TypeError, "callable"),
+        ({"dtype": jnp.complex64}, TypeError, "real floating"),
+    ),
+)
+def test_cfc_cell_rejects_invalid_construction(kwargs, exception, message):
+    with pytest.raises(exception, match=message):
+        CfCCell(2, 3, **kwargs, key=jr.key(13))
+
+
+def test_cfc_cell_matches_full_gated_event_equation():
+    cell = CfCCell(2, 2, backbone_depth=0, dtype=jnp.float64, key=jr.key(13))
+    candidate_weight = jnp.asarray(
+        (
+            ((0.2, -0.1, 0.3, 0.4), (-0.3, 0.2, 0.1, -0.2)),
+            ((-0.1, 0.5, -0.2, 0.3), (0.4, -0.2, 0.2, 0.1)),
+        ),
+        dtype=jnp.float64,
+    )
+    candidate_bias = jnp.asarray(((0.1, -0.2), (0.05, 0.3)))
+    time_weight = jnp.asarray(
+        (
+            ((0.3, 0.2, -0.1, 0.4), (-0.2, 0.1, 0.5, -0.3)),
+            ((-0.4, 0.2, 0.3, 0.1), (0.1, -0.5, 0.2, 0.4)),
+        ),
+        dtype=jnp.float64,
+    )
+    time_bias = jnp.asarray(((0.2, -0.1), (-0.3, 0.25)))
+    cell = eqx.tree_at(
+        lambda current: (
+            current.candidate_weight,
+            current.candidate_bias,
+            current.time_weight,
+            current.time_bias,
+        ),
+        cell,
+        (candidate_weight, candidate_bias, time_weight, time_bias),
+    )
+    inputs = jnp.asarray(((0.2, -0.4), (0.1, 0.3)))
+    state = jnp.asarray(((0.5, -0.1), (-0.2, 0.4)))
+    interval = jnp.asarray((0.0, 1.5))
+
+    next_state, output = cell.step_with_context(
+        state,
+        inputs,
+        time=jnp.asarray((2.0, 9.0)),
+        interval=interval,
+    )
+    features = jnp.concatenate((inputs, state), axis=-1)
+    candidates = jnp.tanh(
+        jnp.einsum("koi,...i->...ko", candidate_weight, features) + candidate_bias
+    )
+    time_parameters = jnp.einsum("koi,...i->...ko", time_weight, features) + time_bias
+    gate = jax.nn.sigmoid(
+        time_parameters[..., 0, :] * interval[..., None] + time_parameters[..., 1, :]
+    )
+    expected = candidates[..., 0, :] * (1.0 - gate) + candidates[..., 1, :] * gate
+
+    assert jnp.allclose(next_state, expected)
+    assert jnp.array_equal(output, next_state)
+    assert not jnp.allclose(next_state[0], state[0])
+    assert jnp.all(jnp.abs(next_state) <= 1.0)
+
+    regular, _ = cell.step(state, inputs)
+    physical_unit, _ = cell.step_with_context(
+        state,
+        inputs,
+        time=jnp.asarray((20.0, -7.0)),
+        interval=jnp.ones((2,)),
+    )
+    assert jnp.allclose(regular, physical_unit)
+
+
+def test_cfc_sequence_is_jittable_differentiable_and_respects_packing():
+    cell = CfCCell(
+        2,
+        3,
+        backbone_width=4,
+        backbone_depth=2,
+        dtype=jnp.float64,
+        key=jr.key(14),
+    )
+    inputs = jr.normal(jr.key(15), (2, 5, 2), dtype=jnp.float64)
+    valid = jnp.asarray(
+        ((True, True, True, False, False), (True, True, True, True, True))
+    )
+    reset = jnp.zeros_like(valid).at[1, 3].set(True)
+    time = jnp.asarray(
+        ((0.0, 0.4, 1.1, 1.1, 1.1), (0.0, 0.2, 0.2, 0.9, 2.0)),
+        dtype=jnp.float64,
+    )
+    batch = RecurrentBatch(inputs, valid, reset=reset, time=time)
+
+    result = eqx.filter_jit(lambda current: run_recurrent(cell, current))(batch)
+    assert result.outputs.shape == (2, 5, 3)
+    assert result.states.shape == (2, 5, 3)
+    assert jnp.array_equal(result.outputs[0, 3:], jnp.zeros((2, 3)))
+    assert jnp.array_equal(result.states[0, 3], result.states[0, 2])
+    assert jnp.array_equal(result.states[0, 4], result.states[0, 2])
+    assert jnp.all(jnp.abs(result.states) <= 1.0)
+
+    gradient = jax.grad(
+        lambda values: jnp.sum(
+            run_recurrent(
+                cell,
+                RecurrentBatch(values, valid, reset=reset, time=time),
+            ).outputs
+            ** 2
+        )
+    )(inputs)
+    assert jnp.all(jnp.isfinite(gradient))
+    parameter_gradient = eqx.filter_grad(
+        lambda current: jnp.sum(run_recurrent(current, batch).outputs ** 2)
+    )(cell)
+    assert jax.tree.leaves(parameter_gradient)
+    assert all(
+        jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(parameter_gradient)
+    )
+
+
+def test_cfc_streaming_preserves_the_boundary_interval():
+    cell = CfCCell(2, 3, dtype=jnp.float64, key=jr.key(16))
+    inputs = jr.normal(jr.key(17), (6, 2), dtype=jnp.float64)
+    valid = jnp.ones((6,), dtype=bool)
+    time = jnp.asarray((0.0, 0.2, 0.8, 1.7, 3.1, 5.0))
+    split = 3
+
+    whole = run_recurrent(cell, RecurrentBatch(inputs, valid, time=time))
+    first = run_recurrent(
+        cell,
+        RecurrentBatch(inputs[:split], valid[:split], time=time[:split]),
+    )
+    second = run_recurrent(
+        cell,
+        RecurrentBatch(inputs[split:], valid[split:], time=time[split:]),
+        initial_state=first.final_state,
+        initial_context=first.final_context,
+    )
+
+    assert jnp.allclose(
+        jnp.concatenate((first.outputs, second.outputs)),
+        whole.outputs,
+    )
+    assert jnp.allclose(
+        jnp.concatenate((first.states, second.states)),
+        whole.states,
+    )
+
+
+def test_stacked_recurrent_cell_forwards_context_to_nested_cfc_cells():
+    first_cell = CfCCell(
+        1,
+        2,
+        backbone_depth=0,
+        dtype=jnp.float64,
+        key=jr.key(18),
+    )
+    second_cell = CfCCell(
+        2,
+        1,
+        backbone_depth=0,
+        use_bias=False,
+        dtype=jnp.float64,
+        key=jr.key(19),
+    )
+    stack = StackedRecurrentCell((first_cell, second_cell))
+    inputs = jnp.asarray(((0.1,), (0.2,), (-0.1,), (0.4,)))
+    valid = jnp.ones((4,), dtype=bool)
+    time = jnp.asarray((0.0, 0.3, 1.1, 2.8))
+    batch = RecurrentBatch(inputs, valid, time=time)
+
+    first = run_recurrent(first_cell, batch)
+    second = run_recurrent(
+        second_cell,
+        RecurrentBatch(first.outputs, valid, time=time),
+    )
+    stacked = run_recurrent(stack, batch)
+
+    assert jnp.allclose(stacked.states[0], first.states)
+    assert jnp.allclose(stacked.states[1], second.states)
+    assert jnp.allclose(stacked.outputs, second.outputs)

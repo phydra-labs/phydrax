@@ -66,3 +66,15 @@ claims remain absent.
 Particle conversion is qualified by exact radial measure identities, thermodynamic inversion residual, interior heat/species cancellation, element balance, phase inventory, accepted-step energy closure, and agreement between reference Rosenbrock and structured tridiagonal backends. `tools/particle_conversion_qualification.py` records these cases as one machine-readable campaign.
 
 Reactive coupling adds particle/fluid momentum, energy, and species closure; subsystem success flags; coupling iteration residual; and atomic rollback. `tools/reactive_cfd_dem_qualification.py` exercises both Strang and iterated schedules. `ParticlePhysicsSupportMatrix` reports claims compositionally: a successful DEM claim does not imply thermochemistry, superquadric, radiation, or distributed support.
+
+## Learned exchange qualification
+
+Qualify a learned pair binding on the exact fixed `ParticlePairRelation`.
+Require artifact/task/feature/relation identity, finite active predictions,
+inactive-route sanitation, and an accepted accumulation policy.
+
+Use `ParticleExchangeLedger` to gate only the construction's actual claim:
+linear exchange cancellation for vector/scalar routes and internal torque for a
+central force. Relative power is diagnostic unless a separate potential or
+dissipation policy supplies an energy claim. Rebuilt neighbor lists, periodic
+image changes, capacity overflow, and topology epochs require new route evidence.

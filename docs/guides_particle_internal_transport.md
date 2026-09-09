@@ -57,6 +57,23 @@ batch = batch_plan.prepare(particles)
 
 Boundary values are supplied with `ParticleTransportBoundary`. Heat and species transfer coefficients are independent; prescribed source rates remain separate channels.
 
+### Reusable radial species action
+
+`RadialSpeciesTransportPlan(species_count)` separates the static species width from runtime material and geometry values. Bind it once to a `PreparedRadialShellMesh` with `prepare_radial_species_transport(plan, mesh)`. The prepared action accepts species amounts with trailing `(shell, species)` axes and preserves every leading batch axis.
+
+The radial branch of `evaluate_particle_transport` uses this action directly. Its established `boundary_species_rate` remains inward-positive, while the reusable action reports the integrated outer rate as outward-positive.
+
+
+At each evaluation, pass `outer_scale`, shell `storage_measure`, `cell_diffusivity`, outward-positive `outer_molar_flux`, and an `active_mask`. Storage may be shared across leading entries only with shape `(shell,)`; otherwise it must have exact shape `(..., shell)`. Diffusivity may have shape `(species,)`, `(shell, species)`, `(..., 1, species)`, or `(..., shell, species)`. Outer flux may have shape `(species,)` or exact shape `(..., species)`. Other implicit broadcasting is rejected.
+
+`RadialSpeciesTransportResult` exposes concentrations, face molar-flux densities, shell amount rates, outward-positive integrated outer amount rates, an explicit diffusion limit, conservation defects, and per-entry validity. The origin face flux is exactly zero. Each active entry satisfies
+
+```text
+sum(shell amount rate) + outward outer amount rate = conservation defect ≈ 0.
+```
+
+Inactive finite entries return zero concentrations, fluxes, rates, outer rates, and defects, with an infinite explicit time-step limit. A nonpositive storage measure or radius, or a negative diffusivity, invalidates only an active entry; zero diffusivity is valid and gives an infinite local diffusion limit. The explicit limit is the frozen-coefficient diffusion diagonal bound: it is a stability estimate, not an accuracy guarantee, and state-dependent or nonlinear diffusivity must be supplied again on every evaluation. Prescribed outer flux is forcing and does not enter that bound. Runtime radii and diffusivities remain ordinary array inputs, so the same prepared topology works under JIT, batching, and parameter differentiation.
+
 ## Solver backends
 
 Compile through `ParticleConversionProblemIR` and `compile_particle_conversion_problem`. Then select:

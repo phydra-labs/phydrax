@@ -19,6 +19,7 @@ from ._hybrid_event import (
     empty_hybrid_event_tape,
     HybridEventPlan,
     HybridEventTape,
+    HybridGuardPlan,
     HybridReplayPolicy,
     HybridReplayResult,
     localize_hybrid_event,
@@ -26,31 +27,33 @@ from ._hybrid_event import (
 )
 
 
-class ScheduledHybridEvent(StrictModule, NonTrainableState):
-    event: HybridEventPlan
-    direction: int = eqx.field(static=True)
-    priority: int = eqx.field(static=True)
-    terminal: bool = eqx.field(static=True)
+class ScheduledHybridGuard(StrictModule, NonTrainableState):
+    """A reusable scheduled guard with an optional explicit-ODE action."""
+
+    guard: HybridGuardPlan
+    event: HybridEventPlan | None
     event_id: str = eqx.field(static=True)
 
     def __init__(
-        self, event: HybridEventPlan, /, *, direction=0, priority=0, terminal=False
+        self,
+        guard: HybridGuardPlan,
+        /,
+        *,
+        event: HybridEventPlan | None = None,
     ):
-        if not isinstance(event, HybridEventPlan):
-            raise TypeError("event must be a HybridEventPlan.")
-        if direction not in (-1, 0, 1):
-            raise ValueError("Scheduled event direction must be -1, zero, or +1.")
+        if not isinstance(guard, HybridGuardPlan):
+            raise TypeError("guard must be a HybridGuardPlan.")
+        if event is not None and not isinstance(event, HybridEventPlan):
+            raise TypeError("event must be a HybridEventPlan or None.")
+        if event is not None and event.guard_plan.guard_id != guard.guard_id:
+            raise ValueError("Scheduled guard and explicit-ODE event must match.")
+        self.guard = guard
         self.event = event
-        self.direction = int(direction)
-        self.priority = int(priority)
-        self.terminal = bool(terminal)
         self.event_id = canonical_fingerprint(
             {
-                "kind": "scheduled-hybrid-event",
-                "event": event.plan_id,
-                "direction": int(direction),
-                "priority": int(priority),
-                "terminal": bool(terminal),
+                "kind": "scheduled-hybrid-guard",
+                "guard": guard.guard_id,
+                "event": None if event is None else event.plan_id,
             }
         )
 
@@ -69,7 +72,7 @@ class HybridScheduleResult(StrictModule):
 
 
 class HybridSchedulePlan(StrictModule, NonTrainableState):
-    events: tuple[ScheduledHybridEvent, ...]
+    events: tuple[ScheduledHybridGuard, ...]
     maximum_events: int = eqx.field(static=True)
     simultaneous_tolerance: float = eqx.field(static=True)
     minimum_event_separation: float = eqx.field(static=True)
@@ -77,7 +80,7 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        events: Sequence[ScheduledHybridEvent],
+        events: Sequence[ScheduledHybridGuard],
         /,
         *,
         maximum_events=64,
@@ -85,8 +88,8 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
         minimum_event_separation=1.0e-12,
     ):
         items = tuple(events)
-        if not items or any(not isinstance(item, ScheduledHybridEvent) for item in items):
-            raise ValueError("Hybrid schedule requires scheduled event values.")
+        if not items or any(not isinstance(item, ScheduledHybridGuard) for item in items):
+            raise ValueError("Hybrid schedule requires scheduled guard values.")
         if len({item.event_id for item in items}) != len(items):
             raise ValueError("Hybrid schedule requires unique events.")
         if not isinstance(maximum_events, int) or isinstance(maximum_events, bool):
@@ -130,6 +133,10 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
         A committed reset ends that bracket. The next bracket therefore represents
         the continuous segment restarted from the recorded post-reset state.
         """
+        if any(scheduled.event is None for scheduled in self.events):
+            raise ValueError(
+                "Explicit-ODE schedule execution requires an event action per guard."
+            )
 
         intervals = jnp.asarray(brackets)
         if intervals.ndim != 2 or intervals.shape[1] != 2 or intervals.shape[0] == 0:
@@ -141,10 +148,16 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
             HybridReplayPolicy(
                 self.maximum_events,
                 grazing_tolerance=min(
-                    item.event.grazing_tolerance for item in self.events
+                    item.event.grazing_tolerance
+                    for item in self.events
+                    if item.event is not None
                 ),
                 simultaneous_tolerance=self.simultaneous_tolerance,
-                event_tolerance=min(item.event.event_tolerance for item in self.events),
+                event_tolerance=min(
+                    item.event.event_tolerance
+                    for item in self.events
+                    if item.event is not None
+                ),
             )
             if replay_policy is None
             else replay_policy
@@ -169,14 +182,15 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
             for event_index, scheduled in enumerate(self.events):
                 left_state = state_at_time(left, args)
                 right_state = state_at_time(right, args)
-                left_guard = scheduled.event.guard(left, left_state, args)
-                right_guard = scheduled.event.guard(right, right_state, args)
+                left_guard = scheduled.guard.guard(left, left_state, args)
+                right_guard = scheduled.guard.guard(right, right_state, args)
                 crossed = left_guard * right_guard <= 0.0
                 direction_ok = (
-                    (scheduled.direction == 0)
-                    | ((scheduled.direction > 0) & (right_guard > left_guard))
-                    | ((scheduled.direction < 0) & (right_guard < left_guard))
+                    (scheduled.guard.direction == 0)
+                    | ((scheduled.guard.direction > 0) & (right_guard > left_guard))
+                    | ((scheduled.guard.direction < 0) & (right_guard < left_guard))
                 )
+                assert scheduled.event is not None
                 localized = localize_hybrid_event(
                     scheduled.event,
                     state_at_time,
@@ -211,15 +225,19 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
                     <= self.simultaneous_tolerance
                 )
                 earlier = result.event_time < winner_time - self.simultaneous_tolerance
-                higher_priority = scheduled.priority > winner_priority
+                higher_priority = scheduled.guard.priority > winner_priority
                 choose = eligible & (
                     (~winner_exists) | earlier | (simultaneous & higher_priority)
                 )
                 winner_exists = winner_exists | eligible
                 winner_index = jnp.where(choose, event_index, winner_index)
                 winner_time = jnp.where(choose, result.event_time, winner_time)
-                winner_priority = jnp.where(choose, scheduled.priority, winner_priority)
-                winner_terminal = jnp.where(choose, scheduled.terminal, winner_terminal)
+                winner_priority = jnp.where(
+                    choose, scheduled.guard.priority, winner_priority
+                )
+                winner_terminal = jnp.where(
+                    choose, scheduled.guard.terminal, winner_terminal
+                )
                 candidate_values = (
                     result.event_time,
                     result.state_before,
@@ -376,12 +394,24 @@ def prepare_hybrid_schedule(
     state = jnp.asarray(state_template)
     if not jnp.issubdtype(state.dtype, jnp.inexact):
         raise TypeError("Hybrid schedule states must use an inexact dtype.")
+    if any(scheduled.event is None for scheduled in plan.events):
+        raise ValueError(
+            "Explicit-ODE schedule preparation requires an event action per guard."
+        )
     policy = (
         HybridReplayPolicy(
             plan.maximum_events,
-            grazing_tolerance=min(item.event.grazing_tolerance for item in plan.events),
+            grazing_tolerance=min(
+                item.event.grazing_tolerance
+                for item in plan.events
+                if item.event is not None
+            ),
             simultaneous_tolerance=plan.simultaneous_tolerance,
-            event_tolerance=min(item.event.event_tolerance for item in plan.events),
+            event_tolerance=min(
+                item.event.event_tolerance
+                for item in plan.events
+                if item.event is not None
+            ),
         )
         if replay_policy is None
         else replay_policy
@@ -468,7 +498,7 @@ __all__ = [
     "HybridSchedulePlan",
     "HybridScheduleResult",
     "PreparedHybridSchedule",
-    "ScheduledHybridEvent",
+    "ScheduledHybridGuard",
     "execute_hybrid_schedule",
     "prepare_hybrid_schedule",
     "replay_hybrid_schedule",

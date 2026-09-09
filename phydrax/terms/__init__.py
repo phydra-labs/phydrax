@@ -123,6 +123,13 @@ from ._operator_dataset import (
     OperatorDatasetTerm,
     PhysicsInformedOperatorTerm,
 )
+from ._physics_flow_matching import (
+    AbstractFlowEndpointFunctional,
+    CallableFlowEndpointFunctional,
+    FlowEndpointRolloutPolicy,
+    PhysicsFlowMatchingDiagnostics,
+    PhysicsFlowMatchingTerm,
+)
 from ._ragged_series import RaggedSeriesSupervisedBatch, RaggedSeriesSupervisedTerm
 from ._ragged_time_series import (
     RaggedTimeSeriesBatch,
@@ -158,7 +165,11 @@ from ._score_matching import (
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
 from ._target_consistency import TargetConsistencyTerm
-from ._time_sampling import UniformTimeSamplingPolicy
+from ._time_sampling import (
+    AbstractTimeSamplingPolicy,
+    LogitNormalTimeSamplingPolicy,
+    UniformTimeSamplingPolicy,
+)
 from ._topology import FrozenTopologyTerm
 from ._trajectory_classification import (
     RaggedTimeSeriesClassificationBatch,
@@ -215,11 +226,14 @@ __all__ = [
     "wasserstein_adversarial_evaluation",
     "FrozenTopologyTerm",
     "BSDETerm",
+    "AbstractFlowEndpointFunctional",
     "BarycenterObjectiveTerm",
     "BatchSampler",
     "CochainResidualTerm",
     "CompiledModalResidualTerm",
+    "AbstractTimeSamplingPolicy",
     "DeepBSDEPredictor",
+    "CallableFlowEndpointFunctional",
     "DeepBSDERollout",
     "DeepBSDESamplingMode",
     "DeepBSDEShootingDiagnostics",
@@ -249,6 +263,7 @@ __all__ = [
     "FlowEndpointProvider",
     "DenseOverlapClassificationTerm",
     "DenseSiteClassificationBatch",
+    "FlowEndpointRolloutPolicy",
     "DenseSiteClassificationTerm",
     "FlowMatchingBatch",
     "FlowMatchingDiagnostics",
@@ -275,6 +290,7 @@ __all__ = [
     "InvariantSubspaceResidualEvaluation",
     "InvariantSubspaceResidualResult",
     "LabelProvider",
+    "LogitNormalTimeSamplingPolicy",
     "ModalObservationTerm",
     "ModalTimeProvider",
     "MomentPenalty",
@@ -286,6 +302,8 @@ __all__ = [
     "RaggedSeriesSupervisedBatch",
     "RaggedSeriesSupervisedTerm",
     "RaggedTimeSeriesBatch",
+    "PhysicsFlowMatchingDiagnostics",
+    "PhysicsFlowMatchingTerm",
     "RaggedTimeSeriesDataTerm",
     "RaggedTimeSeriesInterpolation",
     "RandomizedMomentBatch",

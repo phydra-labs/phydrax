@@ -20,6 +20,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._differential_algebraic import DAEStructure, DifferentialAlgebraicSystem
+from ._layout import InputLayout
 
 
 DAETearingPolicy = Literal["none", "automatic", "declared"]
@@ -36,6 +37,35 @@ def _shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
     if any(size <= 0 for size in result):
         raise ValueError(f"{owner} dimensions must be positive.")
     return result
+
+
+def _positive_scale(value: ArrayLike, shape: tuple[int, ...], owner: str, /) -> Array:
+    array = jnp.asarray(value)
+    if jnp.issubdtype(array.dtype, jnp.complexfloating):
+        raise TypeError(f"{owner} must be real-valued.")
+    if array.shape not in ((), shape):
+        raise ValueError(f"{owner} must be scalar or have shape {shape}.")
+    if not jnp.issubdtype(array.dtype, jnp.inexact):
+        array = array.astype(float)
+    scale = jnp.broadcast_to(array, shape)
+    return eqx.error_if(
+        scale,
+        jnp.any(~jnp.isfinite(scale)) | jnp.any(scale <= 0),
+        f"{owner} must be positive and finite.",
+    )
+
+
+def _unshaped_positive_scale(value: ArrayLike, owner: str, /) -> Array:
+    array = jnp.asarray(value)
+    if jnp.issubdtype(array.dtype, jnp.complexfloating):
+        raise TypeError(f"{owner} must be real-valued.")
+    if not jnp.issubdtype(array.dtype, jnp.inexact):
+        array = array.astype(float)
+    return eqx.error_if(
+        array,
+        jnp.any(~jnp.isfinite(array)) | jnp.any(array <= 0),
+        f"{owner} must be positive and finite.",
+    )
 
 
 class DAEDerivativeIncidence(StrictModule, NonTrainableState):
@@ -55,15 +85,18 @@ class DAEVariableBlock(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     shape: tuple[int, ...] = eqx.field(static=True)
     maximum_derivative_order: int = eqx.field(static=True)
-    scale: Array
+    state_scale: Array
+    rate_scale: Array
 
     def __init__(
         self,
         name: str,
         shape: Sequence[int] = (),
         maximum_derivative_order: int = 1,
-        scale: ArrayLike = 1.0,
         /,
+        *,
+        state_scale: ArrayLike = 1.0,
+        rate_scale: ArrayLike = 1.0,
     ):
         if not isinstance(maximum_derivative_order, int) or isinstance(
             maximum_derivative_order, bool
@@ -72,18 +105,15 @@ class DAEVariableBlock(StrictModule, NonTrainableState):
         if maximum_derivative_order < 0:
             raise ValueError("maximum_derivative_order must be nonnegative.")
         shape_ = _shape(shape, "DAEVariableBlock shape") if shape else ()
-        scale_ = jnp.broadcast_to(jnp.asarray(scale), shape_ or ())
-        if not jnp.issubdtype(scale_.dtype, jnp.inexact):
-            scale_ = scale_.astype(float)
-        scale_ = eqx.error_if(
-            scale_,
-            jnp.any(~jnp.isfinite(scale_)) | jnp.any(scale_ <= 0),
-            "DAE variable scale must be positive and finite.",
-        )
         self.name = _identifier(name, "DAEVariableBlock name")
         self.shape = shape_
         self.maximum_derivative_order = maximum_derivative_order
-        self.scale = scale_
+        self.state_scale = _positive_scale(
+            state_scale, shape_, "DAEVariableBlock state_scale"
+        )
+        self.rate_scale = _positive_scale(
+            rate_scale, shape_, "DAEVariableBlock rate_scale"
+        )
 
     @property
     def size(self) -> int:
@@ -139,17 +169,25 @@ class DAEJet(StrictModule):
         )
 
 
+AutonomousDAEEquationResidual = Callable[[Array, DAEJet, Any], Array]
+InputDAEEquationResidual = Callable[[Array, DAEJet, Array, Any], Array]
+DAEEquationResidual = AutonomousDAEEquationResidual | InputDAEEquationResidual
+
+
 class DAEEquationBlock(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
-    residual: Callable[[Array, DAEJet, Any], Array]
+    residual: DAEEquationResidual
     incidence: tuple[DAEDerivativeIncidence, ...]
+    residual_scale: Array
 
     def __init__(
         self,
         name: str,
-        residual: Callable[[Array, DAEJet, Any], Array],
+        residual: DAEEquationResidual,
         incidence: Sequence[DAEDerivativeIncidence],
         /,
+        *,
+        residual_scale: ArrayLike = 1.0,
     ):
         edges = tuple(incidence)
         if not callable(residual):
@@ -164,6 +202,9 @@ class DAEEquationBlock(StrictModule, NonTrainableState):
         self.name = _identifier(name, "DAEEquationBlock name")
         self.residual = residual
         self.incidence = edges
+        self.residual_scale = _unshaped_positive_scale(
+            residual_scale, "DAEEquationBlock residual_scale"
+        )
 
 
 class DAEPort(StrictModule, NonTrainableState):
@@ -254,6 +295,7 @@ class DAEComponent(StrictModule, NonTrainableState):
 class AcausalDAESource(StrictModule, NonTrainableState):
     components: tuple[DAEComponent, ...]
     connections: tuple[DAEConnection, ...]
+    input_layout: InputLayout | None
     source_id: str = eqx.field(static=True)
 
     def __init__(
@@ -261,6 +303,8 @@ class AcausalDAESource(StrictModule, NonTrainableState):
         components: Sequence[DAEComponent],
         connections: Sequence[DAEConnection] = (),
         /,
+        *,
+        input_layout: InputLayout | None = None,
     ):
         components_ = tuple(components)
         connections_ = tuple(connections)
@@ -270,6 +314,8 @@ class AcausalDAESource(StrictModule, NonTrainableState):
             raise ValueError("AcausalDAESource requires DAE components.")
         if any(not isinstance(value, DAEConnection) for value in connections_):
             raise TypeError("connections must be DAEConnection values.")
+        if input_layout is not None and not isinstance(input_layout, InputLayout):
+            raise TypeError("input_layout must be an InputLayout or None.")
         names = tuple(value.name for value in components_)
         if len(set(names)) != len(names):
             raise ValueError("DAE component names must be unique.")
@@ -286,12 +332,16 @@ class AcausalDAESource(StrictModule, NonTrainableState):
                 )
         self.components = components_
         self.connections = connections_
+        self.input_layout = input_layout
         self.source_id = canonical_fingerprint(
             {
                 "kind": "acausal-dae-source",
                 "components": sorted(names),
                 "connections": sorted(
                     tuple(sorted(value.port_ids)) for value in connections_
+                ),
+                "input_layout": (
+                    None if input_layout is None else input_layout.layout_id
                 ),
             }
         )
@@ -363,30 +413,59 @@ class DAEStructuralAnalysis(StrictModule, NonTrainableState):
 
 class _AssembledEquation(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
-    residual: Callable[[Array, DAEJet, Any], Array]
+    residual: Callable[..., Array]
     incidence: tuple[DAEDerivativeIncidence, ...]
 
 
 class _Assembly(StrictModule, NonTrainableState):
     variables: tuple[DAEVariableBlock, ...]
     equations: tuple[_AssembledEquation, ...]
+    residual_scales: tuple[Array, ...]
+    input_layout: InputLayout | None
     source_id: str = eqx.field(static=True)
 
 
-class _ComponentResidual(StrictModule):
-    residual: Callable[[Array, DAEJet, Any], Array]
+def _local_jet(
+    jet: DAEJet,
+    local_names: tuple[str, ...],
+    global_names: tuple[str, ...],
+    /,
+) -> DAEJet:
+    return DAEJet(
+        local_names,
+        tuple(jet.derivatives[jet.variable_names.index(name)] for name in global_names),
+    )
+
+
+class _AutonomousComponentResidual(StrictModule):
+    residual: AutonomousDAEEquationResidual
     local_names: tuple[str, ...] = eqx.field(static=True)
     global_names: tuple[str, ...] = eqx.field(static=True)
 
     def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
-        local = DAEJet(
-            self.local_names,
-            tuple(
-                jet.derivatives[jet.variable_names.index(name)]
-                for name in self.global_names
-            ),
+        return jnp.asarray(
+            self.residual(
+                time,
+                _local_jet(jet, self.local_names, self.global_names),
+                args,
+            )
         )
-        return jnp.asarray(self.residual(time, local, args))
+
+
+class _InputComponentResidual(StrictModule):
+    residual: InputDAEEquationResidual
+    local_names: tuple[str, ...] = eqx.field(static=True)
+    global_names: tuple[str, ...] = eqx.field(static=True)
+
+    def __call__(self, time: Array, jet: DAEJet, inputs: Array, args: Any, /) -> Array:
+        return jnp.asarray(
+            self.residual(
+                time,
+                _local_jet(jet, self.local_names, self.global_names),
+                inputs,
+                args,
+            )
+        )
 
 
 class _PotentialResidual(StrictModule):
@@ -414,9 +493,23 @@ class _FlowResidual(StrictModule):
         return result
 
 
+class _InputIgnoredResidual(StrictModule):
+    residual: Callable[[Array, DAEJet, Any], Array]
+
+    def __call__(self, time: Array, jet: DAEJet, inputs: Array, args: Any, /) -> Array:
+        del inputs
+        return self.residual(time, jet, args)
+
+
 def _assemble(source: AcausalDAESource, /) -> _Assembly:
     variables = []
     equations = []
+    equation_scales: dict[str, Array] = {}
+
+    def append_equation(equation: _AssembledEquation, scale: Array, /) -> None:
+        equations.append(equation)
+        equation_scales[equation.name] = scale
+
     ports: dict[str, tuple[DAEComponent, DAEPort]] = {}
     for component in source.components:
         local_names = tuple(variable.name for variable in component.variables)
@@ -427,23 +520,28 @@ def _assemble(source: AcausalDAESource, /) -> _Assembly:
                     global_name,
                     variable.shape,
                     variable.maximum_derivative_order,
-                    variable.scale,
+                    state_scale=variable.state_scale,
+                    rate_scale=variable.rate_scale,
                 )
             )
         name_map = dict(zip(local_names, global_names, strict=True))
         for equation in component.equations:
-            equations.append(
-                _AssembledEquation(
-                    f"{component.name}.{equation.name}",
-                    _ComponentResidual(equation.residual, local_names, global_names),
-                    tuple(
-                        DAEDerivativeIncidence(
-                            name_map[edge.variable_name], edge.derivative_order
-                        )
-                        for edge in equation.incidence
-                    ),
-                )
+            residual = (
+                _AutonomousComponentResidual(equation.residual, local_names, global_names)
+                if source.input_layout is None
+                else _InputComponentResidual(equation.residual, local_names, global_names)
             )
+            assembled = _AssembledEquation(
+                f"{component.name}.{equation.name}",
+                residual,
+                tuple(
+                    DAEDerivativeIncidence(
+                        name_map[edge.variable_name], edge.derivative_order
+                    )
+                    for edge in equation.incidence
+                ),
+            )
+            append_equation(assembled, equation.residual_scale)
         for port in component.ports:
             ports[f"{component.name}.{port.name}"] = (component, port)
     variables_by_name = {value.name: value for value in variables}
@@ -466,15 +564,25 @@ def _assemble(source: AcausalDAESource, /) -> _Assembly:
                     raise ValueError(
                         "Connected potential variable shapes must match exactly."
                     )
-                equations.append(
-                    _AssembledEquation(
-                        f"connection[{connection_index}].potential[{port_position},{coordinate}]",
-                        _PotentialResidual(left, right),
-                        (
-                            DAEDerivativeIncidence(left, 0),
-                            DAEDerivativeIncidence(right, 0),
-                        ),
-                    )
+                residual = _PotentialResidual(left, right)
+                assembled = _AssembledEquation(
+                    f"connection[{connection_index}].potential[{port_position},{coordinate}]",
+                    (
+                        residual
+                        if source.input_layout is None
+                        else _InputIgnoredResidual(residual)
+                    ),
+                    (
+                        DAEDerivativeIncidence(left, 0),
+                        DAEDerivativeIncidence(right, 0),
+                    ),
+                )
+                append_equation(
+                    assembled,
+                    jnp.maximum(
+                        variables_by_name[left].state_scale,
+                        variables_by_name[right].state_scale,
+                    ),
                 )
         for coordinate in range(next(iter(flow_counts))):
             flow_variables = tuple(
@@ -482,16 +590,26 @@ def _assemble(source: AcausalDAESource, /) -> _Assembly:
             )
             if len({variables_by_name[name].shape for name in flow_variables}) != 1:
                 raise ValueError("Connected flow variable shapes must match exactly.")
-            equations.append(
-                _AssembledEquation(
-                    f"connection[{connection_index}].flow[{coordinate}]",
-                    _FlowResidual(flow_variables, connection.orientations),
-                    tuple(DAEDerivativeIncidence(name, 0) for name in flow_variables),
-                )
+            residual = _FlowResidual(flow_variables, connection.orientations)
+            flow_scale = variables_by_name[flow_variables[0]].state_scale
+            for name in flow_variables[1:]:
+                flow_scale = jnp.maximum(flow_scale, variables_by_name[name].state_scale)
+            assembled = _AssembledEquation(
+                f"connection[{connection_index}].flow[{coordinate}]",
+                (
+                    residual
+                    if source.input_layout is None
+                    else _InputIgnoredResidual(residual)
+                ),
+                tuple(DAEDerivativeIncidence(name, 0) for name in flow_variables),
             )
+            append_equation(assembled, flow_scale)
+    ordered_equations = tuple(sorted(equations, key=lambda value: value.name))
     return _Assembly(
         tuple(sorted(variables, key=lambda value: value.name)),
-        tuple(sorted(equations, key=lambda value: value.name)),
+        ordered_equations,
+        tuple(equation_scales[equation.name] for equation in ordered_equations),
+        source.input_layout,
         source.source_id,
     )
 
@@ -815,19 +933,23 @@ def _shifted_jet(jet: DAEJet, /) -> DAEJet:
 
 
 def _total_derivative(
-    residual: Callable[[Array, DAEJet, Any], Array],
+    residual: Callable[..., Array],
     count: int,
     time: Array,
     jet: DAEJet,
-    args: Any,
+    runtime: tuple[Any, ...],
     /,
 ) -> Array:
     if count == 0:
-        return jnp.asarray(residual(time, jet, args))
+        return jnp.asarray(residual(time, jet, *runtime))
 
     def previous(t: Array, values: tuple[tuple[Array, ...], ...]) -> Array:
         return _total_derivative(
-            residual, count - 1, t, DAEJet(jet.variable_names, values), args
+            residual,
+            count - 1,
+            t,
+            DAEJet(jet.variable_names, values),
+            runtime,
         )
 
     shifted = _shifted_jet(jet)
@@ -836,18 +958,23 @@ def _total_derivative(
     )[1]
 
 
-class _ReducedResidual(StrictModule):
+class _ReducedResidualCore(StrictModule):
     variables: tuple[_DAEExecutionVariable, ...]
     equations: tuple[_AssembledEquation, ...]
     offsets: tuple[tuple[tuple[int, int], ...], ...] = eqx.field(static=True)
     differentiations: tuple[int, ...] = eqx.field(static=True)
 
-    def __call__(
-        self, time: Array, state: Array, state_rate: Array, args: Any, /
+    def evaluate(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        runtime: tuple[Any, ...],
+        /,
     ) -> Array:
         jet = _jet_from_execution(self.variables, self.offsets, state, state_rate)
         rows = [
-            _total_derivative(equation.residual, count, time, jet, args).reshape((-1,))
+            _total_derivative(equation.residual, count, time, jet, runtime).reshape((-1,))
             for equation, count in zip(self.equations, self.differentiations, strict=True)
         ]
         for variable, blocks in zip(self.variables, self.offsets, strict=True):
@@ -858,21 +985,74 @@ class _ReducedResidual(StrictModule):
         return jnp.concatenate(tuple(rows))
 
 
-class _ResidualAudit(StrictModule):
+class _AutonomousReducedResidual(StrictModule):
+    core: _ReducedResidualCore
+
+    def __call__(
+        self, time: Array, state: Array, state_rate: Array, args: Any, /
+    ) -> Array:
+        return self.core.evaluate(time, state, state_rate, (args,))
+
+
+class _InputReducedResidual(StrictModule):
+    core: _ReducedResidualCore
+
+    def __call__(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
+        /,
+    ) -> Array:
+        return self.core.evaluate(time, state, state_rate, (inputs, args))
+
+
+class _ResidualAuditCore(StrictModule):
     variables: tuple[_DAEExecutionVariable, ...]
     equations: tuple[_AssembledEquation, ...]
     offsets: tuple[tuple[tuple[int, int], ...], ...] = eqx.field(static=True)
 
-    def __call__(
-        self, time: Array, state: Array, state_rate: Array, args: Any = None, /
+    def evaluate(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        runtime: tuple[Any, ...],
+        /,
     ) -> Array:
         jet = _jet_from_execution(self.variables, self.offsets, state, state_rate)
         return jnp.concatenate(
             tuple(
-                equation.residual(time, jet, args).reshape((-1,))
+                equation.residual(time, jet, *runtime).reshape((-1,))
                 for equation in self.equations
             )
         )
+
+
+class _AutonomousResidualAudit(StrictModule):
+    core: _ResidualAuditCore
+
+    def __call__(
+        self, time: Array, state: Array, state_rate: Array, args: Any = None, /
+    ) -> Array:
+        return self.core.evaluate(time, state, state_rate, (args,))
+
+
+class _InputResidualAudit(StrictModule):
+    core: _ResidualAuditCore
+
+    def __call__(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any = None,
+        /,
+    ) -> Array:
+        return self.core.evaluate(time, state, state_rate, (inputs, args))
 
 
 class _Reconstruction(StrictModule):
@@ -888,7 +1068,7 @@ class _Reconstruction(StrictModule):
 class ReducedDAECompilation(StrictModule, NonTrainableState):
     system: DifferentialAlgebraicSystem
     reconstruction: _Reconstruction
-    residual_audit: _ResidualAudit
+    residual_audit: Callable[..., Array]
     structure: DAEStructure
     fixed_state_mask: Array
     fixed_rate_mask: Array
@@ -896,7 +1076,28 @@ class ReducedDAECompilation(StrictModule, NonTrainableState):
     compilation_id: str = eqx.field(static=True)
 
 
-def _verify_declared_incidence(assembly: _Assembly, args: Any, /) -> None:
+def _sample_inputs(source: AcausalDAESource, inputs: ArrayLike | None, /) -> Array | None:
+    if source.input_layout is None:
+        if inputs is not None:
+            raise ValueError("An autonomous AcausalDAESource does not accept inputs.")
+        return None
+    values = (
+        jnp.ones(source.input_layout.shape) if inputs is None else jnp.asarray(inputs)
+    )
+    if values.shape != source.input_layout.shape:
+        raise ValueError(
+            f"inputs must have shape {source.input_layout.shape}; got {values.shape}."
+        )
+    if jnp.issubdtype(values.dtype, jnp.complexfloating):
+        raise TypeError("Acausal DAE inputs must be real-valued.")
+    if not jnp.issubdtype(values.dtype, jnp.inexact):
+        values = values.astype(float)
+    return values
+
+
+def _verify_declared_incidence(
+    assembly: _Assembly, inputs: Array | None, args: Any, /
+) -> None:
     names = tuple(value.name for value in assembly.variables)
     ones = tuple(
         tuple(
@@ -905,6 +1106,7 @@ def _verify_declared_incidence(assembly: _Assembly, args: Any, /) -> None:
         for variable in assembly.variables
     )
     jet = DAEJet(names, ones)
+    runtime = (args,) if assembly.input_layout is None else (inputs, args)
     for equation in assembly.equations:
         declared = {
             (edge.variable_name, edge.derivative_order) for edge in equation.incidence
@@ -922,7 +1124,7 @@ def _verify_declared_incidence(assembly: _Assembly, args: Any, /) -> None:
                 )
                 action = jax.jvp(
                     lambda values: equation.residual(
-                        jnp.asarray(1.0), DAEJet(names, values), args
+                        jnp.asarray(1.0), DAEJet(names, values), *runtime
                     ),
                     (jet.derivatives,),
                     (tangent_values,),
@@ -938,7 +1140,12 @@ def _verify_declared_incidence(assembly: _Assembly, args: Any, /) -> None:
 
 
 def compile_acausal_dae(
-    source: AcausalDAESource, policy: DAEStructuralPolicy, /, *, args: Any = None
+    source: AcausalDAESource,
+    policy: DAEStructuralPolicy,
+    /,
+    *,
+    inputs: ArrayLike | None = None,
+    args: Any = None,
 ) -> ReducedDAECompilation:
     """Lower successful declared structural analysis into the canonical DAE runtime."""
     analysis = analyze_dae_structure(source, policy)
@@ -950,6 +1157,7 @@ def compile_acausal_dae(
             f"{analysis.unmatched_variables}."
         )
     assembly = _assemble(source)
+    sample_inputs = _sample_inputs(source, inputs)
     execution_variables = tuple(
         _DAEExecutionVariable(
             variable.name,
@@ -958,7 +1166,7 @@ def compile_acausal_dae(
         )
         for variable in assembly.variables
     )
-    _verify_declared_incidence(assembly, args)
+    _verify_declared_incidence(assembly, sample_inputs, args)
     offsets, state_size = _execution_layout(execution_variables)
     sample_jet = DAEJet(
         tuple(value.name for value in assembly.variables),
@@ -969,27 +1177,49 @@ def compile_acausal_dae(
             for value in assembly.variables
         ),
     )
-    equation_sizes = tuple(
-        int(jnp.asarray(equation.residual(jnp.asarray(1.0), sample_jet, args)).size)
+    runtime = (args,) if source.input_layout is None else (sample_inputs, args)
+    equation_values = tuple(
+        jnp.asarray(equation.residual(jnp.asarray(1.0), sample_jet, *runtime))
         for equation in assembly.equations
     )
+    equation_sizes = tuple(int(value.size) for value in equation_values)
     matching = dict(analysis.matching)
     variable_by_name = {value.name: value for value in assembly.variables}
-    for equation, size in zip(assembly.equations, equation_sizes, strict=True):
+    equation_scale_rows = []
+    for equation, value, residual_scale in zip(
+        assembly.equations,
+        equation_values,
+        assembly.residual_scales,
+        strict=True,
+    ):
         matched = matching[equation.name]
-        if size != variable_by_name[matched].size:
+        expected_shape = variable_by_name[matched].shape
+        if value.shape != expected_shape:
             raise ValueError(
-                f"Equation {equation.name!r} residual size {size} does not "
-                f"match its structurally matched variable {matched!r} size "
-                f"{variable_by_name[matched].size}."
+                f"Equation {equation.name!r} residual shape {value.shape} does not "
+                f"match its structurally matched variable {matched!r} shape "
+                f"{expected_shape}."
             )
+        if residual_scale.shape not in ((), value.shape):
+            raise ValueError(
+                f"Equation {equation.name!r} residual_scale must be scalar or "
+                f"have residual shape {value.shape}."
+            )
+        equation_scale_rows.append(
+            jnp.broadcast_to(residual_scale, value.shape).reshape((-1,))
+        )
     if sum(equation_sizes) != sum(value.size for value in assembly.variables):
         raise ValueError("Original DAE residual and variable scalar counts must match.")
-    residual = _ReducedResidual(
+    residual_core = _ReducedResidualCore(
         execution_variables,
         assembly.equations,
         offsets,
         analysis.differentiation_counts,
+    )
+    residual = (
+        _AutonomousReducedResidual(residual_core)
+        if source.input_layout is None
+        else _InputReducedResidual(residual_core)
     )
     variable_roles = []
     for variable in assembly.variables:
@@ -1013,19 +1243,35 @@ def compile_acausal_dae(
     )
     state_scale = jnp.concatenate(
         tuple(
-            jnp.broadcast_to(variable.scale, variable.shape).reshape((-1,))
+            variable.state_scale.reshape((-1,))
             for variable in assembly.variables
             for _ in range(max(variable.maximum_derivative_order, 1))
         )
     )
+    rate_scale = jnp.concatenate(
+        tuple(
+            variable.rate_scale.reshape((-1,))
+            for variable in assembly.variables
+            for _ in range(max(variable.maximum_derivative_order, 1))
+        )
+    )
+    residual_scale_rows = list(equation_scale_rows)
+    for variable in assembly.variables:
+        kinematic_scale = jnp.maximum(variable.state_scale, variable.rate_scale)
+        residual_scale_rows.extend(
+            kinematic_scale.reshape((-1,))
+            for _ in range(max(variable.maximum_derivative_order - 1, 0))
+        )
+    residual_scale = jnp.concatenate(tuple(residual_scale_rows))
     system_id = f"reduced-dae:{analysis.analysis_id}"
     system = DifferentialAlgebraicSystem(
         residual,
         state_shape=(state_size,),
         structure=structure,
+        input_layout=source.input_layout,
         state_scale=state_scale,
-        state_rate_scale=state_scale,
-        residual_scale=jnp.ones((state_size,), dtype=state_scale.dtype),
+        state_rate_scale=rate_scale,
+        residual_scale=residual_scale,
         system_id=system_id,
     )
     differential = structure.differential_variable_mask((state_size,))
@@ -1037,10 +1283,16 @@ def compile_acausal_dae(
             "system": system_id,
         }
     )
+    audit_core = _ResidualAuditCore(execution_variables, assembly.equations, offsets)
+    residual_audit = (
+        _AutonomousResidualAudit(audit_core)
+        if source.input_layout is None
+        else _InputResidualAudit(audit_core)
+    )
     return ReducedDAECompilation(
         system,
         _Reconstruction(execution_variables, offsets),
-        _ResidualAudit(execution_variables, assembly.equations, offsets),
+        residual_audit,
         structure,
         differential,
         ~differential,
@@ -1051,11 +1303,14 @@ def compile_acausal_dae(
 
 __all__ = [
     "AcausalDAESource",
+    "AutonomousDAEEquationResidual",
     "DAEComponent",
     "DAEConnection",
     "DAEDerivativeIncidence",
     "DAEEquationBlock",
+    "DAEEquationResidual",
     "DAEJet",
+    "InputDAEEquationResidual",
     "DAEPort",
     "DAEStructuralAnalysis",
     "DAEStructuralPolicy",

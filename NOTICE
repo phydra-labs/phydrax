@@ -293,6 +293,15 @@ resume equivalence as validation evidence. It does not include Scanagram's
 JAXPR interpreter, primitive rules, custom decorator, source, fixtures, or
 runtime dependency.
 
+The closed-form continuous-time recurrent-cell design follows Hasani et al.,
+“Closed-form continuous-time neural networks,” Nature Machine Intelligence 4
+(2022), DOI 10.1038/s42256-022-00556-7. The design study also inspected
+mlech26l/ncps at commit 695ec22d7d1831f2ced67346ef7d2f08c525bd47,
+licensed under the Apache License, Version 2.0. Phydrax independently implements
+the published full-gated equation against its own packed-sequence, physical-time,
+parameter, contraction, and execution contracts. It does not copy or redistribute
+upstream source, tests, fixtures, or runtime dependencies.
+
 Accurate conservation accounting
 The cancellation-aware conservation reductions are independent implementations of
 the error-free TwoSum and Sum2 algorithms described by Takeshi Ogita, Siegfried M.
@@ -460,3 +469,17 @@ basis, S2FFT-normalized product transforms, hybrid radial/angular scaling
 complement, multiresolution plan banks, resource admission, tests, examples,
 and benchmarks. No external ball-transform source, fixtures, generated
 kernels, cache format, or runtime dependency is copied or redistributed.
+
+Physics-learning composition design study
+The multi-objective gradient design considered Liu et al., “ConFIG:
+Towards Conflict-free Training of Physics Informed Neural Networks” (2024).
+The progressively refined solve policy considered “Progressively Refined
+Differentiable Physics” (2025). The terminal transport objective considered
+“Physics-Based Flow Matching” (2025). The conservative learned pair exchange
+considered the pairwise momentum construction in “Deep Lagrangian Fluids”
+and related momentum-conserving learned-fluid work. Phydrax independently
+implements these ideas against its native PyTree, measured-field, closure-data,
+Krylov-control, fixed-step, transport, particle-relation, status, evidence, and
+provenance contracts. No upstream source, tests, fixtures, generated data,
+notebooks, model weights, runtime types, or dependencies are copied, translated,
+bundled, linked, imported, or redistributed.

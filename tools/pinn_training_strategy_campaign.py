@@ -18,7 +18,14 @@ import phydrax as phx
 from phydrax.solver._functional_objective import evaluate_prepared_objective
 
 
-_STRATEGIES = ("baseline", "grad_norm", "ntk_trace", "pseudo", "combined")
+_STRATEGIES = (
+    "baseline",
+    "conflict_free",
+    "grad_norm",
+    "ntk_trace",
+    "pseudo",
+    "combined",
+)
 _OPTIMIZERS = ("adam", "kfac", "soap")
 
 
@@ -41,8 +48,7 @@ def _problem(*, seed: int, samples: int, width: int, depth: int):
     equation = phx.conditions.Residual(
         "u",
         interior,
-        lambda value: phx.operators.laplacian(value, var="x")
-        + jnp.pi**2 * exact,
+        lambda value: phx.operators.laplacian(value, var="x") + jnp.pi**2 * exact,
         label="equation",
     )
     equation_term = phx.terms.ResidualPenalty(
@@ -107,6 +113,9 @@ def _problem(*, seed: int, samples: int, width: int, depth: int):
 
 def _training_plan(strategy: str):
     balance = None
+    gradient_composition = (
+        phx.optim.ConflictFreeGradientPolicy() if strategy == "conflict_free" else None
+    )
     pseudo = ()
     diagnostics = phx.solver.FunctionalDiagnosticsPolicy(
         every=10,
@@ -147,6 +156,7 @@ def _training_plan(strategy: str):
     return phx.solver.FunctionalTrainingPlan(
         pseudo_transient=pseudo,
         term_balance=balance,
+        gradient_composition=gradient_composition,
         diagnostics=diagnostics,
     )
 
@@ -228,9 +238,7 @@ def run(args):
         "ntk_trace": float(ntk_diagnostics.trace),
         "ntk_stable_rank": float(ntk_diagnostics.stable_rank),
         "ntk_effective_rank": float(ntk_diagnostics.effective_rank),
-        "gradient_alignment_intra": (
-            alignment if math.isfinite(alignment) else None
-        ),
+        "gradient_alignment_intra": (alignment if math.isfinite(alignment) else None),
     }
 
 

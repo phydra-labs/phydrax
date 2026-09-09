@@ -201,6 +201,9 @@ def test_candidate_binds_exact_tuple_dependency_run_and_separate_evidence():
     verify_candidate_artifact(artifact)
     assert tuple(artifact["gates"]) == GATE_CATEGORIES
     assert tuple(artifact["qualification_evidence"]) == GATE_CATEGORIES
+    assert {criterion["kind"] for criterion in artifact["criteria"].values()} == {
+        "commercial-route-criterion"
+    }
     dependency = SupportDependency.from_record(artifact["support_dependency"])
     run_spec = ResolvedRunSpec.from_record(artifact["resolved_run_spec"])
     for category in GATE_CATEGORIES:
