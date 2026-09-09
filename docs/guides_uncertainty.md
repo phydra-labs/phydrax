@@ -2815,3 +2815,70 @@ total_order = result.total_order
 Zero-variance and non-finite outputs are rejected because their indices are undefined.
 Sobol estimators assume independent input marginals; dependence requires a different
 sensitivity design.
+
+## Finite-support ensemble refinement and experiment design
+
+`EnsembleSupport` normalizes a finite set of reference weights while retaining
+`source_kind` as `physical-equilibrium`, `empirical`, or `proposal-only`.
+Physical-equilibrium support additionally requires
+`PhysicalEquilibriumSupportProvenance`: a rights-checked reference manifest,
+condition/state support, sampling method, and accepted convergence evidence.
+Relabelling proposal or empirical samples cannot create equilibrium evidence.
+`EnsembleObservablePlan` receives already evaluated per-conformation observables,
+their measured aggregate, covariance, immutable case/source ancestry, and usage
+`calibration`, `model-selection`, or `held-out`; nonlinear observables must never
+be evaluated on an average structure.
+
+`reweight_ensemble` implements the documented Gaussian-observation plus
+\(\theta D_\mathrm{KL}(q\|p)\) convention. Numerical results remain available
+without a support policy, but scientific support validity requires an explicit,
+content-addressed `EnsembleSupportPolicy` with both absolute effective-sample
+and effective-fraction thresholds. Solver evidence, convex-support distance,
+relative entropy, correlation-adjusted effective sample size, collapse, and
+physical-equilibrium validity remain separate. Model-selection and held-out
+observable ancestry must be disjoint from calibration ancestry.
+
+`TwoStateThermodynamicClosurePlan` binds physical-equilibrium provenance,
+support policy, condition, ordered states, sources, rate units, an equivalence
+margin, confidence multiplier, and maximum useful uncertainty. Replica
+populations are derived from the exact reweighting weights and a
+support-bound `TwoStateEquilibriumStateAssignment`; callers cannot submit a
+separate aggregate ratio. A pass requires the residual confidence interval to
+lie inside the physical equivalence margin. Excess uncertainty is inconclusive,
+not evidence of consistency, and kinetic agreement never upgrades empirical or
+proposal-only support into an equilibrium measure.
+
+Experimental design likewise separates computation from evidence.
+`ExperimentalDesignCandidate` freezes condition, cost, feasibility, shared setup,
+diversity, control, and prediction-source identity.
+`exact_finite_expected_utility` delegates finite mutual information to the
+native `FiniteExperimentalDesignProblem` engine; a caller-supplied finite utility
+table uses direct exact expectation. `nested_monte_carlo_expected_utility` and
+the three `posterior_*_expected_utility` functions distinguish parameter,
+predictive, and model-discrimination targets and retain estimator standard
+error, bias bound, approximation, and bound direction.
+`select_experimental_batch` applies cost, setup, exclusion, feasibility,
+diversity, redundancy, and mandatory-control constraints with stable tie
+breaking. `ExperimentalBatchPlan.to_record()` is the content-addressed record to
+freeze before acquisition.
+
+`evaluate_retrospective_design` compares random, space-filling,
+uncertainty-only, domain-heuristic, and proposed selection using realized
+utility per planned cost when actual expenditures differ. It always returns
+`evaluation_kind="retrospective_cost_normalized_replay"` and is not prospective
+qualification.
+Exercise the numerical/design API with:
+
+```bash
+python benchmarks/biophysical_experiment_design.py \
+  --candidates 12 --batch-size 4 --budget 6 \
+  --warmup 1 --repeats 5 --output /tmp/biophysical-design.json
+```
+
+This benchmark is entirely synthetic and reports
+`scientific_claim: "none; synthetic software/design benchmark"`. A prospective
+scientific result starts only after a real campaign freezes the candidate panel,
+models, utility, constraints, selection policy, thresholds, and analysis,
+acquires a genuinely new independent batch, admits every outcome, and runs the
+unchanged analysis.
+

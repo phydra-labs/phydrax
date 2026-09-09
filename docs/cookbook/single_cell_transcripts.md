@@ -143,3 +143,23 @@ pseudotime. Those scientific prerequisites cannot be replaced by the successful
 synthetic workflow. Read the [focused single-cell guide](../guides_systems_biology.md#single-cell-transcript-scenarios-s1),
 [public API](../api/advanced_biophysics.md#single-cell-transcripts), and
 [source dispositions](../biophysical_sources.md) for admission and refusal details.
+
+## Run the four-channel pulse/chase contract
+
+```bash
+python benchmarks/single_cell_pulse_chase.py
+```
+
+This command executes the exact labeled/unlabeled × unspliced/spliced schedule
+mean and reports the fixed channel order. It deliberately passes four absent
+source manifests to `sceu_seq_prerequisites`, so the experimental outcome is
+inconclusive and the four `source-manifest:<channel>` gaps remain visible.
+
+Replacing those gaps requires four exact caller-owned source manifests with
+rights and measurement uncertainty, raw integer matrices with cell/gene/
+culture/plate/time identity, an independently calibrated labeled-count assay,
+physical schedule timing uncertainty, disjoint held-out cultures, plates and
+time point, and identifiable claimed rate combinations. Do not use the
+successful analytical mean as a universal biological clock or relabel a
+retrospective source replay as prospective evidence.
+

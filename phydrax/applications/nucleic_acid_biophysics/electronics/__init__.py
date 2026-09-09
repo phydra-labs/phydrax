@@ -18,18 +18,30 @@ from ._execution import (
     PreparedElectronicModel,
 )
 from ._model import ElectronicChannel, ElectronicParameterArtifact, ElectronicSiteGraph
+from ._qualification import (
+    ChargeTransferObservationSeries,
+    compare_electronic_models,
+    ElectronicModelComparison,
+    ElectronicModelFit,
+    ElectronicModelPrediction,
+)
 
 
 __all__ = [
+    "ChargeTransferObservationSeries",
     "ElectronicChannel",
     "ElectronicEvolution",
     "ElectronicJumpEvolution",
+    "ElectronicModelComparison",
+    "ElectronicModelFit",
+    "ElectronicModelPrediction",
     "ElectronicParameterArtifact",
     "ElectronicSiteGraph",
     "PreparedElectronicModel",
     "electronic_coherences",
     "electronic_populations",
     "electronic_reduced_density",
+    "compare_electronic_models",
     "evolve_electronic_jumps",
     "evolve_electronics",
     "nucleotide_electronic_populations",

@@ -58,6 +58,17 @@ benchmarks/*
 !benchmarks/protein_unfolding_inference.py
 !benchmarks/radiation_lesions.py
 !benchmarks/single_cell_transcripts.py
+!benchmarks/nucleic_electronics_qualification.py
+!benchmarks/nucleic_mechanics_qualification.py
+!benchmarks/protein_cotranslation_qualification.py
+!benchmarks/protein_nucleic_qualification.py
+!benchmarks/radiation_initial_lesion_qualification.py
+!benchmarks/single_cell_pulse_chase.py
+!benchmarks/biophysical_experiment_design.py
+!benchmarks/nucleic_conditional_ensemble.py
+!benchmarks/nucleic_strand_displacement_qualification.py
+!benchmarks/protein_internal_coordinate_generation.py
+!benchmarks/protein_stability_qualification.py
 !benchmarks/electrophysiology.py
 !benchmarks/neural_network.py
 !benchmarks/population_code.py

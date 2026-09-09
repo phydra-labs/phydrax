@@ -46,6 +46,38 @@ reported evidence outcome: it verifies identity and causality but does not turn 
 failed or inconclusive result into a pass. Evidence currentness and supersession
 remain the responsibility of `QualificationMatrix` and the release trust path.
 
+## Scientific data roles versus governed campaign causality
+
+`ScientificCampaign` freezes data-role membership, independent units,
+preparations, batches, ancestry, preprocessing cases, and content-addressed
+scientific metric criteria. It is the application-facing split contract; it does
+not replace `CampaignStartRecord` or `CampaignObservationRecord`.
+
+`ScientificMetricCriterion` describes the exact metric bounds consumed by a
+`ScientificClaimProfile`. Before release, each bound must also be represented by
+an approved `QualificationCriterion` for the same support tuple. A two-sided
+scientific interval requires separate approved lower and upper criteria. The
+approved criteria, resolved run, start, observations, and raw artifacts are then
+validated with `validate_qualification_causality`.
+
+Candidate or analytical workflows intentionally emit empty
+`campaign_start_record_ids` and `campaign_observation_record_ids`. Even if their
+internal numerical stages pass, that evidence is not causally admissible for
+release until the approved pre-start records exist. This preserves the
+distinction between a leakage-controlled retrospective analysis and a registered
+prospective qualification campaign.
+
+::: phydrax.qualification
+    options:
+      show_root_heading: true
+      members:
+        - ScientificCase
+        - CampaignRole
+        - ScientificCampaign
+        - ScientificMetricCriterion
+        - ScientificClaimProfile
+
+
 ::: phydrax.qualification.QualificationCriterion
 
 ::: phydrax.qualification.CampaignStartRecord

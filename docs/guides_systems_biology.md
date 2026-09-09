@@ -344,3 +344,37 @@ does not claim smooth-hazard SSA, biological division, physical pseudotime, or
 experimentally validated timescales. See the
 [single-cell API](api/advanced_biophysics.md#single-cell-transcripts) and
 [biophysical source dispositions](biophysical_sources.md).
+
+## Four-channel pulse/chase qualification lane
+
+The `single_cell` leaf now represents labeled/unlabeled × unspliced/spliced
+counts in the fixed `LABELED_CHANNELS` order. `PulseChaseSchedule` carries
+piecewise-constant rates and pulse fractions with explicit inverse-time units;
+`transient_labeled_transcript_mean` and
+`scheduled_labeled_transcript_mean` compute the exact four-channel mean contract.
+`pulse_chase_identifiability` reports identified and unidentifiable rate
+combinations rather than assigning an arbitrary clock.
+
+`sceu_seq_prerequisites` reports admission gaps for the exact four caller-owned
+GSE128365 export matrices. `import_sceu_seq_arrays` requires one
+rights-and-uncertainty-bearing `ReferenceArtifactManifest` per channel and retains
+raw integer counts, validity, cell/gene/culture/plate/time coordinates,
+preprocessing, and source identity. It performs no download, alignment, or
+normalization.
+
+`assess_pulse_chase_prediction` evaluates only held-out cultures, plates, and a
+physical time point. It refuses culture/plate leakage, requires an independent
+physical schedule timing calibration with uncertainty, reports culture-macro
+standardized RMS, and permits claims only for identifiable rate combinations.
+Its claim must require `source-admission`, `measurement-calibration`,
+`parameter-identifiability`, `locked-prediction`, and `external-transfer`.
+
+The executable schedule benchmark passes four-channel numerical mechanics but
+calls `sceu_seq_prerequisites((None, None, None, None))`. Its exact current
+missing prerequisites are
+`source-manifest:labeled-unspliced`,
+`source-manifest:labeled-spliced`,
+`source-manifest:unlabeled-unspliced`, and
+`source-manifest:unlabeled-spliced`. Experimental status is therefore
+`inconclusive`; the run supplies no source corpus or universal biological clock.
+
