@@ -8,6 +8,10 @@
   provider/runtime events, explicit host/JAX telemetry snapshots, and
   process-safe sink ownership. Functional solver file logging now uses
   process-level `phydrax.logging` sinks and `log_every` defaults to zero.
+- Added a transform-safe iteration execution substrate with bounded pure observers,
+  typed domain records, explicit device stop rules, deterministic host sessions,
+  capability-checked terminal/output/step/attempt/inner-iteration granularity, and
+  checkpointed host cursors across production and training lifecycles.
 - Added native functional domain decomposition with exact multidimensional,
   nonuniform, and periodic Cartesian topology; mapped-cover evidence; sparse
   partition-of-unity and side-aware broken fields; typed local references; physical
@@ -2084,6 +2088,11 @@
   resource accounting.
 
 ### Changed
+- Replaced training and finite-search callbacks and fixed-step diagnostic callbacks
+  with explicit iteration plans, sinks, and separate host control. Native Krylov,
+  Newton, scalar optimization, fixed-step, Markov, Hamiltonian, continuation, and
+  functional-decomposition execution now expose owner-typed iteration evidence;
+  delegated backends report only faithfully available terminal or saved-output data.
 - Compressible case identity now binds the exact physical system, including transport
   and auxiliary state. Equation-owned diffusion replaces the legacy `D + 2`
   material-only FV path, and viscous conservation diagnostics include total

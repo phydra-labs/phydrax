@@ -10,7 +10,12 @@ from ._adaptation import (
 )
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
-from ._chunks import MarkovChunkPlan, MarkovChunkResult, sample_markov_chunked
+from ._chunks import (
+    MarkovChunkIterationMetrics,
+    MarkovChunkPlan,
+    MarkovChunkResult,
+    sample_markov_chunked,
+)
 from ._designs import (
     get_sampler,
     get_sampler_host,
@@ -25,6 +30,7 @@ from ._hamiltonian import (
     HamiltonianAdaptationPlan,
     HamiltonianAdaptationResult,
     HamiltonianChainState,
+    HamiltonianIterationMetrics,
     HamiltonianSampleResult,
     initialize_hamiltonian_state,
     prepare_hamiltonian_kernel,
@@ -32,6 +38,7 @@ from ._hamiltonian import (
     sample_hamiltonian,
 )
 from ._markov import (
+    MarkovIterationMetrics,
     MarkovSampleResult,
     MarkovState,
     MarkovTransitionInfo,
@@ -84,6 +91,7 @@ __all__ = [
     "DesignLike",
     "DesignName",
     "HaltonDesign",
+    "HamiltonianIterationMetrics",
     "FullMarkovTarget",
     "GaussianRandomWalkProposal",
     "HammersleyDesign",
@@ -94,10 +102,12 @@ __all__ = [
     "HamiltonianSampleResult",
     "IncrementalMarkovTarget",
     "IncrementalTargetProposal",
+    "MarkovIterationMetrics",
     "MarkovSampleResult",
     "MarkovState",
     "MarkovTransitionInfo",
     "MetropolisHastings",
+    "MarkovChunkIterationMetrics",
     "MarkovChunkPlan",
     "MarkovChunkResult",
     "MarkovTargetState",

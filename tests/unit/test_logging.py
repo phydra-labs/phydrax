@@ -12,10 +12,13 @@ import stat
 from collections.abc import Iterator
 from pathlib import Path
 
+import jax.numpy as jnp
+import jax.random as jr
 import pytest
 from loguru import logger
 
 from phydrax import logging as pxlogging
+from phydrax._training import TrainingController, TrainingIterationKind
 
 
 class _ExplosiveRepresentation:
@@ -159,9 +162,7 @@ def test_text_sink_is_single_line_and_structured() -> None:
     pxlogging.enable()
     try:
         with pxlogging.context(run_id="run-1"):
-            pxlogging.emit(
-                "INFO", "runtime.operation.completed", "One\nline", value=2
-            )
+            pxlogging.emit("INFO", "runtime.operation.completed", "One\nline", value=2)
     finally:
         pxlogging.remove_sink(handler_id)
 
@@ -189,3 +190,26 @@ def test_event_collections_are_bounded() -> None:
     event = _read_events(buffer)[0]
     assert len(event["fields"]["values"]) < 1_000
     assert "fields.values.*" in event["omitted_fields"]
+
+
+def test_training_iteration_kind_emits_canonical_logging_event() -> None:
+    buffer = io.StringIO()
+    handler_id = pxlogging.add_json_sink(buffer)
+    pxlogging.enable()
+    try:
+        controller = TrainingController(
+            total_steps=1,
+            key=jr.key(0),
+            algorithm_id="logging-test-training",
+        )
+        controller.emit(
+            TrainingIterationKind.RUN_START,
+            metrics={"loss": jnp.asarray(1.25)},
+        )
+    finally:
+        pxlogging.remove_sink(handler_id)
+
+    event = _read_events(buffer)[0]
+    assert event["event"] == "training.started"
+    assert event["fields"]["iteration_kind"] == "run_start"
+    assert event["fields"]["metrics"] == [{"name": "loss", "value": 1.25}]

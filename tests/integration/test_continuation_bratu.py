@@ -64,3 +64,42 @@ def test_weighted_bratu_branch_crosses_the_discrete_fold():
     assert min(float(point.tangent_coordinate) for point in result.points) < 0.0
     assert max(float(point.residual_norm) for point in result.points) <= 1e-8
     assert result.branch.geometry.execution_state_space.space_id == state_space.space_id
+    phases = []
+
+    def phase(event):
+        return int(event.record.coordinates.phase)
+
+    session = phx.execution.IterationSession(
+        "bratu-continuation-test",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                lambda event: phases.append(phase(event)), "collector"
+            ),
+        ),
+        control=phx.execution.CallableIterationHostControl(
+            lambda event: phase(event) == int(phx.execution.IterationPhase.COMMIT),
+            "stop-after-first-branch-step",
+        ),
+    )
+    stopped = phx.continuation.continue_branch(
+        problem,
+        jnp.zeros((size,), dtype=jnp.float64),
+        jnp.asarray(0.0, dtype=jnp.float64),
+        num_steps=14,
+        method=phx.continuation.PseudoArclengthContinuation(
+            initial_step=0.25,
+            maximum_step=0.45,
+            tangent_update="bordered",
+        ),
+        session=session,
+    )
+
+    assert stopped.status == phx.continuation.ContinuationStatus.USER_STOPPED
+    assert len(stopped.points) == 2
+    assert phases == [
+        int(phx.execution.IterationPhase.START),
+        int(phx.execution.IterationPhase.COMMIT),
+        int(phx.execution.IterationPhase.TERMINAL),
+    ]
+    assert stopped.iteration_session_state is not None
+    assert stopped.iteration_session_state.stop_requested

@@ -11,6 +11,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key, PyTree
 
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationEvidence,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    update_iteration,
+)
 from .._strict import StrictModule
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
@@ -168,6 +180,67 @@ class MarkovTransitionInfo(StrictModule):
     target_valid: Array
 
 
+class MarkovIterationMetrics(StrictModule):
+    """Per-chain transition evidence for iteration observers."""
+
+    accepted: Array
+    log_acceptance_ratio: Array
+    proposal_valid: Array
+    target_valid: Array
+    log_target: Array
+    warmup: Array
+    draw_index: Array
+
+    def __init__(
+        self,
+        info: MarkovTransitionInfo,
+        log_target,
+        /,
+        *,
+        warmup,
+        draw_index,
+    ):
+        self.accepted = jnp.asarray(info.accepted, dtype=bool)
+        self.log_acceptance_ratio = jnp.asarray(info.log_acceptance_ratio)
+        self.proposal_valid = jnp.asarray(info.proposal_valid, dtype=bool)
+        self.target_valid = jnp.asarray(info.target_valid, dtype=bool)
+        self.log_target = jnp.asarray(log_target)
+        self.warmup = jnp.asarray(warmup, dtype=bool)
+        self.draw_index = jnp.asarray(draw_index, dtype=jnp.int32)
+
+
+def _markov_iteration_record(
+    state: MarkovState,
+    info: MarkovTransitionInfo,
+    phase,
+    /,
+    *,
+    warmup,
+    draw_index,
+    active,
+    terminal=False,
+) -> IterationRecord:
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            state.step_index.astype(jnp.int32),
+            invocation=draw_index,
+            attempt=state.step_index.astype(jnp.int32),
+            accepted=state.step_index.astype(jnp.int32),
+            active=active,
+            committed=active,
+            terminal=terminal,
+        ),
+        jnp.where(state.valid, 0, 1).astype(jnp.int32),
+        MarkovIterationMetrics(
+            info,
+            state.log_target,
+            warmup=warmup,
+            draw_index=draw_index,
+        ),
+    )
+
+
 class MarkovSampleResult(AbstractChainSampleResult):
     """Chain-preserving Markov draws and complete transition evidence."""
 
@@ -184,6 +257,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
     target_id: str = eqx.field(static=True)
     warmup_steps: int = eqx.field(static=True)
     steps_per_draw: int = eqx.field(static=True)
+    iteration_evidence: IterationEvidence | None
 
     def __init__(
         self,
@@ -201,6 +275,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         target_id: str,
         warmup_steps: int,
         steps_per_draw: int,
+        iteration_evidence: IterationEvidence | None = None,
     ):
         sample_leaves = jax.tree_util.tree_leaves(samples)
         if not sample_leaves:
@@ -232,6 +307,10 @@ class MarkovSampleResult(AbstractChainSampleResult):
             raise ValueError("proposal_id must be non-empty.")
         if not isinstance(target_id, str) or not target_id:
             raise ValueError("target_id must be non-empty.")
+        if iteration_evidence is not None and not isinstance(
+            iteration_evidence, IterationEvidence
+        ):
+            raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.samples = samples
         self.log_target = values
         self.accepted = jnp.asarray(accepted, dtype=bool)
@@ -245,6 +324,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         self.target_id = target_id
         self.warmup_steps = int(warmup_steps)
         self.steps_per_draw = int(steps_per_draw)
+        self.iteration_evidence = iteration_evidence
 
     @property
     def num_chains(self) -> int:
@@ -455,13 +535,16 @@ def sample_markov(
     num_draws: int,
     steps_per_draw: int = 1,
     warmup_steps: int = 0,
+    iteration: IterationPlan | None = None,
 ) -> MarkovSampleResult:
-    """Advance persistent chains and retain chain-by-draw samples."""
+    """Advance persistent chains with optional pure transition observation."""
     resolved = _resolve_target(target)
     if not isinstance(kernel, MetropolisHastings):
         raise TypeError("kernel must be a MetropolisHastings instance.")
     if not isinstance(state, MarkovState):
         raise TypeError("state must be a MarkovState.")
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
     draws = int(num_draws)
     transitions = int(steps_per_draw)
     warmup = int(warmup_steps)
@@ -472,40 +555,178 @@ def sample_markov(
     if warmup < 0:
         raise ValueError("warmup_steps must be non-negative.")
 
-    def discard_step(carry, _):
-        next_state, _info = kernel.step(resolved, carry, key)
-        return next_state, None
+    iteration_scope = None
+    iteration_capabilities = None
+    iteration_state = None
+    if iteration is not None:
+        iteration_capabilities = IterationCapabilities(
+            ("terminal", "output", "step"),
+            mapped_records=True,
+        )
+        iteration_scope = bind_iteration_scope(
+            iteration,
+            iteration_capabilities,
+            f"markov:{kernel.kernel_id}",
+        )
+        initial_info = MarkovTransitionInfo(
+            jnp.zeros_like(state.valid),
+            jnp.full_like(state.log_target, jnp.nan),
+            state.valid,
+            state.valid,
+        )
+        initial_record = _markov_iteration_record(
+            state,
+            initial_info,
+            IterationPhase.START,
+            warmup=True,
+            draw_index=-1,
+            active=state.valid,
+        )
+        iteration_state = initialize_iteration(iteration, initial_record)
 
-    warmed, _ = jax.lax.scan(discard_step, state, xs=None, length=warmup)
+    if iteration is None:
 
-    def collect_draw(carry, _):
-        def transition_step(inner, __):
-            next_state, info = kernel.step(resolved, inner, key)
-            return next_state, info
+        def discard_step(carry, _):
+            next_state, _info = kernel.step(resolved, carry, key)
+            return next_state, None
 
-        next_state, infos = jax.lax.scan(
-            transition_step,
-            carry,
+        warmed, _ = jax.lax.scan(discard_step, state, xs=None, length=warmup)
+
+        def collect_draw(carry, _):
+            def transition_step(inner, __):
+                next_state, info = kernel.step(resolved, inner, key)
+                return next_state, info
+
+            next_state, infos = jax.lax.scan(
+                transition_step,
+                carry,
+                xs=None,
+                length=transitions,
+            )
+            output = (
+                next_state.position,
+                next_state.log_target,
+                infos.accepted,
+                infos.log_acceptance_ratio,
+                infos.proposal_valid,
+                infos.target_valid,
+            )
+            return next_state, output
+
+        final_state, outputs = jax.lax.scan(
+            collect_draw,
+            warmed,
             xs=None,
-            length=transitions,
+            length=draws,
         )
-        output = (
-            next_state.position,
-            next_state.log_target,
-            infos.accepted,
-            infos.log_acceptance_ratio,
-            infos.proposal_valid,
-            infos.target_valid,
-        )
-        return next_state, output
+    else:
+        assert iteration_state is not None
 
-    final_state, outputs = jax.lax.scan(
-        collect_draw,
-        warmed,
-        xs=None,
-        length=draws,
-    )
+        def discard_step(carry, _):
+            current, observed = carry
+            next_state, info = kernel.step(resolved, current, key)
+            record = _markov_iteration_record(
+                next_state,
+                info,
+                IterationPhase.COMMIT,
+                warmup=True,
+                draw_index=-1,
+                active=(
+                    next_state.valid
+                    if iteration.granularity == "step"
+                    else jnp.zeros_like(next_state.valid)
+                ),
+            )
+            observed = update_iteration(iteration, observed, record, allow_stop=False)
+            return (next_state, observed), None
+
+        (warmed, iteration_state), _ = jax.lax.scan(
+            discard_step,
+            (state, iteration_state),
+            xs=None,
+            length=warmup,
+        )
+
+        def collect_draw(carry, draw_index):
+            def transition_step(inner, _):
+                current, observed = inner
+                next_state, info = kernel.step(resolved, current, key)
+                record = _markov_iteration_record(
+                    next_state,
+                    info,
+                    IterationPhase.COMMIT,
+                    warmup=False,
+                    draw_index=draw_index,
+                    active=(
+                        next_state.valid
+                        if iteration.granularity == "step"
+                        else jnp.zeros_like(next_state.valid)
+                    ),
+                )
+                observed = update_iteration(iteration, observed, record, allow_stop=False)
+                return (next_state, observed), info
+
+            (next_state, observed), infos = jax.lax.scan(
+                transition_step,
+                carry,
+                xs=None,
+                length=transitions,
+            )
+            if iteration.granularity == "output":
+                last_info = jax.tree.map(lambda value: value[-1], infos)
+                record = _markov_iteration_record(
+                    next_state,
+                    last_info,
+                    IterationPhase.COMMIT,
+                    warmup=False,
+                    draw_index=draw_index,
+                    active=next_state.valid,
+                )
+                observed = update_iteration(iteration, observed, record, allow_stop=False)
+            output = (
+                next_state.position,
+                next_state.log_target,
+                infos.accepted,
+                infos.log_acceptance_ratio,
+                infos.proposal_valid,
+                infos.target_valid,
+            )
+            return (next_state, observed), output
+
+        (final_state, iteration_state), outputs = jax.lax.scan(
+            collect_draw,
+            (warmed, iteration_state),
+            xs=jnp.arange(draws, dtype=jnp.int32),
+        )
+
     samples, values, accepted, ratios, proposal_valid, target_valid = outputs
+    iteration_evidence = None
+    if iteration is not None:
+        assert iteration_scope is not None
+        assert iteration_capabilities is not None
+        assert iteration_state is not None
+        final_info = MarkovTransitionInfo(
+            accepted[-1, -1],
+            ratios[-1, -1],
+            proposal_valid[-1, -1],
+            target_valid[-1, -1],
+        )
+        terminal = _markov_iteration_record(
+            final_state,
+            final_info,
+            IterationPhase.TERMINAL,
+            warmup=False,
+            draw_index=draws - 1,
+            active=final_state.valid,
+            terminal=True,
+        )
+        iteration_evidence = finalize_iteration(
+            iteration,
+            iteration_scope,
+            iteration_capabilities,
+            iteration_state,
+            terminal,
+        )
     return MarkovSampleResult(
         samples=_swap_draw_chain(samples),
         log_target=jnp.swapaxes(values, 0, 1),
@@ -520,10 +741,12 @@ def sample_markov(
         target_id=resolved.target_id,
         warmup_steps=warmup,
         steps_per_draw=transitions,
+        iteration_evidence=iteration_evidence,
     )
 
 
 __all__ = [
+    "MarkovIterationMetrics",
     "MarkovSampleResult",
     "MarkovState",
     "MarkovTransitionInfo",

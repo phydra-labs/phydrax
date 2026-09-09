@@ -13,6 +13,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax._training import TrainingIterationKind
 
 
 def _dataset(cases=10, resolution=8):
@@ -670,10 +671,17 @@ def test_zero_support_window_skips_every_update_lifecycle_transition():
         case_mask=jnp.asarray((False, False, True, True)),
     )
     events = []
-
-    def record(event):
-        events.append(event.name)
-        return False
+    session = phx.execution.IterationSession(
+        "zero-support-training",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                lambda event: events.append(
+                    TrainingIterationKind(int(event.record.metrics.kind))
+                ),
+                "collector",
+            ),
+        ),
+    )
 
     result = phx.nn.operator.training.fit_operator(
         _fit_model(seed=13),
@@ -683,12 +691,12 @@ def test_zero_support_window_skips_every_update_lifecycle_transition():
         batch_size=2,
         gradient_accumulation=1,
         shuffle=False,
-        callbacks=(record,),
+        session=session,
     )
 
     assert result.completed_steps == 1
     assert result.progress.microstep == 2
-    assert events.count("batch_end") == 1
+    assert events.count(TrainingIterationKind.UPDATE) == 1
 
 
 @pytest.mark.parametrize(
@@ -851,13 +859,24 @@ def test_fit_operator_returns_task_bound_physical_operator():
     )
 
 
-def test_fit_operator_callbacks_can_stop_at_an_update_boundary():
+def test_fit_operator_host_control_stops_at_an_update_boundary():
     events = []
 
-    def stop_after_first(event):
-        events.append(event.name)
-        return event.name == "batch_end"
+    def kind(event):
+        return TrainingIterationKind(int(event.record.metrics.kind))
 
+    session = phx.execution.IterationSession(
+        "stop-operator-training",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                lambda event: events.append(kind(event)), "collector"
+            ),
+        ),
+        control=phx.execution.CallableIterationHostControl(
+            lambda event: kind(event) is TrainingIterationKind.UPDATE,
+            "stop-after-first-update",
+        ),
+    )
     result = phx.nn.operator.training.fit_operator(
         _fit_model(seed=5),
         _dataset(cases=8),
@@ -865,12 +884,12 @@ def test_fit_operator_callbacks_can_stop_at_an_update_boundary():
         steps=8,
         batch_size=2,
         gradient_accumulation=2,
-        callbacks=(stop_after_first,),
+        session=session,
     )
 
     assert result.completed_steps == 1
     assert result.progress.microstep == 2
-    assert result.stopped_by_callback
-    assert events[0] == "train_begin"
-    assert "batch_end" in events
-    assert events[-1] == "train_end"
+    assert result.stopped_by_host_control
+    assert events[0] is TrainingIterationKind.RUN_START
+    assert TrainingIterationKind.UPDATE in events
+    assert events[-1] is TrainingIterationKind.RUN_TERMINAL

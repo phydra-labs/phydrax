@@ -417,6 +417,7 @@ from ._resilience import (
 )
 from ._results import (
     linear_status_message,
+    LinearIterationMetrics,
     LinearPrecisionEvidence,
     LinearSolveCheckEvidence,
     LinearSolveDiagnostics,
@@ -763,6 +764,7 @@ __all__ = [
     "SimilarityScaledLinearTransform",
     "TensorLinearTransform",
     "TrigonometricTransformKind",
+    "LinearIterationMetrics",
     "LinearSolveDiagnostics",
     "LinearSolvePlan",
     "LowRankBoundaryCorrectionPlan",

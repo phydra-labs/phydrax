@@ -17,6 +17,18 @@ import numpy as np
 from blackjax.mcmc import integrators as blackjax_integrators, nuts as blackjax_nuts
 from jaxtyping import Array, ArrayLike, Key
 
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationEvidence,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    update_iteration,
+)
 from .._strict import StrictModule
 from ..linalg import (
     DenseLinearOperator,
@@ -115,6 +127,17 @@ class HamiltonianSampleResult(StrictModule):
     target_id: str = eqx.field(static=True)
     method: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
+    iteration_evidence: IterationEvidence | None
+
+
+class HamiltonianIterationMetrics(StrictModule):
+    accepted: Array
+    acceptance_probability: Array
+    divergent: Array
+    maximum_depth_reached: Array
+    nonfinite_gradient: Array
+    leapfrog_steps: Array
+    log_target: Array
 
 
 class HamiltonianAdaptationResult(StrictModule):
@@ -432,6 +455,7 @@ def sample_hamiltonian(
     *,
     key: Key[Array, ""],
     num_draws: int,
+    iteration: IterationPlan | None = None,
 ) -> HamiltonianSampleResult:
     if not isinstance(kernel, PreparedHamiltonianKernel) or not isinstance(
         state, HamiltonianChainState
@@ -440,6 +464,8 @@ def sample_hamiltonian(
     draws = int(num_draws)
     if draws <= 0:
         raise ValueError("num_draws must be positive.")
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
     chain_indices = jnp.arange(state.position.shape[0], dtype=jnp.uint32)
 
     def draw(carry, _):
@@ -481,6 +507,92 @@ def sample_hamiltonian(
         & jnp.isfinite(values)
         & jnp.all(jnp.isfinite(gradients), axis=-1),
     )
+    iteration_evidence = None
+    if iteration is not None:
+        capabilities = IterationCapabilities(
+            ("terminal", "step", "output"),
+            mapped_records=True,
+        )
+        scope = bind_iteration_scope(
+            iteration,
+            capabilities,
+            f"hamiltonian:{kernel.method}:{kernel.target_id}",
+        )
+        zero_bool = jnp.zeros_like(state.valid)
+        zero_float = jnp.zeros_like(state.log_target)
+        zero_int = jnp.zeros_like(state.log_target, dtype=jnp.int32)
+        initial = IterationRecord(
+            IterationCoordinates(
+                IterationPhase.START,
+                state.step_index.astype(jnp.int32),
+                active=state.valid,
+                committed=jnp.zeros_like(state.valid),
+            ),
+            jnp.where(state.valid, 0, 1).astype(jnp.int32),
+            HamiltonianIterationMetrics(
+                zero_bool,
+                zero_float,
+                zero_bool,
+                zero_bool,
+                zero_bool,
+                zero_int,
+                state.log_target,
+            ),
+        )
+        observed = initialize_iteration(iteration, initial)
+        if iteration.granularity in ("step", "output"):
+            for draw_index in range(draws):
+                active = state.valid & kernel.valid
+                record = IterationRecord(
+                    IterationCoordinates(
+                        IterationPhase.COMMIT,
+                        state.step_index.astype(jnp.int32) + draw_index + 1,
+                        invocation=draw_index,
+                        attempt=state.step_index.astype(jnp.int32) + draw_index + 1,
+                        accepted=state.step_index.astype(jnp.int32) + draw_index + 1,
+                        active=active,
+                        committed=active,
+                    ),
+                    jnp.where(active, 0, 1).astype(jnp.int32),
+                    HamiltonianIterationMetrics(
+                        accepted[:, draw_index],
+                        probabilities[:, draw_index],
+                        divergent[:, draw_index],
+                        depth[:, draw_index],
+                        nonfinite[:, draw_index],
+                        steps[:, draw_index],
+                        log_values[:, draw_index],
+                    ),
+                )
+                observed = update_iteration(iteration, observed, record, allow_stop=False)
+        terminal = IterationRecord(
+            IterationCoordinates(
+                IterationPhase.TERMINAL,
+                final.step_index.astype(jnp.int32),
+                attempt=final.step_index.astype(jnp.int32),
+                accepted=final.step_index.astype(jnp.int32),
+                active=final.valid,
+                committed=final.valid,
+                terminal=True,
+            ),
+            jnp.where(final.valid, 0, 1).astype(jnp.int32),
+            HamiltonianIterationMetrics(
+                accepted[:, -1],
+                probabilities[:, -1],
+                divergent[:, -1],
+                depth[:, -1],
+                nonfinite[:, -1],
+                steps[:, -1],
+                log_values[:, -1],
+            ),
+        )
+        iteration_evidence = finalize_iteration(
+            iteration,
+            scope,
+            capabilities,
+            observed,
+            terminal,
+        )
     return HamiltonianSampleResult(
         samples=samples,
         log_target=log_values,
@@ -496,6 +608,7 @@ def sample_hamiltonian(
         target_id=kernel.target_id,
         method=kernel.method,
         claim="finite-capacity-frozen-production-hamiltonian-chain",
+        iteration_evidence=iteration_evidence,
     )
 
 

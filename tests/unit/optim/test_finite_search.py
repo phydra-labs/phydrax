@@ -145,6 +145,41 @@ def test_finite_exhaustive_search_matches_dense_oracle_for_all_batch_layouts():
         assert int(result.invalid_evaluations) == 0
 
 
+def test_finite_search_session_observes_batches_and_stops_at_boundary():
+    space = phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.arange(6.0)))
+    events = []
+
+    def collect(event):
+        events.append(event)
+
+    session = phx.execution.IterationSession(
+        "finite-search-test",
+        sinks=(phx.execution.CallableIterationSink(collect, "collector"),),
+        control=phx.execution.CallableIterationHostControl(
+            lambda event: (
+                int(event.record.coordinates.phase)
+                == int(phx.execution.IterationPhase.COMMIT)
+            ),
+            "stop-after-first-batch",
+        ),
+    )
+    result = phx.optim.search_finite(
+        lambda value: ((value - 3.0) ** 2, jnp.asarray(True)),
+        space,
+        search=phx.optim.FiniteExhaustiveSearch(batch_size=2),
+        session=session,
+    )
+
+    assert int(result.status) == int(phx.optim.FiniteSearchStatus.STOPPED)
+    assert int(result.attempted_evaluations) == 2
+    assert [int(event.record.coordinates.phase) for event in events] == [
+        int(phx.execution.IterationPhase.START),
+        int(phx.execution.IterationPhase.COMMIT),
+        int(phx.execution.IterationPhase.TERMINAL),
+    ]
+    assert int(events[-1].record.metrics.attempted_evaluations) == 2
+
+
 def test_finite_top_k_has_stable_ties_and_pareto_is_nondominated():
     space = phx.optim.FiniteProductSpace(
         phx.optim.FiniteAxis(jnp.asarray([-2.0, -1.0, 1.0, 2.0]))

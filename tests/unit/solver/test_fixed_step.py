@@ -231,11 +231,6 @@ def test_fixed_step_saves_and_atomically_freezes_structured_state():
         solution.states["active"][:, 0],
         jnp.asarray([True, False, False, False]),
     )
-    first = jax.tree.map(lambda leaf: leaf[1], solution.states)
-    midpoint = problem.state_geometry.interpolate(initial, first, 0.5)
-    assert jnp.array_equal(midpoint["position"], jnp.asarray([0.5]))
-    assert jnp.array_equal(midpoint["route"], initial["route"])
-    assert jnp.array_equal(midpoint["active"], initial["active"])
 
 
 def _additive_problem(step_count=5, *, control=1.0):
@@ -310,19 +305,20 @@ def test_fixed_step_rollout_observes_fail_closed_endpoint_state():
     plan = phx.solver.FixedStepRolloutPlan(
         retention="checkpoints",
         checkpoint_stride=2,
-        diagnostics=lambda step_index, time, state, args: {
-            "state": jnp.sum(state),
-            "time": time,
-        },
-        diagnostics_id="accepted-endpoint",
+        iteration=phx.execution.IterationPlan(
+            observers=(phx.execution.IterationTraceObserver(3),)
+        ),
     )
     result = plan.rollout(problem)
 
     assert not result.successful
     assert jnp.array_equal(result.states[:, 0], jnp.asarray([0.0, 1.0, 1.0]))
     assert jnp.array_equal(result.valid, jnp.asarray([True, False, False]))
-    assert jnp.array_equal(result.diagnostics["state"], jnp.asarray([1.0, 1.0, 1.0]))
-    assert jnp.allclose(result.diagnostics["time"], jnp.asarray([0.1, 0.2, 0.3]))
+    assert result.iteration_evidence is not None
+    trace = result.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 2
+    assert jnp.allclose(trace.records.metrics.time[:2], jnp.asarray([0.1, 0.2]))
+    assert int(trace.terminal.status) == int(phx.solver.FixedStepStatus.STEP_FAILURE)
 
 
 @pytest.mark.parametrize(
@@ -352,7 +348,13 @@ def test_fixed_step_replay_preserves_primal_gradient_and_retention(replay, reten
         **keywords,
         replay=phx.solver.FixedStepReplayPolicy("full"),
     )
-    candidate = phx.solver.FixedStepRolloutPlan(**keywords, replay=replay)
+    candidate = phx.solver.FixedStepRolloutPlan(
+        **keywords,
+        replay=replay,
+        iteration=phx.execution.IterationPlan(
+            observers=(phx.execution.IterationCountObserver(),)
+        ),
+    )
 
     def objective(control, plan):
         result = plan.rollout(_additive_problem(5, control=control))

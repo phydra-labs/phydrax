@@ -276,6 +276,21 @@ forms a fixed-topology component tree. Multiplicative compositions truly
 short-circuit: later components return zero-work skipped evidence and perform
 no residual or local-solver work.
 
+## Iteration evidence
+
+`root(..., iteration=plan)` emits typed nonlinear diagnostics at accepted or
+attempt granularity for native Newton line-search and trust-region methods.
+Records distinguish rejected globalization attempts and retain inner linear
+status/work without executing host callbacks inside the nonlinear loop.
+Device stop rules are honored only after an accepted state and return
+`NonlinearStatus.USER_STOPPED` unless the final physical residual certificate
+already passes.
+
+Other root methods, scalar roots, and fixed-point solvers currently expose
+terminal evidence only and reject a stronger requested granularity before
+execution. Prepared Newton solves accept the same plan for complete or
+single-step execution.
+
 ## Scaling, precision, batching, and sharding
 
 `NonlinearScalingPolicy` prepares positive state and residual scaling while

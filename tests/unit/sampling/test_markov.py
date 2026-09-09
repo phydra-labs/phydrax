@@ -84,6 +84,10 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
     initial_three = jnp.asarray([[-0.5], [0.75], [1.25]])
     state_two = kernel.initialize(_standard_normal, initial_two)
     state_three = kernel.initialize(_standard_normal, initial_three)
+    iteration = phx.execution.IterationPlan(
+        granularity="step",
+        observers=(phx.execution.IterationTraceObserver(20),),
+    )
 
     def run(state, key):
         return phx.sampling.sample_markov(
@@ -94,6 +98,7 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
             num_draws=6,
             steps_per_draw=2,
             warmup_steps=3,
+            iteration=iteration,
         )
 
     eager = run(state_two, jr.key(4))
@@ -109,6 +114,10 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
     assert jnp.array_equal(eager.accepted, extended.accepted[:2])
     assert eager.samples.shape == (2, 6, 1)
     assert eager.accepted.shape == (2, 6, 2)
+    assert eager.iteration_evidence is not None
+    trace = eager.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 15
+    assert trace.records.metrics.accepted.shape[1:] == (2,)
 
 
 def test_refresh_preserves_positions_and_recomputes_target_values():
@@ -239,6 +248,48 @@ def test_incremental_target_refresh_runs_on_declared_transition_cadence():
     assert jnp.allclose(result.log_target[0], jnp.asarray([1.0, 0.0, 1.0, 0.0]))
     assert jnp.all(result.final_state.valid)
     assert jnp.all(result.target_valid)
+
+
+def test_chunked_markov_host_control_preserves_exact_active_prefix():
+    kernel = phx.sampling.MetropolisHastings(_normal_proposal())
+    state = kernel.initialize(_standard_normal, jnp.asarray([[0.0], [1.0]]))
+    phases = []
+
+    def phase(event):
+        return int(event.record.coordinates.phase)
+
+    session = phx.execution.IterationSession(
+        "markov-chunk-test",
+        sinks=(
+            phx.execution.CallableIterationSink(
+                lambda event: phases.append(phase(event)), "collector"
+            ),
+        ),
+        control=phx.execution.CallableIterationHostControl(
+            lambda event: phase(event) == int(phx.execution.IterationPhase.COMMIT),
+            "stop-after-first-chunk",
+        ),
+    )
+    result = phx.sampling.sample_markov_chunked(
+        _standard_normal,
+        kernel,
+        state,
+        key=jr.key(91),
+        plan=phx.sampling.MarkovChunkPlan(6, 2),
+        session=session,
+    )
+
+    assert jnp.array_equal(
+        result.active, jnp.asarray([True, True, False, False, False, False])
+    )
+    assert int(result.final_state.step_index) == 2
+    assert phases == [
+        int(phx.execution.IterationPhase.START),
+        int(phx.execution.IterationPhase.COMMIT),
+        int(phx.execution.IterationPhase.TERMINAL),
+    ]
+    assert result.iteration_session_state is not None
+    assert result.iteration_session_state.stop_requested
 
 
 def test_incremental_target_refresh_cache_mismatch_fails_closed():

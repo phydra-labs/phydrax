@@ -691,6 +691,70 @@ def test_prepared_native_krylov_accepts_dynamic_per_solve_controls():
     )
 
 
+def test_linear_iteration_control_stops_native_krylov_at_a_safe_update():
+    diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
+    problem = la.LinearSystem(
+        la.DenseLinearOperator(
+            jnp.diag(diagonal),
+            properties=_positive_definite_properties(),
+        )
+    )
+    iteration = phx.execution.IterationPlan(
+        granularity="inner-iteration",
+        observers=(phx.execution.IterationTraceObserver(8),),
+        stop_rule=phx.execution.CallableIterationStopRule(
+            lambda initial: jnp.asarray(0, dtype=jnp.int32),
+            lambda state, record: (
+                state + 1,
+                record.coordinates.ordinal >= 1,
+            ),
+            "stop-after-one-krylov-update",
+        ),
+    )
+    result = la.solve(
+        problem,
+        jnp.ones((4,)),
+        policy=la.LinearSolvePolicy(
+            la.PCG(),
+            materialization=la.MaterializationPolicy(max_entries=1, max_bytes=1),
+            tolerance=la.TolerancePolicy(
+                relative=1e-12,
+                absolute=0.0,
+                max_steps=4,
+            ),
+        ),
+        iteration=iteration,
+    )
+
+    assert int(result.status) == int(la.LinearSolveStatus.USER_STOPPED)
+    assert int(result.diagnostics.iterations) == 1
+    assert result.iteration_evidence is not None
+    trace = result.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 1
+    assert bool(trace.terminal.coordinates.terminal)
+
+
+def test_direct_linear_solve_exposes_certified_terminal_evidence_only():
+    problem = la.LinearSystem(la.DenseLinearOperator(jnp.eye(2)))
+    result = la.solve(
+        problem,
+        jnp.asarray([1.0, -2.0]),
+        iteration=phx.execution.IterationPlan(
+            granularity="terminal",
+            observers=(phx.execution.IterationTraceObserver(0),),
+        ),
+    )
+
+    assert bool(result.successful)
+    assert result.iteration_evidence is not None
+    trace = result.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 0
+    assert jnp.allclose(
+        trace.terminal.metrics.residual_norm,
+        result.diagnostics.residual_norm,
+    )
+
+
 def test_linear_solve_control_validates_runtime_values():
     with pytest.raises(
         ValueError,

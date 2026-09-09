@@ -15,6 +15,17 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._iteration import (
+    bind_iteration_scope,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationScope,
+    IterationSession,
+    IterationSessionState,
+)
 from .._strict import AbstractAttribute, StrictModule
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
@@ -105,6 +116,65 @@ class ContinuationStatus(IntEnum):
     TARGET_CORRECTOR_FAILED = 8
     CURVATURE_LIMIT_REACHED = 9
     APPLICATION_REJECTED = 10
+    USER_STOPPED = 11
+
+
+class ContinuationIterationMetrics(StrictModule):
+    """Typed numerical and application evidence for one continuation attempt."""
+
+    coordinate: Array
+    residual_norm: Array
+    step_size: Array
+    corrector_iterations: Array
+    corrector_status: Array
+    tangent_status: Array
+    retry_index: Array
+    numerical_accepted: Array
+    accepted: Array
+    committed: Array
+    rolled_back: Array
+
+    def __init__(self, step: ContinuationStepResult, /):
+        candidate = step.candidate
+        self.coordinate = jnp.asarray(candidate.coordinate)
+        self.residual_norm = jnp.asarray(candidate.residual_norm)
+        self.step_size = jnp.asarray(candidate.step_size)
+        self.corrector_iterations = jnp.asarray(
+            candidate.corrector_iterations, dtype=jnp.int32
+        )
+        self.corrector_status = jnp.asarray(candidate.corrector_status, dtype=jnp.int32)
+        self.tangent_status = jnp.asarray(candidate.tangent_status, dtype=jnp.int32)
+        self.retry_index = jnp.asarray(candidate.retry_index, dtype=jnp.int32)
+        self.numerical_accepted = jnp.asarray(step.numerical_accepted, dtype=bool)
+        self.accepted = jnp.asarray(step.accepted, dtype=bool)
+        self.committed = jnp.asarray(step.committed, dtype=bool)
+        self.rolled_back = jnp.asarray(step.rolled_back, dtype=bool)
+
+
+def _continuation_iteration_record(
+    step: ContinuationStepResult,
+    ordinal: int,
+    phase,
+    /,
+    *,
+    terminal=False,
+    status=None,
+) -> IterationRecord:
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            ordinal,
+            invocation=step.candidate.retry_index,
+            attempt=ordinal,
+            accepted=ordinal if bool(step.accepted) else max(ordinal - 1, 0),
+            rejected=0 if bool(step.accepted) else 1,
+            active=True,
+            committed=step.committed,
+            terminal=terminal,
+        ),
+        step.candidate.corrector_status if status is None else status,
+        ContinuationIterationMetrics(step),
+    )
 
 
 def _real_scalar(value: Any, /, *, name: str) -> Array:
@@ -2780,6 +2850,7 @@ class ContinuationResult(StrictModule):
     steps: tuple[ContinuationStepResult, ...]
     accepted_state: ContinuationAcceptedState | None
     checkpoint: ContinuationCheckpoint | None
+    iteration_session_state: IterationSessionState | None
 
     def __init__(
         self,
@@ -2791,6 +2862,7 @@ class ContinuationResult(StrictModule):
         steps: Sequence[ContinuationStepResult],
         accepted_state: ContinuationAcceptedState | None,
         checkpoint: ContinuationCheckpoint | None,
+        iteration_session_state: IterationSessionState | None = None,
     ):
         if not isinstance(branch, ContinuationBranch):
             raise TypeError("branch must be a ContinuationBranch.")
@@ -2807,6 +2879,12 @@ class ContinuationResult(StrictModule):
             raise TypeError("accepted_state must be ContinuationAcceptedState or None.")
         if checkpoint is not None and not isinstance(checkpoint, ContinuationCheckpoint):
             raise TypeError("checkpoint must be a ContinuationCheckpoint or None.")
+        if iteration_session_state is not None and not isinstance(
+            iteration_session_state, IterationSessionState
+        ):
+            raise TypeError(
+                "iteration_session_state must be IterationSessionState or None."
+            )
         if (accepted_state is None) != (checkpoint is None):
             raise ValueError("A final accepted state and checkpoint must exist together.")
         if accepted_state is not None and (
@@ -2823,6 +2901,7 @@ class ContinuationResult(StrictModule):
         self.steps = steps_
         self.accepted_state = accepted_state
         self.checkpoint = checkpoint
+        self.iteration_session_state = iteration_session_state
 
     @property
     def successful(self) -> Array:
@@ -3598,10 +3677,17 @@ def _continuation_result(
     )
 
 
-def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
+def run_continuation(
+    prepared: PreparedContinuation,
+    /,
+    *,
+    session: IterationSession | None = None,
+) -> ContinuationResult:
     """Run one prepared natural or pseudo-arclength continuation."""
     if not isinstance(prepared, PreparedContinuation):
         raise TypeError("prepared must be a PreparedContinuation.")
+    if session is not None and not isinstance(session, IterationSession):
+        raise TypeError("session must be IterationSession or None.")
     problem = prepared.problem
     plan = prepared.plan
     method = plan.method
@@ -3613,6 +3699,59 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     brackets: list[EventBracket] = []
     points: list[BranchPoint] = []
     steps: list[ContinuationStepResult] = []
+    iteration_scope: IterationScope | None = None
+    host_stop_requested = False
+    if session is not None:
+        capabilities = IterationCapabilities(
+            ("terminal", "step", "attempt"),
+            host_stop=True,
+            host_streaming=True,
+            checkpointable=True,
+        )
+        iteration_scope = bind_iteration_scope(
+            IterationPlan(granularity="attempt"),
+            capabilities,
+            f"continuation:{plan.method.method_id}",
+        )
+
+    def emit_step(step: ContinuationStepResult, phase) -> None:
+        nonlocal host_stop_requested
+        if session is None:
+            return
+        assert iteration_scope is not None
+        requested = session.emit(
+            iteration_scope,
+            _continuation_iteration_record(
+                step,
+                len(steps),
+                phase,
+            ),
+        )
+        if bool(step.accepted):
+            host_stop_requested = host_stop_requested or requested
+
+    def finish(result: ContinuationResult, /) -> ContinuationResult:
+        if session is None:
+            return result
+        assert iteration_scope is not None
+        terminal_step = steps[-1]
+        session.emit(
+            iteration_scope,
+            _continuation_iteration_record(
+                terminal_step,
+                len(steps),
+                IterationPhase.TERMINAL,
+                terminal=True,
+                status=result.status,
+            ),
+        )
+        return eqx.tree_at(
+            lambda value: value.iteration_session_state,
+            result,
+            session.snapshot(),
+            is_leaf=lambda value: value is None,
+        )
+
     application_state = prepared.application_state
     accepted_application_state: ContinuationAcceptedState | None = None
     attempted_steps = 0
@@ -3805,6 +3944,7 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
         )
     )
     steps.append(initial_step)
+    emit_step(initial_step, IterationPhase.START)
     if initial_accepted_state is not None:
         accepted_application_state = initial_accepted_state
     points.append(initial_point)
@@ -3821,94 +3961,100 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             )
         )
     if not initial_success:
-        return _continuation_result(
-            prepared,
-            points,
-            events,
-            brackets,
-            ContinuationStatus.INITIAL_CORRECTOR_FAILED,
-            "initial corrector failed",
-            attempted_steps=attempted_steps,
-            accepted_steps=accepted_steps,
-            rejected_steps=rejected_steps,
-            corrector_iterations=corrector_iterations,
-            corrector_residual_evaluations=corrector_residual_evaluations,
-            corrector_jvp_evaluations=corrector_jvp_evaluations,
-            corrector_vjp_evaluations=corrector_vjp_evaluations,
-            corrector_jacobian_preparations=corrector_jacobian_preparations,
-            corrector_linear_solves=corrector_linear_solves,
-            corrector_linear_iterations=corrector_linear_iterations,
-            corrector_setup_refreshes=corrector_setup_refreshes,
-            corrector_numeric_refreshes=corrector_numeric_refreshes,
-            tangent_failures=tangent_failures,
-            spectral_evaluations=spectral_evaluations,
-            monitor_events=monitor_events,
-            target_corrections=target_corrections,
-            curvature_rejections=curvature_rejections,
-            corrector_provenance=last_corrector_provenance,
-            corrector_prepared_linear=initial_prepared_linear,
-            steps=steps,
-            accepted_state=accepted_application_state,
+        return finish(
+            _continuation_result(
+                prepared,
+                points,
+                events,
+                brackets,
+                ContinuationStatus.INITIAL_CORRECTOR_FAILED,
+                "initial corrector failed",
+                attempted_steps=attempted_steps,
+                accepted_steps=accepted_steps,
+                rejected_steps=rejected_steps,
+                corrector_iterations=corrector_iterations,
+                corrector_residual_evaluations=corrector_residual_evaluations,
+                corrector_jvp_evaluations=corrector_jvp_evaluations,
+                corrector_vjp_evaluations=corrector_vjp_evaluations,
+                corrector_jacobian_preparations=corrector_jacobian_preparations,
+                corrector_linear_solves=corrector_linear_solves,
+                corrector_linear_iterations=corrector_linear_iterations,
+                corrector_setup_refreshes=corrector_setup_refreshes,
+                corrector_numeric_refreshes=corrector_numeric_refreshes,
+                tangent_failures=tangent_failures,
+                spectral_evaluations=spectral_evaluations,
+                monitor_events=monitor_events,
+                target_corrections=target_corrections,
+                curvature_rejections=curvature_rejections,
+                corrector_provenance=last_corrector_provenance,
+                corrector_prepared_linear=initial_prepared_linear,
+                steps=steps,
+                accepted_state=accepted_application_state,
+            )
         )
     if tangent_attempted and not tangent_usable:
-        return _continuation_result(
-            prepared,
-            points,
-            events,
-            brackets,
-            ContinuationStatus.TANGENT_FAILED,
-            "initial tangent solve failed",
-            attempted_steps=attempted_steps,
-            accepted_steps=accepted_steps,
-            rejected_steps=rejected_steps,
-            corrector_iterations=corrector_iterations,
-            corrector_residual_evaluations=corrector_residual_evaluations,
-            corrector_jvp_evaluations=corrector_jvp_evaluations,
-            corrector_vjp_evaluations=corrector_vjp_evaluations,
-            corrector_jacobian_preparations=corrector_jacobian_preparations,
-            corrector_linear_solves=corrector_linear_solves,
-            corrector_linear_iterations=corrector_linear_iterations,
-            corrector_setup_refreshes=corrector_setup_refreshes,
-            corrector_numeric_refreshes=corrector_numeric_refreshes,
-            tangent_failures=tangent_failures,
-            spectral_evaluations=spectral_evaluations,
-            monitor_events=monitor_events,
-            target_corrections=target_corrections,
-            curvature_rejections=curvature_rejections,
-            corrector_provenance=last_corrector_provenance,
-            corrector_prepared_linear=initial_prepared_linear,
-            steps=steps,
-            accepted_state=accepted_application_state,
+        return finish(
+            _continuation_result(
+                prepared,
+                points,
+                events,
+                brackets,
+                ContinuationStatus.TANGENT_FAILED,
+                "initial tangent solve failed",
+                attempted_steps=attempted_steps,
+                accepted_steps=accepted_steps,
+                rejected_steps=rejected_steps,
+                corrector_iterations=corrector_iterations,
+                corrector_residual_evaluations=corrector_residual_evaluations,
+                corrector_jvp_evaluations=corrector_jvp_evaluations,
+                corrector_vjp_evaluations=corrector_vjp_evaluations,
+                corrector_jacobian_preparations=corrector_jacobian_preparations,
+                corrector_linear_solves=corrector_linear_solves,
+                corrector_linear_iterations=corrector_linear_iterations,
+                corrector_setup_refreshes=corrector_setup_refreshes,
+                corrector_numeric_refreshes=corrector_numeric_refreshes,
+                tangent_failures=tangent_failures,
+                spectral_evaluations=spectral_evaluations,
+                monitor_events=monitor_events,
+                target_corrections=target_corrections,
+                curvature_rejections=curvature_rejections,
+                corrector_provenance=last_corrector_provenance,
+                corrector_prepared_linear=initial_prepared_linear,
+                steps=steps,
+                accepted_state=accepted_application_state,
+            )
         )
     if not bool(initial_step.accepted):
-        return _continuation_result(
-            prepared,
-            points,
-            events,
-            brackets,
-            ContinuationStatus.APPLICATION_REJECTED,
-            "initial application candidate rejected",
-            attempted_steps=attempted_steps,
-            accepted_steps=accepted_steps,
-            rejected_steps=rejected_steps,
-            corrector_iterations=corrector_iterations,
-            corrector_residual_evaluations=corrector_residual_evaluations,
-            corrector_jvp_evaluations=corrector_jvp_evaluations,
-            corrector_vjp_evaluations=corrector_vjp_evaluations,
-            corrector_jacobian_preparations=corrector_jacobian_preparations,
-            corrector_linear_solves=corrector_linear_solves,
-            corrector_linear_iterations=corrector_linear_iterations,
-            corrector_setup_refreshes=corrector_setup_refreshes,
-            corrector_numeric_refreshes=corrector_numeric_refreshes,
-            tangent_failures=tangent_failures,
-            spectral_evaluations=spectral_evaluations,
-            monitor_events=monitor_events,
-            target_corrections=target_corrections,
-            curvature_rejections=curvature_rejections,
-            corrector_provenance=last_corrector_provenance,
-            corrector_prepared_linear=initial_prepared_linear,
-            steps=steps,
-            accepted_state=accepted_application_state,
+        return finish(
+            _continuation_result(
+                prepared,
+                points,
+                events,
+                brackets,
+                ContinuationStatus.APPLICATION_REJECTED,
+                "initial application candidate rejected",
+                attempted_steps=attempted_steps,
+                accepted_steps=accepted_steps,
+                rejected_steps=rejected_steps,
+                corrector_iterations=corrector_iterations,
+                corrector_residual_evaluations=corrector_residual_evaluations,
+                corrector_jvp_evaluations=corrector_jvp_evaluations,
+                corrector_vjp_evaluations=corrector_vjp_evaluations,
+                corrector_jacobian_preparations=corrector_jacobian_preparations,
+                corrector_linear_solves=corrector_linear_solves,
+                corrector_linear_iterations=corrector_linear_iterations,
+                corrector_setup_refreshes=corrector_setup_refreshes,
+                corrector_numeric_refreshes=corrector_numeric_refreshes,
+                tangent_failures=tangent_failures,
+                spectral_evaluations=spectral_evaluations,
+                monitor_events=monitor_events,
+                target_corrections=target_corrections,
+                curvature_rejections=curvature_rejections,
+                corrector_provenance=last_corrector_provenance,
+                corrector_prepared_linear=initial_prepared_linear,
+                steps=steps,
+                accepted_state=accepted_application_state,
+            )
         )
     monitor_events += _observe_monitors(
         plan.monitors, problem, None, initial_point, args, events
@@ -3932,6 +4078,10 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             )
         )
     for point_index in () if terminal_reached else range(1, plan.num_steps + 1):
+        if host_stop_requested:
+            status = ContinuationStatus.USER_STOPPED
+            termination_reason = "stopped by host iteration control"
+            break
         accepted = False
         bound_reached = False
         target_failure_seen = False
@@ -4339,6 +4489,7 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                         )
                     )
                     steps.append(rejected_decision)
+                    emit_step(rejected_decision, IterationPhase.ATTEMPT)
                     attempt_decided = True
                     tangent_failure_seen = True
                     tangent_failures += 1
@@ -4397,6 +4548,7 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                         )
                     )
                     steps.append(rejected_decision)
+                    emit_step(rejected_decision, IterationPhase.ATTEMPT)
                     attempt_decided = True
                     curvature_rejections += 1
                     rejected_steps += 1
@@ -4458,6 +4610,14 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     )
                 )
                 steps.append(accepted_decision)
+                emit_step(
+                    accepted_decision,
+                    (
+                        IterationPhase.COMMIT
+                        if bool(accepted_decision.accepted)
+                        else IterationPhase.ATTEMPT
+                    ),
+                )
                 attempt_decided = True
                 if committed_state is not None:
                     accepted_application_state = committed_state
@@ -4499,6 +4659,7 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     ),
                 )
                 steps.append(rejected_decision)
+                emit_step(rejected_decision, IterationPhase.ATTEMPT)
             rejected_steps += 1
             retries += 1
             step_size = max(method.minimum_step, step_size * method.contraction)
@@ -4684,38 +4845,40 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             status = ContinuationStatus.TARGET_NOT_REACHED
             termination_reason = "requested steps exhausted before target"
 
-    return _continuation_result(
-        prepared,
-        points,
-        events,
-        brackets,
-        status,
-        termination_reason,
-        attempted_steps=attempted_steps,
-        accepted_steps=accepted_steps,
-        rejected_steps=rejected_steps,
-        corrector_iterations=corrector_iterations,
-        steps=steps,
-        accepted_state=accepted_application_state,
-        corrector_residual_evaluations=corrector_residual_evaluations,
-        corrector_jvp_evaluations=corrector_jvp_evaluations,
-        corrector_vjp_evaluations=corrector_vjp_evaluations,
-        corrector_jacobian_preparations=corrector_jacobian_preparations,
-        corrector_linear_solves=corrector_linear_solves,
-        corrector_linear_iterations=corrector_linear_iterations,
-        corrector_setup_refreshes=corrector_setup_refreshes,
-        corrector_numeric_refreshes=corrector_numeric_refreshes,
-        tangent_failures=tangent_failures,
-        spectral_evaluations=spectral_evaluations,
-        monitor_events=monitor_events,
-        target_corrections=target_corrections,
-        curvature_rejections=curvature_rejections,
-        corrector_prepared_linear=(
-            initial_prepared_linear
-            if corrector_prepared_linear is None
-            else corrector_prepared_linear
-        ),
-        corrector_provenance=last_corrector_provenance,
+    return finish(
+        _continuation_result(
+            prepared,
+            points,
+            events,
+            brackets,
+            status,
+            termination_reason,
+            attempted_steps=attempted_steps,
+            accepted_steps=accepted_steps,
+            rejected_steps=rejected_steps,
+            corrector_iterations=corrector_iterations,
+            steps=steps,
+            accepted_state=accepted_application_state,
+            corrector_residual_evaluations=corrector_residual_evaluations,
+            corrector_jvp_evaluations=corrector_jvp_evaluations,
+            corrector_vjp_evaluations=corrector_vjp_evaluations,
+            corrector_jacobian_preparations=corrector_jacobian_preparations,
+            corrector_linear_solves=corrector_linear_solves,
+            corrector_linear_iterations=corrector_linear_iterations,
+            corrector_setup_refreshes=corrector_setup_refreshes,
+            corrector_numeric_refreshes=corrector_numeric_refreshes,
+            tangent_failures=tangent_failures,
+            spectral_evaluations=spectral_evaluations,
+            monitor_events=monitor_events,
+            target_corrections=target_corrections,
+            curvature_rejections=curvature_rejections,
+            corrector_prepared_linear=(
+                initial_prepared_linear
+                if corrector_prepared_linear is None
+                else corrector_prepared_linear
+            ),
+            corrector_provenance=last_corrector_provenance,
+        )
     )
 
 
@@ -4735,6 +4898,7 @@ def continue_branch(
     monitors: Sequence[AbstractBranchMonitor] = (),
     terminal_coordinate: float | None = None,
     plan_id: str | None = None,
+    session: IterationSession | None = None,
 ) -> ContinuationResult:
     """Plan, prepare, and run one immutable continuation result."""
     plan = plan_continuation(
@@ -4756,7 +4920,7 @@ def continue_branch(
         args=args,
         application_state=application_state,
     )
-    return run_continuation(prepared)
+    return run_continuation(prepared, session=session)
 
 
 def propose_branch_seeds(
@@ -4787,6 +4951,7 @@ __all__ = [
     "AbstractBranchMonitor",
     "AbstractBranchSwitchHook",
     "AbstractContinuationMethod",
+    "ContinuationIterationMetrics",
     "AbstractStabilityAnalyzer",
     "ContinuationCurveProblem",
     "BifurcationIndicators",

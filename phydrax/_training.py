@@ -7,10 +7,11 @@ from __future__ import annotations
 import signal
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from enum import IntEnum
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -18,6 +19,18 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from ._iteration import (
+    bind_iteration_scope,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationSession,
+    IterationSessionState,
+)
+from ._strict import StrictModule
+from ._trainable import NonTrainableState
 from .logging import emit
 
 
@@ -216,65 +229,107 @@ class TrainingProgress:
     best_step: int = 0
     stale_validations: int = 0
     stopped_early: bool = False
+    iteration_session_id: str | None = None
+    iteration_control_id: str | None = None
+    iteration_session_cursor: int = 0
+    iteration_stop_requested: bool = False
 
     def __post_init__(self):
-        for name in (
-            "epoch",
-            "next_batch_index",
-            "microstep",
-            "update_step",
-            "best_step",
-        ):
-            if int(getattr(self, name)) < 0:
+        indices = (
+            ("epoch", self.epoch),
+            ("next_batch_index", self.next_batch_index),
+            ("microstep", self.microstep),
+            ("update_step", self.update_step),
+            ("best_step", self.best_step),
+            ("iteration_session_cursor", self.iteration_session_cursor),
+        )
+        for name, value in indices:
+            if int(value) < 0:
                 raise ValueError(f"{name} must be non-negative.")
         if int(self.stale_validations) < 0:
             raise ValueError("stale_validations must be non-negative.")
+        if self.iteration_session_id is None and (
+            self.iteration_control_id is not None
+            or self.iteration_session_cursor != 0
+            or self.iteration_stop_requested
+        ):
+            raise ValueError("Iteration session progress requires a session identity.")
+
+    @property
+    def iteration_session_state(self) -> IterationSessionState | None:
+        if self.iteration_session_id is None:
+            return None
+        return IterationSessionState(
+            self.iteration_session_id,
+            self.iteration_session_cursor,
+            self.iteration_stop_requested,
+        )
 
 
-@dataclass(frozen=True, slots=True)
-class TrainingEvent:
-    """One ordered host-side lifecycle event emitted by a training controller."""
+class TrainingIterationKind(IntEnum):
+    """Closed lifecycle vocabulary shared by training frontends."""
 
-    name: str
-    progress: TrainingProgress
-    metrics: tuple[tuple[str, float], ...] = ()
+    RUN_START = 0
+    EPOCH_START = 1
+    UPDATE = 2
+    VALIDATION = 3
+    CHECKPOINT = 4
+    SKIP = 5
+    FAILURE = 6
+    RUN_TERMINAL = 7
+
 
 _TRAINING_LOG_EVENTS = {
-    "batch_end": "training.step.completed",
-    "checkpoint": "training.checkpoint.committed",
-    "epoch_begin": "training.epoch.started",
-    "failure": "training.failed",
-    "nonfinite": "training.nonfinite.detected",
-    "start": "training.started",
-    "stop": "training.completed",
-    "train_begin": "training.started",
-    "train_end": "training.completed",
-    "update": "training.step.completed",
-    "validation": "training.validation.completed",
-    "validation_end": "training.validation.completed",
-    "zero_support": "training.support.empty",
+    TrainingIterationKind.RUN_START: "training.started",
+    TrainingIterationKind.EPOCH_START: "training.epoch.started",
+    TrainingIterationKind.UPDATE: "training.step.completed",
+    TrainingIterationKind.VALIDATION: "training.validation.completed",
+    TrainingIterationKind.CHECKPOINT: "training.checkpoint.committed",
+    TrainingIterationKind.SKIP: "training.support.empty",
+    TrainingIterationKind.FAILURE: "training.failed",
+    TrainingIterationKind.RUN_TERMINAL: "training.completed",
 }
-_TRAINING_WARNING_EVENTS = frozenset({"failure", "nonfinite", "zero_support"})
+_TRAINING_WARNING_EVENTS = frozenset(
+    {TrainingIterationKind.SKIP, TrainingIterationKind.FAILURE}
+)
 _TRAINING_INFO_EVENTS = frozenset(
-    {"checkpoint", "start", "stop", "train_begin", "train_end"}
+    {
+        TrainingIterationKind.RUN_START,
+        TrainingIterationKind.CHECKPOINT,
+        TrainingIterationKind.RUN_TERMINAL,
+    }
 )
 
 
-def _emit_training_event(event: TrainingEvent, /) -> None:
-    event_name = _TRAINING_LOG_EVENTS.get(event.name, "training.callback")
-    progress = event.progress
+def _emit_training_event(
+    kind: TrainingIterationKind,
+    progress: TrainingProgress,
+    metrics: Mapping[str, Any] | None,
+    /,
+) -> None:
     level = (
         "WARNING"
-        if event.name in _TRAINING_WARNING_EVENTS
+        if kind in _TRAINING_WARNING_EVENTS
         else "INFO"
-        if event.name in _TRAINING_INFO_EVENTS
+        if kind in _TRAINING_INFO_EVENTS
         else "DEBUG"
+    )
+    metric_records = (
+        ()
+        if metrics is None
+        else tuple(
+            {
+                "name": str(name),
+                "value": float(jax.device_get(jnp.asarray(value).reshape(()))),
+            }
+            for name, value in metrics.items()
+        )
     )
     emit(
         level,
-        event_name,
+        _TRAINING_LOG_EVENTS[kind],
         "Training lifecycle event",
-        callback_event=event.name,
+        iteration_kind=kind.name.lower(),
         progress={
             "best_step": progress.best_step,
             "best_value": progress.best_value,
@@ -285,14 +340,92 @@ def _emit_training_event(event: TrainingEvent, /) -> None:
             "stopped_early": progress.stopped_early,
             "update_step": progress.update_step,
         },
-        metrics=tuple(
-            {"name": name, "value": value} for name, value in event.metrics
-        ),
+        metrics=metric_records,
     )
 
 
-class TrainingCallback(Protocol):
-    def __call__(self, event: TrainingEvent, /) -> bool | None: ...
+class TrainingIterationMetrics(StrictModule, NonTrainableState):
+    """Typed progress and named scalar metrics for one training event."""
+
+    kind: Array
+    epoch: Array
+    next_batch_index: Array
+    microstep: Array
+    update_step: Array
+    metric_names: tuple[str, ...] = eqx.field(static=True)
+    metric_values: tuple[Array, ...]
+
+    def __init__(
+        self,
+        kind: TrainingIterationKind,
+        progress: TrainingProgress,
+        metrics: Mapping[str, Any] | None,
+        /,
+    ):
+        if not isinstance(kind, TrainingIterationKind):
+            raise TypeError("kind must be TrainingIterationKind.")
+        names = () if metrics is None else tuple(str(name) for name in metrics)
+        values = (
+            ()
+            if metrics is None
+            else tuple(jnp.asarray(value) for value in metrics.values())
+        )
+        if any(value.shape != () for value in values):
+            raise ValueError("Training iteration metrics must be scalar.")
+        self.kind = jnp.asarray(int(kind), dtype=jnp.int32)
+        self.epoch = jnp.asarray(progress.epoch, dtype=jnp.int32)
+        self.next_batch_index = jnp.asarray(progress.next_batch_index, dtype=jnp.int32)
+        self.microstep = jnp.asarray(progress.microstep, dtype=jnp.int32)
+        self.update_step = jnp.asarray(progress.update_step, dtype=jnp.int32)
+        self.metric_names = names
+        self.metric_values = values
+
+    def metric(self, name: str, /) -> Array:
+        for metric_name, metric_value in zip(
+            self.metric_names, self.metric_values, strict=True
+        ):
+            if metric_name == name:
+                return metric_value
+        raise KeyError(name)
+
+
+def training_iteration_record(
+    kind: TrainingIterationKind,
+    progress: TrainingProgress,
+    /,
+    *,
+    metrics: Mapping[str, Any] | None = None,
+) -> IterationRecord:
+    """Build one host-deliverable typed training iteration record."""
+    phases = {
+        TrainingIterationKind.RUN_START: IterationPhase.START,
+        TrainingIterationKind.EPOCH_START: IterationPhase.START,
+        TrainingIterationKind.UPDATE: IterationPhase.COMMIT,
+        TrainingIterationKind.VALIDATION: IterationPhase.VALIDATE,
+        TrainingIterationKind.CHECKPOINT: IterationPhase.COMMIT,
+        TrainingIterationKind.SKIP: IterationPhase.ATTEMPT,
+        TrainingIterationKind.FAILURE: IterationPhase.ATTEMPT,
+        TrainingIterationKind.RUN_TERMINAL: IterationPhase.TERMINAL,
+    }
+    committed = kind in (
+        TrainingIterationKind.UPDATE,
+        TrainingIterationKind.CHECKPOINT,
+    )
+    terminal = kind is TrainingIterationKind.RUN_TERMINAL
+    return IterationRecord(
+        IterationCoordinates(
+            phases[kind],
+            progress.update_step,
+            invocation=progress.epoch,
+            attempt=progress.microstep,
+            accepted=progress.update_step,
+            active=True,
+            committed=committed,
+            terminal=terminal,
+        ),
+        int(progress.stopped_early or progress.iteration_stop_requested),
+        TrainingIterationMetrics(kind, progress, metrics),
+    )
 
 
 def training_key(
@@ -358,26 +491,64 @@ def update_training_selection(
 
 
 class TrainingController:
-    """Shared host lifecycle for PRNG, progress, selection, callbacks, and stopping."""
+    """Shared host lifecycle for PRNG, progress, selection, and typed events."""
 
     def __init__(
         self,
         *,
         total_steps: int,
         key: Key[Array, ""],
+        algorithm_id: str,
         progress: TrainingProgress | None = None,
-        callbacks: Sequence[TrainingCallback] = (),
+        session: IterationSession | None = None,
     ):
         if int(total_steps) < 0:
             raise ValueError("total_steps must be non-negative.")
-        if any(not callable(callback) for callback in callbacks):
-            raise TypeError("training callbacks must be callable.")
+        algorithm_id_ = str(algorithm_id)
+        if not algorithm_id_:
+            raise ValueError("algorithm_id must be non-empty.")
+        if session is not None and not isinstance(session, IterationSession):
+            raise TypeError("session must be IterationSession or None.")
+        progress_ = TrainingProgress() if progress is None else progress
+        if progress_.iteration_session_id is not None:
+            if session is None:
+                raise ValueError(
+                    "Continuation progress requires its persisted iteration session."
+                )
+            if (
+                session.session_id != progress_.iteration_session_id
+                or session.control_id != progress_.iteration_control_id
+            ):
+                raise ValueError(
+                    "Iteration session or control identity changed across continuation."
+                )
+            session_state = progress_.iteration_session_state
+            assert session_state is not None
+            session.restore(session_state)
+        elif session is not None:
+            if session.cursor != 0 or session.stop_requested:
+                raise ValueError("A new training run requires a fresh iteration session.")
+            progress_ = replace(
+                progress_,
+                iteration_session_id=session.session_id,
+                iteration_control_id=session.control_id,
+            )
         self.total_steps = int(total_steps)
         self.key = key
-        self.progress = TrainingProgress() if progress is None else progress
-        self.callbacks = tuple(callbacks)
+        self.progress = progress_
+        self.session = session
         self.best_payload: Any | None = None
-        self.stop_requested = bool(self.progress.stopped_early)
+        self.stop_requested = bool(
+            self.progress.stopped_early or self.progress.iteration_stop_requested
+        )
+        plan = IterationPlan(granularity="step")
+        capabilities = IterationCapabilities(
+            ("terminal", "step"),
+            host_stop=True,
+            host_streaming=True,
+            checkpointable=True,
+        )
+        self.iteration_scope = bind_iteration_scope(plan, capabilities, algorithm_id_)
 
     def split_key(self) -> Key[Array, ""]:
         """Advance a sequential key stream for compatibility-sensitive loops."""
@@ -390,24 +561,22 @@ class TrainingController:
 
     def emit(
         self,
-        name: str,
+        kind: TrainingIterationKind,
         /,
         *,
-        metrics: dict[str, Any] | None = None,
+        metrics: Mapping[str, Any] | None = None,
     ) -> None:
-        pairs = (
-            ()
-            if metrics is None
-            else tuple(
-                (str(key), float(jnp.asarray(value, dtype=float).reshape(())))
-                for key, value in metrics.items()
-            )
+        _emit_training_event(kind, self.progress, metrics)
+        if self.session is None:
+            return
+        record = training_iteration_record(kind, self.progress, metrics=metrics)
+        session_stop = self.session.emit(self.iteration_scope, record)
+        self.stop_requested = self.stop_requested or session_stop
+        self.progress = replace(
+            self.progress,
+            iteration_session_cursor=self.session.cursor,
+            iteration_stop_requested=self.session.stop_requested,
         )
-        event = TrainingEvent(str(name), self.progress, pairs)
-        _emit_training_event(event)
-        for callback in self.callbacks:
-            if callback(event):
-                self.stop_requested = True
 
     def complete_update(self, step: int, /) -> None:
         self.progress = replace(self.progress, update_step=int(step))
@@ -572,9 +741,9 @@ __all__ = [
     "EvaluationParametersFn",
     "SelectionMode",
     "TensorBoardLogger",
-    "TrainingCallback",
     "TrainingController",
-    "TrainingEvent",
+    "TrainingIterationKind",
+    "TrainingIterationMetrics",
     "TrainingProgress",
     "TargetParameterSource",
     "TargetParameterState",
@@ -584,4 +753,5 @@ __all__ = [
     "tensorboard_every",
     "training_key",
     "update_training_selection",
+    "training_iteration_record",
 ]

@@ -68,6 +68,42 @@ def test_true_block_krylov_handles_dependent_and_zero_rhs_columns(method):
         la.solve(prepared, first)
 
 
+@pytest.mark.parametrize("method", [la.BlockGMRES(restart=4), la.BlockCG()])
+def test_true_block_krylov_emits_vector_iteration_records(method):
+    _, problem = _block_problem()
+    rhs = jnp.asarray(
+        [
+            [1.0, -2.0],
+            [2.0, 0.0],
+            [-1.0, 1.0],
+            [0.5, 3.0],
+        ]
+    )
+    prepared = la.prepare(
+        problem,
+        la.LinearSolvePolicy(
+            method,
+            differentiation=la.DifferentiationPolicy("none"),
+            tolerance=la.TolerancePolicy(relative=1e-10, absolute=1e-12, max_steps=20),
+        ),
+        rhs_layout=la.RHSLayout((2,)),
+    )
+    result = la.solve(
+        prepared,
+        rhs,
+        iteration=phx.execution.IterationPlan(
+            granularity="inner-iteration",
+            observers=(phx.execution.IterationTraceObserver(20),),
+        ),
+    )
+
+    assert jnp.all(result.successful)
+    assert result.iteration_evidence is not None
+    trace = result.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) > 0
+    assert trace.records.metrics.residual_norm.shape[1:] == (2,)
+
+
 def test_scalar_multi_rhs_remains_a_distinct_pseudo_block_path():
     matrix, problem = _block_problem()
     rhs = jnp.eye(4)[:, :2]

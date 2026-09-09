@@ -28,6 +28,7 @@ from .._training import (
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger as _TensorBoardLogger,
     TrainingController,
+    TrainingIterationKind,
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
@@ -203,7 +204,6 @@ def solve_gradient(
         if _opt_riemannian is not None
         else "optax"
     )
-
 
     tb_ctx = (
         _TensorBoardLogger(tensorboard_log_dir)
@@ -876,9 +876,12 @@ def solve_gradient(
         control = TrainingController(
             total_steps=int(num_iter),
             key=jr.key(seed) if resume_state is None else resume_state.key,
+            algorithm_id="functional-gradient-training",
             progress=initial_progress,
         )
-        control.emit("start", metrics={"total_steps": int(num_iter)})
+        control.emit(
+            TrainingIterationKind.RUN_START, metrics={"total_steps": int(num_iter)}
+        )
         if resume_state is None:
             control.best_payload = current_evaluation_params
         elif parameter_paths is None:
@@ -1416,9 +1419,7 @@ def solve_gradient(
                     )
                     break
                 log_step = (
-                    _logging_enabled()
-                    and log_every_ > 0
-                    and step % log_every_ == 0
+                    _logging_enabled() and log_every_ > 0 and step % log_every_ == 0
                 )
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
                 mirror_step_metrics = None
@@ -1906,7 +1907,10 @@ def solve_gradient(
             | mirror_diagnostics
             | iterative_diagnostics
         )
-        control.emit("stop", metrics={"completed_steps": completed})
+        control.emit(
+            TrainingIterationKind.RUN_TERMINAL,
+            metrics={"completed_steps": completed},
+        )
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
 

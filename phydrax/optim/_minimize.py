@@ -9,7 +9,9 @@ from typing import Any
 
 from jaxtyping import PyTree
 
-from ._iterative._base import AbstractMinimizationMethod
+from .._iteration import IterationPlan
+from ._iteration import attach_terminal_optimization_iteration
+from ._iterative._base import AbstractMinimizationMethod, AbstractScalarIterativeMethod
 from ._iterative._types import (
     Bounds,
     MinimizationProblem,
@@ -30,6 +32,7 @@ def minimize(
     has_aux: bool = False,
     bounds: Bounds | None = None,
     constraints: Sequence[NonlinearConstraint] = (),
+    iteration: IterationPlan | None = None,
 ) -> MinimizationResult:
     """Minimize a scalar problem through one explicit method adapter."""
 
@@ -52,11 +55,31 @@ def minimize(
     termination_ = OptimizationTermination() if termination is None else termination
     if not isinstance(termination_, OptimizationTermination):
         raise TypeError("termination must be an OptimizationTermination or None.")
-    return method.solve(
-        problem,
-        initial_parameters,
-        termination=termination_,
-        args=args,
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
+    if isinstance(method, AbstractScalarIterativeMethod):
+        result = method.solve(
+            problem,
+            initial_parameters,
+            termination=termination_,
+            args=args,
+            iteration=iteration,
+        )
+    else:
+        if iteration is not None and iteration.granularity != "terminal":
+            raise ValueError(
+                "This optimization method supports terminal iteration evidence only."
+            )
+        result = method.solve(
+            problem,
+            initial_parameters,
+            termination=termination_,
+            args=args,
+        )
+    return attach_terminal_optimization_iteration(
+        result,
+        iteration,
+        method.method_id,
     )
 
 

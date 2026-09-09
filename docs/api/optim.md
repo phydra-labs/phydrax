@@ -1325,6 +1325,20 @@ assert result.diagnostics.primal_feasibility < 1e-7
 ```
 
 
+### Iteration evidence and stopping
+
+`minimize` and `least_squares` accept `iteration=IterationPlan(...)`.
+Native accepted-point scalar and least-squares drivers expose their existing
+`IterativeStepMetrics` at `attempt` or accepted `step` granularity. Pure stop
+rules run after an accepted point; an uncertified early result reports
+`OptimizationStatus.USER_STOPPED`.
+
+External and specialized methods expose terminal evidence unless their adapter
+owns an exact intermediate contract. `search_finite` instead accepts an
+`IterationSession`: it emits typed records between compiled exhaustive-search
+batches and consults separate host control at those boundaries. Adaptive
+branch-and-bound accepts terminal sinks but rejects host stopping.
+
 ### Runtime and benchmark evidence
 
 Native scalar, residual, composite, bounded, nonlinear-constrained, state/design, and

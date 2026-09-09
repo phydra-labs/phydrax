@@ -18,9 +18,14 @@ from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._iteration import IterationSession
 from ..._strict import StrictModule
 from ..._trainable import combine_trainable, NonTrainableState, partition_trainable
-from ..._training import TrainingCallback, TrainingController, TrainingProgress
+from ..._training import (
+    TrainingController,
+    TrainingIterationKind,
+    TrainingProgress,
+)
 from ...imaging import ImagePlaneSupport
 from ._learned_model import AbstractDensePIVModel
 from ._learned_primitives import (
@@ -472,7 +477,7 @@ def fit_learned_piv(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     optimizer: optax.GradientTransformation | None = None,
-    callbacks: Sequence[TrainingCallback] = (),
+    session: IterationSession | None = None,
 ) -> LearnedPIVFitResult:
     """Fit with deterministic logical-step sampling and standard Optax updates."""
 
@@ -516,9 +521,11 @@ def fit_learned_piv(
     control = TrainingController(
         total_steps=config.maximum_steps,
         key=key,
+        algorithm_id="learned-piv-training",
         progress=TrainingProgress(),
-        callbacks=callbacks,
+        session=session,
     )
+    control.emit(TrainingIterationKind.RUN_START)
 
     def objective(parameters_: AbstractDensePIVModel, indices: Array):
         current_model = combine_trainable(parameters_, non_trainable)
@@ -567,13 +574,19 @@ def fit_learned_piv(
         smoothness_history.append(terms.smoothness)
         gradient_history.append(gradient_norm)
         control.complete_update(step + 1)
-        control.emit("update", metrics={"loss": total, "gradient_norm": gradient_norm})
+        control.emit(
+            TrainingIterationKind.UPDATE,
+            metrics={"loss": total, "gradient_norm": gradient_norm},
+        )
 
     fitted_model = combine_trainable(parameters, non_trainable)
     dtype = dataset.first_images.dtype
 
     def stack_history(values: list[Array]) -> Array:
         return jnp.stack(values) if values else jnp.zeros((0,), dtype=dtype)
+
+    final_loss = total_history[-1] if total_history else jnp.asarray(jnp.nan, dtype=dtype)
+    control.emit(TrainingIterationKind.RUN_TERMINAL, metrics={"final_loss": final_loss})
 
     key_words = tuple(int(word) for word in np.asarray(jr.key_data(key)).reshape(-1))
     training_id = canonical_fingerprint(
@@ -584,6 +597,8 @@ def fit_learned_piv(
             "config_id": config.config_id,
             "key_data": key_words,
             "completed_steps": control.progress.update_step,
+            "iteration_session": control.progress.iteration_session_id,
+            "iteration_control": control.progress.iteration_control_id,
         }
     )
     evidence = LearnedPIVTrainingEvidence(

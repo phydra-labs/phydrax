@@ -199,25 +199,38 @@ policy = phx.atomistic.AtomisticTrainingPolicy(
     validation_every=10,
     patience=20,
 )
+events = []
+session = phx.execution.IterationSession(
+    "atomistic-fit",
+    sinks=(
+        phx.execution.CallableIterationSink(
+            lambda event: events.append(event),
+            "fit-events",
+        ),
+    ),
+)
 result = phx.atomistic.fit_atomistic_potential(
     potential,
     problem,
     policy,
     key=jr.key(1),
+    session=session,
 )
 ```
 
-The fit loop uses the shared `TrainingController` for the master key, ordered
-callbacks, selection, patience, and progress. `AtomisticTrainingResult` retains
-final and best potentials, optimizer state, key, fitted normalization, every
-training component history, validation values and steps, progress, status, and
-termination identity. Continue deterministically by raising the total step
-ceiling and passing `continuation=result`; loss, optimizer, normalization, and
-selection semantics must remain identical.
+The fit loop uses the shared `TrainingController` for the master key, selection,
+patience, and progress. Typed lifecycle events are delivered through an explicit
+`IterationSession`; observation sinks cannot alter training, while a separate
+`IterationHostControl` may request stopping at an update boundary.
+`AtomisticTrainingResult` retains final and best potentials, optimizer state, key,
+fitted normalization, every training component history, validation values and
+steps, progress, status, and termination identity. Continue deterministically by
+raising the total step ceiling and passing `continuation=result`; a continued
+host-controlled run must restore the persisted session identity and cursor.
 
 Nonfinite loss or gradient terminates with `AtomisticStatus.NONFINITE`. A model
-selected by patience or a callback retains `STOPPED_EARLY`. Neither case is
-reported as an ordinary maximum-step completion.
+selected by patience or host iteration control retains `STOPPED_EARLY`. Neither
+case is reported as an ordinary maximum-step completion.
 
 ## Local rMD17 archives
 

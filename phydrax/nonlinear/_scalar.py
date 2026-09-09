@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._iteration import IterationPlan
 from .._strict import StrictModule
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
@@ -809,6 +810,7 @@ def scalar_root(
     termination: NonlinearTermination | None = None,
     args: Any = None,
     precision: NonlinearPrecisionPolicy | None = None,
+    iteration: IterationPlan | None = None,
 ) -> ScalarRootResult:
     if not isinstance(problem, ScalarRootProblem):
         raise TypeError("problem must be ScalarRootProblem.")
@@ -821,12 +823,24 @@ def scalar_root(
         raise TypeError("termination must be NonlinearTermination or None.")
     if not isinstance(precision_, NonlinearPrecisionPolicy):
         raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
-    return method_.solve(
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
+    if iteration is not None and iteration.granularity != "terminal":
+        raise ValueError("Scalar roots currently support terminal iteration evidence.")
+    result = method_.solve(
         problem,
         termination=termination_,
         args=args,
         precision=precision_,
     )
+    from ._newton import _attach_terminal_nonlinear_iteration
+
+    nonlinear = _attach_terminal_nonlinear_iteration(
+        result.nonlinear_result,
+        iteration,
+        method_.method_id,
+    )
+    return eqx.tree_at(lambda value: value.nonlinear_result, result, nonlinear)
 
 
 __all__ = [

@@ -2,6 +2,14 @@
 
 Public symbols are also re-exported from `phydrax.solver`.
 
+Block, Schwarz, and asynchronous execution accept an `IterationSession`.
+Records are emitted only after a complete sweep/update commits its local
+parameters and trace exchange. Host control stops before the next sweep and
+returns the exact accepted `FunctionalDecompositionState`; joint execution
+supports terminal sinks but rejects host stopping because it has no host-safe
+internal boundary.
+
+
 ::: phydrax.solver.functional_decomposition.FunctionalDecompositionProblem
     options:
         members:
@@ -66,6 +74,10 @@ Public symbols are also re-exported from `phydrax.solver`.
 ---
 
 ::: phydrax.solver.functional_decomposition.FunctionalDecompositionResult
+
+---
+
+::: phydrax.solver.functional_decomposition.FunctionalDecompositionIterationMetrics
 
 ---
 

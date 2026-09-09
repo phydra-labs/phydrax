@@ -18,6 +18,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._iteration import IterationEvidence
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..discretization import DiscretizationBundle
@@ -499,6 +500,7 @@ class DifferentialSolution(StrictModule):
     backend_successful: Array
     event_terminated: Array
     temporal_evidence: TemporalSolveEvidence | None
+    iteration_evidence: IterationEvidence | None
     wiener_term_slices: frozendict[str, tuple[int, int]] = eqx.field(static=True)
     solver_name: str = eqx.field(static=True)
     interpretation: DifferentialInterpretation = eqx.field(static=True)
@@ -533,6 +535,7 @@ class DifferentialSolution(StrictModule):
         event_terminated: ArrayLike = False,
         temporal_evidence: TemporalSolveEvidence | None = None,
         problem_id: str | None = None,
+        iteration_evidence: IterationEvidence | None = None,
     ):
         if eqx.is_array_like(states):
             arrays = validate_solution_arrays(
@@ -618,6 +621,10 @@ class DifferentialSolution(StrictModule):
             raise TypeError("temporal_evidence must be TemporalSolveEvidence or None.")
         if problem_id is not None and (not isinstance(problem_id, str) or not problem_id):
             raise ValueError("problem_id must be non-empty or None.")
+        if iteration_evidence is not None and not isinstance(
+            iteration_evidence, IterationEvidence
+        ):
+            raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.times = times_array
         self.states = states_array
         self.valid = valid_array
@@ -640,6 +647,7 @@ class DifferentialSolution(StrictModule):
         self.event_terminated = event_stop
         self.temporal_evidence = temporal_evidence
         self.problem_id = problem_id
+        self.iteration_evidence = iteration_evidence
         self.discretization_bundle_id = (
             None if discretization_bundle is None else discretization_bundle.bundle_id
         )

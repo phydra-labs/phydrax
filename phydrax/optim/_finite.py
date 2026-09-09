@@ -9,7 +9,7 @@ import math
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from numbers import Integral
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -19,6 +19,16 @@ from jax import core as jax_core
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._iteration import (
+    bind_iteration_scope,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationScope,
+    IterationSession,
+)
 from .._strict import StrictModule
 from ._branch_and_bound import (
     AbstractBranchAndBoundProblem,
@@ -392,21 +402,75 @@ class FiniteLandscapePolicy(StrictModule):
         self.maximum_bytes = bytes_
 
 
-class FiniteSearchProgress(StrictModule):
-    """Immutable host-callback snapshot between compiled evaluation batches."""
+class FiniteSearchIterationMetrics(StrictModule):
+    """Typed finite-search state emitted at host-safe batch boundaries."""
 
     attempted_evaluations: Array
     invalid_evaluations: Array
     retained_candidates: Array
-    total_candidates: int = eqx.field(static=True)
-    complete: bool = eqx.field(static=True)
+    total_candidates: Array
+    complete: Array
+
+    def __init__(
+        self,
+        attempted_evaluations,
+        invalid_evaluations,
+        retained_candidates,
+        total_candidates,
+        complete,
+        /,
+    ):
+        self.attempted_evaluations = jnp.asarray(attempted_evaluations, dtype=jnp.int64)
+        self.invalid_evaluations = jnp.asarray(invalid_evaluations, dtype=jnp.int64)
+        self.retained_candidates = jnp.asarray(retained_candidates, dtype=jnp.int32)
+        self.total_candidates = jnp.asarray(total_candidates, dtype=jnp.int64)
+        self.complete = jnp.asarray(complete, dtype=bool)
 
 
-@runtime_checkable
-class FiniteSearchCallback(Protocol):
-    """Host-only progress callback; return true to request an explicit stop."""
+def _finite_search_scope(
+    granularity: str,
+    /,
+    *,
+    host_stop: bool,
+) -> tuple[IterationScope, IterationCapabilities]:
+    capabilities = IterationCapabilities(
+        ("terminal", granularity),
+        host_stop=host_stop,
+        host_streaming=True,
+    )
+    plan = IterationPlan(granularity=granularity)
+    return (
+        bind_iteration_scope(plan, capabilities, _FINITE_SEARCH_METHOD_ID),
+        capabilities,
+    )
 
-    def __call__(self, progress: FiniteSearchProgress, /) -> bool: ...
+
+def _finite_search_record(
+    phase: IterationPhase,
+    ordinal: int,
+    metrics: FiniteSearchIterationMetrics,
+    /,
+    *,
+    status: FiniteSearchStatus = FiniteSearchStatus.COMPLETE,
+    committed: bool = False,
+    terminal: bool = False,
+) -> IterationRecord:
+    attempted = metrics.attempted_evaluations
+    invalid = metrics.invalid_evaluations
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            ordinal,
+            attempt=attempted,
+            accepted=attempted - invalid,
+            rejected=invalid,
+            active=True,
+            committed=committed,
+            terminal=terminal,
+        ),
+        int(status),
+        metrics,
+    )
 
 
 class FiniteLocalRefinement(StrictModule):
@@ -735,14 +799,14 @@ def search_finite(
     *,
     search: FiniteExhaustiveSearch | FiniteAdaptiveSearch | None = None,
     landscape: FiniteLandscapePolicy | None = None,
-    callback: FiniteSearchCallback | None = None,
+    session: IterationSession | None = None,
     refinement: FiniteLocalRefinement | None = None,
 ) -> FiniteSearchResult:
     """Stream exact finite reducers over deterministic flat indices.
 
-    Callback orchestration is deliberately host-side and occurs only between
-    compiled, fixed-shape batches. Selection and optional refinement are
-    nondifferentiable; refinement evidence never changes the finite exactness claim.
+    Host observation and control occur only between compiled fixed-shape batches.
+    Selection and optional refinement are nondifferentiable; refinement evidence
+    never changes the finite exactness claim.
     """
 
     reducer_ = FiniteMinimum() if reducer is None else reducer
@@ -750,18 +814,46 @@ def search_finite(
     landscape_ = FiniteLandscapePolicy() if landscape is None else landscape
     if not isinstance(landscape_, FiniteLandscapePolicy):
         raise TypeError("landscape must be a FiniteLandscapePolicy.")
-    if callback is not None and not callable(callback):
-        raise TypeError("callback must be callable or None.")
+    if session is not None and not isinstance(session, IterationSession):
+        raise TypeError("session must be IterationSession or None.")
     if refinement is not None and not isinstance(refinement, FiniteLocalRefinement):
         raise TypeError("refinement must be a FiniteLocalRefinement or None.")
     if isinstance(search_, FiniteAdaptiveSearch):
         if not isinstance(reducer_, FiniteMinimum):
             raise TypeError("FiniteAdaptiveSearch supports FiniteMinimum only.")
-        if landscape_.retain or callback is not None or refinement is not None:
-            raise ValueError(
-                "Adaptive search does not support landscape, callback, or refinement."
+        if landscape_.retain or refinement is not None:
+            raise ValueError("Adaptive search does not support landscape or refinement.")
+        if session is not None and session.control_id is not None:
+            raise ValueError("Adaptive search does not support host-side stopping.")
+        scope, _ = _finite_search_scope("terminal", host_stop=False)
+        if session is not None:
+            session.emit(
+                scope,
+                _finite_search_record(
+                    IterationPhase.START,
+                    0,
+                    FiniteSearchIterationMetrics(0, 0, 0, space.size, False),
+                ),
             )
-        return _search_finite_adaptive(evaluator, space, search_)
+        result = _search_finite_adaptive(evaluator, space, search_)
+        if session is not None:
+            session.emit(
+                scope,
+                _finite_search_record(
+                    IterationPhase.TERMINAL,
+                    0,
+                    FiniteSearchIterationMetrics(
+                        result.attempted_evaluations,
+                        result.invalid_evaluations,
+                        jnp.sum(result.valid, dtype=jnp.int32),
+                        space.size,
+                        result.exact,
+                    ),
+                    status=FiniteSearchStatus(int(result.status)),
+                    terminal=True,
+                ),
+            )
+        return result
     if not isinstance(search_, FiniteExhaustiveSearch):
         raise TypeError(
             "search must be a FiniteExhaustiveSearch or FiniteAdaptiveSearch."
@@ -795,6 +887,17 @@ def search_finite(
     overflow = jnp.asarray(False)
     stopped = False
     batch_size = search_.effective_batch_size(space.size)
+    scope, _ = _finite_search_scope("segment", host_stop=True)
+    batch_ordinal = 0
+    if session is not None:
+        stopped = session.emit(
+            scope,
+            _finite_search_record(
+                IterationPhase.START,
+                batch_ordinal,
+                FiniteSearchIterationMetrics(0, 0, 0, space.size, False),
+            ),
+        )
 
     @eqx.filter_jit
     def evaluate_batch(indices):
@@ -803,6 +906,8 @@ def search_finite(
         return jax.vmap(evaluator)(points)
 
     for start in range(0, space.size, batch_size):
+        if stopped:
+            break
         stop = min(start + batch_size, space.size)
         indices = jnp.arange(start, stop, dtype=jnp.int64)
         batch_scores, declared_valid = evaluate_batch(indices)
@@ -844,17 +949,22 @@ def search_finite(
                 capacity,
             )
             overflow = overflow | batch_overflow
-        if callback is not None:
-            stopped = bool(
-                callback(
-                    FiniteSearchProgress(
-                        jnp.asarray(attempted, dtype=jnp.int64),
-                        jnp.asarray(invalid, dtype=jnp.int64),
+        batch_ordinal += 1
+        if session is not None:
+            stopped = session.emit(
+                scope,
+                _finite_search_record(
+                    IterationPhase.COMMIT,
+                    batch_ordinal,
+                    FiniteSearchIterationMetrics(
+                        attempted,
+                        invalid,
                         jnp.sum(retained_valid, dtype=jnp.int32),
                         space.size,
                         stop == space.size,
-                    )
-                )
+                    ),
+                    committed=True,
+                ),
             )
             if stopped:
                 break
@@ -899,7 +1009,7 @@ def search_finite(
             raise ValueError("Refined objective shape differs from the finite objective.")
         refined_score = jnp.where(candidate_valid, candidate_score, jnp.nan)
 
-    return FiniteSearchResult(
+    result = FiniteSearchResult(
         jax.tree_util.tree_map(jax.lax.stop_gradient, points),
         jax.lax.stop_gradient(
             retained_scores[:, 0] if objectives == 1 else retained_scores
@@ -924,6 +1034,24 @@ def search_finite(
         space.space_id,
         reducer_id,
     )
+    if session is not None:
+        session.emit(
+            scope,
+            _finite_search_record(
+                IterationPhase.TERMINAL,
+                batch_ordinal,
+                FiniteSearchIterationMetrics(
+                    attempted,
+                    invalid,
+                    jnp.sum(retained_valid, dtype=jnp.int32),
+                    space.size,
+                    exact,
+                ),
+                status=FiniteSearchStatus(int(status)),
+                terminal=True,
+            ),
+        )
+    return result
 
 
 __all__ = [
@@ -936,8 +1064,7 @@ __all__ = [
     "FiniteMinimum",
     "FinitePareto",
     "FiniteProductSpace",
-    "FiniteSearchCallback",
-    "FiniteSearchProgress",
+    "FiniteSearchIterationMetrics",
     "FiniteSearchResult",
     "FiniteSearchStatus",
     "FiniteTopK",

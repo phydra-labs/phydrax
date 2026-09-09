@@ -11,6 +11,19 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._iteration import (
+    bind_iteration_scope,
+    finalize_iteration,
+    initialize_iteration,
+    IterationCapabilities,
+    IterationCoordinates,
+    IterationPhase,
+    IterationPlan,
+    IterationRecord,
+    IterationRuntimeState,
+    IterationScope,
+    update_iteration,
+)
 from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
 from ._iterative._base import AbstractScalarIterativeMethod
@@ -101,13 +114,45 @@ class _ScalarRun(StrictModule):
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
 
+def _scalar_iteration_record(
+    state: ScalarIterativeState,
+    status,
+    phase,
+    /,
+    *,
+    active=True,
+    committed=False,
+    terminal=False,
+) -> IterationRecord:
+    return IterationRecord(
+        IterationCoordinates(
+            phase,
+            state.iteration,
+            attempt=state.iteration,
+            accepted=state.accepted_steps,
+            rejected=state.rejected_steps,
+            active=active,
+            committed=committed,
+            terminal=terminal,
+        ),
+        status,
+        state.metrics,
+    )
+
+
 def _run_scalar_iterations(
     method: AbstractScalarIterativeMethod,
     value_function,
     initial_parameters: PyTree[Any],
     termination: OptimizationTermination,
+    iteration: IterationPlan | None = None,
     /,
-) -> _ScalarRun:
+) -> tuple[
+    _ScalarRun,
+    IterationScope | None,
+    IterationCapabilities | None,
+    IterationRuntimeState | None,
+]:
     state = method.prepare_state(value_function, initial_parameters)
     state, static_state = eqx.partition(state, eqx.is_array)
     initial_status = jnp.where(
@@ -115,6 +160,30 @@ def _run_scalar_iterations(
         int(OptimizationStatus.ITERATING),
         int(OptimizationStatus.NONFINITE_INPUT),
     ).astype(jnp.int32)
+    iteration_scope = None
+    iteration_capabilities = None
+    iteration_state = None
+    if iteration is not None:
+        iteration_capabilities = IterationCapabilities(
+            ("terminal", "step", "attempt"),
+            device_stop=True,
+            mapped_records=True,
+        )
+        if iteration.stop_rule is not None and iteration.granularity == "terminal":
+            raise ValueError("Terminal-only optimization observation cannot stop.")
+        iteration_scope = bind_iteration_scope(
+            iteration,
+            iteration_capabilities,
+            method.method_id,
+        )
+        iteration_state = initialize_iteration(
+            iteration,
+            _scalar_iteration_record(
+                eqx.combine(state, static_state),
+                initial_status,
+                IterationPhase.START,
+            ),
+        )
 
     def condition(carry):
         _, current_state, status = carry
@@ -151,18 +220,68 @@ def _run_scalar_iterations(
         dynamic_next_state, _ = eqx.partition(next_state, eqx.is_array)
         return next_parameters, dynamic_next_state, next_status
 
-    parameters, state, status = jax.lax.while_loop(
-        condition,
-        body,
-        (initial_parameters, state, initial_status),
-    )
+    if iteration is None:
+        parameters, state, status = jax.lax.while_loop(
+            condition,
+            body,
+            (initial_parameters, state, initial_status),
+        )
+    else:
+        assert iteration_state is not None
+
+        def observed_condition(carry):
+            return condition(carry[:3]) & ~carry[3].stop_requested
+
+        def observed_body(carry):
+            previous_state = eqx.combine(carry[1], static_state)
+            next_carry = body(carry[:3])
+            next_state = eqx.combine(next_carry[1], static_state)
+            advanced = next_state.iteration > previous_state.iteration
+            committed = next_state.accepted_steps > previous_state.accepted_steps
+            selected = advanced & (committed if iteration.granularity == "step" else True)
+            phase = jnp.where(
+                committed,
+                int(IterationPhase.COMMIT),
+                int(IterationPhase.ATTEMPT),
+            )
+            record = _scalar_iteration_record(
+                next_state,
+                next_carry[2],
+                phase,
+                active=selected,
+                committed=committed,
+            )
+            observed = update_iteration(
+                iteration,
+                carry[3],
+                record,
+                allow_stop=committed,
+            )
+            return (*next_carry, observed)
+
+        parameters, state, status, iteration_state = jax.lax.while_loop(
+            observed_condition,
+            observed_body,
+            (initial_parameters, state, initial_status, iteration_state),
+        )
     state = eqx.combine(state, static_state)
     status = jnp.where(
         status == int(OptimizationStatus.ITERATING),
         int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
         status,
     )
-    return _ScalarRun(parameters, state, status)
+    if iteration_state is not None:
+        status = jnp.where(
+            iteration_state.stop_requested,
+            int(OptimizationStatus.USER_STOPPED),
+            status,
+        )
+    return (
+        _ScalarRun(parameters, state, status),
+        iteration_scope,
+        iteration_capabilities,
+        iteration_state,
+    )
 
 
 def solve_scalar_iterative(
@@ -173,6 +292,7 @@ def solve_scalar_iterative(
     *,
     termination: OptimizationTermination,
     args: Any,
+    iteration: IterationPlan | None = None,
 ) -> MinimizationResult:
     """Execute a native accepted-point scalar method to terminal status."""
 
@@ -202,11 +322,17 @@ def solve_scalar_iterative(
         value, _ = problem.value(candidate, args)
         return value
 
-    run = _run_scalar_iterations(
+    (
+        run,
+        iteration_scope,
+        iteration_capabilities,
+        iteration_state,
+    ) = _run_scalar_iterations(
         method,
         value_function,
         parameters,
         termination,
+        iteration,
     )
     parameters, state, status = run.parameters, run.state, run.status
     (final_value, final_auxiliary), final_gradient = problem.value_and_gradient(
@@ -266,13 +392,39 @@ def solve_scalar_iterative(
         reduction_ratio=final_metrics.reduction_ratio,
         direction_fallbacks=state.direction_fallbacks,
     )
-    return MinimizationResult(
+    result = MinimizationResult(
         parameters,
         final_value,
         final_auxiliary,
         status,
         diagnostics,
         provenance,
+    )
+    if iteration is None:
+        return result
+    assert iteration_scope is not None
+    assert iteration_capabilities is not None
+    assert iteration_state is not None
+    terminal = _scalar_iteration_record(
+        state,
+        status,
+        IterationPhase.TERMINAL,
+        active=True,
+        committed=result.successful,
+        terminal=True,
+    )
+    evidence = finalize_iteration(
+        iteration,
+        iteration_scope,
+        iteration_capabilities,
+        iteration_state,
+        terminal,
+    )
+    return eqx.tree_at(
+        lambda value: value.iteration_evidence,
+        result,
+        evidence,
+        is_leaf=lambda value: value is None,
     )
 
 

@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax._sampling import _hamiltonian as hamiltonian
 from phydrax.nn.quantum import (
     AutoregressiveSpinAmplitude,
@@ -32,13 +33,26 @@ def test_hamiltonian_chain_has_semantic_replay_and_frozen_production():
         target_id="gaussian",
     )
     state = initialize_hamiltonian_state(kernel, jnp.zeros((2, 2)))
-    first = sample_hamiltonian(kernel, state, key=jr.key(5), num_draws=8)
+    first = sample_hamiltonian(
+        kernel,
+        state,
+        key=jr.key(5),
+        num_draws=8,
+        iteration=phx.execution.IterationPlan(
+            granularity="step",
+            observers=(phx.execution.IterationTraceObserver(8),),
+        ),
+    )
     second = sample_hamiltonian(kernel, state, key=jr.key(5), num_draws=8)
     assert jnp.array_equal(first.samples, second.samples)
     assert jnp.all(first.frozen_step_size == 0.1)
     assert not jnp.any(first.nonfinite_gradient)
     assert not jnp.any(first.divergent)
     assert jnp.all(first.leapfrog_steps == 4)
+    assert first.iteration_evidence is not None
+    trace = first.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 8
+    assert trace.records.metrics.accepted.shape[1:] == (2,)
 
 
 def _nonfinite_hmc_result(monkeypatch, cutoff):

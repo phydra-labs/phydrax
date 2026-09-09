@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._iteration import IterationPlan
 from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled,
@@ -39,6 +40,28 @@ from ._types import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+
+
+def _validate_fixed_point_iteration(iteration: IterationPlan | None, /) -> None:
+    if iteration is not None and not isinstance(iteration, IterationPlan):
+        raise TypeError("iteration must be IterationPlan or None.")
+    if iteration is not None and iteration.granularity != "terminal":
+        raise ValueError(
+            "Fixed-point methods currently support terminal iteration evidence."
+        )
+
+
+def _attach_fixed_point_iteration(
+    result: NonlinearResult,
+    iteration: IterationPlan | None,
+    method_id: str,
+    /,
+) -> NonlinearResult:
+    from ._newton import _attach_terminal_nonlinear_iteration
+
+    return _attach_terminal_nonlinear_iteration(result, iteration, method_id)
+
+
 from ._updates import (
     AbstractNonlinearUpdate,
     NonlinearUpdateCapabilities,
@@ -230,12 +253,14 @@ class FixedPointIteration(StrictModule):
         *,
         termination: NonlinearTermination | None = None,
         args: Any = None,
+        iteration: IterationPlan | None = None,
     ) -> NonlinearResult:
         if not isinstance(problem, FixedPointProblem):
             raise TypeError("problem must be a FixedPointProblem.")
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
+        _validate_fixed_point_iteration(iteration)
         self.precision.validate_tolerance(termination_.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
         space = PyTreeSpace(initial)
@@ -448,7 +473,7 @@ class FixedPointIteration(StrictModule):
             acceleration_restarts=run.restarts,
         )
         output_state = jax.tree.map(self.precision.output, final_state)
-        return NonlinearResult(
+        result = NonlinearResult(
             state=output_state,
             residual=final_residual,
             auxiliary=None,
@@ -467,6 +492,7 @@ class FixedPointIteration(StrictModule):
                 output_value=output_state,
             ),
         )
+        return _attach_fixed_point_iteration(result, iteration, self.method_id)
 
 
 class _SteffensenRun(StrictModule):
@@ -533,12 +559,14 @@ class SteffensenIteration(StrictModule):
         *,
         termination: NonlinearTermination | None = None,
         args: Any = None,
+        iteration: IterationPlan | None = None,
     ) -> NonlinearResult:
         if not isinstance(problem, FixedPointProblem):
             raise TypeError("problem must be FixedPointProblem.")
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
+        _validate_fixed_point_iteration(iteration)
         self.precision.validate_tolerance(termination_.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
         space = PyTreeSpace(initial)
@@ -689,7 +717,7 @@ class SteffensenIteration(StrictModule):
             final_state,
         )
         output_state = jax.tree.map(self.precision.output, final_state)
-        return NonlinearResult(
+        result = NonlinearResult(
             state=output_state,
             residual=final_residual,
             auxiliary=final_mapped,
@@ -718,6 +746,7 @@ class SteffensenIteration(StrictModule):
                 output_value=output_state,
             ),
         )
+        return _attach_fixed_point_iteration(result, iteration, self.method_id)
 
 
 def _picard_candidate(
@@ -960,12 +989,14 @@ class PicardIteration(StrictModule):
         *,
         termination: NonlinearTermination | None = None,
         args: Any = None,
+        iteration: IterationPlan | None = None,
     ) -> NonlinearResult:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
+        _validate_fixed_point_iteration(iteration)
         self.precision.validate_tolerance(termination_.absolute_residual)
 
         def mapping(state, current_args):
@@ -990,6 +1021,7 @@ class PicardIteration(StrictModule):
             initial_state,
             termination=termination_,
             args=args,
+            iteration=iteration,
         )
         model_state = self.precision.state(result.state)
         physical_residual, auxiliary = problem.evaluate(model_state, args)
@@ -1021,7 +1053,7 @@ class PicardIteration(StrictModule):
             if result.precision_evidence is None
             else {"fixed-point": result.precision_evidence}
         )
-        return NonlinearResult(
+        physical = NonlinearResult(
             state=output_state,
             residual=physical_residual,
             auxiliary=auxiliary,
@@ -1042,6 +1074,7 @@ class PicardIteration(StrictModule):
             ),
             attempts=result.attempts,
         )
+        return _attach_fixed_point_iteration(physical, iteration, self.method_id)
 
 
 __all__ = [

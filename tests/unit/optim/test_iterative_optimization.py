@@ -120,6 +120,10 @@ def test_native_nonlinear_least_squares_methods_solve_nonlinear_residual(method)
         jnp.array([1.0, 0.0]),
         method=method,
         termination=_termination(steps=30),
+        iteration=phx.execution.IterationPlan(
+            granularity="attempt",
+            observers=(phx.execution.IterationTraceObserver(32),),
+        ),
     )
 
     np.testing.assert_allclose(result.parameters, jnp.array([2.0, 3.0]), atol=1e-6)
@@ -127,6 +131,53 @@ def test_native_nonlinear_least_squares_methods_solve_nonlinear_residual(method)
     assert result.objective < 1e-12
     assert result.diagnostics.residual_evaluations > 0
     assert result.provenance.matrix_free
+    assert result.iteration_evidence is not None
+    assert int(result.iteration_evidence.observer_outputs[0].stored_count) > 0
+
+
+def test_native_minimization_control_stops_at_an_accepted_point():
+    iteration = phx.execution.IterationPlan(
+        granularity="attempt",
+        observers=(phx.execution.IterationTraceObserver(8),),
+        stop_rule=phx.execution.CallableIterationStopRule(
+            lambda initial: jnp.asarray(0, dtype=jnp.int32),
+            lambda state, record: (
+                state + 1,
+                record.coordinates.ordinal >= 1,
+            ),
+            "one-optimization-step",
+        ),
+    )
+    result = phx.optim.minimize(
+        lambda value, _: (1.0 - value[0]) ** 2 + 100.0 * (value[1] - value[0] ** 2) ** 2,
+        jnp.asarray([-1.2, 1.0]),
+        method=phx.optim.NonlinearConjugateGradient(),
+        termination=_termination(steps=50),
+        iteration=iteration,
+    )
+
+    assert int(result.status) == int(phx.optim.OptimizationStatus.USER_STOPPED)
+    assert int(result.diagnostics.iterations) == 1
+    assert result.iteration_evidence is not None
+    assert int(result.iteration_evidence.observer_outputs[0].stored_count) == 1
+
+
+def test_external_optimization_exposes_terminal_evidence_only():
+    result = phx.optim.minimize(
+        lambda value, target: jnp.sum((value - target) ** 2),
+        jnp.asarray([0.0]),
+        method=phx.optim.OptimistixMethod(optx.BFGS(rtol=1e-10, atol=1e-10)),
+        args=jnp.asarray([2.0]),
+        iteration=phx.execution.IterationPlan(
+            granularity="terminal",
+            observers=(phx.execution.IterationTraceObserver(0),),
+        ),
+    )
+
+    assert result.iteration_evidence is not None
+    trace = result.iteration_evidence.observer_outputs[0]
+    assert int(trace.stored_count) == 0
+    assert int(trace.terminal.status) == int(phx.optim.OptimizationStatus.SUCCESS)
 
 
 def test_gauss_newton_handles_rectangular_rank_deficient_residual():

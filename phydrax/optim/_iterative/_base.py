@@ -10,6 +10,7 @@ from typing import Any
 
 from jaxtyping import PyTree
 
+from ..._iteration import IterationPlan
 from ..._strict import StrictModule
 from ._types import (
     IterativeStepMetrics,
@@ -50,6 +51,19 @@ class AbstractMinimizationMethod(StrictModule):
 
 class AbstractScalarIterativeMethod(AbstractMinimizationMethod):
     """Scalar method that can advance one frozen objective realization."""
+
+    @abc.abstractmethod
+    def solve(
+        self,
+        problem: MinimizationProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+        iteration: IterationPlan | None = None,
+    ) -> MinimizationResult:
+        raise NotImplementedError
 
     @property
     @abc.abstractmethod

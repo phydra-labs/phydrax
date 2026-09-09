@@ -18,7 +18,11 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..._training import TrainingController, TrainingProgress
+from ..._training import (
+    TrainingController,
+    TrainingIterationKind,
+    TrainingProgress,
+)
 from .._dynamics import PreparedAtomisticDynamics
 from ._bias import (
     AbstractAtomisticBiasPlan,
@@ -352,7 +356,11 @@ def fit_free_energy_model(
         raise ValueError("Training and validation CV dimensions differ.")
     optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
     state = optimizer_.init(eqx.filter(model, eqx.is_inexact_array))
-    controller = TrainingController(total_steps=policy_.maximum_steps, key=key)
+    controller = TrainingController(
+        total_steps=policy_.maximum_steps,
+        key=key,
+        algorithm_id="free-energy-training",
+    )
 
     @eqx.filter_jit
     def update(current, optimizer_state):
@@ -372,7 +380,10 @@ def fit_free_energy_model(
     controller.select(
         float(initial_validation), current, step=0, mode="min", patience=policy_.patience
     )
-    controller.emit("start", metrics={"total_steps": policy_.maximum_steps})
+    controller.emit(
+        TrainingIterationKind.RUN_START,
+        metrics={"total_steps": policy_.maximum_steps},
+    )
     valid = initial_valid
     for step in range(1, policy_.maximum_steps + 1):
         current, state, training_loss, step_valid = update(current, state)
@@ -383,7 +394,7 @@ def fit_free_energy_model(
             training_history.append(training_loss)
             validation_history.append(validation_loss)
             controller.emit(
-                "validation",
+                TrainingIterationKind.VALIDATION,
                 metrics={
                     "training_loss": training_loss,
                     "validation_loss": validation_loss,
@@ -391,7 +402,7 @@ def fit_free_energy_model(
                 },
             )
             if not bool(valid):
-                controller.emit("nonfinite", metrics={"step": step})
+                controller.emit(TrainingIterationKind.FAILURE, metrics={"step": step})
                 break
             controller.select(
                 float(validation_loss),
@@ -403,7 +414,7 @@ def fit_free_energy_model(
             if controller.stop_requested:
                 break
     controller.emit(
-        "stop",
+        TrainingIterationKind.RUN_TERMINAL,
         metrics={"completed_steps": controller.progress.update_step},
     )
     selected = controller.selected(current)
