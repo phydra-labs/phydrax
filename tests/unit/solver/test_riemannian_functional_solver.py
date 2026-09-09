@@ -112,9 +112,8 @@ def test_functional_solver_accepts_transported_momentum():
     assert trained.training_diagnostics["optimizer/riemannian/momentum_norm"] > 0.0
 
 
-def test_functional_solver_accepts_intrinsic_adaptive_moments(tmp_path):
+def test_functional_solver_accepts_intrinsic_adaptive_moments(phydrax_events):
     solver = _geometric_solver()
-    log_path = tmp_path / "training.log"
     initial_loss = solver.loss()
     trained = solver.solve(
         num_iter=100,
@@ -122,7 +121,6 @@ def test_functional_solver_accepts_intrinsic_adaptive_moments(tmp_path):
         keep_best=False,
         jit=True,
         log_every=100,
-        log_path=log_path,
     )
     direction, offset = _values(trained)
     diagnostics = trained.training_diagnostics
@@ -136,7 +134,10 @@ def test_functional_solver_accepts_intrinsic_adaptive_moments(tmp_path):
         diagnostics["optimizer/riemannian/adaptive_denominator_maximum"]
         >= diagnostics["optimizer/riemannian/adaptive_denominator_minimum"]
     )
-    assert "adaptive_denom=[" in log_path.read_text()
+    event = phydrax_events.records("training.step.completed")[-1]
+    metric_names = {metric["name"] for metric in event["fields"]["metrics"]}
+    assert "optimizer/riemannian/adaptive_denominator_minimum" in metric_names
+    assert "optimizer/riemannian/adaptive_denominator_maximum" in metric_names
 
 
 @pytest.mark.parametrize("optimizer_name", ("conjugate_gradient", "lbfgs"))
@@ -168,9 +169,10 @@ def test_functional_solver_supports_frozen_objective_line_search(optimizer_name)
     assert diagnostics["optimizer/riemannian/pair_accepted"].dtype == jnp.bool_
 
 
-def test_riemannian_solver_logging_and_tensorboard_diagnostics(tmp_path):
+def test_riemannian_solver_logging_and_tensorboard_diagnostics(
+    tmp_path, phydrax_events
+):
     solver = _geometric_solver()
-    log_path = tmp_path / "training.log"
     tensorboard_dir = tmp_path / "tensorboard"
     solver.solve(
         num_iter=2,
@@ -178,16 +180,15 @@ def test_riemannian_solver_logging_and_tensorboard_diagnostics(tmp_path):
         keep_best=False,
         jit=False,
         log_every=1,
-        log_path=log_path,
         tensorboard_log_dir=tensorboard_dir,
         tensorboard_every=1,
     )
 
-    text = log_path.read_text()
-    assert "[phydrax][riemannian-sgd]" in text
-    assert "rgrad=" in text
-    assert "step_norm=" in text
-    assert "constraint=" in text
+    event = phydrax_events.records("training.step.completed")[-1]
+    metric_names = {metric["name"] for metric in event["fields"]["metrics"]}
+    assert "optimizer/riemannian/gradient_norm" in metric_names
+    assert "optimizer/riemannian/tangent_step_norm" in metric_names
+    assert "optimizer/riemannian/constraint_residual_max" in metric_names
 
     accumulator = EventAccumulator(str(tensorboard_dir))
     accumulator.Reload()

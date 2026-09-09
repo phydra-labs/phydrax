@@ -10,6 +10,7 @@ import signal
 import struct
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import equinox as eqx
@@ -21,6 +22,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...logging import emit
 from .._assembly import MeshAssembly, MeshPart
 from .._contracts import (
     MeshingCapability,
@@ -263,6 +265,14 @@ class TiogaAssemblyResult(StrictModule, NonTrainableState):
 
 
 def _run(command: list[str], timeout: float, *, cwd: str | None = None) -> str:
+    started = time.perf_counter()
+    emit(
+        "DEBUG",
+        "provider.process.started",
+        "TIOGA process started",
+        executable=Path(command[0]).name,
+        provider="tioga",
+    )
     try:
         process = subprocess.Popen(
             command,
@@ -273,12 +283,28 @@ def _run(command: list[str], timeout: float, *, cwd: str | None = None) -> str:
             start_new_session=os.name == "posix",
         )
     except OSError as error:
+        emit(
+            "ERROR",
+            "provider.process.failed",
+            "TIOGA process was unavailable",
+            elapsed_seconds=time.perf_counter() - started,
+            failure_category="provider_unavailable",
+            provider="tioga",
+        )
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_UNAVAILABLE, f"Cannot launch TIOGA: {error}"
         ) from error
     try:
         output, _ = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as error:
+        emit(
+            "ERROR",
+            "provider.process.failed",
+            "TIOGA process timed out",
+            elapsed_seconds=time.perf_counter() - started,
+            failure_category="timed_out",
+            provider="tioga",
+        )
         if os.name == "posix":
             os.killpg(process.pid, signal.SIGKILL)
         else:
@@ -289,10 +315,29 @@ def _run(command: list[str], timeout: float, *, cwd: str | None = None) -> str:
             "TIOGA assembly exceeded its wall-time limit.",
         ) from error
     if process.returncode != 0:
+        emit(
+            "ERROR",
+            "provider.process.failed",
+            "TIOGA process failed",
+            elapsed_seconds=time.perf_counter() - started,
+            failure_category="nonzero_exit",
+            provider="tioga",
+            return_code=process.returncode,
+            stdout_bytes=len(output.encode("utf-8")),
+        )
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             f"TIOGA exited with status {process.returncode}: {output[-12000:]}",
         )
+    emit(
+        "DEBUG",
+        "provider.process.completed",
+        "TIOGA process completed",
+        elapsed_seconds=time.perf_counter() - started,
+        provider="tioga",
+        return_code=process.returncode,
+        stdout_bytes=len(output.encode("utf-8")),
+    )
     return output
 
 

@@ -44,6 +44,7 @@ dependencies = [
     "jaxtyping>=0.3.5",
     "laplax==0.0.2",
     "lineax>=0.1.0,<0.2",
+    "loguru>=0.7.3,<0.8",
     "matfree>=0.6.1,<0.7",
     "manifold3d>=3.5.2",
     "meshio>=5.3.5",

@@ -442,6 +442,13 @@ def fit_variational_kinetic_model(
         validation_scores.append(initial_score)
         valid_history.append(initial_valid)
 
+    controller.emit(
+        "start",
+        metrics={
+            "resumed_from_step": resumed_from_step,
+            "total_steps": policy_.maximum_steps,
+        },
+    )
     @eqx.filter_jit
     def update(current, state):
         def objective(candidate):
@@ -483,7 +490,17 @@ def fit_variational_kinetic_model(
             training_scores.append(training_score)
             validation_scores.append(validation_score)
             valid_history.append(complete)
+            controller.emit(
+                "validation",
+                metrics={
+                    "training_score": training_score,
+                    "validation_score": validation_score,
+                    "valid": complete,
+                },
+            )
             should_stop = not bool(complete)
+            if should_stop:
+                controller.emit("failure", metrics={"step": step})
             if not should_stop:
                 controller.select(
                     float(validation_score),
@@ -512,6 +529,7 @@ def fit_variational_kinetic_model(
                     "valid": [bool(value) for value in valid_history],
                 },
             )
+            controller.emit("checkpoint", metrics={"step": step})
         if should_stop:
             break
     if checkpoint is not None:
@@ -531,6 +549,14 @@ def fit_variational_kinetic_model(
                 "valid": [bool(value) for value in valid_history],
             },
         )
+        controller.emit(
+            "checkpoint",
+            metrics={"step": controller.progress.update_step},
+        )
+    controller.emit(
+        "stop",
+        metrics={"completed_steps": controller.progress.update_step},
+    )
     selected = controller.selected(current)
     encoded_library = ModelFeatureLibrary(
         selected,

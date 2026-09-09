@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added a default-silent Loguru event substrate with privacy-bounded text and
+  canonical JSONL sinks, context-local correlation, structured training and
+  provider/runtime events, explicit host/JAX telemetry snapshots, and
+  process-safe sink ownership. Functional solver file logging now uses
+  process-level `phydrax.logging` sinks and `log_every` defaults to zero.
 - Added native functional domain decomposition with exact multidimensional,
   nonuniform, and periodic Cartesian topology; mapped-cover evidence; sparse
   partition-of-unity and side-aware broken fields; typed local references; physical

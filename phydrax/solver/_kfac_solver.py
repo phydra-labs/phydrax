@@ -19,13 +19,14 @@ from jax.flatten_util import ravel_pytree
 from .._frozendict import frozendict
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
-    log_training_signal_stop as _log_training_signal_stop,
+    emit_training_signal_stop as _emit_training_signal_stop,
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger,
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
     update_training_selection,
 )
+from ..logging import emit, is_enabled as _logging_enabled
 from ..optim._iterative._globalization import (
     armijo_backtracking,
     ArmijoLineSearch,
@@ -45,9 +46,10 @@ from ._functional_objective import (
     prepared_data_metrics,
 )
 from ._functional_reporting import (
-    log_tensorboard_scalars as _log_tensorboard_scalars,
-    metric_suffix as _metric_suffix,
+    emit_training_scalars as _emit_training_scalars,
     term_label as _term_label,
+    training_scalars as _training_scalars,
+    write_tensorboard_scalars as _write_tensorboard_scalars,
 )
 from ._functional_residual import materialize_prepared_residual_terms
 from ._functional_run import (
@@ -206,7 +208,6 @@ def solve_kfac(
     keep_best: bool,
     log_every: int,
     log_terms: bool,
-    log_path: str | Path | None,
     tensorboard_log_dir: str | Path | None,
     tensorboard_every: int | None,
     tensorboard_flush_every: int,
@@ -427,11 +428,6 @@ def solve_kfac(
             resumed_from_step=start_step,
         )
 
-    log_context = (
-        open(Path(log_path), "w", encoding="utf-8")
-        if log_path is not None
-        else nullcontext(None)
-    )
 
     def publish_checkpoint(checkpoint_solver, checkpoint_state):
         if training is None or training.checkpoint is None:
@@ -463,19 +459,21 @@ def solve_kfac(
         log_every=int(log_every),
     )
 
-    with (
-        log_context as log_file,
-        tensorboard_context as tensorboard_writer,
-        _TrainingSignalGuard() as signal_guard,
-    ):
+    emit(
+        "INFO",
+        "training.started",
+        "Training started",
+        backend="kfac",
+        total_steps=int(num_iter),
+    )
+    with tensorboard_context as tensorboard_writer, _TrainingSignalGuard() as signal_guard:
         for epoch in range(start_step, int(num_iter)):
             if signal_guard.stop_requested:
-                _log_training_signal_stop(
+                _emit_training_signal_stop(
                     "kfac",
                     signal_guard,
                     completed=epoch,
                     total=int(num_iter),
-                    file=log_file,
                 )
                 break
             iteration_started = time.perf_counter()
@@ -753,7 +751,11 @@ def solve_kfac(
             if selection_stopped:
                 break
 
-            console_step = int(log_every) > 0 and iteration % int(log_every) == 0
+            log_step = (
+                _logging_enabled()
+                and int(log_every) > 0
+                and iteration % int(log_every) == 0
+            )
             tensorboard_step = (
                 tensorboard_writer is not None
                 and tensorboard_period is not None
@@ -764,7 +766,7 @@ def solve_kfac(
             train_data_metrics = tuple({} for _ in self.terms)
             eval_terms = jnp.zeros((len(self.evaluation_terms),), dtype=float)
             eval_data_metrics = tuple({} for _ in self.evaluation_terms)
-            if log_terms and (console_step or tensorboard_step):
+            if log_terms and (log_step or tensorboard_step):
                 evaluation_functions = combine_trainable(params, non_trainable)
                 active_values = evaluate_prepared_objective(
                     prepared,
@@ -809,33 +811,42 @@ def solve_kfac(
                     prepared_evaluation,
                     evaluation_functions,
                 )
-            if console_step:
-                print(
-                    f"step={iteration} loss={accepted_loss_float:.6e} "
-                    f"best={best_loss:.6e} time={elapsed:.3f}s",
-                    file=log_file,
-                )
-                if log_terms:
-                    for term_index, (name, value) in enumerate(
-                        zip(term_names, train_terms, strict=True)
-                    ):
-                        suffix = _metric_suffix(train_data_metrics[term_index])
-                        print(
-                            f"  [train {term_index}] {name}: {float(value):.6e}{suffix}",
-                            file=log_file,
+            if log_step or tensorboard_step:
+                optimizer_metrics: dict[str, Any] = {
+                    "optimizer/kfac/cg_iterations_max": cg_iterations,
+                    "optimizer/kfac/cg_relative_residual_max": (
+                        cg_relative_residual
+                    ),
+                    "optimizer/kfac/damping": optim.damping,
+                    "optimizer/kfac/factor_condition_estimate_max": (
+                        _factor_condition_estimate(
+                            state.curvature,
+                            damping=optim.damping,
                         )
-                    for term_index, (name, value) in enumerate(
-                        zip(evaluation_term_names, eval_terms, strict=True)
-                    ):
-                        suffix = _metric_suffix(eval_data_metrics[term_index])
-                        print(
-                            f"  [eval {term_index}] {name}: {float(value):.6e}{suffix}",
-                            file=log_file,
-                        )
-            if tensorboard_step and tensorboard_writer is not None:
-                _log_tensorboard_scalars(
-                    tensorboard_writer,
-                    step=iteration,
+                    ),
+                    "optimizer/kfac/factor_updates": state.factor_updates,
+                    "optimizer/kfac/line_search_steps": line_search_steps,
+                    "optimizer/kfac/quadratic_update_norm": quadratic_norm,
+                    "optimizer/kfac/step_size": step_size,
+                }
+                if profile_adaptive:
+                    optimizer_metrics.update(
+                        {
+                            "optimizer/kfac/factor_wall_time_seconds": (
+                                factor_wall_time
+                            ),
+                            "optimizer/kfac/gradient_wall_time_seconds": (
+                                gradient_wall_time
+                            ),
+                            "optimizer/kfac/line_search_wall_time_seconds": (
+                                line_search_wall_time
+                            ),
+                            "optimizer/kfac/linear_solve_wall_time_seconds": (
+                                linear_solve_wall_time
+                            ),
+                        }
+                    )
+                scalars = _training_scalars(
                     loss=accepted_loss,
                     best_loss=best_loss,
                     evaluation_loss=selection_evaluation_loss,
@@ -849,67 +860,23 @@ def solve_kfac(
                     eval_terms=eval_terms,
                     eval_data_metrics=eval_data_metrics,
                     log_terms=log_terms,
+                    optimizer_metrics=optimizer_metrics,
                 )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/step_size", step_size, iteration
-                )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/factor_updates", state.factor_updates, iteration
-                )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/cg_iterations_max", cg_iterations, iteration
-                )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/cg_relative_residual_max",
-                    cg_relative_residual,
-                    iteration,
-                )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/quadratic_update_norm",
-                    quadratic_norm,
-                    iteration,
-                )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/line_search_steps",
-                    line_search_steps,
-                    iteration,
-                )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/factor_condition_estimate_max",
-                    _factor_condition_estimate(
-                        state.curvature,
-                        damping=optim.damping,
-                    ),
-                    iteration,
-                )
-                tensorboard_writer.scalar(
-                    "optimizer/kfac/damping",
-                    optim.damping,
-                    iteration,
-                )
-                if profile_adaptive:
-                    tensorboard_writer.scalar(
-                        "optimizer/kfac/gradient_wall_time_seconds",
-                        gradient_wall_time,
-                        iteration,
+                if log_step:
+                    _emit_training_scalars(
+                        scalars,
+                        backend="kfac",
+                        step=iteration,
+                        total_steps=int(num_iter),
                     )
-                    tensorboard_writer.scalar(
-                        "optimizer/kfac/factor_wall_time_seconds",
-                        factor_wall_time,
-                        iteration,
+                if tensorboard_step and tensorboard_writer is not None:
+                    _write_tensorboard_scalars(
+                        tensorboard_writer,
+                        scalars,
+                        step=iteration,
                     )
-                    tensorboard_writer.scalar(
-                        "optimizer/kfac/linear_solve_wall_time_seconds",
-                        linear_solve_wall_time,
-                        iteration,
-                    )
-                    tensorboard_writer.scalar(
-                        "optimizer/kfac/line_search_wall_time_seconds",
-                        line_search_wall_time,
-                        iteration,
-                    )
-                if iteration % int(tensorboard_flush_every) == 0:
-                    tensorboard_writer.flush()
+                    if iteration % int(tensorboard_flush_every) == 0:
+                        tensorboard_writer.flush()
 
     chosen = best_params if keep_best else params
     functions = combine_trainable(chosen, non_trainable)
@@ -985,6 +952,14 @@ def solve_kfac(
         }
         | objective_plane_diagnostics
         | _functional_ntk_diagnostic_values(latest_ntk_diagnostics)
+    )
+    emit(
+        "INFO",
+        "training.completed",
+        "Training completed",
+        backend="kfac",
+        completed_steps=int(completed),
+        total_steps=int(num_iter),
     )
     return eqx.tree_at(lambda solver: solver.training_diagnostics, result, diagnostics)
 

@@ -20,9 +20,9 @@ from .._frozendict import frozendict
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     DelayedTargetPolicy,
+    emit_training_signal_stop as _emit_training_signal_stop,
     EvaluationParametersFn,
     ExponentialMovingAverageTargetPolicy,
-    log_training_signal_stop as _log_training_signal_stop,
     resolve_evaluation_parameters,
     TargetParameterState,
     tensorboard_every as _tensorboard_every,
@@ -36,6 +36,7 @@ from .._training_objective import (
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
+from ..logging import is_enabled as _logging_enabled
 from ..nn.parameters import ParameterSubspace
 from ..nn.parameters._low_rank import validate_low_rank_subspace
 from ..optim._composite import CompositeLeastSquaresProblem
@@ -66,9 +67,10 @@ from ._functional_objective import (
 from ._functional_precision import FunctionalPrecisionPolicy
 from ._functional_reporting import (
     best_display_value as _best_display_value,
-    log_tensorboard_scalars as _log_tensorboard_scalars,
-    metric_suffix as _metric_suffix,
+    emit_training_scalars as _emit_training_scalars,
     term_label as _term_label,
+    training_scalars as _training_scalars,
+    write_tensorboard_scalars as _write_tensorboard_scalars,
 )
 from ._functional_residual import (
     materialize_prepared_residual_terms,
@@ -117,9 +119,8 @@ def solve_gradient(
     seed: int = 0,
     jit: bool = True,
     keep_best: bool = True,
-    log_every: int = 1,
+    log_every: int = 0,
     log_terms: bool = True,
-    log_path: str | Path | None = None,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
@@ -203,11 +204,6 @@ def solve_gradient(
         else "optax"
     )
 
-    log_ctx = (
-        open(Path(log_path), "w", encoding="utf-8")
-        if log_path is not None
-        else nullcontext(None)
-    )
 
     tb_ctx = (
         _TensorBoardLogger(tensorboard_log_dir)
@@ -215,7 +211,7 @@ def solve_gradient(
         else nullcontext(None)
     )
 
-    with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
+    with tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         resume_state = self.training_state if resume else None
         if (
             resume_state is not None
@@ -882,6 +878,7 @@ def solve_gradient(
             key=jr.key(seed) if resume_state is None else resume_state.key,
             progress=initial_progress,
         )
+        control.emit("start", metrics={"total_steps": int(num_iter)})
         if resume_state is None:
             control.best_payload = current_evaluation_params
         elif parameter_paths is None:
@@ -922,7 +919,6 @@ def solve_gradient(
                 min_delta=selection_policy.min_delta,
                 patience=selection_policy.patience,
             )
-        out_file = log_fp if log_fp is not None else None
         refresh_wall_time = 0.0
         optimizer_wall_time = 0.0
         first_optimizer_step_wall_time = 0.0
@@ -1092,12 +1088,11 @@ def solve_gradient(
             )
         for epoch in range(start_epoch, int(num_iter)):
             if signal_guard.stop_requested:
-                _log_training_signal_stop(
+                _emit_training_signal_stop(
                     optimizer_label,
                     signal_guard,
                     completed=epoch,
                     total=int(num_iter),
-                    file=out_file,
                 )
                 break
             completed = epoch
@@ -1413,19 +1408,22 @@ def solve_gradient(
                     break
                 iter_time_s = time.perf_counter() - iter_start
                 if signal_guard.stop_requested:
-                    _log_training_signal_stop(
+                    _emit_training_signal_stop(
                         optimizer_label,
                         signal_guard,
                         completed=step,
                         total=int(num_iter),
-                        file=out_file,
                     )
                     break
-                console_step = log_every_ > 0 and (step % log_every_ == 0)
+                log_step = (
+                    _logging_enabled()
+                    and log_every_ > 0
+                    and step % log_every_ == 0
+                )
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
                 mirror_step_metrics = None
                 mirror_constraint_residual = None
-                if _opt_mirror is not None and (console_step or tensorboard_step):
+                if _opt_mirror is not None and (log_step or tensorboard_step):
                     mirror_step_metrics = _opt_mirror.step_metrics(opt_state)
                     mirror_constraint_residual = (
                         _opt_mirror.parameter_geometry.maximum_constraint_residual(
@@ -1434,7 +1432,7 @@ def solve_gradient(
                     )
                 riemannian_step_metrics = None
                 riemannian_constraint_residual = None
-                if _opt_riemannian is not None and (console_step or tensorboard_step):
+                if _opt_riemannian is not None and (log_step or tensorboard_step):
                     riemannian_step_metrics = _opt_riemannian.step_metrics(opt_state)
                     riemannian_constraint_residual = (
                         _opt_riemannian.parameter_geometry.maximum_constraint_residual(
@@ -1448,7 +1446,7 @@ def solve_gradient(
                 eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.evaluation_terms
                 )
-                if log_terms_ and (console_step or tensorboard_step):
+                if log_terms_ and (log_step or tensorboard_step):
                     active_data_metrics = _data_metrics_wrt_terms(
                         current_evaluation_params,
                         non_trainable,
@@ -1497,163 +1495,129 @@ def solve_gradient(
                         prepared_evaluation,
                     )
 
-                if console_step:
-                    loss_f = float(loss_val)
-                    best_display = _best_display_value(
-                        control.progress.best_value,
-                        loss_f,
-                        keep_best=keep_best,
-                    )
-                    evaluation_suffix = (
-                        ""
-                        if evaluation_loss is None
-                        else f" eval_loss={float(evaluation_loss):.6e}"
-                    )
-                    optimizer_suffix = ""
+                if log_step or tensorboard_step:
+                    optimizer_metrics: dict[str, Any] = {}
                     if iterative_step_metrics is not None:
-                        optimizer_suffix = (
-                            " grad="
-                            f"{float(iterative_step_metrics.optimality_norm):.6e}"
-                            " step_norm="
-                            f"{float(iterative_step_metrics.step_norm):.6e}"
-                            " trials="
-                            f"{int(iterative_step_metrics.globalization_evaluations)}"
-                            " accepted="
-                            f"{int(iterative_step_metrics.accepted)}"
-                            " status="
-                            f"{int(iterative_step_metrics.status)}"
+                        optimizer_metrics.update(
+                            {
+                                "optimizer/iterative/accepted_step_size": (
+                                    iterative_step_metrics.accepted_step_size
+                                ),
+                                "optimizer/iterative/forcing": (
+                                    iterative_step_metrics.forcing
+                                ),
+                                "optimizer/iterative/globalization_evaluations": (
+                                    iterative_step_metrics.globalization_evaluations
+                                ),
+                                "optimizer/iterative/linear_iterations": (
+                                    iterative_step_metrics.linear_iterations
+                                ),
+                                "optimizer/iterative/optimality_norm": (
+                                    iterative_step_metrics.optimality_norm
+                                ),
+                                "optimizer/iterative/status": (
+                                    iterative_step_metrics.status
+                                ),
+                                "optimizer/iterative/step_norm": (
+                                    iterative_step_metrics.step_norm
+                                ),
+                            }
                         )
                     if mirror_step_metrics is not None:
                         if mirror_constraint_residual is None:
                             raise RuntimeError(
                                 "Mirror diagnostics require a constraint residual."
                             )
-                        optimizer_suffix = (
-                            " coordinate_grad="
-                            f"{float(mirror_step_metrics.coordinate_gradient_norm):.6e}"
-                            " dual_step="
-                            f"{float(mirror_step_metrics.dual_displacement_norm):.6e}"
-                            " bregman_step="
-                            f"{float(mirror_step_metrics.bregman_step):.6e}"
-                            " constraint="
-                            f"{float(mirror_constraint_residual):.6e}"
+                        optimizer_metrics.update(
+                            {
+                                "optimizer/mirror/bregman_step": (
+                                    mirror_step_metrics.bregman_step
+                                ),
+                                "optimizer/mirror/constraint_residual_max": (
+                                    mirror_constraint_residual
+                                ),
+                                "optimizer/mirror/coordinate_gradient_norm": (
+                                    mirror_step_metrics.coordinate_gradient_norm
+                                ),
+                                "optimizer/mirror/dual_displacement_norm": (
+                                    mirror_step_metrics.dual_displacement_norm
+                                ),
+                                "optimizer/mirror/learning_rate": (
+                                    mirror_step_metrics.learning_rate
+                                ),
+                            }
                         )
                     if riemannian_step_metrics is not None:
                         if riemannian_constraint_residual is None:
                             raise RuntimeError(
                                 "Riemannian diagnostics require a constraint residual."
                             )
-                        optimizer_suffix = (
-                            " rgrad="
-                            f"{float(riemannian_step_metrics.gradient_norm):.6e}"
-                            " step_norm="
-                            f"{float(riemannian_step_metrics.tangent_step_norm):.6e}"
-                            " constraint="
-                            f"{float(riemannian_constraint_residual):.6e}"
+                        optimizer_metrics.update(
+                            {
+                                "optimizer/riemannian/adaptive_denominator_maximum": (
+                                    riemannian_step_metrics.adaptive_denominator_maximum
+                                ),
+                                "optimizer/riemannian/adaptive_denominator_minimum": (
+                                    riemannian_step_metrics.adaptive_denominator_minimum
+                                ),
+                                "optimizer/riemannian/clipping_scale": (
+                                    riemannian_step_metrics.clipping_scale
+                                ),
+                                "optimizer/riemannian/conjugacy_beta": (
+                                    riemannian_step_metrics.conjugacy_beta
+                                ),
+                                "optimizer/riemannian/constraint_residual_max": (
+                                    riemannian_constraint_residual
+                                ),
+                                "optimizer/riemannian/gradient_norm": (
+                                    riemannian_step_metrics.gradient_norm
+                                ),
+                                "optimizer/riemannian/history_pair_count": (
+                                    riemannian_step_metrics.history_pair_count
+                                ),
+                                "optimizer/riemannian/learning_rate": (
+                                    riemannian_step_metrics.learning_rate
+                                ),
+                                "optimizer/riemannian/line_search_accepted": (
+                                    riemannian_step_metrics.line_search_accepted
+                                ),
+                                "optimizer/riemannian/line_search_evaluations": (
+                                    riemannian_step_metrics.line_search_evaluations
+                                ),
+                                "optimizer/riemannian/line_search_reduction": (
+                                    riemannian_step_metrics.line_search_reduction
+                                ),
+                                "optimizer/riemannian/momentum_norm": (
+                                    riemannian_step_metrics.momentum_norm
+                                ),
+                                "optimizer/riemannian/pair_accepted": (
+                                    riemannian_step_metrics.pair_accepted
+                                ),
+                                "optimizer/riemannian/restarted": (
+                                    riemannian_step_metrics.restarted
+                                ),
+                                "optimizer/riemannian/tangent_residual": (
+                                    riemannian_step_metrics.tangent_residual
+                                ),
+                                "optimizer/riemannian/tangent_step_norm": (
+                                    riemannian_step_metrics.tangent_step_norm
+                                ),
+                                "optimizer/riemannian/transport_metric_distortion": (
+                                    riemannian_step_metrics.transport_metric_distortion
+                                ),
+                                "optimizer/riemannian/transported_tangent_residual": (
+                                    riemannian_step_metrics.transported_tangent_residual
+                                ),
+                            }
                         )
-                        if (
-                            _opt_riemannian is not None
-                            and _opt_riemannian.optimizer_id
-                            in ("riemannian-momentum", "riemannian-adam")
-                        ):
-                            optimizer_suffix += (
-                                " momentum="
-                                f"{float(riemannian_step_metrics.momentum_norm):.6e}"
-                            )
-                        if (
-                            _opt_riemannian is not None
-                            and _opt_riemannian.optimizer_id == "riemannian-adam"
-                        ):
-                            optimizer_suffix += (
-                                " adaptive_denom=["
-                                f"{float(riemannian_step_metrics.adaptive_denominator_minimum):.6e},"
-                                f"{float(riemannian_step_metrics.adaptive_denominator_maximum):.6e}]"
-                            )
-                        if (
-                            _opt_riemannian is not None
-                            and _opt_riemannian.optimizer_id
-                            in (
-                                "riemannian-conjugate-gradient",
-                                "riemannian-lbfgs",
-                            )
-                        ):
-                            optimizer_suffix += (
-                                " line_search="
-                                f"{int(riemannian_step_metrics.line_search_evaluations)}"
-                                " accepted="
-                                f"{int(riemannian_step_metrics.line_search_accepted)}"
-                                " reduction="
-                                f"{float(riemannian_step_metrics.line_search_reduction):.6e}"
-                            )
-                            if (
-                                _opt_riemannian.optimizer_id
-                                == "riemannian-conjugate-gradient"
-                            ):
-                                optimizer_suffix += (
-                                    f" restarted={int(riemannian_step_metrics.restarted)}"
-                                )
-                            if _opt_riemannian.optimizer_id == "riemannian-lbfgs":
-                                optimizer_suffix += (
-                                    " restarted="
-                                    f"{int(riemannian_step_metrics.restarted)}"
-                                    " pair_accepted="
-                                    f"{int(riemannian_step_metrics.pair_accepted)}"
-                                )
-                    print(
-                        f"[phydrax][{optimizer_label}] iter {step}/{int(num_iter)} "
-                        f"loss={loss_f:.6e}{evaluation_suffix} "
-                        f"best={best_display:.6e} iter_time={iter_time_s:.3f}s"
-                        f"{optimizer_suffix}",
-                        file=out_file,
-                    )
-                    if log_terms_:
-                        for i, (name, val) in enumerate(
-                            zip(
-                                term_names,
-                                list(map(float, train_term_values)),
-                                strict=True,
-                            )
-                        ):
-                            suffix = _metric_suffix(train_data_metrics[i])
-                            print(
-                                f"  [train {i}] {name}: {val:.6e}{suffix}",
-                                file=out_file,
-                            )
-                        for i, (name, val) in enumerate(
-                            zip(
-                                model_loss_names,
-                                list(map(float, train_model_loss_terms)),
-                                strict=True,
-                            )
-                        ):
-                            print(
-                                f"  [model {i}] {name}: {val:.6e}",
-                                file=out_file,
-                            )
-                        eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
-                        for i, (name, val) in enumerate(
-                            zip(
-                                evaluation_term_names,
-                                list(map(float, eval_terms_arr)),
-                                strict=True,
-                            )
-                        ):
-                            suffix = _metric_suffix(eval_data_metrics[i])
-                            print(
-                                f"  [eval {i}] {name}: {val:.6e}{suffix}",
-                                file=out_file,
-                            )
-                if tensorboard_step and tb_writer is not None:
                     loss_f = float(loss_val)
                     best_display = _best_display_value(
                         control.progress.best_value,
                         loss_f,
                         keep_best=keep_best,
                     )
-                    _log_tensorboard_scalars(
-                        tb_writer,
-                        step=step,
-                        loss=loss_val,
+                    scalars = _training_scalars(
+                        loss=loss_f,
                         best_loss=best_display,
                         evaluation_loss=evaluation_loss,
                         iter_time_s=iter_time_s,
@@ -1666,174 +1630,30 @@ def solve_gradient(
                         eval_terms=eval_terms,
                         eval_data_metrics=eval_data_metrics,
                         log_terms=log_terms_,
+                        optimizer_metrics=optimizer_metrics,
                     )
-                    if iterative_step_metrics is not None:
-                        tb_writer.scalar(
-                            "optimizer/iterative/optimality_norm",
-                            iterative_step_metrics.optimality_norm,
-                            step,
+                    if log_step:
+                        _emit_training_scalars(
+                            scalars,
+                            backend=optimizer_label,
+                            step=step,
+                            total_steps=int(num_iter),
                         )
-                        tb_writer.scalar(
-                            "optimizer/iterative/step_norm",
-                            iterative_step_metrics.step_norm,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/iterative/accepted_step_size",
-                            iterative_step_metrics.accepted_step_size,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/iterative/globalization_evaluations",
-                            iterative_step_metrics.globalization_evaluations,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/iterative/linear_iterations",
-                            iterative_step_metrics.linear_iterations,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/iterative/forcing",
-                            iterative_step_metrics.forcing,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/iterative/status",
-                            iterative_step_metrics.status,
-                            step,
-                        )
-                    if mirror_step_metrics is not None:
-                        tb_writer.scalar(
-                            "optimizer/mirror/learning_rate",
-                            mirror_step_metrics.learning_rate,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/mirror/coordinate_gradient_norm",
-                            mirror_step_metrics.coordinate_gradient_norm,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/mirror/dual_displacement_norm",
-                            mirror_step_metrics.dual_displacement_norm,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/mirror/bregman_step",
-                            mirror_step_metrics.bregman_step,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/mirror/constraint_residual_max",
-                            mirror_constraint_residual,
-                            step,
-                        )
-                    if riemannian_step_metrics is not None:
-                        tb_writer.scalar(
-                            "optimizer/riemannian/learning_rate",
-                            riemannian_step_metrics.learning_rate,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/gradient_norm",
-                            riemannian_step_metrics.gradient_norm,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/clipping_scale",
-                            riemannian_step_metrics.clipping_scale,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/tangent_step_norm",
-                            riemannian_step_metrics.tangent_step_norm,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/momentum_norm",
-                            riemannian_step_metrics.momentum_norm,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/constraint_residual_max",
-                            riemannian_constraint_residual,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/line_search_evaluations",
-                            riemannian_step_metrics.line_search_evaluations,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/line_search_accepted",
-                            riemannian_step_metrics.line_search_accepted,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/line_search_reduction",
-                            riemannian_step_metrics.line_search_reduction,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/conjugacy_beta",
-                            riemannian_step_metrics.conjugacy_beta,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/history_pair_count",
-                            riemannian_step_metrics.history_pair_count,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/restarted",
-                            riemannian_step_metrics.restarted,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/pair_accepted",
-                            riemannian_step_metrics.pair_accepted,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/tangent_residual",
-                            riemannian_step_metrics.tangent_residual,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/transported_tangent_residual",
-                            riemannian_step_metrics.transported_tangent_residual,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/transport_metric_distortion",
-                            riemannian_step_metrics.transport_metric_distortion,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/adaptive_denominator_minimum",
-                            riemannian_step_metrics.adaptive_denominator_minimum,
-                            step,
-                        )
-                        tb_writer.scalar(
-                            "optimizer/riemannian/adaptive_denominator_maximum",
-                            riemannian_step_metrics.adaptive_denominator_maximum,
-                            step,
-                        )
-                    if step % tb_flush_every_ == 0:
-                        tb_writer.flush()
+                    if tensorboard_step and tb_writer is not None:
+                        _write_tensorboard_scalars(tb_writer, scalars, step=step)
+                        if step % tb_flush_every_ == 0:
+                            tb_writer.flush()
                 if iterative_step_metrics is not None and int(
                     iterative_step_metrics.status
                 ) != int(OptimizationStatus.ITERATING):
                     break
             except (KeyboardInterrupt, InterruptedError) as exc:
                 signal_guard.request_stop_from_exception(exc)
-                _log_training_signal_stop(
+                _emit_training_signal_stop(
                     optimizer_label,
                     signal_guard,
                     completed=completed,
                     total=int(num_iter),
-                    file=out_file,
                 )
                 break
 
@@ -2086,6 +1906,7 @@ def solve_gradient(
             | mirror_diagnostics
             | iterative_diagnostics
         )
+        control.emit("stop", metrics={"completed_steps": completed})
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
 

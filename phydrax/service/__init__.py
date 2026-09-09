@@ -72,6 +72,7 @@ from ._identity import (
 from ._observability import (
     create_support_bundle,
     HostTelemetryCollector,
+    HostTelemetryPolicy,
     HostTelemetrySnapshot,
     PrivacyClassification,
     SecretRedactor,
@@ -156,6 +157,7 @@ __all__ = [
     "HTTPSJWKSProvider",
     "HTTPTransport",
     "HostTelemetryCollector",
+    "HostTelemetryPolicy",
     "HostTelemetrySnapshot",
     "IdempotencyLedger",
     "InProcessReferenceService",

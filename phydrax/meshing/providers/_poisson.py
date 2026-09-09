@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import operator
+import time
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +18,7 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...logging import emit
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
 from .._contracts import (
@@ -195,6 +197,15 @@ class PoissonProvider:
             )
         if not isinstance(specification, PoissonReconstructionSpec):
             raise TypeError("specification must be PoissonReconstructionSpec.")
+        started = time.perf_counter()
+        emit(
+            "DEBUG",
+            "provider.execution.started",
+            "Poisson reconstruction started",
+            provider="poisson",
+            source_id=source.source_id,
+            specification_id=specification.specification_id,
+        )
         backend = _open3d()
         provider = self.info()
         points = np.asarray(source.coordinates, dtype=np.float64)
@@ -217,6 +228,16 @@ class PoissonProvider:
                 )
             )
         except RuntimeError as exc:
+            emit(
+                "ERROR",
+                "provider.execution.failed",
+                "Poisson reconstruction failed",
+                elapsed_seconds=time.perf_counter() - started,
+                failure_category="provider_execution_failed",
+                provider="poisson",
+                source_id=source.source_id,
+                specification_id=specification.specification_id,
+            )
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 f"Open3D screened Poisson reconstruction failed: {exc}",
@@ -291,7 +312,7 @@ class PoissonProvider:
                 ),
             )
         )
-        return CellMeshingResult(
+        result = CellMeshingResult(
             certified.mesh,
             certified.geometry,
             source.coordinate_contract,
@@ -312,6 +333,18 @@ class PoissonProvider:
             provenance,
             boundary=boundary,
         )
+        emit(
+            "INFO",
+            "provider.execution.completed",
+            "Poisson reconstruction completed",
+            elapsed_seconds=time.perf_counter() - started,
+            mesh_id=result.mesh.mesh_id,
+            provider="poisson",
+            source_id=source.source_id,
+            specification_id=specification.specification_id,
+            trace_id=trace.trace_id,
+        )
+        return result
 
 
 __all__ = ["OrientedPointCloud", "PoissonReconstructionSpec", "PoissonProvider"]

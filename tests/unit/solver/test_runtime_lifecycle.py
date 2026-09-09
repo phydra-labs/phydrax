@@ -87,19 +87,30 @@ def test_exact_schedule_observable_and_trigger_are_restartable():
     assert trigger_state.fire_count == 2
 
 
-def test_bounded_async_publisher_snapshots_and_drains():
+def test_bounded_async_publisher_snapshots_drains_and_propagates_context(
+    phydrax_events,
+):
     published = []
 
     def writer(value):
         published.append(value)
+        phx.logging.emit(
+            "INFO",
+            "output.writer.completed",
+            "Writer completed",
+        )
 
     source = np.asarray((1.0, 2.0))
-    with BoundedAsyncPublisher(writer, maximum_pending=1) as publisher:
-        publisher.publish({"value": source})
-        source[:] = -1.0
-        publisher.drain()
-        assert publisher.pending_count == 0
+    with phx.logging.context(run_id="publisher-run"):
+        with BoundedAsyncPublisher(writer, maximum_pending=1) as publisher:
+            publisher.publish({"value": source})
+            source[:] = -1.0
+            publisher.drain()
+            assert publisher.pending_count == 0
     np.testing.assert_array_equal(published[0]["value"], (1.0, 2.0))
+    writer_event = phydrax_events.records("output.writer.completed")[-1]
+    assert writer_event["context"]["run_id"] == "publisher-run"
+    assert phydrax_events.records("output.publication.completed")
 
 
 def test_runtime_checkpoint_identity_is_content_derived():

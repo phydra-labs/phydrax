@@ -11,13 +11,15 @@ import hmac
 import json
 import secrets
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Mapping, Protocol, TYPE_CHECKING
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from phydrax.lifecycle import CheckpointManifest, RunRecord
 from phydrax.qualification._evidence import SupportDependency
 
+from ..logging import emit
 from ._auth import AccessTokenValidator, Clock, ResourceAuthorizer, SystemClock
 from ._contracts import (
     ArtifactDescriptor,
@@ -46,9 +48,6 @@ from ._contracts import (
 )
 from ._durability import DurableJobRecord, DurableServiceStore, OutboxMessage
 
-
-if TYPE_CHECKING:
-    pass
 
 
 class SupportDependencyAdmitter(Protocol):
@@ -328,6 +327,13 @@ class InProcessReferenceService:
             if profile_id in self._providers:
                 raise ValueError("A provider is already registered for this profile.")
             self._providers[profile_id] = ProviderBinding(provider, tuple_id)
+        emit(
+            "INFO",
+            "service.provider.registered",
+            "Execution provider registered",
+            profile_id=profile_id,
+            support_tuple_id=tuple_id,
+        )
 
     def submit(self, token: str, submission: JobSubmission, /) -> JobStatus:
         principal = self._authenticate(token)
@@ -376,7 +382,7 @@ class InProcessReferenceService:
             self._jobs[(job.tenant_id, job_id)] = job
             if submission.request_id:
                 self._requests[request_key] = (job_id, submission.request_digest)
-            self._audit_event(
+            audit_record = self._audit_event(
                 principal,
                 "submit",
                 "job",
@@ -385,7 +391,17 @@ class InProcessReferenceService:
                 "queued",
                 submission.request_id,
             )
-            return self._status(job)
+            status = self._status(job)
+        emit(
+            "INFO",
+            "service.job.submitted",
+            "Service job submitted",
+            audit_event_id=audit_record.event_id,
+            job_id=job_id,
+            profile_id=submission.profile_id,
+            run_record_id=status.run_record.record_id,
+        )
+        return status
 
     def status(self, token: str, job_id: str, /) -> JobStatus:
         principal = self._authenticate(token)
@@ -417,10 +433,19 @@ class InProcessReferenceService:
                 job.state = JobState.CANCELLING
                 job.cancel_requested_at = self._clock.now()
             self._sync_durable_job(job)
-            self._audit_event(
+            audit_record = self._audit_event(
                 principal, "cancel", "job", job_id, "allowed", job.state.value, ""
             )
-            return self._status(job)
+            status = self._status(job)
+        emit(
+            "WARNING",
+            "service.job.cancelled",
+            "Service job cancellation committed",
+            audit_event_id=audit_record.event_id,
+            job_id=job_id,
+            state=status.state.value,
+        )
+        return status
 
     def restart(self, token: str, job_id: str, /) -> JobStatus:
         principal = self._authenticate(token)
@@ -445,10 +470,20 @@ class InProcessReferenceService:
                 job_id, job.submission, "queued", job.recovered_checkpoint_id
             )
             self._sync_durable_job(job, enqueue=True, reserve=True)
-            self._audit_event(
+            audit_record = self._audit_event(
                 principal, "restart", "job", job_id, "allowed", "queued", ""
             )
-            return self._status(job)
+            status = self._status(job)
+        emit(
+            "INFO",
+            "service.job.restarted",
+            "Service job restarted",
+            attempt=status.attempt,
+            audit_event_id=audit_record.event_id,
+            job_id=job_id,
+            run_record_id=status.run_record.record_id,
+        )
+        return status
 
     def execute(self, token: str, job_id: str, /) -> JobStatus:
         """Execute one queued job synchronously using a fenced renewable attempt."""
@@ -473,6 +508,16 @@ class InProcessReferenceService:
                 lease_expires_at=(job.started_at + self._execution_lease_seconds),
             )
             context = _ProviderContext(self, job, execution_attempt, durable_version)
+        emit(
+            "INFO",
+            "service.job.started",
+            "Service job execution started",
+            attempt=execution_attempt,
+            job_id=job_id,
+            profile_id=job.submission.profile_id,
+            run_record_id=job.run_record.record_id,
+        )
+        audit_record: AuditRecord | None = None
         try:
             result = binding.provider(job.submission, context)
             if not isinstance(result, ProviderResult):
@@ -505,7 +550,7 @@ class InProcessReferenceService:
                 job.state = JobState.SUCCEEDED
                 job.finished_at = finished_at
                 job.run_record = run_record
-                self._audit_event(
+                audit_record = self._audit_event(
                     principal,
                     "execute",
                     "job",
@@ -542,7 +587,7 @@ class InProcessReferenceService:
                 job.state = JobState.CANCELLED
                 job.finished_at = finished_at
                 job.run_record = run_record
-                self._audit_event(
+                audit_record = self._audit_event(
                     principal,
                     "execute",
                     "job",
@@ -589,7 +634,7 @@ class InProcessReferenceService:
                 job.finished_at = finished_at
                 job.failure = failure
                 job.run_record = run_record
-                self._audit_event(
+                audit_record = self._audit_event(
                     principal,
                     "execute",
                     "job",
@@ -599,7 +644,25 @@ class InProcessReferenceService:
                     "",
                 )
         with self._lock:
-            return self._status(job)
+            status = self._status(job)
+        event_name = {
+            JobState.CANCELLED: "service.job.cancelled",
+            JobState.FAILED: "service.job.failed",
+            JobState.SUCCEEDED: "service.job.completed",
+        }.get(status.state, "service.job.updated")
+        emit(
+            "ERROR" if status.state is JobState.FAILED else "INFO",
+            event_name,
+            "Service job execution finished",
+            attempt=status.attempt,
+            audit_event_id=(
+                None if audit_record is None else audit_record.event_id
+            ),
+            job_id=job_id,
+            run_record_id=status.run_record.record_id,
+            state=status.state.value,
+        )
+        return status
 
     def store_artifact(
         self,
@@ -655,7 +718,7 @@ class InProcessReferenceService:
                 descriptor, bytes(content)
             )
             job.artifact_ids.append(artifact_id)
-            self._audit_event(
+            audit_record = self._audit_event(
                 principal,
                 "artifact.write",
                 "artifact",
@@ -664,7 +727,18 @@ class InProcessReferenceService:
                 "stored",
                 "",
             )
-            return descriptor
+        emit(
+            "INFO",
+            "service.artifact.stored",
+            "Service artifact stored",
+            artifact_id=descriptor.artifact_id,
+            audit_event_id=audit_record.event_id,
+            byte_count=descriptor.byte_size,
+            classification=descriptor.classification,
+            job_id=job_id,
+            scientific_artifact_id=descriptor.scientific_artifact_id,
+        )
+        return descriptor
 
     def grant_artifact(
         self, token: str, artifact_id: str, /, *, lifetime_seconds: int = 300
@@ -686,7 +760,7 @@ class InProcessReferenceService:
             token_value = self._grant_token(
                 artifact_id, artifact.descriptor.tenant_id, expires_at
             )
-            self._audit_event(
+            audit_record = self._audit_event(
                 principal,
                 "artifact.grant",
                 "artifact",
@@ -695,9 +769,18 @@ class InProcessReferenceService:
                 "granted",
                 "",
             )
-            return SignedArtifactGrant(
+            signed_grant = SignedArtifactGrant(
                 token_value, artifact_id, artifact.descriptor.tenant_id, expires_at
             )
+        emit(
+            "INFO",
+            "service.artifact.granted",
+            "Service artifact grant created",
+            artifact_id=artifact_id,
+            audit_event_id=audit_record.event_id,
+            expires_at=expires_at,
+        )
+        return signed_grant
 
     def fetch_artifact(
         self, token: str, grant: SignedArtifactGrant | str, /
@@ -718,7 +801,7 @@ class InProcessReferenceService:
                 raise IntegrityError(
                     "Artifact content digest does not match its descriptor."
                 )
-            self._audit_event(
+            audit_record = self._audit_event(
                 principal,
                 "artifact.fetch",
                 "artifact",
@@ -727,7 +810,16 @@ class InProcessReferenceService:
                 "fetched",
                 "",
             )
-            return FetchedArtifact(artifact.descriptor, artifact.content)
+            fetched = FetchedArtifact(artifact.descriptor, artifact.content)
+        emit(
+            "DEBUG",
+            "service.artifact.fetched",
+            "Service artifact fetched",
+            artifact_id=artifact_id,
+            audit_event_id=audit_record.event_id,
+            byte_count=fetched.descriptor.byte_size,
+        )
+        return fetched
 
     def delete_expired(self) -> tuple[str, ...]:
         """Purge expired artifacts and terminal job records; return deleted IDs."""
@@ -1282,10 +1374,10 @@ class InProcessReferenceService:
         action: str,
         resource_type: str,
         resource_id: str,
-        outcome: str,
+        outcome: Literal["allowed", "denied", "failed"],
         reason: str,
         request_id: str,
-    ) -> None:
+    ) -> AuditRecord:
         previous = self._audit[-1].record_digest if self._audit else "0" * 64
         record = AuditRecord(
             len(self._audit) + 1,
@@ -1302,10 +1394,12 @@ class InProcessReferenceService:
             previous,
             "",
         )
-        self._audit.append(replace(record, record_digest=self._audit_digest(record)))
+        committed = replace(record, record_digest=self._audit_digest(record))
+        self._audit.append(committed)
         if self._durable_store is not None:
             with self._durable_store.transaction() as transaction:
-                transaction.append_audit(record)
+                transaction.append_audit(committed)
+        return committed
 
     def _deny(
         self,

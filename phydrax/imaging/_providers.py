@@ -14,6 +14,7 @@ from time import monotonic
 
 from .._fingerprint import canonical_fingerprint
 from ..artifacts import ScientificArtifactEnvelope
+from ..logging import emit
 from ..qualification import ReferenceArtifactManifest
 
 
@@ -152,6 +153,14 @@ class MedicalToolProvider:
         version = self.version()
         command = [executable, *(str(value) for value in arguments)]
         started = monotonic()
+        emit(
+            "DEBUG",
+            "provider.execution.started",
+            "Medical-image provider execution started",
+            input_artifact_count=len(input_manifests),
+            output_count=len(output_paths),
+            provider=self.provider_id,
+        )
         result = subprocess.run(
             command,
             cwd=directory,
@@ -162,11 +171,33 @@ class MedicalToolProvider:
         )
         elapsed = monotonic() - started
         if result.returncode:
+            emit(
+                "ERROR",
+                "provider.execution.failed",
+                "Medical-image provider execution failed",
+                elapsed_seconds=elapsed,
+                failure_category="nonzero_exit",
+                provider=self.provider_id,
+                return_code=result.returncode,
+                stderr_bytes=len(result.stderr.encode("utf-8")),
+                stdout_bytes=len(result.stdout.encode("utf-8")),
+            )
             raise RuntimeError(
                 f"{self.provider_id} failed with code {result.returncode}; "
                 "inspect logs only inside the controlled working directory."
             )
         if any(not path.is_file() or path.stat().st_size == 0 for path in output_paths):
+            emit(
+                "ERROR",
+                "provider.execution.failed",
+                "Medical-image provider output validation failed",
+                elapsed_seconds=elapsed,
+                failure_category="missing_output",
+                provider=self.provider_id,
+                return_code=result.returncode,
+                stderr_bytes=len(result.stderr.encode("utf-8")),
+                stdout_bytes=len(result.stdout.encode("utf-8")),
+            )
             raise RuntimeError(
                 f"{self.provider_id} did not produce every declared output."
             )
@@ -195,7 +226,7 @@ class MedicalToolProvider:
                 "parents": list(parents),
             }
         )
-        return MedicalToolResult(
+        provider_result = MedicalToolResult(
             self.provider_id,
             version,
             output_paths,
@@ -205,6 +236,19 @@ class MedicalToolProvider:
             result.stderr if retain_logs else "",
             result_id,
         )
+        emit(
+            "INFO",
+            "provider.execution.completed",
+            "Medical-image provider execution completed",
+            elapsed_seconds=elapsed,
+            output_artifact_ids=tuple(value.artifact_id for value in artifacts),
+            provider=self.provider_id,
+            result_id=result_id,
+            return_code=result.returncode,
+            stderr_bytes=len(result.stderr.encode("utf-8")),
+            stdout_bytes=len(result.stdout.encode("utf-8")),
+        )
+        return provider_result
 
 
 class Dcm2NiixProvider(MedicalToolProvider):

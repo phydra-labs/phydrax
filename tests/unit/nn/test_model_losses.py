@@ -193,7 +193,9 @@ def test_loss_wrapper_preserves_domain_model_metadata():
     assert u.func.binding.batch_mode == "blockwise"
 
 
-def test_solver_logs_model_losses_to_text_and_tensorboard(tmp_path):
+def test_solver_logs_model_losses_to_events_and_tensorboard(
+    tmp_path, phydrax_events
+):
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -201,7 +203,6 @@ def test_solver_logs_model_losses_to_text_and_tensorboard(tmp_path):
         key=jr.key(5),
     ).add_model_loss(lambda m: 1.0, label="unit_penalty")
     solver = _domain_model_solver(model)
-    log_path = tmp_path / "model_loss.log"
     log_dir = tmp_path / "tb"
 
     solver.solve(
@@ -209,13 +210,16 @@ def test_solver_logs_model_losses_to_text_and_tensorboard(tmp_path):
         optim=optax.adam(1e-2),
         seed=0,
         log_every=1,
-        log_path=log_path,
         tensorboard_log_dir=log_dir,
         tensorboard_every=1,
     )
 
-    text = log_path.read_text(encoding="utf-8")
-    assert "[model 0] unit_penalty:" in text
+    events = phydrax_events.records("training.step.completed")
+    metrics = events[-1]["fields"]["metrics"]
+    assert any(
+        metric["name"] == "train/model_losses/000_unit_penalty/loss"
+        for metric in metrics
+    )
 
     accumulator = EventAccumulator(str(log_dir))
     accumulator.Reload()

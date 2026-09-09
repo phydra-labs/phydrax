@@ -836,6 +836,13 @@ def solve_variational_monte_carlo(
         key=resolved_key,
         progress=TrainingProgress(update_step=int(current.iteration)),
     )
+    control.emit(
+        "start",
+        metrics={
+            "resumed_from_step": int(current.iteration),
+            "total_steps": int(current.iteration) + policy.num_iterations,
+        },
+    )
 
     for _ in range(policy.num_iterations):
         iteration = int(current.iteration)
@@ -854,6 +861,13 @@ def solve_variational_monte_carlo(
         variances.append(estimate.variance)
         acceptances.append(estimate.acceptance_rate)
         if not bool(estimate.successful):
+            control.emit(
+                "failure",
+                metrics={
+                    "acceptance_rate": estimate.acceptance_rate,
+                    "status": estimate.status,
+                },
+            )
             statuses.append(estimate.status)
             update_norms.append(jnp.asarray(jnp.nan))
             current = VariationalMonteCarloState(
@@ -889,6 +903,7 @@ def solve_variational_monte_carlo(
         direction = jnp.asarray(linear.value)
         finite_direction = bool(jnp.all(jnp.isfinite(direction)))
         if not linear_success or not finite_direction:
+            control.emit("failure", metrics={"status": VMC_LINEAR_FAILURE})
             status = jnp.asarray(VMC_LINEAR_FAILURE, dtype=jnp.int32)
             statuses.append(status)
             update_norms.append(jnp.asarray(jnp.nan))
@@ -921,6 +936,19 @@ def solve_variational_monte_carlo(
         )
 
         control.complete_update(iteration + 1)
+        control.emit(
+            "update",
+            metrics={
+                "acceptance_rate": estimate.acceptance_rate,
+                "energy": estimate.physical_energy,
+                "update_norm": norm,
+                "variance": estimate.variance,
+            },
+        )
+    control.emit(
+        "stop",
+        metrics={"completed_steps": control.progress.update_step},
+    )
     final_key = jr.fold_in(resolved_key, 0xF1A1)
     final_estimate, _final_samples = evaluate_variational_monte_carlo(
         problem,

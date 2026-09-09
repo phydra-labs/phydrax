@@ -18,6 +18,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from .logging import emit
+
 
 SelectionMode = Literal["min", "max"]
 EvaluationParametersFn = Callable[[Any, Any], Any]
@@ -237,6 +239,57 @@ class TrainingEvent:
     progress: TrainingProgress
     metrics: tuple[tuple[str, float], ...] = ()
 
+_TRAINING_LOG_EVENTS = {
+    "batch_end": "training.step.completed",
+    "checkpoint": "training.checkpoint.committed",
+    "epoch_begin": "training.epoch.started",
+    "failure": "training.failed",
+    "nonfinite": "training.nonfinite.detected",
+    "start": "training.started",
+    "stop": "training.completed",
+    "train_begin": "training.started",
+    "train_end": "training.completed",
+    "update": "training.step.completed",
+    "validation": "training.validation.completed",
+    "validation_end": "training.validation.completed",
+    "zero_support": "training.support.empty",
+}
+_TRAINING_WARNING_EVENTS = frozenset({"failure", "nonfinite", "zero_support"})
+_TRAINING_INFO_EVENTS = frozenset(
+    {"checkpoint", "start", "stop", "train_begin", "train_end"}
+)
+
+
+def _emit_training_event(event: TrainingEvent, /) -> None:
+    event_name = _TRAINING_LOG_EVENTS.get(event.name, "training.callback")
+    progress = event.progress
+    level = (
+        "WARNING"
+        if event.name in _TRAINING_WARNING_EVENTS
+        else "INFO"
+        if event.name in _TRAINING_INFO_EVENTS
+        else "DEBUG"
+    )
+    emit(
+        level,
+        event_name,
+        "Training lifecycle event",
+        callback_event=event.name,
+        progress={
+            "best_step": progress.best_step,
+            "best_value": progress.best_value,
+            "epoch": progress.epoch,
+            "microstep": progress.microstep,
+            "next_batch_index": progress.next_batch_index,
+            "stale_validations": progress.stale_validations,
+            "stopped_early": progress.stopped_early,
+            "update_step": progress.update_step,
+        },
+        metrics=tuple(
+            {"name": name, "value": value} for name, value in event.metrics
+        ),
+    )
+
 
 class TrainingCallback(Protocol):
     def __call__(self, event: TrainingEvent, /) -> bool | None: ...
@@ -351,6 +404,7 @@ class TrainingController:
             )
         )
         event = TrainingEvent(str(name), self.progress, pairs)
+        _emit_training_event(event)
         for callback in self.callbacks:
             if callback(event):
                 self.stop_requested = True
@@ -493,20 +547,22 @@ def tensorboard_every(
     return every
 
 
-def log_training_signal_stop(
+def emit_training_signal_stop(
     backend: str,
     guard: TrainingSignalGuard,
     /,
     *,
     completed: int,
     total: int,
-    file: Any,
 ) -> None:
-    print(
-        f"[phydrax][{backend}] received {guard.signal_name}; "
-        f"exiting training loop after {completed}/{total} iteration(s).",
-        file=file,
-        flush=True,
+    emit(
+        "WARNING",
+        "training.stopped",
+        "Training stopped by process signal",
+        backend=backend,
+        completed_steps=int(completed),
+        signal_name=guard.signal_name,
+        total_steps=int(total),
     )
 
 
@@ -524,7 +580,7 @@ __all__ = [
     "TargetParameterState",
     "TrainingSignalGuard",
     "resolve_evaluation_parameters",
-    "log_training_signal_stop",
+    "emit_training_signal_stop",
     "tensorboard_every",
     "training_key",
     "update_training_selection",

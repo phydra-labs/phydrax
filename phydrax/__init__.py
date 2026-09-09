@@ -9,6 +9,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from . import logging as logging
+
 from . import ein as ein
 
 from . import (
@@ -135,6 +137,7 @@ __all__ = [
     "kernels",
     "imaging",
     "linalg",
+    "logging",
     "metrix",
     "meshing",
     "measurement",

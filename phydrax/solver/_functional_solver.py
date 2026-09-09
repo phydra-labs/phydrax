@@ -441,9 +441,8 @@ class FunctionalSolver(StrictModule):
         seed: int = 0,
         jit: bool = True,
         keep_best: bool = True,
-        log_every: int = 1,
+        log_every: int = 0,
         log_terms: bool = True,
-        log_path: str | Path | None = None,
         tensorboard_log_dir: str | Path | None = None,
         tensorboard_every: int | None = None,
         tensorboard_flush_every: int = 10,
@@ -491,11 +490,11 @@ class FunctionalSolver(StrictModule):
 
         Logging:
 
-        - If `log_every > 0`, prints a progress line every `log_every` iterations.
-        - If `log_terms=True`, also prints the per-term loss breakdown.
-        - If `log_path` is provided, logs are written to that file instead of stdout.
-        - If `tensorboard_log_dir` is provided, scalar training logs are written as
-          TensorBoard event files. `tensorboard_every` controls the event cadence
+        - If `log_every > 0`, emits a `training.step.completed` event every
+          `log_every` iterations through `phydrax.logging`.
+        - If `log_terms=True`, sampled events include per-term scalar metrics.
+        - If `tensorboard_log_dir` is provided, scalar training metrics are written
+          as TensorBoard event files. `tensorboard_every` controls their cadence
           and defaults to `log_every` when positive, otherwise every iteration.
         - If `profile_adaptive=True`, device-synchronized refresh and optimizer wall
           times are returned in `training_diagnostics`.
@@ -617,7 +616,6 @@ class FunctionalSolver(StrictModule):
             keep_best=keep_best,
             log_every=log_every,
             log_terms=log_terms,
-            log_path=log_path,
             tensorboard_log_dir=tensorboard_log_dir,
             tensorboard_every=tensorboard_every,
             tensorboard_flush_every=tensorboard_flush_every,

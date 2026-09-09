@@ -26,6 +26,7 @@ from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
 from ...._model import AxisModelEvaluator, ModelBinding, StructuredDerivativeProvider
 from ...._strict import StrictModule
+from ....logging import emit
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from ..._keys import EvalKey, split_eval_key
 from ..._scan import (
@@ -215,6 +216,13 @@ class LatentContractionModel(
         if self.execution_policy.fallback == "error":
             raise ValueError(message)
         if self.execution_policy.fallback == "warn":
+            emit(
+                "DEBUG",
+                "execution.fallback.selected",
+                "Structured derivative fallback selected",
+                component=type(self).__name__,
+                fallback="generic_derivative_evaluation",
+            )
             warnings.warn(message, UserWarning, stacklevel=3)
 
     def handle_structured_derivative_fallback(self, reason: str, /) -> None:

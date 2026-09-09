@@ -19,22 +19,24 @@ from jax import core as jcore
 from .._frozendict import frozendict
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
-    log_training_signal_stop as _log_training_signal_stop,
+    emit_training_signal_stop as _emit_training_signal_stop,
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger as _TensorBoardLogger,
     TrainingController,
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
+from ..logging import is_enabled as _logging_enabled
 from ._functional_objective import (
     evaluate_prepared_objective,
     prepared_data_metrics,
 )
 from ._functional_reporting import (
     best_display_value as _best_display_value,
-    log_tensorboard_scalars as _log_tensorboard_scalars,
-    metric_suffix as _metric_suffix,
+    emit_training_scalars as _emit_training_scalars,
     term_label as _term_label,
+    training_scalars as _training_scalars,
+    write_tensorboard_scalars as _write_tensorboard_scalars,
 )
 from ._functional_run import replace_solver_state
 from ._model_losses import function_model_loss_labels
@@ -54,7 +56,6 @@ def _solve_evosax_distribution(
     keep_best: bool,
     log_every: int,
     log_terms: bool,
-    log_path: str | Path | None,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
@@ -120,32 +121,26 @@ def _solve_evosax_distribution(
         progress=TrainingProgress(best_value=float("inf")),
     )
     control.best_payload = params
+    control.emit("start", metrics={"total_steps": int(num_iter)})
     objective = self.objective
 
-    log_ctx = (
-        open(Path(log_path), "w", encoding="utf-8")
-        if log_path is not None
-        else nullcontext(None)
-    )
     tb_ctx = (
         _TensorBoardLogger(tensorboard_log_dir)
         if tensorboard_writer is None and tensorboard_log_dir is not None
         else nullcontext(tensorboard_writer)
     )
 
-    with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
-        out_file = log_fp if log_fp is not None else None
+    with tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         refresh_wall_time = 0.0
         optimizer_wall_time = 0.0
 
         for epoch in range(int(num_iter)):
             if signal_guard.stop_requested:
-                _log_training_signal_stop(
+                _emit_training_signal_stop(
                     "evosax",
                     signal_guard,
                     completed=epoch,
                     total=int(num_iter),
-                    file=out_file,
                 )
                 break
             completed = epoch
@@ -226,15 +221,18 @@ def _solve_evosax_distribution(
                 completed = step
                 iter_time_s = time.perf_counter() - iter_start
                 if signal_guard.stop_requested:
-                    _log_training_signal_stop(
+                    _emit_training_signal_stop(
                         "evosax",
                         signal_guard,
                         completed=step,
                         total=int(num_iter),
-                        file=out_file,
                     )
                     break
-                console_step = log_every_ > 0 and (step % log_every_ == 0)
+                log_step = (
+                    _logging_enabled()
+                    and log_every_ > 0
+                    and step % log_every_ == 0
+                )
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.terms
@@ -246,7 +244,7 @@ def _solve_evosax_distribution(
                 values_arr = jnp.zeros((0,), dtype=float)
                 train_term_values = values_arr[: len(term_names)]
                 train_model_loss_terms = values_arr[len(term_names) :]
-                if log_terms_ and (console_step or tensorboard_step):
+                if log_terms_ and (log_step or tensorboard_step):
                     values_arr = jnp.asarray(
                         terms_fn(
                             cand_params,
@@ -277,67 +275,15 @@ def _solve_evosax_distribution(
                         prepared_evaluation,
                     )
 
-                if console_step:
+                if log_step or tensorboard_step:
                     loss_f = float(cand_loss)
                     best_display = _best_display_value(
                         control.progress.best_value,
                         loss_f,
                         keep_best=keep_best,
                     )
-                    print(
-                        f"[phydrax][evosax] iter {step}/{int(num_iter)} "
-                        f"loss={loss_f:.6e} best={best_display:.6e} "
-                        f"iter_time={iter_time_s:.3f}s",
-                        file=out_file,
-                    )
-                    if log_terms_:
-                        for i, (name, val) in enumerate(
-                            zip(
-                                term_names,
-                                list(map(float, train_term_values)),
-                                strict=True,
-                            )
-                        ):
-                            suffix = _metric_suffix(train_data_metrics[i])
-                            print(
-                                f"  [train {i}] {name}: {val:.6e}{suffix}",
-                                file=out_file,
-                            )
-                        for i, (name, val) in enumerate(
-                            zip(
-                                model_loss_names,
-                                list(map(float, train_model_loss_terms)),
-                                strict=True,
-                            )
-                        ):
-                            print(
-                                f"  [model {i}] {name}: {val:.6e}",
-                                file=out_file,
-                            )
-                        eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
-                        for i, (name, val) in enumerate(
-                            zip(
-                                evaluation_term_names,
-                                list(map(float, eval_terms_arr)),
-                                strict=True,
-                            )
-                        ):
-                            suffix = _metric_suffix(eval_data_metrics[i])
-                            print(
-                                f"  [eval {i}] {name}: {val:.6e}{suffix}",
-                                file=out_file,
-                            )
-                if tensorboard_step and tb_writer is not None:
-                    loss_f = float(cand_loss)
-                    best_display = _best_display_value(
-                        control.progress.best_value,
-                        loss_f,
-                        keep_best=keep_best,
-                    )
-                    _log_tensorboard_scalars(
-                        tb_writer,
-                        step=step,
-                        loss=cand_loss,
+                    scalars = _training_scalars(
+                        loss=loss_f,
                         best_loss=best_display,
                         evaluation_loss=None,
                         iter_time_s=iter_time_s,
@@ -351,16 +297,24 @@ def _solve_evosax_distribution(
                         eval_data_metrics=eval_data_metrics,
                         log_terms=log_terms_,
                     )
-                    if step % tb_flush_every_ == 0:
-                        tb_writer.flush()
+                    if log_step:
+                        _emit_training_scalars(
+                            scalars,
+                            backend="evosax",
+                            step=step,
+                            total_steps=int(num_iter),
+                        )
+                    if tensorboard_step and tb_writer is not None:
+                        _write_tensorboard_scalars(tb_writer, scalars, step=step)
+                        if step % tb_flush_every_ == 0:
+                            tb_writer.flush()
             except (KeyboardInterrupt, InterruptedError) as exc:
                 signal_guard.request_stop_from_exception(exc)
-                _log_training_signal_stop(
+                _emit_training_signal_stop(
                     "evosax",
                     signal_guard,
                     completed=completed,
                     total=int(num_iter),
-                    file=out_file,
                 )
                 break
 
@@ -386,6 +340,7 @@ def _solve_evosax_distribution(
                 "optimizer_wall_time_seconds": jnp.asarray(optimizer_wall_time),
             }
         )
+        control.emit("stop", metrics={"completed_steps": completed})
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
 

@@ -223,9 +223,10 @@ def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
     assert jnp.isfinite(trained.loss(key=jr.key(27), step=jnp.asarray(1.0, dtype=float)))
 
 
-def test_kfac_logs_train_and_evaluation_terms_to_console_and_tensorboard(
+def test_kfac_logs_train_and_evaluation_terms_to_events_and_tensorboard(
     monkeypatch,
     tmp_path,
+    phydrax_events,
 ):
     scalar_tags = []
 
@@ -253,26 +254,25 @@ def test_kfac_logs_train_and_evaluation_terms_to_console_and_tensorboard(
         terms=base.terms,
         evaluation_terms=base.terms,
     )
-    log_path = tmp_path / "kfac-diagnostics.log"
     solver.solve(
         num_iter=1,
         optim=phx.optim.kfac(damping=1e-2),
         keep_best=False,
         log_every=1,
         log_terms=True,
-        log_path=log_path,
         tensorboard_log_dir=tmp_path / "tensorboard",
         tensorboard_every=1,
     )
 
-    log_text = log_path.read_text()
-    assert "[train 0] target-one:" in log_text
-    assert "[eval 0] target-one:" in log_text
+    events = phydrax_events.records("training.step.completed")
+    metric_names = {metric["name"] for metric in events[-1]["fields"]["metrics"]}
+    assert "train/terms/000_target-one/value" in metric_names
+    assert "eval/terms/000_target-one/value" in metric_names
     assert "train/terms/000_target-one/value" in scalar_tags
     assert "eval/terms/000_target-one/value" in scalar_tags
 
 
-def test_kfac_honors_training_signal_stop(monkeypatch, tmp_path):
+def test_kfac_honors_training_signal_stop(monkeypatch, phydrax_events):
     class StopImmediately:
         signal_name = "SIGTERM"
         stop_requested = True
@@ -284,18 +284,20 @@ def test_kfac_honors_training_signal_stop(monkeypatch, tmp_path):
             del exc_type, exc, traceback
 
     monkeypatch.setattr(kfac_solver, "_TrainingSignalGuard", StopImmediately)
-    log_path = tmp_path / "kfac.log"
     trained = _linear_solver().solve(
         num_iter=5,
         optim=phx.optim.kfac(),
         log_every=0,
-        log_path=log_path,
     )
 
     assert trained.training_diagnostics["optimizer/kfac/factor_updates"] == 0
-    assert "received SIGTERM; exiting training loop after 0/5 iteration(s)" in (
-        log_path.read_text()
-    )
+    events = phydrax_events.records("training.stopped")
+    assert events[-1]["fields"] == {
+        "backend": "kfac",
+        "completed_steps": 0,
+        "signal_name": "SIGTERM",
+        "total_steps": 5,
+    }
 
 
 def test_kfac_rejects_non_residual_training_terms_without_curvature_roots():

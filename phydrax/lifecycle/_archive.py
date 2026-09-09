@@ -27,6 +27,7 @@ from .._array_archive import (
 )
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ..diagnostics import Diagnostic, DiagnosticError
+from ..logging import emit
 from ._chunk_repository import (
     ArtifactManifest,
     ArtifactRepository,
@@ -478,7 +479,17 @@ def create(
         },
         arrays=arrays_,
     )
-    return open(path, allow_incomplete=True, limits=None)
+    archive = open(path, allow_incomplete=True, limits=None)
+    emit(
+        "INFO",
+        "lifecycle.archive.created",
+        "Lifecycle archive created",
+        archive_id=archive.archive_id,
+        array_bytes=sum(array_payload_byte_count(value) for value in arrays_.values()),
+        array_count=len(arrays_),
+        record_kind=record["kind"],
+    )
+    return archive
 
 
 def open(
@@ -529,7 +540,16 @@ def open(
             )
         )
     immutable = MappingProxyType(dict(arrays))
-    return LifecycleArchive(source, manifest, immutable, archive_id)
+    archive = LifecycleArchive(source, manifest, immutable, archive_id)
+    emit(
+        "DEBUG",
+        "lifecycle.archive.opened",
+        "Lifecycle archive opened",
+        archive_id=archive_id,
+        array_count=len(immutable),
+        record_kind=record["kind"],
+    )
+    return archive
 
 
 def list_fields(source: str | Path | LifecycleArchive, /) -> tuple[str, ...]:
@@ -608,7 +628,17 @@ def export(
     key = str(format).strip().lower()
     if key not in _EXPORTERS:
         raise ValueError(f"No sampled exporter is registered for {key!r}.")
-    return _EXPORTERS[key](query(source, fields=fields), Path(destination))
+    query_ = query(source, fields=fields)
+    destination_ = _EXPORTERS[key](query_, Path(destination))
+    emit(
+        "INFO",
+        "lifecycle.archive.exported",
+        "Lifecycle archive exported",
+        archive_id=query_.archive.archive_id,
+        field_count=len(query_.fields),
+        format=key,
+    )
+    return destination_
 
 
 _SUPPORT_RECORD_KINDS = frozenset(
@@ -693,7 +723,7 @@ def support_bundle(
     archive = _as_archive(source, limits=archive_limits)
     telemetry = _sanitized_support_telemetry(archive)
     if authorization is None:
-        return write_array_archive(
+        output = write_array_archive(
             destination,
             manifest={
                 "kind": "lifecycle-support-bundle",
@@ -703,6 +733,14 @@ def support_bundle(
             },
             arrays={},
         )
+        emit(
+            "INFO",
+            "lifecycle.support_bundle.created",
+            "Lifecycle support bundle created",
+            archive_id=archive.archive_id,
+            disclosure="sanitized",
+        )
+        return output
     if authorization.source_archive_id != archive.archive_id:
         raise ValueError("Support authorization is not bound to the source archive.")
 
@@ -718,7 +756,7 @@ def support_bundle(
     authorization_record["authorization_fingerprint"] = canonical_fingerprint(
         authorization_record
     )
-    return write_array_archive(
+    output = write_array_archive(
         destination,
         manifest={
             "kind": "lifecycle-support-bundle",
@@ -738,6 +776,14 @@ def support_bundle(
         },
         arrays={"archive": np.frombuffer(payload, dtype=np.uint8)},
     )
+    emit(
+        "INFO",
+        "lifecycle.support_bundle.created",
+        "Lifecycle support bundle created",
+        archive_id=archive.archive_id,
+        disclosure="data_owner_authorized",
+    )
+    return output
 
 
 def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
