@@ -1,0 +1,368 @@
+{
+  "content_id": "322218a10e29d5996eb301f6efe716152b9248652af84ede1eafedcaf32af25f",
+  "material_points": {
+    "byte_count": 41028,
+    "inputs_member": "inputs.json",
+    "observations_member": "samples.jsonl",
+    "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/material-points.tar.gz",
+    "qualification_command": "python tools/almonacid_2024_material_qualification.py",
+    "qualification_scope": "Native stresses and mixed residuals match actual unmodified upstream class; full spatial-rate AD is not equated with source approximate hand tangent.",
+    "sample_count": 95,
+    "sha256": "199e5224ca10a8eec6fa894e90d8082333ae97343a1165389653366e84a15ab4",
+    "source_record_content_id": "391a447112933f92aea8bd95e85a45244e79fa4c2302b0a7251341c06c022c94",
+    "source_record_member": "run-record.json"
+  },
+  "native_qualifications": [
+    {
+      "biological_validation": false,
+      "byte_count": 624665,
+      "case": "repository-default-fields",
+      "full_101_sample_campaign": true,
+      "full_mta_admitted": false,
+      "inf_sup_qualified": false,
+      "maximum_field_scaled_errors": {
+        "deformation_gradient": 0.00024598587824794534,
+        "dilation": 6.766814511690091e-08,
+        "displacement_m": 2.1934348769893353e-06,
+        "fiber_stretch": 8.510026025319794e-07,
+        "isochoric_fiber_stretch": 1.4328143716308655e-06,
+        "kirchhoff_Pa": 7.662995883001713e-05,
+        "kirchhoff_active_Pa": 8.643367003496678e-05,
+        "kirchhoff_base_Pa": 3.6062398596595815e-05,
+        "kirchhoff_passive_fiber_Pa": 2.485978137337952e-06,
+        "normalized_isochoric_strain_rate": 0.00028158203084780034,
+        "normalized_total_strain_rate": 0.00017188904318628996,
+        "orientation": 3.42311758195878e-05,
+        "pressure_Pa": 1.3031014925331874e-05,
+        "velocity_m_per_s": 4.533945759273473e-06,
+        "volume_ratio": 1.986699325654046e-06
+      },
+      "maximum_source_observable_scaled_errors": {
+        "source_boundary_force_N": 4.6598896374578773e-05,
+        "source_energy_density": 3.99089347979547e-05,
+        "source_volume_m3": 1.537242733832463e-05
+      },
+      "maximum_weak_residuals": {
+        "dilation_weak_residual_J": 1.3448012711901733e-12,
+        "free_force_residual_N": 2.463682510740199e-07,
+        "interface_displacement_jump_l2_m": 2.3750470494266157e-18,
+        "pressure_weak_residual_m3": 5.971052571948889e-17
+      },
+      "numeric_revision": "ecde530b5c5d4faa67712aa18f4a7aa1290f968a76635ebf8cdf87e78fd69e0b",
+      "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/native-repository-default-fields-qualification.json",
+      "plan_id": "3c70610f96dbba33b42a6f0dda7912ba89998654882bae35cc00333881330426",
+      "prepared_id": "8a423ace594201f3cff25ce46f6d5c667b2d8d72361d8539ce50441cc1e20dbd",
+      "sample_count": 101,
+      "sha256": "a3f7668cc0a51e71e0763afc3098a845ebd07806a31f874b5998396c7293a264",
+      "solver_policy": "matrix-free Newton; exact local scalar condensation; JAX-CPU sparse LU condensed mechanical Schur",
+      "source_equivalence_passed": true,
+      "source_record_content_id": "c25b5a6de2d318f8259c2f06478112f3ec5803f35f7d2874c8daaead733dcb7b"
+    },
+    {
+      "biological_validation": false,
+      "byte_count": 619917,
+      "case": "passive-cyclic",
+      "full_101_sample_campaign": true,
+      "full_mta_admitted": false,
+      "inf_sup_qualified": false,
+      "maximum_field_scaled_errors": {
+        "deformation_gradient": 2.151298273930907e-06,
+        "dilation": 6.011967234032022e-08,
+        "displacement_m": 1.064529073793297e-06,
+        "fiber_stretch": 7.303743273005164e-08,
+        "isochoric_fiber_stretch": 6.803032409778273e-08,
+        "kirchhoff_Pa": 5.320080030651297e-06,
+        "kirchhoff_active_Pa": 0.0,
+        "kirchhoff_base_Pa": 2.4017479503527286e-06,
+        "kirchhoff_passive_fiber_Pa": 9.513164575597416e-07,
+        "normalized_isochoric_strain_rate": 4.405923911462651e-06,
+        "normalized_total_strain_rate": 4.4854950914488035e-06,
+        "orientation": 3.0139450492370806e-06,
+        "pressure_Pa": 2.3973691515266183e-06,
+        "velocity_m_per_s": 1.1188737577913284e-06,
+        "volume_ratio": 9.63606619932564e-08
+      },
+      "maximum_source_observable_scaled_errors": {
+        "source_boundary_force_N": 4.779720221630538e-05,
+        "source_energy_density": 4.436670916738684e-05,
+        "source_volume_m3": 1.5449292799142212e-05
+      },
+      "maximum_weak_residuals": {
+        "dilation_weak_residual_J": 7.182832970533066e-11,
+        "free_force_residual_N": 1.3294639041995061e-07,
+        "interface_displacement_jump_l2_m": 3.3337593106069128e-18,
+        "pressure_weak_residual_m3": 2.2908766926509463e-16
+      },
+      "numeric_revision": "6d83eef1d6c68da965c47eea10200f20e7a464af298f83bc67f0f4018e82c411",
+      "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/native-passive-cyclic-qualification.json",
+      "plan_id": "e27b05cdc5a39444b2d7f522f6a9d9089be64643593d0235459744c1dd0a8c1b",
+      "prepared_id": "f9af7b1305f5261cd7cb30d374ba8022ddbbb2238fbb7be30f903c4920fe3040",
+      "sample_count": 101,
+      "sha256": "60d74666cba5a0a8b592c1d8c8e3047804acc1d949e694a935d0bc595e54e119",
+      "solver_policy": "matrix-free Newton; exact local scalar condensation; JAX-CPU sparse LU condensed mechanical Schur",
+      "source_equivalence_passed": true,
+      "source_record_content_id": "1f46a2d443e2680b8766f8e6c7e4ce9b6c1618a2b89bb29c589e810119afbb87"
+    },
+    {
+      "biological_validation": false,
+      "byte_count": 625222,
+      "case": "fixed-end-activation",
+      "full_101_sample_campaign": true,
+      "full_mta_admitted": false,
+      "inf_sup_qualified": false,
+      "maximum_field_scaled_errors": {
+        "deformation_gradient": 0.00011828393798149389,
+        "dilation": 6.851432420562979e-08,
+        "displacement_m": 3.2029046255325995e-06,
+        "fiber_stretch": 6.321742790875542e-07,
+        "isochoric_fiber_stretch": 1.083200101712081e-06,
+        "kirchhoff_Pa": 7.952822107281462e-05,
+        "kirchhoff_active_Pa": 0.00010954256452578838,
+        "kirchhoff_base_Pa": 3.6223772632852305e-05,
+        "kirchhoff_passive_fiber_Pa": 3.0200827630324057e-06,
+        "normalized_isochoric_strain_rate": 0.00021109807454879292,
+        "normalized_total_strain_rate": 0.0001276092749619926,
+        "orientation": 3.0179154239935867e-05,
+        "pressure_Pa": 9.817026988002908e-06,
+        "velocity_m_per_s": 2.819194988400337e-06,
+        "volume_ratio": 1.6354501373182082e-06
+      },
+      "maximum_source_observable_scaled_errors": {
+        "source_boundary_force_N": 4.3482612133367135e-05,
+        "source_energy_density": 9.656833274331866e-06,
+        "source_volume_m3": 1.5394748594558197e-05
+      },
+      "maximum_weak_residuals": {
+        "dilation_weak_residual_J": 3.6754307789626414e-13,
+        "free_force_residual_N": 2.3623330315569777e-07,
+        "interface_displacement_jump_l2_m": 1.2173972784766655e-18,
+        "pressure_weak_residual_m3": 1.1263551072428432e-16
+      },
+      "numeric_revision": "295e4ea9ccfffd11b81eeef4958e33d79a9577ae2e488e98a7ef43efd0bfa78f",
+      "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/native-fixed-end-activation-qualification.json",
+      "plan_id": "9e123ee25c47ff0bdb2a3e261a3b219f73ae1dfd054099030916da00f0cb13dd",
+      "prepared_id": "b3fd27dda7ef0e6fd43e06b2578ca69e46cefff1777eec2ef8e55b6eb542eacc",
+      "sample_count": 101,
+      "sha256": "ef8e2f4754162125e718f0c1df3c974628dd5271202a2c21046f9a64e2a8ac17",
+      "solver_policy": "matrix-free Newton; exact local scalar condensation; JAX-CPU sparse LU condensed mechanical Schur",
+      "source_equivalence_passed": true,
+      "source_record_content_id": "21b0447706a07a3cd276b5308bc0b8258c0a45ca85c17e9896118d5dfd769eda"
+    }
+  ],
+  "native_refinement": {
+    "byte_count": 3230,
+    "passed": true,
+    "path": "benchmarks/almonacid_2024_refinement.json",
+    "scope": "Native short-horizon reaction/volume convergence; not external source equivalence, LBB certification, anatomy, or biology.",
+    "sha256": "4788b3aadd6bc5b75d3ebc5da9c1a383890ad4896f8616499423b3381fd8b808",
+    "spatial_observed_binary_refinement_order": 1.0129781379335172,
+    "temporal_observed_binary_refinement_order": 1.0955807165573088
+  },
+  "packages": [
+    {
+      "build_record_sha256": "42290091204ecb476435e11892b5ac2e3382a97687235304251cfc87971ce8b5",
+      "byte_count": 11183169,
+      "case": "repository-default-fields",
+      "executable_sha256": "b037f40a2aa46e589ea1e10fcb2043e86f52c33ad24261efe80196fb2c81c1a7",
+      "full_raw_artifact_inventory_member": "frozen-reference.json",
+      "histories": {
+        "energy_data-3d.csv": {
+          "end_s": 1.0,
+          "samples": 101,
+          "start_s": 0.0
+        },
+        "force_data-3d.csv": {
+          "end_s": 1.0,
+          "samples": 101,
+          "start_s": 0.0
+        }
+      },
+      "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/repository-default-fields.tar.gz",
+      "retained_members": [
+        "frozen-reference.json",
+        "build-record.json",
+        "runtime-evidence.txt",
+        "source-manifest.json",
+        "parameters.prm",
+        "control_points_activation.dat",
+        "control_points_strain.dat",
+        "markers.dat",
+        "run.log",
+        "outputs/grid-3d.msh",
+        "outputs/activation_muscle_length-3d.csv",
+        "outputs/displacements-3d.csv",
+        "outputs/gearing_info-3d.csv",
+        "outputs/mean_stretch_pennation_data-3d.csv",
+        "outputs/force_data-3d.csv",
+        "outputs/energy_data-3d.csv",
+        "outputs/cell_data_main-3d-000.data",
+        "outputs/cell_data_tensors-3d-000.data",
+        "outputs/solution-3d-000.vtu",
+        "outputs/velocity-3d-000.vtu",
+        "outputs/cell_data_main-3d-050.data",
+        "outputs/cell_data_tensors-3d-050.data",
+        "outputs/solution-3d-050.vtu",
+        "outputs/velocity-3d-050.vtu",
+        "outputs/cell_data_main-3d-100.data",
+        "outputs/cell_data_tensors-3d-100.data",
+        "outputs/solution-3d-100.vtu",
+        "outputs/velocity-3d-100.vtu"
+      ],
+      "runtime_environment": {
+        "DEAL_II_NUM_THREADS": "2"
+      },
+      "sha256": "73381e0418f1d2127e53ac863ca705a5795f70b8ba7cd625bfef29ec48154661",
+      "snapshot_steps": [
+        0,
+        50,
+        100
+      ],
+      "source_record_content_id": "c25b5a6de2d318f8259c2f06478112f3ec5803f35f7d2874c8daaead733dcb7b"
+    },
+    {
+      "build_record_sha256": "42290091204ecb476435e11892b5ac2e3382a97687235304251cfc87971ce8b5",
+      "byte_count": 10071430,
+      "case": "passive-cyclic",
+      "executable_sha256": "b037f40a2aa46e589ea1e10fcb2043e86f52c33ad24261efe80196fb2c81c1a7",
+      "full_raw_artifact_inventory_member": "frozen-reference.json",
+      "histories": {
+        "energy_data-3d.csv": {
+          "end_s": 1.0,
+          "samples": 101,
+          "start_s": 0.0
+        },
+        "force_data-3d.csv": {
+          "end_s": 1.0,
+          "samples": 101,
+          "start_s": 0.0
+        }
+      },
+      "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/passive-cyclic.tar.gz",
+      "retained_members": [
+        "frozen-reference.json",
+        "build-record.json",
+        "runtime-evidence.txt",
+        "source-manifest.json",
+        "parameters.prm",
+        "control_points_activation.dat",
+        "control_points_strain.dat",
+        "markers.dat",
+        "run.log",
+        "outputs/grid-3d.msh",
+        "outputs/activation_muscle_length-3d.csv",
+        "outputs/displacements-3d.csv",
+        "outputs/gearing_info-3d.csv",
+        "outputs/mean_stretch_pennation_data-3d.csv",
+        "outputs/force_data-3d.csv",
+        "outputs/energy_data-3d.csv",
+        "outputs/cell_data_main-3d-000.data",
+        "outputs/cell_data_tensors-3d-000.data",
+        "outputs/solution-3d-000.vtu",
+        "outputs/velocity-3d-000.vtu",
+        "outputs/cell_data_main-3d-050.data",
+        "outputs/cell_data_tensors-3d-050.data",
+        "outputs/solution-3d-050.vtu",
+        "outputs/velocity-3d-050.vtu",
+        "outputs/cell_data_main-3d-100.data",
+        "outputs/cell_data_tensors-3d-100.data",
+        "outputs/solution-3d-100.vtu",
+        "outputs/velocity-3d-100.vtu"
+      ],
+      "runtime_environment": {
+        "DEAL_II_NUM_THREADS": "2"
+      },
+      "sha256": "21964908aba7d5c71f69fb0e5dbd9660bf451f41135294c6520ceb598f75539d",
+      "snapshot_steps": [
+        0,
+        50,
+        100
+      ],
+      "source_record_content_id": "1f46a2d443e2680b8766f8e6c7e4ce9b6c1618a2b89bb29c589e810119afbb87"
+    },
+    {
+      "build_record_sha256": "42290091204ecb476435e11892b5ac2e3382a97687235304251cfc87971ce8b5",
+      "byte_count": 10770885,
+      "case": "fixed-end-activation",
+      "executable_sha256": "b037f40a2aa46e589ea1e10fcb2043e86f52c33ad24261efe80196fb2c81c1a7",
+      "full_raw_artifact_inventory_member": "frozen-reference.json",
+      "histories": {
+        "energy_data-3d.csv": {
+          "end_s": 1.0,
+          "samples": 101,
+          "start_s": 0.0
+        },
+        "force_data-3d.csv": {
+          "end_s": 1.0,
+          "samples": 101,
+          "start_s": 0.0
+        }
+      },
+      "path": "tests/fixtures/flexodeal_0698e3d/reference_outputs/fixed-end-activation.tar.gz",
+      "retained_members": [
+        "frozen-reference.json",
+        "build-record.json",
+        "runtime-evidence.txt",
+        "source-manifest.json",
+        "parameters.prm",
+        "control_points_activation.dat",
+        "control_points_strain.dat",
+        "markers.dat",
+        "run.log",
+        "outputs/grid-3d.msh",
+        "outputs/activation_muscle_length-3d.csv",
+        "outputs/displacements-3d.csv",
+        "outputs/gearing_info-3d.csv",
+        "outputs/mean_stretch_pennation_data-3d.csv",
+        "outputs/force_data-3d.csv",
+        "outputs/energy_data-3d.csv",
+        "outputs/cell_data_main-3d-000.data",
+        "outputs/cell_data_tensors-3d-000.data",
+        "outputs/solution-3d-000.vtu",
+        "outputs/velocity-3d-000.vtu",
+        "outputs/cell_data_main-3d-050.data",
+        "outputs/cell_data_tensors-3d-050.data",
+        "outputs/solution-3d-050.vtu",
+        "outputs/velocity-3d-050.vtu",
+        "outputs/cell_data_main-3d-100.data",
+        "outputs/cell_data_tensors-3d-100.data",
+        "outputs/solution-3d-100.vtu",
+        "outputs/velocity-3d-100.vtu"
+      ],
+      "runtime_environment": {
+        "DEAL_II_NUM_THREADS": "2"
+      },
+      "sha256": "c1c38c905075af93b1412f66b39809274d8583162fb54d84d463f16d44115f2c",
+      "snapshot_steps": [
+        0,
+        50,
+        100
+      ],
+      "source_record_content_id": "21b0447706a07a3cd276b5308bc0b8258c0a45ca85c17e9896118d5dfd769eda"
+    }
+  ],
+  "precision": {
+    "histories": "Original source CSV decimal formatting retained; not recomputed or refit.",
+    "quadrature_fields": "Original C++ float32 binary output; little-endian on the recorded arm64 runtime.",
+    "source_energy": "Source stress-displacement contraction diagnostics, not a total stored-energy potential.",
+    "source_force": "Nearest cell quadrature stress evaluated at boundary quadrature; distinct from variational nodal reactions."
+  },
+  "retention": "Archives retain complete principal time histories, procedural mesh, exact run/build/input metadata, and raw field snapshots at steps 0,50,100. Each frozen-reference.json inventories every original run artifact; omitted intermediate fields remain only in the ignored local campaign directory and can be reproduced with the recorded executable campaign. Native qualification records retain all 101 per-step comparison metrics for each case; the refinement record retains the short-horizon spatial/time study.",
+  "reuse": "Generated mathematical simulation outputs; source code/inputs retain the LGPL-2.1 notice in the parent fixture directory. No upstream C++ runtime source is vendored.",
+  "runtime": {
+    "MPICH_CC": "/usr/bin/clang",
+    "MPICH_CXX": "/usr/bin/clang++",
+    "cmake_version": "4.3.4",
+    "compiler": "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+    "deal_ii_version": "9.5.1",
+    "dependency_identity": "Read-only official image SHA-256 pins bundled transitive dependencies; system libc++/libSystem belong to the recorded macOS runtime.",
+    "image_byte_count": 1434101428,
+    "image_sha256": "1599deffe696840921d196b34cf180554eaee8873aaf9d39613fb9fe4f047471",
+    "image_uri": "https://github.com/dealii/dealii/releases/download/v9.5.1/dealii-9.5.1-sonoma-arm64-clang17.dmg",
+    "linker": "Homebrew LLD 17.0.2",
+    "path_prepend": "/Applications/deal.II.app/Contents/Resources/brew/opt/llvm/bin",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "review": "Observed configuration, compiler/linker versions, successful build and all three 101-sample campaigns; no cross-platform bitwise claim."
+  },
+  "scope": "Generated external numerical references for the pinned repository-default idealized muscle plus two aponeurosis sheets; no tendon or biological validation.",
+  "source_id": "flexodeal:0698e3d87d7261c81437d410dda161fe3b8efcbf:repository-default-idealized-muscle-aponeurosis"
+}

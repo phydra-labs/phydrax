@@ -254,9 +254,14 @@ def solve_native_krylov(
             )
         raise ValueError(f"Unsupported native Krylov method {method_name!r}.")
 
-    value, auxiliary = jax.vmap(solve_column, in_axes=(1, 1), out_axes=(1, 0))(
-        rhs, guesses
-    )
+    if rhs.shape[1] == 1:
+        value_column, auxiliary_column = solve_column(rhs[:, 0], guesses[:, 0])
+        value = value_column[:, None]
+        auxiliary = jax.tree.map(lambda item: item[None], auxiliary_column)
+    else:
+        value, auxiliary = jax.vmap(solve_column, in_axes=(1, 1), out_axes=(1, 0))(
+            rhs, guesses
+        )
     (
         iterations,
         residual,

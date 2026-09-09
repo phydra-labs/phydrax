@@ -299,3 +299,190 @@ def test_state_dependent_derivative_setups_use_converged_native_coordinates():
     assert jnp.allclose(value, jnp.sqrt(rhs), atol=1e-9)
     assert jnp.allclose(tangent, 0.5 / jnp.sqrt(rhs), atol=1e-9)
     assert jnp.allclose(gradient, tangent, atol=1e-9)
+
+
+def _structured_setup_root(target):
+    initial = (jnp.asarray([[4.0], [5.0]]), jnp.asarray(6.0))
+    space = la.PyTreeSpace(initial)
+
+    def mixing(history):
+        return jnp.asarray(
+            [[2.0, 1.0, 0.0], [0.0, 3.0, 1.0], [1.0, 0.0, 4.0]]
+        ) + history * jnp.diag(jnp.asarray([1.0, 2.0, 3.0]))
+
+    def residual(state, history):
+        coordinates = space.flatten(state)
+        return space.unflatten(mixing(history) @ (coordinates**2 - target - history))
+
+    def setup(state, history):
+        matrix = mixing(history) * (2 * space.flatten(state))[None, :]
+        return la.DenseLinearOperator(matrix, source=space, target=space)
+
+    problem = nl.NonlinearSystemProblem(
+        residual,
+        state_space=space,
+        residual_space=space,
+        linear_setup=setup,
+        problem_id="structured-implicit-setup",
+    )
+    return problem, initial, space
+
+
+def _one_step_preconditioned_policy(builder):
+    # One Krylov direction resolves this nonnormal system only with exact,
+    # correctly oriented setup at the current root, not at a Newton iterate.
+    return la.LinearSolvePolicy(
+        la.GMRES(restart=1),
+        preconditioning=la.PreconditioningPolicy(builder, side="right"),
+        tolerance=la.TolerancePolicy(relative=1e-12, absolute=1e-12, max_steps=1),
+    )
+
+
+def test_implicit_setup_tracks_structured_root_history_and_single_primal(monkeypatch):
+    executions = []
+    original_solve = nl.NewtonKrylov.solve
+
+    def counted_solve(self, *arguments, **keywords):
+        jax.debug.callback(lambda: executions.append(None), ordered=True)
+        return original_solve(self, *arguments, **keywords)
+
+    monkeypatch.setattr(nl.NewtonKrylov, "solve", counted_solve)
+    method = nl.NewtonKrylov(
+        linear_policy=_one_step_preconditioned_policy(
+            la.DenseInversePreconditionerBuilder()
+        )
+    )
+
+    def observe(target, history):
+        problem, initial, space = _structured_setup_root(target)
+        result = nl.implicit_root_result(
+            problem, initial, method=method, termination=_termination(), args=history
+        )
+        evidence = jnp.stack(
+            (
+                result.status.astype(target.dtype),
+                result.diagnostics.iterations.astype(target.dtype),
+                result.diagnostics.initial_residual_norm,
+            )
+        )
+        return space.flatten(result.state), evidence
+
+    direction = jnp.asarray([0.2, -0.4, 0.3])
+    history_direction = jnp.asarray(0.1)
+    weights = jnp.asarray([1.0, -0.5, 2.0])
+    forward = jax.jit(
+        lambda target, history: jax.jvp(
+            observe, (target, history), (direction, history_direction)
+        )
+    )
+
+    @jax.jit
+    def reverse(target, history):
+        value, pullback = jax.vjp(observe, target, history)
+        first = pullback((weights, jnp.zeros(3)))
+        second = pullback((2 * weights, jnp.zeros(3)))
+        return value, first, second
+
+    for index, (target, history) in enumerate(
+        (
+            (jnp.asarray([1.0, 4.0, 9.0]), jnp.asarray(0.25)),
+            (jnp.asarray([2.0, 7.0, 5.0]), jnp.asarray(0.75)),
+        )
+    ):
+        expected = jnp.sqrt(target + history)
+        (value, evidence), (tangent, evidence_tangent) = forward(target, history)
+        jax.effects_barrier()
+        assert len(executions) == 2 * index + 1
+        assert evidence[0] == int(nl.NonlinearStatus.SUCCESS)
+        assert evidence[1] > 0
+        assert jnp.all(evidence_tangent == 0)
+        assert jnp.allclose(value, expected, rtol=1e-10, atol=1e-11)
+        assert jnp.allclose(
+            tangent,
+            (direction + history_direction) / (2 * expected),
+            rtol=1e-9,
+            atol=1e-11,
+        )
+        (_, reverse_evidence), first, second = reverse(target, history)
+        jax.effects_barrier()
+        assert len(executions) == 2 * index + 2
+        assert jnp.array_equal(reverse_evidence[:2], evidence[:2])
+        assert jnp.allclose(reverse_evidence[2], evidence[2], rtol=1e-12, atol=1e-12)
+        expected_gradient = weights / (2 * expected)
+        assert jnp.allclose(first[0], expected_gradient, rtol=1e-9, atol=1e-11)
+        assert jnp.allclose(first[1], expected_gradient.sum(), rtol=1e-9, atol=1e-11)
+        assert jnp.allclose(second[0], 2 * first[0], rtol=1e-9, atol=1e-11)
+        assert jnp.allclose(second[1], 2 * first[1], rtol=1e-9, atol=1e-11)
+
+
+def test_implicit_setup_binds_independent_forward_and_transpose_builders():
+    exact = _one_step_preconditioned_policy(la.DenseInversePreconditionerBuilder())
+    unresolved = _one_step_preconditioned_policy(la.JacobiPreconditionerBuilder())
+    method = nl.NewtonKrylov(linear_policy=exact)
+    target = jnp.asarray([1.0, 4.0, 9.0])
+    history = jnp.asarray(0.25)
+    direction = jnp.asarray([0.2, -0.4, 0.3])
+
+    def root(argument, policy):
+        problem, initial, space = _structured_setup_root(argument)
+        result = nl.implicit_root_result(
+            problem,
+            initial,
+            method=method,
+            termination=_termination(),
+            derivative_policy=policy,
+            args=history,
+        )
+        return space.flatten(result.state)
+
+    forward_policy = nl.ImplicitRootDerivativePolicy(
+        tangent_linear_policy=exact, adjoint_linear_policy=unresolved
+    )
+    reverse_policy = nl.ImplicitRootDerivativePolicy(
+        tangent_linear_policy=unresolved, adjoint_linear_policy=exact
+    )
+    _, tangent = jax.jvp(
+        lambda argument: root(argument, forward_policy), (target,), (direction,)
+    )
+    gradient = jax.grad(lambda argument: jnp.sum(root(argument, reverse_policy)))(target)
+    expected = 0.5 / jnp.sqrt(target + history)
+    assert jnp.allclose(tangent, direction * expected, rtol=1e-9, atol=1e-11)
+    assert jnp.allclose(gradient, expected, rtol=1e-9, atol=1e-11)
+    failed_forward = eqx.filter_jit(
+        lambda argument: jax.jvp(
+            lambda value: root(value, reverse_policy), (argument,), (direction,)
+        )[1]
+    )
+    failed_reverse = eqx.filter_jit(
+        jax.grad(lambda argument: jnp.sum(root(argument, forward_policy)))
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="root derivative solve failed"):
+        failed_forward(target)
+    with pytest.raises(eqx.EquinoxRuntimeError, match="root derivative solve failed"):
+        failed_reverse(target)
+
+
+def test_failed_implicit_setup_root_preserves_accepted_state_and_status():
+    target = jnp.asarray([1.0, 4.0, 9.0])
+    history = jnp.asarray(0.25)
+    problem, initial, space = _structured_setup_root(target)
+    method = nl.NewtonKrylov(
+        linear_policy=_one_step_preconditioned_policy(
+            la.DenseInversePreconditionerBuilder()
+        )
+    )
+    termination = _termination(maximum_steps=1)
+    result = nl.implicit_root_result(
+        problem, initial, method=method, termination=termination, args=history
+    )
+    initial_coordinates = space.flatten(initial)
+    expected = 0.5 * (initial_coordinates + (target + history) / initial_coordinates)
+    assert result.status == int(nl.NonlinearStatus.MAXIMUM_STEPS_REACHED)
+    assert result.diagnostics.iterations == 1
+    assert jnp.allclose(space.flatten(result.state), expected, rtol=1e-10, atol=1e-11)
+    with pytest.raises(
+        eqx.EquinoxRuntimeError, match="Implicit nonlinear root solve failed"
+    ):
+        nl.implicit_root(
+            problem, initial, method=method, termination=termination, args=history
+        )

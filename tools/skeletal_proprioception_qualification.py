@@ -59,9 +59,11 @@ def qualify() -> dict[str, object]:
             "no human or closed-loop reflex claim"
         ),
         "gto_status": (
-            "not implemented: the source requires per-fiber collagen topology and "
-            "its printed nonlinear collagen exponent is not unambiguous enough for "
-            "an independently reproducible implementation"
+            "not implemented or qualified: Eq. 2 spring exponent 3 and Eq. 6 "
+            "dashpot exponent 0.4 are resolved; exact force balance versus the "
+            "stated bypass-driven Simulink approximation, source initialization, "
+            "complete per-fiber partition assets, and Fig. 3-6/Gregory oracle "
+            "reproduction remain release gates; no aggregate-force substitution"
         ),
     }
 

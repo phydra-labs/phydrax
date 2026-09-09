@@ -108,6 +108,17 @@ from ._mjx import (
     prepare_mjx_adapter,
     prepare_mjx_muscle_projection,
 )
+from ._opensim_cylinder_wrap import (
+    CylinderWrapSide,
+    OpenSimCylinderRouteWrapPlan,
+    OpenSimCylinderWrapCandidate,
+    OpenSimCylinderWrapEvaluation,
+    OpenSimCylinderWrapEvidence,
+    OpenSimCylinderWrapPullbackEvidence,
+    OpenSimCylinderWrapState,
+    OpenSimCylinderWrapStatus,
+    PreparedOpenSimCylinderRouteWrap,
+)
 from ._soft_fem import (
     FEM_ATOMIC_REPLAY_CAPABILITY_ID,
     FEM_BODY_FORCE_ACTUATION_CAPABILITY_ID,
@@ -229,6 +240,15 @@ from ._urdf import (
 
 
 __all__ = [
+    "CylinderWrapSide",
+    "OpenSimCylinderRouteWrapPlan",
+    "OpenSimCylinderWrapCandidate",
+    "OpenSimCylinderWrapEvaluation",
+    "OpenSimCylinderWrapEvidence",
+    "OpenSimCylinderWrapPullbackEvidence",
+    "OpenSimCylinderWrapState",
+    "OpenSimCylinderWrapStatus",
+    "PreparedOpenSimCylinderRouteWrap",
     "AnalyticWrapEvaluation",
     "AnalyticWrapEvidence",
     "AnalyticWrapStatus",

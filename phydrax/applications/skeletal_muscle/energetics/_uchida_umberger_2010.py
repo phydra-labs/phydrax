@@ -103,6 +103,11 @@ class UchidaUmberger2010Result(StrictModule, NonTrainableState):
     evidence: UchidaUmberger2010Evidence
     model_id: str = eqx.field(static=True)
 
+    intrinsic_shortening_lengthening_heat_W_per_kg: Array
+    negative_work_dissipation_W_per_kg: Array
+    heat_floor_adjustment_W_per_kg: Array
+    muscle_mass_kg: Array
+
 
 class UchidaUmberger2010Plan(StrictModule):
     """Algebraic muscle-only metabolic power with pinned OpenSim policy."""
@@ -175,9 +180,7 @@ class UchidaUmberger2010Plan(StrictModule):
         )
         denominator = slow_drive + fast_drive
         safe_denominator = jnp.where(denominator > 0.0, denominator, 1.0)
-        slow_fraction = jnp.where(
-            denominator > 0.0, slow_drive / safe_denominator, 1.0
-        )
+        slow_fraction = jnp.where(denominator > 0.0, slow_drive / safe_denominator, 1.0)
         activity = jnp.where(
             excitation_ > activation_, excitation_, 0.5 * (excitation_ + activation_)
         )
@@ -191,19 +194,18 @@ class UchidaUmberger2010Plan(StrictModule):
             activation_maintenance * (0.4 + 0.6 * force_length),
         )
         alpha_fast = 153.0 / p.maximum_contraction_velocity_per_s
-        alpha_slow = 100.0 / (
-            p.maximum_contraction_velocity_per_s / 2.5
-        )
+        alpha_slow = 100.0 / (p.maximum_contraction_velocity_per_s / 2.5)
         slow_shortening_rate = -alpha_slow * normalized_velocity_per_s
-        shortening = p.aerobic_factor * activity**2 * (
-            slow_fraction * jnp.minimum(slow_shortening_rate, 100.0)
-            - alpha_fast * normalized_velocity_per_s * (1.0 - slow_fraction)
+        shortening = (
+            p.aerobic_factor
+            * activity**2
+            * (
+                slow_fraction * jnp.minimum(slow_shortening_rate, 100.0)
+                - alpha_fast * normalized_velocity_per_s * (1.0 - slow_fraction)
+            )
         )
         lengthening = (
-            p.aerobic_factor
-            * activity
-            * (4.0 * alpha_slow)
-            * normalized_velocity_per_s
+            p.aerobic_factor * activity * (4.0 * alpha_slow) * normalized_velocity_per_s
         )
         shortening_lengthening = jnp.where(
             normalized_velocity_per_s <= 0.0, shortening, lengthening
@@ -213,6 +215,7 @@ class UchidaUmberger2010Plan(StrictModule):
             shortening_lengthening * force_length,
             shortening_lengthening,
         )
+        intrinsic_shortening_lengthening = shortening_lengthening
         mechanical_work = -jnp.maximum(force, 0.0) * velocity / p.muscle_mass_kg
         raw_total = activation_maintenance + shortening_lengthening + mechanical_work
         correction_active = raw_total < 0.0
@@ -296,6 +299,10 @@ class UchidaUmberger2010Plan(StrictModule):
             slow_fraction,
             evidence,
             self.model_id,
+            intrinsic_shortening_lengthening,
+            shortening_lengthening - intrinsic_shortening_lengthening,
+            heat - heat_before_floor,
+            p.muscle_mass_kg,
         )
 
 
@@ -320,9 +327,7 @@ def integrate_metabolic_energy_joule(
         "muscle_metabolic_power_W must be finite and non-negative.",
     )
     interval = jnp.diff(time)
-    return jnp.sum(
-        interval[:, None] * 0.5 * (power[:-1] + power[1:]), axis=0
-    )
+    return jnp.sum(interval[:, None] * 0.5 * (power[:-1] + power[1:]), axis=0)
 
 
 __all__ = [

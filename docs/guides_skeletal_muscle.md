@@ -1,9 +1,23 @@
 # Skeletal-muscle modeling
 
-`phydrax.applications.skeletal_muscle` begins with one deliberately bounded model:
-the deterministic mean-rate sustained-isometric motor-unit population of Potvin and
-Fuglevand (2017). It is not a generic muscle model, a musculotendon actuator, a cellular
-excitation-contraction model, or a source of physical force in newtons.
+This guide covers the deterministic mean-rate sustained-isometric motor-unit population
+of Potvin and Fuglevand (2017). That source model is deliberately bounded; it is not
+itself a musculotendon actuator, a cellular excitation-contraction model, or a source
+of physical force in newtons. The skeletal-muscle package also provides separately
+identified models and adapters:
+
+- [fatigue and recovery](guides/skeletal-muscle-fatigue.md);
+- [stochastic motor-unit discharge](guides/skeletal-muscle-motor-units.md);
+- [physical force calibration](guides/skeletal-muscle-force-calibration.md);
+- [cellular excitation-contraction dynamics](guides_skeletal_muscle_cellular.md);
+- [stimulated fibers and endplates](guides_skeletal_muscle_fibers.md);
+- [musculotendon dynamics](guides_skeletal_musculotendon.md);
+- [continuum mechanics](guides_skeletal_muscle_continuum.md);
+- [body-attached muscle routes](guides_robotics_muscle_routes.md);
+- [muscle-spindle proprioception](guides_skeletal_muscle_proprioception.md).
+
+These are distinct source fidelities, not additional mechanisms silently enabled in
+the Potvin–Fuglevand model.
 
 ## Scientific identity and scope
 
@@ -21,10 +35,11 @@ force-frequency fusion, peripheral force-capacity loss, and fatigue-induced twit
 slowing are explicit. The shipped parameterization is generally representative rather
 than calibrated to a particular human muscle.
 
-Supported claim: deterministic mean-rate force and capacity during sustained isometric
-contractions. The model does not include recovery, individual spikes, force noise,
-length or velocity effects, tendon, pennation, calcium, crossbridges, geometry, sensory
-feedback, or physical force calibration.
+Supported Potvin–Fuglevand claim: deterministic mean-rate force and capacity during
+sustained isometric contractions. This model does not include recovery, individual
+spikes, force noise, length or velocity effects, tendon, pennation, calcium,
+crossbridges, geometry, sensory feedback, or physical force calibration. These are
+model-local exclusions, not a list of unimplemented package capabilities.
 
 ## State and outputs
 

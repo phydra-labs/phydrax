@@ -14,6 +14,16 @@ from ._bundle import (
     SkeletalFiberBundleState,
     SkeletalFiberBundleStatus,
 )
+from ._reaction import AbstractFiberReaction, Shorten2007FiberReaction
+from ._structured import (
+    MovingFiberGeometry1D,
+    PreparedStructuredFiberResponse,
+    StructuredFiberResponseCandidate,
+    StructuredFiberResponseEvidence,
+    StructuredFiberResponsePlan,
+    StructuredFiberResponseState,
+    StructuredFiberResponseStatus,
+)
 from ._territories import (
     MotorUnitEndplateStimulus,
     MotorUnitTerritoryEvidence,
@@ -22,6 +32,15 @@ from ._territories import (
 
 
 __all__ = [
+    "AbstractFiberReaction",
+    "MovingFiberGeometry1D",
+    "PreparedStructuredFiberResponse",
+    "Shorten2007FiberReaction",
+    "StructuredFiberResponseCandidate",
+    "StructuredFiberResponseEvidence",
+    "StructuredFiberResponsePlan",
+    "StructuredFiberResponseState",
+    "StructuredFiberResponseStatus",
     "MotorUnitEndplateStimulus",
     "MotorUnitTerritoryEvidence",
     "MotorUnitTerritoryPlan",

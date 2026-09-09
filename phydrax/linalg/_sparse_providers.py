@@ -16,6 +16,7 @@ from .._strict import StrictModule
 
 SparseProviderName: TypeAlias = Literal[
     "jax-cuda",
+    "jax-cpu",
     "scipy-superlu",
     "spineax-cudss",
     "umfpack",
@@ -51,6 +52,16 @@ class SparseProviderAvailability(StrictModule):
 
 
 SPARSE_PROVIDER_CATALOG = (
+    SparseProviderCapabilities(
+        name="jax-cpu",
+        factorization="lu",
+        placement="host",
+        package="scipy",
+        jit=True,
+        transpose_solve=False,
+        complex=True,
+        batched_shared_pattern=True,
+    ),
     SparseProviderCapabilities(
         name="jax-cuda",
         factorization="qr",
@@ -141,7 +152,23 @@ def sparse_provider_availability(
 ) -> SparseProviderAvailability:
     """Inspect one provider without mutating global selection state."""
     capabilities = sparse_provider_capabilities(name)
-    if name == "jax-cuda":
+    if name == "jax-cpu":
+        import jax
+
+        package_available = _package_available("scipy")
+        cpu_default = jax.default_backend() == "cpu"
+        available = package_available and cpu_default
+        missing = []
+        if not package_available:
+            missing.append("scipy is not installed")
+        if not cpu_default:
+            missing.append("the default JAX backend is not CPU")
+        reason = (
+            "JAX CPU sparse LU is available."
+            if available
+            else "JAX CPU sparse LU unavailable: " + "; ".join(missing) + "."
+        )
+    elif name == "jax-cuda":
         import jax
 
         available = any(device.platform == "gpu" for device in jax.devices())

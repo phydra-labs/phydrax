@@ -1,0 +1,245 @@
+# ----------------------------------------
+#               FLEXODEAL
+# ----------------------------------------
+#          Listing of Parameters
+# ----------------------------------------
+
+subsection Finite element system
+  # Displacement system polynomial order
+  set Polynomial degree = 2
+
+  # Gauss quadrature order
+  set Quadrature order  = 5
+
+  # Type of simulation (dynamic or quasi-static)
+  set Type of simulation = dynamic
+end
+
+
+subsection Geometry
+  # Global refinement level
+  set Global refinement   = 2
+
+  # Muscle length [m]
+  set Muscle length = 0.27
+
+  # Aponeurosis length [m]
+  set Aponeurosis length = 0.208
+
+  # Aponeurosis height [m]
+  set Aponeurosis height = 0.003
+
+  # Muscle width [m]
+  set Muscle width = 0.055
+
+  # Pennation angle muscle fibres [deg]
+  # This is the angle between the fibres and the line
+  # of action (LOA), which is taken here as the x-axis.
+  set Pennation angle = 15.3
+
+  # Global grid scaling factor (note that this factor
+  # scales the grid and nothing else)
+  set Grid scale          = 1
+
+  # Ratio of applied pressure to reference pressure 
+  # [nondimensional]
+  set Pressure ratio p/p0 = 0
+end
+
+
+subsection Linear solver
+  # Linear solver iterations (multiples of the system matrix size)
+  # In 2-d, this value is best set at 2. In 3-d, a value of 1 work fine.
+  set Max iteration multiplier = 2
+
+  # Linear solver residual (scaled by residual norm)
+  set Residual                 = 1e-6
+  
+  # Use static condensation and solve a 1-block system, or solve
+  # the full 3-block system using Linear Operators and the Schur
+  # complement
+  set Use static condensation = false
+
+  # Preconditioner type (jacobi or ssor)
+  set Preconditioner type  = jacobi
+
+  # Preconditioner relaxation value
+  set Preconditioner relaxation  = 0.65
+
+  # Type of solver used to solve the linear system (GMRES, CG, or Direct).
+  # Small problems (Grid refinement level 1 or 2) can usually be solved
+  # using the Direct (UMFPACK) solver without issues. However, for larger
+  # problems, a CG solver with a Jacobi preconditioner is recommended.
+  set Solver type              = Direct
+end
+
+
+subsection Materials
+  # Density of muscle [kg/m^3]
+  set Muscle density = 1060
+
+  # ----------------- Muscle fibre properties -------------------
+
+  # Maximum isometric stress [Pa]
+  set Sigma naught muscle = 2.0e5
+
+  # Bulk modulus muscle [Pa]
+  set Bulk modulus muscle = 1.0e7
+
+  # Maximum strain rate [1/s]
+  set Max strain rate = 5.0
+
+  # Initial fibre orientation to be set according to the
+  # pennation angle given in the Geometry section.
+  
+  # ------------ Muscle base material properties ----------------
+
+  # Maximum isometric stress base material [Pa]
+  # (which is usually equal to that of the muscle fibres)
+  set Sigma naught base material = 2.0e5
+
+  # Base material "fudge" factor [nondimensional]. 
+  # Ideally this should be 1.
+  set Muscle base material factor = 1.0
+
+  # Constants in Yeoh strain-energy function
+  set Muscle base material constant 1 = 0.1990559575103343
+	set Muscle base material constant 2 = 0.3662334826469149
+	set Muscle base material constant 3 = 0.0
+
+  # -------------- Aponeurosis fibre properties -----------------
+
+  # Aponeurosis fibre normalizing stress [Pa]
+  set Sigma naught aponeurosis = 2.0e5
+
+  # Aponeurosis bulk modulus [Pa]
+  set Bulk modulus aponeurosis = 1.0e7
+
+  # ----------- Aponeurosis base material properties ------------
+
+  # Aponeurosis base material normalizing stress [Pa]
+  set Sigma naught aponeurosis base material = 2.0e5
+
+  # Aponeurosis base material "fudge" factor [nondimensional]
+  # Ideally this should be 1.
+  set Aponeurosis base material factor = 1.0
+
+  # Constants in Yeoh strain-energy function
+  set Aponeurosis base material constant 1 = 4.6896264975
+  set Aponeurosis base material constant 2 = -3.4551410975
+  set Aponeurosis base material constant 3 = 484.92055395
+
+  # ---------------- Tendon fibre properties --------------------
+
+  # Tendon fibre normalizing stress [Pa]
+  set Sigma naught tendon  = 2.0e5
+
+   # Tendon bulk modulus [Pa]
+  set Bulk modulus tendon = 1.0e8
+
+  # ------------- Tendon base material properties ---------------
+
+  # Tendon base material normalizing stress [Pa]
+  set Sigma naught tendon base material = 2.0e5
+
+  # Tendon base material "fudge" factor [nondimensional]
+  # Ideally this should be 1.
+  set Tendon base material factor = 1.0
+
+  # Constants in Yeoh strain-energy function
+  set Tendon base material constant 1 = 4.6896264975
+  set Tendon base material constant 2 = -3.4551410975
+  set Tendon base material constant 3 = 484.92055395
+
+  # ---------------------- Fat properties ------------------------
+
+  # Bulk modulus fat [Pa]
+  set Bulk modulus fat = 1.0e+07
+  
+  # Fat "fudge" factor [nondimensional].
+  # Ideally this should be 1.
+  set Fat factor = 1.0
+
+  # Constants in Neo-Hookean strain-energy function
+  set Fat constant 1 = 1.3e+05
+
+  # Fat fraction
+  set Fat fraction = 0.0
+end
+
+
+subsection Nonlinear solver
+  # Type of nonlinear solve (classicNewton or acceleratedNewton).
+  # Note that classicNewton is STRONGLY suggested as acceleratedNewton
+  # hasn't shown good performance at all.
+  set Nonlinear solver type = classicNewton
+
+  # Number of Newton-Raphson iterations allowed.
+  # Note that dynamic simulations can easily require 10 to 15 
+  # times the amount of Newton iterations per time step required 
+  # for the quasi-static problem.
+  set Max iterations Newton-Raphson = 100
+
+  # Displacement error tolerance [m]
+  set Tolerance displacement        = 1.0e-4
+
+  # Force residual tolerance (this is the L2 norm of the RHS block vector)
+  set Tolerance force               = 1.0e-4
+end
+
+
+subsection Time
+  # End time [s]
+  # To obtain data for the very last time step, add 1e-08 to
+  # the desired end time
+  set End time       = 1.00000001
+
+  # Time step size [s]
+  set Time step size = 0.01
+end
+
+
+subsection Prescribed displacement
+    # Even if you perform an isometric contraction it is important
+    # to set this quantity properly as this is the place where
+    # forces are computed for the force_data-3d.csv time series file.
+    set Pulling face ID  = 1
+end
+
+
+subsection Measuring locations
+    # These locations MUST correspond to vertices on the grid. Otherwise
+    # the solver returns the error: "The evaluation point ... was not 
+    # found among the vertices of the present grid."
+
+    set Markers list file = markers.dat
+end
+
+subsection Output binary files
+    # These files contain QP information of the main variables in the code
+    # and they're written at each time step. In essence, each file is a
+    # dimensional array of (number of QPs) x (number of columns), where each
+    # column is a different quantity. Because these files tend to be large in
+    # comparison to other outputs, one should only output these files when
+    # needed.
+
+    # File 1: cell_data_main-3d-XYZ.data (XYZ: time step)
+    # Number of columns: 21
+    # Columns: qp_x, qp_y, qp_z, JxW, det_F, u1, u2, u3, v1, v2, v3, p, D,
+    #          stretch, stretch_bar, strain_rate, strain_rate_bar,
+    #          orientation_x, orientation_y, orientation_z, tissue_id
+    set Output binary files main variables = false
+
+    # File 2: cell_data_tensors-3d-XYZ.data (XYZ: time step)
+    # Number of columns: 69
+    # Columns: qp_x, qp_y, qp_z, JxW, det_F,
+    #          F_1_1, F_1_2, F_1_3, F_2_1, F_2_2, F_2_3, F_3_1, F_3_2, F_3_3,
+    #          tau_1_1, tau_1_2, tau_1_3, tau_2_1, tau_2_2, tau_2_3, tau_3_1, tau_3_2, tau_3_3,
+    #          tau_vol_1_1, tau_vol_1_2, tau_vol_1_3, tau_vol_2_1, tau_vol_2_2, tau_vol_2_3, tau_vol_3_1, tau_vol_3_2, tau_vol_3_3,
+    #          tau_iso_1_1, tau_iso_1_2, tau_iso_1_3, tau_iso_2_1, tau_iso_2_2, tau_iso_2_3, tau_iso_3_1, tau_iso_3_2, tau_iso_3_3,
+    #          tau_muscle_active_1_1, tau_muscle_active_1_2, tau_muscle_active_1_3, tau_muscle_active_2_1, tau_muscle_active_2_2, tau_muscle_active_2_3, tau_muscle_active_3_1, tau_muscle_active_3_2, tau_muscle_active_3_3,
+    #          tau_muscle_passive_1_1, tau_muscle_passive_1_2, tau_muscle_passive_1_3, tau_muscle_passive_2_1, tau_muscle_passive_2_2, tau_muscle_passive_2_3, tau_muscle_passive_3_1, tau_muscle_passive_3_2, tau_muscle_passive_3_3,
+    #          tau_muscle_base_1_1, tau_muscle_base_1_2, tau_muscle_base_1_3, tau_muscle_base_2_1, tau_muscle_base_2_2, tau_muscle_base_2_3, tau_muscle_base_3_1, tau_muscle_base_3_2, tau_muscle_base_3_3,
+    #          tissue_id
+    set Output binary files tensors = false
+end

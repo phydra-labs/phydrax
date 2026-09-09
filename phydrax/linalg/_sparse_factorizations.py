@@ -740,6 +740,28 @@ def refresh_sparse_factorization(
         raise ValueError(
             "Sparse factorization refresh requires an unchanged value batch shape."
         )
+    return refresh_sparse_factorization_values(plan, storage.values)
+
+
+def refresh_sparse_factorization_values(
+    plan: SparseFactorizationPlan,
+    values: ArrayLike,
+    /,
+) -> PreparedSparseFactorization:
+    """Refresh traced numeric values in the plan's original CSR entry order.
+
+    Symbolic analysis and pattern validation belong to
+    :func:`prepare_sparse_factorization`. This numeric-only boundary accepts
+    exactly ``plan.batch_shape + (plan.input_nnz,)`` values without inspecting
+    traced CSR indices on the host.
+    """
+    if not isinstance(plan, SparseFactorizationPlan):
+        raise TypeError("plan must be a SparseFactorizationPlan.")
+    numeric_values = jnp.asarray(values)
+    if numeric_values.shape != plan.batch_shape + (plan.input_nnz,):
+        raise ValueError("Sparse factorization values must match the plan's input shape.")
+    if not jnp.issubdtype(numeric_values.dtype, jnp.inexact):
+        raise TypeError("Sparse factorization values must have an inexact dtype.")
 
     def factor_one(input_values):
         safe_input = jnp.maximum(plan.input_positions, 0)
@@ -897,7 +919,7 @@ def refresh_sparse_factorization(
         )
 
     batch_count = int(np.prod(plan.batch_shape)) if plan.batch_shape else 1
-    flattened_input = storage.values.reshape((batch_count, storage.nnz))
+    flattened_input = numeric_values.reshape((batch_count, plan.input_nnz))
     (
         values,
         status,
@@ -959,4 +981,5 @@ __all__ = [
     "factorize_sparse",
     "prepare_sparse_factorization",
     "refresh_sparse_factorization",
+    "refresh_sparse_factorization_values",
 ]

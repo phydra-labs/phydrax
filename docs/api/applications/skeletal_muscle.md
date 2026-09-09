@@ -81,6 +81,10 @@ semantics.
 
 ::: phydrax.applications.skeletal_muscle.energetics
 
+## Retained-heat thermal fields
+
+::: phydrax.applications.skeletal_muscle.thermal
+
 ## Personalization, likelihoods, and exact replay
 
 ::: phydrax.applications.skeletal_muscle.personalization
