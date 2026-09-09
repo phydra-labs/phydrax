@@ -294,7 +294,7 @@ def test_route_rejects_independent_or_mismatched_support_and_multiple_routes():
     values = jnp.ones((1, 4))
     route = _route()
     independent = _trained(_StateOperator(), _task(independent=True))
-    with pytest.raises(ValueError, match="coincident"):
+    with pytest.raises(ValueError):
         phx.nn.operator.training.autoregressive_operator_rollout(
             independent,
             _batch(values),

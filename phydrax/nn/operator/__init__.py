@@ -45,6 +45,7 @@ from . import (
     free_boundary,
     layers,
     metrics,
+    preconditioning,
     prompt,
     protocols,
     representations,
@@ -101,6 +102,7 @@ from .context import (
     SampledAnchorContext,
 )
 from .data import (
+    function_samples_with_values,
     FunctionSamples,
     OperatorAxis,
     OperatorBasis,
@@ -154,6 +156,15 @@ from .metrics import (
     operator_l2_loss,
     operator_sobolev_loss,
     operator_spectral_loss,
+)
+from .preconditioning import (
+    OperatorCorrectionBinding,
+    OperatorCorrectionCost,
+    OperatorSubspaceCorrection,
+    prepare_operator_subspace_correction,
+    PreparedOperatorCorrection,
+    TrainedOperatorPreconditioner,
+    TrainedOperatorPreconditionerBuilder,
 )
 from .prompt import (
     OperatorPrompt,
@@ -216,6 +227,7 @@ __all__ = [
     "representations",
     "AbstractOperatorModel",
     "EncodedOperatorModel",
+    "function_samples_with_values",
     "FunctionSamples",
     "CorrectedOperatorRollout",
     "CorrectedOperatorStep",
@@ -258,6 +270,9 @@ __all__ = [
     "OperatorOutputSpec",
     "OperatorPrediction",
     "OperatorPredictionBuilder",
+    "OperatorCorrectionBinding",
+    "OperatorCorrectionCost",
+    "OperatorSubspaceCorrection",
     "OperatorTrialSubspace",
     "OperatorProblemSpec",
     "OperatorQuadraturePolicy",
@@ -300,6 +315,7 @@ __all__ = [
     "operator_graph_fingerprint",
     "operator_graph_from_samples",
     "operator_trial_subspace",
+    "prepare_operator_subspace_correction",
     "rayleigh_ritz_from_samples",
     "operator_topology_fingerprint",
     "pad_function_samples",
@@ -316,6 +332,7 @@ __all__ = [
     "tensor_product",
     "warm_started_eigensolve_from_samples",
     "topology",
+    "preconditioning",
     "validate_operator_contract",
     "validate_operator_architecture",
     "AbstractEncodedOperatorModel",
@@ -377,4 +394,7 @@ __all__ = [
     "layers",
     "protocols",
     "training",
+    "PreparedOperatorCorrection",
+    "TrainedOperatorPreconditioner",
+    "TrainedOperatorPreconditionerBuilder",
 ]

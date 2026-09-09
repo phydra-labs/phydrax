@@ -54,6 +54,10 @@ from ._coreset import (
     OperatorCoresetMethod,
     OperatorQueryCoreset,
 )
+from ._correction import (
+    OperatorResidualCorpus,
+    prepare_operator_residual_corpus,
+)
 from ._dataset import (
     operator_dataset_from_arrays,
     operator_dataset_from_cases,
@@ -250,6 +254,7 @@ __all__ = [
     "OperatorBatchLoader",
     "OperatorBatchEpoch",
     "OperatorDataset",
+    "OperatorResidualCorpus",
     "OperatorCaseCoreset",
     "OperatorCoresetMethod",
     "OperatorQueryCoreset",
@@ -334,6 +339,7 @@ __all__ = [
     "operator_batch_schema",
     "operator_dataset_fingerprint",
     "operator_dataset_from_arrays",
+    "prepare_operator_residual_corpus",
     "operator_dataset_from_cases",
     "save_operator_training_checkpoint",
     "SupervisedOperatorLoss",

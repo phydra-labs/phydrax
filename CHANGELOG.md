@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added task-bound neural-operator residual preconditioning, operator-informed
+  Galerkin coarse-space lowering, immutable on-policy residual corpora, and a
+  deterministic original-residual benchmark. Learned actions retain explicit
+  field-transfer, resource, provenance, and FGMRES-only reliability contracts.
 - Added a modality-neutral measurement substrate for physical quantities,
   sample supports, validity, uncertainty, acquisition identity, governed
   provenance, derivation lineage, and compatible observed/predicted comparison.

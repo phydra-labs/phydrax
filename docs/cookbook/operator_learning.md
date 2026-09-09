@@ -1366,6 +1366,104 @@ governing equation through modal differential operators. For problems carrying
 initial or boundary conditions, apply an `OperatorOutputPipeline` and compile
 with `condition_handling="external"`.
 
+## Learned corrections inside native linear solves
+
+Publish the targetless correction model as an ordinary `TrainedOperator`, then
+bind every numerical representation explicitly. The template contains fixed
+coefficient/geometry sources and a placeholder for the runtime residual.
+`solver_space`, `model_residual_space`, and `model_correction_space` are
+`DiscreteFieldSpace` values; the two `FieldTransfer` values must have the shown
+directions.
+
+```python
+binding = phx.nn.operator.OperatorCorrectionBinding(
+    trained,
+    residual_template,
+    solver_space,
+    model_residual_space,
+    model_correction_space,
+    residual_transfer,    # solver -> model residual
+    correction_transfer,  # model correction -> solver
+    residual_source_name="residual",
+    correction_field_name="correction",
+    condition_ids=(
+        physical_problem_id,
+        boundary_condition_id,
+        discretization_bundle_id,
+        topology_epoch_id,
+    ),
+)
+builder = phx.nn.operator.TrainedOperatorPreconditionerBuilder(
+    binding,
+    phx.nn.operator.OperatorCorrectionCost(
+        preparation_workspace_bytes=declared_preparation_workspace,
+        inference_workspace_bytes_per_rhs=declared_inference_workspace,
+    ),
+)
+policy = phx.linalg.LinearSolvePolicy(
+    phx.linalg.FGMRES(restart=30),
+    preconditioning=phx.linalg.PreconditioningPolicy(builder, side="right"),
+)
+result = phx.linalg.solve(system, right_hand_side, policy=policy)
+```
+
+The direct action is conservatively nonlinear and is therefore FGMRES-only.
+Do not switch to GMRES, PCG, or MINRES based on sampled model behavior. The
+solver computes and reports the original system residual; correction magnitude
+and model-training loss do not determine success.
+
+For a fixed learned or POD basis, lower the basis once and let native Galerkin
+algebra own every subsequent operator application:
+
+```python
+basis_samples = phx.nn.operator.function_samples_with_values(
+    physical_query,
+    pod_fit.basis.values,
+)
+learned_coarse = phx.nn.operator.prepare_operator_subspace_correction(
+    basis_samples,
+    model_basis_space,
+    solver_space,
+    basis_transfer,
+    phx.linalg.DenseInversePreconditionerBuilder(),
+)
+preconditioner = phx.linalg.AdditiveSubspaceCorrectionBuilder(
+    (native_smoother_term, learned_coarse.term),
+)
+```
+
+Basis transfer occurs before rank validation. The returned restriction is the
+Hilbert adjoint of the final solver-space prolongation. Never use a reverse
+interpolation or raw transpose in its place. A coarse term alone is
+finite-rank, so it must not be asserted positive definite on the full space.
+
+On-policy residual collection remains an offline host workflow. Represent each
+valid iterate as a targetless `OperatorCase` with solver, operator,
+discretization, boundary, topology, residual-metric, and source-policy
+identities, then freeze the corpus:
+
+```python
+corpus = phx.nn.operator.training.prepare_operator_residual_corpus(
+    residual_cases,
+    binding_id=binding.binding_id,
+    task_fingerprint=trained.task_fingerprint,
+    residual_loss_fingerprint=physics_loss.fingerprint,
+    source_artifact_ids=(solver_run_artifact_id,),
+    required_identity_keys=(
+        "solver_execution_id",
+        "operator_id",
+        "discretization_bundle_id",
+        "residual_metric_id",
+    ),
+)
+```
+
+Pass `corpus.dataset` to `fit_operator` and include
+`corpus.training_provenance` in normal fit/artifact provenance. Recollection
+after changing the model creates a new immutable corpus ID. Finite stagnated
+iterates are useful cases; invalid or nonfinite states are rejected.
+
+
 ## Operator field classification
 
 Declare statistical output semantics with the JSON-safe
